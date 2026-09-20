@@ -106,6 +106,26 @@ def ci_served_files():
     return [tok for tok in step["pytest"] if tok.startswith("tests/") and "*" not in tok]
 
 
+def ci_gear_browser_step():
+    """The gear browser legs' step as the workflow states it (the maintainer's round 5 of the wsBytesByHost review, tests-1): the
+    one step that sets ROMP_GEAR_BROWSER_REQUIRE to 1, its run line, and its place in the job (after the Chromium install, before
+    the served step); None when its anchors are gone, so a caller fails on None rather than passing on nothing."""
+    with open(CI_YML, encoding="utf-8") as f:
+        lines = f.read().split("\n")
+    at = [i for i, l in enumerate(lines) if 'ROMP_GEAR_BROWSER_REQUIRE: "1"' in l]
+    if len(at) != 1:
+        return None
+    i = at[0]
+    k = i
+    while k < len(lines) and not lines[k].strip().startswith("run:"):
+        k += 1
+    if k >= len(lines):
+        return None
+    install = [j for j, l in enumerate(lines) if "npx playwright install chromium" in l]
+    served = [j for j, l in enumerate(lines) if 'ROMP_SERVED_TESTS_REQUIRE: "1"' in l]
+    return {"run": lines[k].split("run:", 1)[1].strip(), "after_install": bool(install) and install[0] < i, "before_served": bool(served) and i < served[0]}
+
+
 def two_host_lab_knob():
     """The env name TwoHostsBytesByHost's gate reads, derived from the corners module's source (the class body, up to the next
     class), so a renamed knob moves this pin with it instead of leaving the workflow's env stale and the pin green; None when the
@@ -176,6 +196,24 @@ class ServedLabsUnderCI(unittest.TestCase):
         self.assertIsNotNone(knob, "the corners module's TwoHostsBytesByHost gate was not found: re-aim two_host_lab_knob()")
         self.assertTrue((step["env"].get(knob) or "").strip(),
                         "the served step does not set the two-host lab's knob %s (the gate reads any non-blank value): %r" % (knob, step["env"]))
+
+    def test_the_gear_browser_legs_run_after_the_browser_install(self):
+        """ui/webview/gear-sub-focus-browser.test.ts holds the source pins and the browser legs of the description-on-focus work
+        (the wsBytesByHost review). The Test step runs it before the job installs Chromium, so there its browser legs skip and the
+        gate's read is the pins alone (the maintainer's round 5, tests-1); the job runs the file again by name after the install,
+        under ROMP_GEAR_BROWSER_REQUIRE=1, which the file reads to turn its browser skip into a failure naming the reason. This
+        pins the step's switch, its run line (the Test step's bundle, which npm run build leaves in place) and its place: after
+        the install and before the served step, the job's long phase."""
+        step = ci_gear_browser_step()
+        self.assertIsNotNone(step, "ci.yml has no step setting ROMP_GEAR_BROWSER_REQUIRE: the gear browser legs run in no CI job")
+        self.assertEqual(step["run"], "node --test out-tests/ui/webview/gear-sub-focus-browser.test.js", "the step runs the Test step's bundle of the file by name")
+        self.assertTrue(step["after_install"], "the step sits after the Chromium install (before it the legs skip)")
+        self.assertTrue(step["before_served"], "and before the served step")
+        src_path = os.path.join(ROOT, "ui", "webview", "gear-sub-focus-browser.test.ts")
+        self.assertTrue(os.path.exists(src_path), "the file the step names is gone")
+        with open(src_path, encoding="utf-8") as f:
+            src = f.read()
+        self.assertIn("process.env.ROMP_GEAR_BROWSER_REQUIRE", src, "the file reads the switch the step sets")
 
     def test_the_ci_globs_are_the_conftest_suffixes(self):
         self.assertEqual(sorted(ci_served_globs()), ["tests/test_*_browser.py", "tests/test_*_served.py"])

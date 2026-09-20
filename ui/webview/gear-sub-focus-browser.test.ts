@@ -19,7 +19,15 @@
 //
 // Two pins over the sources for every runner, and browser legs over the REAL gear module and its stylesheet, the
 // gear-judge-fast-browser.test.ts pattern (a fake kernel behind page.route; skips with a stated reason without a playwright
-// browser, which CI installs none of). The legs read the PANEL, not the row: every `.rs-sub` under `#rsettings` that is shown,
+// browser). WHAT THE GATE CHECKS, and where (the maintainer's round 5, tests-1): CI's vscode-extension job runs `npm test` BEFORE
+// it installs Chromium, so at that step every browser leg in this file skips and the gate's read of this file is the source
+// pins alone (the parsed-sheet pins on the rules and the gear.js wiring pins); the job then installs Chromium and runs this
+// file again by name, the "Gear description browser legs" step under ROMP_GEAR_BROWSER_REQUIRE=1, where the browser legs run in
+// that Chromium and a skip is a failure naming its reason (the pane bench's stance), pinned by tests/test_served_labs_under_ci.py.
+// A developer's machine with playwright's Chromium runs both in one `npm test`. The surface the browser legs exclude: Firefox
+// and WebKit (the three-engine readings in the review record came from a scratch matrix, not this file), and every engine
+// generation that lacks :has(), which the degradation leg below MODELS rather than installs. The legs read the PANEL, not the
+// row: every `.rs-sub` under `#rsettings` that is shown,
 // with the host that owns it, over every host in EVERY pane that has a description and a control of any kind (a checkbox, a
 // button, a text field; the census form: a two-pane leg was a sample, and the two text controls and the Account row's two
 // descriptions lived in the panes it did not open). The keyboard focus comes from a real Tab press (the previous tabbable
@@ -30,6 +38,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
+import { spawnSync } from "node:child_process";
 
 const EXT = process.cwd();                                        // npm test runs in vscode-extension
 const requireCjs = createRequire(path.join(EXT, "package.json"));
@@ -99,11 +108,13 @@ test("the sheet shows a description while its row holds a KEYBOARD focus: the sh
     "the box's hover pair's focus twins, in the descendant form (a :has() cannot nest a :has(), and the box is never the focused element): while a keyboard focus is inside the box the row's description stands down and the box's own shows");
   assert.match(GEAR_CSS, /^#rsettings \.rs-row:has\(:focus-visible\) \.rs-fastin\.rs-up \.rs-sub \{ top: auto; bottom: 100%; margin-top: 0; margin-bottom: 2px; \}/m,
     "the box's up rule's focus twin: a box wearing rs-up opens its description above the row on the keyboard as on hover");
-  const rules = GEAR_CSS.split("\n").filter((l) => !l.trimStart().startsWith("/*") && !l.trimStart().startsWith("*") && /\{/.test(l));
-  assert.deepEqual(rules.filter((l) => /:focus-within/.test(l)), [],
+  // the population is RULES, parsed (the maintainer's round 5, tests-1): a line-keyed read saw only the lines holding a brace, so a
+  // selector spanning two lines escaped it, and gear.css writes that form (the panel-wide stand-down); comments are outside the
+  // population by span, not by line prefix; the failure text names the offending rule
+  assert.deepEqual(GEAR_RULES.filter((r) => /:focus-within/.test(r.selector)).map((r) => r.selector), [],
     "no rule keys on :focus-within any more: a mouse click satisfies it, and the description then outlives the pointer (the maintainer's round 4, ui-2)");
-  assert.equal(rules.join("\n").match(/:focus-visible/g)!.length, 9,
-    "nine :focus-visible tokens in rules: the show rule's two, the up twin's two, the box's up twin, the box's stand-down twin, the pair's two twins, and the grip's own rule from before this road");
+  assert.equal(GEAR_RULES.map((r) => r.selector).join("\n").match(/:focus-visible/g)!.length, 9,
+    "nine :focus-visible tokens over the rules' selectors: the keyboard show rule's two, the up twin's two, the box's up twin, the box's stand-down twin, the pair's two twins, and the grip's own rule from before this road");
   // the rule walk (round 5, ui-3): a selector list is unforgiving, so no rule may mix a :has() arm with a :has()-free arm, or an
   // engine without :has() drops the plain arms with the rule (the show rule did, and nothing showed on any road there); the
   // failure text names the rule
@@ -210,12 +221,19 @@ const VERSION = { judgeModel: "opus", judgeEffort: "", indexModel: "opus", index
 
 let pw: any = null;
 try { pw = requireCjs("playwright"); } catch { pw = null; }
+// ROMP_GEAR_BROWSER_REQUIRE (CI's step after the Chromium install sets it) turns the browser legs' skip into a failure naming
+// the reason: the one CI run of these legs must not read green on a runner that lost its browser
+const required = !!process.env.ROMP_GEAR_BROWSER_REQUIRE;
+const skipOrFail = (t: any, why: string) => {
+  if (required) assert.fail("ROMP_GEAR_BROWSER_REQUIRE is set and this leg cannot run: " + why);
+  t.skip(why + " (in CI the Test step runs before the job installs Chromium, so the browser legs skip there and run in the step after the install)");
+};
 
 async function withGear(t: any, tab: string, body: (page: any, errors: string[]) => Promise<void>, height = 320, ctxOpts: Record<string, unknown> = {}, css = GEAR_CSS): Promise<void> {
-  if (!pw) { t.skip("playwright is not installed under vscode-extension; the browser leg needs it (CI installs no browsers)"); return; }
+  if (!pw) { skipOrFail(t, "playwright is not installed under vscode-extension; the browser legs need it"); return; }
   let browser: any;
   try { browser = await pw.chromium.launch(); }
-  catch (e) { t.skip("no playwright browser on this machine; the browser leg needs one (CI installs none): " + String((e as Error).message).split("\n")[0]); return; }
+  catch (e) { skipOrFail(t, "no playwright browser on this machine; the browser legs need one: " + String((e as Error).message).split("\n")[0]); return; }
   const errors: string[] = [];
   try {
     const js = bundle();
@@ -380,6 +398,28 @@ test("the share switch's description opens on a keyboard focus and is placed: at
     assert.equal(high.subBelowRow, true, "and it shows below the row");
     assert.deepEqual(errors, [], "no page error");
   });
+});
+
+test("ROMP_GEAR_BROWSER_REQUIRE turns the browser legs' skip into a failure that names the reason, and without it the skip stands: CI's step after the Chromium install sets it", { timeout: 120000 }, () => {
+  // a child run of this file's share-switch leg with playwright pointed at an empty browsers directory (the pane bench's probe):
+  // under the switch the leg fails naming the switch and the reason; without it the leg skips, as the Test step's run does
+  const empty = fs.mkdtempSync(path.join(EXT, "out-tests", "no-browsers-"));
+  try {
+    // the child's environment is built, not inherited: under `node --test` this process carries the runner's NODE_TEST_CONTEXT,
+    // and a child inheriting it reports on the runner's channel instead of its stdout
+    const base: Record<string, string> = {};
+    for (const k of ["PATH", "HOME", "TMPDIR", "NODE_OPTIONS"]) if (process.env[k] !== undefined) base[k] = process.env[k] as string;
+    const run = (env: Record<string, string>) => spawnSync(process.execPath, ["--test", "--test-name-pattern=share switch", __filename],
+      { cwd: EXT, encoding: "utf8", timeout: 100000, env: { ...base, ...env, PLAYWRIGHT_BROWSERS_PATH: empty } });
+    const req = run({ ROMP_GEAR_BROWSER_REQUIRE: "1" });
+    assert.match(req.stdout, /ROMP_GEAR_BROWSER_REQUIRE is set and this leg cannot run: no playwright browser/, "the switch: a failure naming it and the reason\n" + req.stdout.slice(-1500));
+    assert.match(req.stdout, /^# fail 1$/m, "the leg failed under the switch");
+    const plain = run({});
+    assert.match(plain.stdout, /^# skipped 1$/m, "without the switch the leg skips\n" + plain.stdout.slice(-1500));
+    assert.match(plain.stdout, /the Test step runs before the job installs Chromium/, "and the skip's reason states the step order");
+  } finally {
+    fs.rmSync(empty, { recursive: true, force: true });
+  }
 });
 
 test("the degradation on an engine without :has(), modelled: with every :has() rule removed from the sheet (such an engine drops a rule it cannot parse whole) a hover still shows the row's description and a keyboard focus shows nothing, the keyboard road alone lost; before the split of the show rule nothing showed on either road", { timeout: 90000 }, async (t) => {
