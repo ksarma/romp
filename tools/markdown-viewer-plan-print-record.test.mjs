@@ -29,6 +29,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..');
@@ -939,4 +940,64 @@ test('P2: the wait\'s count is the aim\'s and does not fall as pictures settle, 
   assert.ok(!/onSettle|onEach|progress/.test(settle), 'settlePictures reports no per-settle event');
   assert.ok(read('ui', 'webview', 'file-print.ts').includes('N is the count at the AIM (the press, a choice, or a re-aim after a\n//      repaint or a settle), not a count that falls as each picture settles'), 'the header states the property (a comment, read as one)');
   assert.ok(read('ui', 'webview', 'file-print-driver-browser.test.ts').includes('"one of two pictures landed: the count is the aim\'s and does not fall per settle; nothing printed"'), 'the driver leg reads the count after one of two settles');
+});
+
+// ── the post-filter index: the population, derived, not recalled ──────────────────────────────────
+
+/** The TypeScript compiler the UI builds with, for reading a test module's syntax rather than matching its text. */
+const tsc = createRequire(path.join(REPO, 'vscode-extension', 'package.json'))('typescript');
+/** The print follow-on's test modules under ui/webview: the `ls ui/webview/file-print*.test.ts` listing the Tests paragraph
+ *  names, the gate's node module, the takings leg and the legs' shared harness. Read from the directory, so a module added
+ *  under the pattern joins the census on its own. */
+const printTestModules = () => [...fs.readdirSync(path.join(REPO, 'ui', 'webview')).filter((f) => /^file-print.*\.test\.ts$/.test(f)), 'figure-gate.test.ts', 'file-view-print-takings-browser.test.ts', 'real-viewer-leg.ts'].sort();
+/** Every `.filter(...).map((row, i) => ...)` chain in `src` by its syntax: a map whose callback declares an index, over a
+ *  filter's result (a `!` or parentheses between them unwrapped), so `i` counts the rows the filter KEPT and no longer names
+ *  the row of any table the callback indexes. Each as `line: text`. */
+function postFilterIndexChains(name, src) {
+  const sf = tsc.createSourceFile(name, src, tsc.ScriptTarget.Latest, true, tsc.ScriptKind.TS);
+  const out = [];
+  const unwrap = (n) => { while (tsc.isNonNullExpression(n) || tsc.isParenthesizedExpression(n)) n = n.expression; return n; };
+  const walk = (n) => {
+    if (tsc.isCallExpression(n) && tsc.isPropertyAccessExpression(n.expression) && n.expression.name.text === 'map') {
+      const fn = n.arguments[0];
+      const recv = unwrap(n.expression.expression);
+      const indexed = fn !== undefined && (tsc.isArrowFunction(fn) || tsc.isFunctionExpression(fn)) && fn.parameters.length >= 2;
+      const afterFilter = tsc.isCallExpression(recv) && tsc.isPropertyAccessExpression(recv.expression) && recv.expression.name.text === 'filter';
+      if (indexed && afterFilter) out.push((sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1) + ': ' + n.getText(sf));
+    }
+    tsc.forEachChild(n, walk);
+  };
+  walk(sf);
+  return out;
+}
+/** The chains sanctioned by hand, each the executed record of the defect inside the node case that holds the helper
+ *  replacing it, keyed by module and by the chain's exact text (a line number would move). */
+const POST_FILTER_INDEX_RECORDS = [
+  { file: 'file-print-figure-browser.test.ts', text: 'rows.filter((r, i) => r.twinPaints !== expected[i]).map((r, i) => r.name + ": the browser paints the twin " + r.twinPaints + ", the leg expected " + expected[i])', why: 'paperMismatches\' fails-before record (the round-4 review\'s correctness-4)' },
+  { file: 'file-print-figure-browser.test.ts', text: 'restored.filter(holds).map((_, i) => names[i])', why: 'namesWhere\'s fails-before record (the round-5 review\'s correctness-3)' },
+];
+
+test('the post-filter index (the round-4 review\'s correctness-4, tests-7 and regression-3; the round-5 review\'s correctness-3, tests-2, regression-2 and extra7-1, one defect filed seven times): a census over the print test modules by syntax finds every filter-then-map-by-index chain, passes the two fails-before records by their exact text and refuses any other with its module and line; a named helper stands at each site the records replaced', () => {
+  const modules = printTestModules();
+  assert.ok(modules.length >= 9 && modules.includes('file-print-figure-browser.test.ts'), 'the listing is the follow-on\'s: ' + modules.join(', '));
+  const refused = [], found = [];
+  for (const file of modules) {
+    for (const chain of postFilterIndexChains(file, read('ui', 'webview', file))) {
+      const text = chain.slice(chain.indexOf(': ') + 2);
+      const record = POST_FILTER_INDEX_RECORDS.find((r) => r.file === file && r.text === text);
+      if (record) found.push(record); else refused.push(file + ':' + chain);
+    }
+  }
+  assert.deepEqual(refused, [], 'a filter-then-map-by-index chain the census has not read by hand: a message built from it names a row other than the one that failed (namesWhere or paperMismatches carry the row with its name)');
+  assert.deepEqual(found.map((r) => r.text).sort(), POST_FILTER_INDEX_RECORDS.map((r) => r.text).sort(), 'each sanctioned record stands once, none stale');
+  assert.equal(found.length, 2, 'the population of the class at the round-6 head: the two records, no live chain');
+  // the two records are executed as FAILS BEFORE inside the node cases that hold the helpers
+  const fig = read('ui', 'webview', 'file-print-figure-browser.test.ts');
+  assert.ok(fig.includes('function namesWhere<T>(rows: readonly T[], names: readonly string[], holds: (row: T) => boolean): string[] {'), 'the helper carries the name and the row through the filter');
+  assert.ok(fig.includes('return rows.map((r, i) => ({ r, name: names[i] })).filter((x) => holds(x.r)).map((x) => x.name + " " + JSON.stringify(x.r));'), 'the row is paired with its name BEFORE the filter');
+  assert.ok(fig.includes('assert.deepEqual(namesWhere(restored, rows.map((r) => r.name), (r) => r.printableAtRestore === true && r.restored !== true), [], "every placeholder whose figure paints was restored (each named with what the restore read)");'), 'the restore assert reads through the helper');
+  assert.ok(!fig.includes('.map((_, i) => rows[i].name)'), 'the chain that named the first shape for any failure is gone');
+  for (const r of POST_FILTER_INDEX_RECORDS) assert.ok(fig.slice(fig.indexOf(r.text)).slice(0, 600).includes('FAILS BEFORE, kept as the record of the defect'), r.why + ' is followed by its FAILS BEFORE assertion');
+  assert.ok(TESTS.includes('A second node case holds `namesWhere`, the restore assert\'s message, the same way'), 'the Tests list names the second helper');
+  assert.ok(TESTS.includes('the record test\'s census over the print test modules refuses every filter-then-map-by-index chain but the two cases\' fails-before records'), 'and the census');
 });

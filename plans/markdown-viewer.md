@@ -8611,6 +8611,12 @@ _Avoid_ (a review finding, 2026-09-19).
   and fetched). A node case in the same module holds `paperMismatches`, the leg's disagreement message, to name each
   disagreeing shape with its own expected value, where the form before it named the third shape with the second's (the
   round-4 review's correctness-4, tests-7 and regression-3, a tests-only fix landed as its own commit at the docs tier).
+  A second node case holds `namesWhere`, the restore assert's message, the same way: the row travels with its name
+  through the filter, where the form before it indexed the unfiltered table by the post-filter index and named the
+  first shape whichever row failed (the round-5 review's correctness-3, tests-2, regression-2 and extra7-1, the same
+  defect filed seven times over two rounds); the record test's census over the print test modules refuses every
+  filter-then-map-by-index chain but the two cases' fails-before records, by the modules' syntax, so the population
+  is read at each run rather than recalled.
 - ui/webview/file-view-print-takings-browser.test.ts, headless Chromium: P7's takings and seatings after a paint that
   held the file, each executed against the derived readiness: a reload that fails while the bar is armed with the
   keyboard on a word button of the line (the line goes, the button disables by aria-disabled with the property false,

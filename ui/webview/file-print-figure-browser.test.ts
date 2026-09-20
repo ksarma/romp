@@ -183,6 +183,25 @@ test("paperMismatches names each disagreeing shape with its own expected value; 
   const before = rows.filter((r, i) => r.twinPaints !== expected[i]).map((r, i) => r.name + ": the browser paints the twin " + r.twinPaints + ", the leg expected " + expected[i]);
   assert.deepEqual(before, ["second: the browser paints the twin false, the leg expected true", "third: the browser paints the twin true, the leg expected true"], "FAILS BEFORE, kept as the record of the defect: the old form named the third shape with expected[1], the second's value, so its message claimed a disagreement between equal values");
 });
+/** The names of the rows `holds` picks, each with the row's own values beside it, so a red names the shape that failed and
+ *  shows what it read: `names[i]` is `rows[i]`'s, and the row travels with its name through the filter. The round-5 review
+ *  (2026-09-20, correctness-3): the restore assert below filtered the rows and then indexed the unfiltered table by the
+ *  POST-FILTER index, so a red named another shape (row 0 never has a figure to restore, so every red named the first
+ *  shape); the node case below executes the old form and this one over three rows, and the record test's census over the
+ *  print test modules refuses every filter-then-map-by-index chain but the two fails-before records. */
+function namesWhere<T>(rows: readonly T[], names: readonly string[], holds: (row: T) => boolean): string[] {
+  return rows.map((r, i) => ({ r, name: names[i] })).filter((x) => holds(x.r)).map((x) => x.name + " " + JSON.stringify(x.r));
+}
+
+test("namesWhere names each row the predicate holds by its own name with the row's values; the form before it (filter, then map by the post-filter index into the unfiltered names) named the first shape whichever row failed", () => {
+  const restored = [{ printableAtRestore: false, restored: null }, { printableAtRestore: true, restored: true }, { printableAtRestore: true, restored: false }];
+  const names = ["first", "second", "third"];
+  const holds = (r: { printableAtRestore: boolean | null; restored: boolean | null }): boolean => r.printableAtRestore === true && r.restored !== true;
+  assert.deepEqual(namesWhere(restored, names, holds), ['third {"printableAtRestore":true,"restored":false}'], "the third row failed, and the message names the third with what it read");
+  assert.deepEqual(namesWhere(restored, names, () => false), [], "nothing held, no message");
+  const before = restored.filter(holds).map((_, i) => names[i]);
+  assert.deepEqual(before, ["first"], "FAILS BEFORE, kept as the record of the defect: the old form named the first shape, which has no figure to restore, for the third's failure");
+});
 type Read = { rows: Row[]; errors: string[] };
 type Restored = { restored: boolean | null; printableAtRestore: boolean | null };
 
@@ -247,7 +266,7 @@ for (const engine of ENGINES) test("figureHidden and figurePrintable over real g
     const offRecord = rows.map((r, i) => ({ r, s: all[i] })).filter((x) => recorded(x.s, engine) && x.r.printable !== paintsIn(x.s, engine)).map((x) => x.r.name + ": figurePrintable " + x.r.printable + ", the table's paint " + paintsIn(x.s, engine) + " (the twin oracle reads " + x.r.twinPaints + " in " + engine + ", recorded)");
     assert.deepEqual(offRecord, [], "where the twin oracle is recorded to read other than the paint, the flow answers the paint");
     // the named spellings and shapes, each to the answer the round named
-    const wrong = rows.filter((r, i) => hiddenIn(all[i], engine) !== undefined && r.hidden !== hiddenIn(all[i], engine)).map((r, i) => r.name + ": figureHidden " + r.hidden);
+    const wrong = rows.filter((r, i) => hiddenIn(all[i], engine) !== undefined && r.hidden !== hiddenIn(all[i], engine)).map((r) => r.name + ": figureHidden " + r.hidden);
     assert.deepEqual(wrong, [], "FAILS BEFORE: -0, +0, 0e0, -1 and calc(0) read as on the paper, 0.0.0 as off it, and <svg hidden> as hidden");
     const wrongPaper = paperMismatches(rows, all.map((s) => oracleReads(s, engine)));
     assert.deepEqual(wrongPaper, [], "the browser's own answers are the ones this leg's table names, the recorded per-engine readings among them (a change here is a change in the engine, and the flow follows it)");
@@ -274,7 +293,7 @@ for (const engine of ENGINES) test("figureHidden and figurePrintable over real g
     const fetchedOf = (i: number): string[] => { const a = asked.filter((u) => u === "https://" + hostOf(i) + "/p.svg").length, b = asked.filter((u) => u === "https://" + hostOf2(i) + "/q.svg").length; return [...(a ? ["a" + (a > 1 ? " x" + a : "")] : []), ...(b ? ["b" + (b > 1 ? " x" + b : "")] : [])]; };
     for (let i = 0; i < all.length; i++) t.diagnostic("fetch | " + engine + " | " + all[i].name + " | printable=" + restored[i].printableAtRestore + " | restored=" + restored[i].restored + " | fetched=" + (fetchedOf(i).join(",") || "none") + " | expected=" + (expectedFetches(all[i], engine).join(",") || "none"));
     assert.deepEqual(restored.map((r, i) => [rows[i].name, r.printableAtRestore]).filter(([, p], i) => p !== rows[i].printable), [], "the restore read the same printable answer as the rows");
-    assert.deepEqual(restored.filter((r) => r.printableAtRestore === true && r.restored !== true).map((_, i) => rows[i].name), [], "every placeholder whose figure paints was restored");
+    assert.deepEqual(namesWhere(restored, rows.map((r) => r.name), (r) => r.printableAtRestore === true && r.restored !== true), [], "every placeholder whose figure paints was restored (each named with what the restore read)");
     const wrongFetch = all.map((s, i) => ({ name: s.name, got: fetchedOf(i), want: expectedFetches(s, engine) })).filter((x) => x.got.join(",") !== x.want.join(",")).map((x) => x.name + ": asked for " + (x.got.join(",") || "none") + ", the table says " + (x.want.join(",") || "none"));
     assert.deepEqual(wrongFetch, [], "per URL: the restore of a figure that paints asks for every URL the browser fetches of the whole figure, a non-painting element's among them (the figure-level grant, stated in figure-gate.ts and file-print.ts), and a figure that paints nothing has no URL asked for");
     assert.deepEqual(asked.filter((u) => !/^https:\/\/s\d+b?\.remote\.test\/[pq]\.svg$/.test(u)), [], "no URL outside the shapes' own was asked for");
