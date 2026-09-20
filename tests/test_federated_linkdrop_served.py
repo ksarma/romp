@@ -536,23 +536,31 @@ const visible = async (ch) => {
   return v;
 };
 // the phase's visibles, waited for CONCURRENTLY (three pages, three waiters), so the point is bounded by ms, not three
-// times it, and each waiter's timeout draws on the budget
-const waitVisible = async (ch, ms) => {
+// times it, and each waiter's timeout draws on the budget. Each wait's OUTCOME is recorded, never swallowed (round 5): a
+// wait that expires names itself in v.expired and in out.timeouts with the phase, because waitedMs alone cannot tell a
+// delivery at the cap from a wait that ran to its cap with nothing delivered, and the gate legs read waitedMs as this
+// drive's delivery (_assert_the_down_window_outlasts_the_drives_slowest_delivery requires v.expired empty before it does)
+const waitVisible = async (ch, ms, what) => {
   const t0 = Date.now();
   const last = ch.noticeKeys.length - 1;
-  const quietly = (p) => p.catch(() => {});
-  const waits = [quietly(pages.feed.locator(cardSel(ch, last)).first().waitFor({ state: "attached", timeout: budget.capped(ms) }))];
-  if (pages.waiting && ch.todoText) waits.push(quietly(pages.waiting.locator(".ut-text", { hasText: ch.todoText }).first().waitFor({ timeout: budget.capped(ms) })));
-  if (pages.fleet && ch.prompt) waits.push(quietly(pages.fleet.waitForFunction(([sel, t]) => { const e = document.querySelector(sel); return !!e && e.textContent === t; }, [cfg.provSel, ch.prompt], { timeout: budget.capped(ms) })));
+  const expired = [];
+  const outcome = (name, p) => p.then(() => true, (e) => {
+    expired.push(name);
+    out.timeouts.push(what + ": the " + name + " wait expired" + (budget.left() === 0 ? " (the driver's wait budget was spent)" : "") + ": " + String(e).split("\n")[0].slice(0, 160));
+    return false;
+  });
+  const waits = [outcome("card", pages.feed.locator(cardSel(ch, last)).first().waitFor({ state: "attached", timeout: budget.capped(ms) }))];
+  if (pages.waiting && ch.todoText) waits.push(outcome("todo", pages.waiting.locator(".ut-text", { hasText: ch.todoText }).first().waitFor({ timeout: budget.capped(ms) })));
+  if (pages.fleet && ch.prompt) waits.push(outcome("prompt", pages.fleet.waitForFunction(([sel, t]) => { const e = document.querySelector(sel); return !!e && e.textContent === t; }, [cfg.provSel, ch.prompt], { timeout: budget.capped(ms) })));
   await Promise.all(waits);
-  const v = await visible(ch); v.waitedMs = Date.now() - t0; return v;
+  const v = await visible(ch); v.waitedMs = Date.now() - t0; v.expired = expired; return v;
 };
 const freshRelayWithFeed = async (sinceKey) => { for (const app of APPS) { const s = await snap(pages[app]); if (!s.socks.some((k) => k.relay && k.dialedAt >= out.marks[sinceKey] && k.frames.some((f) => f.t === "feed"))) return false; } return true; };
 const phase = async (name) => {
   await quiet("before phase " + name);
   mark(name + "0");
   const ch = await ctl("change", { phase: name });
-  const rec = { change: ch, seen: await waitVisible(ch, cfg.waitMs) };
+  const rec = { change: ch, seen: await waitVisible(ch, cfg.waitMs, "phase " + name) };
   await pages.feed.waitForTimeout(cfg.phaseSettleMs);   // let the panes' rows land on the hub
   mark(name + "1");
   for (const app of APPS) rec[app] = await snap(pages[app]);
@@ -609,7 +617,7 @@ try {
   mark("rowUp");
   await waitFor(() => freshRelayWithFeed("resume"), cfg.waitsMs.redialed, "a fresh relay socket per page holds the remote's full frame after the link's return");
   mark("redialed");
-  out.phases.D.seenAfterReturn = await waitVisible(chD, cfg.waitMs);   // the redial's whole frame carries the change made while the link was down
+  out.phases.D.seenAfterReturn = await waitVisible(chD, cfg.waitMs, "phase D after the link's return");   // the redial's whole frame carries the change made while the link was down
   const chB = await phase("B");
   out.phases.B.seenA = await visible(chA);
   out.phases.B.seenD = await visible(chD);
@@ -1266,10 +1274,13 @@ class _LinkDrop(unittest.TestCase):
 
     def _assert_every_wait_was_met(self):
         """Every wait the driver placed (waitFor: the held sockets closing, the row leaving and returning to up, a fresh
-        relay socket per page holding a whole frame, the local sockets reopening) was met inside its timeout. An
+        relay socket per page holding a whole frame, the local sockets reopening; and every visibility wait, waitVisible:
+        a phase's card, todo and provisional row, and phase D's after the return) was met inside its timeout. An
         expired wait means a phase ran on an unmet precondition and the record shows a partial drive that every other
         assertion may still pass (round 1, fresh-3: a forced timeout gave 3 / 0 / 3 / 2 and five green tests). The
-        driver records quiet()'s give-ups separately and they are not fatal."""
+        visibility waits' expiries were swallowed until round 5, so a phase whose cards never came left only a waitedMs
+        at about the cap, which the gate legs read as a delivery; the driver now names each in out.timeouts with its
+        phase and in the phase's seen.expired. The driver records quiet()'s give-ups separately and they are not fatal."""
         self._driver_ran()
         self.assertEqual(self.result.get("timeouts"), [], "every wait the driver placed was met; the expired ones: %r (quiet gave up: %r)"
                          % (self.result.get("timeouts"), self.result.get("quietGaveUp")))
