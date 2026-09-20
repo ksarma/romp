@@ -140,12 +140,12 @@ CENSUS = {
         "host": (BARE, "the conn's host on every hostconn, feedDelta-nobase, feedDelta-stale, sendqueue and senddrop row (federation_host_row_kinds, "
                        "derived from federation.ts); empty on the poll rows, local on the local nobase row"),
         "ev": (NONE, "the hostconn event word"),
-        "why": (NONE, "a cause word at each literal writer (watchdog-close's quiet, dial-deferred's local-down, senddrop's closed, the feedDelta-stale ladder's words); "
+        "why": (NONE, "a cause word at each literal writer (watchdog-close's quiet or connecting, dial-deferred's local-down, senddrop's no-conn on its bookkeeping arm, the feedDelta-stale ladder's words); "
                       "on delta-unknown-slot the peer frame's own slot string as parsed off the remote socket, cut at 32 (UNKNOWN_SLOT_CUT: the remote kernel's choice, a fixed "
                       "word for every kernel in this repo), then the peer's sha as the hub's /version poll validated it (_peer_sha) or nothing; on delta-unkeyed-base this bundle's "
                       "slot, collection and shape words with the same tail; or the page's own /tunnels fetch failure text, cut at 200 by the poster and 64 here. NONE on the census's "
                       "first-party scope (this header): a peer kernel could put any 32 characters in its slot word"),
-        "quietMs": (NONE, _INT), "foreground": (NONE, _BOOL), "msgType": (NONE, "hold, sendqueue and senddrop: msg.type of an outbound frame, a KERNEL_SETTING word or a BOOKKEEPING type"),
+        "quietMs": (NONE, _INT), "foreground": (NONE, _BOOL), "msgType": (NONE, "hold, sendqueue and senddrop: msg.type of an outbound frame, a KERNEL_SETTING word (sendqueue), a BOOKKEEPING type (hold and the no-conn drop), or, on the default drop, the outbound gesture's own type, a page-minted literal"),
         "rs": (NONE, "a readyState"),
         "flushed": (NONE, "open and flush-halt: message type words (flushPending's list)"), "held": (NONE, "flush-halt: pendingTypes, message type words"),
         "unread": (NONE, _BOOL), "endedUnread": (NONE, _BOOL),
@@ -505,6 +505,54 @@ def maps_comment():
     return re.sub(r"\s+", " ", re.sub(r"\n\s*//", " ", m.group(1))).strip() if m else None
 
 
+def federation_fixture_rows(host):
+    """One synthetic row per federation.ts diag() call site (hostconn's events, then the others), the shapes the WRITERS post:
+    re-minted from the source in the author's pass after round 4 (the maintainer's round 4, extra7-1 and extra9-1: the hold
+    row carried a KERNEL_SETTING type where a hold can carry only a BOOKKEEPING one, and the senddrop row posted a `why` no
+    writer sends, "closed", on a type the why-carrying arm never drops). test_the_federation_fixture_rows_are_shapes_the_writers_post
+    holds these rows to the writers' literals and tables."""
+    return [
+        ("hostconn", {"host": host, "ev": "watchdog-close", "why": "quiet", "quietMs": 31000, "foreground": True}),
+        ("hostconn", {"host": host, "ev": "dial-deferred", "why": "local-down"}),   # a relay dial put off while the pane's local socket is down (2026-09-18)
+        ("hostconn", {"host": host, "ev": "hold", "msgType": "activeTab", "rs": 0}),   # a bookkeeping frame held for the open: its type is a BOOKKEEPING key (federation.ts, the hold arm)
+        ("hostconn", {"host": host, "ev": "flush-halt", "flushed": ["setAutoNudge"], "held": ["setJudgeModel"]}),
+        ("hostconn", {"host": host, "ev": "tunnels-poll-failing", "why": "http", "unread": True}),   # unread is !this.hostsRead, a boolean (federation.ts); the earlier fixture posted a count
+        ("hostconn", {"host": host, "ev": "tunnels-poll-recovered", "unread": False, "endedUnread": True}),   # both booleans: !this.hostsRead and firstRead
+        ("hostconn", {"host": host, "ev": "open", "flushed": ["setAutoNudge"]}),
+        ("hostconn", {"host": host, "ev": "close", "code": 1006, "clean": False, "detached": False}),
+        ("hostconn", {"host": host, "ev": "detach", "pendingDropped": ["setAutoNudge", "needFull"]}),
+        ("hostconn", {"host": host, "ev": "moot", "pendingDropped": ["needFull", "needFull"]}),   # the held asks the ready's connect push answers, dropped before the flush, by type (2026-09-18)
+        ("hostconn", {"host": host, "ev": "delta-unknown-slot", "why": "lanes"}),   # a remote patch for a slot the conn's receiver has no table for (2026-09-19)
+        ("hostconn", {"host": host, "ev": "delta-unkeyed-base", "why": "bars judging dictlist:k is a list @a1b2c3d4e"}),   # a remote's patch that found no base because its whole frame was refused as one (a collection the receiver's table cannot key): the slot, the collection and shape, and the remote's build when the /tunnels row names one; once per distinct row (2026-09-19)
+        ("feedDelta-nobase", {"host": host, "buildId": 7}),
+        ("feedDelta-nobase", {"host": "local", "buildId": 7}),   # the local socket's frame with no base: the LOCAL kernel's counter (the census, federation.buildId)
+        ("feedDelta-stale", {"host": host, "buildId": 7, "why": "gen"}),   # a stamped remote feedDelta refused by the gen gate: the ask carries the held pair (2026-09-19). The why is one of STALE_WHY_WORDS (a word per field failure, a word per relation between valid fields); each is driven in test_the_stale_rows_why_words_pass_whole_and_a_foreign_key_on_the_row_is_dropped
+        ("feedmerge", {"counts": {host: 4}}),
+        ("sendqueue", {"host": host, "msgType": "setAutoNudge", "gt": 1700000000002, "rs": 0, "superseded": True}),   # an older emitter's pick replaced: no numeric gt
+        ("sendqueue", {"host": host, "msgType": "setJudgeModel", "gt": 1700000000002, "rs": 0, "superseded": 1700000000001}),   # a stamped pick replaced: its gesture-clock stamp
+        ("senddrop", {"host": host, "msgType": "activeTab", "why": "no-conn"}),   # the bookkeeping arm: a host this page holds no conn for (federation.ts; federation-send-queue.test.ts pins the row)
+        ("senddrop", {"host": host, "msgType": "prompt"}),   # the default drop: the outbound gesture's own type, no why (federation.ts, the last arm of sendRemote)
+    ]
+
+
+def federation_writer_tables():
+    """The tables and literals federation.ts's hold, sendqueue and senddrop writers draw their fields from, read off the source:
+    the KERNEL_SETTING set, the BOOKKEEPING map's keys, and the literal object of every senddrop and hold call site (its
+    keys, and the `why` literal where it carries one). Empty reads fail loudly in the test that calls this."""
+    src = open(os.path.join(os.path.dirname(HERE), "ui", "webview", "federation.ts"), encoding="utf-8").read()
+    ks = re.search(r"const KERNEL_SETTING = new Set\(\[(.*?)\]\);", src, re.S)
+    kernel_setting = set(re.findall(r'"([A-Za-z]+)"', ks.group(1))) if ks else set()
+    bk = re.search(r"export const BOOKKEEPING: ReadonlyMap.*?= new Map.*?\(\[\n(.*?)\n\]\);", src, re.S)
+    bookkeeping = set(re.findall(r'^\s*\["([A-Za-z]+)",', bk.group(1), re.M)) if bk else set()
+    sites = []
+    for what, body in re.findall(r'this\.diag\("(senddrop|hostconn)", \{ (host[^}]*?) \}\)', src):
+        keys = tuple(re.findall(r'(?:^|, )([A-Za-z]+)(?=:|,|$)', body))   # a shorthand key (host) or a keyed one (msgType: ...), the terminator left for the next
+        why = re.search(r'why: "([^"]+)"', body)
+        ev = re.search(r'ev: "([^"]+)"', body)
+        sites.append((what, ev.group(1) if ev else None, keys, why.group(1) if why else None))
+    return kernel_setting, bookkeeping, sites
+
+
 class ClientDiagAllowlistTest(unittest.TestCase):
     def setUp(self):
         # A private state root (T282): km.jd is the judge module every test module shares, and its STATE is whatever
@@ -705,10 +753,10 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         self.assertNotIn(km.CLIENT_DIAG_CUT_KEY, d, "no value was cut: no marker")
         # a poster's own key of the marker's name is a foreign key: dropped and said as one, never stored as a marker, and the
         # kernel's marker wins the name on a row that was cut
-        err = self.post("federation", "senddrop", {"host": "TESTHOST", "msgType": "prompt", "why": "closed", km.CLIENT_DIAG_CUT_KEY: ["host"]})
+        err = self.post("federation", "senddrop", {"host": "TESTHOST", "msgType": "activeTab", "why": "no-conn", km.CLIENT_DIAG_CUT_KEY: ["host"]})   # the writer's row (the bookkeeping arm) plus a forged marker
         self.assertNotIn(km.CLIENT_DIAG_CUT_KEY, self.rows()[-1]["data"], "the forged marker is dropped")
         self.assertIn("dropping a key the surface's allowlist does not admit", err); self.assertIn("'%s'" % km.CLIENT_DIAG_CUT_KEY, err)
-        self.post("federation", "senddrop", {"host": "TESTHOST", "msgType": "prompt", "why": "w" * 65, km.CLIENT_DIAG_CUT_KEY: ["host"]})
+        self.post("federation", "senddrop", {"host": "TESTHOST", "msgType": "activeTab", "why": "w" * 65, km.CLIENT_DIAG_CUT_KEY: ["host"]})   # the same row with a why over the cap (no writer sends one: the cut is the subject here)
         self.assertEqual(self.rows()[-1]["data"][km.CLIENT_DIAG_CUT_KEY], ["why"], "the kernel's list, not the poster's")
 
     def test_nesting_past_the_depth_cap_reads_null_and_the_row_carries_the_cut_marker(self):
@@ -1277,27 +1325,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                 ("regionask", {"sid": sid, "why": "landing", "nav": True, "kind": "user", "keep": True, "reland": False, "trail": ["pre-jump"], "notice": True, "atBottom": False}),
                 ("scrollwrite-capped", {"sid": sid, "perMinute": 200}),
             ],
-            "federation": [   # federation.ts diag(): hostconn's events, then the others
-                ("hostconn", {"host": host, "ev": "watchdog-close", "why": "quiet", "quietMs": 31000, "foreground": True}),
-                ("hostconn", {"host": host, "ev": "dial-deferred", "why": "local-down"}),   # a relay dial put off while the pane's local socket is down (2026-09-18)
-                ("hostconn", {"host": host, "ev": "hold", "msgType": "setAutoNudge", "rs": 0}),
-                ("hostconn", {"host": host, "ev": "flush-halt", "flushed": ["setAutoNudge"], "held": ["setJudgeModel"]}),
-                ("hostconn", {"host": host, "ev": "tunnels-poll-failing", "why": "http", "unread": True}),   # unread is !this.hostsRead, a boolean (federation.ts); the earlier fixture posted a count
-                ("hostconn", {"host": host, "ev": "tunnels-poll-recovered", "unread": False, "endedUnread": True}),   # both booleans: !this.hostsRead and firstRead
-                ("hostconn", {"host": host, "ev": "open", "flushed": ["setAutoNudge"]}),
-                ("hostconn", {"host": host, "ev": "close", "code": 1006, "clean": False, "detached": False}),
-                ("hostconn", {"host": host, "ev": "detach", "pendingDropped": ["setAutoNudge", "needFull"]}),
-                ("hostconn", {"host": host, "ev": "moot", "pendingDropped": ["needFull", "needFull"]}),   # the held asks the ready's connect push answers, dropped before the flush, by type (2026-09-18)
-                ("hostconn", {"host": host, "ev": "delta-unknown-slot", "why": "lanes"}),   # a remote patch for a slot the conn's receiver has no table for (2026-09-19)
-                ("hostconn", {"host": host, "ev": "delta-unkeyed-base", "why": "bars judging dictlist:k is a list @a1b2c3d4e"}),   # a remote's patch that found no base because its whole frame was refused as one (a collection the receiver's table cannot key): the slot, the collection and shape, and the remote's build when the /tunnels row names one; once per distinct row (2026-09-19)
-                ("feedDelta-nobase", {"host": host, "buildId": 7}),
-                ("feedDelta-nobase", {"host": "local", "buildId": 7}),   # the local socket's frame with no base: the LOCAL kernel's counter (the census, federation.buildId)
-                ("feedDelta-stale", {"host": host, "buildId": 7, "why": "gen"}),   # a stamped remote feedDelta refused by the gen gate: the ask carries the held pair (2026-09-19). The why is one of STALE_WHY_WORDS (a word per field failure, a word per relation between valid fields); each is driven in test_the_stale_rows_why_words_pass_whole_and_a_foreign_key_on_the_row_is_dropped
-                ("feedmerge", {"counts": {host: 4}}),
-                ("sendqueue", {"host": host, "msgType": "setAutoNudge", "gt": 1700000000002, "rs": 0, "superseded": True}),   # an older emitter's pick replaced: no numeric gt
-                ("sendqueue", {"host": host, "msgType": "setJudgeModel", "gt": 1700000000002, "rs": 0, "superseded": 1700000000001}),   # a stamped pick replaced: its gesture-clock stamp
-                ("senddrop", {"host": host, "msgType": "setAutoNudge", "why": "closed"}),
-            ],
+            "federation": federation_fixture_rows(host),
             "feed": [
                 ("colflip", {"id": parked, "from": "working", "to": "blocked", "ev": "feedDelta", "buildId": 7, "predicted": True}),
                 ("itemset", {"appeared": [parked], "gone": ["11111111-2222-3333-4444-555555555555:g1"], "total": 12, "ev": "feed", "buildId": 7}),
@@ -1330,6 +1358,45 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                 self.assert_shorthand_shapes(surface, what, data)
                 sent |= set(data)
             self.assertEqual(sent, set(km.CLIENT_DIAG_KEYS[surface]), "%s: the fixtures' keys are the table's, both ways" % surface)
+
+    def test_the_federation_fixture_rows_are_shapes_the_writers_post_and_the_reasons_name_every_writer_literal(self):
+        """The census against the writers (the maintainer's round 4, extra7-1, extra9-1, extra9-2): a census asserting a shape the
+        product cannot produce tests its own fixture. The hold row carried a KERNEL_SETTING type, where federation.ts's hold arm
+        holds only a BOOKKEEPING frame; the senddrop row posted `why: "closed"`, a word no writer sends, on a KERNEL_SETTING type,
+        where the one why-carrying senddrop writer (the bookkeeping arm, a host this page holds no conn for) posts "no-conn" on a
+        BOOKKEEPING type and the other (the default drop) posts the gesture's own type and no why. Derived from the source, never
+        a list kept here: every senddrop and hold fixture row's key set is one a call site posts, its why is that site's literal,
+        its msgType is in the table that arm draws from (BOOKKEEPING for hold and the why-carrying drop, KERNEL_SETTING for
+        sendqueue, a gesture type outside both for the default drop); both senddrop call sites have a row; and the census's
+        `why` and `msgType` reasons name every writer literal and all three msgType classes."""
+        kernel_setting, bookkeeping, sites = federation_writer_tables()
+        self.assertGreaterEqual(len(kernel_setting), 10, "KERNEL_SETTING read off federation.ts")
+        self.assertGreaterEqual(len(bookkeeping), 4, "BOOKKEEPING's keys read off federation.ts")
+        self.assertIn("activeTab", bookkeeping); self.assertIn("setAutoNudge", kernel_setting)
+        senddrop_sites = [(keys, why) for what, ev, keys, why in sites if what == "senddrop"]
+        self.assertEqual(sorted(senddrop_sites), sorted([(("host", "msgType", "why"), "no-conn"), (("host", "msgType"), None)]),
+                         "the two senddrop writers: the bookkeeping arm with why no-conn, the default drop with none")
+        hold_sites = [keys for what, ev, keys, why in sites if what == "hostconn" and ev == "hold"]
+        self.assertEqual(hold_sites, [("host", "ev", "msgType", "rs")], "the one hold writer")
+        rows = federation_fixture_rows("TESTHOST")
+        senddrops = [d for what, d in rows if what == "senddrop"]
+        self.assertEqual(sorted((tuple(d), d.get("why")) for d in senddrops), sorted(senddrop_sites), "one fixture row per senddrop call site, its keys and why the site's")
+        for d in senddrops:
+            if "why" in d:
+                self.assertIn(d["msgType"], bookkeeping, "the why-carrying drop is the bookkeeping arm's: %r" % (d,))
+            else:
+                self.assertNotIn(d["msgType"], bookkeeping | kernel_setting, "the default drop carries a gesture's own type, outside both tables: %r" % (d,))
+        holds = [d for what, d in rows if what == "hostconn" and d.get("ev") == "hold"]
+        self.assertEqual(len(holds), 1)
+        self.assertEqual(tuple(holds[0]), hold_sites[0]); self.assertIn(holds[0]["msgType"], bookkeeping, "a hold carries a BOOKKEEPING type: %r" % (holds[0],))
+        for d in (d for what, d in rows if what == "sendqueue"):
+            self.assertIn(d["msgType"], kernel_setting, "sendqueue queues KERNEL_SETTING frames alone: %r" % (d,))
+        why_reason, msg_reason = CENSUS["federation"]["why"][1], CENSUS["federation"]["msgType"][1]
+        for lit in ("quiet", "connecting", "local-down", "no-conn"):
+            self.assertIn(lit, why_reason, "the why reason names the writer literal %r" % lit)
+        self.assertNotIn("closed", why_reason, "no writer sends closed")
+        for phrase in ("KERNEL_SETTING", "BOOKKEEPING", "gesture's own type"):
+            self.assertIn(phrase, msg_reason, "the msgType reason names the class: %s" % phrase)
 
     def test_the_stale_rows_why_words_pass_whole_and_a_foreign_key_on_the_row_is_dropped(self):
         """Round 3 (2026-09-20), the fifth word; round 4, the rule applied to every test of the gate (nine words: a word per
