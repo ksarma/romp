@@ -76669,7 +76669,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if msg and msg.get("type") == "activeTab":
             client["active"] = msg.get("id")   # tab switch → next push builds the now-active tab first
-            client.pop("preferred", None)      # [fork] pass 7 (kernel-1): the page's own word supersedes the parked-reveal preference's record (_watched_tab)
+            client.pop("preferred", None)   # [fork] pass 7
             if msg.get("id"):
                 _release_skeleton(client, str(msg["id"]))   # a skeleton tab clicked: its full rides that push (2026-09-07)
             _pusher_wake.set()                 # …and the pusher wakes now (the tab switch IS the event): that
@@ -76677,6 +76677,10 @@ class Handler(BaseHTTPRequestHandler):
             #                                       interval has passed or the new tab's live tail changed since
             #                                       the last cycle (the hold re-tests every recorded sid against
             #                                       the active tabs; see _pusher), else at the interval's deadline
+            # [fork] pass 7 (the author's label, 2026-09-20, taking the reviewer's round-5 finding kernel-1): the pop of `preferred`
+            #   above releases the parked-reveal preference's record before this wake, so the push the wake starts reads the
+            #   page's own word (_watched_tab) and never builds the parked preference once more. Its comment is one tag so the
+            #   wake stays inside the tab-switch pin's 400-character window (tests/test_chat_fold.py, Wiring.test_a_tab_switch_wakes_the_pusher).
             if client.get("app") == "chat":
                 _relay_active_chat(client, msg.get("id"), msg.get("nonce"))   # …and the window's feed learns which session is focused (T347), the announcement number echoed (T416)
             return
