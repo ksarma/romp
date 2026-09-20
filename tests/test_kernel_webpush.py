@@ -2794,6 +2794,12 @@ class RevealDeclaresChatColumns(unittest.TestCase):
         self.assertEqual(two["frames"], [["/reveal", {"sid": "S70", "wid": "W-test", "via": "sw", "boot": True, "cols": 3}], ["/push/landed", {"pid": "PID-cols-000000000001"}]], "the split script up: the document's chat frames are the count, over the record's two")
         self.assertEqual(two["throwing"][0], ["/reveal", {"sid": "S71", "wid": "W-test", "via": "sw", "boot": True}], "a store that throws: nothing declared, the body as before the field")
         self.assertIn("var cc=cols();if(cc>0)body.cols=cc;", km._LANDING_REVEAL_JS, "the declaration rides land()'s one body")
+        # pass 7 (the author's label, taking the reviewer's round-5 finding tests-1): the pin above is true for the joined form too (the fork
+        # statement appended onto the project's line, the shape pass 5 shipped and its verify's fixer undid), so it did not pin the conversion.
+        # Both halves, from the line start: the project's body line byte-identical, the fork's declaration on its own line after it.
+        self.assertIn("\nvar body={sid:sid,wid:wid(),via:via};if(boot)body.boot=true;\nvar cc=cols();if(cc>0)body.cols=cc;", km._LANDING_REVEAL_JS,
+                      "the project's body line stands byte-identical and the fork's declaration is the line after it (the upstream-line convention: "
+                      "the project's line is inserted around and never edited, so a fold meets no conflict on it)")
 
 if __name__ == "__main__":
     unittest.main()
