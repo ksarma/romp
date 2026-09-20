@@ -1156,3 +1156,30 @@ test("a per-cycle stamped patch carrying through equal to its rev applies with n
     fm.conns.get(HOST).closed = true;
   });
 });
+
+// The base advances to the frame's rev, and a stamped frame's rev IS its through (the design: through equal to rev on a
+// per-cycle patch, R on a composed frame); a frame whose two disagree recovers (needSlot, the base dropped) in either
+// direction, as the feed road refuses it, because adopting either number would declare a reach the stream never reached:
+// a probe on the round-2 head adopted rev 7 from a patch whose stated reach was 1.
+test("a stamped patch whose rev and through disagree recovers as a base-rev mismatch does, in either direction and for a composed frame: needSlot on the conn, nothing emitted, the base dropped, and the whole slot the ask earns re-seeds the pair", async () => {
+  await withManager("timeline", ({ fm, emitted }) => {
+    seedLocalTimeline(fm);
+    fm.openRemote(HOST, true);
+    const ws = last(FakeWS.made);
+    ws.open();
+    for (const [rev, through, newGen] of [[7, 1, undefined], [1, 7, undefined], [3, 5, G2]] as Array<[number, number, string | undefined]>) {
+      ws.frame(remoteBarsStamped(G));
+      assert.deepEqual(heldBars(fm), { gen: G, rev: 0 });
+      const before = barsOf(emitted).length, asked = ws.sent.length;
+      ws.frame({ type: "delta", slot: "bars", gen: G, ...(newGen ? { newGen } : {}), base: 0, rev, through, coll: { turns: { set: { [SID_A + SEP + "seg-9"]: bar("seg-9", 1090, 1095, "ninth") } } }, rest: { now: 590 } });
+      assert.deepEqual(ws.sent.slice(asked), [{ type: "needSlot", slot: "bars" }], "recovered: rev " + rev + ", through " + through);
+      assert.equal(barsOf(emitted).length, before, "nothing emitted: rev " + rev + ", through " + through);
+      assert.equal(heldBars(fm), null, "the base is dropped, so nothing is declared until the whole slot re-seeds it");
+    }
+    ws.frame(remoteBarsStamped(G3));
+    assert.deepEqual(heldBars(fm), { gen: G3, rev: 0 }, "the whole slot the ask earns re-seeds the pair");
+    ws.frame({ ...barsCycle(G3, 0, bar("seg-2", 1010, 1015, "second"), 505), through: 1 });
+    assert.deepEqual(heldBars(fm), { gen: G3, rev: 1 }, "a well-formed per-cycle patch applies as ever");
+    fm.conns.get(HOST).closed = true;
+  });
+});

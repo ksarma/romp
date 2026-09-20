@@ -810,6 +810,42 @@ test("a per-cycle stamped delta carrying through equal to its rev applies under 
   });
 });
 
+// The pair advances to the frame's rev, and a stamped delta's rev IS its through (the design: through equal to rev on a
+// per-cycle delta, R on a composed frame); a frame whose two disagree is refused (why "rev") into needFullFeed carrying the
+// held pair, in either direction, because advancing to either number would declare a reach the stream never reached:
+// (gen, 7) from a delta that applied rev 2 (the round-3 find: the gate read through against the held rev alone), or
+// (gen, 2) from one whose stated reach was 7.
+test("a stamped delta whose rev and through disagree is refused with why rev and the held pair on the ask, in either direction and for a composed frame; nothing applied, the pair stands, and the redial declares only what applied", async () => {
+  await withManager(({ fm, emitted, sent }) => {
+    fm.outbound({ type: "ready", proto: 2 });
+    fm.openRemote(HOST, true);
+    const ws = last(FakeWS.made);
+    ws.open();
+    ws.frame({ type: "caps" });
+    ws.frame(stamped());
+    ws.frame(cycle(G, 0, 2));
+    assert.deepEqual(heldOf(fm), { gen: G, rev: 1 });
+    const before = feeds(emitted).length, raw = fm.conns.get(HOST).feedRaw;
+    ws.frame({ type: "feedDelta", gen: G, base: 1, rev: 2, through: 7, now: 520, buildId: 50, asks: [card(SID_A, 9)] });   // through past rev
+    assert.deepEqual(ws.sent.filter((x: any) => x.type !== "ready"), [{ type: "needFullFeed", gen: G, rev: 1 }], "refused: the ask carries the pair that applied, not (gen, 7)");
+    ws.frame({ type: "feedDelta", gen: G, base: 1, rev: 7, through: 2, now: 521, buildId: 51, asks: [card(SID_A, 9)] });   // rev past through
+    ws.frame({ type: "feedDelta", gen: G, newGen: G2, base: 1, rev: 4, through: 5, now: 522, buildId: 52, asks: [card(SID_A, 9)] });   // a composed frame whose two disagree
+    assert.equal(ws.sent.filter((x: any) => x.type === "needFullFeed").length, 3, "each refused frame asks once");
+    assert.deepEqual(diagRows(sent, "feedDelta-stale"), [{ host: HOST, buildId: 50, why: "rev" }, { host: HOST, buildId: 51, why: "rev" }, { host: HOST, buildId: 52, why: "rev" }], "the cause is the rev: not one rev to advance to");
+    assert.equal(feeds(emitted).length, before, "nothing applied, nothing emitted");
+    assert.equal(fm.conns.get(HOST).feedRaw, raw, "the base stands");
+    assert.deepEqual(heldOf(fm), { gen: G, rev: 1 }, "the pair is what applied");
+    ws.frame(cycle(G, 1, 3));   // a well-formed per-cycle delta after them (rev 2, through 2) applies as ever
+    assert.deepEqual(heldOf(fm), { gen: G, rev: 2 });
+    assert.equal(feeds(emitted).length, before + 1);
+    ws.readyState = 3;
+    const timers = heldTimers(() => ws.onclose!({ code: 1006, wasClean: false }));
+    timers[0]();
+    assert.equal(qOf(last(FakeWS.made).url).get("caps"), "feedDelta,held:feed:" + G + ".2", "the redial declares the applied rev, never a stated reach");
+    fm.conns.get(HOST).closed = true;
+  });
+});
+
 test("the gen's form: a non-empty string holding neither '.' nor ',' (the kernel's token and counter joined by '-'); a number, an empty string or a string carrying either separator reads as no stamp, so the full leaves no pair, its deltas apply on the base alone and the redial declares nothing", async () => {
   for (const bad of [7, 0, "", GEN_STAMP + ".7", GEN_STAMP + ",7", null, true]) {
     await withManager(({ fm, emitted }) => {

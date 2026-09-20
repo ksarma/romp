@@ -961,8 +961,9 @@ interface Conn {
   // beside the receiver when it holds no gen (feedHeld below), and with the conn in closeRemote.
   feedRaw?: any;
   // The pair the raw feed base holds for a resume declaration (2026-09-19): (gen, 0) at a full carrying gen, advanced by
-  // each feedDelta that applies under the gen gate (a composed frame to (newGen, through), a per-cycle delta to (gen,
-  // rev): applyRemoteFeedDelta), absent at a full carrying none and while no full has landed. Set and cleared together
+  // each feedDelta that applies under the gen gate to (newGen when the frame carries one, else gen; the frame's rev, which
+  // the gate holds equal to its through: applyRemoteFeedDelta), absent at a full carrying none and while no full has
+  // landed. Set and cleared together
   // with feedRaw, nowhere else: connect() keeps a base holding a pair across a redial and writes the pair on the dial
   // (remoteDialUrl, held:feed:<gen>.<rev>), so the declared pair is the applied one and has no home but the base's. The
   // gen is the kernel's string (view-deltas.ts genOf: the boot's token and a counter joined by '-'), never a number.
@@ -1487,8 +1488,9 @@ export class FederationManager {
    *  goes now.
    *
    *  The gen gate (2026-09-19): a delta carrying `gen` (a kernel that stamps its frames) applies only when its gen is
-   *  the held pair's, its base at or below the held rev and its `through` at or above the held rev; else the pair is
-   *  stale for this stream and the ask carries the held pair (kernel.py reads it at the compose), nothing applied. The
+   *  the held pair's, its base at or below the held rev, its `through` at or above the held rev and its rev equal to its
+   *  through; else the pair is stale for this stream and the ask carries the held pair (kernel.py reads it at the compose),
+   *  nothing applied. The
    *  gate is keyed on gen alone and never on the frame carrying through: the kernel that stamps its frames stamps
    *  through on EVERY delta (equal to the rev on a per-cycle delta, R on a composed frame), so through's presence tells
    *  nothing about the frame's shape, the through test stands for every gen-carrying frame, and a stamped delta carrying
@@ -1508,13 +1510,17 @@ export class FederationManager {
     const held = c.feedHeld;
     if (gen !== undefined) {
       const inGate = !!held && gen === held.gen && Number.isSafeInteger(d.base) && d.base <= held.rev && Number.isSafeInteger(d.rev)
-                     && Number.isSafeInteger(d.through) && d.through >= held.rev;
+                     && Number.isSafeInteger(d.through) && d.through >= held.rev && d.rev === d.through;
       if (!inGate) {
         // one why per cause, so a reader can tell a generation change from a base past the held rev: gen (the held pair's
         // gen differs, or none is held for a stamped stream), base (above the held rev), through (below the held rev, or not
-        // carried: every stamped delta carries it), or rev (no safe rev to advance to)
+        // carried: every stamped delta carries it), or rev (not a safe integer, or unequal to the through the frame states:
+        // the pair advances to rev, and a stamped delta's rev IS its through (the design's stamped shape: through equal to
+        // rev on a per-cycle delta, R on a composed frame), so a frame whose two disagree states no one rev to advance to
+        // and is refused rather than declared at either; the through causes are tested first, so a frame below the held
+        // rev reads "through" whatever its rev). Four words, the stale row's whole vocabulary.
         const why = !held || gen !== held.gen ? "gen" : !Number.isSafeInteger(d.base) || d.base > held.rev ? "base"
-                    : !Number.isSafeInteger(d.rev) ? "rev" : "through";
+                    : !Number.isSafeInteger(d.rev) ? "rev" : !Number.isSafeInteger(d.through) || d.through < held.rev ? "through" : "rev";
         this.diag("feedDelta-stale", { host, buildId: d.buildId, why });
         this.sendRemote(host, held ? { type: "needFullFeed", gen: held.gen, rev: held.rev } : { type: "needFullFeed" });
         return;
@@ -1523,10 +1529,12 @@ export class FederationManager {
     const next = applyFeedDelta(raw, d);
     c.feedRaw = next;
     if (gen !== undefined) {
-      // the pair after the frame: (newGen, through) after a composed frame, (gen, through) after a per-cycle delta, whose
-      // through equals its rev
+      // the pair after the frame: (newGen, rev) after a composed frame, (gen, rev) after a per-cycle delta; rev is the
+      // frame's through by the gate (a stamped delta's two are equal or it was refused above), so the pair advances to
+      // the one rev the frame states, the rev the applier holds once it applies, as the bars road's base does
+      // (view-deltas.ts), and neither road can declare a reach the stream never reached
       const newGen = genOf(d.newGen);
-      c.feedHeld = { gen: newGen !== undefined ? newGen : gen, rev: d.through };
+      c.feedHeld = { gen: newGen !== undefined ? newGen : gen, rev: d.rev };
     }
     this.perHostFeed[host] = prefixInbound(host, next);
     this.perHostFeedAt[host] = Date.now();   // the delta's arrival, as on the local path: the merge's clock anchor when no local frame anchors it

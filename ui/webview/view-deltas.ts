@@ -196,10 +196,13 @@ export class ViewDeltas {
       // last frame before the close: base r, rev r, through r, a coll that may be empty), which a base-plus-one test
       // would refuse into a needSlot and a whole slot at rev 0 under a new gen; and a STAMPED PER-CYCLE patch, which the
       // kernel that stamps its frames sends with through equal to its rev (every stamped delta carries gen, base, rev and
-      // through), rev equal to base plus one as ever. This test asks only what both satisfy. A frame carrying no through
-      // keeps the base-plus-one test; every other rev recovers as today.
+      // through), rev equal to base plus one as ever. This test asks only what both satisfy, and one thing more: rev equal
+      // to through (2026-09-20), the design's stamped shape on both frames, so a frame whose two disagree states no one rev
+      // for the base and recovers (needSlot, the base dropped) rather than adopting either; the feed road's gate asks the
+      // same of a feedDelta (applyRemoteFeedDelta), so neither road declares a reach the stream never reached. A frame
+      // carrying no through keeps the base-plus-one test; every other rev recovers as today.
       const hasThrough = msg.through !== undefined;
-      const revOk = hasThrough ? Number.isSafeInteger(msg.through) && msg.rev >= msg.base : msg.rev === msg.base + 1;
+      const revOk = hasThrough ? Number.isSafeInteger(msg.through) && msg.rev >= msg.base && msg.rev === msg.through : msg.rev === msg.base + 1;
       if (!Number.isSafeInteger(msg.base) || msg.base < 0 || !Number.isSafeInteger(msg.rev) || !revOk || !object(msg.coll)) {
         throw new Error("invalid delta revision or collections");
       }
