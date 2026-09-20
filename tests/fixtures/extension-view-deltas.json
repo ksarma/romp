@@ -1101,6 +1101,94 @@
         "working": [],
         "awaiting": []
       }
+    },
+    {
+      "wire": {
+        "type": "bars",
+        "turns": {
+          "11111111-2222-3333-4444-aaaaaaaaaaa1": [
+            {
+              "id": "web-0",
+              "t": 1000,
+              "end": 1030
+            }
+          ]
+        },
+        "judging": {},
+        "messages": [
+          {
+            "id": 1.0,
+            "text": "synthetic message"
+          }
+        ],
+        "now": 1055,
+        "warming": false
+      },
+      "full": {
+        "type": "bars",
+        "turns": {
+          "11111111-2222-3333-4444-aaaaaaaaaaa1": [
+            {
+              "id": "web-0",
+              "t": 1000,
+              "end": 1030
+            }
+          ]
+        },
+        "judging": {},
+        "messages": [
+          {
+            "id": 1.0,
+            "text": "synthetic message"
+          }
+        ],
+        "now": 1055,
+        "warming": false
+      }
+    },
+    {
+      "wire": {
+        "type": "bars",
+        "turns": {
+          "11111111-2222-3333-4444-aaaaaaaaaaa1": [
+            {
+              "id": "web-0",
+              "t": 1000,
+              "end": 1030
+            }
+          ]
+        },
+        "judging": {},
+        "messages": [
+          {
+            "id": 1.0,
+            "text": "synthetic message, edited"
+          }
+        ],
+        "now": 1060,
+        "warming": false
+      },
+      "full": {
+        "type": "bars",
+        "turns": {
+          "11111111-2222-3333-4444-aaaaaaaaaaa1": [
+            {
+              "id": "web-0",
+              "t": 1000,
+              "end": 1030
+            }
+          ]
+        },
+        "judging": {},
+        "messages": [
+          {
+            "id": 1.0,
+            "text": "synthetic message, edited"
+          }
+        ],
+        "now": 1060,
+        "warming": false
+      }
     }
   ]
 }

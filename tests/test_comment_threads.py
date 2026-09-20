@@ -387,6 +387,28 @@ class ThreadProjection(CommentBase):
             km._views_dirty[0] = 0.0
             km._built_thread.clear()
 
+    def test_a_thread_signature_counts_under_thread_and_its_reads_fold_like_the_push_loops(self):
+        """memos.chatSig (stage 1 of the chat-signature design, 2026-09-18 review): the thread's signature is
+        _chat_build_sig too, so its reads fold into stats, namesReads, switchReads and regReads like a tab's; it is
+        counted under `thread`, one per frame per thread (the served frame takes it too, to compare the key), and never
+        under pre or post, the push loop's own, so the per-signature figure stats / (pre + post + thread) has every
+        signature the reads came from in its denominator."""
+        self._seed_thread()
+        km._built_thread.clear()
+        km._views_dirty[0] = 0.0
+        try:
+            before = km._chat_sig_stats_report()
+            km._comments_frame(PARENT)                  # the first frame: built
+            km._comments_frame(PARENT)                  # the second: served on the same key, the signature still taken
+            after = km._chat_sig_stats_report()
+            d = {k: after[k] - before[k] for k in after}
+            self.assertEqual(d["thread"], 2, "one thread signature per frame, the served frame's included")
+            self.assertEqual((d["pre"], d["post"], d["nosig"]), (0, 0, 0), "a thread's signature is not a tab's")
+            self.assertGreaterEqual(d["stats"], 2 * 2, "each signature stats the thread's transcript and states file at least")
+        finally:
+            km._views_dirty[0] = 0.0
+            km._built_thread.clear()
+
     def test_a_build_that_raises_stores_nothing_and_the_next_frame_rebuilds(self):
         # a transient read fault mid-build must not be served as the thread's (empty) events: nothing is stored
         # for it, the next frame builds again, and that good build is what gets served (review 2026-09-08)
@@ -481,6 +503,7 @@ class ThreadProjection(CommentBase):
                 km._comments_frame(PARENT)
             seen.append(err.getvalue())
             return seen[-1].count(head)
+        t0 = km._chat_sig_stats_report()["thread"]
         try:
             self.assertEqual(frame(), 1, "the first frame says it")
             self.assertIn(head + ": Traceback (most recent call last)", seen[-1], "...with the traceback")
@@ -488,6 +511,8 @@ class ThreadProjection(CommentBase):
             self.assertEqual(frame(), 0, "the second frame, same fault: not again")
             self.assertEqual(frame(), 0)
             self.assertEqual(calls.count(THREAD), 3, "a build is attempted every frame while the key cannot be taken")
+            self.assertEqual(km._chat_sig_stats_report()["thread"] - t0, 3,
+                             "memos.chatSig.thread counts a raising thread signature too (its reads folded)")
             self.assertNotIn(THREAD, km._built_thread, "nothing is stored")
             self.assertEqual(len(km._SYNC_NOTICES), 1, "one episode, one bell row")
             self.assertIn("thread-x", km._SYNC_NOTICES[-1]["text"], "the row names the thread")
@@ -1393,8 +1418,25 @@ def _views_reads_fault():
 
 
 class CommentOps(CommentBase):
+    """The comment operations over a FakeBackend, every kernel name they stub restored in tearDown (_stub). The class that
+    can leak a stub onto the shared kernel module also checks for the leak, in its own process (2026-09-19 review, fresh-1):
+    setUp registers, as its FIRST cleanup, a check that km._sdk is the kernel's own def by qualified name. Cleanups run
+    LIFO after tearDown, so the first registered runs last, after CommentBase.tearDown put _sdk back and after every other
+    cleanup; a leak from this class fires on the leaking test, and on the test after it too, because CommentBase.setUp saves
+    the leaked stub as the value tearDown restores. The last-in-file class keeps guarding a leak from any other class: under
+    pytest-xdist the two need not share a worker, so that pin alone told nothing about this class on most runs (the three
+    _stub hunks reverted: CommentOps alone 28 of 34 red serially, since pytest runs the class alphabetically, the leaking
+    test is seventh and the check fires on it and on every test after it; the whole module red under -n 4; the
+    last-in-file pin green in most runs on one box, a single measurement, for the reason above)."""
+
+    def _assert_sdk_is_the_kernels_own(self):
+        self.assertEqual(getattr(km._sdk, "__qualname__", None), "_sdk",
+                         "a stub leaked onto the shared kernel module's _sdk: %r" % (km._sdk,))
+
     def setUp(self):
         super().setUp()
+        self.addCleanup(self._assert_sdk_is_the_kernels_own)   # FIRST, so LIFO runs it LAST (the class docstring says why)
+        self._stubs = []               # (name, the value before): _stub's record, undone first thing in tearDown
         self.be = FakeBackend()
         self._saved_backend_for = km.Sessions.backend_for
         self._saved_ready = km._sdk_ready
@@ -1412,6 +1454,8 @@ class CommentOps(CommentBase):
         km._push_session_now = lambda sid: None
 
     def tearDown(self):
+        for name, before in reversed(self._stubs):   # BEFORE CommentBase's restore below: a cleanup would run after it
+            setattr(km, name, before)
         km.Sessions.backend_for = self._saved_backend_for
         km._sdk_ready = self._saved_ready
         km._sessions = self._saved_sessions
@@ -1449,7 +1493,11 @@ class CommentOps(CommentBase):
         self.assertEqual(row["anchorUuid"], "a1")
 
     def _stub(self, name, value):
-        self.addCleanup(setattr, km, name, getattr(km, name))
+        """Replace a kernel name for this test, undone in tearDown before CommentBase's own restore. Not addCleanup: a
+        cleanup runs AFTER tearDown, so for a name CommentBase.setUp also stubs (_sdk) it put the setUp stub back over the
+        original tearDown had just restored, and the stub leaked onto the shared kernel module for every test module
+        ordered after this one (2026-09-18: their _sdk() read None). The last class in this file pins the module clean."""
+        self._stubs.append((name, getattr(km, name)))
         setattr(km, name, value)
 
     def test_a_parent_idle_past_the_discovery_window_still_takes_a_comment(self):
@@ -2037,6 +2085,21 @@ class ForkCommentRoutes(CommentBase):
         self.assertIn('if u.path in ("/fork-comment", "/fork-promote"):', src)
         self.assertIn('res = (_fork_comment_request(b) if u.path == "/fork-comment"', src)
         self.assertIn('return self._send(res.pop("_status", 200), json.dumps(res), "application/json")', src)
+
+
+class ZzTheModuleLeavesTheSharedKernelAsItFoundIt(unittest.TestCase):
+    """Last in the file and last alphabetically, so it runs after every class above under pytest (file order) and
+    unittest (name order): the shared romp_kernel module's _sdk is the kernel's own def, not a stub of this module's.
+    CommentOps once left CommentBase.setUp's stub on it: its _stub helper restored through addCleanup, which runs
+    AFTER tearDown, so for _sdk (a name CommentBase.setUp stubs too) the cleanup put the setUp stub back over the
+    original tearDown had just restored, and every module ordered after this one read _sdk() as None (2026-09-18).
+    Checked by the def's qualified name, not object identity: load_source re-executes the kernel into the same module
+    object for every test module collected, so the function object a module found at import is not the one that
+    stands when its tests run."""
+
+    def test_sdk_is_the_kernels_own_def(self):
+        self.assertEqual(getattr(km._sdk, "__qualname__", None), "_sdk",
+                         "a class above left a stub on the shared kernel module: %r" % (km._sdk,))
 
 
 if __name__ == "__main__":

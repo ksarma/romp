@@ -147,6 +147,67 @@ class SpawnSpec(unittest.TestCase):
         self.assertEqual(oct(os.stat(p.parent).st_mode & 0o777), "0o700")
         self.assertEqual(json.loads(p.read_text())["env"]["ROMP_SID"], SID)
 
+    def test_a_pre_existing_looser_spawn_json_is_tightened_before_the_overlay_lands_in_it(self):
+        # Until 2026-09-18 the writer opened spawn.json O_CREAT|O_TRUNC at 0600 and chmod'd it AFTER the write: a
+        # fresh file was born 0600, but a pre-existing looser one kept its mode through the truncating open, took
+        # the environment overlay at that mode, and tightened only afterwards. The mode now goes onto the descriptor
+        # before the write (PR 789, review round 1: the same write-then-tighten window the reg and the parked-ops
+        # mirror lost). The FILE's chmod is interposed and NOT performed, so the old order leaves it at 0644 and the
+        # case reads the descriptor's mode alone; the directory's 0700 chmod stays a real one.
+        d = tempfile.mkdtemp()
+        p = ht.host_dir(d, SID) / "spawn.json"
+        p.parent.mkdir(parents=True)
+        p.write_text("{}")
+        os.chmod(p, 0o644)
+        fchmods, chmods = [], []
+        real_fchmod, real_chmod = os.fchmod, os.chmod
+
+        def fchmod_probe(fd, mode):
+            fchmods.append((mode, os.fstat(fd).st_size))         # 0 bytes at that moment: before the first write
+            return real_fchmod(fd, mode)
+
+        def chmod_probe(path, mode, *a, **k):
+            if Path(path) == p:
+                chmods.append(mode)                              # the file's chmod: recorded, not performed
+                return None
+            return real_chmod(path, mode, *a, **k)
+        with mock.patch.object(os, "fchmod", fchmod_probe), mock.patch.object(os, "chmod", chmod_probe):
+            out = ht.write_spawn_spec(d, SID, {"env": {"FEATURE_FLAG": "1"}, "sid": SID})
+        self.assertEqual(out, p)
+        self.assertEqual(os.stat(p).st_mode & 0o777, 0o600, "tightened before the write, with no file chmod performed")
+        self.assertEqual(fchmods, [(0o600, 0)], "one fchmod on the descriptor while the file is still empty")
+        self.assertEqual(chmods, [], "no chmod on the file after the write")
+        self.assertEqual(os.stat(p.parent).st_mode & 0o777, 0o700, "the directory's chmod is unchanged")
+        self.assertEqual(json.loads(p.read_text())["env"]["FEATURE_FLAG"], "1", "and the overlay landed")
+
+    def test_a_raising_fchmod_closes_the_descriptor(self):
+        # Review round 2 of PR 789 (2026-09-19): round 1 put the fchmod between os.open and os.fdopen with nothing closing
+        # the descriptor when it raised; os.fdopen was the only close. The error propagates (this writer has no swallow
+        # road), the descriptor os.open returned reaches os.close (a real close, recorded), and the directory's chmod
+        # stays real.
+        import errno
+        d = tempfile.mkdtemp()
+        opened, closed = [], []
+        real_open, real_close = os.open, os.close
+
+        def open_probe(*a, **k):
+            fd = real_open(*a, **k)
+            opened.append(fd)
+            return fd
+
+        def fchmod_refused(fd, mode):
+            raise PermissionError(errno.EPERM, "fchmod refused (interposed)")
+
+        def close_probe(fd):
+            closed.append(fd)
+            return real_close(fd)
+        with mock.patch.object(os, "open", open_probe), mock.patch.object(os, "fchmod", fchmod_refused), \
+                mock.patch.object(os, "close", close_probe), self.assertRaises(PermissionError):
+            ht.write_spawn_spec(d, SID, {"env": {"FEATURE_FLAG": "1"}, "sid": SID})
+        self.assertEqual(len(opened), 1, "one descriptor, spawn.json's")
+        self.assertEqual(closed, opened, "closed on the failure road")
+        self.assertEqual(os.stat(ht.host_dir(d, SID)).st_mode & 0o777, 0o700, "the directory's chmod ran")
+
     @unittest.skipUnless(SDK, "the SDK is not importable here")
     def test_the_spec_fields_track_what_the_sdk_transport_reads(self):
         import claude_agent_sdk._internal.transport.subprocess_cli as scli

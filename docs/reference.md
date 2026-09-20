@@ -648,11 +648,86 @@ a stored login the machine cannot bill just now, refused, expired or removed,
 falls through to the machine's own login),
 and a pick there changes no session that carries its own pick; a session
 with no pick of its own follows it, in its status at once and at its next
-launch. A third choice, Automatic, is the rule that held before: the API key
-when a helper is configured, else the login; it clears the explicit default,
-and the group's sub-line says which rule holds. Until the default is set here,
-the last per-session pick seeds it (as a model or effort pick does); once set
-here, a per-session pick is about that session alone and moves no default. A
+launch; changing the machine default reconnects every session following it
+that runs on the other side, at its next quiet moment (the same pending dots
+a per-session pick shows), and those sessions keep following the default (no
+pick is written for them). The relaunches are staggered on the bounded budget
+boot resumes use (three at a time): a follower keeps its CLI, and keeps
+serving, until its slot is granted, so a message sent while it waits is
+answered by the CLI it still has and the relaunch takes the next quiet moment
+after it. A follower that carried its ask across a kernel restart holds it
+for the background work its surviving CLI still runs (counted from the
+registry's record at the re-attach; the CLI's own turn-end report at the first
+turn after it, the task list its Stop hook carries, confirms each task it lists
+as running, retires a shell it omits (the one task type the report is known to
+enumerate completely: a probe on 2026-08-28, and a read of the bundled CLI's
+producer on 2026-09-19 that found the list type-agnostic on that build; one
+probe per type widens it), keeps a monitor (a `monitor_mcp` or `monitor_ws`
+task; the ordinary Monitor over a shell command registers as a shell and is
+retired like one), an agent or a workflow run it omits until the CLI's own
+stream ends it, and counts a running task it names that the kernel never saw;
+a turn that ends without that report holds what nothing spoke for, said in the
+log). A task counted from the report alone
+starts, for the elapsed time shown, at the report's moment (the report carries
+no start time) and has no tool-use id until the CLI's stream supplies one, so
+such a shell, which streams nothing until its end, is absent from the chat's
+background-task box and offers no Stop there until its end frame, while every
+other reading counts it. Nothing here ends work on an inference
+that it ended: a task is torn down, or reported to the session as cut off,
+only on the CLI's own report; a retry after a handshake that timed out against
+a surviving CLI retires nothing, and a stand-down after four such timeouts
+holds the tasks and the registry's record for the next attach. Two gaps are
+disclosed, not closed: a recorded task whose closing record never reaches the
+kernel holds the ask, the pending dots and a stoppable-task row until the CLI's
+own report or stream speaks for it (for a task other than a shell, until its
+end frame, across turns and restarts), and it counts as live background work in
+the box's restart-disruption reading, keeping `/busy` above zero and the update
+banner's confirm step naming the session, so a quiet deploy waits to its
+15-minute backstop (the automatic converge is unaffected, since it counts
+in-flight turns alone); and a subagent known only to the
+SubagentStart hook has no registry record and is not counted, so a survivor
+whose only live work is such a subagent can be reconnected over it. Both wait
+on one design question, what
+the authoritative read of a surviving CLI's live work is at the re-attach, for
+background tasks, Task agents, Workflow runs and hook-only subagents alike. The
+bundled CLI also pushes a snapshot of its background tasks
+(`background_tasks_changed`) behind a repeated initialize; it arrives after
+the handshake, covers running non-foreground tasks only, and is not applied
+(settled by execution against 2.1.266, 2026-09-19). A report whose snapshot of
+the CLI's task registry predates an end frame the kernel already processed
+would count the ended task as running again, held until the CLI's stream or a
+later report ends it. Every `task_notification` call site in the bundled CLI
+2.1.266 was enumerated (one emitter, 35 call sites): each carries a terminal
+status, 33 behind a write of that status into the task registry or a removal
+of the entry and two on process-exit paths after which no report follows, so
+that road is theoretical at this CLI version. A
+follower whose CLI bills a credential in the CLI's own environment that romp's
+per-session settings layer cannot suppress (Claude Code's settings carry no
+apiKeyHelper) is left where it is, said in one line at each write of the
+default. A follower's move leaves no record in its chat: the pending dots are
+the only session-side signal and they clear at the landing; the kernel log's
+per-session line is the durable record. A third choice, Automatic, is the rule
+that held before: the API key when a helper is configured, else the login; it
+clears the explicit default, the group's sub-line says which rule holds, and
+the sessions following the default are reconnected the same way. A
+per-session pick, before or after the default is set here, is about that
+session alone and moves no default: the new-session picker preselects the
+machine default (the explicit one, else the rule that holds), and a session
+created with no pick of its own follows the machine default, not the last
+pick. A session created while an explicit default stands is seeded with it as
+a pick of its own and is not moved by a later change of the default; a session
+created while none stood follows the default wherever it moves. Since a
+per-session pick's remembered value seeds no new session, a box whose last
+per-session pick was a login, the machine's own or a stored one, bills new
+sessions on the key from this kernel on when its settings carry an
+apiKeyHelper; with no helper, a remembered stored-login pick bills them on the
+machine's own login, or on whatever the CLI resolves by itself when no login is
+signed in either. A remembered key pick keeps the key and makes new sessions
+followers of the default. Where the account moves, or the remembered pick names
+a side this machine cannot bill, the spawn says so as a problem row on the new
+session, naming the pick, what the session bills and the Set default billing
+submenu; a repeat while the pick stands counts on the one ring entry. All of
+this holds until a default is set here. A
 remote session's flyout names its host, and the pick sets that host's default
 (the op routes to the session's owning kernel). The judges follow the same
 resolution: a judge on a session with no pick of its own bills the machine's
@@ -662,13 +737,13 @@ when the right would clip and the left has room, below the row when neither
 side has room, above it when below does not fit, and only then clamped inside
 the window; it never covers its row while a place beside or beyond it exists.
 
-On a one-auth box the picker never chooses the missing side. A remembered
-default that names the side this box cannot bill is set aside at spawn and the
-unpicked rule below decides instead, in both directions: a remembered login
-pick on a machine with no login seeds new sessions on the API key when a
-helper is configured, exactly as a remembered key pick on a helper-less machine
-already fell to the login, and the fall is said once per process as a problem
-row. An explicit pick that names the missing
+On a one-auth box the picker never chooses the missing side. An explicit
+machine default that names the side this box cannot bill is set aside at spawn
+and the unpicked rule below decides instead, in both directions: an explicit
+login default on a machine with no login seeds new sessions on the API key
+when a helper is configured, exactly as an explicit key default on a
+helper-less machine falls to the login, and the fall is said once per process
+as a problem row. An explicit pick that names the missing
 side (a session picked "login" on a box that later lost its login) launches on
 the other side when one exists and says so once per session start, on the tab
 menu's Billing sub-line as `⚠ login unavailable, billing API key` and in the
@@ -696,10 +771,12 @@ login-billed launches.
 The login is named by its account (the email the credential store records);
 the key option is labelled plainly `API key`. No fragment of the key, not even
 a last-4 tail, ever reaches a browser or a screen, and romp never sees the key
-at all. A new session defaults to the last pick made anywhere, and before any
-pick to the key when a helper is configured. A remembered key pick on a box
-whose settings carry no helper leaves new sessions unpicked, and the kernel
-log says so once, naming the settings file to configure.
+at all. A new session is preselected on the machine's explicit default when
+the box can bill it, else on the rule that holds without one: the key when a
+helper is configured, else the login. An explicit key default on a box whose
+settings carry no helper leaves new sessions unpicked, and the kernel log says
+so once, naming the settings file to configure and the Set default billing
+submenu.
 
 A tab not yet loaded after a reconnect shows "Not loaded yet — click to load"
 as its hover tooltip, until its transcript arrives. The strip's skeleton tabs
@@ -736,13 +813,15 @@ flagged, naming the declaration. On a box with a helper every session without
 a login pick bills the key, so `ROMP_EXPECTED_AUTH=key` describes such a box
 truthfully. An undeclared box (the variable unset, or any other value)
 compares each landing against what that session was launched for and stays
-quiet when they agree. One explicit gear **Billing** pick supersedes the
-declaration from then on: the remembered pick becomes the box's expectation
-and the env var goes inert (it described the unpicked design), so re-seeded
-spawns are judged against your pick, never against stale doctrine. The one
-exception is an API-key pick remembered from a box that no longer holds a
-key: it is set aside at spawn, so it seeds nothing (the per-init check still
-judges each landing against the pick).
+quiet when they agree. Setting the machine's default billing (the **Set
+default billing** submenu) supersedes the declaration from then on: the
+explicit default becomes the box's expectation and the env var goes inert (it
+described the unpicked design), so the sessions following the default are
+judged against it, never against stale doctrine; a per-session **Billing**
+pick is about that session alone and leaves the declaration speaking for the
+others. An explicit API-key default on a box that no longer holds a key is set
+aside at spawn, so it seeds nothing (the per-init check still judges each
+landing against the default).
 
 The kernel also checks, once at boot and before anything is spawned, that no
 retired key path is still configured. A `service.env` that still carries a key
@@ -2939,8 +3018,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `kernel/kernel.py`), never the thread's name itself: the name up to the
   naming convention's colon when that part is a registered prefix (`sdk` and
   `sdk-intr` for a session's threads, `codex` for a Codex session's worker,
-  `end-host` for a session's end hook, `port-up` for a dial's port watch,
-  `peer` for a postal peer loop, `romp-refused-mark` for the refused-echo
+  `end-host` for a session's end hook, `sdk-slot` for a session waiting for
+  a relaunch slot after a change of the machine's default billing, `port-up`
+  for a dial's port watch, `peer` for a postal peer loop, `romp-refused-mark` for the refused-echo
   mark a cut-off boot re-delivery writes aside); a registered constant name
   (`pusher`, `jobs` (the housekeeping loop split off the pusher), `producer`,
   `index`, `triage`, `serve-pass`, `parse-warm`, `boot-warm`, `sdk-boot`,
@@ -3104,7 +3184,18 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `push.chat`, `push.feed`, `push.timeline`, `push.send`, `push.warm`,
   `push.feedFirst`; a fresh snapshot lists every one at zero. Two of those
   are split further: inside `push.chat`, `push.chat.sig` (each tab's build
-  signature, every tab every cycle, the post-build check included),
+  signature, every tab past the cold gate every cycle, the post-build check
+  included; itself
+  split into `push.chat.sig.static`, the signature less its dependency
+  tail, and `push.chat.sig.deps`, the tail evaluated over the cached
+  build's record, the task-output stats, the path-token re-resolves and
+  the postal values, recorded only when the tail ran, so a post-build check
+  lists static alone; the signature's bytes in the split land on the static
+  row, the tail's included, because static is the first of the two rows
+  closed since the last byte mark, and the same last-mark rule puts
+  anything read between the previous close and the seam's open there too;
+  the deps row records wall and CPU only, its bytes and hydrated columns
+  zero),
   `push.chat.build` (the session build alone, a rebuild only) and
   `push.chat.send` (the events diff and the per-client chat sends); inside
   `push.send`, `push.send.feedParts` (the feed's per-card pass and its
@@ -3166,6 +3257,66 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   on the WS handler thread (`_ws_act_now_tick`: `key`, `snapshot`, `looks`,
   and `parse` per session looked at); any other key names a stage that ran
   outside both loops. The keys are the kernel's own stage names.
+- `stages_cpu_ms`: the calling thread's CPU over a stage, beside its wall:
+  `{stage: {user, sys}}` in milliseconds, from `getrusage(RUSAGE_THREAD)`
+  read at the stage's open and close, for the containers `push`, `jobs` and
+  `jobsPass` and the chat loop's rows `push.chat`, `push.chat.sig`,
+  `push.chat.sig.static`, `push.chat.sig.deps`, `push.chat.build` and
+  `push.chat.send`, each listed at zero from the start and cumulative like
+  the flat rows of `stages_ms`. Three of those are containers of the rows
+  listed after them, as in `stages_ms`: `push.chat.sig`'s CPU row is
+  exactly `push.chat.sig.static` plus `push.chat.sig.deps` by construction
+  (the seam's close records the two sub-rows and then their total);
+  `push.chat`'s row covers its three seams `push.chat.sig`,
+  `push.chat.build` and `push.chat.send` plus the loop's glue (a superset,
+  not a sum: the glue has no CPU row of its own); and `push` covers the
+  whole of `_push_all` (the pusher's `push` stage wraps the call), so a
+  reader summing the nine rows counts the signature a fourth time. A row
+  takes the CPU of a mark whose wall
+  went to the flat `stages_ms` row of its name: a connect push's `push.*`
+  stage, the pusher's `jobs.<job>` and a foreign writer's stage (a
+  push-marked write from a thread owning no cycle included, under the
+  `stagesForeign` rule above) record no CPU row, so each row's CPU is the
+  same writer's as its wall. Over a window, wall minus user minus sys is
+  the stage's wait (the GIL, the syscalls). Read the block over a window,
+  never off one cycle: `getrusage(RUSAGE_THREAD)`'s total is the thread's
+  runtime as of its last scheduler update (a tick, 1 ms at HZ=1000, or a
+  context switch), not the instant of the read, split into user and sys by
+  the tick counts, so a mark over a sub-millisecond stage reads 0 on the
+  marks no update fell in and a whole tick on the others (a real-clock test
+  in `tests/test_perf_stats.py` pins it: over 300 sub-millisecond spins some
+  mark reads 0, some a whole tick, and the marks' sum tracks the window's
+  thread CPU), and only the sum over a window estimates the CPU.
+  The instrumentation's own cost, one run's readings and not a contract, on
+  2026-09-19 (Python 3.12, a 30-core (60-thread) dev box):
+  the per-term microseconds are what `tests/test_perf_stats.py`'s cost-terms
+  test prints (best of five over the loaded kernel; `-rA` shows the line),
+  the per-signature stats and thread CPU what the six-cycle harness's two
+  worlds print in `tests/test_kernel_delta_send.py`, and the counts behind
+  the totals (which operation runs how many times per served tab, per
+  rebuilt tab and per push) are derived in the kernel's `stages_cpu_ms`
+  block comment and pinned by
+  `test_the_per_tab_counts_the_cost_derivation_uses_hold_by_execution`; this
+  paragraph is the only place the figures live, and the kernel's comments
+  point here. A `getrusage` read 0.974 us; the `os.stat` and `os.lstat`
+  counting wrappers add, per stat, 0.54 us (2.829 us with a signature open
+  against 2.289 us bare) times the signature's stats (22.7 per signature in
+  the bare harness world, 61.2 in the furnished one, a figure that moves
+  with the temp root's path depth, one lstat per component of the
+  transcript's realpath); the DirEntry door 0.189 to 0.279 us per stat; the
+  signature scope 2.501 us; the per-tab note 2.500 us and a re-read's note
+  2.599 us; a count call 0.203 us; the census 18.565 us per push at 38 tabs
+  and four clients when the gate walked no tab, 3.817 us when it walked all.
+  From those terms, the bare world's stats per signature and the pinned
+  counts: 23.5 us per served tab per cycle, 44.8 us per rebuilt tab and 0.91
+  ms per push at 38 served tabs, which is 0.56 percent of the per-tab
+  signature wall in the chat-signature design note's live window (159.5 ms
+  per cycle over 38 tabs with a dashboard attached, the r60 window of
+  2026-09-18: a reading outside this repo, not this instrumentation's
+  measurement) and 2.9 to 7.1 percent of the signature's thread CPU as the
+  harness reads it (0.331 to 0.817 ms per signature).
+  Empty where the platform has no per-thread rusage (macOS): an empty
+  block means no clock, not no CPU.
 - `builds`: `chat`, `feed`, `timeline`, each with `cached`, `built`, `ms`.
   `chat` also carries `bySession`, one row per living session built since
   the boot, ordered by `max` (slowest first) and numbered by `rank` in that
@@ -4026,6 +4177,104 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   forty percent off that overhead. The block is counts and byte totals under
   identifier keys, and the public export (`romp perf export --public`)
   carries it whole.
+  `chatSig` is the chat signature pass's own table (stage 1 of the
+  chat-signature design), one integer per key. `pre` and `post` count the
+  pre-build signatures the push loop took (one per tab past the cold gate, a
+  raising one included) and the post-build ones; `failedBuilds` counts the
+  chat builds that raised past a pre-build signature, which count under
+  neither `builds.chat` `cached` nor `built`; `targetedBuilds` counts the
+  targeted push's builds (`_push_session_now`, which a create, a fork, a
+  comment promotion and the backend's connect handshake run), which take
+  no signature and which `builds.chat` labels
+  `targeted` under `bg_miss` only when the tab is unwatched. Two identities
+  follow, read at rest (between pushes; while a tab is in flight `pre` runs
+  one ahead, since its note is folded before the tab's `builds.chat`
+  record). `pre` equals `builds.chat` `cached` plus `built`
+  less `targetedBuilds` plus `failedBuilds`. Over a window with
+  `failedBuilds` zero `post` equals `built` less `targetedBuilds` less
+  `nosig`, and otherwise exceeds it by the failed builds whose signature was
+  also None (`nosig` counts them, `built` does not), by at most
+  `failedBuilds`. The `nosig` in that identity is this table's, which counts
+  every tab; the same-named `builds.chat` `bg_miss` `nosig` counts background
+  builds only. `thread` counts the comment-thread signatures (one per
+  non-promoted thread of every session with a comments store, per push and
+  per comments frame, a raising one included: the third taker of the
+  signature, so a per-signature figure for the read counts below divides by
+  `pre` plus `post` plus `thread`); `nosig`, signatures that raised or found
+  no transcript path (the tab built, never cached); `waited`, tabs served
+  after waiting for another thread's build of the same tab. `compares`
+  counts one per cache read that returned an entry with a signature in
+  hand: the pre-flight read, the re-read after a single-flight wait and the
+  re-read under a claim, and not the final compare, which re-evaluates the
+  last read's operands; so a rebuild counts two (every ordinary rebuild
+  takes the claim road), a served waiter one on a cold cache (its post-wait
+  re-read) or two when its pre-flight read met a stale entry, and
+  `compares` can exceed `pre`. `compareIdenticalComponents` counts the
+  components of those reads' operands equal by object identity, at every
+  one of the 40 positions whether or not the tuple compare reached it (a
+  miss stops at the first unequal position), so it is exact for a hit and
+  an upper bound on the pointer answers a miss took. The share stage 3's
+  identity memos would widen is
+  `compareIdenticalComponents / (compares * len(_CHAT_SIG_LABELS))` (the
+  label count is the components `bg_miss` lists, 40 today; both operands
+  are always full-length signatures), never `compareIdenticalComponents`
+  over `compares` alone.
+  `stats` counts the `os.stat`, `os.lstat` and `DirEntry.stat` calls made on
+  the thread while a signature is open, whichever function or module makes
+  them: `os.stat` and `os.lstat` in the wrappers the kernel installs around
+  them on the `os` and `posix` modules at import (and on pathlib's accessor
+  on Python 3.10), which every `os.path`, `pathlib` and `importlib` caller
+  reaches; `DirEntry.stat` in `_entry_stat` and its twins in the judge,
+  event-model and SDK-backend modules, which every scandir entry's stat in
+  `kernel/` goes through (a source pin derives the entry names from every
+  scandir there), because a `DirEntry` stats in C and reaches no wrapper.
+  Not in the count, and not countable from Python (C makes them with no
+  Python call per stat): the fstat inside `open()` (part of a read, counted
+  by the read counters and the bytes column), the fstat inside `scandir()`
+  on the directory it opens, a `DirEntry` predicate (`is_dir`, `is_file`,
+  `is_symlink`) on a symlink entry or on a filesystem that reports no
+  d_type, and the stats made in another process by any git child a
+  signature forks (`tests/test_chat_build_sig_inputs.py` spies the forks
+  inside a signature and pins the set: today the cold cwd memo's `rev-parse`
+  and `remote get-url`, and the repo file index's `ls-files` whenever the
+  repo-index key moved; a fork's wall lands on the row of the part that
+  forked it, the tail's `ls-files` on `push.chat.sig.deps`, and its CPU on
+  no row, since `RUSAGE_THREAD` excludes a child). A test intercepts
+  `os.stat`, `os.lstat` and `DirEntry.stat` in-process around real
+  signatures over a real state root and asserts the counter equals the
+  interception count, over a world furnished so every channel runs
+  (`tests/test_kernel_delta_send.py`). `namesReads` counts raw
+  names-registry reads inside a signature; `switchReads`, reads of the
+  user-todos switch file; `regReads`, registry file reads by the SDK
+  backend's reader. The warm-tab census: `warmEligible`, a tab with a cached
+  build that no connected chat client watches, every connected chat client
+  holds as a skeleton, with a transcript and no plain Sessions pane
+  connected (the cold gate's predicate with its not-yet-built clause
+  negated, a cached build, and without the gate's live-row clause: the gate
+  skips only a tab whose liveness row exists, while the census counts a tab
+  with none too; so an upper bound on what a cold-gate-shaped warm gate
+  would skip, the excess being tabs with no live row, a dead session
+  reopened read-only); `warmBlockedByOutline`,
+  the same tab with a plain Sessions pane connected; and `heldBody`, a tab
+  some connected chat client holds as a body, the watched tab included.
+  `pushes` counts the pushes that ran the chat tab loop (the pusher's
+  cycles and the connect pushes of a chat or Sessions page; a feed,
+  timeline or other page's connect push runs no loop and does not count),
+  bumped once where the loop opens; every key here but six is a delta over
+  `pushes` for a per-push figure. `targetedBuilds` counts a push that runs
+  no loop, and `thread` counts a comments frame's signatures, taken outside
+  any push too (the WebSocket comment-create acknowledgements run a
+  comments frame with no push), so each has its own denominator; and the
+  four read counters `stats`, `namesReads`, `switchReads` and `regReads`
+  move with every signature, the thread signatures outside a push included,
+  so their denominator is `pre` plus `post` plus `thread`, the per-signature
+  figure above, never `pushes`. A figure over
+  `pusher.cycles` alone runs high by those connect pushes, largest in the
+  boot window. The `push.chat.sig` rows of `stages_ms` and `stages_cpu_ms`
+  exclude connect pushes (their wall goes to `pusher.connectPush.stagesMs`
+  and they record no CPU row) while this table includes them, so a
+  per-signature wall or CPU divides a pusher-only numerator by a mixed
+  denominator unless the window has no connect push.
 - `judge`: `passes`, `ms_sum`, `ms_last`, `ms_mean` (wall time; a pass waits
   on model calls), `cpu_ms_sum` (CPU time of the judge tier threads and every
   per-session worker they run; the in-process pools' share is
