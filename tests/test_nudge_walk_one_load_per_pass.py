@@ -653,7 +653,14 @@ case replaced only those, so the wedge-gate sweep case standing a new-identity p
 name in neither list, left the module green on the tree of the round's seventh fix (39 passed) with the stub live for every later
 test; setUp keeps its first snapshots and _restore, after the saved names go back and the root is rebound, checks every kernel and
 judge global against them by identity, the names the restoring rebind moves subtracted, and puts a leaked name back, so the same
-plant reds that case at its cleanup since, naming the kernel name (1 failed, 38 passed). The
+plant reds that case at its cleanup since, naming the kernel name (1 failed, 38 passed). The door names' copies (the plan's hunt
+for a seventh axis, the class of extra7-1), on the tree of the round's ninth fix: the four door names were spelled by hand three
+times, in _DOOR_SPELLINGS, in the birth pin's defs line and in the enumeration's stub judge, copies pinned to each other by nothing,
+so a fifth spelling added to the constant left the module green on the tree of the round's eighth fix (39 passed); the defs line
+reads the constant, the stub judge is built from it, and the birth pin holds the constant against the spellings the kernel calls and
+against the judge's defs both ways, so the same plant reds the birth pin since, naming the spelling as one the kernel never calls
+(1 failed, 38 passed), and a spelling removed from the constant reds the same pin, naming it as one called and not spelled
+(1 failed, 38 passed). The
 clean module at this head, the head of the round-7 fixes: 39 passed single-process on 3.10, 3.11, 3.12, 3.13 and 3.14t.
 
 Drives the real pass (_auto_nudge_tick) over two alive sessions with real transcript files and real goal stores, on the
@@ -1183,7 +1190,8 @@ def _loader_births(path, judge):
     and the rule reads it there. `called` counts each spelling called and `defs` each def named like a loader, so a caller can
     check the population it read is the doors' and not empty. Derives: every birth, every called spelling, every loader def and
     every hand-off from the whole AST of the file at `path`, with one parent map over the walk. Bounds: _DOOR_SPELLINGS, the four
-    doors' names, the closed set the value rule keys on, spelled by hand; _DYNAMIC_LOOKUPS and _DICT_READS, the receivers the
+    doors' names, the closed set the value rule keys on, spelled by hand once (the birth pin holds that copy against the judge's defs
+    and the kernel's called spellings both ways, so the set is a policy here and a derived check there); _DYNAMIC_LOOKUPS and _DICT_READS, the receivers the
     consumer clause reads, an open set kept only for a constant that merely contains the name (a whole spelling is refused whatever
     receives it); the three transforms _door_text undoes, a policy boundary, so the assembled class is outside by it; and the
     needle, "load_goals" by substring."""
@@ -3311,12 +3319,14 @@ class TheCountersOneSite(unittest.TestCase):
         correctness-1, tests-1 and extra6-1: the string class was stated closed by a list of receivers, nine lookups, four dict
         reads and a subscript slice, and six working doors on no list passed the pin with a real load in a replaced helper's body;
         the pin keys on the door's spelling now, the closed set, and the receivers need no listing. Derives: the births, the called
-        spellings, the defs and the hand-offs over the kernel's and the judge's whole files (_loader_births). Bounds: the four door
-        names, spelled by hand in this case's defs line as in _DOOR_SPELLINGS and the enumeration's stub judge, three copies pinned to
-        each other by nothing at this tree (a fifth spelling added to _DOOR_SPELLINGS left the module green at the head the round-7
-        plan read); the kernel's call sites per spelling, 27, 9, 7 and 15, a tripwire on the population read, so an upstream fold
-        that moves one reds here by design; and the two hand-offs, the judge's two outer wrappers, a pinned pair that also holds the
-        recorder's hand-picked boundary set against the judge's AST."""
+        spellings, the defs and the hand-offs over the kernel's and the judge's whole files (_loader_births), and the door names' one
+        copy, _DOOR_SPELLINGS, held both ways against the judge's defs and against the spellings the kernel calls (until the round-7
+        fixes the four names were spelled by hand three times, in the constant, in this case's defs line and in the enumeration's stub
+        judge, copies pinned to each other by nothing, so a fifth spelling added to the constant left the module green; the defs line
+        reads the constant and the stub judge is built from it since). Bounds: the kernel's call sites per spelling, 27, 9, 7 and 15,
+        a tripwire on the population read whose keys spell the doors with the kernel's base and whose key set the kernel-side line
+        holds against the constant, so an upstream fold that moves one reds here by design; and the two hand-offs, the judge's two
+        outer wrappers, a pinned pair that also holds the recorder's hand-picked boundary set against the judge's AST."""
         born, called, defs, handoffs = _loader_births(Path(os.path.realpath(km.__file__)), judge=False)
         self.assertEqual(born, [], "%s: a loader bound to another name, or reached through a string, is a body the census cannot read; every "
                                    "reference to a loader in the kernel is the callee of a call spelled jd.<door>(...), so no other name is born, "
@@ -3331,6 +3341,12 @@ class TheCountersOneSite(unittest.TestCase):
                          "not the sum), which needs the reference's other-readers clause or a bound re-read before the number moves; a fifth "
                          "spelling is a new door or a new base, which needs a recorder or a bound before this dict grows: %r"
                          % (KERNEL_FILE, {k: v for k, v in sorted(called.items())}))
+        kernel_doors = {k[len("jd."):] for k in called}
+        self.assertEqual(kernel_doors, set(_DOOR_SPELLINGS),
+                         "%s: the doors the kernel calls are the names of _DOOR_SPELLINGS, the one copy of the four spellings (the defs line "
+                         "below holds the same constant against the judge's defs, so the constant, the kernel's calls and the judge's defs "
+                         "agree or one of the two lines reds). Spelled in the constant and never called %r; called and not spelled %r"
+                         % (KERNEL_FILE, sorted(set(_DOOR_SPELLINGS) - kernel_doors), sorted(kernel_doors - set(_DOOR_SPELLINGS))))
         self.assertEqual((defs, handoffs), ({}, []), "%s: the kernel defines no loader and hands none to _or_fault" % KERNEL_FILE)
         born, called, defs, handoffs = _loader_births(Path(os.path.realpath(jd.__file__)), judge=True)
         self.assertEqual(born, [], "%s: the judge reaches its own doors by bare name as the callee of a call, or hands one to _or_fault from a "
@@ -3338,9 +3354,11 @@ class TheCountersOneSite(unittest.TestCase):
                                    "constant spells one whole, wherever it appears and whatever receives it, and none containing the name reaches "
                                    "a dynamic lookup, a dict read or a subscript key): %s"
                                    % (JUDGE_FILE, "; ".join("line %d, %s" % b for b in born)))
-        self.assertEqual(defs, dict.fromkeys(("load_goals", "load_goals_or_fault", "load_goals_shared", "load_goals_shared_or_fault"), 1),
-                         "%s: the four doors are defined once each (a fifth def named like a loader is a new door, which needs a recorder or a "
-                         "bound): %r" % (JUDGE_FILE, defs))
+        self.assertEqual(defs, dict.fromkeys(_DOOR_SPELLINGS, 1),
+                         "%s: every door of _DOOR_SPELLINGS is defined once and no other def is named like a loader (a fifth def is a new "
+                         "door, which needs a recorder or a bound and its spelling in the constant; a spelling in the constant with no def is "
+                         "a name the value rule refuses for no door). Defined %r; spelled in the constant and not defined %r; defined and not "
+                         "spelled %r" % (JUDGE_FILE, defs, sorted(set(_DOOR_SPELLINGS) - set(defs)), sorted(set(defs) - set(_DOOR_SPELLINGS))))
         self.assertEqual(set(called), set(defs), "%s: the judge calls its four doors and no other loader spelling: %r" % (JUDGE_FILE, sorted(called)))
         self.assertEqual(handoffs, [("load_goals_or_fault", "load_goals"), ("load_goals_shared_or_fault", "load_goals_shared")],
                          "%s: the two outer boundary wrappers hand their loader to _or_fault and no other function does (the recorder steps over "
@@ -3411,8 +3429,8 @@ class TheCountersOneSite(unittest.TestCase):
 
 
 # The census's form enumeration (the consolidation pass). One sample module per form, written to a file and imported so inspect can read
-# it, with a stub judge standing in for the real one (its four loaders take any argument and return it, so a decorator form's
-# def-time call is harmless and no store is touched; the samples are otherwise never called). Each row of _LOADER_FORMS: the
+# it, with a stub judge standing in for the real one (one def per name of _DOOR_SPELLINGS, each taking any argument and returning
+# it, so a decorator form's def-time call is harmless and no store is touched; the samples are otherwise never called). Each row of _LOADER_FORMS: the
 # form's id and description, the module body, the target's dotted name, the interpreter it needs (None: every one; a gated form
 # fails to compile below it, which the test checks), the sites _loader_sites answers for the needle "load_goals" as line indices
 # into the target's source, the site count for the needle "jd.load_goals_shared", and, for a form the census answers no site
@@ -3792,8 +3810,7 @@ class TheCensusOverEveryForm(unittest.TestCase):
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
         self.addCleanup(self.td.cleanup)
-        stub = self._module(_STUB_JUDGE, "".join("def %s(fsid=None, *a, **k):\n    return fsid\n\n\n" % n for n in
-                                                 ("load_goals", "load_goals_shared", "load_goals_or_fault", "load_goals_shared_or_fault")))
+        stub = self._module(_STUB_JUDGE, "".join("def %s(fsid=None, *a, **k):\n    return fsid\n\n\n" % n for n in _DOOR_SPELLINGS))
         kstub = types.ModuleType(_STUB_KERNEL)
         kstub.jd = stub
         sys.modules[_STUB_KERNEL] = kstub
