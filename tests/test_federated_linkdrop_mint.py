@@ -28,8 +28,14 @@ caught whichever recorded function the module used (round 4: the spies saw `run`
 `Popen` with its tokens assembled passed every pin, the byte-identical records included, since the peer worktree's directory
 was still alive; the fixer pass of that round found `call`, `check_call` and `check_output` reaching the real module through
 the delegation unseen while this docstring said the record saw them, and the same plant as a `check_call` passed every pin).
-What neither the spies nor the census sees is a command issued any other way: `os.system`, `os.popen`, `os.spawn*`,
-`os.exec*`, or a second import of `subprocess` under another name.
+What the recorder cannot see, a command issued any other way (`os.system`, `os.popen`, the `os.spawn*`, `os.posix_spawn*`
+and `os.exec*` families, or a road to the subprocess module other than `import subprocess`: an import under another name, a
+name imported from it, the string "subprocess" handed to __import__ or importlib), a second census refuses by node in the
+lab module and in every module it imports from this directory, transitively (OS_SPAWNERS, pinned against this Python's os
+module; _commands_around_the_recorder, its detector pinned on a synthetic source of every form it refuses). What remains
+unseen is a command a function of an imported module issues through THAT module's own `subprocess` attribute (the recorder
+patches the lab module's alone): the mint's two commands and the teardown's none are the lab module's own, and no pin here
+exercises a road through an imported module.
 
 Synthetic: a scratch repository minted here, hostname TESTHOST; no kernel, no browser.
 """
@@ -50,6 +56,60 @@ FORBIDDEN_ARGV = ("worktree", "prune", "gc")
 # every public callable of the subprocess module that starts a process: what the recorder records, by name (the pin below
 # checks the tuple against this Python's subprocess.__all__, so a spawning function added to the module is not delegated unseen)
 SPAWNERS = ("run", "Popen", "call", "check_call", "check_output", "getoutput", "getstatusoutput")
+# every os function that starts a program, by name: what the recorder over the lab module's `subprocess` attribute cannot
+# see, refused by the census below in the lab module and its imports from this directory (the tuple is pinned against this
+# Python's os module, every name beginning spawn, exec or posix_spawn plus system and popen, so a member it lacks is a red)
+OS_SPAWNERS = ("system", "popen",
+               "spawnl", "spawnle", "spawnlp", "spawnlpe", "spawnv", "spawnve", "spawnvp", "spawnvpe", "posix_spawn", "posix_spawnp",
+               "execl", "execle", "execlp", "execlpe", "execv", "execve", "execvp", "execvpe")
+LAB_MODULE = "test_federated_linkdrop_served"
+
+
+def _lab_modules(root=LAB_MODULE):
+    """The lab module and, transitively, every module it imports that lives beside it in this directory, {name: source},
+    derived from the parsed import statements (an `import x` or `from x import y` naming a file HERE/x.py), so a helper the
+    lab module grows is censused without anyone listing it."""
+    out, todo = {}, [root]
+    while todo:
+        name = todo.pop()
+        path = os.path.join(HERE, name + ".py")
+        if name in out or not os.path.isfile(path):
+            continue
+        with open(path, encoding="utf-8") as f:
+            out[name] = f.read()
+        for n in ast.walk(ast.parse(out[name])):
+            if isinstance(n, ast.Import):
+                todo += [a.name for a in n.names]
+            elif isinstance(n, ast.ImportFrom) and n.module and not n.level:
+                todo.append(n.module)
+    return out
+
+
+def _commands_around_the_recorder(src):
+    """Every node of the parsed source that could start a program around the recorder, as (line, form): an attribute read
+    named as one of OS_SPAWNERS on ANY value (`os.system`, a renamed os and a nested attribute are refused alike, the safe
+    side); a call to such a bare name, or its import from os (`from os import system`, `from os import *`); an import of
+    the subprocess module under another name, or of a name from it; and the string "subprocess" as a constant, the road
+    through __import__, importlib.import_module or sys.modules. A comment or a docstring is no node of these kinds, so the
+    words in one do not count."""
+    found = []
+    for n in ast.walk(ast.parse(src)):
+        if isinstance(n, ast.Attribute) and n.attr in OS_SPAWNERS:
+            found.append((n.lineno, "." + n.attr))
+        elif isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in OS_SPAWNERS:
+            found.append((n.lineno, n.func.id + "("))
+        elif isinstance(n, ast.ImportFrom) and n.module:
+            if n.module == "os" and any(a.name in OS_SPAWNERS or a.name == "*" for a in n.names):
+                found.append((n.lineno, "from os import " + ", ".join(a.name for a in n.names)))
+            if n.module.split(".")[0] == "subprocess":
+                found.append((n.lineno, "from %s import %s" % (n.module, ", ".join(a.name for a in n.names))))
+        elif isinstance(n, ast.Import):
+            for a in n.names:
+                if a.name.split(".")[0] == "subprocess" and (a.asname or a.name != "subprocess"):
+                    found.append((n.lineno, "import %s as %s" % (a.name, a.asname)))
+        elif isinstance(n, ast.Constant) and n.value == "subprocess":
+            found.append((n.lineno, '"subprocess"'))
+    return found
 
 
 def _git(*args):
@@ -272,6 +332,43 @@ class OldHubMintIsPrivate(unittest.TestCase):
         found = sorted(tok for tok in FORBIDDEN_ARGV if tok in constants)
         self.assertEqual(found, [], "string constants in the lab module that name a worktree, a record clearing or a collection: %r" % (found,))
         self.assertNotIn("_remove_old_hub", src, "the teardown has no git step of its own: the lab's rmtree takes the checkout")
+
+    def test_no_road_to_a_process_around_the_recorder_in_the_lab_module_or_its_imports(self):
+        """The census the module docstring names (round 4's fixer pass disclosed these roads; this refuses them): the recorder
+        sees a command only through the lab module's `subprocess` attribute, so the lab module and every module it imports
+        from this directory, transitively (_lab_modules, derived from the import statements), carry no other road to a
+        process, by node over the parsed source (_commands_around_the_recorder): no attribute named as one of this Python's
+        program-starting os functions on any value, no call to or import of such a bare name, no import of subprocess under
+        another name or of a name from it, no constant "subprocess". OS_SPAWNERS is pinned against this Python's os module
+        (every name beginning spawn, exec or posix_spawn, plus system and popen); the derivation must reach the lab module
+        and lab_dist; and the detector is pinned on a synthetic source of each form it refuses and on the allowed spellings
+        (import os, import subprocess, subprocess.run, os.path.join, the words in a docstring), so an empty census is a red
+        and not a pass. What remains unseen is stated in the module docstring: a command a function of an imported module
+        issues through that module's own subprocess attribute."""
+        wanted = {n for n in dir(os) if n.startswith(("spawn", "exec", "posix_spawn")) or n in ("system", "popen")}
+        self.assertTrue(wanted, "this Python's os module names program-starting functions")
+        self.assertEqual(sorted(wanted - set(OS_SPAWNERS)), [], "every program-starting os function of this Python is in OS_SPAWNERS")
+        forms = (('import os\nos.system("true")\n', ".system"),
+                 ('import os as o\no.popen("true")\n', ".popen"),
+                 ('import os\nos.posix_spawn("/bin/true", ["true"], {})\n', ".posix_spawn"),
+                 ('from os import execv\n', "from os import execv"),
+                 ('from os import *\n', "from os import *"),
+                 ('def f(system):\n    system("true")\n', "system("),
+                 ('import subprocess as sp\n', "import subprocess as sp"),
+                 ('from subprocess import Popen as P\n', "from subprocess import Popen"),
+                 ('import importlib\nimportlib.import_module("subprocess")\n', '"subprocess"'),
+                 ('import sys\nsys.modules["subprocess"]\n', '"subprocess"'))
+        for src, form in forms:
+            with self.subTest(form=form):
+                hits = _commands_around_the_recorder(src)
+                self.assertTrue(any(form in h[1] for h in hits), "the detector refuses %r: %r" % (src, hits))
+        allowed = 'import os\nimport subprocess\nsubprocess.run(["true"])\nos.path.join("a", "b")\n"""os.system in a docstring"""\n'
+        self.assertEqual(_commands_around_the_recorder(allowed), [], "the allowed spellings, and the words in a docstring, are not refused")
+        mods = _lab_modules()
+        self.assertTrue({LAB_MODULE, "lab_dist"} <= set(mods), "the derivation reaches the lab module and lab_dist: %r" % sorted(mods))
+        found = {name: hits for name, src in sorted(mods.items()) for hits in [_commands_around_the_recorder(src)] if hits}
+        self.assertEqual(found, {}, "a road to a process around the recorder in the lab module or a module it imports from this directory (censused: %s): %r"
+                                    % (", ".join(sorted(mods)), found))
 
 
 if __name__ == "__main__":
