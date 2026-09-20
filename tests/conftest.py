@@ -864,9 +864,12 @@ def _sdk_swapped(start, before):
     jd.STATE as that read recorded it (the kept-root picture) or over a directory that is gone, which at that read only
     import-time code or a fixture of a scope wider than the function could have made; the slot's value at the window
     (`before`) is what a module or class setup (setUpModule, setUpClass, or a module- or class-scoped fixture, the actors
-    between the two reads) swapped in. The leak is named from the start read's fields, since the live object may have
-    been repointed since; no test is accused and no scope is named, because which test will start under the object, and
-    whether it is put back, cannot be said at this window, and the premise sentence, true here, would be false at any
+    between the two reads) swapped in. The leak is named from the start read's fields, both objects rendered from the
+    reads' recorded state_dir: the start read's because the live attribute may have been repointed since (S11, a class
+    that repoints the object before swapping it out), the window's for one convention, since nothing runs between the
+    before read and this render, so its recorded text and the live attribute agree by construction and no run can tell
+    them apart (annotated at the call, not a cell); no test is accused and no scope is named, because which test will
+    start under the object, and whether it is put back, cannot be said at this window, and the premise sentence, true here, would be false at any
     later one (the flag is spent with this line, never deferred: a deferred report would fire where a test body has run,
     a wrong attribution in place of a silence). Two heads, the inherited report's two shapes: the kept-root wording and
     cause family for the standing directory, the gone wording with the cause family narrowed to what could have run
@@ -893,7 +896,10 @@ def _sdk_swapped(start, before):
             "it out, so this test does not start under it, and which test will, or whether it is put back, cannot be said here; "
             "no test is accused and no scope is named. Import-time code did, or a session- or package-scoped fixture did (one "
             "that set up before this module's own reads), %s; a swap left in place is judged at its own scope's end."
-            % (head, _sdk_singleton_text(be, start.sd), start.jd_state, _sdk_singleton_text(before.be, before.sd), cause))
+            % (head, _sdk_singleton_text(be, start.sd), start.jd_state,
+               _sdk_singleton_text(before.be, before.sd),   # the recorded text for one convention: the before read and this render
+               cause))                                       # are one fixture call with no test code between, so the live attribute
+                                                             # agrees with it by construction and no run can tell them apart
 
 
 def _sdk_remedy(after, ref):

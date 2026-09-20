@@ -232,6 +232,14 @@ alphabetically, and each case's `before` is what the previous case left):
     the class's build, the object remedy), one exception group, one error; no test starts under the gone object, so no
     gone report; Two.a quiet. Without the gone arm the boundary verdict was the only line and named neither the gone
     directory nor import-time code.
+  S11, S7 with the start read's object repointed before the swap: One's setUpClass moves the import-time object's
+    state_dir to a second sandbox, then saves, resets and moves jd.STATE; the refusal names the root the start read
+    RECORDED (the kept one) and not the live attribute's (the repointed one); tearDownClass puts the object, jd.STATE and
+    the state_dir back, so every boundary is quiet; Two.a is quiet; one error.
+  S12, S7's swapping class BUILDING over its class root in place of resetting the slot: a real object of the class's own
+    is in the slot at the first window, the identity term fails, and the refusal's window value says the slot holds
+    SdkBackend over the class root, the one run that executes that branch of the render; One.a's window is a cache hit,
+    Two.a meets the import-time object, every boundary is quiet, one error.
   W, a session-scoped autouse fixture in the case directory's own conftest.py (nested_run's conftest) that builds over
     a kept root and restores jd.STATE before the module boundary's start read: a is the first test to meet it and
     carries the kept-root inherited report, its cause clause naming import-time code or a session- or package-scoped
@@ -332,8 +340,11 @@ fixture READS and the branch each read feeds, with the case that reds under each
   the first window's refusal (_sdk_swapped): deleted (S7's first test shows no refusal line and the run exits 0); keyed
     on the window's before object in place of the start read's (S7: the window's object is None, so the refusal is
     silent); the reference root rendered from the window's jd.STATE in place of the start read's (S7, S7B, S9: the class
-    root is rendered and the value regex, a path ending in /romp, fails; S10 green, its class leaves jd.STATE alone); its
-    class guard dropped (T, U and V: a refusal naming None (not built) as the leak on a first window whose
+    root is rendered and the value regex, a path ending in /romp, fails; S10 green, its class leaves jd.STATE alone); the
+    start read's object rendered from the live attribute in place of its recorded state_dir (S11: the refusal names the
+    repointed root); the window value rendered as None whatever the slot holds (S12: the class's build in the slot is said
+    as None (not built); the window value's recorded-text argument is inert, nothing running between the before read and
+    the render, annotated at the call and not a cell); its class guard dropped (T, U and V: a refusal naming None (not built) as the leak on a first window whose
     start read saw nothing, beside T's class boundary verdict and inside U's and V's gone-report teardown, read as
     carriers); its run-root guard dropped (S8: a refusal on the kernel's own import-time build over the run root, exit
     1); its gone arm removed, the start read's gone object refused silently (S9: no refusal on One.a, the count 1
@@ -1015,6 +1026,70 @@ SCRATCH_S10 = SCRATCH_HEAD + textwrap.dedent("""\
     class Two(unittest.TestCase):
         def test_a_meets_the_classes_build(self):
             assert km._sdk_backend.state_dir == jd.STATE and not _root.exists()
+""")
+
+SCRATCH_S11 = SCRATCH_HEAD + textwrap.dedent("""\
+
+    _root = Path(tempfile.mkdtemp(prefix="kept-"))    # S6's import-time build over a sandbox that STANDS, jd.STATE restored; the
+    (_root / "session-hosts").write_text("off\\n")    # prefix marks the root the start read records (hosts off, as sandbox() does)
+    _saved = jd.STATE
+    jd.STATE = _root
+    km._sdk()
+    jd.STATE = _saved
+
+    class One(unittest.TestCase):
+        @classmethod
+        def setUpClass(cls):
+            cls.saved = (km._sdk_backend, jd.STATE)   # S7's swapping class, the start read's object REPOINTED before the swap: the
+            cls.moved = Path(tempfile.mkdtemp(prefix="repointed-"))     # live attribute shows a root the start read did not record
+            km._sdk_backend.state_dir = cls.moved
+            cls.root = sandbox()
+            km._sdk_backend = None
+            jd.STATE = cls.root
+
+        @classmethod
+        def tearDownClass(cls):
+            km._sdk_backend, jd.STATE = cls.saved
+            km._sdk_backend.state_dir = _root         # the state_dir put back where the class found it, so One's boundary is quiet
+            shutil.rmtree(cls.root)
+            shutil.rmtree(cls.moved)
+
+        def test_a_builds_over_the_class_root(self):
+            assert km._sdk().state_dir == One.root
+            assert One.saved[0].state_dir == One.moved   # the live attribute shows the repointed root at this window
+
+    class Two(unittest.TestCase):
+        def test_a_meets_the_import_time_object(self):
+            assert km._sdk_backend.state_dir == _root and _root.is_dir() and jd.STATE != _root
+""")
+
+SCRATCH_S12 = SCRATCH_HEAD + textwrap.dedent("""\
+
+    _root = sandbox()                                 # S6's import-time build over a sandbox that STANDS, jd.STATE restored
+    _saved = jd.STATE
+    jd.STATE = _root
+    km._sdk()
+    jd.STATE = _saved
+
+    class One(unittest.TestCase):
+        @classmethod
+        def setUpClass(cls):
+            cls.saved = (km._sdk_backend, jd.STATE)   # S7's swapping class, but the setup BUILDS over its root in place of resetting
+            cls.root = Path(tempfile.mkdtemp(prefix="classroot-"))   # the slot: a real object of the class's own is in the slot at
+            (cls.root / "session-hosts").write_text("off\\n")        # the first window (hosts off, as sandbox() does)
+            build_over(cls.root)
+
+        @classmethod
+        def tearDownClass(cls):
+            km._sdk_backend, jd.STATE = cls.saved
+            shutil.rmtree(cls.root)
+
+        def test_a_finds_the_classes_build_in_the_slot(self):
+            assert km._sdk_backend.state_dir == One.root and km._sdk() is km._sdk_backend   # a cache hit: no transition
+
+    class Two(unittest.TestCase):
+        def test_a_meets_the_import_time_object(self):
+            assert km._sdk_backend.state_dir == _root and _root.is_dir() and jd.STATE != _root
 """)
 
 CONFTEST_W = textwrap.dedent("""\
@@ -2389,6 +2464,78 @@ class ASwappingClassNeverPutsTheGoneObjectBack(_NestedRun, unittest.TestCase):
 
     def test_the_test_that_meets_the_classes_build_is_quiet(self):
         self.assertRatchetPassed("Two", "test_a_meets_the_classes_build")
+
+
+class TheRefusalNamesTheRootTheStartReadRecorded(_NestedRun, unittest.TestCase):
+    """S11: S7 with the start read's object REPOINTED before the swap. One's setUpClass moves the import-time object's
+    state_dir to a second sandbox (prefix repointed-), then saves, resets and moves jd.STATE as S7's class does, and its
+    tearDownClass puts the object, jd.STATE and the state_dir back. At One.a's window the live attribute shows the
+    repointed root while the start read recorded the kept one (prefix kept-), and the refusal names the root the start
+    read RECORDED: rendered from the live attribute, it would name a root the start read never saw. Two.a meets the
+    object put back over its kept root and is quiet; every boundary is quiet (One's start and end reads agree on the
+    object and its state_dir text); one error. The kill cell is the start read's object rendered live
+    (_sdk_singleton_text(be) in place of _sdk_singleton_text(be, start.sd)): the refusal then names the repointed root."""
+    SCRATCH = SCRATCH_S11
+    ERRORS = 1
+    FIRST = "One.test_a_builds_over_the_class_root"
+
+    def test_the_refusal_names_the_root_the_start_read_recorded_not_the_live_attribute(self):
+        cls, method = self.FIRST.split(".")
+        text = inherited(self.out, cls, method, head=SWAPPED)
+        self.assertIsNotNone(text, "the first window's refusal line, opening with SWAPPED, is missing: %s" % self.out)
+        self.assertEqual(outcomes(self.out).get(self.FIRST), {"PASSED", "ERROR"}, self.out)
+        self.assertIsNone(verdict(self.out, cls, method), "the allowed build over the class root is not accused: %s" % self.out)
+        self.assertRegex(text, r"^SdkBackend over \S*/kept-\S+, jd.STATE \S+/romp at that read")   # the recorded root, and the run root
+        self.assertNotIn("repointed-", text, "the live attribute's root is not the start read's: %s" % text)
+        self.assertIn("(it holds None (not built))", text)
+        self.assertNotIn("Fix:", text, text)
+        self.assertNotIn(BOUNDARY, text)
+        self.assertIsNone(re.search(r"test_scratch2?\.py::\w+", text), "no scope or test is named in the refusal: %s" % text)
+        self.assertEqual(carriers(self.out, SWAPPED), {"test_scratch.py::" + self.FIRST.replace(".", "::")}, self.out)
+        self.assertEqual(carriers(self.out, SWAPPED_GONE), set(), self.out)
+
+    def test_every_boundary_is_quiet_and_the_later_test_is_quiet(self):
+        for scope in ("::One", "::Two", ""):
+            self.assertIsNone(boundary(self.out, scope), self.out)
+        self.assertEqual(boundary_scopes(self.out), set(), self.out)
+        self.assertRatchetPassed("Two", "test_a_meets_the_import_time_object")
+
+
+class ASwappingClassThatLeavesItsOwnBuildInTheSlot(_NestedRun, unittest.TestCase):
+    """S12: S6's import-time build over a kept root met first by a class whose setUpClass saves the singleton and jd.STATE
+    and then BUILDS over a class root (prefix classroot-) in place of resetting the slot, so the slot holds a real object
+    of the class's own at the worker's first window; tearDownClass puts both back. The identity term fails as in S7 and
+    the refusal fires with the kept head, and its window value says what the slot holds: "(it holds SdkBackend over
+    <class root>)", the branch of the render no other case executes (every other refusal meets a None in the slot).
+    One.a's own window is quiet (the same object before and after, a cache hit), Two.a meets the import-time object
+    and is quiet, every boundary is quiet, one error. The kill cell is the window value rendered as None whatever the
+    slot holds. The render's second argument, the before read's recorded state_dir, is not a cell: the before read and
+    the render are one fixture call with no test code between, so no run can tell it from the live attribute (annotated
+    at the call in tests/conftest.py)."""
+    SCRATCH = SCRATCH_S12
+    ERRORS = 1
+    FIRST = "One.test_a_finds_the_classes_build_in_the_slot"
+
+    def test_the_refusal_says_the_slot_holds_the_classes_build(self):
+        cls, method = self.FIRST.split(".")
+        text = inherited(self.out, cls, method, head=SWAPPED)
+        self.assertIsNotNone(text, "the first window's refusal line, opening with SWAPPED, is missing: %s" % self.out)
+        self.assertEqual(outcomes(self.out).get(self.FIRST), {"PASSED", "ERROR"}, self.out)
+        self.assertIsNone(verdict(self.out, cls, method), "the cache hit is no transition: %s" % self.out)
+        self.assertTrue(text.startswith("SdkBackend over "), text)                # the start read's object over the kept root
+        self.assertRegex(text, r"\(it holds SdkBackend over \S*/classroot-\S+\)")  # the class's own build in the slot at the window
+        self.assertNotIn("None (not built)", text, "the slot holds a real object here: %s" % text)
+        self.assertNotIn("Fix:", text, text)
+        self.assertNotIn(BOUNDARY, text)
+        self.assertIsNone(re.search(r"test_scratch2?\.py::\w+", text), "no scope or test is named in the refusal: %s" % text)
+        self.assertEqual(carriers(self.out, SWAPPED), {"test_scratch.py::" + self.FIRST.replace(".", "::")}, self.out)
+        self.assertEqual(carriers(self.out, SWAPPED_GONE), set(), self.out)
+
+    def test_every_boundary_is_quiet_and_the_later_test_is_quiet(self):
+        for scope in ("::One", "::Two", ""):
+            self.assertIsNone(boundary(self.out, scope), self.out)
+        self.assertEqual(boundary_scopes(self.out), set(), self.out)
+        self.assertRatchetPassed("Two", "test_a_meets_the_import_time_object")
 
 
 class SessionScopedFixtureInstallsBeforeTheModulesReads(_NestedRun, unittest.TestCase):
