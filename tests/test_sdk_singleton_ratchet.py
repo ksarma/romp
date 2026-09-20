@@ -666,7 +666,10 @@ def mutation_cell_text(doc, cell):
             if depth == 0:
                 break
         i -= 1
-    start = max(doc.rfind("; ", 0, i), doc.rfind("): ", 0, i))       # the previous cell's end, or the block's head
+    head = doc.rfind("a derive id: ", 0, i)                          # a block's head ("each cell a rule and a derive id")
+    if head >= 0:
+        head += len("a derive id")                                    # at its colon: the split below lands as for "): "
+    start = max(doc.rfind("; ", 0, i), doc.rfind("): ", 0, i), head)  # the previous cell's end, or the block's head
     return doc[doc.index(" ", start) + 1:end]
 
 
@@ -2657,6 +2660,19 @@ class TheMutationCellsApply(unittest.TestCase):
             text = mutation_cell_text(__doc__, cell)
             self.assertIsNotNone(text, cell)
             self.assertIn("(red: ", text, "%s: the cell states no rule: %s" % (cell, text))
+
+    def test_the_first_cell_of_each_block_opens_on_its_own_words(self):
+        """The cell text derive() prints starts at the cell's own words for a block's first cell too, whose left
+        neighbour is the block's head ("each cell a rule and a derive id: "), not a cell's close: before the head was a
+        delimiter, the two first cells printed from the previous cell's tail (the refusal block's from the inherited
+        report's last cell, the boundary block's from refusal-flag-kept's close)."""
+        self.assertTrue(mutation_cell_text(__doc__, "refusal-deleted").startswith("deleted (red: "),
+                        mutation_cell_text(__doc__, "refusal-deleted"))
+        self.assertTrue(mutation_cell_text(__doc__, "boundary-link-dropped").startswith("the clause dropped (red: "),
+                        mutation_cell_text(__doc__, "boundary-link-dropped"))
+        for cell in MUTATIONS:                            # no cell's text opens on another's derive id or a block head
+            text = mutation_cell_text(__doc__, cell)
+            self.assertFalse(text.startswith("derive: ") or "a derive id: " in text, "%s: %s" % (cell, text[:120]))
 
     def test_the_table_is_not_short(self):
         self.assertGreaterEqual(len(MUTATIONS), 30, "the refusal block's twenty-three cells and the boundary link's seven "
