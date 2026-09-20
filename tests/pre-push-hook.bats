@@ -17,16 +17,15 @@
 #
 # The two CONTENT rules, both about what a push changes on the remote: the TIP
 # tree of each pushed ref must be clean (that is what a push exposes), and each
-# commit no fetched remote already has must ADD no banned line — a commit that
+# commit no fetched remote already has must ADD no banned line: a commit that
 # only inherits an older leak in its tree is not refused, a commit that
 # introduced one is, even if a later commit removed it again. The hook's two
-# METADATA rules — each new commit's author and committer addresses, and its
-# message, with an annotated tag's own tagger and message under the same two —
-# have their own files, pre-push-identity.bats and pre-push-message.bats (added
-# 2026-09-09, when an unset user.email stamped a hostname through both content
-# scans). install-sh.bats exercises the hook through a real `git push`; this
-# file feeds it ref lines directly, so it can model a remote and its
-# remote-tracking refs the way a clone has them.
+# METADATA rules (each new commit's author and committer addresses, and its
+# message, with an annotated tag's own tagger and message under the same two)
+# have their own files, pre-push-identity.bats and pre-push-message.bats.
+# install-sh.bats exercises the hook through a real `git push`; this file feeds
+# it ref lines directly, so it can model a remote and its remote-tracking refs
+# the way a clone has them.
 #
 # The tip scan reads symlink TARGETS as well as regular files: git grep reads
 # regular-file blobs only, and a committed link's target is its blob content, so

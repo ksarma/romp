@@ -503,8 +503,8 @@ PY
 # The same new commits' metadata is read too (their author and committer address
 # domains, unless the clone is configured to use the address, and their messages;
 # an annotated tag's own tagger and message likewise), which pre-push-identity.bats
-# and pre-push-message.bats drive by hand. No strings file → a no-op, so a
-# contributor's clone is unaffected.
+# and pre-push-message.bats drive by hand.
+# No strings file → a no-op, so a contributor's clone is unaffected.
 # (ROMP_GITHOOK_DIR redirects install.sh's symlink target below; the behaviour
 # tests copy the hook directly.)
 

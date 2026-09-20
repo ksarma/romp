@@ -69,15 +69,18 @@ EXPECTED_NEUTRALIZED = {
     "em.set_checkpoint_dir (shadowed)",   # the fold checkpoints' directory provider, pointed at the shadow (2026-09-18)
     "pwd.getpwnam (counted)", "pwd.getpwuid (counted)"}
 # The caches whose emptiness the cold rows' PROOF rests on: the event model's parse-layer caches (the
-# per-sample assembly check reads _ASM_CACHE and the counters) and the kernel's parse cache (the
-# build_feed_noparse row empties it too). The tool skips a name a revision lacks and reports what it did
+# per-sample assembly check reads _ASM_CACHE and the counters), the kernel's parse cache (the
+# build_feed_noparse row empties it too) and the feed's per-session card memo (2026-09-18: an entry memoized
+# under a warm parse re-reads the parse in place when the store misses, so a feed built over an emptied store
+# but a warm memo takes no cold branch and asks for no warm; a fresh kernel has no memo, and the cold rows
+# and build_feed_noparse empty it). The tool skips a name a revision lacks and reports what it did
 # empty, and the per-sample assembly check is what proves a sample cold, so the rest of the tool's list is
 # checked only to be drawn from that list: the first form pinned every kernel-private cache name at HEAD,
 # which an unrelated kernel rename would have broken with the proof intact (review find, 2026-09-08).
 # This kernel adds four memos of its own that a cold build_session sample must find empty too (the captions
 # memo, the thread registry memo, the states-overlay cache and the per-lane segment memo; fork PRs 353 and
 # 362), so they join the proof-bearing set; the tool names them in COLD_KERNEL_CACHES.
-EXPECTED_COLD_CACHES = {"kernel": {"_parse_cache", "_caps_memo", "_thread_reg_memo", "_states_overlay_cache", "_lanes_memo"},
+EXPECTED_COLD_CACHES = {"kernel": {"_parse_cache", "_feed_memo", "_caps_memo", "_thread_reg_memo", "_states_overlay_cache", "_lanes_memo"},
                         "event_model": {"_JSONL_CACHE", "_ASM_CACHE"}}
 # The writes a normal run is known to aim at the copy, every one of which the tool's shadow takes: the
 # import-time repo-root marker, the tab-order audit and the session order the push maintains, and the fold
@@ -391,7 +394,7 @@ class PerfBench(unittest.TestCase):
         for layer, need in EXPECTED_COLD_CACHES.items():
             self.assertTrue(need <= cc[layer], "%s: %s emptied before each cold sample (emptied: %s)" % (layer, sorted(need), sorted(cc[layer])))
         pb = load_source("perf_bench_caches_under_test", TOOL)
-        self.assertTrue(cc["kernel"] <= set(pb.COLD_KERNEL_CACHES) | {"_chat_fold"}, "every kernel cache emptied is one the tool names")
+        self.assertTrue(cc["kernel"] <= set(pb.COLD_KERNEL_CACHES) | {"_chat_fold", "_feed_memo"}, "every kernel cache emptied is one the tool names")
         self.assertTrue(cc["event_model"] <= {n for n, _lock in pb.COLD_EM_CACHES})
 
     def test_path_token_lookups_are_counted(self):
