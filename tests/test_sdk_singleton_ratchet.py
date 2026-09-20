@@ -470,8 +470,10 @@ written in prose is measured once and outlives the cell added after it).
     in the worker in place of the found object, membership by existence (red: every case with a refusal followed by a
     start-to-end boundary verdict whose found object is not the refused one; derive: boundary-link-by-existence); the
     clause keyed on the found object on every
-    road, the gate moved from the start-to-end call to the boundary fixture (red: every case whose scope found the
-    refused object and whose verdict renders another object, the last-object roads; derive:
+    road, the gate moved from the start-to-end call to the boundary fixture (red: every case that reads, for the
+    clause's absence, a verdict off the start-to-end road of a scope that found the refused object and ended under the
+    marker it started with: the last-object roads, which render the object the last test left, and the put-back roads,
+    which end on the found object; the reload verdict stays bare, the gate's marker term moving with the gate; derive:
     boundary-link-on-start-object); the clause moved into _sdk_judge, the boundary's call bare and the changed-object
     return wrapped, so it rides the function fixture's road too (red: every case that reads a test's own verdict whose
     before value is the refused object for the clause's absence; derive: boundary-link-in-judge); the changed-marker
