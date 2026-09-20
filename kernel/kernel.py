@@ -41105,7 +41105,7 @@ _BILLING_WORDS = {"now": "now", "deferred": "at the end of the open turn", "queu
                   "landing": "when its connect lands", "report": "when its CLI first reports its billing",
                   "staggered": "at its turn in the spawn stagger"}
 # ...and a pick the FIFO parked, by the reason it waits (_park_reason): the drain applies it when the gate lifts.
-# "waiting" is busy with no turn open (a queued turn, an untaken text; round 2 of the review): the words the unparked
+# "waiting" is busy with no turn open (a queued turn, an untaken text; round 2 of the review, 2026-09-18): the words the unparked
 # road's "queued" prints, so the verb offers --now only for "turn", the one park a cut can end.
 _BILLING_PARK_WORDS = {"turn": "at the end of the open turn", "compaction": "after the compaction",
                        "queue": "after the work queued ahead of it", "move": "after the move finishes",
@@ -41176,7 +41176,7 @@ def _billing_request(b):
         session's own pick (SdkBackend.follow_default_auth), and the reconnect it may need takes the follower walk's
         own road, request_reconnect's arm rule, never the FIFO, whose replay could not apply the value (set_auth
         refuses it) and would drop it in silence. Never parked, it is refused during a move too.
-    Both roads DROP the sid's parked auth picks before the backend call (round 2 of the review; _drop_parked_auth): the
+    Both roads DROP the sid's parked auth picks before the backend call (round 2 of the review, 2026-09-18; _drop_parked_auth): the
     FIFO would have fired an earlier pick over the one just applied. Every road asks the box's reason first
     (auth_unavailable_why, the reason set_auth refuses with; the plain road since round 1 of the review, 2026-09-19,
     which had parked a doomed pick and answered ok), and the two gate-off roads ask the backend whether the record
@@ -41188,7 +41188,7 @@ def _billing_request(b):
     walk's `after_write` hook), a follower whose queue a move holds has the pick parked behind the move instead (its
     `park` hook; `parkedSessions`, with `parkedReconnect` for the verb's words), and each moved session's outlook
     (auth_apply_outlook, in the reconnect words) rides the answer per name (`outlooks`), so the verb says which
-    sessions reconnect and which already bill the pick (round 2 of the review: the head said every one reconnects)."""
+    sessions reconnect and which already bill the pick (round 2 of the review, 2026-09-18: the head said every one reconnects)."""
     pick = str(b.get("pick") or "")
     now = bool(b.get("now"))
     if b.get("allFollowing"):
@@ -41366,7 +41366,7 @@ def _park_reason(be, sid):
     """Why the FIFO parked a drive op for `sid` just now, as one word for the caller's answer (`romp billing`, round 1 of
     the review, 2026-09-18): "limit" (the account cannot serve a request: a usage-limit hold), "compaction", "move" (a
     move in flight), "turn" (an open turn), "waiting" (busy with no turn open: a queued turn or an untaken text, held
-    for press order with nothing to cut; round 2 of the review), else "queue" (a queue already exists and the op lines
+    for press order with nothing to cut; round 2 of the review, 2026-09-18), else "queue" (a queue already exists and the op lines
     up behind it, the press-order rule). The same predicates _ops_gate reads, read again after the park, so a state
     that changed between the two reads is named for what it is now; the order names the wait that governs longest
     first. An auth pick is NOT exempted from the limit hold although switching billing is the escape from it: the hold
@@ -41478,7 +41478,7 @@ def _billing_read(target):
     explicit}, pending, held, default: {auth, login, explicit, label, explicitPick, explicitWhy}} (SdkBackend.billing_view's
     fields, the machine default from _billing_default: what an unpicked session bills, explicit or the helper rule, with
     a stored login's label or the machine login's, and the raw explicit pick with the box's reason when it cannot bill
-    it, round 2 of the review), or {ok: false, error} with its status: 400 no target, the resolver's 404 or 503, 409 a
+    it, round 2 of the review, 2026-09-18), or {ok: false, error} with its status: 400 no target, the resolver's 404 or 503, 409 a
     backend with no billing pick or a record that would not read."""
     if not target:
         return {"ok": False, "error": "target required", "_status": 400}

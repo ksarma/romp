@@ -7404,8 +7404,8 @@ class SdkSession:
         stored login it targets, _auth_pending_login: the default's walk, set_auth, the landing's clear, which compares
         the live pair against its snapshot under the lock, the served check's withdrawal, and the verb's `default` step,
         follow_default_auth, through _follow_default and _follow_default_unlanded; round 3 of the review, 2026-09-18,
-        the pair and the withdrawal since round 1 of the reviewer's review, the verb's step named in round 2 of its own
-        review), of the session's pick beside it (auth, auth_login: written in the same hold as the pending since round
+        the pair and the withdrawal since round 1 of the reviewer's review, 2026-09-18, the verb's step named in round 2 of its own
+        review, 2026-09-18), of the session's pick beside it (auth, auth_login: written in the same hold as the pending since round
         2 of the billing verb's review, and mirrored to the reg from the live fields, _mirror_auth) and of the relaunch
         slot flag (_relaunch_bounded: the ask's flag, written in the same hold as the pending it belongs to, so the
         landing's guarded clear cannot be undone by a walk that wrote the flag bare after its pending; the reviewer's
@@ -8336,7 +8336,7 @@ class SdkSession:
         request_reconnect defers or holds the request once more (the flag it sets already stands; no second arm), and
         the withdrawal then finds this pick's surface and leaves the arm standing for it ("leaves the pending auth pick
         pending; the reconnect stands"). The same reason _follow_default's early return was removed
-        in round 2 of the reviewer's review (its docstring). The slot flag comes from the walk's memo (_landing_ask_bounded,
+        in round 2 of the reviewer's review (2026-09-19; its docstring). The slot flag comes from the walk's memo (_landing_ask_bounded,
         fork PR #813: only a bounded walk's pick, `romp billing --all-following`'s, draws a spawn-stagger slot; any other
         pick's relaunch draws none) and is written under the hold, the pending's hold (the reviewer's regression-3); the
         line ends with the stagger clause the walk's lines end with when the relaunch waits for its slot with the CLI
@@ -19295,7 +19295,7 @@ class SdkBackend:
         ahead of the call, a follower whose connect in progress already launched the pick (the already-applying branch,
         no request) kept the flag with nothing armed, and its next reconnect of any kind drew a slot it was never meant
         to. A plain pick passes nothing and draws no slot, and one that takes over a follower's standing ask spends the
-        walk's flag (round 2 of the review).
+        walk's flag (round 2 of the review, 2026-09-18).
 
         Round 2 of the verb's review (2026-09-18) added two rules. AN OBJECT THAT NEVER LANDED, WITH A REPORT (the
         first branch below; _follow_default's never-landed rule, carried into the pick): the pick and its pending are
@@ -19536,14 +19536,14 @@ class SdkBackend:
         already-applying guard, else the pending reconnect under the one arm rule) and no /auth chip, since the session
         made no pick of its own. Each session set_auth asks to reconnect draws a spawn-stagger slot for that relaunch
         (set_auth's `bounded`: the flag is set on its request branch and nowhere else, so a follower set_auth reconnects
-        nothing for is never flagged; round 1 of the review). {"moved": [names], "skipped": [names], "unwritten":
+        nothing for is never flagged; round 1 of the review, 2026-09-18). {"moved": [names], "skipped": [names], "unwritten":
         [names], "movedSids": [sids], "outlook": {name: word}}, the name lists sorted: the followers written, the
         sessions with a pick of their own, and the followers whose record would not read (nothing written, said apart
-        since round 1 of the review: filed under skipped, the log and the verb called such a session's silence a pick of
+        since round 1 of the review, 2026-09-18: filed under skipped, the log and the verb called such a session's silence a pick of
         its own); the moved sids in the names' order (`movedSids`: no kernel road reads the field since the drop moved
         into the `after_write` hook, round 1 of the billing verb's review, 2026-09-19); and each moved session's outlook (auth_apply_outlook, read right after its set_auth, the read the
         per-session route makes), so the verb says which sessions reconnect, which already bill the pick and which
-        apply it at their next launch (round 2 of the review: the verb told the user every moved session reconnects,
+        apply it at their next launch (round 2 of the review, 2026-09-18: the verb told the user every moved session reconnects,
         and a walk onto the side every follower already ran promised switching dots that never came). None for a
         value that is no pick or a side this box cannot bill (last_auth_refusal names why, as set_auth's refusal does):
         the check runs ONCE, ahead of the walk, so a refused side moves nothing. "failed": the followers whose step raised
@@ -19673,7 +19673,7 @@ class SdkBackend:
         the default's walk and the attach landing take (_follow_default): a reconnect when it runs the other side, the
         withdrawal of a pick's pending reconnect the default makes moot, nothing when it already runs what the default
         resolves to. A live session with NO running side is judged by the connect in flight or left to its first
-        connect (_follow_default_unlanded, round 1 of the review). A DORMANT session (no object) can still have a live
+        connect (_follow_default_unlanded, round 1 of the review, 2026-09-18). A DORMANT session (no object) can still have a live
         CLI, stood down under its host (T315) or during the boot window, and its next "launch" is then an ATTACH, which
         asks a follower to move only while authPending stands (_connect_landed's attach branch); so the ask is derived
         from the reg's own report of the side its CLI runs (apiKeyAuth, the init's apiKeySource) against what the
@@ -19681,9 +19681,10 @@ class SdkBackend:
         none when they match or there is no report (nothing ran, or a launch retired it: since round 3 of the default
         billing's review, 2026-09-18, _stamp_launch_login clears the report at every launch, so a session relaunched and
         not yet reporting, which a --resume connect does at its first turn, derives no ask and the line says it follows
-        the default from its next launch; the landing decides from the composed shape). Until round 1 of the review the dormant branch forced
-        authPending False for a picked session, and a session picked onto the login and running it under its host kept
-        billing the login after `default` while every reader said it followed the default. No /auth chip: the session
+        the default from its next launch; the landing decides from the composed shape). Until round 1 of the review
+        (2026-09-18) the dormant branch forced authPending False for a picked session, and a session picked onto the login
+        and running it under its host kept billing the login after `default` while every reader said it followed the
+        default. No /auth chip: the session
         made no pick. False for a record that will not read, and for a record whose write is refused (the clear and its
         mirror as one unit, below; round 1 of the billing verb's review, 2026-09-19, the reviewer's 17:14Z takes, its
         fresh-2), with the pick left standing and the sentence for the caller left at pop_auth_refusal. That slot is cleared
@@ -19728,7 +19729,8 @@ class SdkBackend:
         with s._hold_lock:
             before = (s.auth, getattr(s, "auth_login", "") or "")
         try:
-            with s._hold_write():   # the pick pair under the hold, mirrored from the live fields (round 2 of the review; _mirror_auth)
+            # the pick pair under the hold, mirrored from the live fields (round 2 of the review, 2026-09-18; _mirror_auth)
+            with s._hold_write():
                 s.auth = ""
                 s.auth_login = ""
             s._mirror_auth()
@@ -20034,7 +20036,7 @@ class SdkBackend:
         """What `romp billing <session>` reads: the side the running CLI LAUNCHED on (_launched_auth, the stamp the landing
         wrote; None when no landed launch stands: a dormant session, a live object with no client up, or a connect
         composed and not landed, since the stamp is written at the landing and reset nowhere, and read bare it named the
-        side of a process a reconnect's teardown or a crash had already ended, round 1 of the review; not "no process
+        side of a process a reconnect's teardown or a crash had already ended, round 1 of the review, 2026-09-18; not "no process
         runs", round 2: a connect in flight is a CLI this kernel spawned, and a dormant session's CLI can serve under its
         host) with the stored login it carried, the CLI's own report of what it bills
         (auth_live, the init's apiKeySource; for a dormant session the persisted report, apiKeyAuth; both retired at

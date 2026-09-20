@@ -138,7 +138,7 @@ class HelpSurfacesAgree(unittest.TestCase):
             self.assertEqual(out.stderr.splitlines()[0], "usage: " + form, verb)
 
     def test_billing_misuse_is_usage_exit_2_without_a_kernel(self):
-        # round 1 of the review (finding 11): four misuse arms sat after the serve-token read, so with no kernel they
+        # round 1 of the review (2026-09-18; finding 11): four misuse arms sat after the serve-token read, so with no kernel they
         # exited 1 ("the kernel isn't running") instead of the usage exit 2 the verb's header promises; the siblings
         # (move, color, emoji, end) check arity before any network. _run has no kernel and no token. An EMPTY session
         # (a script's unset variable) is misuse too (round 2 of the review, 2026-09-18): it passed the arity check as one

@@ -1023,8 +1023,10 @@ class WhereDerivedFromTheDiff(unittest.TestCase):
     """The `where:` line is generated from the branch's diff and checked against it (2026-09-20: a hand-kept line was
     under-derived three times on one PR, each re-derivation by hand missing a method the delta had added). `touched` names
     every changed file and, for a Python file outside tests/, the def, method or module-level assignment each touched line
-    belongs to (a closure belongs to its def; a test module is named as a whole); `where_missing` reds on any of them the
-    line omits; the working tree stands in for a commit about to be made."""
+    belongs to (a closure belongs to its def; a test module is named as a whole), the lines the change wrote read on the
+    head's blob and the lines it removed on the base's (the lenses over round 2's commit of fork PR #813, 2026-09-20: a
+    definition removed whole went unnamed, since the new-side line a deletion leaves behind belongs to the previous one);
+    `where_missing` reds on any of them the line omits; the working tree stands in for a commit about to be made."""
 
     def _repo(self):
         d = Path(tempfile.mkdtemp())
@@ -1033,8 +1035,9 @@ class WhereDerivedFromTheDiff(unittest.TestCase):
         (d / "kernel").mkdir()
         (d / "tests").mkdir()
         (d / "kernel" / "x.py").write_text(
-            "import os\n\nLIMIT = 1\n\n\ndef f1():\n    return 1\n\n\ndef f2():\n    def inner():\n        return 2\n    return inner()\n\n\n"
+            "import os\n\nLIMIT = 1\n\n\ndef f1():\n    x = 1\n    return x\n\n\ndef f2():\n    def inner():\n        return 2\n    return inner()\n\n\n"
             "class C:\n    ROWS = 3\n\n    def m(self):\n        return 4\n\n    def n(self):\n        return 5\n", encoding="utf-8")
+        (d / "kernel" / "z.py").write_text("def h():\n    return 7\n", encoding="utf-8")   # deleted whole by the new test below
         (d / "tests" / "test_x.py").write_text("def test_a():\n    pass\n", encoding="utf-8")
         (d / "notes.md").write_text("one\n", encoding="utf-8")
         _git(d, "add", "-A")
@@ -1045,6 +1048,8 @@ class WhereDerivedFromTheDiff(unittest.TestCase):
         src = src.replace("        return 4\n", "        return 40\n")          # C.m
         src = src.replace("LIMIT = 1\n", "LIMIT = 10\n")                        # a module-level assignment
         src = src.replace("    ROWS = 3\n", "")                                 # a class-level assignment deleted outright
+        src = src.replace("    x = 1\n", "")                                    # a line of f1's body deleted: f1 is named
+        src = src.replace("\n    def n(self):\n        return 5\n", "")         # a method deleted whole: n is named
         (d / "kernel" / "x.py").write_text(src, encoding="utf-8")
         (d / "tests" / "test_x.py").write_text("def test_a():\n    pass\n\n\ndef test_b():\n    pass\n", encoding="utf-8")
         (d / "notes.md").write_text("one\ntwo\n", encoding="utf-8")
@@ -1052,20 +1057,41 @@ class WhereDerivedFromTheDiff(unittest.TestCase):
 
     def test_touched_names_the_defs_the_diff_touches_and_nothing_else(self):
         d, base = self._repo()
-        self.assertEqual(L.touched(d, base, None), {"kernel/x.py": ["LIMIT", "f2", "m"], "notes.md": [], "tests/test_x.py": []},
-                         "f1 and n untouched, inner folded into f2, the deleted ROWS line lands in C's body outside any method")
+        self.assertEqual(L.touched(d, base, None), {"kernel/x.py": ["LIMIT", "ROWS", "f1", "f2", "m", "n"], "notes.md": [], "tests/test_x.py": []},
+                         "inner folded into f2; ROWS, f1's removed line and the removed n read from the base blob")
         _git(d, "add", "-A")
         _git(d, "commit", "-q", "-m", "change", date="2026-01-11T12:00:00+00:00")
         self.assertEqual(L.touched(d, base, "HEAD"), L.touched(d, base, None), "the commit derives what its tree derived")
-        self.assertEqual(L.derive_where(L.touched(d, base, "HEAD")), "kernel/x.py (LIMIT, f2, m), notes.md, tests/test_x.py")
+        self.assertEqual(L.derive_where(L.touched(d, base, "HEAD")), "kernel/x.py (LIMIT, ROWS, f1, f2, m, n), notes.md, tests/test_x.py")
+
+    def test_removed_lines_name_their_definition_from_the_base_blob_and_an_added_file_has_none(self):
+        # the lenses over round 2's commit of fork PR #813 (2026-09-20; the mutation lens's unpinned claim 6 and the documents
+        # lens's edge): a hunk that only deletes contributes no new-side line, so the deleted lines are read on the BASE
+        # blob: a removed body line names its def, a method removed whole is named, a class-level assignment removed
+        # whole is named. A file the branch adds has no base blob and removed nothing; a file the branch deletes is
+        # named whole with no definitions, as a test module is
+        d, base = self._repo()
+        (d / "kernel" / "y.py").write_text("def g():\n    return 6\n", encoding="utf-8")
+        _git(d, "add", "kernel/y.py")     # the working-tree road reads `git diff <base>`, which lists tracked files: an added file is in the diff once staged
+        (d / "kernel" / "z.py").unlink()
+        self.assertEqual(L.deleted_lines(d, base, None, "kernel/x.py"), [3, 7, 13, 18, 21, 22, 23, 24],
+                         "LIMIT's line, f1's removed line, inner's return, ROWS, m's return, then the blank line and the two lines of n")
+        self.assertEqual(L.changed_lines(d, base, None, "kernel/x.py"), [3, 12, 19],
+                         "LIMIT, inner's return and m's return: the deletions contribute no new-side line")
+        self.assertEqual(L.touched(d, base, None), {"kernel/x.py": ["LIMIT", "ROWS", "f1", "f2", "m", "n"], "kernel/y.py": ["g"],
+                                                    "kernel/z.py": [], "notes.md": [], "tests/test_x.py": []})
+        _git(d, "add", "-A")
+        _git(d, "commit", "-q", "-m", "change", date="2026-01-11T12:00:00+00:00")
+        self.assertEqual(L.touched(d, base, "HEAD"), L.touched(d, base, None), "the commit derives what its tree derived")
 
     def test_where_missing_reds_on_an_omitted_def_or_file_and_passes_the_derived_line(self):
         d, base = self._repo()
         t = L.touched(d, base, None)
-        self.assertEqual(L.where_missing("kernel/x.py (f2), notes.md", t), ["kernel/x.py: LIMIT", "kernel/x.py: m", "tests/test_x.py"])
-        self.assertEqual(L.where_missing("kernel/x.py (`f2`, the `m` method and LIMIT), notes.md, tests/test_x.py", t), [],
+        self.assertEqual(L.where_missing("kernel/x.py (f2), notes.md", t),
+                         ["kernel/x.py: LIMIT", "kernel/x.py: ROWS", "kernel/x.py: f1", "kernel/x.py: m", "kernel/x.py: n", "tests/test_x.py"])
+        self.assertEqual(L.where_missing("kernel/x.py (`f2`, the `m` method, LIMIT, ROWS, `f1` and `n`), notes.md, tests/test_x.py", t), [],
                          "prose around the names is fine; the names are matched as whole words")
-        self.assertEqual(L.where_missing("kernel/x.py (f2, m, LIMITS), notes.md, tests/test_x.py", t), ["kernel/x.py: LIMIT"],
+        self.assertEqual(L.where_missing("kernel/x.py (f2, m, LIMITS, ROWS, f1, n), notes.md, tests/test_x.py", t), ["kernel/x.py: LIMIT"],
                          "a longer word does not stand in for the name")
         self.assertEqual(L.where_missing(L.derive_where(t), t), [])
 
@@ -1077,12 +1103,13 @@ class WhereDerivedFromTheDiff(unittest.TestCase):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             rc = L.main(["--root", str(d), "where-check", "x-thing", base, "--head", "WORKTREE"])
-        self.assertEqual((rc, out.getvalue()), (1, "where: omits kernel/x.py: LIMIT\nwhere: omits kernel/x.py: m\n"))
+        self.assertEqual((rc, out.getvalue()), (1, "where: omits kernel/x.py: LIMIT\nwhere: omits kernel/x.py: ROWS\nwhere: omits kernel/x.py: f1\n"
+                                                   "where: omits kernel/x.py: m\nwhere: omits kernel/x.py: n\n"))
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             self.assertEqual(L.main(["--root", str(d), "touched", base, "--head", "WORKTREE"]), 0)
         line = out.getvalue().strip()
-        self.assertEqual(line, "kernel/x.py (LIMIT, f2, m), notes.md, tests/test_x.py")
+        self.assertEqual(line, "kernel/x.py (LIMIT, ROWS, f1, f2, m, n), notes.md, tests/test_x.py")
         L.main(["--root", str(d), "set", "x-thing", "where", line])
         out = io.StringIO()
         with contextlib.redirect_stdout(out):

@@ -2261,7 +2261,7 @@ if [[ "${1:-}" == "billing" ]]; then
     # for an unknown session carries a JSON error object): name the cause and the remedy, as the emoji verb's read arm
     # does (round 1 of the review, 2026-09-18: both arms printed "HTTP 404: not found" with neither). For a session an
     # attached host runs, the local kernel's relay names the same case for the FAR kernel in a JSON error this verb
-    # prints as it prints every kernel refusal (round 2 of the review; kernel _billing_far_answer). $1 = status, $2 = body
+    # prints as it prints every kernel refusal (round 2 of the review, 2026-09-18; kernel _billing_far_answer). $1 = status, $2 = body
     _bl_pre_route() {
         if [[ "$1" == 404 ]] && python3 -c 'import json, sys
 try:
@@ -2308,7 +2308,7 @@ def one(c):
 if moved:
     # the write it is (round 1 of the review, 2026-09-18): the walk writes the pick and asks a reconnect where the side
     # differs; "now bill" claimed the sessions already bill it, and misconjugated for one. The reconnect clause comes from
-    # the kernel's per-session outlook (round 2 of the review): the head said every moved session reconnects at its next
+    # the kernel's per-session outlook (round 2 of the review, 2026-09-18): the head said every moved session reconnects at its next
     # quiet moment, and a walk onto the side every follower already ran promised switching dots that never came. An older
     # kernel's answer carries no outlooks: the write alone is said, with no moment promised
     head = "%d session%s following the default now carr%s %s own pick, %s (%s)" % (
@@ -2342,7 +2342,7 @@ if moved:
             subject = (", ".join(names)) if len(groups) > 1 else ("they" if plural else "it")
             head += "; " + say(subject, plural)
 elif unwritten or parked or failed:
-    # followers were reached and none was moved: a record that would not read (round 2 of the review), a follower parked
+    # followers were reached and none was moved: a record that would not read (round 2 of the review, 2026-09-18), a follower parked
     # behind its move (round 1 of the review, 2026-09-19), or every reached follower's step failed (the same round's 17:14Z takes,
     # its extra7-2: the failed bucket came after this guard, and the head denied the followers the tail then named); the
     # tail says why, and the head must not deny them
@@ -2350,7 +2350,7 @@ elif unwritten or parked or failed:
 else:
     head = "no running session follows the machine default, so none moved to %s" % words(r.get("pick") or "")
 if r.get("superseded"):
-    # a pick queued earlier for a moved session would have fired over the walk's write (round 2 of the review): dropped
+    # a pick queued earlier for a moved session would have fired over the walk's write (round 2 of the review, 2026-09-18): dropped
     head += "; %d earlier queued pick%s dropped" % (r["superseded"], " was" if one(r["superseded"]) else "s were")
 if not skipped:
     tail = "0 skipped"
@@ -2359,7 +2359,7 @@ elif len(skipped) == 1:
 else:
     tail = "%d skipped (%s): they have their own picks" % (len(skipped), ", ".join(skipped))
 if unwritten:
-    # a record that would not read: nothing was written, and it is not a pick of that session's own (round 1 of the review)
+    # a record that would not read: nothing was written, and it is not a pick of that session's own (round 1 of the review, 2026-09-18)
     tail += "; %d not written (%s): %s" % (len(unwritten), ", ".join(unwritten),
                                            "its record would not read" if len(unwritten) == 1 else "their records would not read")
 if failed:
@@ -2512,7 +2512,7 @@ tails = {"now": (lead_now, "the session is reconnecting to apply it"),
          "at its turn in the spawn stagger": (lead, "the session reconnects at its turn in the machine's spawn stagger; its CLI serves until then")}
 head, tail = tails.get(when) or (lead, "the session reconnects %s" % when)
 cut = "the in-flight turn was cut; " if r.get("cut") else ""
-# a pick queued earlier for this session would have fired over this one at the next quiet cycle (round 2 of the review):
+# a pick queued earlier for this session would have fired over this one at the next quiet cycle (round 2 of the review, 2026-09-18):
 # --now and default drop it, and the kernel counts what went
 dropped = ("; %d earlier queued pick%s dropped" % (r["superseded"], " was" if r["superseded"] == 1 else "s were")) if r.get("superseded") else ""
 print("romp billing: %s%s; %s%s" % (cut, head, tail, dropped))

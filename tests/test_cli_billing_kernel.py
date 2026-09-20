@@ -26,7 +26,7 @@ under -n 3; the traceback names the step that failed):
   5. `--now` cuts an in-flight turn (read in the cut session's own transcript) and the reconnect follows its settle;
   6. an unknown session exits 1 with the resolver's error, a junk pick exits 1 with the kernel's, misuse exits 2.
 
-The class is skipped on a runner whose MANAGED Claude settings configure an apiKeyHelper (round 1 of the review, finding
+The class is skipped on a runner whose MANAGED Claude settings configure an apiKeyHelper (round 1 of the review, 2026-09-18, finding
 23): the lab's helper lives in the lab's user settings, but the kernel subprocess reads the platform's managed file, which
 has no environment seam, and a managed helper makes the backend refuse every login pick, so cases 2 and 5 could not pass
 there through any fault of their own.
@@ -317,7 +317,7 @@ class BillingVerb(unittest.TestCase):
     @classmethod
     def _interrupted_results(cls, name):
         """How many turns of `name`'s OWN conversation ended interrupted: its transcript stand-in is the file the fake CLI
-        names by the session id it was resumed with, the reg's lastSid (round 1 of the review, finding 22: a scan over
+        names by the session id it was resumed with, the reg's lastSid (round 1 of the review, 2026-09-18, finding 22: a scan over
         every transcript under the lab discriminated only while no other case interrupted anything)."""
         p = Path(cls.tdir, cls._reg(name)["lastSid"] + ".jsonl")
         return p.read_text().count('"result":"interrupted"') if p.exists() else 0
@@ -355,7 +355,7 @@ class BillingVerb(unittest.TestCase):
         self.assertEqual(launched, "launched: login; the CLI reports: login", "the login pick's launch blanked the helper")
         self.assertEqual(pick, "pick: login")
         launched, pick, default = self._lines(self._romp(self.sids["docs"]))   # a dormant session, by id as by name
-        # docs never ran, so its reg carries no report and the head stands alone (round 2 of the review: the head says what
+        # docs never ran, so its reg carries no report and the head stands alone (round 2 of the review, 2026-09-18: the head says what
         # the kernel knows, no landed launch under it, and a report it kept would ride as "the CLI last reported")
         self.assertEqual(launched, "launched: no CLI is up under this kernel")
         self.assertEqual(pick, "pick: follows the machine default")
@@ -363,7 +363,7 @@ class BillingVerb(unittest.TestCase):
         self.assertEqual(self._lines(self._romp("docs"))[0], "launched: no CLI is up under this kernel")
 
     def step_2_all_following_moves_the_live_followers_and_skips_the_picked_one_without_a_chip(self):
-        # the OTHER side from the one the followers run (round 1 of the review, finding 20): with `key` the walk wrote regs
+        # the OTHER side from the one the followers run (round 1 of the review, 2026-09-18, finding 20): with `key` the walk wrote regs
         # and reconnected nothing, so its reconnect road (the deferred or immediate request, the bounded relaunch slot
         # and its release, the landing on the other side) never ran against a live CLI
         out = self._romp("--all-following", "login")
@@ -413,7 +413,7 @@ class BillingVerb(unittest.TestCase):
         self.assertEqual(self._gestures("api"), [], "no /auth chip: the session made no pick")
 
     def step_4b_a_pick_mid_turn_without_now_parks_and_applies_at_the_turns_settle(self):
-        # the verb's default road end to end (round 1 of the review, finding 19): the pick parks in the kernel's FIFO
+        # the verb's default road end to end (round 1 of the review, 2026-09-18, finding 19): the pick parks in the kernel's FIFO
         # behind the open turn (the real _ops_gate, not a stub), the drain replays it at the settle, and the reconnect
         # lands with no turn cut. tests runs the login since case 2; the pick is the key
         before = self._interrupted_results("tests")

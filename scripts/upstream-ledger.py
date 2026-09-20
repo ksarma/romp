@@ -90,7 +90,7 @@ TABLE_SEPARATOR = "|---|---|---|---|"
 
 # ---------------------------------------------------------------- the where: line, derived from a diff
 
-HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
 
 def _range(base, head):
@@ -98,19 +98,32 @@ def _range(base, head):
     return ["%s..%s" % (base, head)] if head else [base]
 
 
-def changed_lines(root, base, head, path):
-    """The new-side line numbers `git diff -U0 base head -- path` touches: each hunk's new range, and for a hunk that
-    only deletes (a new range of zero lines) the line the deletion left behind, so a removed body still names its def."""
+def _hunks(root, base, head, path):
+    """(old start, old count, new start, new count) per hunk of `git diff -U0 base head -- path`; a range printed with
+    no count is one line, a range of zero lines is one side's absence (a pure insertion has no old lines, a pure
+    deletion no new ones)."""
     out = subprocess.run(["git", "-C", str(root), "diff", "-U0", *_range(base, head), "--", path],
                          check=True, capture_output=True, text=True).stdout
-    lines = []
+    hunks = []
     for line in out.splitlines():
         m = HUNK.match(line)
-        if not m:
-            continue
-        start, count = int(m.group(1)), int(m.group(2)) if m.group(2) is not None else 1
-        lines.extend(range(start, start + count) if count else [max(start, 1)])
-    return lines
+        if m:
+            hunks.append(tuple(int(g) if g is not None else 1 for g in m.groups()))
+    return hunks
+
+
+def changed_lines(root, base, head, path):
+    """The new-side line numbers `git diff -U0 base head -- path` touches: each hunk's new range, read on the head's
+    blob. A hunk that only deletes has none; its lines are deleted_lines', read on the base's blob (2026-09-20, the
+    lenses over round 2's commit of fork PR #813: until then the new-side line a deletion left behind stood in for the
+    deleted lines, which named the PREVIOUS definition for a definition removed whole, and the removed one never)."""
+    return [n for _, _, start, count in _hunks(root, base, head, path) for n in range(start, start + count)]
+
+
+def deleted_lines(root, base, head, path):
+    """The old-side line numbers the same diff touches: each hunk's old range, read on the base's blob, so a removed
+    body still names its def and a definition the branch removes whole is named too (a pure insertion has none)."""
+    return [n for start, count, _, _ in _hunks(root, base, head, path) for n in range(start, start + count)]
 
 
 def names_by_line(source):
@@ -151,9 +164,11 @@ def names_by_line(source):
 def touched(root, base, head="HEAD"):
     """{path: [names]} for every file `git diff --name-only base..head` lists: the names names_by_line owes for the
     lines the diff touches in a Python file outside tests/ (sorted, unique), an empty list for a test module (named as a
-    whole: its tests are the module's own business), for any other file and for a file the head deleted. Read from the
-    head's blob, so the derivation names the commit it describes; `head` None reads the working tree, the tree a commit
-    about to carry the line is made from (the line derived at the commit itself is checked after, where-check)."""
+    whole: its tests are the module's own business), for any other file and for a file the head deleted. The lines the
+    change wrote are read from the head's blob, so the derivation names the commit it describes, and the lines it
+    removed from the base's blob, so a definition deleted whole is named as well (a file the branch added has no base
+    blob and removed nothing); `head` None reads the working tree, the tree a commit about to carry the line is made
+    from (the line derived at the commit itself is checked after, where-check)."""
     files = subprocess.run(["git", "-C", str(root), "diff", "--name-only", *_range(base, head)],
                            check=True, capture_output=True, text=True).stdout.split()
     out = {}
@@ -168,7 +183,12 @@ def touched(root, base, head="HEAD"):
                 source = f.read_text(encoding="utf-8") if f.is_file() else None
             if source is not None:
                 owed = names_by_line(source)
-                names = sorted({owed[n] for n in changed_lines(root, base, head, path) if n in owed})
+                found = {owed[n] for n in changed_lines(root, base, head, path) if n in owed}
+                before = subprocess.run(["git", "-C", str(root), "show", "%s:%s" % (base, path)], capture_output=True, text=True)
+                if before.returncode == 0:
+                    owed_before = names_by_line(before.stdout)
+                    found |= {owed_before[n] for n in deleted_lines(root, base, head, path) if n in owed_before}
+                names = sorted(found)
         out[path] = names
     return out
 
