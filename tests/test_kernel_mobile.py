@@ -86,13 +86,15 @@ class LandingShell(unittest.TestCase):
         # (visual viewport much shorter than the layout viewport), restore it when the keyboard closes.
         js = km._LANDING_MOBILE_JS
         # scale-aware (the user 2026-08-19): a desktop pinch shrinks vv.height by the zoom factor; height*scale
-        # recovers the layout height, so a pinch never reads as "keyboard open" (or re-fits --app-h smaller)
-        self.assertIn("function kbOpen(){var vv=window.visualViewport;return vv?(window.innerHeight-vv.height*(vv.scale||1)>120):false;}", js)
-        # desktop (fine pointer) uses innerHeight outright — pinch-immune in every browser, no scale
+        # recovers the layout height, so a pinch never reads as "keyboard open" (or re-fits --app-h smaller).
+        # The layout height is layoutH() (the root's clientHeight), not window.innerHeight, which WebKit
+        # shrinks to the visual viewport under a pinch; tests/test_layout_viewport_height.py drives the difference
+        self.assertIn("function kbOpen(){var vv=window.visualViewport;return vv?(layoutH()-vv.height*(vv.scale||1)>120):false;}", js)
+        # desktop (fine pointer) reads the layout height outright, pinch-immune in every browser, no scale
         # arithmetic (desktop Firefox does not reliably report vv.scale during a pinch); the visual
         # viewport drives the fit only on coarse-pointer devices, where keyboards/toolbars live
         self.assertIn("var coarse=window.matchMedia&&matchMedia('(pointer: coarse)').matches;", js)
-        self.assertIn("var h=(!coarse||!vv)?window.innerHeight:Math.round(vv.height*(vv.scale||1));", js)
+        self.assertIn("var h=(!coarse||!vv)?layoutH():Math.round(vv.height*(vv.scale||1));", js)
         self.assertIn("--mtabs-h',(kbOpen()?0:(bar.offsetHeight||0))+'px'", js)
 
     def test_usage_modal_dismisses_via_a_real_backdrop_not_a_document_click(self):

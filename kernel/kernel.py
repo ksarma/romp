@@ -60989,17 +60989,36 @@ def _chat_body():
             '<button id="composer-send" title="Send (Enter)" aria-label="Send">➤</button></div></div>')
 
 
+# The LAYOUT viewport's height, for every shell read that means it: a fixed box's bottom edge, a cap taken from
+# the viewport, the keyboard-open test (the layout height less the visual viewport's). window.innerHeight is that
+# height in Chromium and Firefox; WebKit's LocalDOMWindow::innerHeight is the unobscured content rect's height,
+# which on iOS WebPage::updateVisibleContentRects sets from the VISUAL viewport, so under a standing pinch at
+# scale 2 it reads about half the layout height (WebKit source, read 2026-09-20; Chromium measured at page scale
+# 2 on an iPhone 14 descriptor: innerHeight 844, documentElement.clientHeight 844, visualViewport.height 422).
+# The root element's clientHeight is the layout viewport's height in both engines while the page is in
+# standards mode (the landing's doctype) and its root is overflow:hidden (the html,body rules, desktop and
+# phone), so no scrollbar parts it from innerHeight where innerHeight is right: the swap is a no-op there and a
+# correction under the pinch. The fallback keeps a window stand-in without a root element (the node harnesses)
+# on innerHeight. Spliced at the top of each shell IIFE that reads the layout height, at definition, so the
+# attribute a node harness runs alone carries it (the landing's script count is pinned: no element of its own).
+# tests/test_layout_viewport_height.py drives every reader under a WebKit-under-pinch model and a Chromium model
+# and classifies every innerHeight read the shell serves; tests/test_layout_height_served.py reads the premise
+# (standards mode, the root's overflow, clientHeight equal to innerHeight at rest) in real engines.
+_LAYOUT_H_JS = "function layoutH(){var d=document.documentElement;return (d&&d.clientHeight)||window.innerHeight;}\n"
+
+
 # The combined-shell splitter JS: draggable v-split (chat|feed) + h-split (top row | timeline),
 # persisted in localStorage. Iframes get pointer-events:none mid-drag so the gutter keeps the mouse
 # (an iframe otherwise swallows mousemove the instant the cursor crosses it).
-_LANDING_JS = """
-(function(){var col=document.querySelector('.col'),row=document.querySelector('.row'),
+_LANDING_JS = ("""
+(function(){__ROMP_LAYOUT_H__var col=document.querySelector('.col'),row=document.querySelector('.row'),
 tf=document.getElementById('f-timeline');
 // ── timeline BOTTOM BAND (the user 2026-06-25): the rail's Timeline toggle (body.po-timeline) shows/hides a
 // full-width band below the pane row. It AUTO-FITS its content height (--tl, capped 70vh); the gh gutter
 // resizes it. Both band + gutter are hidden by CSS unless po-timeline.
 function tlContentH(){try{return tf?tf.contentDocument.body.scrollHeight:0;}catch(e){return 0;}}
-function cap(){return Math.round(window.innerHeight*0.7);}
+// 70% of the LAYOUT viewport (the CSS says 70vh); WebKit's innerHeight is the visual viewport's height under a pinch
+function cap(){return Math.round(layoutH()*0.7);}
 function autosize(){if(!document.body.classList.contains('po-timeline'))return;var h=tlContentH();if(!h)return;col.style.setProperty('--tl',Math.min(h+2,cap())+'px');}
 var ghh=document.getElementById('gh');
 if(ghh)ghh.addEventListener('mousedown',function(e){e.preventDefault();document.body.classList.add('drag','dragh');
@@ -61098,7 +61117,7 @@ try{new ResizeObserver(autosize).observe(tf.contentDocument.body);}catch(e){}});
 window.addEventListener('resize',autosize);
 window.addEventListener('romp-panes',autosize);   // re-fit when the Timeline toggle turns the band on
 })();
-"""
+""").replace("__ROMP_LAYOUT_H__", _LAYOUT_H_JS)
 
 
 # Active-pane FOCUS cue (the user 2026-06-23): mark the section the user last interacted with so the faint
@@ -61463,7 +61482,7 @@ f.addEventListener('load',wire);wire();};   // a split chat column (2026-09-08) 
 # draws them itself in the web shell); render two compact vertical bar-pairs (used %, elapsed %) under the
 # refresh button — same green/amber/red usage colours the timeline used — with the full detail on hover.
 _LANDING_USAGE_JS = """
-(function(){var el=document.getElementById('rail-usage');if(!el)return;
+(function(){__ROMP_LAYOUT_H__var el=document.getElementById('rail-usage');if(!el)return;
 var tip=document.createElement('div');tip.id='ru-tip';tip.style.display='none';document.body.appendChild(tip);
 // A real full-screen backdrop in the SHELL document catches the dismiss tap (the user 2026-07-22): on
 // mobile the panes are content iframes, so an outside tap lands in another document and a document-level
@@ -62146,8 +62165,9 @@ spPanel.innerHTML=h;renderChart();spSizePane();}
 // the list pane takes exactly the room left under the chart (review find: a fixed 38vh cap left the card
 // itself scrolling at common viewport heights, a scroll region inside a scroll region); a floor keeps a
 // few rows visible on a very short screen, where the card then scrolls as the last resort
+// the cap mirrors the card's max-height:92vh, a LAYOUT viewport figure; WebKit's innerHeight shrinks under a pinch, the card does not
 function spSizePane(){var pane=document.getElementById('rsp-table');if(!pane||!spPanel)return;
-var cap=Math.floor(window.innerHeight*0.92),cs=getComputedStyle(spPanel),pad=parseFloat(cs.paddingTop)+parseFloat(cs.paddingBottom)+2;
+var cap=Math.floor(layoutH()*0.92),cs=getComputedStyle(spPanel),pad=parseFloat(cs.paddingTop)+parseFloat(cs.paddingBottom)+2;
 var above=pane.offsetTop-spPanel.offsetTop-spPanel.clientTop;   // everything rendered above the pane, inside the card
 var room=cap-pad-above-8;pane.style.maxHeight=Math.max(120,room)+'px';}
 // 1-2-5 ceilings: the y-axis top is the nearest clean number above the tallest bucket
@@ -62181,7 +62201,8 @@ function spTipBox(){if(!spTip){spTip=document.createElement('div');spTip.id='rsp
 // a pointer-anchored flip landed a six-row box on the stamp in a short window); only a viewport too short for either
 // falls back to the pointer, and the header repeats the stamp's text. The box takes no pointer events
 function spTipPlace(x,y,rect){spTip.style.display='block';var w=spTip.offsetWidth,hh=spTip.offsetHeight,left=x+14,top=y+18;if(left+w+6>window.innerWidth)left=x-14-w;
-if(top+hh+6>window.innerHeight){var above=(rect?rect.top:y)-hh-6;top=above>=6?above:y-18-hh;}
+// the box is position:fixed, so the flip is against the LAYOUT viewport's bottom; WebKit's innerHeight is the visual viewport's under a pinch
+if(top+hh+6>layoutH()){var above=(rect?rect.top:y)-hh-6;top=above>=6?above:y-18-hh;}
 spTip.style.left=Math.max(6,left)+'px';spTip.style.top=Math.max(6,top)+'px';}
 // the bucket tooltip: the total leads (the other measure and the stamp follow), then a row per session — a dot in the
 // stack's colour, the name (user data: textContent), the value — the hovered bar's row emphasised, the fold line last
@@ -62273,7 +62294,7 @@ pull(false);                                     // fill on load, independent of
 // VERTICAL bars when the left rail ran out of height. The bars are HORIZONTAL in the bottom bar now and only
 // ~text-height tall, so they always fit — nothing to degrade.)
 window.addEventListener('message',function(e){if(!window.__rompPaneSourceOk||!window.__rompPaneSourceOk(e))return;var m=e.data;if(m&&m.romp==='usage')render(m.usage);});})();
-"""
+""".replace("__ROMP_LAYOUT_H__", _LAYOUT_H_JS)
 
 
 # The bottom bar's API health cell: one dot and one word beside the usage readout, painted from the kernel's
@@ -63606,8 +63627,8 @@ refresh();   // self-schedules (fast while attaching, slow keep-alive otherwise)
 # to 1024px, is one pane at a time with bottom tabs; mouse desktops keep the grid.
 _MOBILE_MQ = "(max-width:820px),(pointer:coarse) and (max-width:1024px)"
 
-_LANDING_MOBILE_JS = """
-(function(){
+_LANDING_MOBILE_JS = ("""
+(function(){__ROMP_LAYOUT_H__
 // The shell's own client-diag rows (2026-09-08): the bell's and the tap-landing scripts record what they saw
 // (a test's session attached or not, and why; a worker's message; a deep link; /reveal's status) as
 // {type:'clientDiag', surface:'shell'} over the shell socket below — the rows the panes already file in
@@ -63632,7 +63653,8 @@ function wid(){try{return sessionStorage.getItem('romp:wid')||'';}catch(e){retur
 // SHRINKS vv.height by the zoom factor — and blindly re-fitting --app-h to it re-laid the whole shell
 // into the zoomed-in window, so the bottom bar climbed up over the very thing being zoomed (timeline
 // open or not; it is the shell's own layout var). On a DESKTOP (fine pointer) the layout height is
-// simply innerHeight — pinch-immune in every browser BY DEFINITION of the layout viewport, and
+// read directly (layoutH: the root's clientHeight, pinch-immune in every browser BY DEFINITION of the
+// layout viewport; WebKit's innerHeight is the visual viewport's under a pinch), and
 // deliberately not vv.height*scale: desktop Firefox does not reliably report scale during a pinch
 // (the user 2026-08-19, in Firefox), so any scale arithmetic is a Chrome-ism there. The visual
 // viewport drives the fit only where its problems live — the coarse-pointer mobile world of soft
@@ -63641,7 +63663,7 @@ function wid(){try{return sessionStorage.getItem('romp:wid')||'';}catch(e){retur
 // (keyboard gone, app back in front) can never leave a stale, shorter --app-h behind.
 function fit(){try{var vv=window.visualViewport;
 var coarse=window.matchMedia&&matchMedia('(pointer: coarse)').matches;
-var h=(!coarse||!vv)?window.innerHeight:Math.round(vv.height*(vv.scale||1));
+var h=(!coarse||!vv)?layoutH():Math.round(vv.height*(vv.scale||1));
 if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // iOS ignores interactive-widget and reveals a focused input by SCROLLING this overflow:hidden page
 // (a UA scroll bypasses the clamp) — the shell then sits a keyboard-height up until dragged back
@@ -63656,7 +63678,8 @@ barfit();}catch(e){}}
 // to 0 so the chat pane extends flush above the keyboard, and restore it when the keyboard closes. The
 // keyboard is open when the visual viewport is much shorter than the layout viewport (event: vv resize).
 // Measured by fit() itself since 2026-09-08: the two vars describe ONE geometry and went stale together.
-function kbOpen(){var vv=window.visualViewport;return vv?(window.innerHeight-vv.height*(vv.scale||1)>120):false;}
+// layoutH, not innerHeight: WebKit's innerHeight follows the visual viewport under a pinch, and the difference then reads closed with the keyboard up
+function kbOpen(){var vv=window.visualViewport;return vv?(layoutH()-vv.height*(vv.scale||1)>120):false;}
 function barfit(){try{var bar=document.getElementById('mtabs');if(!bar)return;
 document.documentElement.style.setProperty('--mtabs-h',(kbOpen()?0:(bar.offsetHeight||0))+'px');}catch(e){}}
 // ONE fit per animation frame, however many events a keyboard slide or a resume fires: rAF is the
@@ -63784,7 +63807,7 @@ ws.onclose=function(){try{window.__rompApiSocketLost&&window.__rompApiSocketLost
 shellWS();
 var last='chat';try{var s=localStorage.getItem(KT);if(s&&F[s])last=s;}catch(e){}show(last);
 })();
-"""
+""").replace("__ROMP_LAYOUT_H__", _LAYOUT_H_JS)
 
 
 # The bell in the bottom bar's action cluster / mobile tab bar opens the NOTIFICATION POPOVER
@@ -63813,7 +63836,7 @@ var last='chat';try{var s=localStorage.getItem(KT);if(s&&F[s])last=s;}catch(e){}
 # tooltip names which half is off. Where push is blocked or unavailable the This-device row is
 # disabled and its sub-line says why and how to fix it — never a silent no-op.
 _LANDING_PUSH_JS = """
-(function(){var bells=[].slice.call(document.querySelectorAll('#mbell,#rail-bell'));if(!bells.length)return;
+(function(){__ROMP_LAYOUT_H__var bells=[].slice.call(document.querySelectorAll('#mbell,#rail-bell'));if(!bells.length)return;
 bells.forEach(function(b){b.hidden=false;});
 var canPush=('serviceWorker' in navigator)&&('PushManager' in window)&&('Notification' in window);
 var back=document.getElementById('rbell-back'),pop=document.getElementById('rbell-pop');if(!back||!pop)return;
@@ -63893,8 +63916,9 @@ else{n=tb.querySelectorAll('.tab[data-id]').length;t=tb.querySelector('.tab.acti
 var id=t?String(t.getAttribute('data-id')||''):'';var i=id.indexOf(':');
 var lab=t&&t.querySelector('.tab-label');
 return {sid:id,host:i>0?id.slice(0,i):'',label:String((lab&&lab.textContent)||'').replace(/\\s+/g,' ').trim().slice(0,80),why:why,tabs:n};}
+// a fixed box's bottom is measured from the LAYOUT viewport's bottom edge; WebKit's innerHeight is the visual viewport's under a pinch
 function place(anchor){var r=anchor.getBoundingClientRect();   // beside the rail bell / above the tab bar: both sit at the bottom edge
-pop.style.bottom=Math.max(8,window.innerHeight-r.top+6)+'px';pop.style.right=Math.max(8,window.innerWidth-r.right)+'px';}
+pop.style.bottom=Math.max(8,layoutH()-r.top+6)+'px';pop.style.right=Math.max(8,window.innerWidth-r.right)+'px';}
 function open(anchor){place(anchor);back.hidden=false;}
 function close(){back.hidden=true;}
 window.__rompCloseBellPop=close;                                  // Escape (the shell's shared chain) closes it like every panel
@@ -63927,7 +63951,7 @@ if(!isOn)testOut.textContent+=" Real notifications won't arrive until the main s
 .then(function(){testBtn.disabled=false;testBtn.textContent=label;});}
 });
 })();
-"""
+""".replace("__ROMP_LAYOUT_H__", _LAYOUT_H_JS)
 
 
 # Landing a notification tap on what fired (the user 2026-08-08, whose first push opened a different
@@ -64147,7 +64171,7 @@ _STALE_HTML = (
     "<button class=rs-reload id=rstale-reload>Reload</button>"
     "<button class=rs-dismiss id=rstale-dismiss>Dismiss</button></div>")
 _STALE_JS = (
-    "(function(){var box=document.getElementById('rstale'),msg=box.querySelector('.rs-msg'),"
+    "(function(){__ROMP_LAYOUT_H__var box=document.getElementById('rstale'),msg=box.querySelector('.rs-msg'),"
     "rl=document.getElementById('rstale-reload'),dm=document.getElementById('rstale-dismiss');"
     "var loaded=__LOADEDVER__,dismissed=0,served=0,connStale=false,buildStale=false,offer=null;"
     "var BUILDMSG='A newer romp build is available.',"
@@ -64202,8 +64226,9 @@ _STALE_JS = (
     # reset it — and a fresh page's banner is a fresh drift, where the centered default is right.
     # Clamped fully on-screen at drag time and re-clamped on resize (a shrunken window must not strand it).
     "var drag=null;"
+    # the banner is position:fixed, so its clamp is the LAYOUT viewport's edge; WebKit's innerHeight is the visual viewport's under a pinch
     "function clampXY(x,y){var r=box.getBoundingClientRect();"
-    "return [Math.max(0,Math.min(x,window.innerWidth-r.width)),Math.max(0,Math.min(y,window.innerHeight-r.height))];}"
+    "return [Math.max(0,Math.min(x,window.innerWidth-r.width)),Math.max(0,Math.min(y,layoutH()-r.height))];}"
     "box.addEventListener('pointerdown',function(e){if(e.button!==0||e.target.tagName==='BUTTON')return;"
     "var r=box.getBoundingClientRect();box.style.left=r.left+'px';box.style.top=r.top+'px';box.style.transform='none';"
     "drag={dx:e.clientX-r.left,dy:e.clientY-r.top};box.classList.add('dragging');"
@@ -64221,7 +64246,7 @@ _STALE_JS = (
     # dismiss (kept per build), else the no-core bar's own latch.
     "rl.onclick=function(){if(RL&&offer){rl.disabled=true;rl.textContent='Reloading\u2026';RL.accept();}else location.reload();};"
     "dm.onclick=function(){if(connStale){dismissed=served;connStale=false;buildStale=false;paint();}else if(RL&&offer)RL.dismiss();else{dismissed=served;buildStale=false;paint();}};"
-    "check();setInterval(check,30000);})();")
+    "check();setInterval(check,30000);})();").replace("__ROMP_LAYOUT_H__", _LAYOUT_H_JS)
 
 
 # Pane layout controller (the user 2026-06-24/25). The far-left rail holds a toggle per pane (Chat, the
