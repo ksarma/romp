@@ -8567,7 +8567,7 @@ bypassed: no request reaches a host the gate still holds. The build's record her
 the contract said the same; the claim was false, and the follow-on is a privacy surface, landing on the owner's word
 (open point 11). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui/webview, docs, plans, tools,
-upstream or tests alone (40 files, the ledger entry's where line; run 2026-09-20 at the head after the merge of the fork's
+upstream or tests alone (42 files, the ledger entry's where line; run 2026-09-20 at the head after the merge of the fork's
 main for the file review's round 5, where the merge-base is the fork's main itself and the listing is the branch's whole
 delta over it; the two earlier runs, at the commit that built the one reader for the file review's round 4 and at the head
 that closed the author's closing pass after the file review's round 4, listed 38 from the older merge-base they shared,
@@ -8637,7 +8637,7 @@ opens the source's file, and since its round 2 a failed local figure with a box 
 nothing) and ui/webview/file-view-figure-recent-browser.test.ts (Chromium over the real Files page: a picture
 opened from a figure, by the control and by the plain click, takes no Recent row while Back returns to the report at the
 reader's block, a Forward step onto the picture mints its row, and a link's open still takes its row).
-Thirteen standing suites were re-aimed, not undone:
+Fifteen standing suites were re-aimed, not undone:
 ui/webview/file-view-text-size.test.ts (its real-module bar leg at 380, 420, 480 and 600 px in the chat and feed modals
 reads the group hidden on a fresh open and, once a link is followed, measures the two glyphs among the actions, case 8), ui/webview/file-view.test.ts and ui/webview/file-view-links.test.ts
 (the delegate's open through openFromViewer; the model import), ui/webview/file-view-figure-error.test.ts and
@@ -8657,8 +8657,12 @@ ui/webview/file-view-seam.test.ts (its re-parse census: the callee list gained a
 with the local functions it reaches, and since the landing round the walk follows a reached local's imported callees and
 every import form transitively, judging the sites it finds per module, with the whole file's count in its one home) and
 tools/markdown-viewer-plan-gate-adopt.test.mjs (main's pin of the "Fix: the gate before adoption (2026-09-20)" section: its
-held copy of that section's re-parse paragraph, re-derived, with the derived figures filled from the seam test's pins). The
-guide's Links in a file paragraph gained two sentences, the trail's and
+held copy of that section's re-parse paragraph, re-derived, with the derived figures filled from the seam test's pins), and
+in the landing round ui/webview/anchor-map.test.ts (the control at the box's top level is no block's node, executed beside
+the failed figure's label's case: the img's html block owns its img alone, or the panel's wrap, the control answers no
+block, the paragraph after pairs and paints, and beside prose the caption maps) and
+ui/webview/md-config-figure-gate-place.test.ts (readPlace over a loaded figure wearing the control, inside the block's
+paragraph and beside its text). The guide's Links in a file paragraph gained two sentences, the trail's and
 the figure control's, and the browser plan's navigation-stack section (plans/file-browser.md) a pointer sentence.
 tools/markdown-viewer-plan-linknav.test.mjs holds this section to the tree: the section is present once after "## Out of
 scope" and carries the ask, what existed, the six decisions, the tests and the open points in that order; the trail

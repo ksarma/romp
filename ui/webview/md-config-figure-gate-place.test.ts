@@ -117,6 +117,13 @@ const gatedImg = (): FakeElement => el("img", { width: "120", height: "80", alt:
  *  the img's next sibling in the img's own parent; its text the viewer's (the fact, the authored source, the alt), not the note's. */
 const figerr = (src: string, alt: string): FakeElement => el("span", { class: "fv-figerr", "data-fv-figerr": "" }, [txt("Image failed to load: " + src + (alt ? " (" + alt + ")" : ""))]);
 const LOCAL = "figs/missing.png";
+/** The "Open the picture" control file-view.ts places after a loaded figure (decideFigureControl, the link-navigation follow-on's
+ *  L3): `button.fv-figopen[data-fv-figopen]`, the img's next sibling, holding a glyph and no text. reader-place.ts lists its class
+ *  among the controls noteText skips; the entry is defensive, since a control with no text contributes nothing to the walk
+ *  whether it is listed or not, so the entry itself is held by the source pin in file-figure-open.test.ts and the scenes below
+ *  hold the pairing and the place with the control beside the img (the file review's landing round, tests-2). */
+const figopen = (): FakeElement => el("button", { class: "fileview-btn fileview-icon fv-figopen", "data-fv-figopen": "", type: "button", title: "Open the picture" }, [el("svg", { viewBox: "0 0 16 16" }, [])]);
+const LOADED = "figs/plot.png";
 
 /** `.fileview-body > div.fileview-md > [h1, p1, p2, X, p3, p4]`, each box 40px tall with an 8px gap, stacked so that
  *  X (the fourth element) straddles the body's top edge at 100 (its box 80..120): the scene of a reader 20px into it. */
@@ -131,7 +138,7 @@ function scene(block: FakeElement): { body: FakeElement; md: FakeElement; blocks
 }
 const docWith = (html: string): string => "# Report\n\n" + PARA(1) + "\n\n" + PARA(2) + "\n\n" + html + "\n\n" + PARA(3) + "\n\n" + PARA(4) + "\n";
 
-test("readPlace: an html block whose figure the gate wrapped reads as its block, the placeholder's label skipped as the anchor map skips it: inside the block's <p>, as the block's own element (a bare <img> line), and a Copy button in an html <pre><code> the same way; text in the element that is not the block's still refuses the pairing", () => {
+test("readPlace: an html block whose figure the gate wrapped reads as its block, the placeholder's label skipped as the anchor map skips it: inside the block's <p>, as the block's own element (a bare <img> line), and a Copy button in an html <pre><code> the same way; text in the element that is not the block's still refuses the pairing; since the link-navigation follow-on a loaded figure's Open the picture control beside the img (a glyph with no text) reads the same way", () => {
   const scenes: Array<[string, string, FakeElement]> = [
     ["a gated picture inside the block's <p>", `<p><img src="${SRC}" width="120" height="80" alt="fig"></p>`, el("p", {}, [gated(gatedImg())])],
     ["a gated bare <img> line: the placeholder is the block's element", `<img src="${SRC}" width="120" height="80" alt="fig">`, gated(gatedImg())],
@@ -142,6 +149,9 @@ test("readPlace: an html block whose figure the gate wrapped reads as its block,
     // source never held; read through textContent the block would refuse to pair, as the gate's label made it before Slice 4
     ["a failed figure's label inside the block's <p>", `<p><img src="${LOCAL}" alt="fig"></p>`, el("p", {}, [el("img", { src: LOCAL, alt: "fig" }), figerr(LOCAL, "fig")])],
     ["a failed figure's label beside the block's own text", `<p>Figure 2. <img src="${LOCAL}" alt="fig"> The caption.</p>`, el("p", {}, [txt("Figure 2. "), el("img", { src: LOCAL, alt: "fig" }), figerr(LOCAL, "fig"), txt(" The caption.")])],
+    // the link-navigation follow-on: a loaded figure wears the "Open the picture" control as the img's next sibling (button.fv-figopen)
+    ["a loaded figure's Open the picture control inside the block's <p>", `<p><img src="${LOADED}" alt="fig"></p>`, el("p", {}, [el("img", { src: LOADED, alt: "fig" }), figopen()])],
+    ["a loaded figure's control beside the block's own text", `<p>Figure 3. <img src="${LOADED}" alt="fig"> The caption.</p>`, el("p", {}, [txt("Figure 3. "), el("img", { src: LOADED, alt: "fig" }), figopen(), txt(" The caption.")])],
   ];
   for (const [what, html, rendered] of scenes) {
     const doc = docWith(html);

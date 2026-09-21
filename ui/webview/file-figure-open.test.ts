@@ -97,7 +97,7 @@ test("the click: a listener of its own on the body beside the links'; the contro
   assert.doesNotMatch(links, /figure/, "the links' listener knows nothing of figures");
 });
 
-test("the two text walks skip the control as they skip the failed figure's label, and the Rendered pairing leaves it out of the top-level nodes beside an html-block figure", () => {
+test("SOURCE-TEXT pins of the two text walks' control lists and of the Rendered pairing's predicate (anchor-map.ts's CONTROL_CLASSES and isFigureCompanion in holdsContent, reader-place.ts's seven): the control is listed with the failed figure's label; the executed cases are anchor-map.test.ts's (the control at the box's top level is no block's node) and md-config-figure-gate-place.test.ts's (readPlace over a figure wearing the control)", () => {
   const classes = between(ANCHOR, "const CONTROL_CLASSES = [", "];");
   assert.match(classes, /"fv-figerr",[^\n]*\n\s*"fv-figopen",/, "anchor-map.ts: after the label, the last entry");
   assert.match(ANCHOR, /const isFigureCompanion = \(n: DNode\): boolean => hasClass\(n, "fv-figerr"\) \|\| hasClass\(n, "fv-figopen"\);/, "the two companions of a figure");
