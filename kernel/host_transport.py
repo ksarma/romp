@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import collections
 import errno
+import fcntl
 import json
 import os
 import re
@@ -160,9 +161,15 @@ class HostDirRefused(OSError):
     directory: a state root that is itself a plain file, or hosts/ re-pointed to a file between the two helpers),
     ELOOP (a symlink loop) and ENOENT (hosts/ re-pointed to a dangling link between the two helpers, the reading the
     descent already gives ENOENT: "does not exist"); every other errno (ENOSPC, EROFS, EACCES, EPERM, EMFILE) is a
-    filesystem failure and propagates as the OSError it is, with its errno, to the launch error."""
+    filesystem failure and propagates as the OSError it is, with its errno, to the launch error. Since the fork PR that
+    follows #814 (2026-09-21, the journal-reads change) the two write opens ask the readers' shape question before
+    anything is opened (_open_host_file_for_write), so a directory, a FIFO or a socket OF OURS standing at spawn.json or
+    host.stderr is refused under this class too, naming the file and its kind (`kind` set beside `file`) with nothing
+    opened, where through #814 a FIFO at either name blocked the open inside the kernel's event loop until a reader
+    appeared and a directory was EISDIR out of it."""
 
-    file = None                                  # the file name when the refusal is a link at spawn.json or host.stderr
+    file = None                                  # the file name when the refusal names an entry at a file's name under hosts/<sid>/
+    kind = None                                  # the entry's kind ("directory", "FIFO", "socket") when a non-regular entry of ours is refused
 
 
 class HostDirAbsent(HostDirRefused):
@@ -225,8 +232,9 @@ def _open_dir_nofollow(name, what: str, shown: Path, dir_fd=None, private: bool 
     on an install whose hosts/ was made at the umask, nor repair it, which is the spawn road's helpers' job; the order
     here is read, record, proceed, and this function changes no mode on any road). `modes`, a list: EVERY component
     admitted is recorded on it the same way, loose or not (the round-7 fifth addendum, 2026-09-20: the caller files a
-    loose row once per connect episode per mode it observed, and a mode that changes between two descents of one
-    episode is a transition it files, which takes the tight observations as well as the loose ones to tell apart)."""
+    loose row once per observed mode of the directory, whoever observes it, and a mode that changes between two
+    observations is a transition it files, which takes the tight observations as well as the loose ones to tell apart;
+    THE RULE is stated at sdk_backend._file_loose_directory_rows)."""
     try:
         fd = os.open(name, _DIR_FLAGS, dir_fd=dir_fd)
     except OSError as e:
@@ -276,9 +284,11 @@ class HostDirs:
     named a PERMANENT residual at its line and in the PR's record (the round-7 fourth addendum, 2026-09-20: connect(2)
     has no dir_fd form, and the descriptor-relative spellings are a different mechanism), under the same precondition
     every residual here shares: a state root that is not 0700 while a session starts, and for the connect one a peer
-    can WRITE, since the swap of hosts/ is a rename in the root. The journal reads (the one queued follow-up, named at
-    their sites) are reachable under a weaker one: a group-writable hosts/, or a loose hosts/<sid>/ of ours, under a
-    root the peer can traverse. Stated precisely (the round-7 fifth addendum, 2026-09-20): under a root that is 0700
+    can WRITE, since the swap of hosts/ is a rename in the root. The journal reads were reachable under a weaker one
+    through #814 (a group-writable hosts/, or a loose hosts/<sid>/ of ours, under a root the peer can traverse) and take
+    the descent since the fork PR that follows it (journal_segments and read_journal_dir: the listing is a scandir off
+    this `dir` descriptor, each file the owner question by name under it through the one reader; the design is stated
+    at read_journal_dir). Stated precisely (the round-7 fifth addendum, 2026-09-20): under a root that is 0700
     before any peer held a descriptor inside it, neither is reachable; a peer who obtained a directory descriptor on a
     loose <sid>/ while the root was traversable keeps creating entries there until a spawn tightens that directory
     (the permission check of a create through a held descriptor is the directory's own mode, not an ancestor's, so
@@ -345,7 +355,7 @@ def _descend(state_dir, sid: str, private: bool) -> HostDirs:
     name under it, each O_DIRECTORY|O_NOFOLLOW and fstat-verified by _open_dir_nofollow."""
     hosts_path = Path(state_dir) / "hosts"
     loose = []          # the read roads' record of a loose component (what, path, mode); the spawn road refuses one instead
-    modes = []          # every component admitted, the same tuples (the loose rows' once-per-episode-per-mode latch reads it)
+    modes = []          # every component admitted, the same tuples (the loose rows' once-per-observed-mode latch reads it)
     hfd = _open_dir_nofollow(str(hosts_path), "hosts directory", hosts_path, private=private, loose=loose, modes=modes)
     try:
         dfd = _open_dir_nofollow(str(sid), "host directory", hosts_path / str(sid), dir_fd=hfd, private=private, loose=loose, modes=modes)
@@ -395,9 +405,10 @@ def open_host_dirs_if_present(state_dir, sid: str):
     (2) The mode is READ, from the fstat the descent already makes, and a loose component is recorded on
     the returned HostDirs (`loose`: what, path, mode; `modes`: every component) for the caller to FILE
     (sdk_backend._file_loose_directory_rows, kind host.directory-loose, the mode in octal, the remedy naming the spawn
-    road's repair) once per connect episode per mode observed, so a stable loose directory is one row however many
-    descents the episode makes and a mode that changes between two of them is a row naming the new mode (the fifth
-    addendum, on the reviewer's ruling of 20:40Z; the fourth filed one row per descent), and then proceed. The read
+    road's repair) once per observed mode of the directory, whoever observes it, so a stable loose directory is one row
+    however many descents, sessions or roads observe it and a mode that changes between two observations is a row naming
+    the new mode (THE RULE at sdk_backend._file_loose_directory_rows, the reviewer's ruling of 2026-09-21 07:19Z; the
+    fifth addendum filed once per connect episode, the fourth once per descent), and then proceed. The read
     roads neither refuse on the mode (the denial of service above) nor repair
     it: a read road stays a read road, the chmod belongs to the spawn road's helpers (sh.hosts_dir, sh.owner_only_dir),
     and the order here is read, record, proceed, never repair-before-reading. Pinned in tests/test_host_transport.py
@@ -554,6 +565,150 @@ def read_host_file(name: str, dirs: HostDirs):
         return f.read()
 
 
+_SEGMENT_RE = re.compile(r"\Ajournal-([0-9]+)\.jsonl\Z")      # sh.Journal's segment names: journal-<firstoffset>.jsonl
+
+
+def journal_segments(dirs: HostDirs, refused=None) -> list:
+    """The orphan journal's segments OF OURS under the verified `hosts/<sid>/`, as (first offset, name) in first-offset
+    order, listed OFF THE HELD DESCRIPTOR: os.scandir(dirs.dir) reads the directory the descent verified and nothing a
+    path names by then; each entry whose NAME has a segment's shape (_SEGMENT_RE) is put the owner question by name
+    under the same descriptor (_stat_name) and decided from the readers' table: a regular file of ours is a segment;
+    no entry (gone since the listing), or a directory, a FIFO or a socket of ours, is not one, skipped with nothing
+    opened; an entry ANOTHER UID owns, of any kind, is HostFileForeign, handed to `refused` for its row and skipped, so
+    the road proceeds as with no such segment (the answer a foreign identity.json gets on the same roads); a SYMLINK of
+    ours is the file-shape refusal, raised, so the road that asked is refused as it is by a link at identity.json (the
+    lease-applies road answers False after the row; the orphan road replays nothing). With `refused` None a foreign
+    entry raises too: a caller with no row to file gets the refusal, never a silent skip. THE CLOSE DISCIPLINE of the
+    listing: os.scandir on a descriptor duplicates it for fdopendir and rewinds the duplicate before closedir, so the
+    held descriptor stays open and a second listing on it starts at the directory's beginning; the `with` closes the
+    iterator whatever the body raises. The census (tests/test_hosts_path_census.py) holds the scandir and the stat
+    by-descriptor. The lease-applies road's journal question (sdk_backend._host_lease_applies) is this list's truth;
+    read_journal_dir below reads the segments it names, and THE DESIGN of both is stated there."""
+    names = []
+    with os.scandir(dirs.dir) as it:
+        for entry in it:
+            names.append(entry.name)
+    out = []
+    for name in sorted(names):
+        m = _SEGMENT_RE.match(name)
+        if m is None:
+            continue
+        try:
+            st = _stat_name(name, dirs)
+        except HostFileForeign as e:
+            if refused is None:
+                raise
+            refused(e)
+            continue
+        if st is None or not stat.S_ISREG(st.st_mode):
+            continue
+        out.append((int(m.group(1)), name))
+    out.sort()
+    return out
+
+
+def read_journal_dir(dirs: HostDirs, offset: int = 0, refused=None):
+    """Read an ORPHAN journal (its host is gone) under the verified `hosts/<sid>/` from `offset` to the end without an
+    index, through the descent's descriptor: segments in first-offset order (journal_segments), each record numbered
+    from its segment's first offset, so acknowledged-and-deleted early segments cost nothing but the records they held;
+    a gap marker's record is skipped and the offsets gaps.json names are skipped in the numbering. Yields
+    (offset, record).
+
+    THE DESIGN (the fork PR that follows #814, 2026-09-21, building the item "the journal reads descend by descriptor"
+    of the general notes' small-asks file, filed by #814's round-7 fourth addendum and placed NEXT by the reviewer on
+    2026-09-20). THE POPULATION it converts, derived by the census (tests/test_hosts_path_census.py) at #814's head and
+    listed there under the follow-up role, five by-path reads under hosts/<sid>/ and no other in the three modules
+    that mint such a path: this function's predecessor in kernel/session_host.py (its glob over the directory, its read
+    of gaps.json by the directory's path, its open of each segment by the path the glob yielded) and the two journal
+    globs in kernel/sdk_backend.py (_host_lease_applies, whether a host held the session, asked with hosts off;
+    _host_orphan_recover, whether a tail stands past the acknowledged offset). The host process never called the
+    predecessor: the host reads its journal through sh.Journal.read_from, off the in-memory index of the segments it
+    wrote itself under a directory sh.owner_only_dir verified (0700, its own uid), and lists the directory for nothing
+    (tests/test_session_host.py pins both by execution and by structure), so the host side has no caller to convert and
+    asks no owner question of its own directory.
+    THE MECHANISM. The caller hands the HostDirs its read descent holds (open_host_dirs_if_present: hosts/ and <sid>
+    each opened O_DIRECTORY|O_NOFOLLOW and fstat-verified a directory of this uid), never a path. The listing is a
+    scandir OFF THE <sid> DESCRIPTOR with a name match on the segment shape (journal_segments), so a `<sid>/` renamed
+    away and a link put in its place after the descent lists the directory the descent verified and not the link's
+    target: a descriptor names an inode, a path names whatever stands there now. Each file is then put the owner
+    question by NAME under the same descriptor and opened by name under it, through the one reader every kernel read
+    of a file under hosts/<sid>/ goes through (_open_host_file: the fstatat before any open, the O_NOFOLLOW|O_NONBLOCK
+    open, the fstat of the descriptor it returned, deciding the same way): gaps.json through read_host_file, each
+    segment through _open_host_file. The answers, from the readers' table (SHAPE_TABLE in tests/test_host_transport.py),
+    file by file: a regular file of ours is read; no entry, or a directory, a FIFO or a socket of ours, is not the file,
+    skipped with nothing opened; an entry ANOTHER UID owns, of any kind, is HostFileForeign, handed to `refused` for its
+    one row (the kernel files host.directory-refused naming the file, its directory and the owning uid, once per connect
+    episode per observed state, sdk_backend._refused_directory_row) and skipped as absent, the road proceeding as it
+    does for a foreign identity.json (a foreign gaps.json: the numbering proceeds as with none); a SYMLINK of ours is
+    the file-shape refusal, RAISED, and the road that asked is refused as it is by a link at identity.json (the
+    lease-applies road answers False after the row; the orphan road's tail check replays nothing; the replay transport
+    files the row and ends the stream). The question is asked of the name under the descriptor and of the object
+    opened, never of a path: a path stat would reopen the window the descent closes.
+    WHAT IT CLOSES: the two roads the item names, both under #814's weaker precondition (a group-writable hosts/, or a
+    loose hosts/<sid>/ of ours, under a state root the peer can traverse; not a peer-writable root). A re-point of
+    `<sid>` landing between a read road's descent and its listing, which the globs took through the link; and a
+    journal file a peer planted under a loose `<sid>/` of ours, which the predecessor read with no owner check. WHAT
+    REMAINS by path under hosts/: the connect to the published socket (HostTransport.connect), permanent while the
+    transport is a Unix socket (connect(2) has no dir_fd form), and the sites the census lists under its other roles
+    (the two directory helpers before the spawn road's descent, the descent's own first open, the host's own writes).
+    `refused` None: a foreign entry raises, so a caller with no row to file gets the refusal and never a silent skip.
+    CALLERS: the orphan road's tail check (journal_has_tail) and the replay transport (HostTransport._read_journal),
+    which BORROWS the descriptor for the replay's life; the road that opened it closes it after the replay
+    (sdk_backend._host_orphan_recover). The lease-applies road takes the listing alone (journal_segments)."""
+    segs = journal_segments(dirs, refused)
+    if not segs:
+        return
+    gaps = set()
+    try:
+        raw = read_host_file("gaps.json", dirs)
+    except HostFileForeign as e:
+        if refused is None:
+            raise
+        refused(e)                                  # a peer's gaps.json: its row, and the numbering proceeds as with none
+        raw = None
+    if raw is not None:
+        try:
+            gaps = set(json.loads(raw))
+        except Exception:                           # a malformed gaps.json of ours: no gaps, as the predecessor read it
+            gaps = set()
+    for first, name in segs:
+        try:
+            fh = _open_host_file(name, dirs)
+        except HostFileForeign as e:                # a peer's entry swapped onto the name since the listing
+            if refused is None:
+                raise
+            refused(e)
+            continue
+        if fh is None:                              # gone, or not a regular file of ours, since the listing
+            continue
+        n = first
+        while n in gaps:                            # an unrecorded gap at the segment's head
+            n += 1
+        with fh:
+            for line in fh:
+                if n >= offset:
+                    try:
+                        rec = json.loads(line)
+                    except ValueError:
+                        rec = None
+                    if rec is not None and rec.get("type") != sh.GAP_TYPE:
+                        yield n, rec
+                n += 1
+                while n in gaps:                    # an unrecorded gap between two records on disk: the numbering skips it
+                    n += 1
+
+
+def journal_has_tail(dirs: HostDirs, offset: int, refused=None) -> bool:
+    """Whether a record stands at or past `offset` in the orphan journal under `dirs` (read_journal_dir's first answer;
+    the orphan road's tail check, sdk_backend._host_orphan_recover). The generator is closed after its first answer,
+    so a segment it opened is closed before the caller reads on."""
+    gen = read_journal_dir(dirs, offset, refused)
+    try:
+        return next(gen, None) is not None
+    finally:
+        gen.close()
+
+
 def host_sock_present(dirs: HostDirs, name: str) -> bool:
     """Whether an entry stands at the published socket's NAME (`host_sock(...).name`, `<sid8>.sock`) in the verified
     `hosts/`: a stat by name relative to the `hosts` descriptor, no symlink followed. The spawn wait's poll
@@ -571,14 +726,18 @@ def host_sock_present(dirs: HostDirs, name: str) -> bool:
 
 def _open_file_nofollow(name: str, flags: int, dirs: HostDirs) -> int:
     """A file under the verified `hosts/<sid>/` opened by NAME relative to its descriptor with O_NOFOLLOW (and
-    O_CLOEXEC), mode 0600 when created: the two file-level opens of the spawn road, spawn.json (write_spawn_spec) and
-    host.stderr (host_stderr_open). A symlink standing at the name fails the open with ELOOP and is refused under
+    O_CLOEXEC), mode 0600 when created: the one open every kernel open of a file under hosts/<sid>/ goes through, for
+    the readers (_open_host_file) and, since the fork PR that follows #814 (2026-09-21), for the two write opens of the
+    spawn road through _open_host_file_for_write, spawn.json (write_spawn_spec) and host.stderr (host_stderr_open),
+    which through #814 called this directly with no shape question before it and no O_NONBLOCK on it. A symlink standing at the name fails the open with ELOOP and is refused under
     HostDirRefused, naming the file and the directory, with `file` set (kernel-2, round 5 of the review, 2026-09-20:
     through round 4 the ELOOP surfaced as a bare OSError, outside the class the two call sites catch, so a planted link
     got no problem row and no remedy and _record_launch_error composed the card over a stale stderr tail). Any other
-    OSError (a full disk, a permission error, EISDIR for a directory at the name) propagates as itself with its errno:
-    the class is for the shape the descent refuses, not for every failure of the open. Nothing is followed and nothing
-    is written on the refused road: O_NOFOLLOW fails the open before any descriptor exists."""
+    OSError (a full disk, a permission error such as EACCES on a file of ours with no write bit) propagates as itself
+    with its errno: the class is for the shape the descent refuses, not for every failure of the open (a directory at
+    the name, EISDIR out of here through #814, no longer reaches this open on either side: the shape question before
+    it answers the kind). Nothing is followed and nothing is written on the refused road: O_NOFOLLOW fails the open
+    before any descriptor exists."""
     try:
         return os.open(name, flags | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0), 0o600, dir_fd=dirs.dir)
     except OSError as e:
@@ -587,6 +746,106 @@ def _open_file_nofollow(name: str, flags: int, dirs: HostDirs) -> int:
             e2.file = name
             raise e2 from None
         raise
+
+
+_KIND_WORDS = ((stat.S_ISDIR, "directory"), (stat.S_ISFIFO, "FIFO"), (stat.S_ISSOCK, "socket"),
+               (stat.S_ISCHR, "character device"), (stat.S_ISBLK, "block device"), (stat.S_ISLNK, "symlink"))
+
+
+def _kind_word(mode: int) -> str:
+    for test, word in _KIND_WORDS:
+        if test(mode):
+            return word
+    return "special file"
+
+
+def _not_regular(name: str, dirs: HostDirs, mode: int) -> HostDirRefused:
+    """The refusal for a non-regular entry OF OURS at a file's name on the write side, naming the file and its kind
+    (`file` and `kind` set, no `uid`): the fork PR that follows #814 (2026-09-21). The read side answers the same entry
+    None with nothing opened, because a read of what is not the file has nothing to read; a WRITE would create or
+    append to it (a FIFO's open blocking until a reader appears, a directory's failing EISDIR after the fact), so the
+    write side refuses it before any open, as it refuses a link, and the spawn road files the row with a remedy naming
+    the kind (sdk_backend._refused_directory_row)."""
+    kind = _kind_word(mode)
+    e = HostDirRefused("%s in host directory %s is a %s, not a regular file" % (name, dirs.path, kind))
+    e.file, e.kind = name, kind
+    return e
+
+
+def _open_host_file_for_write(name: str, flags: int, dirs: HostDirs) -> int:
+    """`hosts/<sid>/<name>` opened for WRITING through the descent, the one opener the spawn road's two writes share
+    (host_stderr_open, write_spawn_spec; the fork PR that follows #814, 2026-09-21, building the small-asks item on the
+    two O_WRONLY opens): the readers' shape question first, then the open with O_NONBLOCK, then the fstat of the
+    descriptor the open returned, then the mode. Returns the descriptor, at 0600, blocking, or raises with nothing
+    opened. Through #814 both writes called _open_file_nofollow directly: O_NOFOLLOW refused a link, and nothing else
+    was asked, so a FIFO a peer planted at host.stderr or spawn.json under a <sid>/ of ours while it was loose (a
+    tightened directory keeps every entry planted before) BLOCKED the open until a reader opened the other end, inside
+    the kernel's event loop, since the spawn road's helpers are synchronous calls in it (driven by the drives verifier
+    of #814's final body pass: blocked 2 s, released by a reader end); a directory at the name was EISDIR out of the
+    open, a bare launch error with no row.
+    FIRST THE SHAPE QUESTION, BEFORE ANY OPEN (_stat_name, the readers' fstatat of the name under the held `<sid>`
+    descriptor with no link followed): no entry, and the open below creates the file (O_CREAT, the caller's flag); a
+    regular file of ours, and the open below opens it; an entry ANOTHER UID owns, of any kind, HostFileForeign, the owner
+    row and the launch refused as the read roads refuse a foreign identity.json (the row names the file, the directory
+    and the owning uid); a SYMLINK of ours, the file-shape refusal _stat_name raises (the same words the open's ELOOP
+    arm gives a link swapped in after the stat); a directory, a FIFO or a socket of ours, the refusal naming the kind
+    (_not_regular), nothing opened, so a FIFO never blocks and a directory never reaches EISDIR.
+    THEN THE OPEN, by name under the same descriptor with O_NOFOLLOW (_open_file_nofollow) AND O_NONBLOCK, so a FIFO
+    swapped onto the name between the stat and the open cannot block it: with no reader the open ends with ENXIO (a
+    socket at the name answers ENXIO too), which asks the shape question once more by name (a peer's entry is its row,
+    a non-regular entry of ours is the kind refusal) instead of standing as a bare errno; no entry, or a regular file
+    of ours, by then means the object the open met is gone again, and the open's own errno stands, since there is no
+    kind to name; with a reader the open returns a descriptor the
+    fstat below refuses. THEN THE FSTAT OF THE DESCRIPTOR, the authoritative check since the entry can change between
+    the stat and the open, deciding the same way (another uid's, HostFileForeign, closed unwritten; not a regular file,
+    the kind refusal, closed unwritten). A caller's O_TRUNC is taken off the open and applied AFTER these checks
+    (os.ftruncate on the verified descriptor), so a peer's file swapped onto spawn.json between the stat and the open
+    is refused with its bytes intact, where O_TRUNC on the open itself would have emptied it before the fstat ran (a
+    directory swapped in answers the open's EISDIR, which asks the shape question again like ENXIO and refuses by
+    kind). O_NONBLOCK is then cleared off the descriptor (fcntl F_SETFL): on a regular
+    file the flag changes no write, and this descriptor outlives the function as the host's stderr or as spawn.json's
+    writer, so it leaves here exactly as #814 returned it. THE MODE LAST, on the descriptor (os.fchmod 0600, kernel-1
+    of round 5 of #814's review: O_CREAT's mode applies only to a file this open creates, and a file a previous launch
+    left kept its birth mode), after the truncation and before the caller's first write, so the mode is tightened
+    while the file is still empty (PR 789's pin, SpawnSpec); a raising fchmod, or any raise after the open, closes the
+    descriptor first. Every other
+    OSError of the open (ENOSPC, EROFS, EMFILE, EACCES on a file of ours with no write bit) propagates as itself with
+    its errno, the launch error's road (sdk_backend._spawn_road_failed). Every question is asked of the name under the
+    held descriptor or of the descriptor itself, never of a path (a path stat would reopen the window the descent
+    closes); the census (tests/test_hosts_path_census.py) holds every syscall here by-descriptor. Pinned cell by cell
+    in tests/test_host_transport.py (WriteOpens: the shape table at both names, the FIFO drive with a bounded join, the
+    swap inside the open)."""
+    st = _stat_name(name, dirs)
+    if st is not None and not stat.S_ISREG(st.st_mode):
+        raise _not_regular(name, dirs, st.st_mode)
+    try:
+        # O_TRUNC is taken OFF the open and applied after the checks (os.ftruncate on the verified descriptor): with it on
+        # the open, a peer's regular file swapped onto spawn.json between the stat and the open was truncated before the
+        # fstat below refused it, a write onto a file that is not ours
+        fd = _open_file_nofollow(name, (flags & ~os.O_TRUNC) | os.O_NONBLOCK, dirs)
+    except OSError as e:
+        if e.errno in (errno.ENXIO, errno.EISDIR):  # a FIFO with no reader, a socket or a directory swapped onto the name since the stat
+            st = _stat_name(name, dirs)             # a peer's: HostFileForeign out of here; a non-regular entry of ours: the kind
+            if st is not None and not stat.S_ISREG(st.st_mode):
+                raise _not_regular(name, dirs, st.st_mode) from None
+            # no entry, or a regular file of ours, by now: the object the open met is gone again and there is no kind
+            # to name, so the open's own errno stands (the review fix-up of this PR, on the drives verifier's nit:
+            # through the PR's first commit this arm named a regular file of ours a special file)
+        raise
+    try:
+        st = os.fstat(fd)
+        if st.st_uid != os.geteuid():
+            raise _foreign(name, dirs, st.st_uid)
+        if not stat.S_ISREG(st.st_mode):
+            raise _not_regular(name, dirs, st.st_mode)
+        if flags & os.O_TRUNC:                      # the caller's truncation, on the verified descriptor, before the mode and the write
+            os.ftruncate(fd, 0)
+        fcntl.fcntl(fd, fcntl.F_SETFL, fcntl.fcntl(fd, fcntl.F_GETFL) & ~os.O_NONBLOCK)
+        os.fchmod(fd, 0o600)
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
 
 
 def host_stderr_open(dirs: HostDirs) -> int:
@@ -600,14 +859,12 @@ def host_stderr_open(dirs: HostDirs) -> int:
     it was born with, 0664 under the 002 umask every launch before round 4 opened it at, while spawn.json two lines
     away in write_spawn_spec paid the same fchmod for the same reason; a raising fchmod closes the descriptor and
     propagates. A symlink at the name is refused under HostDirRefused (_open_file_nofollow, kernel-2 of the same
-    round), the class the launcher's call site already catches."""
-    fd = _open_file_nofollow("host.stderr", os.O_WRONLY | os.O_CREAT | os.O_APPEND, dirs)
-    try:
-        os.fchmod(fd, 0o600)
-    except BaseException:
-        os.close(fd)
-        raise
-    return fd
+    round), the class the launcher's call site already catches. Since the fork PR that follows #814 (2026-09-21) the
+    open goes through _open_host_file_for_write: the shape question of the entry at the name before anything is opened
+    (a peer's entry of any kind, the owner row and the launch refused; a directory, a FIFO or a socket of ours, a
+    refusal naming the kind, nothing opened), O_NONBLOCK on the open and the fstat of the descriptor after it, so a
+    FIFO at the name no longer blocks the spawn road inside the event loop."""
+    return _open_host_file_for_write("host.stderr", os.O_WRONLY | os.O_CREAT | os.O_APPEND, dirs)
 
 
 def host_stderr_size(dirs: HostDirs) -> int:
@@ -671,9 +928,9 @@ def remove_host_dir(state_dir, sid: str, log=None) -> bool:
     a peer's directory the leftover arm of the connect road (a `hosts/<sid>/` seen through the link, no lease) deleted
     the peer's `<sid>/` through it, a write onto a target of the peer's choosing on the road every session start takes.
     The reads that arm makes before this call take the descent since the round-7 second addendum (the directory's
-    existence through open_host_dirs_if_present, identity.json through read_host_file); the journal's tail still takes
-    a path (a glob and the reads that follow it, sh.read_journal_dir), the one queued follow-up ("the journal reads
-    descend by descriptor", the general notes' small-asks file) named at its call sites."""
+    existence through open_host_dirs_if_present, identity.json through read_host_file), and so does the journal's tail
+    since the fork PR that follows #814 (journal_has_tail and read_journal_dir off the same descriptor; the design is
+    stated at read_journal_dir)."""
     hosts_path = Path(state_dir) / "hosts"
     try:
         hfd = _open_dir_nofollow(str(hosts_path), "hosts directory", hosts_path, private=False)
@@ -1061,12 +1318,12 @@ def write_spawn_spec(state_dir, sid: str, spec: dict) -> Path:
         raise HostDirRefused(helper_shape_refusal(e, state_dir, sid)) from e
     p = host_dir(state_dir, sid) / "spawn.json"
     with open_host_dirs(state_dir, sid) as dirs:
-        fd = _open_file_nofollow("spawn.json", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, dirs)
-        try:
-            os.fchmod(fd, 0o600)
-        except BaseException:
-            os.close(fd)          # closed and re-raised, not a finally: the file object closes it on the success road
-            raise
+        # the one write opener since the fork PR that follows #814 (2026-09-21; _open_host_file_for_write): the shape
+        # question of the entry at spawn.json before anything is opened (a peer's entry of any kind is the owner row and
+        # the launch refused; a directory, a FIFO or a socket of ours is a refusal naming the kind, nothing opened, where
+        # through #814 a FIFO blocked this open inside the event loop until a reader appeared), then the open with
+        # O_NONBLOCK, the fstat of the descriptor, and the fchmod that was here, with the same close-and-reraise
+        fd = _open_host_file_for_write("spawn.json", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, dirs)
         with os.fdopen(fd, "w") as f:
             json.dump(spec, f)
     return p
@@ -1105,8 +1362,17 @@ class HostTransport(_Base):
     The session's receive loop is the same either way, which is the point."""
 
     def __init__(self, sock_path=None, *, kernel=None, ack=sh.ACK_NONE, end_grace=sh.END_GRACE_DEFAULT_S,
-                 on_ack=None, on_hello=None, on_stderr=None, on_exit=None, on_fault=None, journal_dir=None):
+                 on_ack=None, on_hello=None, on_stderr=None, on_exit=None, on_fault=None, journal_dirs=None, on_refused=None):
         self.sock_path = str(sock_path) if sock_path else None
+        # replay mode holds the read descent's HostDirs on the orphan's hosts/<sid>/ (the fork PR that follows #814,
+        # 2026-09-21; a directory PATH through #814): the records are read by name under its descriptor
+        # (read_journal_dir), and `on_refused` files the kernel's row for an entry the reader refuses (a peer's file,
+        # skipped; a link of ours, which ends the replay). `journal_dir` stays the replay FLAG every mode check below and
+        # the spend fold's orphan test in sdk_backend read (`if self.journal_dir`), now the directory's path as the descent
+        # names it, for wording alone: nothing opens it. The descriptor is BORROWED: the road that opened it closes it
+        # after the replay.
+        self.journal_dirs = journal_dirs
+        self.on_refused = on_refused
         self.kernel = dict(kernel or {})
         self.ack_offset = int(ack)
         self.replay_end = None          # the journal's next offset at the attach (the hello's journal.next): records before
@@ -1116,7 +1382,7 @@ class HostTransport(_Base):
         #                                 transport's current offset is never the handled record's; the tag is
         self.end_grace = float(end_grace)
         self.on_ack, self.on_hello, self.on_stderr, self.on_exit, self.on_fault = on_ack, on_hello, on_stderr, on_exit, on_fault
-        self.journal_dir = str(journal_dir) if journal_dir else None
+        self.journal_dir = str(journal_dirs.path) if journal_dirs is not None else None
         self.detach_mode = False
         self.hello = None
         self.exit_info = None
@@ -1136,8 +1402,12 @@ class HostTransport(_Base):
         self._init_pending = True       # live mode: the Query's initialize has not been answered yet
 
     @classmethod
-    def from_journal(cls, journal_dir, ack=sh.ACK_NONE, **kw):
-        return cls(None, ack=ack, journal_dir=journal_dir, **kw)
+    def from_journal(cls, dirs, ack=sh.ACK_NONE, **kw):
+        """The replay transport over the orphan journal under `dirs`, the HostDirs the caller's read descent holds
+        (host_transport.open_host_dirs_if_present); `on_refused` in `kw` takes the reader's refusals (read_journal_dir);
+        with none given a refusal is raised out of read_messages, never a silent end of the stream (_read_journal).
+        The caller keeps the descriptor open through the replay and closes it after."""
+        return cls(None, ack=ack, journal_dirs=dirs, **kw)
 
     # ── Transport ──
     async def connect(self) -> None:
@@ -1409,31 +1679,37 @@ class HostTransport(_Base):
             if item is None:
                 return
             yield item
-        # FOLLOW-UP, one item, "the journal reads descend by descriptor" (the general notes' small-asks file, filed
-        # 2026-09-20 by the round-7 fourth addendum of the review; through the third addendum this site read
-        # UNCONVERTED): sh.read_journal_dir lists the orphan's segments with a GLOB over the directory
-        # (kernel/session_host.py, `d.glob("journal-*.jsonl")`) and then opens each segment and gaps.json by the paths
-        # the glob yields; its interface is a directory path. That function's three reads and the two journal globs in
-        # sdk_backend (_host_lease_applies, _host_orphan_recover) are the item's five sites, one change: a scandir off the
-        # verified <sid> descriptor with a name match and opens by name under it, the shape _rmtree_at already has, with
-        # read_journal_dir rewritten to take the descriptor and its two callers (the orphan road's tail check and this
-        # transport) with it. The replay transport reaches here from _host_orphan_recover only after that road's descent
-        # has verified hosts/<sid>/ and read identity.json through it; a re-point landing between that read and this one
-        # is read here, and a journal file a peer planted under a loose <sid>/ of ours is read by these paths with no
-        # owner check until the item lands (the readers under hosts/<sid>/ check the owner since the fourth addendum;
-        # these do not).
-        for off, rec in sh.read_journal_dir(self.journal_dir, self.ack_offset + 1):
-            self.ack_offset = off
-            if self.on_ack:
-                self.on_ack(off)
-            self._tag(off, rec, replay=True)             # an orphan journal's records are all replays
-            yield rec
-            # answers the Query asked for meanwhile ride between records
-            while not self._synth.empty():
-                item = self._synth.get_nowait()
-                if item is None:
-                    return
-                yield item
+        # The journal by descriptor (the fork PR that follows #814, 2026-09-21; the design is stated at read_journal_dir):
+        # the segments are listed off the <sid> descriptor the orphan road's descent holds and handed here
+        # (from_journal), and gaps.json and each segment are opened by name under it through the one reader, the owner
+        # question asked of each. Through #814 this site read UNCONVERTED, one of the item's five: sh.read_journal_dir
+        # listed the segments with a glob over the directory PATH and opened each file by the path the glob yielded, so
+        # a re-point of <sid> landing between the road's descent and this read was read through the link and a journal
+        # file a peer planted under a loose <sid>/ of ours was replayed with no owner check. Now a peer's file is its
+        # row (on_refused, the kernel's) and skipped, and a link of ours at a segment or at gaps.json ends the replay
+        # after the row: the stream then ends as it does at the journal's end (the Query's initialize answered below,
+        # then the replay-end exit), never a raise out of the read loop for a shape at a name. WITH NO on_refused the
+        # refusal is RAISED out of the read loop instead, as read_journal_dir raises with `refused` None: a caller with
+        # no row to file gets the refusal, never a silent end (the review fix-up of this PR, on the drives verifier's
+        # finding: through the PR's first commit this arm swallowed it, and a foreign segment beside ours ended the
+        # stream replay-end with none of our records replayed, since the listing raises before the first record).
+        try:
+            for off, rec in read_journal_dir(self.journal_dirs, self.ack_offset + 1, self.on_refused):
+                self.ack_offset = off
+                if self.on_ack:
+                    self.on_ack(off)
+                self._tag(off, rec, replay=True)             # an orphan journal's records are all replays
+                yield rec
+                # answers the Query asked for meanwhile ride between records
+                while not self._synth.empty():
+                    item = self._synth.get_nowait()
+                    if item is None:
+                        return
+                    yield item
+        except HostDirRefused as e:                          # a link of ours at a segment or at gaps.json: the rest is not replayed
+            if self.on_refused is None:                      # no row to file: the refusal itself, out of read_messages
+                raise
+            self.on_refused(e)
         # the Query writes its initialize right after start(); answer it before ending the stream (the SDK
         # treats the end as the CLI's exit), bounded so a client that never asks still ends
         deadline = time.time() + 5.0
