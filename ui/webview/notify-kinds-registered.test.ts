@@ -34,8 +34,9 @@ function chipKinds(): Set<string> {
   return new Set(Array.from(KERNEL.matchAll(/\.rerr-chip\.k-([a-z]+)(?=[,{])/g), (m) => m[1]));
 }
 
-/** Comments out, so a writer named in prose is not a writer. */
-const code = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/[^\n]*/g, "$1");
+/** Comments out, so a writer named in prose is not a writer; a block comment leaves its line breaks, so a site's line number is
+ *  its number in the file. */
+const code = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, "")).replace(/(^|[^:"'`\\])\/\/[^\n]*/g, "$1");
 
 /** The top-level arguments of the call whose `(` is at `open`: parentheses, brackets and braces balanced, strings skipped. */
 function callArgs(src: string, open: number): string[] {
