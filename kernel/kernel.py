@@ -25123,16 +25123,21 @@ def _note_tunnel_teardown(r, now):
 BUS_PORT = int(os.environ.get("ROMP_POSTAL_PORT", "25302"))      # the environment's word for this machine's bus port: the tunnel's
 #                                                                    local side (the -L target, the legacy -R) and the FALLBACK of _bus_port()
 _BUS_PORT_SAID = [None]                                           # the census line's memory: (port, source) said once, a change said again
-_BUS_ENSURED = [False]                                            # this kernel ENSURED its bus (the ensure exited 0): the bus whose record it may trust
+_BUS_ENSURED = [False]                                            # this kernel ENSURED a bus of its own (the ensure took the spawned or the up road,
+#                                                                    postal_service.ensure_road; never a client-only ping): the bus whose record it may trust
 
 
 def _bus_port():
     """The port this machine's bus BOUND, for every loopback dial of it: the bus's own record STATE/postal/postal-port ({"port",
     "pid", "tok"}, written after its bind, removed on a clean exit; postal_service.py PORTFILE) ahead of the environment, which is
     the fallback when the record is absent, stale (its pid no longer runs), another bus's (its token mark is not this kernel's),
-    or when this kernel ensured no bus at all (_BUS_ENSURED: client-only mode, a lab kernel, an in-process test kernel; the
+    or when this kernel ensured no bus of its own (_BUS_ENSURED: a client-only host, whose ensure only pings the tunnel, a
+    lab kernel, an in-process test kernel, an ensure that found a tunnel or another environment's bus answering the port; the
     whole test suite showed a record one world left under the shared state root redirecting a later world's dial, and the
-    ensure is the event that makes a bus this kernel's). Both processes read ROMP_POSTAL_PORT at import and
+    ensure that spawned the bus, or found the machine's own answering with its record live under this kernel's token, is
+    the event that makes a bus this kernel's: postal_service.ensure_road's `spawned` and `up`. The fold 3 review,
+    2026-09-21: any exit 0 armed the flag, a client-only host's ping of the tunnel included, and a live local record then
+    redirected the dials meant for the tunnel). Both processes read ROMP_POSTAL_PORT at import and
     nothing bound them (2026-09-18): a unit or profile that set the port for one process and not the other, or a stale legacy
     tunnel reverse-forwarding the hub's bus onto this loopback at the fixed port, had the kernel dial a bus that was not its
     own, and a held message's approve came back "no held message" from a bus that never held it. The record is the bus's
@@ -25212,6 +25217,18 @@ _remotes_lock = threading.Lock()
 _tunnel_wake = threading.Event()
 
 
+_BUS_OWNED_ROADS = ("spawned", "up")   # postal_service.ENSURE_OWNED (KEEP IN SYNC): the ensure roads on which this machine owns a local bus
+
+
+def _ensure_road(out):
+    """The road the ensure took, from its stdout (`ensure: road=<road>`, postal_service main's ensure verb); "" when it named
+    none (an older service, a stdout something else wrote over)."""
+    for ln in (out or "").splitlines():
+        if ln.startswith("ensure: road="):
+            return ln[len("ensure: road="):].strip()
+    return ""
+
+
 def _ensure_postal_bus():
     """Start the local postal bus if nothing has yet (best-effort, off the boot path). The bus used to
     start only LAZILY — a session's postal MCP server runs `ensure` — so a freshly attach-bootstrapped
@@ -25219,14 +25236,24 @@ def _ensure_postal_bus():
     silently (the 2026-07-27 federation shakedown: the new box answered /sessions while every message
     to it sat parked). The postal service's own `ensure` is idempotent, respects client-only mode, and
     no-ops when the bus is already up, so the kernel can insist at every boot. Absolute paths: a
-    bootstrap-started kernel's non-login shell has neither the repo's bin/ nor a guaranteed PATH."""
+    bootstrap-started kernel's non-login shell has neither the repo's bin/ nor a guaranteed PATH.
+    The ensure says on stdout which ROAD it took (postal_service.ensure_road), and only a road on which
+    this machine owns a local bus (it spawned one, or found the machine's own answering) arms
+    _BUS_ENSURED, the trust _bus_port() puts in the bus's port record: a client-only host's ping of its
+    tunnel, or a tunnel or another environment's bus answering the port, arms nothing (the fold 3
+    review, 2026-09-21: any exit 0 armed it)."""
     try:
         r = subprocess.run([sys.executable, str(BIN / "romp-postal-service"), "ensure"],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=30)
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30)
         if r.returncode != 0:   # the bus said no (2026-09-10: it refuses the machine's fixed port under a test): say so here, where the kernel's log is
             sys.stderr.write("postal bus ensure refused (exit %d): %s\n" % (r.returncode, (r.stderr or "").strip()[-2000:]))
         else:
-            _BUS_ENSURED[0] = True   # the bus this kernel ensured is the one whose port record _bus_port() may trust
+            road = _ensure_road(r.stdout)
+            if road in _BUS_OWNED_ROADS:
+                _BUS_ENSURED[0] = True   # a bus of this kernel's own: the one whose port record _bus_port() may trust
+            elif not _BUS_ENSURED[0]:
+                sys.stderr.write("postal bus ensure took the %s road: this kernel owns no bus, and its dials read ROMP_POSTAL_PORT\n"
+                                 % (road or "unnamed"))
     except Exception:
         sys.stderr.write("postal bus ensure failed:\n%s" % traceback.format_exc())
 
@@ -25241,9 +25268,17 @@ def _revive_postal_bus():
     so a burst of refused notifies — one per tunnel per supervisor pass — coalesces into one ensure.
     A quiet hub went dark exactly this way twice on 2026-08-12: bus gone, kernel up, every /peer
     notify failing silently, cross-host mail parked until a manual ensure."""
-    if (os.environ.get("ROMP_POSTAL_CLIENT_ONLY") or "").strip().lower() in ("1", "on", "true", "yes"):
-        return   # a client-only kernel owns no bus to revive: the ensure would only ping (2026-09-18: a revive kicked on a daemon
-        #          thread by a hermetic test's refused notify outran the test's environment restore and started a real bus)
+    no_bus_word = (os.environ.get("ROMP_POSTAL_CLIENT_ONLY") or "").strip().lower() in ("1", "on", "true", "yes")
+    if no_bus_word and not _BUS_ENSURED[0]:
+        # The environment's client-only word is read here as "this kernel must start no bus", a stricter gate than the
+        # service's own mode on purpose: postal_service.is_client_only() is peers OFF and (the word or the marker file), and
+        # mirroring it would let the suite's floor, the word with peers on, spawn a real bus off a refused notify on a daemon
+        # thread (2026-09-18: a revive kicked by a hermetic test's refused notify outran the test's environment restore and
+        # started a real bus). What the kernel knows of its own bus outranks the word: a kernel that ensured a bus of its own
+        # (_BUS_ENSURED, armed on the spawned and up roads alone) owns one to revive, word or no word (the fold 3 review,
+        # 2026-09-21: a kernel that set the word with peers on owned a real bus and silently refused to re-ensure it when it
+        # died). A client-only host never arms the flag (its ensure only pings the tunnel), so the skip holds there.
+        return
     with _bus_revive_lock:
         if _bus_reviving[0]:
             return
@@ -45905,7 +45940,7 @@ def _user_todo_placeholder(s, name, color, fsid, live, now, todos):
             "summary": None, "blockSummary": None, "background": None,
             "blocked": {"state": "userTodos", "count": len(todos),
                         "what": _USER_TODO_BLOCK_WHAT},
-            "column": "needs_input",
+            "column": "needs_input", "board": "feed", "category": "needs_input",
             "provisional": True, "tree": []}
 
 

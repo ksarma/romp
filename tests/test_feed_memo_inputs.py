@@ -241,9 +241,11 @@ CONST_TYPES = (int, float, str, bytes, bool, tuple, frozenset, re.Pattern, type,
                type(None))
 
 # ── the row readers, function -> (the name its row travels under, the top-level row fields it reads) ───────
-# Every function on the feed's path that reads the live row (2026-09-18): the body, the helpers HELPERS labels
-# `row`, _awaiting_live_rows (reached through _session_awaiting) and _interrupting (the key computes its boolean
-# into the `interrupting` component, so its two fields are that component's, not the row's). RowFieldCensus
+# Every function on the feed's path that reads the live row (2026-09-18), including one a censused reader hands the
+# row to: the body, the helpers HELPERS labels `row`, _awaiting_live_rows (reached through _session_awaiting),
+# _compacting_now (reached through _user_todo_idle, this fork's floor; the fold 3 review, 2026-09-21: an entry that
+# stopped at the caller's own source left the callee's two reads uncensused) and _interrupting (the key computes its
+# boolean into the `interrupting` component, so its two fields are that component's, not the row's). RowFieldCensus
 # derives each function's reads from its source (the rule in its docstring) and pins _feed_row_key to their union,
 # so a new `.get("field")` in any of them fails by name, and a helper newly labelled `row` must be entered here.
 # Three of them (_cap_switch_offer, _session_awaiting, _bg_live_norm) take the row off _live_map(), the cycle's
@@ -257,7 +259,8 @@ ROW_READERS = {
     "_awaiting_live_rows": ("tm", {"subagents"}),
     "_session_awaiting": ("live", set()),                                   # `live is not None` alone: no field
     "_warm_wanted": ("tm", {"state"}),
-    "_user_todo_idle": ("tm", set()),                                       # hands the row and the path to _compacting_now's gate (build_feed's hoist); no field of its own
+    "_user_todo_idle": ("tm", set()),                                       # hands the row and the path to _compacting_now's gate (build_feed's hoist); no read of its own: the callee's are censused on the next line
+    "_compacting_now": ("tm", {"state", "since"}),                          # the gate _user_todo_idle hands the row to (this fork's floor): its state and since, both in the key already
     "_interrupting": ("tm", {"interrupting", "snapT"}),
 }
 INTERRUPTING_FIELDS = {"interrupting", "snapT"}    # the `interrupting` component's own reads, not the row component's

@@ -600,20 +600,31 @@ class BusPortRecord(unittest.TestCase):
         self.assertEqual((ok, err), (True, "bus HTTP 200"), "the dial followed the override to the stub, not the foreign record")
         self.assertEqual(seen[0][0], "/quarantine/act")
 
-    def test_the_ensure_exiting_zero_is_what_arms_the_record(self):
-        # the flag is set by _ensure_postal_bus on a zero exit and by nothing else; a refused ensure (the fixed port under a test)
-        # leaves it off, so a hermetic kernel never trusts a record
+    def test_the_ensure_that_took_an_owned_road_is_what_arms_the_record(self):
+        # the flag is set by _ensure_postal_bus on a zero exit whose stdout names a road on which this machine owns a local bus
+        # (spawned, up: postal_service.ensure_road) and by nothing else. A refused ensure (the fixed port under a test) leaves
+        # it off, so a hermetic kernel never trusts a record; so does an exit 0 on the client-only road (the fold 3 review,
+        # 2026-09-21: the all-exit-0 contract this pin used to hold armed a client-only host's ping of its tunnel, and a live
+        # local record then redirected the dials meant for the tunnel), on the answering road (a tunnel or another
+        # environment's bus on the port) or with no road named. Once armed the flag stands: the bus this kernel spawned is
+        # its own whatever a later ensure finds answering. tests/test_postal_bus_revive_guard.py drives the roads end to end.
         saved = km.subprocess.run
         class R:
-            def __init__(self, code): self.returncode, self.stderr = code, "refused"
+            def __init__(self, code, out=""): self.returncode, self.stdout, self.stderr = code, out, "refused"
         try:
-            km._BUS_ENSURED[0] = False
-            km.subprocess.run = lambda *a, **kw: R(1)
+            for code, out in ((1, ""), (0, "ensure: road=client-only\n"), (0, "ensure: road=answering\n"), (0, "")):
+                km._BUS_ENSURED[0] = False
+                km.subprocess.run = lambda *a, code=code, out=out, **kw: R(code, out)
+                km._ensure_postal_bus()
+                self.assertFalse(km._BUS_ENSURED[0], "arms nothing: exit %d, stdout %r" % (code, out))
+            for out in ("ensure: road=spawned\n", "ensure: road=up\n"):
+                km._BUS_ENSURED[0] = False
+                km.subprocess.run = lambda *a, out=out, **kw: R(0, out)
+                km._ensure_postal_bus()
+                self.assertTrue(km._BUS_ENSURED[0], "the ensure that answered on an owned road arms the record: %r" % out)
+            km.subprocess.run = lambda *a, **kw: R(0, "ensure: road=answering\n")
             km._ensure_postal_bus()
-            self.assertFalse(km._BUS_ENSURED[0], "a refused ensure arms nothing")
-            km.subprocess.run = lambda *a, **kw: R(0)
-            km._ensure_postal_bus()
-            self.assertTrue(km._BUS_ENSURED[0], "the ensure that answered arms the record")
+            self.assertTrue(km._BUS_ENSURED[0], "armed once, the flag stands")
         finally:
             km.subprocess.run = saved
 
