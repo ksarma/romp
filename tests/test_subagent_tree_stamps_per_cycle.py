@@ -18,17 +18,17 @@ first reader of a tree in the cycle validates or walks it and holds the (directo
 stamp; every later reader on that thread in the cycle, the agent-file lookup's stamp re-check included, pays no stat;
 and the agents' launch folds are held for the cycle too (_awaiting_nest). A change on disk after the validation is
 seen by the NEXT cycle's first reader, one cycle later at most. Nothing failed is held for the cycle; a launch fold that
-did not read the file is held for the CALL that observed the fault alone (two lifetimes, round 2 of #882: returned without
+did not read the file is held for the CALL that observed the fault alone (two lifetimes; round 1 of #882 found that returned without
 any hold it was folded once per owner lookup, A x (A - 1) times per read where the parent's call-local memo folded A).
 
 Pinned here, through the REAL cycle functions so the clearing point tested is the wired one: (1) the bound: one pusher
 cycle and one jobs pass with three _session_awaiting calls each cost D os.lstat on the tree's directories (the one
 validation), 0 os.stat on them, dirStats plus D - 1, one hit, served moved by the asks the scope answered (the premise
 that every read reached the memo is asserted per read and by shape, the first ask validated and every later one served,
-never by a count of asks per read; round 2 of #882) and A agent-file stats (one fold per agent), where before the scope
+never by a count of asks per read; round 1 of #882's extra8-1) and A agent-file stats (one fold per agent), where before the scope
 each call paid A x D os.stat, D lstats and A file stats, and the scope's reads moved no counter; with an agent row whose
 file is nowhere the miss walk runs once per cycle and its dependency notes to the chat build cost no stat on the tree's
-directories (round 2 of #882:
+directories (round 1 of #882's correctness-1:
 the own tree's note was a fresh stat, one per walk); the scope is closed after the cycle; and a read
 outside any cycle (a handler thread's) still pays per call, with dirStats now counting the stats of both validators;
 (2) per cycle, not sticky: a directory and a fourth agent landing between two cycles are seen by the second cycle's
@@ -40,27 +40,27 @@ root makes the next read in the same scope walk again while a forget that evicts
 stamp stat that raises is answered (dir, None) and not held while one that succeeds is held; a walk with a failed
 listing is not held while a clean one is, and a walk that stored a racy stamp (the real window, one directory written at
 the walk) is held for the cycle like a clean one, its pair and its stamps, and walked again by the next cycle's first read
-(round 2 of #882: every case closed the window, so the hold had no executed pin and the opposite policy stayed green); a
+(round 1 of #882: every case closed the window, so the hold had no executed pin and the opposite policy stayed green); a
 launch fold that did not read the file is folded once per read (the call-local
 hold) and again by the next read (not held for the cycle) while one that read it is held for the cycle, with the fault's
 producer driven for real (the reader's fail path, a raising fold, a readable file); a root gone mid-cycle whose entry stood
 moves the gen and records its own eviction, and a sibling tree the scope held is still served (the eviction is that root's,
 not the sibling's), while one with no entry moves nothing; the two pop paths, each found by a thread with no hold on the
-root while another thread's scope holds it (the tree removed, and the tree replaced by a regular file; round 2 of #882,
+root while another thread's scope holds it (the tree removed, and the tree replaced by a regular file; round 1 of #882,
 where the replaced-root record had no case and its deletion left the module green): the pop moves the gen by one and names
 the root in the table, the holder's next read drops its pair and answers the pop's shape at one lstat of the root, its
 other held tree is still served, and a second read with no entry standing moves nothing; and the held-root lag,
 characterized: a root removed while the same thread's scope holds it is served, pair and stamps, at no stat until that
 scope ends (the served call precedes the root's lstat, so no pop runs and the gen stands), and the next scope's first read
-finds it gone; (5) the invalidation is scoped to what became stale (round 2 of
-#882): an eviction of a root drops from every open scope that root's pair, the stamps indexed from it and the launch folds
+finds it gone; (5) the invalidation is scoped to what became stale (since 2026-09-21,
+round 1 of #882's ruling): an eviction of a root drops from every open scope that root's pair, the stamps indexed from it and the launch folds
 of the agents whose files resolved under it, and nothing else, so a held tree, a held stamp and held launch folds survive
 the eviction of a root they are not under (0 lstats, 0 stats, 0 folds on the next read), a cached agent-file path is not
 answered after another thread found its tree gone (the stamps of the removed tree are dropped), held launch folds are
 re-read when their own root leaves the memo (the attribution changes), and the table of evicted roots at its cap is
-cleared with every held entry dropped once. Before round 2 one process-wide generation emptied every scope's three maps on
+cleared with every held entry dropped once. Before 2026-09-21 one process-wide generation emptied every scope's three maps on
 any root's eviction: every held tree paid its D lstats again, every held stamp its stat, every awaiting agent its fold.
-(6) The dependency key (round 2 of #882): the key a chat build records for a subagents tree the agent-file miss walk looked
+(6) The dependency key (since 2026-09-21, round 1 of #882's ruling): the key a chat build records for a subagents tree the agent-file miss walk looked
 through is the served read's (mtime, size) per directory, so a file landing after the hold under a directory the served
 listing lacked leaves the recorded key behind the next signature's re-stat and the tab is rebuilt, whether the landing moved
 the root's stamp or a listed child's; a fresh stat taken after the served listing recorded the post-landing key, equal to
@@ -111,7 +111,7 @@ SID = "11111111-2222-3333-4444-7c7c7c7c7c7c"   # a PRIVATE placeholder sid (the 
 OTHER_SID = "11111111-2222-3333-4444-7c7c7c7c7c7d"   # a second private placeholder: the session whose tree vanishes mid-cycle (Guards)
 NOW = 1781100000
 AGED_NS = 10_000_000_000                       # ten seconds: past the racy window, as tests/test_subagent_tree_memo.py ages
-STAT_KEYS = ("hit", "miss", "served", "evict", "dirStats")   # served: the reads the scope answered from a held pair (round 2 of #882)
+STAT_KEYS = ("hit", "miss", "served", "evict", "dirStats")   # served: the reads the scope answered from a held pair (since 2026-09-21)
 
 # The kernel names this module replaces for a test and puts back at cleanup: the liveness and awaiting sources (stubbed
 # as tests/test_awaiting_rows.py stubs them), the tick jobs a test stands in for, and the two jobs that read the tree
@@ -351,7 +351,7 @@ class _World(unittest.TestCase):
         scope already held the pair and answered with it ("served") or the call validated or walked ("validated"): the
         premise the bound rests on, that every read reached the memo, is asserted per read, so a read that never asked
         cannot satisfy the bound for nothing; the lists are per read so the assertion can key on the shape (the first ask
-        validated, every later one served) and not on how many asks one read makes (round 2 of #882's extra8-1: the flat
+        validated, every later one served) and not on how many asks one read makes (round 1 of #882's extra8-1: the flat
         exact list also fixed that number, so a new in-call reader turned the bound cases red over a bound it had not
         touched, with a message that blamed a re-validation)."""
         def job(now, live_map, **kw):
@@ -379,7 +379,7 @@ class _World(unittest.TestCase):
         return job
 
     def _assert_asks(self, what, asks, d, reads):
-        """The premise the bound rests on, keyed on the property and not on a count of asks per read (round 2 of #882's
+        """The premise the bound rests on, keyed on the property and not on a count of asks per read (round 1 of #882's
         extra8-1): `asks` is one list per driven read; every one of the `reads` reads asked the tree memo at least once, and
         flattened, the first ask validated and every later one was served the held pair, however many asks a read makes (a
         new in-call reader adds served asks and leaves this green; a later read that validated again, or one that never
@@ -394,8 +394,8 @@ class _World(unittest.TestCase):
                          "scope removes)" % (what, asks))
         self.assertEqual(d["served"], flat.count("served"),
                          "memos.subagentTree served over one %s: %d; keyed on the asks the scope answered from its held pair, %d "
-                         "(_subagent_tree's early return alone moves it, so hit + miss + served is the reads of the root; before round 2 "
-                         "of #882 those reads moved no counter)" % (what, d["served"], flat.count("served")))
+                         "(_subagent_tree's early return alone moves it, so hit + miss + served is the reads of the root; before "
+                         "2026-09-21 those reads moved no counter)" % (what, d["served"], flat.count("served")))
         return flat
 
     def _assert_bound(self, what, t, d, rec):
@@ -453,7 +453,7 @@ class BoundPerCycleAndPerPass(_World):
         exists nowhere, under the own tree or a sibling's. The first read's owner lookups resolve it, the walk misses and the
         scope's launches map holds set() for it, so the walk runs once per cycle; the walk's dependency notes to the running
         chat build (the absent own place, every directory of each tree it looked through) come from the pair the lookup was
-        answered, the served tree, so they cost no stat on the tree's directories: 0 os.stat (round 2 of #882: the own tree's
+        answered, the served tree, so they cost no stat on the tree's directories: 0 os.stat (round 1 of #882's correctness-1: the own tree's
         note was a fresh _chat_stat_key stat, 1 per walk). The walk's other costs, derived: W lstats of the own root, its two
         symlink checks (os.path.islink, and os.path.realpath's lstat per component), counted by running those two calls; one
         os.stat per candidate file, the flat place and one per served directory (D + 1); the project directory's one stamp
@@ -477,7 +477,7 @@ class BoundPerCycleAndPerPass(_World):
                                              "(and was served: the shape above)" % (rec.get("asked"), CALLS))
         self.assertEqual(t["dir_stat"], 0,
                          "os.stat on the tree's %d directories over one pusher cycle with the miss walk: %d; keyed on 0, the walk's notes "
-                         "to the chat build taken from the served pair and the stamp re-checks served as in the bound (round 2 of #882: "
+                         "to the chat build taken from the served pair and the stamp re-checks served as in the bound (round 1 of #882: "
                          "the own tree's note was a fresh stat, 1 per walk)" % (D, t["dir_stat"]))
         self.assertEqual(t["dir_lstat"], D + W,
                          "os.lstat on the tree's directories: %d; expected D + W = %d + %d, the one validation plus the walk's symlink "
@@ -775,7 +775,7 @@ class Guards(_World):
                              % (cost3,))
 
     def test_a_faulted_launch_fold_is_folded_once_per_call_and_not_held_across_calls(self):
-        """Two lifetimes for a launch fold whose reader took its fail path (_awaiting_nest's `faulted`, round 2 of #882): the
+        """Two lifetimes for a launch fold whose reader took its fail path (_awaiting_nest's `faulted`; round 1 of #882's extra9-2): the
         fault is held for the CALL that observed it, so the owner lookups of one _session_awaiting read fold each agent's file
         once (each of the A lookups consults every other agent's launches, A x (A - 1) lookups per read), and not beyond that
         call, so the next read in the same cycle folds again and a file that became readable is seen at that read; a fold that
@@ -868,8 +868,8 @@ class Guards(_World):
     def test_a_root_gone_mid_cycle_with_an_entry_moves_the_gen_and_records_its_eviction_while_a_held_sibling_stays_served(self):
         """_subagent_tree's missing-root pop path (a session's tree removed while the walk memo held it): a pop that removed
         an entry moves _SUBAGENT_TREES_GEN and records the root's eviction at the value it moved to, so what an open scope
-        holds for THAT root is dropped at its next lookup; a sibling tree the scope holds is still served (round 2 of #882:
-        before it, one process-wide generation emptied every scope and the sibling paid its D lstats again); a missing root
+        holds for THAT root is dropped at its next lookup; a sibling tree the scope holds is still served (before 2026-09-21
+        one process-wide generation emptied every scope and the sibling paid its D lstats again); a missing root
         with no entry answers (), () and moves nothing."""
         other_t = Path(self.td.name) / "other" / (OTHER_SID + ".jsonl")   # a second session's transcript, its tree beside it
         other_t.parent.mkdir()
@@ -1091,9 +1091,9 @@ class Guards(_World):
 
 
 class ScopedInvalidation(_World):
-    """(5) An eviction drops from every open scope what became stale and nothing else (round 2 of #882): the evicted
+    """(5) An eviction drops from every open scope what became stale and nothing else (since 2026-09-21): the evicted
     root's pair, the stamps indexed from that tree and the launch folds of the agents whose files resolved under it. Every
-    other root's pair, stamps and launch folds are still served. Before round 2 one process-wide generation
+    other root's pair, stamps and launch folds are still served. Before 2026-09-21 one process-wide generation
     (_SUBAGENT_TREES_GEN alone) emptied every scope's three maps on any root's eviction, so an ownership eviction of an
     unrelated root (most often an unowned sibling a miss scan inserted, forgotten by the next jobs pass) cost every held
     tree its D lstats again, every held stamp its stat and every awaiting agent its fold, once per forget rather than once
@@ -1314,12 +1314,12 @@ class ScopedInvalidation(_World):
 
 class DependencyKey(_World):
     """(6) The key a chat build records for a subagents tree the agent-file miss walk looked through is the served read's
-    stamp (round 2 of #882). Two sessions share a project directory (a /clear fork's, the case the sibling scan exists for);
+    stamp (since 2026-09-21, round 1 of #882's ruling). Two sessions share a project directory (a /clear fork's, the case the sibling scan exists for);
     an agent row of this session names a file that exists nowhere yet; earlier in the cycle a build read the sibling's tree,
     so the scope holds it; then the file lands under the sibling's root in a directory the held listing lacks; then this
     session's chat build resolves the agent, is answered the held listing, finds the file nowhere and shows it missing. The
     tab is cached under the dependencies the build recorded (_chat_build_deps) and rebuilt when the next cycle's signature
-    re-stats one of them to a different key (_chat_sig_deps). Before round 2 the walk recorded the sibling's root under a
+    re-stats one of them to a different key (_chat_sig_deps). Before 2026-09-21 the walk recorded the sibling's root under a
     FRESH os.stat taken after the served listing, the post-landing key, equal to every later re-stat, so the tab stayed
     stale until something else moved; and it recorded the root alone, which a landing under a listed child never moves. Now
     every directory of the tree is recorded under the (mtime, size) of the stat the served read was taken with (the shape

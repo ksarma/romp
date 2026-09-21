@@ -3680,9 +3680,10 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   agent-file miss walk looked through is the served read's stamp per
   directory, never a stat taken after it, so a file landing after the
   hold under a directory the served listing lacked leaves the recorded
-  key behind the next signature's re-stat and the tab is rebuilt (round 2
-  of #882: a fresh stat there recorded the post-landing key of the root
-  alone, and the tab that showed the file missing was never rebuilt); a
+  key behind the next signature's re-stat and the tab is rebuilt (since
+  2026-09-21; round 1 of #882 found a fresh stat there recording the
+  post-landing key of the root alone, so the tab that showed the file
+  missing was never rebuilt); a
   root that leaves the memo mid-cycle (an ownership eviction, most
   often of an unowned sibling root an agent-file miss scan inserted; a tree
   found missing or replaced; a session departing is one such root) drops
@@ -3690,7 +3691,7 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   launch folds of the agents whose files resolved under it, and nothing
   else, so an eviction costs one read of that root at its next lookup in
   the cycle plus one fold per agent under it, its D plus its A, not a
-  re-validation of every held tree (since round 2 of #882; before it one
+  re-validation of every held tree (since 2026-09-21; before it one
   process-wide generation emptied every scope on any eviction, and the lab
   in `tests/test_subagent_tree_stamps_per_cycle.py` measured R roots of D
   directories and A agents with one unrelated root evicted between each
@@ -3702,9 +3703,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   how many validations and walks the process paid), `served` (reads a cycle
   scope answered from the pair it held with no stat: how many reads the
   scope absorbed; a read of a root that is there lands in exactly one of the
-  three, so `hit` plus `miss` plus `served` is the reads; since round 2 of
-  #882, before which the scope's reads moved no counter, so the figure has no
-  earlier series),
+  three, so `hit` plus `miss` plus `served` is the reads; since
+  2026-09-21, before which the scope's reads moved no counter, so the figure
+  has no earlier series),
   `evict` (roots dropped because no alive session's transcript names them,
   on every jobs pass and, as a belt, after each feed build and from the
   tracking-off frame), `dirStats` (the directory stats both validators
