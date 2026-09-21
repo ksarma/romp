@@ -758,7 +758,16 @@ test("bodyReady reads the element children through `children`, else through `chi
 // value can carry a remote URL, whether that road reaches the network and when, and what gates it, where a URL is written
 // by an assignment to a member the assignment axis's hand read flags as a URL (NON_SEATING_WRITES' `url`: href, src) or to
 // a member of `location`, by setAttribute or setAttributeNS under any name but an `aria-*` or `data-*` one (neither fetched
-// nor navigated by) or one NON_URL_ATTRS lists as carrying no URL, by a method of `location` (assign, replace, reload, any)
+// nor navigated by) or one NON_URL_ATTRS lists as carrying no URL, by a CSS property written through an element's `style`
+// (an assignment through `style`, or `style.setProperty`, its value read like setAttribute's) under any name but one
+// NON_URL_STYLE_PROPS lists by hand as taking no url() value (a computed property name refused whatever the value; the
+// round-8 fixes, the round-7 review's correctness-2, 2026-09-21: before this a write through `style` passed on the
+// assignment axis by the rule and `setProperty` by its listing, so `el.style.backgroundImage = "url(" + x + ")"`,
+// `el.style.cssText = ...` and `el.style.setProperty("background-image", ...)` reached the network with no hand read while
+// `el.setAttribute("style", ...)` was refused), by a method of `location` (assign, replace or reload, its own navigations;
+// every other method on a receiver whose chain names `location` is the call axis's and a seat there is refused as a seat:
+// the round-8 fixes, the round-7 review's correctness-1, before which an else-if chain let the URL arm, keyed on the
+// receiver alone, swallow `append`, `setHTMLUnsafe` and every other method there, a literal first argument recording nothing)
 // or by `window.open` (the global's `open` by binding), each call's first argument the value; and a setAttribute or
 // setAttributeNS whose NAME is not a string literal (a constant resolved through its declaration counts as one) or names an
 // on<event> handler passes only as a site ATTR_NAMES_READ_BY_HAND lists. A listed site the source no longer has fails too (a
@@ -1071,6 +1080,7 @@ function census(src: string, table: SeatRead[] = SEATS_READ_BY_HAND, indexTable:
   for (const a of second.attrNames) if (!attrTable.some((e) => attrKey(a, e))) refused.push("line " + a.line + ": " + a.text + " sets an attribute on `" + a.on + "` in " + a.fn + " under a name (`" + a.name + "`) the census cannot read as a literal, or one naming an on<event> handler: a handler attribute holds a string that runs as code, a string road the census cannot read; read the site for what the name can be and list it in ATTR_NAMES_READ_BY_HAND, or name the attribute by a literal");
   for (const e of attrTable) if (!second.attrNames.some((a) => attrKey(a, e))) refused.push("ATTR_NAMES_READ_BY_HAND lists `" + e.name + "` set on `" + e.on + "` in " + e.in + ", and the source has no such write: the entry is stale, remove it or read the site again");
   for (const e of NON_URL_ATTRS) if (!second.attrWrites.some((a) => a.name === e.name)) refused.push("NON_URL_ATTRS lists " + e.name + ", and the source sets no such attribute from a value that is not a literal: the entry is stale, remove it or read the write again");
+  for (const e of NON_URL_STYLE_PROPS) if (!second.styleWrites.some((w) => w.name === e.name)) refused.push("NON_URL_STYLE_PROPS lists " + e.name + ", and the source writes no such CSS property through style from a value that is not a literal: the entry is stale, remove it or read the write again");
   // an element the census can see by its shape, handed to a callee the file does not declare: read by hand and listed in
   // ARGS_READ_BY_HAND like a node of the tree (the verifiers' records-1 of the round-7 build)
   for (const h of second.elementsHanded) {
@@ -1125,12 +1135,21 @@ const SITE_RECEIVERS = ["Object", "Reflect", "Function"];
  *  ALONE (seatSites.addSeatsNothing reads the receiver): an HTMLSelectElement's add and an HTMLOptionsCollection's add seat
  *  an option, so `add` on any other receiver is a call read by its site, listed in SEATS_READ_BY_HAND or refused (the
  *  round-6 review's extra6-4, 2026-09-20: the name stood here as seating nothing for every receiver, with no probe; the
- *  mutant case plants a select's add and reads the census red). `replace` passes by this name on any receiver but
- *  `location`, and `open` on any but the global (window, globalThis, self, or the bare name): a method of `location` and
- *  `window.open` are navigations, the write axis's, read by their site through URL_WRITES_READ_BY_HAND before this list is
- *  consulted (the verifiers' census-4 of the round-7 build, 2026-09-20: `location.replace(x)` passed under the string
- *  method's listing and `window.open(href, ...)` under the browser's). The body token's own calls are the first read's
- *  (NON_SEATING_CALLS, a shorter list). */
+ *  mutant case plants a select's add and reads the census red). THIS LIST SPEAKS OF THE SEATING AXIS ALONE AND EXEMPTS
+ *  NO VALUE READ (the maintainer's round-8 ruling on the round-7 review's correctness-2, 2026-09-21): a listed name says the
+ *  call seats nothing, and what its arguments carry is read on its own axis regardless of the listing. So `setProperty`
+ *  stands here as seating nothing, and its VALUE is read on the URL axis by seatSites' style road like setAttribute's (a
+ *  CSS property through `style.setProperty` is a URL write unless NON_URL_STYLE_PROPS lists the property); `setAttribute`
+ *  stands here and its name and value are read on the URL axis; `assign` and `reload` are NOT here, and `replace` and
+ *  `open` are (the string's replace, the browser's and the viewer's open), because the URL axis owns the (location,
+ *  navigation-method) PAIRS and the global `open`, not the names: a call of `assign`, `replace` or `reload` on a receiver
+ *  whose chain names `location`, and of `open` on the global (window, globalThis, self, or the bare name), is a navigation
+ *  read as a URL write through URL_WRITES_READ_BY_HAND, and the call axis does not read those three pairs (listing `assign`
+ *  or `reload` here instead would pass `x.assign(y)` on every receiver, the unsafe side; the verifiers' census-4 of the
+ *  round-7 build, 2026-09-20: `location.replace(x)` passed under the string method's listing and `window.open(href, ...)`
+ *  under the browser's). Every other method on a location-named receiver is this list's like any other receiver's (the
+ *  round-8 fixes, the round-7 review's correctness-1). The body token's own calls are the first read's (NON_SEATING_CALLS,
+ *  a shorter list). */
 const NON_SEATING_METHODS = [
   // the DOM
   ...NON_SEATING_CALLS, "setAttribute", "getAttribute", "hasAttribute", "removeAttribute", "getAttributeNS", "removeAttributeNS", "remove", "closest", "matches", "getElementById", "createElement", "scrollIntoView", "stopPropagation", "preventDefault", "click", "hasFocus", "toggle", "setProperty", "createRange", "setStart", "setEnd", "createTreeWalker", "nextNode", "getSelection", "setBaseAndExtent", "observe", "disconnect",
@@ -1151,10 +1170,13 @@ const NON_SEATING_METHODS = [
  *  bar's state, the save hooks, a srcset candidate), and three handler members (onclick, onload, onerror) whose value the
  *  census holds to a function (a string there is a string road). The two URL members among them (href, src) are also the
  *  URL axis's read (URL_WRITES_READ_BY_HAND): the write seats nothing, what the value can be is read there. A write
- *  THROUGH an element's `style` (a CSS property) or `dataset` (a data attribute) passes by that rule and not by its name
- *  (MemberWrite's `through`): neither object can hold an element child, whatever the property (the body's first read
- *  passes a further access on the same two, FURTHER_MEMBERS). The `body` token's own writes are the first read's
- *  (NON_SEATING_ASSIGNS, a shorter list that refuses textContent on the body). */
+ *  THROUGH an element's `style` (a CSS property) or `dataset` (a data attribute) passes ON THIS AXIS by that rule and not
+ *  by its name (MemberWrite's `through`): neither object can hold an element child, whatever the property (the body's first
+ *  read passes a further access on the same two, FURTHER_MEMBERS). The rule says nothing about the URL axis: a write through
+ *  `style` from a value that is not a literal, or from a literal spelling `url(` or `javascript:`, is a URL write there
+ *  unless NON_URL_STYLE_PROPS lists the property as taking no url() (the round-8 fixes, the round-7 review's correctness-2).
+ *  The `body` token's own writes are the first read's (NON_SEATING_ASSIGNS, a shorter list that refuses textContent on the
+ *  body). */
 const NON_SEATING_WRITES: Array<{ name: string; why: string; url?: true }> = [
   // the DOM's text and attribute reflectors: none makes an element child
   { name: "textContent", why: "sets the element's text: one text node replaces its children, no element is made (on a body root it empties the root and seats nothing)" },
@@ -1239,7 +1261,7 @@ type SecondRead = {
   handedNodes: HandedNode[]; stringRoads: Array<Use & { callee: string }>; urlWrites: UrlWrite[];
   writes: MemberWrite[]; computedWrites: MemberWrite[]; handlerStrings: MemberWrite[]; oddTargets: Use[]; bodyWrites: number;
   reflectionReads: Array<Use & { name: string; as: string }>; attrNames: MemberWrite[]; destructured: Use[];
-  attrWrites: MemberWrite[]; bodyDecls: Array<Use & { why: string }>; elementsHanded: HandedNode[];
+  attrWrites: MemberWrite[]; bodyDecls: Array<Use & { why: string }>; elementsHanded: HandedNode[]; styleWrites: MemberWrite[];
 };
 /** Every seat in `src` on any receiver, and every other form the second read classes, each axis an allowlist with its default
  *  refusing (the branch's verification pass finding census-1; the round-6 review's clusters A to C). THE CALL AXIS: every
@@ -1278,8 +1300,20 @@ type SecondRead = {
  *  that is not a function, `new Function`, and `import(...)` are `stringRoads` and refused. THE WRITE AXIS (the URL roads;
  *  the verifiers' census-1 and census-4 of the round-7 build): an assignment to a member NON_SEATING_WRITES flags as a URL
  *  or to a member of `location`, a setAttribute or setAttributeNS under a name that is neither `aria-*` nor `data-*` nor
- *  listed in NON_URL_ATTRS, a method of `location` and `window.open`, each from a value (the call's first argument) that
- *  is not a literal or is a javascript: literal, is a `urlWrite` passed only as a site URL_WRITES_READ_BY_HAND lists; an
+ *  listed in NON_URL_ATTRS, a CSS property written through an element's `style` (an assignment through `style`, or
+ *  `style.setProperty`) under a name NON_URL_STYLE_PROPS does not list (a literal spelling `url(` counts as a URL there; a
+ *  computed property name is recorded whatever the value), a method of `location` that is one of its own navigations
+ *  (assign, replace, reload) and `window.open`, each from a value (the call's first argument) that is not a literal or is a
+ *  javascript: literal, is a `urlWrite` passed only as a site URL_WRITES_READ_BY_HAND lists. A member call is read in TWO
+ *  PASSES (the round-8 fixes, the round-7 review's correctness-1, 2026-09-21: before this an else-if chain let the URL arm,
+ *  keyed on the receiver's chain naming `location`, preempt the call and seat axes, so `append`, `setHTMLUnsafe` and every
+ *  other method on such a receiver was classed on no axis and a literal first argument recorded nothing): the shape first
+ *  (does the receiver's chain name `location`, is the method one of its navigations, is the callee the global `open`), then
+ *  each axis on its own, the URL axis recording the navigations and the call axis every member call by its name except
+ *  the three (location, navigation-method) pairs, a keyed exclusion on the PAIR and never on the receiver; the assignment
+ *  spellings reach the URL axis inside classWrite, on the peeled target, before the identifier and body-token returns, so a
+ *  parenthesised, array, object, for-of or for-in target is a `urlWrite` like a plain one (the round-7 review's extra8-1:
+ *  the push stood in the plain-assignment arm on the raw left side); an
  *  `aria-*` or `data-*` attribute set from a non-literal is an `attrWrite`, classed and passed; a setAttribute or
  *  setAttributeNS whose name is not a string literal (a constant resolved through its declaration counts as one) or names
  *  an `on<event>` handler is an `attrName` passed only as a site ATTR_NAMES_READ_BY_HAND lists. A declaration named `body`
@@ -1481,18 +1515,30 @@ function seatSites(src: string): SecondRead {
   const sites: SeatSite[] = [], computed: Use[] = [], unknown: Array<Use & { name: string; on: string }> = [], handedOut: Array<Use & { name: string }> = [], oddCallee: Use[] = [], indexReads: Array<Use & { fn: string; on: string }> = [];
   const handedNodes: HandedNode[] = [], stringRoads: Array<Use & { callee: string }> = [], urlWrites: UrlWrite[] = [];
   const writes: MemberWrite[] = [], computedWrites: MemberWrite[] = [], handlerStrings: MemberWrite[] = [], oddTargets: Use[] = [], reflectionReads: Array<Use & { name: string; as: string }> = [], attrNames: MemberWrite[] = [], destructured: Use[] = [];
-  const attrWrites: MemberWrite[] = [], bodyDecls: Array<Use & { why: string }> = [], elementsHanded: HandedNode[] = [];
-  /** A call of a method of `location` or of `window.open` (or the bare global `open`): a navigation to its first argument, read
-   *  as a URL write whose target is the call (`location.replace`, `window.open`) and whose value is that argument; a string
-   *  literal there that is not a javascript: URL passes, as an assignment's does. */
+  const attrWrites: MemberWrite[] = [], bodyDecls: Array<Use & { why: string }> = [], elementsHanded: HandedNode[] = [], styleWrites: MemberWrite[] = [];   // styleWrites: the writes through style from a non-literal the URL axis passes by NON_URL_STYLE_PROPS, classed and never silent
+  /** One URL write recorded on the URL axis: its target as spelled (`on`), the value as spelled and, for a bare name, the
+   *  value's binding and shadow. Every road of the axis (an assignment, setAttribute, the style road, a navigation) records
+   *  through this one function, so a value read is never a road's own. */
+  const urlWriteAt = (n: ts.Node, on: string, value: string, valueNode?: ts.Expression): void => {
+    const u: UrlWrite = { line: lineOf(n), text: text(n), fn: fnOf(n), on, value };
+    if (valueNode) { const pv = peel(valueNode); if (ts.isIdentifier(pv)) { Object.assign(u, bindingOf(pv)); const sh = shadowOf(pv); if (sh) u.shadowed = sh; } }
+    urlWrites.push(u);
+  };
+  /** A call of one of `location`'s own navigation methods (LOCATION_NAV: assign, replace, reload) or of `window.open` (or the
+   *  bare global `open`): a navigation to its first argument, read as a URL write whose target is the call (`location.replace`,
+   *  `window.open`) and whose value is that argument; a string literal there that is not a javascript: URL passes, as an
+   *  assignment's does. Any other method on a location-named receiver is the call axis's (the round-8 fixes). */
   const urlCall = (n: ts.CallExpression, target: string): void => {
     const v = n.arguments[0];
     const lit = v ? literalText(v) : null;
     if (v && lit !== null && !/^\s*javascript:/i.test(lit)) return;
-    const u: UrlWrite = { line: lineOf(n), text: text(n), fn: fnOf(n), on: target, value: v ? flat(v.getText(sf)) : "" };
-    if (v) { const pv = peel(v); if (ts.isIdentifier(pv)) { Object.assign(u, bindingOf(pv)); const sh = shadowOf(pv); if (sh) u.shadowed = sh; } }
-    urlWrites.push(u);
+    urlWriteAt(n, target, v ? flat(v.getText(sf)) : "", v);
   };
+  /** The methods of `location` that navigate: the three the URL axis owns on a receiver whose chain names `location`. */
+  const LOCATION_NAV = ["assign", "replace", "reload"];
+  /** A CSS property name as `style.<name>` spells it, from setProperty's kebab-case argument (`background-image` to
+   *  `backgroundImage`; a custom property `--x` keeps its dashes, so it never matches a listed name and is read). */
+  const camelProp = (name: string): string => name.startsWith("--") ? name : name.replace(/-([a-z])/g, (_, ch: string) => ch.toUpperCase());
   /** Whether a call's callee is a BARE name this file does not declare: an import (`addCopyBtn`, `installFilePrint`) or a
    *  global (`Array.from` is a member; a bare `structuredClone`). A local function's seats are read in this file; a member
    *  call is the call axis's (its name passes only as NON_SEATING_METHODS lists it, whatever it is handed, or as a site the
@@ -1625,11 +1671,24 @@ function seatSites(src: string): SecondRead {
     if (ts.isComputedPropertyName(key)) destructured.push({ line: lineOf(at), text: text(at) });
     else if ((ts.isIdentifier(key) || ts.isStringLiteral(key)) && (SEAT_CALLS.includes(key.text) || SITE_CALLS.includes(key.text))) handedOut.push({ line: lineOf(at), text: text(at), name: key.text });
   };
-  /** One write target, classed by the write axis: a binding's write was the pre-pass's; a member of the `body` token is the
-   *  first read's; a computed name is refused; a SEAT_ASSIGNS name is a site (the value is what it seats); any other
-   *  member name is a write the census holds to NON_SEATING_WRITES, an `on<event>` one to a function value as well. */
+  /** One write target, classed by the assignment axis and, first, by the URL axis: a binding's write was the pre-pass's; a
+   *  member of the `body` token is the first read's; a computed name is refused; a SEAT_ASSIGNS name is a site (the value is
+   *  what it seats); any other member name is a write the census holds to NON_SEATING_WRITES, an `on<event>` one to a
+   *  function value as well. THE URL AXIS reads the PEELED target here, before the identifier and body-token returns (the
+   *  round-8 fixes, the round-7 review's extra8-1, 2026-09-21: the push stood in visit's plain-assignment arm on the raw
+   *  left side, so a URL member written through a parenthesised, array, object, for-of or for-in target was a write and no
+   *  URL write, where the same targets with innerHTML were seats): a member NON_SEATING_WRITES flags as a URL, or a target
+   *  whose chain names `location`, written from a value that is not a literal or is a javascript: literal, is a URL write; an
+   *  arm with no value node (a pattern's leaf, a loop's head, a `++`) is recorded unconditionally, there being no literal to
+   *  read; `on` is the peeled target's text (byte-identical to the raw left side's for every live entry). The style road (the
+   *  round-7 review's correctness-2) follows the write's own record: a write through `style` under a property
+   *  NON_URL_STYLE_PROPS does not list, from a value that is not a literal or a literal spelling `url(` or `javascript:`, is a
+   *  URL write on `<recv>.style.<prop>`; a computed property name is the computed-write refusal above. */
   const classWrite = (n: ts.Node, target: ts.Expression, value: string, op: string, valueNode?: ts.Expression): void => {
     const t = peel(target);
+    const urlMember = isUrlTarget(t);
+    const lit = valueNode ? literalText(valueNode) : null;
+    if (urlMember && (lit === null || /^\s*javascript:/i.test(lit))) urlWriteAt(n, flat(strip(t).getText(sf)), value, valueNode);
     if (ts.isIdentifier(t)) return;
     if (!ts.isPropertyAccessExpression(t) && !ts.isElementAccessExpression(t)) { oddTargets.push({ line: lineOf(n), text: text(n) }); return; }
     const obj = memberObject(t), name = memberName(t);
@@ -1640,6 +1699,7 @@ function seatSites(src: string): SecondRead {
     const o = peel(obj);
     const through = ts.isPropertyAccessExpression(o) && (o.name.text === "style" || o.name.text === "dataset") ? o.name.text : undefined;
     writes.push(through ? { line: lineOf(n), text: text(n), fn: fnOf(n), on, name, through } : { line: lineOf(n), text: text(n), fn: fnOf(n), on, name });
+    if (!urlMember && through === "style" && (lit === null || /url\(|javascript:/i.test(lit))) { if (NON_URL_STYLE_PROPS.some((p) => p.name === name)) styleWrites.push({ line: lineOf(n), text: text(n), fn: fnOf(n), on, name, through }); else urlWriteAt(n, on + "." + name, value, valueNode); }
     if (/^on[a-z]+$/.test(name) && !(valueNode && (isFunction(valueNode) || isNullish(valueNode)))) handlerStrings.push({ line: lineOf(n), text: text(n), fn: fnOf(n), on, name });
   };
   const visit = (n: ts.Node): void => {
@@ -1648,16 +1708,40 @@ function seatSites(src: string): SecondRead {
       const name = memberName(c);
       if (ts.isPropertyAccessExpression(c) || ts.isElementAccessExpression(c) && name !== null) {
         const obj = memberObject(c);
+        const recv = flat(strip(obj).getText(sf));
         if (ts.isElementAccessExpression(c)) computed.push({ line: lineOf(n), text: text(n) });
-        else if (touchesLocation(obj) || (name === "open" && GLOBAL_OBJECTS.includes(globalOf(obj) ?? ""))) urlCall(n, flat(strip(obj).getText(sf)) + "." + name);   // a method of `location` (assign, replace, reload, any), or window.open: a navigation to its first argument, the URL axis's (the verifiers' census-4 of the round-7 build: `location.replace(x)` passed under String.prototype.replace's listing, `window.open(href, ...)` under the browser's `open`)
-        else if (isSite(name!, obj)) { if (!(SITE_CALLS.includes(name!) && ownedByFirstRead(obj))) { const seated = SEAT_CALLS.includes(name!) ? SEATED_ARGS[name!](n.arguments.map((_, i) => String(i))).map((i) => n.arguments[Number(i)]) : [...n.arguments]; site(n, obj, name!, SEAT_CALLS.includes(name!) ? seated.map((a) => flat(a.getText(sf))).join(", ") : n.arguments.map(abbreviate).join(", "), false, seated); } }   // `body.append.call(...)` is the first read's refusal
-        else if (name === "add" && !isBodyToken(obj) && !addSeatsNothing(obj)) site(n, obj, "add", n.arguments.map(abbreviate).join(", "), false, [...n.arguments]);   // add on a receiver that is neither a class list nor a Set: a site
-        else if (!NON_SEATING_METHODS.includes(name!) && !isBodyToken(obj)) unknown.push({ line: lineOf(n), text: text(n), name: name!, on: flat(strip(obj).getText(sf)) });
+        else {
+          // TWO PASSES over a member call (the round-8 fixes, the round-7 review's correctness-1, 2026-09-21: an else-if chain
+          // stood here whose URL arm, keyed on the receiver's chain naming `location`, preempted the seat and call arms, so
+          // `nav.location.append(x)` was refused as a URL write and `nav.location.setHTMLUnsafe("<b>")` recorded nothing).
+          // The first pass reads the call's SHAPE: does the receiver's chain name `location`, is the method one of location's
+          // own navigations, is the callee the global `open`. The second applies each axis on its own.
+          const onLocation = touchesLocation(obj), navigation = LOCATION_NAV.includes(name!), globalOpen = name === "open" && GLOBAL_OBJECTS.includes(globalOf(obj) ?? "");
+          // THE URL AXIS: a navigation is a URL write from its first argument (the verifiers' census-4 of the round-7 build:
+          // `location.replace(x)` passed under String.prototype.replace's listing, `window.open(href, ...)` under the browser's `open`)
+          if ((onLocation && navigation) || globalOpen) urlCall(n, recv + "." + name);
+          // THE CALL AXIS: every member call by its name, except the three (location, navigation-method) PAIRS, which seat
+          // nothing and are the URL axis's alone; the exclusion is keyed on the pair, never on the receiver, so a seat name or an
+          // unlisted name on a location-named receiver is read here like any other receiver's, and `x.assign(y)` on any other
+          // receiver is an unlisted method
+          if (!(onLocation && navigation)) {
+            if (isSite(name!, obj)) { if (!(SITE_CALLS.includes(name!) && ownedByFirstRead(obj))) { const seated = SEAT_CALLS.includes(name!) ? SEATED_ARGS[name!](n.arguments.map((_, i) => String(i))).map((i) => n.arguments[Number(i)]) : [...n.arguments]; site(n, obj, name!, SEAT_CALLS.includes(name!) ? seated.map((a) => flat(a.getText(sf))).join(", ") : n.arguments.map(abbreviate).join(", "), false, seated); } }   // `body.append.call(...)` is the first read's refusal
+            else if (name === "add" && !isBodyToken(obj) && !addSeatsNothing(obj)) site(n, obj, "add", n.arguments.map(abbreviate).join(", "), false, [...n.arguments]);   // add on a receiver that is neither a class list nor a Set: a site
+            else if (!NON_SEATING_METHODS.includes(name!) && !isBodyToken(obj)) unknown.push({ line: lineOf(n), text: text(n), name: name!, on: recv });
+          }
+        }
+        if (name === "setProperty" && !isBodyToken(obj)) {   // THE URL AXIS's style road through setProperty (the round-8 fixes, the round-7 review's correctness-2): the call passes on the call axis by its listing, which says nothing about the value; the property name a literal (a constant resolved through its declaration counts) is read against NON_URL_STYLE_PROPS in its `style.<name>` spelling, a computed name is recorded whatever the value, and the value is read like setAttribute's (a non-literal, or a literal spelling url( or javascript:, is a URL write on `<recv>.setProperty("<prop>")`)
+          const a = n.arguments[0], v = n.arguments[1];
+          const init = a ? initOf(a) : null;
+          const lit = a ? literalText(a) ?? (init !== null ? literalText(init) : null) : null;
+          const vlit = v ? literalText(v) : null;
+          if (v && (lit === null || vlit === null || /url\(|javascript:/i.test(vlit))) { if (lit !== null && NON_URL_STYLE_PROPS.some((p) => p.name === camelProp(lit))) styleWrites.push({ line: lineOf(n), text: text(n), fn: fnOf(n), on: recv, name: camelProp(lit), through: "style" }); else urlWriteAt(n, recv + ".setProperty(" + (lit !== null ? JSON.stringify(lit) : flat(a.getText(sf))) + ")", flat(v.getText(sf)), v); }
+        }
         if ((name === "setAttribute" || name === "setAttributeNS") && !isBodyToken(obj)) {   // the attribute's name: a literal (a constant resolved through its declaration counts) not naming a handler passes; the rest is a site read by hand
           const ai = name === "setAttributeNS" ? 1 : 0, a = n.arguments[ai], v = n.arguments[ai + 1];
           const init = a ? initOf(a) : null;
           const lit = a ? literalText(a) ?? (init !== null ? literalText(init) : null) : null;
-          const on = flat(strip(obj).getText(sf));
+          const on = recv;
           if (lit === null || /^on/i.test(lit)) attrNames.push({ line: lineOf(n), text: text(n), fn: fnOf(n), on, name: a ? flat(a.getText(sf)) : "" });
           // the attribute's VALUE (the verifiers' census-1 of the round-7 build: the URL axis read the assignment spelling alone, so
           // `a.setAttribute("href", path)` passed): a value that is not a literal, or a javascript: literal, under a name the census
@@ -1666,7 +1750,7 @@ function seatSites(src: string): SecondRead {
           const vlit = v ? literalText(v) : null;
           if (v && !(lit !== null && /^on/i.test(lit)) && (vlit === null || /^\s*javascript:/i.test(vlit))) {
             if (lit !== null && (/^(?:aria|data)-/.test(lit) || NON_URL_ATTRS.some((e) => e.name === lit))) attrWrites.push({ line: lineOf(n), text: text(n), fn: fnOf(n), on, name: lit });
-            else { const pv = peel(v); const u: UrlWrite = { line: lineOf(n), text: text(n), fn: fnOf(n), on: on + "." + name + "(" + (lit !== null ? JSON.stringify(lit) : flat(a.getText(sf))) + ")", value: flat(v.getText(sf)) }; if (ts.isIdentifier(pv)) { Object.assign(u, bindingOf(pv)); const sh = shadowOf(pv); if (sh) u.shadowed = sh; } urlWrites.push(u); }
+            else urlWriteAt(n, on + "." + name + "(" + (lit !== null ? JSON.stringify(lit) : flat(a.getText(sf))) + ")", flat(v.getText(sf)), v);
           }
         }
       } else if (ts.isElementAccessExpression(c)) computed.push({ line: lineOf(n), text: text(n) });
@@ -1678,10 +1762,7 @@ function seatSites(src: string): SecondRead {
     } else if (ts.isBinaryExpression(n) && isAssignOp(n.operatorToken.kind)) {
       const op = n.operatorToken.getText(sf), left = peel(n.left), value = flat(n.right.getText(sf));
       if (ts.isArrayLiteralExpression(left) || ts.isObjectLiteralExpression(left)) for (const { target, key } of targetsOf(left)) { if (key) keyRead(key, n); classWrite(n, target, "a value destructured from `" + value + "`", op); }
-      else {
-        classWrite(n, left, value, op, n.right);
-        if (isUrlTarget(n.left)) { const lit = literalText(n.right); if (lit === null || /^\s*javascript:/i.test(lit)) { const v = peel(n.right); const u: UrlWrite = { line: lineOf(n), text: text(n), fn: fnOf(n), on: flat(strip(n.left).getText(sf)), value }; if (ts.isIdentifier(v)) { Object.assign(u, bindingOf(v)); const sh = shadowOf(v); if (sh) u.shadowed = sh; } urlWrites.push(u); } }
-      }
+      else classWrite(n, left, value, op, n.right);   // the URL axis reads the target inside classWrite, with every other arm's (the round-8 fixes)
     } else if (isIncDec(n)) classWrite(n, n.operand, "", n.operator === ts.SyntaxKind.PlusPlusToken ? "++" : "--");
     else if ((ts.isForOfStatement(n) || ts.isForInStatement(n)) && !ts.isVariableDeclarationList(n.initializer)) for (const { target, key } of targetsOf(n.initializer)) { if (key) keyRead(key, n); classWrite(n, target, "each of `" + flat(n.expression.getText(sf)) + "`", "of"); }
     if (ts.isBindingElement(n) && ts.isObjectBindingPattern(n.parent)) keyRead(n.propertyName ?? (n.name as ts.PropertyName), n.parent);
@@ -1699,7 +1780,7 @@ function seatSites(src: string): SecondRead {
     ts.forEachChild(n, visit);
   };
   visit(sf);
-  return { sites, computed, unknown, handedOut, oddCallee, indexReads, handedNodes, stringRoads, urlWrites, writes, computedWrites, handlerStrings, oddTargets, bodyWrites, reflectionReads, attrNames, destructured, attrWrites, bodyDecls, elementsHanded };
+  return { sites, computed, unknown, handedOut, oddCallee, indexReads, handedNodes, stringRoads, urlWrites, writes, computedWrites, handlerStrings, oddTargets, bodyWrites, reflectionReads, attrNames, destructured, attrWrites, bodyDecls, elementsHanded, styleWrites };
 }
 /** A seat in file-view.ts on a receiver other than the `body` token, READ BY HAND and listed as ONE seat (the round-6 review's
  *  cluster A, 2026-09-20): the nearest named function around it (`in`), the receiver's spelling (`on`), the form (`via`) and
@@ -1824,6 +1905,24 @@ const BODY_DECL_INIT = 'el("div", "fileview-body")';
  *  stale. Empty at this head: the viewer's non-literal attribute values go to aria-*, data-*, srcset, href and the figure
  *  reference's own name, and the last three are URL writes. */
 const NON_URL_ATTRS: Array<{ name: string; why: string }> = [];
+/** The CSS properties file-view.ts writes through an element's `style` (an assignment, or `style.setProperty`) from a value
+ *  that is not a literal and that the URL axis passes WITHOUT a hand read of the value, each listed here because the
+ *  property accepts no url() value, so whatever the value is it cannot name a resource (the round-8 fixes, the round-7
+ *  review's correctness-2 as its refuters corrected it, 2026-09-21: an allowlist of the url()-capable names would enumerate
+ *  on the unsafe side, maskImage, borderImageSource, cursor, content and their kin missed; this list is the other side, a
+ *  property not here is READ, its write a URL write until URL_WRITES_READ_BY_HAND lists it). A property that accepts url()
+ *  stays out: `background` (the shorthand takes an image) is written from the session colour record at one live site and
+ *  is read by hand there, never listed here. A stale name here (one the file no longer writes from a non-literal) is
+ *  refused, so the list is the live set. */
+const NON_URL_STYLE_PROPS: Array<{ name: string; why: string }> = [
+  { name: "top", why: "an inset: a <length-percentage> or auto (CSS Positioned Layout 3); url() is not a value of it" },
+  { name: "right", why: "an inset, as top" },
+  { name: "left", why: "an inset, as top" },
+  { name: "maxWidth", why: "a sizing limit: a <length-percentage>, none or a sizing keyword (CSS Sizing 3); url() is not a value of it" },
+  { name: "maxHeight", why: "a sizing limit, as maxWidth" },
+  { name: "aspectRatio", why: "a <ratio> or auto (CSS Sizing 4); url() is not a value of it" },
+  { name: "color", why: "a <color> (CSS Color 4): no image, so url() is not a value of it" },
+];
 /** A member of a receiver read by a COMPUTED name and stored or handed on (`const at = rows[cur]`), READ BY HAND and listed by
  *  its site: the nearest named function (`in`) and the receiver's spelling (`on`), with what the receiver is (`is`), the
  *  hand read's claim that the value is no seating method of an element (the branch's verification pass finding census-1, 2026-09-20: a
@@ -1910,6 +2009,11 @@ const URL_WRITES_READ_BY_HAND: UrlWriteRead[] = [
   { in: "linkOut", on: "a.href", value: "href", decl: "a parameter of openUrlView", is: "the URL viewer's own document URL, openUrlView's parameter (never written inside it): the chat's anchor delegate opens this viewer only for a same-origin markdown URL (render.ts routes into openUrlView under isMarkdownUrl(href, location.origin)), and the probe seams hand it a same-origin test URL, so at this head the value names the page's origin; the comment above the site says so too. It COULD carry a remote URL if a caller passed one, so the road is read: the network is reached on the person's click alone, a navigation in a new tab (target _blank, rel noopener, dataset.newTab so the delegate lets the tab open); the gate is the caller's isMarkdownUrl test against the page's origin, plus the click" },
   { in: "startDownload", on: "a.href", value: "url", decl: "a parameter of startDownload", is: "the kernel's download route: every caller hands `dlUrl`, fileUrl(path, sid) + \"&download=1\" (three call sites, read by grep of startDownload(), each with dlUrl), a same-origin path the kernel answers with Content-Disposition: attachment. The network IS reached at the press, since the code clicks the anchor itself (a.click()), a same-origin cookie-authed request the browser's downloader owns; the gate is fileUrl, which builds the route from the file's path against the page's origin, never from page input" },
   { in: "imgBlock", on: "img.src", value: "objUrl", decl: "a parameter of imgBlock", is: "an object URL over the fetched bytes: the one caller hands the open's objUrl (imgBlock(objUrl, path, imgFailed) in renderBody, with objUrl minted by URL.createObjectURL(t); read by the parameter's declaration and grep of imgBlock(). No network: a blob: URL resolves in the browser to bytes already fetched. The gate is URL.createObjectURL" },
+  // the style road (the round-8 fixes, the round-7 review's correctness-2, 2026-09-21): a CSS property written through `style`
+  // from a non-literal under a name NON_URL_STYLE_PROPS does not list, each read for what the value can be
+  { in: "stamp", on: "(n as HTMLElement).style.setProperty(\"--fv-body-w\")", value: "width + \"px\"", is: "the body's measured width as a CSS custom property on each top-level table (watchBodyWidth's stamp: `width` is the ResizeObserver entry's contentRect width, a number the browser measured, plus the unit), consumed by the stylesheet's `var(--fv-body-w)` in a width rule alone (styles.css); a number with a unit names no resource and the property that reads it takes no url(). No network: nothing fetches a length. The gate is the type: a measured number, never a string from the document or the person" },
+  { in: "openOutline", on: "r.style.setProperty(\"--fv-ol-depth\")", value: "String(Number(h.tagName[1]) - shallowest)", is: "a heading's depth as a CSS custom property on its outline row (the heading's tag digit, h1 to h6, less the shallowest depth in the outline, a small integer made a string), consumed by the stylesheet's `var(--fv-ol-depth)` in an indent rule alone; an integer names no resource. No network. The gate is the derivation: Number() of a tag name's digit, never document text" },
+  { in: "openFileView", on: "sess.style.background", value: "owner.color.bg", is: "the session tag's background colour, the owning session's colour record (FileViewIdentity's `color`, resolved from the sid through identityOf, which files.ts and feed.ts register from the kernel's session list; hostStub gives none), a colour string the kernel mints from its palette, never the document's or the person's. `background` is the shorthand and ACCEPTS a url() image, so this write is read here by hand and the property is kept OUT of NON_URL_STYLE_PROPS: a reader must not tidy it onto that list. No network at this head: the value is a colour. The gate is the record's source, the kernel's palette" },
   { in: "pdfBlock", on: "frame.src", value: "objUrl", decl: "a parameter of pdfBlock", is: "an object URL over the fetched bytes: the callers hand the open's objUrl (pdfBlock(objUrl, path) in renderBody; pdfBlock(url, path) in showPdfPages's fallback with `const url = objUrl` read null-checked above it), objUrl minted by URL.createObjectURL(t); read by the parameter's declaration and grep of pdfBlock(). No network: the frame's PDF viewer reads the blob the browser holds. The gate is URL.createObjectURL" },
   // the setAttribute spelling and window.open (the verifiers' census-1 and census-4 of the round-7 build, 2026-09-20: the URL
   // axis read the assignment spelling alone, so eight setAttribute writes from author-controlled values and the tab opener stood
@@ -2004,7 +2108,7 @@ test("the census of the body's roots, its default refusing: every `body` token i
   const roots = [...seated.keys()].sort();
   t.diagnostic("census: " + roots.map((r) => r + " (line " + seated.get(r)!.join(", ") + ")").join("; "));
   const second = seatSites(VIEWER_SRC);
-  t.diagnostic("second read: " + second.sites.length + " seats and site-read calls (" + second.sites.filter((s) => s.body).length + " on the body token, " + second.sites.filter((s) => !s.body).length + " on other receivers, " + SEATS_READ_BY_HAND.length + " entries listed over " + SEATS_READ_BY_HAND.reduce((n, e) => n + (e.times ?? 1), 0) + " seats, one entry per seat), " + second.indexReads.length + " stored index reads (" + INDEX_READS_BY_HAND.length + " distinct sites listed), " + NON_SEATING_METHODS.length + " method names listed as seating nothing; member writes on receivers other than the body token: " + (second.writes.length + second.sites.filter((s) => !s.body && s.assign).length) + " over " + new Set([...second.writes.map((w) => w.name), ...second.sites.filter((s) => !s.body && s.assign).map((s) => s.via.split(" ")[0])]).size + " distinct names (" + second.sites.filter((s) => !s.body && s.assign).length + " seats, " + second.writes.filter((w) => w.through === undefined).length + " by " + NON_SEATING_WRITES.length + " names listed as seating nothing, " + second.writes.filter((w) => w.through !== undefined).length + " through style or dataset by the rule), the body token's " + second.bodyWrites + "; " + second.handedNodes.length + " nodes handed to callees and " + second.elementsHanded.length + " elements handed to callees the file does not declare (" + ARGS_READ_BY_HAND.length + " entries listed over " + ARGS_READ_BY_HAND.reduce((n, e) => n + (e.times ?? 1), 0) + " hand-offs), " + second.urlWrites.length + " URL writes (" + URL_WRITES_READ_BY_HAND.length + " entries listed over " + URL_WRITES_READ_BY_HAND.reduce((n, e) => n + (e.times ?? 1), 0) + " writes), " + second.attrNames.length + " attribute names read by hand (" + ATTR_NAMES_READ_BY_HAND.length + " listed), " + second.attrWrites.length + " attributes set from a non-literal under an aria-* or data-* name (" + NON_URL_ATTRS.length + " names listed as carrying no URL)");
+  t.diagnostic("second read: " + second.sites.length + " seats and site-read calls (" + second.sites.filter((s) => s.body).length + " on the body token, " + second.sites.filter((s) => !s.body).length + " on other receivers, " + SEATS_READ_BY_HAND.length + " entries listed over " + SEATS_READ_BY_HAND.reduce((n, e) => n + (e.times ?? 1), 0) + " seats, one entry per seat), " + second.indexReads.length + " stored index reads (" + INDEX_READS_BY_HAND.length + " distinct sites listed), " + NON_SEATING_METHODS.length + " method names listed as seating nothing; member writes on receivers other than the body token: " + (second.writes.length + second.sites.filter((s) => !s.body && s.assign).length) + " over " + new Set([...second.writes.map((w) => w.name), ...second.sites.filter((s) => !s.body && s.assign).map((s) => s.via.split(" ")[0])]).size + " distinct names (" + second.sites.filter((s) => !s.body && s.assign).length + " seats, " + second.writes.filter((w) => w.through === undefined).length + " by " + NON_SEATING_WRITES.length + " names listed as seating nothing, " + second.writes.filter((w) => w.through !== undefined).length + " through style or dataset by the rule), the body token's " + second.bodyWrites + "; " + second.handedNodes.length + " nodes handed to callees and " + second.elementsHanded.length + " elements handed to callees the file does not declare (" + ARGS_READ_BY_HAND.length + " entries listed over " + ARGS_READ_BY_HAND.reduce((n, e) => n + (e.times ?? 1), 0) + " hand-offs), " + second.urlWrites.length + " URL writes (" + URL_WRITES_READ_BY_HAND.length + " entries listed over " + URL_WRITES_READ_BY_HAND.reduce((n, e) => n + (e.times ?? 1), 0) + " writes), " + second.styleWrites.length + " CSS properties written through style from a non-literal under a name listed as taking no url() (" + NON_URL_STYLE_PROPS.length + " names listed), " + second.attrNames.length + " attribute names read by hand (" + ATTR_NAMES_READ_BY_HAND.length + " listed), " + second.attrWrites.length + " attributes set from a non-literal under an aria-* or data-* name (" + NON_URL_ATTRS.length + " names listed as carrying no URL)");
   t.diagnostic("live seats on receivers other than the body token: " + JSON.stringify(second.sites.filter((s) => !s.body).map((s) => ({ in: s.fn, on: s.on, via: s.via, seats: s.seats, decl: s.decl, kind: s.kind, writes: s.writes, line: s.line }))));
   assert.ok([...seated.values()].reduce((n, ls) => n + ls.length, 0) >= 10, "the seating sites are found in file-view.ts");
   const listed = [...READY_ROOTS, ...NOT_READY_ROOTS, ...LINE_ROOTS].sort();
@@ -2019,7 +2123,7 @@ test("the census of the body's roots, its default refusing: every `body` token i
     assert.equal(bodyReady(bodyOf(r)), false, r + " alone: not in");
     for (const c of READY_ROOTS) assert.equal(bodyReady(bodyOf(r, c)), true, r + " over " + c + ": a line over content, in");
   }
-  assert.equal(bodyReady(bodyOf("div.fileview-unlisted")), false, "FAILS BEFORE: a child none of the lists names is not in; this census is what turns a new root into a red test rather than a dead button, on the call, assignment, receiver, argument and write axes since the round-7 fixes (a method call's name; a member assignment's name; a seat's receiver and each seated name by their bindings; a node of the tree handed to any callee, and an element the census can see by shape handed to a callee the file does not declare; a URL written from a non-literal by an assignment, setAttribute, a method of location or window.open, or an attribute set under a non-literal name)");
+  assert.equal(bodyReady(bodyOf("div.fileview-unlisted")), false, "FAILS BEFORE: a child none of the lists names is not in; this census is what turns a new root into a red test rather than a dead button, on the call, assignment, receiver, argument and write axes since the round-7 fixes (a method call's name; a member assignment's name; a seat's receiver and each seated name by their bindings; a node of the tree handed to any callee, and an element the census can see by shape handed to a callee the file does not declare; a URL written from a non-literal by an assignment, setAttribute, a CSS property through style or style.setProperty, a method of location or window.open, or an attribute set under a non-literal name)");
   for (const c of READY_ROOTS) assert.equal(bodyReady(bodyOf(c, "div.fileview-unlisted")), false, "an unlisted child beside " + c + ": not in");
   for (const r of NOT_READY_ROOTS) assert.equal(bodyReady(bodyOf(r), "pdf"), r === PDF_LOADER_ROOT, r + " alone under the PDF kind: " + (r === PDF_LOADER_ROOT ? "in (the pages attempt's loader; the PDF road reads nothing from the body)" : "not in"));
   assert.ok(NOT_READY_ROOTS.includes(PDF_LOADER_ROOT), "the PDF kind's exception is one of the wait roots");
@@ -2219,6 +2323,25 @@ test("the census refuses its unknown and derives its population, executed over m
   refusedMutant(seat('({ h: md.innerHTML } = { h: ' + MUTANT_HTML + ' });'), "an object pattern with innerHTML as a target", /seats `a value destructured from `\{[^`]*\}`` on `md` by innerHTML = in openFileView/);
   refusedMutant(seat('for (md.innerHTML of [' + MUTANT_HTML + ']) { break; }'), "a for-of head with innerHTML as its target", /seats `each of `\[[^`]*\]`` on `md` by innerHTML of in openFileView/);
   refusedMutant(seat('(md.innerHTML) = ' + MUTANT_HTML + ';'), "a parenthesised target", /seats `"<div class=\\"fileview-mutant\\"><\/div>"` on `md` by innerHTML = in openFileView/);
+  // the round-8 fixes (the round-7 review's extra8-1, 2026-09-21): the URL push stood in visit's plain-assignment arm on the raw
+  // left side, so a URL member written through a parenthesised, array, object, for-of or for-in target was a write and no URL
+  // write (FAILS BEFORE: each of e8-a to e8-j and e8-n below passed with no refusal), where the innerHTML twins above were
+  // seats; the push is classWrite's now, on the peeled target, and every arm reaches it
+  const esc = (x: string): string => x.replace(/[()[\].*+?^$|{}\\]/g, "\\$&");
+  const A4 = 'const a4 = el("a") as HTMLAnchorElement; ';
+  const HREF_URL = (value: string): RegExp => new RegExp("writes a4\\.href from `" + esc(value) + "` in openFileView, a URL write");
+  refusedMutant(seat(A4 + '({ href: a4.href } = { href: path });'), "FAILS BEFORE (e8-a): an object pattern with href as a target", HREF_URL("a value destructured from `{ href: path }`"));
+  refusedMutant(seat(A4 + '[a4.href] = [path];'), "FAILS BEFORE (e8-b): an array pattern with href as a target", HREF_URL("a value destructured from `[path]`"));
+  refusedMutant(seat(A4 + '(a4.href) = path;'), "FAILS BEFORE (e8-c): a parenthesised href target", HREF_URL("path"));
+  refusedMutant(seat(A4 + 'for (a4.href of [path]) {}'), "FAILS BEFORE (e8-d): a for-of head with href as its target", HREF_URL("each of `[path]`"));
+  refusedMutant(seat(A4 + 'for (a4.href in { x: 1 }) {}'), "FAILS BEFORE (e8-e): a for-in head with href as its target", HREF_URL("each of `{ x: 1 }`"));
+  refusedMutant(seat(A4 + '(a4.href) += path;'), "FAILS BEFORE (e8-f): a compound assignment to a parenthesised href target", HREF_URL("path"));
+  refusedMutant(seat(A4 + '[[a4.href]] = [[path]];'), "FAILS BEFORE (e8-g): a nested array pattern", HREF_URL("a value destructured from `[[path]]`"));
+  refusedMutant(seat(A4 + '({ h: { href: a4.href } } = { h: { href: path } });'), "FAILS BEFORE (e8-h): a nested object pattern", HREF_URL("a value destructured from `{ h: { href: path } }`"));
+  refusedMutant(seat(A4 + 'for ({ href: a4.href } of [{ href: path }]) {}'), "FAILS BEFORE (e8-n): a for-of object head", HREF_URL("each of `[{ href: path }]`"));
+  refusedMutant(seat('[location.href] = [path];'), "FAILS BEFORE (e8-i): location.href as an array pattern's target", /writes location\.href from `a value destructured from `\[path\]`` in openFileView, a URL write/);
+  refusedMutant(seat('({ href: location.href } = { href: path });'), "FAILS BEFORE (e8-j): location.href as an object pattern's target", /writes location\.href from `a value destructured from `\{ href: path \}`` in openFileView, a URL write/);
+  assert.deepEqual(census(seat(A4 + 'a4.href = path;')).refused.length, 1, "the plain spelling, the control: one refusal, as before the fix");
   refusedMutant(seat('const { append: seatFn } = md; [el("div", "fileview-mutant")].forEach(seatFn, md);'), "a destructured seating method with an iterator thisArg", HANDED_METHOD);
   refusedMutant(seat('const { ["append"]: seatFn2 } = md; seatFn2.call(md, el("div", "fileview-mutant"));'), "a destructuring by a computed key, then call", /calls call on `seatFn2` into `md, el\("div", "fileview-mutant"\)` in openFileView, a call the census reads by its site/, 2);   // the call read by its site on `seatFn2`, and the destructuring, below
   assert.match(census(seat('const { ["append"]: seatFn2 } = md; seatFn2.call(md, el("div", "fileview-mutant"));')).refused[1], /^line \d+: \{ \["append"\]: seatFn2 \} destructures a member by a computed key, which the census cannot read/, "...the destructuring by a computed key, refused on its own");
@@ -2229,6 +2352,28 @@ test("the census refuses its unknown and derives its population, executed over m
   assert.deepEqual(census(classedWrite).refused, [], "textContent, a handler holding a function, an attribute named by a constant or a literal, a ++ on a listed name, a style property and a data attribute pass");
   assert.deepEqual(seatSites(classedWrite).writes.filter((w) => w.line === plantedLine).map((w) => w.name + (w.through ? " through " + w.through : "")), ["textContent", "onclick", "scrollTop", "height through style", "probe through dataset"], "...and each passing write is CLASSED (never silent): the write axis records it, by a name NON_SEATING_WRITES lists or by the style or dataset rule");
   refusedMutant(seat('(md as any).style = "color: red";'), "the style attribute written as one string (the name `style` on md, not a property through it)", UNLISTED_WRITE("style", "(md as any)"));
+  // the round-8 fixes (the round-7 review's correctness-2, 2026-09-21): a CSS URL written through `style` reached the network with
+  // no hand read (FAILS BEFORE: c2-a, c2-b, c2-e and c2-g below passed, recorded as writes through style; c2-c and c2-h passed,
+  // recorded nowhere, setProperty being listed), while the same road spelled setAttribute("style", ...) was refused. The style
+  // road is the URL axis's now, inverted as the refuters asked: a write through style from a non-literal, or from a literal
+  // spelling url( or javascript:, is a URL write unless NON_URL_STYLE_PROPS lists the property by hand, and a computed property
+  // name through setProperty is recorded whatever the value
+  const STYLE_URL = (on: string, value: string): RegExp => new RegExp("writes " + esc(on) + " from `" + esc(value) + "` in openFileView, a URL write");
+  refusedMutant(seat('md.style.backgroundImage = "url(" + path + ")";'), "FAILS BEFORE (c2-a): style.backgroundImage from a non-literal", STYLE_URL("md.style.backgroundImage", '"url(" + path + ")"'));
+  refusedMutant(seat('md.style.cssText = "background:url(" + path + ")";'), "FAILS BEFORE (c2-b): style.cssText from a non-literal", STYLE_URL("md.style.cssText", '"background:url(" + path + ")"'));
+  refusedMutant(seat('md.style.setProperty("background-image", "url(" + path + ")");'), "FAILS BEFORE (c2-c): style.setProperty from a non-literal (the call passes on the call axis by its listing; the value is read here)", STYLE_URL('md.style.setProperty("background-image")', '"url(" + path + ")"'));
+  refusedMutant(seat('md.style["backgroundImage"] = path;'), "FAILS BEFORE (c2-e): the element-access spelling through style", STYLE_URL("md.style.backgroundImage", "path"));
+  refusedMutant(seat('md.style.backgroundImage = "url(https://example.invalid/x.png)";'), "FAILS BEFORE (c2-g): a literal url() through style", STYLE_URL("md.style.backgroundImage", '"url(https://example.invalid/x.png)"'));
+  refusedMutant(seat('md.style.setProperty("--fv-probe", path);'), "FAILS BEFORE (c2-h): a custom property from a non-literal through setProperty", STYLE_URL('md.style.setProperty("--fv-probe")', "path"));
+  refusedMutant(seat('md.style.setProperty(propName, "red");'), "a computed property name through setProperty is recorded whatever the value", STYLE_URL("md.style.setProperty(propName)", '"red"'));
+  const styleClassed = seat('md.style.top = x + "px"; md.style.color = owner ? "red" : "blue"; md.style.setProperty("color", path); md.style.display = "none";');
+  assert.deepEqual(census(styleClassed).refused, [], "a listed no-URL property (top, color) written from a non-literal, the same property through setProperty, and a literal that spells no url() pass");
+  const classedStyle = seatSites(styleClassed);
+  assert.deepEqual(classedStyle.writes.filter((w) => w.line === plantedLine).map((w) => w.name + " through " + w.through), ["top through style", "color through style", "display through style"], "...and each passing assignment is CLASSED on the assignment axis (never silent): the write through style, by the rule");
+  assert.deepEqual(classedStyle.styleWrites.filter((w) => w.line === plantedLine).map((w) => w.on + " " + w.name), ["md.style top", "md.style color", "md.style color"], "...and each non-literal write a listed property passes is CLASSED on the URL axis as a style write the list excused, the setProperty one among them");
+  assert.deepEqual(classedStyle.urlWrites.filter((u) => u.line === plantedLine), [], "...and none is a URL write");
+  const staleStyle = census(VIEWER_SRC, undefined, undefined, undefined, undefined, undefined);
+  assert.deepEqual(staleStyle.refused, [], "the pristine viewer under the live no-URL list: every listed property is written from a non-literal somewhere in the file");
   const staleWrite = census(VIEWER_SRC, undefined, undefined, undefined, undefined, undefined);
   assert.deepEqual(staleWrite.refused, [], "the pristine viewer under the live tables");
   // the round-6 review's cluster C (correctness-3, extra6-3; 2026-09-20): a reflection global is read by its binding and
@@ -2280,6 +2425,20 @@ test("the census refuses its unknown and derives its population, executed over m
   refusedMutant(seat('window.open(path);'), "FAILS BEFORE: window.open(path)", /writes window\.open from `path` in openFileView, a URL write/);
   refusedMutant(seat('globalThis.open("javascript:alert(1)");'), 'globalThis.open("javascript:...")', /writes globalThis\.open from `"javascript:alert\(1\)"` in openFileView, a URL write/);
   assert.deepEqual(census(seat('location.assign("/files"); window.open("/files", "_blank");')).refused, [], "a literal that is not javascript: passes at both, as an assignment's literal does");
+  // the round-8 fixes (the round-7 review's correctness-1, 2026-09-21): the URL arm preempted the seat and call axes on a receiver
+  // whose chain names `location`, and a literal first argument recorded nothing (FAILS BEFORE: c1-a and c1-f below were refused
+  // as URL writes, the wrong axis with the wrong message; c1-b, c1-d, c1-g and c1-j passed silent). The chain is two passes now,
+  // the shape and then each axis, and the call axis's exclusion is keyed on the (location, navigation-method) pair alone
+  const LOC_SEAT = /seats `[^`]*` on `(?:nav\.location|\(window\.location as any\)|\(document\.location as any\))` by (?:append|setHTMLUnsafe) in openFileView, a seat the census has not read by hand/;
+  const NAV = 'const nav = { location: md }; ';
+  refusedMutant(seat(NAV + 'nav.location.append(el("div", "fileview-mutant"));'), "FAILS BEFORE (c1-a): append of an element on a location-named receiver, refused as a URL write", LOC_SEAT);
+  refusedMutant(seat(NAV + 'nav.location.append("fileview-mutant text");'), "FAILS BEFORE (c1-b): append of a literal on a location-named receiver, silent", LOC_SEAT);
+  refusedMutant(seat(NAV + 'nav.location.setHTMLUnsafe(\'<div class="fileview-mutant"></div>\');'), "FAILS BEFORE (c1-d): setHTMLUnsafe of a literal on a location-named receiver, silent", LOC_SEAT);
+  refusedMutant(seat('(window.location as any).append(el("div", "fileview-mutant"));'), "FAILS BEFORE (c1-f): append on window.location, refused as a URL write", LOC_SEAT);
+  refusedMutant(seat('(document.location as any)!.setHTMLUnsafe(\'<div class="fileview-mutant"></div>\');'), "FAILS BEFORE (c1-g): setHTMLUnsafe on document.location, silent", LOC_SEAT);
+  refusedMutant(seat(NAV + 'nav.location.foo("x");'), "FAILS BEFORE (c1-j): an unlisted method on a location-named receiver with a literal argument, silent", /calls foo on `nav\.location`, a method the census does not list as seating or as seating nothing/);
+  refusedMutant(seat(NAV + 'nav.location.assign(path);'), "the navigation pair on a location-named receiver is the URL axis's alone, one refusal (the call axis does not read the pair)", /writes nav\.location\.assign from `path` in openFileView, a URL write/);
+  refusedMutant(seat('md.assign(path);'), "`assign` on any other receiver is an unlisted method: the exclusion is keyed on the pair, never on the name", /calls assign on `md`, a method the census does not list as seating or as seating nothing/);
   // census-3: the argument axis read direct arguments alone, so a node handed inside an object literal, an array literal or a
   // concise arrow passed, and an object literal in a seats key was `{...}`, so a property added to a listed call was no new seat
   refusedMutant(seat('wrapCodeLines({ up: main.parentElement } as any);'), "FAILS BEFORE: a node inside an object literal handed to a callee", /hands `\{ up: main\.parentElement \}`, a node of the tree read through parentElement, to wrapCodeLines\(\.\.\.\) in openFileView, a callee the census has not read by hand/);

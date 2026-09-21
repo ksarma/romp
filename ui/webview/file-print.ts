@@ -815,8 +815,9 @@ export function rootKind(c: BodyChild): RootKind {
  *  than a dead button: since the round-7 fixes it refuses a seat it has not read on the call, assignment, receiver, argument
  *  and write axes, by name: a method call's name, a member assignment's name, a seat's receiver and each seated name by their
  *  bindings, a node handed to any callee and an element the census can see by shape handed to a callee the file does not
- *  declare, and a URL written from anything but a literal by an assignment, setAttribute, a method of location or window.open,
- *  or an attribute set under a name it cannot read as a literal, so a root the viewer seats by any of the five reds until read,
+ *  declare, and a URL written from anything but a literal by an assignment, setAttribute, a CSS property through style or
+ *  style.setProperty, a method of location or window.open, or an attribute set under a name it cannot read as a literal, so a
+ *  root the viewer seats by any of the five reds until read,
  *  and on no other axis). In when a content root stands and nothing above
  *  holds: the rendered root, the code block (a
  *  `div.fileview-err` line above either, an empty file's or a render that fell, is a line over content, not a pane), a
