@@ -616,9 +616,22 @@ setup_hook_repo() {
 # that has never installed it. The rules and .gitleaks.toml are exercised for
 # real in tests/gitleaks-config.bats and by CI's secret-scan job.
 
-setup_gitleaks_stub() {   # <exit-code>: records its args, then exits that code
+setup_gitleaks_stub() {   # <exit-code>: records its args, reports the range's commit count the way gitleaks does, then exits that code
     # 0 is a clean scan; 2 is a finding (the hook asks gitleaks to report one so,
     # apart from its own failures); 1 is gitleaks failing.
+    # The count line: the hook reads gitleaks' own log for the commits it scanned
+    # and refuses a scan that reports none (exit 0 says no finding was reported,
+    # not that a scan happened), so the stub reports the range's count in
+    # gitleaks' line shape, `<time> INF <n> commits scanned.` (8.30.1 prints
+    # `3:27AM INF 2 commits scanned.`; the hook reads the fields, so the time
+    # carries no space). The range is the --log-opts value up to the options the
+    # hook appends, counted in the source root the stub is handed, as gitleaks'
+    # own `git -C <root> log` would. `git rev-list --count` is the right count
+    # HERE because every fixture below adds one text file per commit; gitleaks
+    # counts a commit only once it has scanned a hunk of a file that is neither
+    # deleted nor binary, so a fixture with an empty, deletion-only or
+    # binary-only commit would need the hook's rule (scannable_commits in
+    # .githooks/pre-push) instead.
     unset ROMP_NO_GITLEAKS
     GL_ARGS="$TEST_DIR/gitleaks.args"
     export ROMP_GITLEAKS="$TEST_DIR/gitleaks-stub"
@@ -626,6 +639,9 @@ setup_gitleaks_stub() {   # <exit-code>: records its args, then exits that code
 #!/usr/bin/env bash
 echo "\$@" >> "$GL_ARGS"
 echo "stub scanner ran" >&2
+# the range's commit count in gitleaks' own line shape (why: setup_gitleaks_stub)
+opts=; for a in "\$@"; do case "\$a" in --log-opts=*) opts="\${a#--log-opts=}";; esac; done
+echo "12:00AM INF \$(git -C "\$2" rev-list --count \${opts%% --diff-merges=first-parent*}) commits scanned." >&2
 exit $1
 EOF
     chmod +x "$ROMP_GITLEAKS"
