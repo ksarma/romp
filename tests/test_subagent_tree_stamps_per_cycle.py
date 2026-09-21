@@ -35,7 +35,10 @@ threads: a pusher cycle and a jobs pass running at once each validate once with 
 by the other's; (4) the guards, each against the input it refuses and the input it accepts: a forget that evicts the
 root makes the next read in the same scope walk again while a forget that evicts nothing leaves the scope serving; a
 stamp stat that raises is answered (dir, None) and not held while one that succeeds is held; a walk with a failed
-listing is not held while a clean one is; a launch fold that did not read the file is folded once per read (the call-local
+listing is not held while a clean one is, and a walk that stored a racy stamp (the real window, one directory written at
+the walk) is held for the cycle like a clean one, its pair and its stamps, and walked again by the next cycle's first read
+(round 2 of #882: every case closed the window, so the hold had no executed pin and the opposite policy stayed green); a
+launch fold that did not read the file is folded once per read (the call-local
 hold) and again by the next read (not held for the cycle) while one that read it is held for the cycle, with the fault's
 producer driven for real (the reader's fail path, a raising fold, a readable file); a root gone mid-cycle whose entry stood
 moves the gen and records its own eviction, and a sibling tree the scope held is still served (the eviction is that root's,
@@ -88,6 +91,7 @@ os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "test-token-DO-NOT-USE")
 km = load_source("romp_kernel_subagent_tree_stamps_per_cycle", os.path.join(BIN, "romp-kernel"))
 jd = km.jd
+RACY_NS_REAL = km._SUBAGENT_DIR_RACY_NS   # the kernel's racy window, read at import BEFORE _World.setUp closes it: the racy-hold guard runs with it
 
 D = 8              # directories in the tree: the subagents root, workflows/, and D - 2 workflow directories under it
 A = 3              # awaiting workflow agents, one nested in each of the first A workflow directories
@@ -679,6 +683,60 @@ class Guards(_World):
         self.assertEqual(sp.total()["dir_lstat"], 0, "served from the scope")
         self.assertEqual(self._delta(b)["miss"], 2)
         self.assertEqual(dirs3, dirs2)
+
+    def test_a_racy_tree_is_held_for_the_cycle_it_was_walked_in_and_walked_again_next_cycle(self):
+        """The racy hold with the REAL window (regression-1 and tests-3 of the round-1 review: setUp closes the window for
+        every case, so no walk in the module stored a racy stamp and the opposite policy, a scope holding vouched walks
+        alone, stayed green through it). A directory whose mtime or ctime is within _SUBAGENT_DIR_RACY_NS of the walk is
+        stored in the cross-cycle memo with identity None (git's racy-stamp rule), so that memo never vouches for the tree
+        and the next cycle's first read walks it again; the cycle scope holds the walk like any clean one, its pair and its
+        stamps, since a racy stamp is the clock's coarseness and no failure, and a tree under active write is the one the
+        pusher reads most. Keys, in order: the premise (the walk stored None for the directory written at the walk; a walk
+        that ran late, past the window, is a visible red here, never a pass for the wrong reason), the hold (the second read
+        in the scope and the written directory's _dir_stamp cost 0 lstats and 0 stats and neither validate nor walk) and the
+        release (a new scope's first read walks: one miss, D lstats). The opposite policy leaves the second read walking: D
+        lstats and a miss where 0 are owed, once per read for every tree under active write."""
+        root, touched = str(self.sub), self.dirs[3]       # one workflow directory, written at the walk: within the real window
+        with mock.patch.object(km, "_SUBAGENT_DIR_RACY_NS", RACY_NS_REAL):
+            self.assertGreater(km._SUBAGENT_DIR_RACY_NS, 0, "the window is the kernel's own, read at import before setUp closed it")
+            km._SUBAGENT_TREES.pop(root, None)             # no entry stands: the first read walks
+            sc = self._open()
+            b = self._stats()
+            now = time.time_ns()
+            os.utime(touched, ns=(now, now))              # mtime now; the utime itself moves ctime to now as well
+            with self._spy() as sp:
+                dirs1, stats1 = km._subagent_tree(root)
+            t1, d1 = sp.total(), self._delta(b)
+            self.assertEqual((len(dirs1), d1["miss"], t1["dir_lstat"]), (D, 1, D), "read 1 walked the tree: D directories, one miss, D lstats")
+            at = dirs1.index(touched)
+            self.assertIsNone(km._SUBAGENT_TREES[root][1][at],
+                              "premise: the walk stored identity None for the directory written at the walk, its stamp within "
+                              "_SUBAGENT_DIR_RACY_NS = %d ns of the clock; a stored identity means the walk saw no racy stamp (it ran past "
+                              "the window on a slow box) and this case cannot pin the hold" % RACY_NS_REAL)
+            with self._spy() as sp:
+                dirs2, _stats2 = km._subagent_tree(root)
+                stamp2 = km._dir_stamp(touched)
+            t2, d2 = sp.total(), self._delta(b)
+            cost2 = (t2["dir_lstat"], t2["dir_stat"], d2["hit"] - d1["hit"], d2["miss"] - d1["miss"])
+            self.assertEqual(cost2, (0, 0, 0, 0),
+                             "(os.lstat on the tree's directories, os.stat on them, validated hits, walks) on the second read in the scope "
+                             "and the written directory's stamp: %r; keyed on the racy walk being held for the cycle like a clean one, the "
+                             "pair and the stamps served (0, 0, 0, 0); a scope holding vouched walks alone walks again, D = %d lstats, a "
+                             "stat for the stamp and a miss, on every read of a tree under active write" % (cost2, D))
+            self.assertIs(dirs2, dirs1, "the second read is answered the first read's listing")
+            self.assertEqual(stamp2, (touched, stats1[at].st_mtime_ns), "the stamp served is the one the walk took")
+            self.assertIn(root, sc["trees"], "held: the racy walk's pair stands in the scope")
+            km._subagent_scope_close()                     # the cycle ends
+            self._open()                                   # the next cycle
+            with self._spy() as sp:
+                dirs3, _stats3 = km._subagent_tree(root)
+            t3, d3 = sp.total(), self._delta(b)
+            cost3 = (d3["miss"] - d2["miss"], d3["hit"] - d2["hit"], t3["dir_lstat"], len(dirs3))
+            self.assertEqual(cost3, (1, 0, D, D),
+                             "the next scope's first read: (walks, validated hits, lstats, directories) %r; keyed on a walk (1, 0, D, D): "
+                             "the racy entry is unvouched across cycles, so the cross-cycle memo never hits on it, and the hold ended with "
+                             "the scope, so the new cycle reads the disk (a hold that outlived the scope would serve the pair for 0)"
+                             % (cost3,))
 
     def test_a_faulted_launch_fold_is_folded_once_per_call_and_not_held_across_calls(self):
         """Two lifetimes for a launch fold whose reader took its fail path (_awaiting_nest's `faulted`, round 2 of #882): the
