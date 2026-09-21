@@ -14,6 +14,7 @@ file	tests/test_error_center.py
 file	tests/test_federated_dial_terms_served.py
 file	tests/test_files_pane.py
 file	tests/test_files_pane_toggle_served.py
+file	tests/test_kernel_delta_send.py
 file	tests/test_kernel_mobile.py
 file	tests/test_kernel_pane_rail.py
 file	tests/test_kernel_webpush.py
@@ -75,10 +76,15 @@ line	kernel/kernel.py	            # the FAILED state (review round 1, 2026-09-19
 line	kernel/kernel.py	            # the retry button (review round 3, ui-1): a real button, shown by the failed paint alone (paintLoading drops its `hidden`), in the
 line	kernel/kernel.py	            client.pop("preferred", None)   # [fork] pass 8 (the author's label, 2026-09-21, taking the reviewer's round-6 finding kernel-2): the parked-reveal
 line	kernel/kernel.py	        # [fork] pass 4b, the author's label (2026-09-20, taking the reviewer's round-3 addendum: fresh-1 / regression-4, the round-3 fixlist's extra9-1): a reveal PARKED for this client's
+line	kernel/kernel.py	        _active = _watched_flag(_active, sid, targets)   # [fork] pass 8 (the author's label, 2026-09-21, taking the reviewer's round-6 finding kernel-1): derived from the project's answer above, which stands while no target carries the parked-reveal preference's record; with one standing the record counts as watched and the declaration it replaced does not, so this label and _push's active-first set answer alike
 line	kernel/kernel.py	        _hint = None   # the page's hint the preference below replaced, when it did (pass 5, the author's label, taking the reviewer's round-4 finding kernel-2: the record)
 line	kernel/kernel.py	    """[fork] The lazy panes' proof of a 200 (review round 4 of the lazy panes, 2026-09-19, kernel-1): every text/html 200 this kernel
+line	kernel/kernel.py	    declaration's place (_watched_tab, _watched_set); the exemption stays on the page's word (the reviewer's round-5 ruling),
 line	kernel/kernel.py	    rule over the writer and no list of pages. Handler._send is not the one place every response leaves (pass 5, the author's label, taking the reviewer's round-4 finding extra6-1):
 line	kernel/kernel.py	    skeleton row, _watched_sids and the live-wake exemption read it as the page's declaration. [fork] pass 7 (the author's label, 2026-09-20, taking the reviewer's round-5 finding kernel-1): before this the
+line	kernel/kernel.py	    so the two sets are named apart here (pass 8, the author's label, taking the reviewer's round-6 finding kernel-1)."""
+line	kernel/kernel.py	    taking the reviewer's round-6 findings kernel-1 and regression-4): the fork's readers DERIVE their answer from the
+line	kernel/kernel.py	    the preference served whole as active, as _push's active-first set ranks it (kernel-1, the reviewer's round 6: the label
 line	kernel/kernel.py	    var on={};KEYS.forEach(function(k){on[k]=mob?(k===tab):!!po[k];});return {romp:'panes',on:on,avail:{files:filesCtl()},link:(window.__rompLink&&window.__rompLink().up)?'up':'down',mob:mob};}   // mob (review round 3, extra8-1): the LAYOUT word, so a pane re-decides a layout-keyed hold on every flip (the media query's change re-tells: _LANDING_MOBILE_JS retell); render.ts's return hold reads it   // [fork] D3 (2026-09-18): the page's link is the shell socket's state (_LANDING_MOBILE_JS window.__rompLink), re-told on its open/close/abandon; consumers (render.ts, waiting.ts) replace on and avail wholesale and ignore keys they do not read
 line	kernel/kernel.py	  function linkMsg(){var m=panesMsg();return {romp:'link',link:m.link,mob:m.mob};}   // mob (review round 4, 2026-09-19, kernel-3): the LAYOUT word rides the link word too, so a split chat column, which hears no panes word, re-decides its return hold on every flip as the pane frames do (render.ts's link branch runs onLayoutWord on it); before this a column that armed the hold on the phone kept it for the socket's life after a flip to the desktop
 line	kernel/kernel.py	  if(!live&&parsed&&sPend&&!sDeferred){sDeferred=true;sOpen=open;return;}   // [fork] pass 5, the author's label, the reviewer's round-4 ui-1: committed at the url, no marker yet, no load yet: the fetch is in flight, so this tap rides it once (its ask recorded for the load; the comment above)
@@ -169,6 +175,7 @@ line	tests/test_files_pane.py	        _lacks(self, "try{window.__rompMobileTab&&
 line	tests/test_files_pane.py	MOBILE = true; TAB = 'chat';   // the same two asks on the phone (pass 5, the author's label, the reviewer's round-4 ui-2: the two above run on the desktop, where the feed's tab swap is gated now)
 line	tests/test_files_pane_toggle_served.py	        # promotion left a blank pane with every assertion green (the round-1 refuter's screenshot)
 line	tests/test_files_pane_toggle_served.py	        # the pane's CONTENT after the tap (review round 3 of the lazy panes, extra9-2): the Files pane is lazy on the phone since stage 0,
+line	tests/test_kernel_delta_send.py	        (pass 8, the author's label, 2026-09-21, taking the reviewer's round-6 finding kernel-1: the client declares another tab
 line	tests/test_kernel_mobile.py	                      "the shell's pane loader is the romp loader first, then the failed-load message (announced: role=alert), then the retry button, hidden until the failed paint (review round 3, ui-1)")
 line	tests/test_kernel_mobile.py	        # D3 (review round 2, 2026-09-19): the shown pane's synchronous show hook, inserted right after the m-on toggle (upstream's line) and before the button loop
 line	tests/test_kernel_mobile.py	        # D7 (review round 1, regression-5): the desktop promotion is its own element, spliced BEFORE the mobile script, reading the media query itself

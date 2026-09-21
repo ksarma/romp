@@ -55428,6 +55428,40 @@ def _watched_tab(c):
     return c.get("preferred") or c.get("active")
 
 
+def _watched_records(clients):
+    """The parked-reveal preference's standing records over `clients`, for the two derivations below: (recs, withheld),
+    where `recs` is every record (`preferred`) a client carries and `withheld` is every declaration (`active`) a client with
+    a record made that no record-less client also declares. A client with a record watches the record and not its
+    declaration (_watched_tab), so the set of watched tabs is the declared set minus `withheld` plus `recs`; with no record
+    standing both sets are empty and the declared set is the watched set. [fork] pass 8 (the author's label, 2026-09-21,
+    taking the reviewer's round-6 findings kernel-1 and regression-4): the fork's readers DERIVE their answer from the
+    project's line (the declared set, or the declared flag) instead of recomputing it, so a later upstream edit to that
+    line takes effect here; the residual, disclosed: a client the project's line filters out still contributes its record."""
+    recs, withheld = set(), set()
+    for c in clients:
+        p = c.get("preferred")
+        if not p:
+            continue
+        recs.add(p)
+        a = c.get("active")
+        if a and a != p and not any(x is not c and not x.get("preferred") and x.get("active") == a for x in clients):
+            withheld.add(a)
+    return recs, withheld
+
+
+def _watched_flag(declared, sid, clients):
+    """Whether `sid` is a watched tab, derived from the project's answer `declared` (whether a client declares it): the
+    project's answer stands while no client in `clients` carries the preference's record; with one standing, a withheld
+    declaration does not count and a record does, so the targeted push's perf label (_push_session_now) files the session
+    the preference served whole as active, as _push's active-first set ranks it (kernel-1, the reviewer's round 6: the label
+    read the declaration alone and filed that session as background while the set built it first, one question with two
+    answers). [fork] pass 8."""
+    recs, withheld = _watched_records(clients)
+    if not recs:
+        return declared
+    return (declared and sid not in withheld) or sid in recs
+
+
 def _send_tab_order(c, tab_order, tab_meta, live):
     """The tab strip to one client through the pusher's ("taborder",) dedup slot — built AND enqueued under the
     client's slot lock so the frame's skeleton list and its queue position agree with every release, which
@@ -61950,6 +61984,7 @@ def _push_session_now(sid):
         except OSError:
             _nbytes = None
         _active = sid in {c.get("active") for c in targets if c.get("active")}   # the watched tab, as _push reads it from its clients
+        _active = _watched_flag(_active, sid, targets)   # [fork] pass 8 (the author's label, 2026-09-21, taking the reviewer's round-6 finding kernel-1): derived from the project's answer above, which stands while no target carries the parked-reveal preference's record; with one standing the record counts as watched and the declaration it replaced does not, so this label and _push's active-first set answer alike
         _PERF_STATS.build_chat(False, _dt, active=_active, miss=("targeted",), sid=sid, nbytes=_nbytes)
         _chat_sig_bump(targetedBuilds=1)             # memos.chatSig.targetedBuilds: a targeted build, no signature taken, watched or not
         #   the per-session timer (round three, 2026-09-15): this push builds too (27 attach handshakes at a boot run it), and an
@@ -62027,8 +62062,11 @@ def _take_live_wake_sids():
 
 
 def _watched_sids():
-    """The chat tabs connected clients are looking at: each alive, ready chat client's active sid (the
-    ?active= connect hint or the activeTab message; the same set _push builds first)."""
+    """The chat tabs connected clients are looking at, by each alive, ready chat client's own declaration: its active sid (the
+    ?active= connect hint or the activeTab message), the page's word, for the live-wake exemption. _push's active-first set
+    equals this set except while a parked-reveal preference's record stands on a client, when _push reads the record in the
+    declaration's place (_watched_tab, _watched_set); the exemption stays on the page's word (the reviewer's round-5 ruling),
+    so the two sets are named apart here (pass 8, the author's label, taking the reviewer's round-6 finding kernel-1)."""
     with _clients_lock:
         return {str(c["active"]) for c in _clients
                 if c.get("app") == "chat" and c.get("alive", True) and _client_ready(c) and c.get("active")}
@@ -78015,6 +78053,8 @@ class Handler(BaseHTTPRequestHandler):
         wid = (q.get("wid") or [""])[0]         # which DASHBOARD this pane belongs to → _send_to_view aims at one
         iid = (q.get("iid") or [""])[0]         # which page INSTANCE: a reconnect carrying it retires its old socket
         active = (q.get("active") or [""])[0]   # the tab this client is looking at → _push builds it FIRST
+        # [fork] pass 8 (kernel-1): first unless a reveal parked for this window names another session at the set's resolve, when the
+        #   parked-reveal preference records that session on the client and _push builds it first in the hint's place (_watched_tab)
         # Capabilities the client ANNOUNCES (comma-separated). FEED_DELTA_CAP: a page whose bundle can apply
         # {type:"feedDelta"} says so on its ws URL (the shim adds it for the kernel-served feed, Outline and
         # Waiting on you pages — see _shim's `caps`); READY_GATE_CAP is the hold below. Announced on the URL
