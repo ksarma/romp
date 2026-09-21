@@ -75,7 +75,7 @@ MARKER = re.compile(r"^\s*(?:#|//|/\*|\*|<!--)?\s*")               # a comment m
 # closing fixer pass after the maintainer's round 6, close-1: three listed shapes had caught three of the eight prefix shapes the
 # artefact makes). The sweep inlined the qualifier Q on a line whose line above already ended with a word-prefix P of Q, and since
 # Q opens with P the joined prose reads P P and the rest of Q. So: a word run opening with "the", immediately repeated (the run up
-# to ten words, longer than the qualifier's eight; the repeat's case free, as re.I reads a backreference; a hyphenated number is a
+# to ten words, longer than the qualifier's nine; the repeat's case free, as re.I reads a backreference; a hyphenated number is a
 # word of the run), where the text from the run's first word to the clause's end names the author's or the maintainer's (the
 # lookahead, anchored at the run's first word: the attribution's possessive inside the run or after it, before the next period,
 # semicolon or colon; a possessive BEFORE the run in its clause is outside the pin by choice, since the sweep's artefact keeps the
