@@ -25,18 +25,22 @@
 //     tree: a present source is red here as arrived, and the promotion remedy derived from that source (a roster line, a
 //     reason of its own, or no line) is the census test's and the script's to print;
 //   - the script the step calls (vscode-extension/scripts/ci-browser-legs.sh) exists, is executable, calls the census
-//     module once (--tsv) and node --test through xargs, and prints "no legs in the roster" on an empty roster; run on
-//     synthetic trees with a stub node on PATH that answers the census call from a TABLE this module writes (so what is
-//     executed here is the script's READING of a census, never the census), it refuses a stale line, a leg in neither
-//     file, a leg in both, a line without a reason, a duplicate, a line naming no leg, a missing bundle, a malformed line
-//     (shown with its whitespace visible, the leg it names attributed to it), a roster line whose census row carries a gap
-//     or an engine, naming the line, the census's sentence and the remedy; stops, judging nothing, when the census exits
-//     1 (no compiler) or 2 (a refusal, whose lines it prints); and after node --test turns a skipped test into a red
-//     naming the test, the switch's state in the run (set to 1 as the step has it, or unset as a local run may) and the
-//     rostered sources whose text holds its name with node's TAP escaping undone, turns a rostered leg that registered no
-//     test into a red naming the leg (node's record reports such a file as one passing test named by its path as node
-//     received it), prints the lost-browser remedy beside a leg whose failure names the switch, and passes node's own
-//     failure status through;
+//     module once (--tsv) and node --test through xargs with the reporter scripts/ci-browser-legs-reporter.mjs beside the
+//     spec reporter, and prints "no legs in the roster" on an empty roster; run on synthetic trees with a stub node on PATH
+//     that answers the census call from a TABLE this module writes (so what is executed here is the script's READING of a
+//     census, never the census), it refuses a stale line, a leg in neither file, a leg in both, a line without a reason, a
+//     duplicate, a line naming no leg, a missing bundle, a malformed line (shown with its whitespace visible, the leg it
+//     names attributed to it), a roster line whose census row carries a gap or an engine, naming the line, the census's
+//     sentence and the remedy; stops, judging nothing, when the census exits 1 (no compiler) or 2 (a refusal, whose lines
+//     it prints); and after node --test reads the reporter's record (the stub writes a record this module hands it) and
+//     derives, per rostered leg, that at least one result attributed to it is a pass with no skip or todo, a test and not a
+//     suite, and not node's file-level result, red naming the leg otherwise (todo-only, a describe() that registers none,
+//     a file that registered nothing, a failure inside a todo); turns a skipped test into a red naming the test, its reason
+//     and the switch's state in the run (set to 1 as the step has it, or unset as a local run may); reds a failure inside a
+//     todo and a file that failed as a whole (timed out, or threw at load) by name; prints the lost-browser remedy beside a
+//     leg whose failure names the switch; and passes node's own failure status through. The reporter itself is executed
+//     here over synthetic bundles with a real node --test (the shapes above, and a name holding a tab and a newline), and so
+//     is the composition: the script with the real node and the real reporter over those shapes as rostered legs;
 //   - the phrase the script reads a lost browser by is a literal in ui/webview/real-viewer-leg.ts's source, the SHARED
 //     PHRASE between the helper and the script, so a reword on either side is red here rather than a remedy dropped in
 //     silence. That pin reads text and guards the phrase alone: that inBrowser FAILS with it under the switch and skips
@@ -58,6 +62,7 @@ const CI = path.join(REPO, '.github', 'workflows', 'ci.yml');
 const ROSTER = 'ci-browser-legs.txt';
 const EXCLUDED = 'ci-browser-legs-excluded.txt';
 const SCRIPT = path.join(EXT, 'scripts', 'ci-browser-legs.sh');
+const REPORTER = path.join(EXT, 'scripts', 'ci-browser-legs-reporter.mjs');
 const CENSUS = path.join(EXT, 'scripts', 'browser-legs-census.mjs');
 const CENSUS_TEST = path.join(REPO, 'ui', 'webview', 'ci-browser-legs-census.test.ts');
 /** The census's home, named in every message here that stops where the parse begins. */
@@ -234,10 +239,13 @@ function bash(args, opts = {}) {
   return r;
 }
 
-test('the script exists, is executable, calls the census module once and node --test through xargs, and spells the empty-roster guard (each executed below through the stub)', () => {
+test('the script exists, is executable, calls the census module once and node --test through xargs with the reporter beside the spec reporter, and spells the empty-roster guard (each executed below through the stub)', () => {
   assert.ok(fs.existsSync(SCRIPT), 'the step\'s script exists at ' + path.relative(REPO, SCRIPT));
   assert.ok(fs.statSync(SCRIPT).mode & 0o111, 'the script is executable');
+  assert.ok(fs.existsSync(REPORTER), 'the reporter the script passes to node --test exists at ' + path.relative(REPO, REPORTER));
   const src = read(SCRIPT);
+  assert.match(src, /^REPORTER=\.\/scripts\/ci-browser-legs-reporter\.mjs$/m, 'the script names the reporter once, as REPORTER, by a path node resolves from vscode-extension/');
+  assert.equal((src.match(/--test-reporter="\$REPORTER" --test-reporter-destination="\$rep"/g) || []).length, 1, 'node --test is handed the reporter with a destination file the script reads after the run (executed below)');
   assert.match(src, /^CENSUS=scripts\/browser-legs-census\.mjs$/m, 'the script names the census module once, as CENSUS');
   assert.equal((src.match(/node "\$CENSUS" --tsv/g) || []).length, 1, 'the census is run once, as node "$CENSUS" --tsv (the stub below answers that call; the script\'s --list-legs against the real census is compared in ' + path.relative(REPO, CENSUS_TEST) + ')');
   assert.ok(src.includes('echo "no legs in the roster"; exit 0'), 'the empty-roster guard is spelled in the script (executed below)');
@@ -251,20 +259,23 @@ test('the script exists, is executable, calls the census module once and node --
  *  launches through inBrowser but reaches Firefox, each with a bundle); and a stub node on PATH that answers the script's
  *  census call (node scripts/browser-legs-census.mjs --tsv) with the TABLE below, CBL_STUB_CENSUS (bundle TAB 1|0 TAB gap
  *  TAB engines TAB class, the module's --tsv shape; the sentences are the module's shapes, as values of this table), exiting
- *  CBL_STUB_CENSUS_EXIT with CBL_STUB_CENSUS_ERR on stderr when set, and otherwise records its arguments, writes CBL_STUB_TAP
- *  (when set) to the tap reporter's destination and exits CBL_STUB_EXIT (0 unless set). The sources' text decides nothing
- *  here: what runs is the script's reading of the table (the census over real sources is executed by the census test in the
- *  vscode-extension job). Returns a runner over roster/exclusions text that runs the script with the switch set to 1 as the
- *  step does (stub.switch names another value; null runs it unset, as a local run may; stub.census replaces the table,
- *  stub.censusExit and stub.censusErr the census call's exit and stderr; stub.check runs --check); `node` in its result is the argument list of the
- *  node --test call without the reporter flags. `ext` is the physical path of the tree's vscode-extension, as node spells a
- *  bundle in its record. */
+ *  CBL_STUB_CENSUS_EXIT with CBL_STUB_CENSUS_ERR on stderr when set; for any other call it records its arguments and then either
+ *  runs the REAL node over them (CBL_STUB_REAL_NODE names it: the composition of the script, node and the real reporter) or
+ *  writes CBL_STUB_REPORT (when set) to the reporter's destination and exits CBL_STUB_EXIT (0 unless set). The sources' text
+ *  decides nothing here: what runs is the script's reading of the table (the census over real sources is executed by the census
+ *  test in the vscode-extension job). Returns a runner over roster/exclusions text that runs the script with the switch set to 1
+ *  as the step does (stub.switch names another value; null runs it unset, as a local run may; stub.census replaces the table,
+ *  stub.censusExit and stub.censusErr the census call's exit and stderr; stub.check runs --check; stub.report is the record the
+ *  stub writes; stub.exit its exit; stub.real runs the real node); `node` in its result is the argument list of the node --test
+ *  call without the reporter flags. `ext` is the physical path of the tree's vscode-extension, as node spells a bundle in its
+ *  record, and `rec(bundle, fields...)` spells one record line for that bundle (the reporter's eight fields, the path first). */
 function syntheticTree(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cbl-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const ext = path.join(root, 'vscode-extension');
   for (const d of ['vscode-extension/scripts', 'vscode-extension/src', 'vscode-extension/out-tests/ui/webview', 'ui/webview', 'bin']) fs.mkdirSync(path.join(root, d), { recursive: true });
   fs.copyFileSync(SCRIPT, path.join(ext, 'scripts', 'ci-browser-legs.sh'));
+  fs.copyFileSync(REPORTER, path.join(ext, 'scripts', 'ci-browser-legs-reporter.mjs'));
   const priv = 'import { createRequire } from "node:module";\nconst pw = createRequire(__filename)("playwright");\n';
   const shared = 'import { inBrowser } from "./real-viewer-leg";\n';
   const web = (name, text) => fs.writeFileSync(path.join(root, 'ui', 'webview', name), text);
@@ -285,9 +296,10 @@ function syntheticTree(t) {
     '  printf \'%s\' "${CBL_STUB_CENSUS:-}"; exit "${CBL_STUB_CENSUS_EXIT:-0}";;',
     'esac',
     'printf \'%s\\n\' "$@" > "' + log + '"',
+    'if [ -n "${CBL_STUB_REAL_NODE:-}" ]; then exec "$CBL_STUB_REAL_NODE" "$@"; fi',
     'prev=""',
     'for a in "$@"; do',
-    '  case "$a" in --test-reporter-destination=*) if [ "$prev" = "--test-reporter=tap" ] && [ -n "${CBL_STUB_TAP:-}" ]; then printf \'%s\\n\' "$CBL_STUB_TAP" > "${a#--test-reporter-destination=}"; fi;; esac',
+    '  case "$a" in --test-reporter-destination=*) if [ "$prev" = "--test-reporter=./scripts/ci-browser-legs-reporter.mjs" ] && [ -n "${CBL_STUB_REPORT:-}" ]; then printf \'%s\\n\' "$CBL_STUB_REPORT" > "${a#--test-reporter-destination=}"; fi;; esac',
     '  prev="$a"',
     'done',
     'exit "${CBL_STUB_EXIT:-0}"',
@@ -304,29 +316,33 @@ function syntheticTree(t) {
     if (excluded === null) fs.rmSync(path.join(ext, EXCLUDED), { force: true }); else fs.writeFileSync(path.join(ext, EXCLUDED), excluded);
     fs.rmSync(log, { force: true });
     const env = { ...process.env, PATH: path.join(root, 'bin') + path.delimiter + process.env.PATH };
-    delete env.CBL_STUB_TAP; delete env.CBL_STUB_EXIT; delete env.CBL_STUB_CENSUS_EXIT; delete env.CBL_STUB_CENSUS_ERR;
+    delete env.CBL_STUB_REPORT; delete env.CBL_STUB_EXIT; delete env.CBL_STUB_CENSUS_EXIT; delete env.CBL_STUB_CENSUS_ERR; delete env.CBL_STUB_REAL_NODE; delete env.NODE_TEST_CONTEXT;
     env.CBL_STUB_CENSUS = stub.census !== undefined ? stub.census : CENSUS_TABLE;
     if (stub.censusExit !== undefined) env.CBL_STUB_CENSUS_EXIT = String(stub.censusExit);
     if (stub.censusErr !== undefined) env.CBL_STUB_CENSUS_ERR = stub.censusErr;
     env[SWITCH] = '1';
     if (stub.switch === null) delete env[SWITCH]; else if (stub.switch !== undefined) env[SWITCH] = stub.switch;
-    if (stub.tap !== undefined) env.CBL_STUB_TAP = stub.tap;
+    if (stub.report !== undefined) env.CBL_STUB_REPORT = stub.report;
     if (stub.exit !== undefined) env.CBL_STUB_EXIT = String(stub.exit);
+    if (stub.real) env.CBL_STUB_REAL_NODE = process.execPath;
     const r = bash([path.join(ext, 'scripts', 'ci-browser-legs.sh'), ...(stub.check ? ['--check'] : [])], { cwd: root, env });
     const args = fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean) : null;
     return { status: r.status, out: r.stdout, err: r.stderr, node: args && args.filter((a) => !a.startsWith('--test-reporter')), reporters: args && args.filter((a) => a.startsWith('--test-reporter')) };
   };
-  return { run, root, ext: fs.realpathSync(ext), A, B, P, M, K, F, PLAIN, GAP_P, GAP_M, GAP_K, TABLE: CENSUS_TABLE };
+  const real = fs.realpathSync(ext);
+  const rec = (bundle, ...fields) => [path.join(real, bundle), ...fields].join('\t') + '\n';
+  return { run, root, ext: real, rec, A, B, P, M, K, F, PLAIN, GAP_P, GAP_M, GAP_K, TABLE: CENSUS_TABLE };
 }
 
 const EXCLUDE_REST = (...keep) => ['a', 'b', 'p', 'm', 'k', 'f'].filter((n) => !keep.includes(n)).map((n) => 'out-tests/ui/webview/' + n + '-browser.test.js\treason ' + n + '\n').join('');
 
 test('the script runs the rostered legs through node --test when the roster and the tree agree, and prints "no legs in the roster" and starts no node on an empty roster', (t) => {
-  const { run, A } = syntheticTree(t);
-  const ok = run('# header\n\n' + A + '\n', '# header\n' + EXCLUDE_REST('a'));
+  const { run, rec, A } = syntheticTree(t);
+  // the stub's record: a's one test passed (with no record a rostered leg is red as unrun, the property the post-run test executes)
+  const ok = run('# header\n\n' + A + '\n', '# header\n' + EXCLUDE_REST('a'), { report: rec(A, 'pass', 'test', '-', 'test', 'leg a opens the page', '', '-') });
   assert.equal(ok.status, 0, ok.err);
   assert.deepEqual(ok.node, ['--test', A], 'node --test received the roster\'s one bundle');
-  assert.deepEqual(ok.reporters.filter((a) => !a.startsWith('--test-reporter-destination=')), ['--test-reporter=spec', '--test-reporter=tap'], 'the spec reporter for the log and the tap reporter for the skip check');
+  assert.deepEqual(ok.reporters.filter((a) => !a.startsWith('--test-reporter-destination=')), ['--test-reporter=spec', '--test-reporter=./scripts/ci-browser-legs-reporter.mjs'], 'the spec reporter for the log and the step\'s own reporter for the post-run read');
   assert.ok(!ok.out.includes('no legs in the roster'));
   const empty = run('# only a comment\n\n   \n', EXCLUDE_REST());
   assert.equal(empty.status, 0, empty.err);
@@ -385,10 +401,10 @@ test('the script refuses, naming the line and the remedy, on: a missing file, a 
 });
 
 test('the script allows a pending line while its source is absent, reds a pending reason that names no PR, and once the source is present reds the line with the promotion remedy the census derives (a roster line for a shared Chromium leg; the real reason for a private or engine leg; no line for a non-leg) and not as "in neither" too', (t) => {
-  const { run, root, A, P, F, PLAIN, GAP_P, TABLE } = syntheticTree(t);
+  const { run, root, rec, A, P, F, PLAIN, GAP_P, TABLE } = syntheticTree(t);
   const C = 'out-tests/ui/webview/c-browser.test.js';
   const rest = EXCLUDE_REST('a');
-  const absent = run(A + '\n', C + '\tpending #860: a leg an open PR brings\n' + rest);
+  const absent = run(A + '\n', C + '\tpending #860: a leg an open PR brings\n' + rest, { report: rec(A, 'pass', 'test', '-', 'test', 'leg a opens the page', '', '-') });
   assert.equal(absent.status, 0, 'a pending line with an absent source is allowed; stderr: ' + absent.err);
   assert.deepEqual(absent.node, ['--test', A], 'the rostered leg ran');
   const check = run(A + '\n', C + '\tpending #860: a leg an open PR brings\n' + rest, { check: true });
@@ -418,60 +434,137 @@ test('the script allows a pending line while its source is absent, reds a pendin
   for (const r of [priv, eng, none]) assert.ok(!r.err.includes('is in neither'), 'no second red:\n' + r.err);
 });
 
-test('after node --test the script turns a skipped test into a red naming the test, the rostered sources holding its name (node\'s TAP escaping undone) and the remedy, turns a rostered leg that registered no test into a red naming the leg, prints the lost-browser remedy beside a leg whose failure names the switch, and passes node\'s own failure status through', (t) => {
-  const { run, ext, A } = syntheticTree(t);
+test('after node --test the script derives per rostered leg that at least one attributable pass ran, red otherwise (todo-only, a describe() that registers none, a file that registered nothing, a failure inside a todo); reds a skipped test naming the test, its reason and the switch\'s state; reds a failure inside a todo and a file that failed as a whole by name; prints the lost-browser remedy beside a leg whose failure names the switch; passes node\'s status through', (t) => {
+  const { run, root, rec, A, B } = syntheticTree(t);
   const excluded = EXCLUDE_REST('a');
-  const HOLDERS = 'rostered sources whose text holds that test name, node\'s TAP escaping undone: ';
-  const tapSkip = 'TAP version 13\n# Subtest: leg a opens the page\nok 1 - leg a opens the page # SKIP no playwright chromium on this box\n# Subtest: some other test\nok 2 - some other test\n1..2\n# tests 2\n# pass 1\n# skipped 1\n';
-  const skipped = run(A + '\n', excluded, { tap: tapSkip });
+  const PASS = rec(A, 'pass', 'test', '-', 'test', 'leg a opens the page', '', '-');
+  const skipped = run(A + '\n', excluded, { report: PASS + rec(A, 'pass', 'test', 'skip', 'test', 'leg a keeps the slice\\nwhole # 2', 'no playwright chromium on this box', '-') });
   assert.equal(skipped.status, 1, 'a skip under the switch is red; stderr: ' + skipped.err);
   assert.deepEqual(skipped.node, ['--test', A], 'the leg ran (the skip is read from the run, not refused before it)');
-  assert.ok(skipped.err.includes('skipped with ' + SWITCH + '=1: ok 1 - leg a opens the page # SKIP no playwright chromium on this box (' + HOLDERS + A + ')'), skipped.err);
+  assert.ok(skipped.err.includes('ci-browser-legs: skipped with ' + SWITCH + '=1: \'leg a keeps the slice\\nwhole # 2\' # SKIP no playwright chromium on this box (' + A + ')'), 'the skip names the test as the record spells it (a newline written \\n), its reason and its leg:\n' + skipped.err);
   assert.ok(skipped.err.includes('a rostered leg skipped a test with ' + SWITCH + '=1, so the step claims coverage it did not run'), skipped.err);
   assert.ok(skipped.err.includes('only inBrowser in ui/webview/real-viewer-leg.ts turns a launch it cannot make into a failure here') && skipped.err.includes('move it to ' + EXCLUDED + ' with that reason'), skipped.err);
+  assert.ok(!skipped.err.includes('no test of this leg passed'), 'a leg with a pass beside its skip is not called unrun:\n' + skipped.err);
   // the same skip with the switch unset, as a local run may have it: still red, and the message says the switch is unset
   // and that the step sets it, instead of claiming a state the run did not have
-  const unset = run(A + '\n', excluded, { tap: tapSkip, switch: null });
+  const unset = run(A + '\n', excluded, { report: PASS + rec(A, 'pass', 'test', 'skip', 'test', 'leg a opens the page', 'why', '-'), switch: null });
   assert.equal(unset.status, 1, 'a skip with the switch unset is red too; stderr: ' + unset.err);
-  assert.ok(unset.err.includes('skipped with ' + SWITCH + ' unset: ok 1 - leg a opens the page # SKIP'), unset.err);
+  assert.ok(unset.err.includes('skipped with ' + SWITCH + ' unset: \'leg a opens the page\' # SKIP why (' + A + ')'), unset.err);
   assert.ok(unset.err.includes('a rostered leg skipped a test with ' + SWITCH + ' unset, so this run claims coverage it did not run: the step sets ' + SWITCH + '=1'), unset.err);
   assert.ok(!unset.err.includes(SWITCH + '=1:') && !unset.err.includes('with ' + SWITCH + '=1,'), 'no line claims the switch was set:\n' + unset.err);
-  const unknown = run(A + '\n', excluded, { tap: 'TAP version 13\nok 1 - a name no source spells # SKIP why\n1..1\n' });
-  assert.equal(unknown.status, 1);
-  assert.ok(unknown.err.includes('(' + HOLDERS + 'none)'), 'a name found in no rostered source says so:\n' + unknown.err);
-  // node's record doubles a backslash and writes # as \#, so a's second test (a newline and a # in its name, spelled \n
-  // and # in the source) is recorded as "slice\\nwhole \# 2"; the lookup undoes that and finds the source
-  const escaped = run(A + '\n', excluded, { tap: 'TAP version 13\nok 1 - leg a keeps the slice\\\\nwhole \\# 2 # SKIP why\n1..1\n' });
-  assert.equal(escaped.status, 1);
-  assert.ok(escaped.err.includes('skipped with ' + SWITCH + '=1: ok 1 - leg a keeps the slice\\\\nwhole \\# 2 # SKIP why (' + HOLDERS + A + ')'), 'the name is looked up with the record\'s escaping undone:\n' + escaped.err);
-  const clean = run(A + '\n', excluded, { tap: 'TAP version 13\nok 1 - leg a opens the page\n1..1\n# tests 1\n# pass 1\n# skipped 0\n' });
-  assert.equal(clean.status, 0, 'no skip, no red: ' + clean.err);
-  assert.equal(clean.err, '', 'nothing on stderr when every rostered test ran');
-  // a rostered leg that registered no test: node's record reports the file as one passing test named by the bundle's
-  // path as node received it (the roster line, relative to vscode-extension), with no nested line, and its summary counts
-  // it as a pass
-  const none = run(A + '\n', excluded, { tap: 'TAP version 13\n# Subtest: ' + A + '\nok 1 - ' + A + '\n1..1\n# tests 1\n# pass 1\n# skipped 0\n' });
-  assert.equal(none.status, 1, 'a leg with no test is red; stderr: ' + none.err);
+  const clean = run(A + '\n', excluded, { report: PASS + rec(A, 'pass', 'suite', '-', 'test', 'a suite with tests', '', '-') });
+  assert.equal(clean.status, 0, 'a pass beside a suite\'s own pass: no red: ' + clean.err);
+  assert.equal(clean.err, '', 'nothing on stderr when every rostered leg passed a test');
+  // the property: no attributable pass. Four shapes, each red naming the leg and what the record held, none called a skip
+  const UNRUN = 'ci-browser-legs: ' + A + ': no test of this leg passed in this run (the record holds ';
+  const none = run(A + '\n', excluded, { report: rec(A, 'pass', 'test', '-', 'file-level', A, '', '-') });
+  assert.equal(none.status, 1, 'a file that registered nothing is red; stderr: ' + none.err);
   assert.deepEqual(none.node, ['--test', A], 'the leg ran (the empty run is read from the record, not refused before it)');
-  assert.ok(none.err.includes('ci-browser-legs: ' + A + ' registered no test in this run (node\'s record reports the file as one passing test named by its path), so the step claims coverage it did not run'), none.err);
-  assert.ok(none.err.includes('move it to ' + EXCLUDED + ' with that reason until one runs'), none.err);
-  assert.ok(!none.err.includes('skipped with'), 'an empty run is not called a skip:\n' + none.err);
+  assert.ok(none.err.includes(UNRUN + '0 skipped, 0 todo, 0 suite and 1 file-level results for it), so the step claims coverage it did not run') && none.err.includes('move it to ' + EXCLUDED + ' with that reason until one runs'), none.err);
+  const suite = run(A + '\n', excluded, { report: rec(A, 'pass', 'suite', '-', 'test', 'a suite that registers none', '', '-') });
+  assert.equal(suite.status, 1, 'a describe() that registers no test is red; stderr: ' + suite.err);
+  assert.ok(suite.err.includes(UNRUN + '0 skipped, 0 todo, 1 suite and 0 file-level results for it)'), suite.err);
+  const todos = run(A + '\n', excluded, { report: rec(A, 'pass', 'test', 'todo', 'test', 'bodyless todo', '', '-') + rec(A, 'pass', 'test', 'todo', 'test', 'a todo with a passing body', 'waiting on the browser', '-') });
+  assert.equal(todos.status, 1, 'a leg whose tests are all todo is red; stderr: ' + todos.err);
+  assert.ok(todos.err.includes(UNRUN + '0 skipped, 2 todo, 0 suite and 0 file-level results for it)'), todos.err);
+  assert.ok(!todos.err.includes('failed inside a todo'), 'a todo that passed is not a discarded failure:\n' + todos.err);
+  const todoFail = run(A + '\n', excluded, { report: rec(A, 'fail', 'test', 'todo', 'test', 'a real failure inside a todo', 'the leg is broken', 'testCodeFailure') });
+  assert.equal(todoFail.status, 1, 'a failure inside a todo is red although node exits 0; stderr: ' + todoFail.err);
+  assert.ok(todoFail.err.includes('ci-browser-legs: ' + A + ': \'a real failure inside a todo\' failed inside a todo (the leg is broken): node discards the failure (# fail 0, exit 0), so the step would read green over a broken test: remove the todo, or fix the test and remove it'), todoFail.err);
+  assert.ok(todoFail.err.includes(UNRUN + '0 skipped, 1 todo, 0 suite and 0 file-level results for it)'), 'and the leg ran no counting pass:\n' + todoFail.err);
+  // a real pass beside a failure inside a todo: the property holds, the discarded failure is still red
+  const mixed = run(A + '\n', excluded, { report: PASS + rec(A, 'fail', 'test', 'todo', 'test', 'a swallowed failure', 'the leg is broken', 'testCodeFailure') });
+  assert.equal(mixed.status, 1, mixed.err);
+  assert.ok(mixed.err.includes('\'a swallowed failure\' failed inside a todo (the leg is broken)') && !mixed.err.includes('no test of this leg passed'), mixed.err);
+  for (const r of [none, suite, todos, todoFail]) assert.ok(!r.err.includes('skipped with'), 'an unrun leg is not called a skip:\n' + r.err);
+  // two rostered legs, one of which ran nothing: the red names that one and not the other (attribution is per bundle)
+  fs.writeFileSync(path.join(root, 'vscode-extension', B), '');   // b has no bundle in the tree by default
+  const two = run(A + '\n' + B + '\n', EXCLUDE_REST('a', 'b'), { report: PASS + rec(B, 'pass', 'test', 'todo', 'test', 'leg b todo', '', '-') });
+  assert.equal(two.status, 1, two.err);
+  assert.ok(two.err.includes('ci-browser-legs: ' + B + ': no test of this leg passed') && !two.err.includes('ci-browser-legs: ' + A + ': no test'), 'the leg that ran nothing is named and the one that passed is not:\n' + two.err);
+  // a file that failed as a whole (node's file-level result failing: a timeout under --test-timeout, or a throw at load)
+  const timedOut = run(A + '\n', excluded, { report: rec(A, 'fail', 'test', '-', 'file-level', A, 'test timed out after 300000ms', 'testTimeoutFailure'), exit: 1 });
+  assert.equal(timedOut.status, 123, 'node\'s failure stands');
+  assert.ok(timedOut.err.includes('ci-browser-legs: ' + A + ' failed as a whole (testTimeoutFailure: test timed out after 300000ms): a file that timed out or threw at load ran no test that counts'), timedOut.err);
+  assert.ok(!timedOut.err.includes('no test of this leg passed'), 'a failed file is node\'s red, not called unrun on top:\n' + timedOut.err);
   // xargs answers a command's exit of 1 to 125 with 123, so that is the status a failed leg gives the step
-  const failed = run(A + '\n', excluded, { tap: 'TAP version 13\nnot ok 1 - leg a opens the page\n  ---\n  location: \'' + path.join(ext, A) + ':3:1\'\n  error: \'an assertion of the leg\\\'s own failed\'\n  ...\n1..1\n# fail 1\n', exit: 1 });
+  const failed = run(A + '\n', excluded, { report: rec(A, 'fail', 'test', '-', 'test', 'leg a opens the page', 'an assertion of the leg\'s own failed', 'testCodeFailure'), exit: 1 });
   assert.equal(failed.status, 123, 'node\'s failure is the step\'s (through xargs, which answers 123)');
-  assert.ok(!failed.err.includes('skipped under'), 'a failure is not called a skip:\n' + failed.err);
-  assert.ok(!failed.err.includes('lost its browser'), 'a failure for a reason of the leg\'s own is not called a lost browser:\n' + failed.err);
-  assert.ok(!failed.err.includes('registered no test'), 'a failed test is a registered test:\n' + failed.err);
-  // a failure whose error names the switch is inBrowser failing to launch under it: the remedy is printed beside the leg,
-  // named from the record's location line
+  assert.equal(failed.err, '', 'a failure for a reason of the leg\'s own gets no label of the script\'s (node\'s own report carries it):\n' + failed.err);
+  // a failure whose message names the switch is inBrowser failing to launch under it: the remedy is printed beside the leg
   const LOST = SWITCH + ' is set and this leg cannot run: no playwright browser on this box; the browser leg needs one: browserType.launch: Executable doesn\'t exist at /nowhere';
-  const lostTap = 'TAP version 13\n# Subtest: leg a opens the page\nnot ok 1 - leg a opens the page\n  ---\n  duration_ms: 1\n  type: \'test\'\n  location: \'' + path.join(ext, A) + ':3:1\'\n  failureType: \'testCodeFailure\'\n  error: "' + LOST + '"\n  code: \'ERR_ASSERTION\'\n  ...\n1..1\n# fail 1\n';
-  const lost = run(A + '\n', excluded, { tap: lostTap, exit: 1 });
+  const lost = run(A + '\n', excluded, { report: rec(A, 'fail', 'test', '-', 'test', 'leg a opens the page', LOST, 'testCodeFailure'), exit: 1 });
   assert.equal(lost.status, 123);
-  assert.ok(lost.err.includes('ci-browser-legs: ' + A + ': \'leg a opens the page\' failed under ' + SWITCH + '=1 because inBrowser could not launch ("' + LOST + '"): the runner lost its browser: check the Chromium install step'), lost.err);
-  const both = run(A + '\n', excluded, { tap: 'TAP version 13\nok 1 - leg a opens the page # SKIP why\n1..1\n', exit: 7 });
+  assert.ok(lost.err.includes('ci-browser-legs: ' + A + ': \'leg a opens the page\' failed under ' + SWITCH + '=1 because inBrowser could not launch (' + LOST + '): the runner lost its browser: check the Chromium install step'), lost.err);
+  const both = run(A + '\n', excluded, { report: rec(A, 'pass', 'test', 'skip', 'test', 'leg a opens the page', 'why', '-'), exit: 7 });
   assert.equal(both.status, 123, 'with a failure and a skip node\'s status stands and the skip is still named');
   assert.ok(both.err.includes('skipped with ' + SWITCH + '=1'), both.err);
+});
+
+/** Synthetic bundles for the reporter and the composition: each a node:test module of one shape, written under `dir` as
+ *  out-tests/ui/webview/<name>-browser.test.js; returns the bundle paths by shape. */
+function writeShapes(dir) {
+  const w = (name, body) => { fs.writeFileSync(path.join(dir, 'out-tests', 'ui', 'webview', name + '-browser.test.js'), body); return 'out-tests/ui/webview/' + name + '-browser.test.js'; };
+  const head = 'const { test, describe } = require("node:test"); const assert = require("node:assert");\n';
+  return {
+    passSkip: w('pass-skip', head + 'test("one pass", () => {});\ntest("one skip", (t) => { t.skip("no browser # here"); });\n'),
+    todoBoth: w('todo-both', head + 'test.todo("bodyless todo");\ntest("a todo with a passing body", { todo: "waiting on the browser" }, () => {});\n'),
+    describeNone: w('describe-none', head + 'describe("a suite that registers none", () => {});\n'),
+    nothing: w('nothing', ''),
+    todoFail: w('todo-fail', head + 'test("a real failure inside a todo", { todo: true }, () => { assert.fail("the leg is broken"); });\n'),
+    mixed: w('mixed', head + 'test("one real pass", () => {});\ntest("a swallowed failure", { todo: true }, () => { assert.fail("the leg is broken"); });\n'),
+    describePass: w('describe-pass', head + 'describe("outer suite", () => { test("inner pass\\nwith a newline\\tand a tab", () => {}); });\n'),
+    lost: w('lost', head + 'test("the launch", () => { assert.fail("' + SWITCH + ' is set and this leg cannot run: no playwright browser on this box"); });\n'),
+  };
+}
+
+test('the reporter, executed with a real node --test over synthetic bundles: one line per result attributed to its file, a describe() as a suite, a skip and a todo as directives, a failure inside a todo as a fail, node\'s file-level result marked for a file that registered nothing, and a name\'s tab and newline written \\t and \\n', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cbl-rep-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(dir, 'out-tests', 'ui', 'webview'), { recursive: true });
+  const S = writeShapes(dir);
+  const out = path.join(dir, 'record.tsv');
+  const env = {}; for (const k of ['PATH', 'HOME', 'TMPDIR']) if (process.env[k] !== undefined) env[k] = process.env[k];
+  const r = spawnSync(process.execPath, ['--test', '--test-reporter=' + REPORTER, '--test-reporter-destination=' + out, ...Object.values(S)], { cwd: dir, encoding: 'utf8', env, timeout: 120000 });
+  assert.equal(r.status, 1, 'node exits 1 (the lost shape fails for real); stderr: ' + r.stderr);
+  const real = fs.realpathSync(dir);
+  const lines = fs.readFileSync(out, 'utf8').split('\n').filter(Boolean).map((l) => l.split('\t'));
+  const of = (bundle) => lines.filter((f) => f[0] === path.join(real, bundle)).map((f) => f.slice(1));
+  assert.deepEqual(of(S.passSkip), [['pass', 'test', '-', 'test', 'one pass', '', '-'], ['pass', 'test', 'skip', 'test', 'one skip', 'no browser # here', '-']]);
+  assert.deepEqual(of(S.todoBoth), [['pass', 'test', 'todo', 'test', 'bodyless todo', '', '-'], ['pass', 'test', 'todo', 'test', 'a todo with a passing body', 'waiting on the browser', '-']]);
+  assert.deepEqual(of(S.describeNone), [['pass', 'suite', '-', 'test', 'a suite that registers none', '', '-']], 'a describe() that registers none is one suite result and nothing else');
+  assert.deepEqual(of(S.nothing), [['pass', 'test', '-', 'file-level', S.nothing, '', '-']], 'a file that registered nothing is node\'s file-level pass, marked');
+  assert.deepEqual(of(S.todoFail), [['fail', 'test', 'todo', 'test', 'a real failure inside a todo', 'the leg is broken', 'testCodeFailure']]);
+  assert.deepEqual(of(S.mixed), [['pass', 'test', '-', 'test', 'one real pass', '', '-'], ['fail', 'test', 'todo', 'test', 'a swallowed failure', 'the leg is broken', 'testCodeFailure']]);
+  assert.deepEqual(of(S.describePass), [['pass', 'test', '-', 'test', 'inner pass\\nwith a newline\\tand a tab', '', '-'], ['pass', 'suite', '-', 'test', 'outer suite', '', '-']], 'the inner test first, then the suite; the name\'s newline and tab escaped');
+  assert.deepEqual(of(S.lost), [['fail', 'test', '-', 'test', 'the launch', SWITCH + ' is set and this leg cannot run: no playwright browser on this box', 'testCodeFailure']]);
+  assert.equal(lines.length, 12, 'twelve results over the eight bundles and no other line: ' + JSON.stringify(lines));
+  assert.ok(lines.every((f) => f.length === 8), 'eight fields per line');
+});
+
+test('the composition, executed: the script with the real node and the real reporter over the shapes as rostered legs reds todo-only, describe-none, nothing and a failure inside a todo by leg, names the skip, prints the lost-browser remedy, and passes a clean roster', (t) => {
+  const { run, root, TABLE } = syntheticTree(t);
+  const S = writeShapes(path.join(root, 'vscode-extension'));
+  const shared = 'import { inBrowser } from "./real-viewer-leg";\n';
+  const rows = [];
+  for (const b of Object.values(S)) {
+    const name = path.basename(b, '.test.js');
+    fs.writeFileSync(path.join(root, 'ui', 'webview', name + '.test.ts'), shared + 'test("x", async (t) => { await inBrowser(t, async () => {}); });\n');
+    rows.push([b, '1', '-', '-', 'shared'].join('\t'));
+  }
+  const census = TABLE + rows.join('\n') + '\n';
+  const excl = (...keep) => EXCLUDE_REST() + Object.values(S).filter((b) => !keep.includes(b)).map((b) => b + '\treason\n').join('');
+  const all = run(Object.values(S).join('\n') + '\n', excl(...Object.values(S)), { census, real: true });
+  assert.equal(all.status, 123, 'node exit 1 (the lost shape) through xargs; stderr: ' + all.err);
+  for (const b of [S.todoBoth, S.describeNone, S.nothing, S.todoFail]) assert.ok(all.err.includes('ci-browser-legs: ' + b + ': no test of this leg passed in this run'), b + ' is red as unrun:\n' + all.err);
+  for (const b of [S.passSkip, S.mixed, S.describePass, S.lost]) assert.ok(!all.err.includes('ci-browser-legs: ' + b + ': no test of this leg passed'), b + ' is not called unrun:\n' + all.err);
+  assert.ok(all.err.includes('ci-browser-legs: ' + S.todoFail + ': \'a real failure inside a todo\' failed inside a todo (the leg is broken)') && all.err.includes('ci-browser-legs: ' + S.mixed + ': \'a swallowed failure\' failed inside a todo (the leg is broken)'), all.err);
+  assert.ok(all.err.includes('skipped with ' + SWITCH + '=1: \'one skip\' # SKIP no browser # here (' + S.passSkip + ')'), all.err);
+  assert.ok(all.err.includes('ci-browser-legs: ' + S.lost + ': \'the launch\' failed under ' + SWITCH + '=1 because inBrowser could not launch (' + SWITCH + ' is set and this leg cannot run: no playwright browser on this box): the runner lost its browser: check the Chromium install step'), all.err);
+  assert.ok(all.err.includes(S.describeNone + ': no test of this leg passed in this run (the record holds 0 skipped, 0 todo, 1 suite and 0 file-level results for it)') && all.err.includes(S.nothing + ': no test of this leg passed in this run (the record holds 0 skipped, 0 todo, 0 suite and 1 file-level results for it)'), all.err);
+  const clean = run(S.describePass + '\n', excl(S.describePass), { census, real: true });
+  assert.equal(clean.status, 0, 'a leg whose test passes inside a describe(): green; stderr: ' + clean.err);
+  assert.equal(clean.err, '', 'nothing on stderr');
 });
 
 /** The executed test of the switch's behaviour, which the phrase pin below names and does not replace. */

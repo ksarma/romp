@@ -35,17 +35,19 @@
 # node that answers the census call from a table, so what it executes is this script's reading of the census, not the
 # census. `--list-legs` prints the census's legs; `--check` runs the pre-run checks alone and starts no node --test
 # (it does not check that the bundles are built, which the step's run does).
-# After node --test it reads the run's TAP record: a test skipped under the switch is red too, with the skipped tests
-# named as node names them, the switch's state in the run and the rostered sources whose text holds each name (node's
-# TAP escaping undone), since a skip here is coverage the step claims and does not have (with the switch unset, as a
-# local run may have it, the remedy is to run with it set); a rostered leg that registered no test is red too (node's
-# record reports such a file as one passing test named by the bundle's path as node received it, and the step would
-# read green with the leg's coverage gone); and a failed test whose error names the switch (inBrowser could not launch)
-# is printed
-# beside its leg, read from the record's location line, with the remedy: the runner lost its browser, check the Chromium
-# install step. An empty roster prints "no legs in the roster"
-# and exits 0 without starting node --test: with no file arguments node --test runs its default glob, the whole suite
-# again.
+# After node --test it reads the run's record from scripts/ci-browser-legs-reporter.mjs (one line per result, attributed to
+# its bundle by node's own record of the file; node's TAP record names no file for a pass, so it cannot say which leg a pass
+# belongs to) and derives, per rostered leg, DID THIS LEG RUN: at least one result attributed to it is a pass that carries no
+# skip or todo, is a test and not a suite, and is not node's file-level result (node reports a file that registered nothing as
+# one pass named by its path). A leg with none is red naming the leg and what the record held instead (skips, todos, suites,
+# the file-level result), since the step would otherwise claim coverage it did not run; a leg whose results all fail is
+# node's red, passed through. Beside that property: a test skipped is red naming the test, its reason and the switch's state
+# in the run (with the switch unset, as a local run may have it, the remedy is to run with it set); a failure inside a todo is
+# red (node discards it: # fail 0, exit 0); a file that failed as a whole (node's file-level result failing: a timeout, or a
+# throw at load) is red naming the file; and a failed test whose message names the switch (inBrowser could not launch) is printed beside its
+# leg with the remedy: the runner lost its browser, check the Chromium install step. One pass over the record (awk),
+# linear in its length. An empty roster prints "no legs in the roster" and exits 0 without starting node --test: with no
+# file arguments node --test runs its default glob, the whole suite again.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 ROOT=$(cd .. && pwd)
@@ -53,6 +55,7 @@ ROSTER=ci-browser-legs.txt
 EXCLUDED=ci-browser-legs-excluded.txt
 SWITCH=ROMP_BROWSER_LEGS_REQUIRE
 CENSUS=scripts/browser-legs-census.mjs
+REPORTER=./scripts/ci-browser-legs-reporter.mjs
 # The switch's state in this run, printed by the messages after node --test: the step sets it to 1; a local run may not,
 # and a skip with it unset is inBrowser skipping as designed, so the remedy differs.
 if [ -n "${!SWITCH:-}" ]; then switch_state="$SWITCH=${!SWITCH}"; else switch_state="$SWITCH unset"; fi
@@ -185,68 +188,60 @@ if [ "$fail" -ne 0 ]; then echo "ci-browser-legs: the roster and the tree disagr
 if [ "$check_only" -eq 1 ]; then echo "ci-browser-legs: the roster and the tree agree: ${#legs[@]} rostered, $(census | awk 'END { print NR }') browser legs in the census, $pending_n pending lines naming absent sources (--check judges the two files against the tree and starts no node --test; the step's run also checks that each rostered bundle is built under out-tests/)"; exit 0; fi
 
 if [ "${#legs[@]}" -eq 0 ]; then echo "no legs in the roster"; exit 0; fi
-# The run's TAP record goes to a file beside the spec output on stdout, for the skip check below.
-tap=$(mktemp)
-trap 'rm -f "$tap"' EXIT
+# The run's record goes to a file beside the spec output on stdout, one line per result (the reporter's header states the
+# eight fields); the pass below reads it once.
+rep=$(mktemp)
+trap 'rm -f "$rep"' EXIT
 status=0
-printf '%s\n' "${legs[@]}" | xargs -r node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=tap --test-reporter-destination="$tap" || status=$?
+printf '%s\n' "${legs[@]}" | xargs -r node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter="$REPORTER" --test-reporter-destination="$rep" || status=$?
 
-# A skipped test under the switch: node's record names the test and its reason, not the file (a multi-file run reports
-# every test at the top level), so each skipped name is looked up in the rostered sources' text with node's TAP escaping
-# undone (the record doubles a backslash and writes # as \#; undone, a newline in the name reads \n, as a source spells
-# it). A name built at run time, or spelled otherwise in its source, may match none, and the line says so.
-skipped=$(grep -E '^[[:space:]]*(not )?ok [0-9]+ - .* # SKIP' "$tap" || [ $? -eq 1 ])
-if [ -n "$skipped" ]; then
-  while IFS= read -r s; do
-    name=$(sed -E 's/^[[:space:]]*(not )?ok [0-9]+ - //; s/ # SKIP.*$//; s/\\#/#/g; s/\\\\/\\/g' <<<"$s")
-    holders=""
-    for leg in "${legs[@]}"; do
-      if grep -qF -- "$name" "$(source_of "$leg")"; then holders="${holders:+$holders, }$leg"; fi
-    done
-    echo "ci-browser-legs: skipped with $switch_state: ${s#"${s%%[![:space:]]*}"} (rostered sources whose text holds that test name, node's TAP escaping undone: ${holders:-none})" >&2
-  done <<<"$skipped"
+# One pass over the record with the roster on stdin: per rostered leg a TALLY line (passes that count, fails that count,
+# skips, todos, todo failures, suites, file-level results); and one line per result the step reads a red from: SKIP, TODOFAIL,
+# FILEFAIL (the file failed as a whole), LOST (a failure whose message names the switch). Node resolves a bundle from its
+# physical working directory, so the roster's lines are keyed by that path.
+here=$(pwd -P)
+report=$(printf '%s\n' "${legs[@]}" | awk -v msg="$SWITCH is set and this leg cannot run" -F '\t' -v here="$here" '
+  NR == FNR { if ($0 != "") { a = here "/" $0; leg[a] = $0; order[++n] = a; p[a] = 0; f[a] = 0; sk[a] = 0; td[a] = 0; tf[a] = 0; su[a] = 0; fl[a] = 0 }; next }
+  !($1 in leg) { next }
+  {
+    if ($2 == "pass" && $3 == "test" && $4 == "-" && $5 == "test") p[$1]++
+    if ($2 == "fail" && $4 != "todo") f[$1]++
+    if ($4 == "skip") { sk[$1]++; print "SKIP\t" leg[$1] "\t" $6 "\t" $7 }
+    if ($4 == "todo") { td[$1]++; if ($2 == "fail") { tf[$1]++; print "TODOFAIL\t" leg[$1] "\t" $6 "\t" $7 } }
+    if ($3 == "suite") su[$1]++
+    if ($5 == "file-level") { fl[$1]++; if ($2 == "fail") print "FILEFAIL\t" leg[$1] "\t" $8 "\t" $7 }
+    if ($2 == "fail" && index($7, msg)) print "LOST\t" leg[$1] "\t" $6 "\t" $7
+  }
+  END { for (i = 1; i <= n; i++) { a = order[i]; print "TALLY\t" leg[a] "\t" p[a] "\t" f[a] "\t" sk[a] "\t" td[a] "\t" tf[a] "\t" su[a] "\t" fl[a] } }
+' - "$rep")
+skipped=0
+while IFS=$'\t' read -r kind leg a b c d e f g; do
+  case "$kind" in
+    TALLY)   # $a passes that count, $b fails that count, $c skips, $d todos, $e todo failures, $f suites, $g file-level results
+      if [ "$a" -eq 0 ] && [ "$b" -eq 0 ]; then
+        echo "ci-browser-legs: $leg: no test of this leg passed in this run (the record holds $c skipped, $d todo, $f suite and $g file-level results for it), so the step claims coverage it did not run: a rostered leg holds a test that runs and passes here; a leg whose tests skip, are todo, or sit behind an unmet condition runs none when it is unmet, so move it to $EXCLUDED with that reason until one runs" >&2
+        [ "$status" -ne 0 ] || status=1
+      fi;;
+    SKIP)
+      skipped=1
+      echo "ci-browser-legs: skipped with $switch_state: '$a' # SKIP $b ($leg)" >&2;;
+    TODOFAIL)
+      echo "ci-browser-legs: $leg: '$a' failed inside a todo ($b): node discards the failure (# fail 0, exit 0), so the step would read green over a broken test: remove the todo, or fix the test and remove it" >&2
+      [ "$status" -ne 0 ] || status=1;;
+    FILEFAIL)
+      echo "ci-browser-legs: $leg failed as a whole ($a: $b): a file that timed out or threw at load ran no test that counts" >&2
+      [ "$status" -ne 0 ] || status=1;;
+    LOST)
+      echo "ci-browser-legs: $leg: '$a' failed under $switch_state because inBrowser could not launch ($b): the runner lost its browser: check the Chromium install step" >&2
+      [ "$status" -ne 0 ] || status=1;;
+  esac
+done <<<"$report"
+if [ "$skipped" -ne 0 ]; then
   if [ -n "${!SWITCH:-}" ]; then
     echo "ci-browser-legs: a rostered leg skipped a test with $switch_state, so the step claims coverage it did not run: the test skips for a reason of its own (only inBrowser in ui/webview/real-viewer-leg.ts turns a launch it cannot make into a failure here); until every test of the leg runs here, move it to $EXCLUDED with that reason" >&2
   else
     echo "ci-browser-legs: a rostered leg skipped a test with $switch_state, so this run claims coverage it did not run: the step sets $SWITCH=1, under which inBrowser in ui/webview/real-viewer-leg.ts fails a launch it cannot make instead of skipping; run with it set, and a test that still skips there skips for a reason of its own" >&2
   fi
-  [ "$status" -ne 0 ] || status=1
-fi
-
-# A rostered leg that registered no test: node's record reports such a file as one passing test named by the bundle's
-# path as node received it, the roster line itself here (a file with tests reports its tests and no line for the file),
-# so the step would read green with the leg's coverage gone.
-results=$(grep -E '^[[:space:]]*(not )?ok [0-9]+ - ' "$tap" || [ $? -eq 1 ])
-for leg in "${legs[@]}"; do
-  while IFS= read -r s; do
-    [ -n "$s" ] || continue
-    name=$(sed -E 's/^[[:space:]]*(not )?ok [0-9]+ - //' <<<"$s")
-    if [ "$name" = "$leg" ]; then
-      echo "ci-browser-legs: $leg registered no test in this run (node's record reports the file as one passing test named by its path), so the step claims coverage it did not run: a rostered leg holds a test that runs here; a leg whose tests are all behind a condition runs none when it is unmet, so move it to $EXCLUDED with that reason until one runs" >&2
-      [ "$status" -ne 0 ] || status=1
-      break
-    fi
-  done <<<"$results"
-done
-
-# A failed test whose error names the switch: inBrowser could not launch under $SWITCH, and the step's Chromium install
-# is what it launches, so the runner lost its browser. The record's failure block carries the test's location (the
-# bundle's absolute path, as node resolves it from its physical working directory, with a line and column) and its
-# error; each such failure is printed beside its leg with the remedy.
-here=$(pwd -P)
-lost=$(awk -v msg="$SWITCH is set and this leg cannot run" '
-  /^[[:space:]]*not ok [0-9]+ - / { name=$0; sub(/^[[:space:]]*not ok [0-9]+ - /, "", name); loc=""; err=""; infail=1; next }
-  infail && /^[[:space:]]*location: / { loc=$0; sub(/^[[:space:]]*location: /, "", loc) }
-  infail && /^[[:space:]]*error: / { err=$0; sub(/^[[:space:]]*error: /, "", err) }
-  infail && /^[[:space:]]*\.\.\.[[:space:]]*$/ { if (index(err, msg)) print loc "\t" name "\t" err; infail=0 }
-' "$tap")
-if [ -n "$lost" ]; then
-  while IFS=$'\t' read -r loc name err; do
-    # the location as node quotes it: '<absolute bundle path>:<line>:<column>'; the leg is that path relative to here
-    file=${loc#\'}; file=${file%\'}; file=${file%:*}; file=${file%:*}
-    leg=${file#"$here/"}
-    echo "ci-browser-legs: $leg: '$name' failed under $switch_state because inBrowser could not launch ($err): the runner lost its browser: check the Chromium install step" >&2
-  done <<<"$lost"
   [ "$status" -ne 0 ] || status=1
 fi
 exit "$status"
