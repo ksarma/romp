@@ -38,23 +38,24 @@ loudly (UnreadableSpawn, naming the call's line and both declarations), never re
 no readable value beside one bound to the path leaves the path standing. A string that MENTIONS the path without
 being it (a -c program that load_sources the kernel, a comment, a docstring) is not a kernel process: that is the
 in-process shape in a child, met by the bus belt below like the in-process shape itself (the ruling point below).
-The scan replaced a regex pair on 2026-09-21 (the ninth review round of PR #850, on the ruling of its eighth): the
-old KERNEL_NAME pattern took any name bound on ONE line that spelled romp-kernel as a name bound to the kernel's
-path and looked for it as a whole WORD in every subprocess call span, so a local `p` bound to TEXT that spelled the
-path collided with the "-p" of a nested pytest argv (a false offender on that PR's eighth-round head, the loud
-half), while a path bound across two lines, through a constant holding the script's name, to a tuple target or
-to self.kernel never entered the pattern and a spawn through it passed this rule vacuously (the silent half); at
-that head the pattern bound 680 such names in 555 test modules, 515 of them the `km` of an in-process load, a
-module object and no path (the round's prep measured it; PR #850's body carries the table). PLANT_TABLE below
-runs both halves, every row labelled with what the scan must do; the guard test's report carries the row count.
+The scan replaced a regex pair on 2026-09-21, in the author's pass applying the ruling of PR #850's eighth review
+round: the old KERNEL_NAME pattern took any name bound on ONE line that spelled romp-kernel as a name bound to the
+kernel's path and looked for it as a whole WORD in every subprocess call span, so a local `p` bound to TEXT that
+spelled the path collided with the "-p" of a nested pytest argv (a false offender at a commit of that PR's eighth
+round that was never pushed, fixed at its ruled head; the loud half), while a path bound across two lines, through
+a constant holding the script's name, to a tuple target or to self.kernel never entered the pattern and a spawn
+through it would have passed this rule vacuously (the silent half; a plant showed the miss, the tree had no such
+spawn); at that head most of the names the pattern bound were the `km` of an in-process load, a module object and
+no path (the author's pass measured it before the rewrite). PLANT_TABLE below runs both halves, every row labelled
+with what the scan must do; the guard test's report carries the row count.
 
 Roads and residual, derived by one command (`python tests/test_hermetic_kernel_postal.py --roads [directory]`, one
 line per module the trio test reads, then the unresolved names, then a summary line with every count): a module's
 kernel spawn is found by the argv road (an element that is the path as written), the binding road (a name or target
 resolved to a declaration bound to it), or neither, and a module the scan can read neither way is labelled refused.
 On 2026-09-21, over the 948 .py files beside this one: argv 85, binding 0, neither 863, refused 0, 87 spawn sites
-(every one an os.path.join onto the kernel's name as an argv element), 0 offenders; the regex pair counted 86
-modules, the one difference tests/test_chat_pages.py, whose only match was a -c child (below). The guard test holds
+(every one an os.path.join onto the kernel's name as an argv element), 0 offenders; the regex pair flagged one
+module more, tests/test_chat_pages.py, whose only match was a -c child (below). The guard test holds
 the two lab modules on the argv road and no module refused, and reports the counts at whatever size the tree has.
 The residual, a stated limit: a name or target in an argv that resolves to a declaration with no readable value (a
 parameter, an import, a loop or with target, an unpacking the scan cannot split) or to none at all (an attribute of
@@ -71,8 +72,9 @@ attribute of an attribute 1; with 1), none of them in a call whose argv holds th
 Ruling point, the maintainers' to decide (2026-09-21): a child interpreter that load_sources the kernel
 (`[sys.executable, "-c", <program>]`) is read here as NOT a kernel process. It is the in-process shape one process
 down, and the belt below covers it exactly as it covers the parent, provided the child inherits the parent's
-environment (PYTEST_CURRENT_TEST under pytest) or runs under a temporary state root. Derived for the six such sites
-on that day (`grep -n '"-c"' tests/*.py`, each program read): tests/test_assembly_road_counters.py:935, env
+environment (PYTEST_CURRENT_TEST under pytest) or runs under a temporary state root. Derived on that day by reading
+every `-c` program under tests/ (`grep -n '"-c"' tests/*.py`, each program read by hand), the sites whose program
+loads bin/romp-kernel, directly or through a module that loads it, are: tests/test_assembly_road_counters.py:935, env
 dict(os.environ) plus one key, the state root the parent's temporary floor; tests/test_kernel_serve_token_mode.py:608,
 env dict(os.environ), ROMP_STATE_DIR a mkdtemp; tests/test_manager_write_token.py:402, env filtered from os.environ
 (ROMP_STATE_DIR and ROMP_MANAGER_PID dropped, PYTEST_CURRENT_TEST kept), XDG_STATE_HOME the class's mkdtemp;
@@ -160,7 +162,8 @@ class UnreadableSpawn(AssertionError):
     """A spawn whose argv the scan can read neither way: a name, or a target of the form self.X, with two declarations
     in the scope the call reads, one bound to the kernel's path and one bound to something else, so the census cannot
     say which the call runs. Raised naming the module, the call's line and both declarations, never a verdict either
-    way (2026-09-21: a silent match on the wrong binding was the regex census's failure). Two declarations that agree
+    way (2026-09-21: a silent miss of a two-line binding and a loud match on a word were the regex census's failures).
+    Two declarations that agree
     are read as one; a declaration with no readable value (a parameter, an import, a loop or with target, a None
     placeholder) beside one bound to the path leaves the path standing, the side that requires the trio."""
 
@@ -944,8 +947,8 @@ def _method_chain(cls, name, classes):
 # target resolved to a declaration bound to the path; no-spawn: no site (the word-collision class of the regex census,
 # a -c child that loads the kernel, the CLI with another verb, the other bin/ scripts, an in-process load, a parameter);
 # refused-loud: UnreadableSpawn naming the call's line and both declarations, (call line, path line, other line). Every
-# row is synthetic (TESTHOST paths). The row labelled B1 is the case the ruling of 2026-09-21 required: a kernel path
-# bound across two lines, missed by the regex census because its KERNEL_NAME pattern read one line.
+# row is synthetic (an unbound BIN, no real path). The row labelled B1 is the case the ruling of 2026-09-21 required: a
+# kernel path bound across two lines, missed by the regex census because its KERNEL_NAME pattern read one line.
 PLANT_TABLE = (
     ("B1 two-line binding (the ruling's required case)", 'caught-by-binding', 3,
      'KERNEL = os.path.join(\n    BIN, "romp-kernel")\nsubprocess.Popen([KERNEL])'),
@@ -1037,7 +1040,7 @@ PLANT_TABLE = (
      'kernel = os.path.join(BIN, "romp-kernel")\nsubprocess.run(["grep", "kernel", "docs"])'),
     ('N7 lines beside -k lines', 'no-spawn', None,
      'lines = open(os.path.join(BIN, "romp-kernel")).read().splitlines()\nsubprocess.run([sys.executable, "-m", "pytest", "-k", "lines"])'),
-    ("N8 the round-8 head's own shape (text spelling the path, -p)", 'no-spawn', None,
+    ("N8 the shape that collided (text spelling the path, -p)", 'no-spawn', None,
      'p = "os.path.join(BIN, \'romp-kernel\')"\nsubprocess.run([sys.executable, "-m", "pytest", "-p", "tests.conftest"])'),
     ('N9 a -c child that loads the kernel, inline', 'no-spawn', None,
      'subprocess.run([sys.executable, "-c", "load_source(\'k\', os.path.join(%r, \'romp-kernel\'))" % BIN])'),
@@ -1113,8 +1116,8 @@ class HermeticKernelPostal(unittest.TestCase):
         refuse the shapes the regex census read wrongly (2026-09-21), else the rule reds on a module that starts no
         kernel. Three reads. (1) The tree: the roads table over every module the trio test reads (spawn_roads; the
         `--roads` arm prints it) holds the two lab modules on the argv road and no module refused, and the message
-        REPORTS the three counts at whatever size the tree has, so a change of population is visible here and fails
-        nothing by itself. (2) The head's five positives and four negatives, snippets with no import of subprocess,
+        REPORTS the four road counts, the module count and the plant-table row count at whatever size the tree has,
+        so a change of population is visible here and fails nothing by itself. (2) The head's five positives and four negatives, snippets with no import of subprocess,
         so the library is read by its spelling as an unbound name (the stated fallback). (3) PLANT_TABLE: every row
         run and held to its label, the site's LINE held to the planted call's, the road held to the label's, the
         refusal's message held to name the call's line and both declarations. (4) The residual is listed, never

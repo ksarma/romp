@@ -36,7 +36,9 @@ Imported by tests/test_hermetic_kernel_postal.py and tests/test_sdk_singleton_ra
 `sys.path.insert(0, HERE)`, so a direct script run and a pytest run resolve the same file; registering the
 name in tests/__init__.py, as romp_load is, would be the cleaner road and is not taken here. Standard library
 only; loads no kernel module; writes nothing to the environment; named with no test_ prefix and no _test suffix,
-so no census under tests/ collects it as a test module. Runs on 3.10 to 3.14 (ast.TryStar guarded).
+so the runner collects it as no test module, while the censuses that read every .py under tests/ (the hermetic
+module's spawn scan and its import-time environment scan) read it like any other and find no spawn and no write in
+it. Runs on 3.10 to 3.14 (ast.TryStar guarded).
 """
 import ast
 

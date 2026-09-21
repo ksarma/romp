@@ -3453,11 +3453,13 @@ def case_list_ids(doc):
 
 def conftest_roster_ids(text):
     """The ids the conftest's roster of the refusal's cases names, read from ratchet_comment_text(): the first
-    parenthesis after CONFTEST_ROSTER_OPENS, with no parenthesis between the opener and it and a period after it, so a
-    parenthetical written into the sentence before the roster is a loud read failure and not a shorter roster; its
+    parenthesis after CONFTEST_ROSTER_OPENS, with no parenthesis between the opener and it and a period after it; its
     entries split on semicolons, each opening with its id, or its ids joined by "and", before the entry's first comma;
     an entry may open with "and". An entry in any other shape raises, and so does a text with no such parenthesis after
-    the opener. Ids in roster order, duplicates kept for the pin to name."""
+    the opener, so a parenthetical written into the sentence before the roster is a loud read failure when its first
+    words are not an id or when no period follows it; an id-shaped one that a period follows is read as the roster,
+    and the pin's equality against the derived population then names the ids it lacks (this pass narrowed the claim).
+    Ids in roster order, duplicates kept for the pin to name."""
     m = re.search(re.escape(CONFTEST_ROSTER_OPENS) + r"[^()]*\(([^()]*)\)\.", text)
     if not m:
         raise AssertionError("no roster in one parenthesis follows %r in the conftest's comments"
