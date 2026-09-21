@@ -3677,7 +3677,12 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   first read of it in its own cycle or a handler thread's, finds it missing
   or replaced first, after which the holder's next lookup drops the pair),
   and the key a chat build records for a subagents tree the
-  agent-file miss walk looked through is the served read's stamp per
+  agent-file miss walk looked through (a record the walk makes for the
+  build whose lookup walked; a lookup the agent-file memo answers on an
+  earlier walk's stamps records nothing for its build, and the project
+  directory the walk lists is stamped for that memo alone and is no
+  build's dependency: the scope is stated once in `_subagent_file`'s
+  docstring in `kernel/kernel.py`) is the served read's stamp per
   directory, never a stat taken after it, so a file landing after the
   hold under a directory the served listing lacked leaves the recorded
   key behind the next signature's re-stat and the tab is rebuilt (since
@@ -3705,8 +3710,12 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   (trees vouched for by one stat per known directory against trees walked:
   how many validations and walks the process paid), `served` (reads a cycle
   scope answered from the pair it held with no stat: how many reads the
-  scope absorbed; a read of a root that is there lands in exactly one of the
-  three, so `hit` plus `miss` plus `served` is the reads; since
+  scope absorbed; a read answered a tree, validated, walked or served,
+  lands in exactly one of the three and a read answered no tree (a missing
+  root, a file or a symlink in its place, a root that cannot be read) moves
+  none, so `hit` plus `miss` plus `served` is the reads answered a tree
+  (the rule, its edges and the tests that execute it: the comment at
+  `_SUBAGENT_TREE_STATS` in `kernel/kernel.py`); since
   2026-09-21, before which the scope's reads moved no counter, so the figure
   has no earlier series),
   `evict` (roots dropped because no alive session's transcript names them,

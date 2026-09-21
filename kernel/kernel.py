@@ -1028,8 +1028,9 @@ class _PerfStats:
                                    _subagent_tree_memo_report) -> hit / miss (trees vouched for by
                                    their directories' stats vs walked: the validations and walks
                                    paid) / served (reads a cycle scope answered from its held pair
-                                   with no stat: the reads the scope absorbed; a read of a standing
-                                   root lands in exactly one of the three), evict (roots dropped as
+                                   with no stat: the reads the scope absorbed; a read answered a
+                                   tree lands in exactly one of the three, a read answered no tree
+                                   in none: the comment at _SUBAGENT_TREE_STATS), evict (roots dropped as
                                    unowned), dirStats (the directory stats both validators paid:
                                    the tree validation's lstats and the agent-file lookup's stamp
                                    re-check; the lstat half alone before 2026-09-19, when a tree's
@@ -35247,12 +35248,29 @@ SUBAGENT_STEPS_CAP = 200        # tool calls shipped on the Agent head (agentSte
 _SUBAGENT_TREES = {}
 _SUBAGENT_TREE_STATS = {"hit": 0, "miss": 0, "served": 0, "evict": 0, "dirStats": 0, "walkMs": 0.0, "validateMs": 0.0}   # /perf memos.subagentTree;
 #                          advisory tallies, incremented without a lock as the neighbouring memos' are (a lost count under a race
-#                          is tolerated; the memo's own writes are single dict stores of immutable tuples). Every _subagent_tree
-#                          read of a root that is a directory lands in exactly one of hit (validated: one lstat per known
-#                          directory), miss (walked) and served (answered from the cycle scope's held pair, no stat; the scope's
-#                          early return alone moves it, not _dir_stamp's served stamps, a distinct population left uncounted;
-#                          2026-09-21, round 1 of #882's fresh-3, before which the scope's reads moved no counter), so hit + miss is the validations
-#                          and walks the process paid and served is the reads the scope absorbed. dirStats counts the
+#                          is tolerated; the memo's own writes are single dict stores of immutable tuples). WHICH COUNTER A READ
+#                          LANDS IN, stated here once (_subagent_tree_memo_report's docstring, the /perf table's comment and
+#                          docs/reference.md's memos paragraph point here): a _subagent_tree read answered a tree lands in
+#                          exactly one of hit (validated: one lstat per known directory), miss (walked) and served (answered
+#                          from the cycle scope's held pair, no stat; the scope's early return alone moves it, not _dir_stamp's
+#                          served stamps, a distinct population left uncounted; 2026-09-21, round 1 of #882's fresh-3, before
+#                          which the scope's reads moved no counter), the held-root lag included (a root removed on disk while
+#                          this thread's scope holds it is answered the held pair, and counted served, until the scope ends);
+#                          a read answered no tree moves none of the three: a missing root, a file or a symlink in its place
+#                          (the two pop paths, which record an eviction when an entry stood) and a root whose lstat fails for
+#                          another reason (the raise, _SubagentTreeUnreadable). So hit + miss is the validations and walks the
+#                          process paid, served is the reads the scope absorbed, and hit + miss + served is the reads answered
+#                          a tree, not every call. Executed in tests/test_subagent_tree_stamps_per_cycle.py Guards: the
+#                          held-root lag case ((hit, miss, served) == (1, 0, 1) over the hold and the read after the removal,
+#                          and the next scope's missing-root pop moving none), the two pop-path cases (the missing-root and
+#                          the replaced-root pop on a thread with no hold, then the holder's drop: served 0 at each, and the
+#                          case's (hit, miss, served) the held reads alone) and the stale-hold case ((hit, miss, served, evict)
+#                          == (0, 1, 0, 1)); in tests/test_subagent_tree_memo.py UnreadableRoot (no counter moves on the
+#                          raise). The symlink shape shares the file shape's branch (not S_ISDIR) and is executed by no test
+#                          in the tree; the owner's pass before round 2 of #882 read it in a lab outside the repo (none of the
+#                          three moved), and until that pass this clause read "a root that is a directory", the report
+#                          docstring's "a standing root" and the reference's "a root that is there", the last two counting a
+#                          served read of a removed root out and a file in the root's place in. dirStats counts the
 #                          directory stats BOTH validators pay (2026-09-19): _subagent_tree's lstat per known directory below
 #                          the root and _dir_stamp's os.stat per directory an agent-file lookup re-checks; before that day it counted the
 #                          lstat half alone, so the figure across that deploy is not one series
@@ -35609,8 +35627,10 @@ def _subagent_trees_forget(alive):
 def _subagent_tree_memo_report():
     """/perf memos.subagentTree: hit and miss (trees served by validation against trees walked: how many validations and
     walks the process paid), served (reads a cycle scope answered from the pair it held, no stat: how many reads the scope
-    absorbed; _subagent_tree's early return alone, so a read of a standing root lands in exactly one of the three; since
-    2026-09-21, round 1 of #882's fresh-3, before which those reads moved no counter), evict (roots dropped as
+    absorbed; _subagent_tree's early return alone moves it; a read answered a tree, validated, walked or served, lands in
+    exactly one of the three and a read answered no tree moves none, the rule, its edges and the tests that execute it
+    stated once at _SUBAGENT_TREE_STATS; since 2026-09-21, round 1 of #882's fresh-3, before which those reads moved no
+    counter), evict (roots dropped as
     unowned), dirStats (the directory stats both validators paid: the tree validation's lstat per known directory below the
     root and the agent-file lookup's os.stat per directory it re-checks, _dir_stamp; the lstat half alone before 2026-09-19), walkMs and
     validateMs (the time in each, every thread), and the gauges roots (entries) and dirs (directories held). A validation
@@ -35827,11 +35847,23 @@ def _subagent_file(path, agent_id, faults=None):
     missed it and the viewer said the file was missing, T355), or — when the sidecar dir has moved under a /clear
     fork's fsid — the one file of that name anywhere in the project dir, nested or not. None when missing.
     A miss is a dependency of the chat payload that asked (the taskout idiom, _chat_dep_note_taskout;
-    re-review 2026-09-08): the absent beside-path and, for the own tree and every sibling subagents tree the
-    fallback looked through, each directory's identity as the read that answered the walk saw it
-    (_subagent_tree_dep_note; since 2026-09-21) are recorded for the running build, so the file landing in any of
-    them, or a directory appearing for it to land in, moves the key (a resolved file is recorded by _agent_steps
-    when it is read). `faults`, a list when given, receives the reason when the answer stands for a lookup that
+    re-review 2026-09-08), recorded by the WALK for the build whose lookup walked: the absent beside-path and, for
+    the own tree and every sibling subagents tree the fallback looked through, each directory's identity as the read
+    that answered the walk saw it (_subagent_tree_dep_note; since 2026-09-21), so the file landing in any of them, or
+    a directory appearing under one of them, moves that build's key (a resolved file is recorded by _agent_steps when
+    it is read). The scope of that record, stated here once (docs/reference.md's memos paragraph points here): the
+    memo-hit road records nothing. A lookup this memo answers, on the stamps an earlier walk took (on this thread or
+    another, in this cycle or an earlier one), re-stats those directories and answers the cached resolution, and its
+    build holds no key for the sibling trees or the absent beside-path, so a landing under one of them after that
+    build moves no key it recorded; the landing moves the memo's stamps, so the next lookup walks and records them
+    for ITS build (the own tree is in every build's record through the sidecar map's read, not through this lookup).
+    The project directory the walk lists is stamped for this memo alone (its mtime moves when a sibling fsid's
+    directory appears in it, so the next lookup walks) and is no build's dependency: a new sibling tree appearing in
+    it with the file after a build moves no key that build recorded, and the next cycle's lookup finds the file (the
+    owner's pass before round 2 of #882 read both roads through the real pusher cycle, and the hit road through a
+    jobs pass on another thread too; until that pass this docstring read "recorded for the running build" and "a
+    directory appearing for it to land in", neither scoped).
+    `faults`, a list when given, receives the reason when the answer stands for a lookup that
     could not be made (a subagents tree whose root cannot be read, the project directory unlistable:
     _subagent_file_walk's faults), so a caller can give it the shorter lifetime (_awaiting_nest, as it does
     _agent_launch_ids' faults); such a lookup answers the memo's standing resolution for the agent when one stands,
