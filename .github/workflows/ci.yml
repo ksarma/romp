@@ -239,8 +239,17 @@ jobs:
         # ref. --diff-merges=first-parent: `gitleaks git` runs `git log -p`, which omits
         # merge-commit diffs, so a secret introduced only in a merge (a conflict resolution) is
         # invisible to --all alone; the tree scan below catches it only while it is still at HEAD;
-        # this surfaces it in history for good. A finding exits nonzero and fails the step.
-        run: gitleaks git . --no-banner --redact -v --config .gitleaks.toml --log-opts="--all --diff-merges=first-parent"
+        # this surfaces it in history for good. --text: that same `git log -p` reads the checkout's
+        # .gitattributes, and a path marked -diff prints as "Binary files differ" with no hunk, so a
+        # secret committed in such a path and removed in a later commit is text this scan never sees
+        # while the tree scan below reads HEAD, where it is gone; --text prints the diff regardless
+        # of the attribute. Latent here today: the one committed .gitattributes
+        # (ui/webview/anchor-map-fixtures/.gitattributes) marks a fixture -text, for its line
+        # endings, not -diff. Other plain-stream options (--no-color, --no-textconv, --no-ext-diff)
+        # fence off a developer's git config; this runner has none, so here they would be defence in
+        # depth, not load-bearing, and only the committed attribute needs an option. A finding
+        # exits nonzero and fails the step.
+        run: gitleaks git . --no-banner --redact -v --config .gitleaks.toml --log-opts="--all --diff-merges=first-parent --text"
       - name: Scan the tree as it stands
         # The history scan reads commit diffs, so a secret in a file that is present but untouched
         # by any scanned commit (a submodule tip, a file added before a rewrite) is only caught by

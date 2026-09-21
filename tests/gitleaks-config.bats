@@ -86,6 +86,49 @@ probe_token() { printf 'gh%s_%s%s' p "$(printf '0123456789%.0s' 1 2 3)" abcdef; 
     [ "$status" -eq 2 ]
 }
 
+@test "a credential in a path a committed .gitattributes marks -diff is caught by CI's configured history scan" {
+    # `gitleaks git` runs `git log -p`, and git reads the checkout's .gitattributes for it: a path
+    # marked -diff prints as "Binary files differ" with no hunk, so a credential committed there and
+    # removed in a later commit is text the history scan never sees, while the tree scan reads HEAD,
+    # where the file is gone. CI's line carries an option for this. What is asserted is that CI's
+    # CONFIGURED invocation, whatever its spelling, surfaces the secret: the arguments are read from
+    # .github/workflows/ci.yml itself, not copied here, since a copied string stays green while CI
+    # drifts.
+    R="$TEST_DIR/repo"; mkdir -p "$R"
+    git -C "$R" init -q
+    git -C "$R" symbolic-ref HEAD refs/heads/main     # whatever init.defaultBranch says
+    printf '*.cfg -diff\n' > "$R/.gitattributes"
+    git -C "$R" add -A && git -C "$R" commit -qm "attributes"
+    # the secret, assembled at run time, in a path the attribute covers
+    printf 'token = "%s"\n' "$(probe_token)" > "$R/app.cfg"
+    git -C "$R" add -A && git -C "$R" commit -qm "add app.cfg"
+    git -C "$R" rm -q app.cfg && git -C "$R" commit -qm "remove app.cfg"
+    # The premise, against this git: with the attribute at HEAD, the plain log shows no hunk for
+    # the file, so a scanner reading that log has nothing to match.
+    run git -C "$R" log -p --all
+    [[ "$output" == *"Binary files"* ]]
+
+    # CI's line, from the workflow's own text: exactly one `run: gitleaks git .` line is expected,
+    # the credential-scan job's history step. Zero or two and the premise is gone, so say so.
+    ci="$ROMP_DIR/.github/workflows/ci.yml"
+    n=$(grep -cE '^[[:space:]]*run: gitleaks git \. ' "$ci")
+    [ "$n" -eq 1 ] || { echo "expected exactly one 'run: gitleaks git .' line in ci.yml, found $n"; false; }
+    line=$(grep -E '^[[:space:]]*run: gitleaks git \. ' "$ci")
+    # The arguments after `gitleaks git .`, split the way the runner's bash splits the run line:
+    # `eval` into an array honours the quotes around the --log-opts value, so its several words stay
+    # one argument, as they are in CI. Two positions belong to the checkout rather than the scanner:
+    # `.` is the repository (the scratch one here) and `.gitleaks.toml` its config.
+    eval "ci_args=(${line#*run: gitleaks git . })"
+    for i in "${!ci_args[@]}"; do [ "${ci_args[$i]}" = ".gitleaks.toml" ] && ci_args[$i]="$CFG"; done
+    # --exit-code 2 as in every case here: CI's line lets a finding and a scanner failure share exit
+    # 1 (the step is red either way), and this test has to tell them apart.
+    run "$GL" git "$R" "${ci_args[@]}" --exit-code 2
+    [ "$status" -eq 2 ] || {
+        echo "CI's history scan did not report the credential (exit $status):"; echo "$output"; false; }
+    [[ "$output" == *"app.cfg"* ]]               # -v: the file to fix
+    [[ "$output" != *"$(probe_token)"* ]]        # --redact: the value stays out of the log
+}
+
 @test "RFC 6455's example WebSocket key is excused" {
     # The handshake nonce the kernel's tests hand a fake request. High entropy by
     # protocol design, published in the RFC, not a credential.
