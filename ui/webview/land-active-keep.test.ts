@@ -139,7 +139,7 @@ class Host {
 }
 
 type Arm = { anchor?: string; t?: number; keepY?: number; seek?: { sid: string; uuid: string; kind: string }; reload?: unknown; land?: boolean; landT?: boolean; rebuild?: (host: Host) => void };
-type Opts = { spacerH?: number; n?: number; rowH?: number; clientHeight?: number; saved: number; scrollTop?: number; shown?: boolean; stick?: boolean; parked?: boolean; bottomSpacerH?: number };
+type Opts = { spacerH?: number; n?: number; rowH?: number; clientHeight?: number; saved: number; scrollTop?: number; shown?: boolean; stick?: boolean; parked?: boolean; bottomSpacerH?: number; gap?: boolean };
 type World = { content: Content; host: Host; v: any; spacer: Node; rows: Node[]; writes: Write[]; calls: any[]; rows_: any[]; toasts: string[]; trace: string[]; geometryAt: Record<string, string[]>; land: (content: Content | null, v: any) => void; parked: () => boolean };
 const D = 300;   // the take's delta: the head spacer re-sized by the re-measured figure over the head gap's turns
 
@@ -148,13 +148,17 @@ const D = 300;   // the take's delta: the head spacer re-sized by the re-measure
  *  on a re-show; the LEAVING tab's on a switch, the default here being the saved place). `parked`: a figure waits for a taker, and the
  *  take grows the head spacer by D (the stubbed applyMeasure models what sizeSpacers draws from the taken figure). `arm` is what the
  *  land finds armed and how the stubbed landings answer (`land`: scrollToAnchor's answer, `landT`: landNearestMoment's; `rebuild` runs
- *  over the host before scrollToAnchor answers: the window rebuilt around the anchor's unit, rows leaving). */
+ *  over the host before scrollToAnchor answers: the window rebuilt around the anchor's unit, rows leaving). `gap`: a 40 px gap row
+ *  (`tx-gap`, with the unit range production's redraw reads) between r4 and r5, and `bottomSpacerH` a bottom spacer, so a view holds every
+ *  kind of child production's spacer code draws on: a gap redraw or a bottom-spacer resize planted in the ordering window matched nothing in a
+ *  view without them and moved no geometry (the author's fixer pass over the pass after the maintainer's round 4 ruling, VE-3). */
 function world(o: Opts, arm: Arm = {}): World {
   const spacerH = o.spacerH ?? 2000, n = o.n ?? 10, rowH = o.rowH ?? 100, clientHeight = o.clientHeight ?? 600;
   const trace: string[] = [];   // the land's events in order; the world's own construction below is cut from it
   const content = new Content(clientHeight, trace); const host = new Host(content);
   const spacer = host.add(new Node(spacerH, "tx-spacer tx-spacer-top"));
   const rows: Node[] = []; for (let i = 0; i < n; i++) rows.push(host.add(new Node(rowH, "turn", "r" + i)));
+  if (o.gap) { const g = new Node(40, "tx-gap"); g.dataset.lo = "5"; g.dataset.hi = "7"; host.insertBefore(g, rows[5] ?? null); }
   if (o.bottomSpacerH) host.add(new Node(o.bottomSpacerH, "tx-spacer tx-spacer-bot"));
   trace.length = 0;
   content.scrollTop = o.scrollTop ?? o.saved;
@@ -279,10 +283,12 @@ test("the reload restore with no anchor row (the reader's place inside a spacer 
   assert.equal(r.v.stick, false); assert.equal(r.parked(), false);
 });
 
-test("the reload restore's raw write, the ordering its exception rests on: the take, then the record bound for the restore (the window's start, wider than the window ruled, which runs from the site's own read of rs.top to the write, so strictly stronger; the persisted top's first read is earlier, in landActive's saved computation, where takeReloadScroll admits the record to decide the take), then the site's read of that record's top, then the write, with nothing between the binding and the write but that read, on both raw shapes (no anchor row; an anchor row the fresh window lacks). The window is anchored on the IDENTITY of the binding whose value is written: the read that precedes the write names its call, and the window runs from that call's record, so a later call that admits the record again cannot slide the window's start past a planted take (the maintainer's round 4 ruling, ordering-2). The site needs no take-back because its value was measured in the state it lands in, the pre-reload page's layout that the take before it re-derives, not because the site is special: a change in that window would land the value in a layout it was not measured in, so this pin reds the moment the window opens, on a take-class event, on a geometry event (a height written on a row or the view element, a child inserted or removed: the model records them and fails closed on what it cannot represent, closure-6 of the same ruling), on another record, and on the geometry at the write differing from the geometry at the binding (the reviewer's answer to the author's tail-2 question, 2026-09-21; spacer-measure.test.ts checks the window on the tree)", () => {
+test("the reload restore's raw write, the ordering its exception rests on: the take, then the record bound for the restore (the window's start, wider than the window ruled, which runs from the site's own read of rs.top to the write, so strictly stronger; the persisted top's first read is earlier, in landActive's saved computation, where takeReloadScroll admits the record to decide the take), then the site's read of that record's top, then the write, with nothing between the binding and the write but that read, on both raw shapes (no anchor row; an anchor row the fresh window lacks), in a view that holds a gap row and a bottom spacer beside the head spacer and the rows, so production's gap redraw and either spacer's resize have geometry to move. The window is anchored on the IDENTITY of the binding whose value is written: the read that precedes the write names its call, and the window runs from that call's record, so a later call that admits the record again cannot slide the window's start past a planted take (the maintainer's round 4 ruling, ordering-2). The site needs no take-back because its value was measured in the state it lands in, the pre-reload page's layout that the take before it re-derives, not because the site is special: a change in that window would land the value in a layout it was not measured in, so this pin reds the moment the window opens, on a take-class event, on a geometry event (a height written on a row or the view element, a child inserted or removed: the model records them and fails closed on what it cannot represent, closure-6 of the same ruling), on another record, and on the geometry at the write differing from the geometry at the binding (the reviewer's answer to the author's tail-2 question, 2026-09-21; spacer-measure.test.ts checks the window on the tree)", () => {
   for (const reload of [{ id: "A", top: 2350, stick: false, anchor: null }, { id: "A", top: 2350, stick: false, anchor: { uuid: "11111111-2222-4333-8444-000000000007", y: -50 } }]) {
     const shape = reload.anchor ? "an anchor row the fresh window lacks" : "no anchor row";
-    const r = world({ saved: 2350, scrollTop: 0 }, { reload, land: false });
+    // a view with every kind of child production's spacer code draws on (a head spacer, rows, a gap row, a bottom spacer), so a redraw of
+    // any of them planted in the window moves geometry the model records
+    const r = world({ saved: 2350, scrollTop: 0, gap: true, bottomSpacerH: 500 }, { reload, land: false });
     r.land(r.content, r.v);
     const write = r.trace.indexOf("write reload-restore");
     assert.ok(write >= 0, shape + ": the raw write ran: " + JSON.stringify(r.trace));
