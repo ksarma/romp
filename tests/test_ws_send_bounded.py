@@ -75,6 +75,10 @@ class WedgedClientCannotStallTheSendLoop(unittest.TestCase):
         c = {"app": "feed", "alive": True, "qbytes": 0, "qlock": threading.Lock()}
         c["send"] = km._mk_ws_send(q, sock, c)
         t = threading.Thread(target=km._ws_sender, args=(q, sock, threading.Lock(), c), daemon=True)
+        # The sender ends on every exit path (T282): the handler's own teardown sentinel, then a bounded join. A sender
+        # parked in a write to a peer that never reads is freed first by tearDown's close of the sockets (cleanups run
+        # after tearDown), so the sentinel is what ends an idle one and the join proves either end.
+        self.addCleanup(lambda: (q.put_nowait(None), t.join(5)))
         t.start()
         return c, q, t
 
@@ -261,6 +265,7 @@ class WedgedClientCannotStallTheSendLoop(unittest.TestCase):
                 got.extend(b)
 
         t = threading.Thread(target=drain, daemon=True)
+        self.addCleanup(t.join, 10)          # the drain ends on its own (the peer's 5 s timeout); the join is on every exit path (T282)
         t.start()
         try:
             c["send"](body)
