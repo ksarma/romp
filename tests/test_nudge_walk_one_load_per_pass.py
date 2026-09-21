@@ -2745,9 +2745,9 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
     by the unread drive alone and by no harness case's pass (the harness's stores carry no mark and their journals read).
     Derives: the door's bump sites as (key, ordinal) from the real door's source through _door_regions (_sites); the sites each call
     executed, by a trace of the door's code object and every code object nested in it, the set derived from co_consts (_line_trace
-    over _nested_codes), the set checked by the coverage case against the defs nested in the door's statement lists both ways and, since
-    the door holds no nested code object today, by execution over a stand-in with a def two levels down, a lambda and a generator
-    expression; the coverage, the door's sites against the rows' sites plus
+    over _nested_codes), the set checked by the coverage case, the defs and classes nested in the door's statement lists each among
+    the set's names, and, since the door holds no nested code object today, by execution over a stand-in with a def two levels down,
+    a lambda and a generator expression; the coverage, the door's sites against the rows' sites plus
     UNDRIVEN_SITES both ways and none in both; the keys ROADS expects against both rosters both ways; the rows against the class's
     method names both ways; per site, whether the statement list holding it hands the read to load_goals (_door_hands_off, the roster
     pin's predicate), each row's hand-off column against the count over its sites, and the no-hand-off sites of hand-off keys, the
@@ -2800,9 +2800,9 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
         source with its first line's number); and whether the statement list holding each as a direct statement hands the read to
         load_goals (_door_hands_off, the roster pin's predicate over the same lists). A bump that is a direct statement of no list (an
         assignment's value, say) hands nothing off here, and the row whose drive reads a load at it disagrees with the derivation. Third,
-        the sorted names of the defs nested in the door, every FunctionDef or AsyncFunctionDef that is a statement of one of the same
-        lists below the parsed source's own body (which holds the door's def), at any depth, the tree's side of the coverage case's
-        check on the traced code objects (_nested_codes). The
+        the sorted names of the defs and classes nested in the door, every FunctionDef, AsyncFunctionDef or ClassDef that is a statement
+        of one of the same lists below the parsed source's own body (which holds the door's def), at any depth, the tree's side of the
+        coverage case's check on the traced code objects (_nested_codes). The
         real door is the one setUp saved before it stood the recorder on the name."""
         door = self.saved_jd["load_goals_shared"]
         src, start = inspect.getsourcelines(door)
@@ -2815,7 +2815,7 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
         lines = {(key, i): start - 1 + rel for key, rels in by_key.items() for i, rel in enumerate(rels)}
         hands = {(key, i): handing.get((rel, key), False) for key, rels in by_key.items() for i, rel in enumerate(rels)}
         nested = sorted(s.name for blk in blocks if blk is not tree.body      # the parsed source's own body holds the door's def
-                        for s in blk if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef)))
+                        for s in blk if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)))   # a class body is a frame too
         return lines, hands, nested
 
     def _store_path(self):
@@ -2936,20 +2936,27 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
                          "reconciliation (every bump of a hand-off key counted as a load), so a drive outside any pass is its one witness; "
                          "such sites %r, of which undriven %r" % (silent, sorted(set(silent) - driven)))
         # the trace's reach (review round 7, the seventh-axis hunt): the drives trace the door through _nested_codes, its code object and
-        # every code object nested in it, derived from co_consts. The set against the door's tree: every def nested in the door's
-        # statement lists (the third map of _sites, read from the lists _door_regions holds) is a code object of the set by name, and
-        # every unbracketed name of the set below the door is such a def, both ways (the bracketed names, <lambda>, <genexpr> and the
-        # comprehensions of 3.10 and 3.11, are no statement and are traced without a tree-side twin). The door holds no nested code
-        # object today, so both sides are empty there and the check would pass with a derivation answering the door alone; the mechanism
-        # is therefore held by execution over a stand-in, each of its code objects traced alone first
+        # every code object nested in it, derived from co_consts. The set against the door's tree, one way: every def or class nested in
+        # the door's statement lists (the third map of _sites, read from the lists _door_regions holds; a class body is a frame a bump
+        # can run in) is a code object of the set by name. The other direction is not asserted: a name the constants hold and the tree
+        # does not, a PEP 695 type alias on 3.12 and later or an annotation scope on 3.14, is a code object the trace reads and needs no
+        # tree-side twin, and a list of node classes on the tree's side is a list of syntax (until the round-7 close the check ran both
+        # ways over the two def classes, so a class defined in the door red it naming the opposite cause: review round 7, extra4-2 and
+        # extra7-4). The bracketed names, <lambda>, <genexpr> and the comprehensions of 3.10 and 3.11, are no statement either and are
+        # left out of the names the message prints. The door holds no nested code object today, so both sides are empty there and the
+        # check would pass with a derivation answering the door alone; the mechanism is therefore held by execution over a stand-in,
+        # each of its code objects traced alone first
         door = self.saved_jd["load_goals_shared"]
         codes = _nested_codes(door.__code__)
         self.assertIs(codes[0], door.__code__, "the derived set is headed by the real door's code object: %r" % [c.co_name for c in codes])
-        self.assertEqual(sorted(c.co_name for c in codes[1:] if not c.co_name.startswith("<")), nested,
-                         "the defs nested in the door by the interpreter's constants (_nested_codes, the unbracketed names below the door) "
-                         "are the defs nested in the door's statement lists by its tree (_sites), both ways: by the constants %r, by the tree "
-                         "%r; a def the tree holds and the constants do not is a frame the trace would not read"
-                         % (sorted(c.co_name for c in codes[1:] if not c.co_name.startswith("<")), nested))
+        untraced = sorted(set(nested) - {c.co_name for c in codes[1:]})
+        self.assertEqual(untraced, [],
+                         "a def or class the door's tree holds (_sites) that is among no code object of the derived set (_nested_codes) is "
+                         "a frame the trace would not read: %r (the constants' unbracketed names below the door, for the reader: %r; a name "
+                         "the constants hold and the tree does not, a type alias or an annotation scope on a newer interpreter, is traced "
+                         "and needs no tree-side twin, so that direction is not asserted; a def the compiler dropped as unreachable reds "
+                         "here and is a frame nothing runs: delete it)"
+                         % (untraced, sorted(c.co_name for c in codes[1:] if not c.co_name.startswith("<"))))
 
         def stand_in(x):
             def helper(y):
