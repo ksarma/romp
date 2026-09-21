@@ -961,6 +961,11 @@ def stale_rows(entries, answers):
     return out
 
 
+def _count(n, one, many):
+    """`n` with its noun, singular at one: `1 offered entry`, `3 distinct PRs`."""
+    return f"{n} {one if n == 1 else many}"
+
+
 def stale_command(root, entries_dir, run=None):
     """The `stale` subcommand: 0 when every offered entry's PR is open; 1 after printing one line per
     stale entry; 2 when it could not read (the ledger does not parse, the clone has no `upstream`
@@ -986,7 +991,8 @@ def stale_command(root, entries_dir, run=None):
     lines = stale_rows(offered, answers)
     for line in lines:
         print(line)
-    print(f"stale: {len(lines)} stale of {len(offered)} offered entries; {len(numbers)} distinct PRs read from {repo}")
+    print(f"stale: {len(lines)} stale of {_count(len(offered), 'offered entry', 'offered entries')}; "
+          f"{_count(len(numbers), 'distinct PR', 'distinct PRs')} read from {repo}")
     return 1 if lines else 0
 
 

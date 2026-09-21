@@ -1213,6 +1213,15 @@ class Stale(unittest.TestCase):
         self.assertEqual(out, "stale: 0 stale of 3 offered entries; 3 distinct PRs read from example-owner/example-repo\n")
         self.assertEqual(err, "")
 
+    def test_the_summary_counts_one_entry_and_one_pr_in_the_singular(self):
+        one = {"2026-09-01-lone-offer.md": dict(title="Lone offer", status="offered", offered="their PR #12")}
+        rc, out, err = self._run(self._root(one), FakeGh(self.ANSWERS))
+        self.assertEqual(rc, 1, (out, err))
+        self.assertEqual(out.rstrip("\n").split("\n")[-1], "stale: 1 stale of 1 offered entry; 1 distinct PR read from example-owner/example-repo")
+        rc, out, err = self._run(self._root(one), FakeGh({12: _answer("OPEN")}))
+        self.assertEqual(rc, 0, (out, err))
+        self.assertEqual(out, "stale: 0 stale of 1 offered entry; 1 distinct PR read from example-owner/example-repo\n")
+
     def test_the_command_exits_2_with_no_upstream_remote_and_reads_nothing(self):
         for remote in (None, "no-push://upstream-is-fetch-only"):
             with self.subTest(remote=remote):
