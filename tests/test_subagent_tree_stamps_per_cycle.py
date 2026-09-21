@@ -802,12 +802,21 @@ class PerCycleNotSticky(_World):
         miss-path bound case, one row whose file is nowhere (_miss_walk_cycle asserts its costs): its walk stats the project
         directory once, an own stat _dir_stamp holds under root None. Cycle two over the same world, unchanged: the tree's one
         validation (D - 1 lstats into dirStats) and the row's memoized miss re-checked, whose project-directory stamp the new
-        scope does not hold, so it is re-taken (+1). Keys on cycle two's dirStats == (D - 1) + 1 = D, the stamps memo released
-        at cycle one's end (_subagent_scope_close) and not carried; a stamps map carried across cycles serves the stale stamp
-        and pays D - 1. Keyed on dirStats, the memo's own counter, and not on a raw count of os.stat on the project directory,
-        which the cycle stats once more for reasons of its own (_discover_fingerprint)."""
-        self._miss_walk_cycle(1)
+        scope does not hold, so it is re-taken (+1). Three pins, each keyed on what it names (the owner's pass before round 2
+        of #882, its fixes-by-execution lens: the count alone reds identically under a carried LAUNCHES map, whose served fold
+        makes no lookup in cycle two, so no project-directory stat is owed, and the count's message blamed the stamps map):
+        the lookup was made in cycle two, keyed on cycle two's scope holding the project directory's stamp under root None (a
+        carried launches map reds here); the stamps map was released, keyed on cycle two's stamps map and its entry being
+        objects other than cycle one's (a carried stamps map reds here, by identity); and then the count, cycle two's dirStats
+        == (D - 1) + 1 = D, keyed on the count alone. Keyed on dirStats, the memo's own counter, and not on a raw count of
+        os.stat on the project directory, which the cycle stats once more for reasons of its own (_discover_fingerprint)."""
+        proj = str(Path(self.path).parent)
+        t1, d1, rec1, ghosts = self._miss_walk_cycle(1)
         self.assertIsNone(getattr(km._live_scope, "subtrees", None), "premise: cycle one's scope is closed (its finally ran)")
+        stamps1 = (rec1.get("scope") or {}).get("stamps")
+        self.assertIsNotNone(stamps1, "premise: cycle one's job recorded its scope")
+        self.assertIn(proj, stamps1, "premise: cycle one's walk held the project directory's own stat (the entry a carried map would serve on): %r"
+                      % (sorted(str(k) for k in stamps1),))
         rec = {}
         km._turn_notify_tick = self._awaiting_job(rec)
         b = self._stats()
@@ -815,11 +824,23 @@ class PerCycleNotSticky(_World):
             km._pusher_cycle()
         d = self._delta(b)
         self.assertEqual(rec.get("counts"), [A + 1] * CALLS, "cycle two's %d reads each saw the A agents and the one row nobody owns: %r" % (CALLS, rec))
+        stamps2 = (rec.get("scope") or {}).get("stamps")
+        self.assertIsNotNone(stamps2, "cycle two's job recorded its scope")
+        held = stamps2.get(proj)
+        self.assertIsNotNone(held,
+                             "cycle two's scope holds the project directory's stamp: the lookup was made in cycle two (the row's memoized miss "
+                             "re-checked, _dir_stamp's own stat of the project directory taken and held); a launches map carried across cycles "
+                             "serves the row's fold, makes no lookup and lands no entry here: %r" % (sorted(str(k) for k in stamps2),))
+        self.assertIsNone(held[1], "the project directory's stamp is an own stat, vouched by no root (root None): %r" % (held,))
+        self.assertIsNot(stamps2, stamps1,
+                         "cycle two's stamps map is not cycle one's object: the map is released at the cycle's end (_subagent_scope_close) "
+                         "and the next cycle's scope mints its own; a stamps map carried across cycles is the same object")
+        self.assertIsNot(held, stamps1[proj],
+                         "and the project directory's entry is cycle two's own, re-taken, not cycle one's held tuple served on")
         self.assertEqual(d["dirStats"], D,
                          "memos.subagentTree dirStats over cycle two, the world unchanged since cycle one: %d; keyed on (D - 1) + 1 = %d, the "
-                         "validation's lstats plus the project directory's stamp stat re-taken, since the stamps memo is released at the "
-                         "cycle's end (_subagent_scope_close) with the other two maps and the own stat cycle one held under root None is not "
-                         "there to serve; a stamps map carried across cycles serves it and pays D - 1 = %d" % (d["dirStats"], D, D - 1))
+                         "count alone: the validation's lstats plus one stamp stat (that the lookup was made is the presence pin above, and "
+                         "that the stat was re-taken rather than served from a carried map is the identity pin above)" % (d["dirStats"], D))
         self.assertEqual((d["hit"], d["miss"], d["evict"]), (1, 0, 0), "cycle two's one validated hit, no walk, nothing evicted: %r" % (d,))
         self.assertEqual(sp.total()["dir_stat"], 0, "no os.stat on the tree's directories in cycle two either: the tree is read before the re-checks")
         self.assertIsNone(getattr(km._live_scope, "subtrees", None), "cycle two's scope is closed too")
