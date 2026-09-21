@@ -8372,15 +8372,26 @@ ask cover the pictures that reach the paper alone: `collectPictures` filters eac
 `<image>` element), so a picture inside a closed fold or under `hidden` is neither awaited, counted, set eager nor asked
 about (the shared-host probe, 2026-09-19), and the browser's answer is read through it too, so a picture the browser
 does not render (a ruby's `<rp>`, a `<canvas>`'s fallback content, a `popover` not shown) is not awaited, not set eager
-and not probed. An svg `<image>` is filtered by the container walk as well (`inRenderingSvg`, the test `shows` runs
-below a figure's root), because the browser's answer for one inside `<defs>`, a `<symbol>`, a `<clipPath>`, a `<mask>`,
-a `<pattern>` or a `<marker>` is the engine's: Chromium reports no rect and Firefox and WebKit one, and no engine paints
-it; before the round-7 fixes (2026-09-20, the round-6 review's finding) the rect alone decided, so on the figure leg's
+and not probed. An svg `<image>` is decided by `svgReachesPaper`: the container walk (`inRenderingSvg`, the test `shows`
+runs below a figure's root) and, where the walk meets a `<pattern>`, a `<mask>` or a `<marker>`, the reference to it.
+The wait collects a picture when it can paint on the paper, and the test of that is measured ink, never a rect the
+engine reports: the browser's answer for an image inside `<defs>`, a `<symbol>`, a `<clipPath>`, a `<mask>`, a
+`<pattern>` or a `<marker>` is the engine's whether the container paints or not (Chromium reports no rect and Firefox
+and WebKit one), so it is never read on such an image; one inside `<defs>`, a `<symbol>`, a `<clipPath>` or
+`<metadata>` is not a picture the print shows in any engine, and one inside a `<pattern>`, a `<mask>` or a `<marker>`
+paints in every engine when a printable svg element that reaches the paper names the container by `url(#id)` in fill,
+stroke, mask or a marker property, and is collected when such a referrer exists, the browser's answer read on the
+referrer (the round-7 review's cluster E, 2026-09-21; the figure leg's reference case per engine measures the ink of
+the pattern, mask and marker each inside `<defs>`, referenced as the sanitizer spells the id it mints, against a 404
+twin, and holds the collection to it, the author's ordinary `url(#id)`, dead after the sanitize, the control collected
+in no engine); before the round-7 fixes (2026-09-20, the round-6 review's finding) the rect alone decided, so on the figure leg's
 body of eight such images and an `<img>` Chromium collected two pictures and Firefox and WebKit eight, the wait there
 counting, awaiting and probing seven images the print never shows (their hrefs already requested by the render in every
 engine, so the count on the line and the deadline's ask differed, never a host); the figure leg's collectPictures case
 per engine holds every engine to the `<img>` and the image in `<g>` alone, and the node case holds the walk over
-namespaced stand-ins. Such a picture can still be loading during the wait when its
+namespaced stand-ins; from the round-7 fixes to the round-8 fixes the walk alone decided, so the image inside a
+referenced pattern, mask or marker was collected in no engine, where the rect had collected it in Firefox and WebKit.
+Such a picture can still be loading during the wait when its
 host is allowed (the gear's list, or a host a click loaded for the page), since the browser fetches an `<img>` the fold
 hides at the render; "with them" does not restore it (the per-placeholder restore above). Before this the wait read
 every picture in the body, so a host two placeholders shared, one in the open body and one inside a closed `<details>`,
@@ -8912,9 +8923,11 @@ and a placeholder with no figure inside answers for itself (the `figurePrintable
 mutant case). `collectPictures` (P2): each of its three collections reads
 `printable`, the browser's answer included, so a picture the browser does not render is not awaited, not set eager and
 not probed (the two `collectPictures` cases over the printable rule and over the browser's answer), and the svg
-`<image>` collection reads the container walk too (`inRenderingSvg`), so an image inside a container that never renders
-is not a picture in any engine, whatever rect the engine reports (the node case over namespaced stand-ins; the figure
-leg's collectPictures case per engine). `step` under the
+`<image>` collection reads the container walk and the reference (`svgReachesPaper`), so an image inside a container
+that never renders its content, referenced by nothing, is not a picture in any engine, whatever rect the engine reports
+(the node case over namespaced stand-ins; the figure leg's collectPictures case per engine), and one inside a
+`<pattern>`, a `<mask>` or a `<marker>` a printable element references by a resolvable `url(#id)` is collected on the
+referrer's answer (the figure leg's reference case per engine). `step` under the
 ask (P2): a `stalled` with nothing loading disarms and rests, never prints (the verdict case;
 file-print-driver-browser.test.ts case (13)). `isPrintKeys` (P1): every key or modifier set it does not name is not the
 chord and is left to the browser, so the flow prevents no key it does not know (the `isPrintKeys` case over other keys
@@ -9193,8 +9206,8 @@ the plan's last because this section lands at the same place; it pins nothing of
   and without a `<source>`, a hidden `<picture>`, a video's poster and a hidden video, the fallback content of a video
   (nothing inks of a video with no poster and no source in any engine; the flow counts its box, recorded on the row)
   and of an audio (nothing does), an audio with and without `controls`, an svg image inside each SVG container (the
-  image inside defs, symbol, clipPath, mask, pattern, marker and metadata inks nothing in any engine and the one
-  inside g, a and switch does; Firefox and WebKit report a box for the image inside the six that never render their
+  image inside defs, symbol, clipPath, mask, pattern, marker and metadata, referenced by nothing, inks nothing in any
+  engine and the one inside g, a and switch does; Firefox and WebKit report a box for the image inside the six that never render their
   content, recorded per row, below), an svg image hidden by its own display, opacity or visibility, a hidden group
   over a visible image, `display: contents` on a group and a nested svg (its content inks), on the outermost svg and a
   switch (nothing inks), and on a link (Firefox inks the image inside, Chromium and WebKit do not, recorded per
@@ -9232,7 +9245,16 @@ the plan's last because this section lands at the same place; it pins nothing of
   container, and an `<img>`: the pictures are the `<img>` and the image inside `<g>` alone, the seven other hrefs not
   probed, and the render itself requested every one of the nine (FAILS BEFORE in its title, in Firefox and WebKit: eight
   pictures and seven probes against Chromium's two and one), with `rendered` read per container and held to the
-  per-engine reading the docstrings state. The rows the leg holds per engine, each held to its record and named here
+  per-engine reading the docstrings state; and a reference case per engine over sanitized bodies whose svg image
+  stands inside a pattern, a mask or a marker inside `<defs>` that a rect or a line references by `url(#id)`, the
+  reference spelled as an author writes it (dead after the sanitize) and as the sanitizer spells the id, each with the
+  image served and with a 404 twin: the picture reaches the paper, measured as ink differing from the twin's, exactly
+  where the prefixed reference names the container, screen and print alike, collectPictures collects exactly the images
+  of the containers whose served cell paints, the twin of each among them, the author-spelled cells the control
+  collected in no engine, `rendered` reads the image as the docstrings state per engine whether the container paints or
+  not and every referrer as rendered, and the render requests every image URL either way (FAILS BEFORE the round-8
+  fixes in every engine: none of the six was collected; before the round-7 fixes Firefox and WebKit collected them
+  where Chromium never did). The rows the leg holds per engine, each held to its record and named here
   from the leg's built table (file-print.test.ts derives this list from `shapes()` under npm test, so a row the leg gains
   with a per-engine column reds until it is named): `opacity="1e-9"` (the root read hidden in WebKit alone; the twin oracle
   reads a box in Chromium, Firefox and WebKit; the flow counts it in Chromium and Firefox); `video>img (fallback)`

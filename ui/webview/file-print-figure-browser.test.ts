@@ -42,7 +42,9 @@
 // does. The oracle's divergences are pre-existing at the PR's base as platform readings (measured at the base, the fork's
 // main the review reads this PR against, which has no file-print.ts, in the same three engines: Firefox and WebKit report a client rect for an element inside an SVG
 // container that never renders its content, Firefox an empty one and WebKit a full one, with checkVisibility true, and
-// every engine paints nothing there) AND read by this PR's code: `rendered` is that oracle, and collectPictures read it
+// every engine paints nothing there when nothing references the container; a pattern, mask or marker a printable element
+// references by url(#id) paints through that element in every engine, the reference case per engine below) AND read by
+// this PR's code: `rendered` is that oracle, and collectPictures read it
 // alone for an svg <image> until the round-7 fixes, so in Firefox and WebKit the wait counted, awaited and probed the
 // images inside such containers where Chromium skipped them; the collectPictures case per engine below pins the fix
 // (FAILS BEFORE in Firefox and WebKit: eight pictures against Chromium's two). Figures with no remote URL have no row and
@@ -64,7 +66,7 @@ const GATE_RULE = '.fileview-md .fv-gate[data-act="fv-load"] > :not([data-fv-lab
 function bundle(): string {
   const esbuild = requireCjs("esbuild");
   const r = esbuild.buildSync({
-    stdin: { contents: 'export { figureHidden, figurePrintable, collectPictures, rendered, PAINTS_SEL } from "./file-print"; export { gateRemoteFigures, loadGatedFigure, GATE_ACT } from "./figure-gate";', resolveDir: UI, loader: "ts", sourcefile: "figure-leg.ts" },
+    stdin: { contents: 'export { figureHidden, figurePrintable, collectPictures, rendered, printable, PAINTS_SEL } from "./file-print"; export { gateRemoteFigures, loadGatedFigure, GATE_ACT } from "./figure-gate"; export { sanitizeMd } from "./md-sanitize";', resolveDir: UI, loader: "ts", sourcefile: "figure-leg.ts" },
     bundle: true, write: false, format: "iife", globalName: "FVF", platform: "browser", target: "es2020",
     nodePaths: [path.join(process.cwd(), "node_modules")], external: ["*.png", "*.svg", "*.woff", "*.ttf", "../media/*.woff2"], logLevel: "silent",
   });
@@ -83,7 +85,9 @@ type PerEngine = Record<Engine, boolean>;
 /** `twinReads`: what the twin oracle (checkVisibility and a client rect over the twin's painting elements, `rendered` in the
  *  product) reads in an engine where that reading is NOT the ink: Firefox and WebKit report a client rect for an element
  *  inside an SVG container that never renders its content (Firefox an empty one, WebKit a full one) with checkVisibility
- *  true, and every engine paints nothing there; every engine keeps opacity 1e-9 visible in checkVisibility and paints no
+ *  true, and every engine paints nothing there when nothing references the container (the rows below carry no reference;
+ *  a referenced pattern, mask or marker paints through its referrer, the reference case at the end of this file); every
+ *  engine keeps opacity 1e-9 visible in checkVisibility and paints no
  *  visible pixel at it; and a rect whose paint server the page cannot resolve, and a video with no poster and no source,
  *  have a box and paint nothing. Pre-existing at the PR's base (the fork's main, which has no file-print.ts) as a platform
  *  reading in the same three engines, and read by this PR's code through `rendered` (the header). Where a row records it the oracle is
@@ -153,8 +157,10 @@ function shapes(): Shape[] {
   out.push({ name: "audio>img (fallback)", html: (u) => '<audio><img src="' + u + '" width="8" height="8" alt=""></audio>', hidden: false, paints: false });
   out.push({ name: "img[hidden=until-found]", html: (u) => '<img hidden="until-found" src="' + u + '" width="8" height="8" alt="">', hidden: true, paints: false });
   // (an svg <title> or <desc> is an HTML integration point of the parser: an <image> inside becomes an HTML <img href>, which fetches nothing, so the gate wraps nothing there; neither is a shape)
-  // an image inside a container that never renders its content paints nothing in any engine; Firefox and WebKit report a
-  // client rect for it all the same (metadata excepted: its content is not laid out there), the reading twinReads records
+  // an image inside a container that never renders its content, referenced by nothing (these rows carry no reference; a
+  // referenced pattern, mask or marker paints through its referrer, the reference case at the end of this file), paints
+  // nothing in any engine; Firefox and WebKit report a client rect for it all the same (metadata excepted: its content is
+  // not laid out there), the reading twinReads records
   for (const c of ["defs", "symbol", "clipPath", "mask", "pattern", "marker"]) out.push({ name: "svg>" + c + ">image", html: svgOf("", (u) => "<" + c + ">" + image()(u) + "</" + c + ">"), hidden: false, paints: false, twinReads: { firefox: true, webkit: true } });
   out.push({ name: "svg>metadata>image", html: svgOf("", (u) => "<metadata>" + image()(u) + "</metadata>"), hidden: false, paints: false });
   for (const c of ["g", "a", "switch"]) out.push({ name: "svg>" + c + ">image", html: svgOf("", (u) => "<" + c + ">" + image()(u) + "</" + c + ">"), hidden: false, paints: true });
@@ -390,8 +396,8 @@ for (const engine of ENGINES) test("figureHidden and figurePrintable over real g
 });
 
 /** The containers the collectPictures case builds one svg <image> in, each with its own local href: the six that never render
- *  their content (the rows above with `twinReads` in Firefox and WebKit), <metadata> (not laid out in any engine) and <g>, the
- *  one that renders. */
+ *  their content (the rows above with `twinReads` in Firefox and WebKit; none is referenced here, so none paints through a
+ *  referrer, the reference case below), <metadata> (not laid out in any engine) and <g>, the one that renders. */
 const PICTURE_CONTAINERS: readonly string[] = ["defs", "symbol", "clipPath", "mask", "pattern", "marker", "metadata", "g"];
 /** What the collectPictures case reads per engine: `rendered` for each container's image (the product's oracle, per engine),
  *  the URLs collectPictures probed, and how many pictures it returned (the <img> and the probes). */
@@ -440,6 +446,132 @@ for (const engine of ENGINES) test("collectPictures in " + engine + " over a bod
     assert.deepEqual({ pictures: got.pictures, imgs: got.imgs }, { pictures: 2, imgs: 1 }, "two pictures, the <img> and one probe, in " + engine + " (FAILS BEFORE in Firefox and WebKit: eight)");
     assert.deepEqual(PICTURE_CONTAINERS.filter((c) => !requests.includes(ORIGIN + "/pic-" + c + ".svg")), [], "the render itself requested every container's image, <metadata>'s among them, in " + engine + ", so the fix changes what the wait counts and probes, never what the page fetches");
     assert.deepEqual(errors, [], "no script error");
+    await page.close();
+  }, engine);
+});
+
+// ── the reference case (the round-7 review's cluster E, 2026-09-21): an image inside a pattern, a mask or a marker paints through the element that references it ──
+
+/** The image the reference case serves: a red square, so a mask's luminance is not zero (a black image masks everything out,
+ *  and the masked rect would ink nothing whether the picture landed or not) and the picture's ink is told from the referrer's
+ *  own paint (the mask's rect is black). */
+const RED = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="red"/></svg>';
+const refImage = (href: string): string => '<image href="' + href + '" width="16" height="16"/>';
+/** The three containers whose content paints through a reference, each inside <defs> with the element that references it: a
+ *  rect filled by the pattern, a rect masked by the mask, a line carrying the marker at its start. `href` is the image's URL
+ *  and `ref` the reference's spelling: `#<id>` as an author writes it, or `#user-content-<id>`, the sanitizer's own spelling
+ *  of the id it mints (md-sanitize.ts prefixes every author id and leaves url() values as written, so after the sanitize the
+ *  author's spelling names nothing and the prefixed one names the container). The id is `p`; the case suffixes it per cell. */
+const REFERENCE_SHAPES: ReadonlyArray<{ container: string; html: (href: string, ref: string) => string }> = [
+  { container: "pattern", html: (href, ref) => '<defs><pattern id="p" width="1" height="1">' + refImage(href) + '</pattern></defs><rect width="16" height="16" fill="url(' + ref + ')"/>' },
+  { container: "mask", html: (href, ref) => '<defs><mask id="p" maskUnits="userSpaceOnUse" x="0" y="0" width="16" height="16">' + refImage(href) + '</mask></defs><rect width="16" height="16" fill="black" mask="url(' + ref + ')"/>' },
+  { container: "marker", html: (href, ref) => '<defs><marker id="p" markerUnits="userSpaceOnUse" markerWidth="16" markerHeight="16" refX="0" refY="0" overflow="visible">' + refImage(href) + '</marker></defs><line x1="0" y1="0" x2="16" y2="16" stroke="none" marker-start="url(' + ref + ')"/>' },
+];
+/** One cell of the reference case: a container, the reference's spelling, whether the image's route serves it or answers 404
+ *  (the twin), and the image's URL, unique per cell so the probes name their cell. */
+type RefCell = { i: number; container: string; spelling: "author" | "prefixed"; served: boolean; url: string };
+/** What the page reads of a cell: `rendered` on the image and on its referrer, `printable` on the image, whether collectPictures
+ *  probed the cell's URL, and the sanitizer's survivors with the attributes the reference rides on. */
+type RefRead = { rendered: boolean | null; renderedReferrer: boolean | null; printable: boolean | null; collected: boolean; survivors: string };
+/** The ink inside a cell's box: the pixels that are not white, and the colour most of them share. */
+type RefInk = { pixels: number; mode: string };
+
+for (const engine of ENGINES) test("collectPictures in " + engine + " over sanitized bodies whose svg image stands inside a <pattern>, a <mask> or a <marker> that a rect or a line references by url(#id), each with the reference spelled as an author writes it (dead after the sanitize: the id is prefixed user-content- and the value is not) and as the sanitizer spells the id, each with the image served and with its route answering 404 (the twin): the picture reaches the paper, measured as ink inside the cell that differs from the twin's, exactly where the prefixed reference names the container, in every engine, screen and print alike; collectPictures collects exactly the images of the containers whose served cell paints, the twin of each among them (the rule reads the reference, not the load), the browser's answer read on the referrer, since `rendered` reads the image itself as the docstrings state per engine whether the container paints or not; the author-spelled cells are the control, collected in no engine; and the render requests every image URL either way (FAILS BEFORE the round-8 fixes in every engine: the walk alone decided and none of the six was collected; before the round-7 fixes the rect decided, and Firefox and WebKit collected them where Chromium never did)", { timeout: 180000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const page = await browser.newPage({ viewport: { width: 600, height: 700 } });
+    const errors: string[] = [];
+    const requests: string[] = [];
+    page.on("pageerror", (e: Error) => { errors.push(e.message); });
+    page.on("request", (r: any) => { requests.push(r.url()); });
+    const js = bundle();
+    const cells: RefCell[] = [];
+    for (const s of REFERENCE_SHAPES) for (const spelling of ["author", "prefixed"] as const) for (const served of [true, false]) {
+      const i = cells.length;
+      cells.push({ i, container: s.container, spelling, served, url: (served ? "/ref-" : "/ref-missing-") + i + ".svg" });
+    }
+    const markupOf = (c: RefCell): string => {
+      const shape = REFERENCE_SHAPES.find((s) => s.container === c.container)!;
+      return '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16">' + shape.html(c.url, "#" + (c.spelling === "prefixed" ? "user-content-" : "") + "p" + c.i).replace('id="p"', 'id="p' + c.i + '"') + "</svg>";
+    };
+    const html = '<!DOCTYPE html><html><head><meta charset="utf-8"><style>body { margin: 0; background: #fff; } .cell { position: absolute; left: 20px; width: 16px; height: 16px; line-height: 0; }</style></head><body><div class="fileview-md" id="root"></div><script src="/leg.js"></script></body></html>';
+    await page.route((u: URL) => u.href.startsWith(ORIGIN), (route: any) => {
+      const u = new URL(route.request().url());
+      if (u.pathname === "/leg.js") return route.fulfill({ status: 200, contentType: "text/javascript", body: js });
+      if (u.pathname.startsWith("/ref-missing-")) return route.fulfill({ status: 404, contentType: "text/plain", body: "never" });
+      if (u.pathname.startsWith("/ref-")) return route.fulfill({ status: 200, contentType: "image/svg+xml", body: RED });
+      return route.fulfill({ status: 200, contentType: "text/html", body: html });
+    });
+    await page.goto(ORIGIN + "/");
+    const reads: RefRead[] = await page.evaluate(async (specs: Array<{ i: number; markup: string; url: string }>) => {
+      const w = window as any;
+      const root = document.getElementById("root")!;
+      for (const s of specs) {   // each body through the sanitizer, the road a note's markup takes to the page
+        const cell = document.createElement("div");
+        cell.className = "cell"; cell.setAttribute("data-cell", String(s.i)); cell.style.top = (20 + s.i * 30) + "px";
+        const clean = w.FVF.sanitizeMd(s.markup) as HTMLElement;
+        while (clean.firstChild) cell.appendChild(clean.firstChild);
+        root.appendChild(cell);
+      }
+      await new Promise((r) => setTimeout(r, 1500));   // an svg <image> reports no completeness: time for every route to answer
+      await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+      const probed: string[] = [];
+      w.FVF.collectPictures(root, location.href, (url: string) => { probed.push(url); return { complete: true, addEventListener() {}, removeEventListener() {} }; });
+      return specs.map((s) => {
+        const cell = root.querySelector('[data-cell="' + s.i + '"]')!;
+        const im = cell.querySelector("image");
+        const referrer = cell.querySelector("rect, line");
+        const survivors = Array.from(cell.querySelectorAll("*")).map((e) => e.localName + Array.from(e.attributes).filter((a) => /^(id|href|fill|mask|marker-start)$/.test(a.name)).map((a) => "[" + a.name + "=" + a.value + "]").join("")).join(" ");
+        return { rendered: im ? w.FVF.rendered(im) : null, renderedReferrer: referrer ? w.FVF.rendered(referrer) : null, printable: im ? w.FVF.printable(im) : null, collected: probed.includes(location.origin + s.url), survivors };
+      });
+    }, cells.map((c) => ({ i: c.i, markup: markupOf(c), url: c.url })));
+    // the ink, the figure case's read: one full-page screenshot decoded in the page, the pixels inside each cell's box that are
+    // not white counted, with the colour most of them share; read on screen and again under print media
+    const inkRead = async (): Promise<RefInk[]> => {
+      const shot: Buffer = await page.screenshot({ fullPage: true });
+      return page.evaluate(async ([png, n]: [string, number]) => {
+        const img = new Image(); img.src = "data:image/png;base64," + png; await img.decode();
+        const canvas = document.createElement("canvas"); canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext("2d")!; ctx.drawImage(img, 0, 0);
+        const scale = window.devicePixelRatio;
+        const out: Array<{ pixels: number; mode: string }> = [];
+        for (let i = 0; i < n; i++) {
+          const r = document.querySelector('[data-cell="' + i + '"]')!.getBoundingClientRect();
+          const d = ctx.getImageData(Math.floor((r.left + window.scrollX) * scale), Math.floor((r.top + window.scrollY) * scale), Math.ceil(r.width * scale), Math.ceil(r.height * scale)).data;
+          let pixels = 0; const hist: Record<string, number> = {};
+          for (let k = 0; k < d.length; k += 4) if (d[k] < 250 || d[k + 1] < 250 || d[k + 2] < 250) { pixels++; const c = "rgb(" + d[k] + "," + d[k + 1] + "," + d[k + 2] + ")"; hist[c] = (hist[c] || 0) + 1; }
+          const mode = Object.entries(hist).sort((a, b) => b[1] - a[1])[0];
+          out.push({ pixels, mode: mode ? mode[0] : "none" });
+        }
+        return out;
+      }, [shot.toString("base64"), cells.length]);
+    };
+    const screen = await inkRead();
+    await page.emulateMedia({ media: "print" });
+    await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
+    const print = await inkRead();
+    await page.emulateMedia({ media: null });
+    const key = (k: RefInk): string => k.pixels + " " + k.mode;
+    const twinOf = (c: RefCell): RefCell => cells.find((d) => d.container === c.container && d.spelling === c.spelling && !d.served)!;
+    /** Whether the served cell `c`'s picture reaches the paper: its box inks, and other than its 404 twin's box (the image's
+     *  load state is what the paper shows; a rect whose mask reference is dead renders unmasked, the same ink with or
+     *  without the picture, so ink alone would read the picture where there is none). */
+    const paints = (c: RefCell): boolean => screen[c.i].pixels > 0 && key(screen[c.i]) !== key(screen[twinOf(c).i]);
+    for (const c of cells) t.diagnostic("reference | " + engine + " | " + c.container + " | " + c.spelling + " | " + (c.served ? "served" : "404") + " | ink=" + key(screen[c.i]) + " print=" + key(print[c.i]) + (c.served ? " | paints=" + paints(c) : "") + " | rendered(image)=" + reads[c.i].rendered + " rendered(referrer)=" + reads[c.i].renderedReferrer + " printable(image)=" + reads[c.i].printable + " | collected=" + reads[c.i].collected + " | " + reads[c.i].survivors);
+    assert.deepEqual(errors, [], "no script error");
+    assert.deepEqual(cells.filter((c) => !requests.includes(ORIGIN + c.url)).map((c) => c.url), [], "the render itself requested every cell's image, served or not, in " + engine + ": the rule changes what the wait counts and probes, never what the page fetches");
+    assert.ok(screen.some((k) => k.pixels > 0) && screen.some((k) => k.pixels === 0), "the ink read tells cells apart in " + engine + " (a screenshot that missed the page would read every cell alike)");
+    assert.deepEqual(cells.filter((c) => key(screen[c.i]) !== key(print[c.i])).map((c) => c.container + " " + c.spelling + (c.served ? "" : " 404") + ": screen " + key(screen[c.i]) + ", print " + key(print[c.i])), [], "every cell inks the same under print media as on screen in " + engine + ": what the screen shows of these is what the paper shows");
+    const served = cells.filter((c) => c.served);
+    assert.deepEqual(served.filter((c) => c.spelling === "prefixed" && !paints(c)).map((c) => c.container + ": " + key(screen[c.i]) + " against the twin's " + key(screen[twinOf(c).i])), [], "the picture inside every referenced container reaches the paper in " + engine + " when the reference names the container as the sanitizer spells the id: pattern, mask and marker");
+    assert.deepEqual(served.filter((c) => c.spelling === "author" && paints(c)).map((c) => c.container + ": " + key(screen[c.i])), [], "the control: with the reference spelled as an author writes it the picture reaches the paper in no container in " + engine + " (the sanitizer prefixes the id and leaves the value as written, so the reference names nothing; a red here says the sanitizer now resolves it, the rule below then collects it, and this control's expectation is what to update)");
+    // the rule: collected exactly where the reference paints, the 404 twin with its served sibling (the reference decides, not the load)
+    const sibling = (c: RefCell): RefCell => served.find((s) => s.container === c.container && s.spelling === c.spelling)!;
+    const expected = cells.filter((c) => paints(sibling(c))).map((c) => ORIGIN + c.url).sort();
+    const got = cells.filter((c) => reads[c.i].collected).map((c) => ORIGIN + c.url).sort();
+    assert.ok(expected.length > 0 && expected.length === served.filter(paints).length * 2, "the expectation is derived from the ink: " + expected.length + " URLs, two per painting container (the served image and its 404 twin), " + served.filter(paints).length + " painting containers");
+    assert.deepEqual(got, expected, "collectPictures collects exactly the images of the containers whose picture reaches the paper in " + engine + ", the 404 twin of each among them, and none of the author-spelled controls (FAILS BEFORE the round-8 fixes in every engine: none of these was collected)");
+    assert.deepEqual(cells.filter((c) => reads[c.i].rendered !== RENDERED_READS[engine][c.container]).map((c) => c.container + " " + c.spelling + (c.served ? "" : " 404") + ": rendered " + reads[c.i].rendered), [], "`rendered` reads the image inside each container as the docstrings state for " + engine + ", referenced or not, painting or not, so the browser's answer is not read on the image");
+    assert.deepEqual(cells.filter((c) => reads[c.i].renderedReferrer !== true).map((c) => c.container + " " + c.spelling + (c.served ? "" : " 404") + ": rendered " + reads[c.i].renderedReferrer), [], "and reads every referrer, the rect or the line in rendering content, as rendered in " + engine + ": the answer the rule reads");
     await page.close();
   }, engine);
 });

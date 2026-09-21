@@ -408,11 +408,14 @@ export type PrintableNode = { localName: string; parentElement: PrintableNode | 
  *  alone: the sheets use none, and a picture far below the fold is on the paper), AND at least one client rect (a closed
  *  fold's content and a `hidden="until-found"` ancestor's keep their rects and are skipped, which the rects alone read as
  *  rendered). The rect is the engine's own reading, and the engines differ on an svg <image> inside <defs>, a <symbol>, a
- *  <clipPath>, a <mask>, a <pattern> or a <marker>, which no engine paints: Chromium gives it a layout object and no rect,
+ *  <clipPath>, a <mask>, a <pattern> or a <marker>, which no engine lays out as itself (a pattern, a mask or a marker that a
+ *  printable element references paints THROUGH that element, svgReachesPaper): Chromium gives it a layout object and no rect,
  *  so this answer is false there; Firefox reports one empty rect and WebKit one full rect for it, with checkVisibility true
  *  in all three, so this answer is TRUE in those two (file-print-figure-browser.test.ts, the three engines, 2026-09-20).
  *  An svg <image> is therefore never decided by this answer alone: the container walk decides it (SVG_RENDERS through
- *  `shows` for a figure's paint, and through `inRenderingSvg` for the wait's pictures, collectPictures), and before the
+ *  `shows` for a figure's paint, and through `svgReachesPaper` for the wait's pictures, collectPictures, which reads this
+ *  answer on the image under rendering containers and on the referencing element for an image inside a referenced
+ *  pattern, mask or marker), and before the
  *  round-7 fixes (2026-09-20) collectPictures read this answer alone for it, so in Firefox and WebKit the wait counted,
  *  awaited and probed the images inside such containers where Chromium skipped them. Null where the browser cannot be
  *  asked (a stand-in under node, an engine without checkVisibility): the walk alone decides then. Measured in Chromium,
@@ -497,9 +500,12 @@ function authorDisplay(el: FigureNode): string | null {
   return scratch.display;
 }
 /** The SVG containers whose content renders: the svg itself, a group, a link, a switch. A graphics element under any other
- *  SVG ancestor (defs, symbol, clipPath, mask, pattern, marker, a gradient, a filter, title, desc) is never rendered directly
- *  and paints nothing there; an SVG ancestor this list does not name reads the same way, the safe side, so nothing is
- *  counted for it. */
+ *  SVG ancestor (defs, symbol, clipPath, mask, pattern, marker, a gradient, a filter, title, desc) is never rendered directly:
+ *  a pattern, a mask or a marker paints through the element that references it by url(#id), and a symbol through <use>,
+ *  which the sanitizer drops. The wait's walk reads the reference (svgReachesPaper); the figure walk `shows` does not, and
+ *  reads the referencing element as the figure's paint (a rect filled by a pattern is a painting element of its own) and the
+ *  container's own content as adding none. An SVG ancestor this list does not name reads the same way, the safe side, so
+ *  nothing is counted for it. */
 const SVG_RENDERS: readonly string[] = ["svg", "g", "a", "switch"];
 /** Whether the ancestor `a` lets the content below it render: an element in the svg namespace that SVG_RENDERS does not name
  *  takes the paint off; an HTML ancestor, or an SVG container the list names, does not. The one test both walks over an
@@ -633,16 +639,25 @@ function resolved(value: string | null, base: string): string | null {
  *  fetched too, which the per-placeholder restore since the round-2 review no longer does). The browser's own answer is
  *  read through printable as well (rendered): a picture inside a ruby's <rp>, a <canvas>'s fallback content or a `popover`
  *  not shown is not awaited, not set eager and not probed, so no request the render did not make is made for a picture
- *  the print never shows. An svg <image> is filtered by the container walk as well (inRenderingSvg: every SVG ancestor up
- *  to the first HTML one renders its content, the test `shows` runs below a figure's root), because the browser's own
- *  answer is the engine's for one inside <defs>, a <symbol>, a <clipPath>, a <mask>, a <pattern> or a <marker>: Chromium
- *  reports no rect for it and Firefox and WebKit report one (rendered's docstring), and no engine paints it. Before the
- *  round-7 fixes (2026-09-20) the rect alone decided, so on a body of eight svg images, one in each of those six
- *  containers, one in <metadata> and one in <g>, plus an <img>, Chromium collected two pictures and Firefox and WebKit
- *  eight, awaiting and probing seven images the print never shows; with the walk every engine collects the <img> and the
- *  image in <g> alone (file-print-figure-browser.test.ts, the collectPictures case per engine; their hrefs were already
- *  requested by the render in every engine, so the difference was the count on the line and the deadline's ask, never a
- *  host). An <img loading="lazy"> is set eager first: the browser has deliberately not started
+ *  the print never shows. An svg <image> is decided by svgReachesPaper: the container walk (inRenderingSvg: every SVG
+ *  ancestor up to the first HTML one renders its content, the test `shows` runs below a figure's root) and, where the walk
+ *  meets a <pattern>, a <mask> or a <marker>, the reference to it. The wait collects a picture when it can paint on the
+ *  paper, and the test of that is measured INK, never a rect the engine reports: the browser's own answer is the engine's
+ *  for an image inside <defs>, a <symbol>, a <clipPath>, a <mask>, a <pattern> or a <marker>, referenced or not (Chromium
+ *  reports no rect for it and Firefox and WebKit report one, rendered's docstring), so it is never read on such an image.
+ *  One inside <defs>, a <symbol>, a <clipPath> or <metadata> is not a picture the print shows in any engine
+ *  (inRenderingSvg's docstring); one inside a <pattern>, a <mask> or a <marker> PAINTS in every engine when a printable svg
+ *  element that reaches the paper names the container by url(#id) in fill, stroke, mask or a marker property, and is
+ *  collected when such a referrer exists, the browser's answer read on the referrer (the round-7 review's cluster E,
+ *  2026-09-21). Before the round-7 fixes (2026-09-20) the rect alone decided, so on a body of eight svg images, one in each
+ *  of the six containers, one in <metadata> and one in <g>, plus an <img>, Chromium collected two pictures and Firefox and
+ *  WebKit eight, awaiting and probing seven images the print never shows; with the walk every engine collects the <img>
+ *  and the image in <g> alone (file-print-figure-browser.test.ts, the collectPictures case per engine; their hrefs were
+ *  already requested by the render in every engine, so the difference was the count on the line and the deadline's ask,
+ *  never a host). From the round-7 fixes to the round-8 fixes the walk alone decided, so the image inside a referenced
+ *  pattern, mask or marker, which paints in every engine, was collected in none, where the rect had collected it in Firefox
+ *  and WebKit (the same leg's reference case per engine: collected in all three now, its dead-reference twin in none, and
+ *  the render requests every image URL either way). An <img loading="lazy"> is set eager first: the browser has deliberately not started
  *  fetching one far below the fold, so it would fire neither load nor error and the wait would run to its deadline over
  *  it; eager starts the deferred fetch at once, for the same URL (no other host is reached; a gated img has no src and
  *  fetches nothing), and the attribute stays eager after the print; a hidden or folded lazy picture is left as it is, so
@@ -653,21 +668,67 @@ export function collectPictures(body: ParentNode, base: string, probe: (url: str
   const out: Picture[] = [];
   body.querySelectorAll("img").forEach((el) => { if (!printable(el)) return; const img = el as HTMLImageElement; if (img.loading === "lazy") img.loading = "eager"; out.push(img); });
   body.querySelectorAll("video[poster]").forEach((v) => { if (!printable(v)) return; const u = resolved(v.getAttribute("poster"), base); if (u) out.push(probe(u)); });
-  body.querySelectorAll("image").forEach((im) => { if (!printable(im) || !inRenderingSvg(im)) return; const u = resolved(im.getAttribute("href"), base); if (u) out.push(probe(u)); });
+  body.querySelectorAll("image").forEach((im) => { if (!svgReachesPaper(im, body)) return; const u = resolved(im.getAttribute("href"), base); if (u) out.push(probe(u)); });
   return out;
 }
 /** Whether every SVG ancestor of the svg element `el`, up to the first ancestor outside the svg namespace, renders its content
- *  (svgContainerRenders, the test `shows` runs below a figure's root): an svg <image> inside <defs>, a <symbol>, a
- *  <clipPath>, a <mask>, a <pattern>, a <marker> or <metadata> is not a picture the print shows in any engine, whatever
- *  rect the engine reports for it (rendered's docstring). A stand-in whose parents carry no namespace passes: the walk
- *  reads SVG containers alone, and the browser's own answer and the walk in printable stand before it. */
+ *  (svgContainerRenders, the test `shows` runs below a figure's root). An svg <image> inside <defs>, a <symbol>, a <clipPath>
+ *  or <metadata> is not a picture the print shows in any engine, whatever rect the engine reports for it (rendered's
+ *  docstring): a <symbol> renders through <use> alone and the sanitizer drops <use>; clipPath content that is an image clips
+ *  nothing. One inside a <pattern>, a <mask> or a <marker> PAINTS in every engine when a graphics element that reaches the
+ *  paper references the container's id with a resolvable url(#id) in fill, stroke, mask or a marker property, inside <defs>
+ *  or not (measured 2026-09-21, 256 of 256 pixels in Chromium, Firefox and WebKit, screen and print), which svgReachesPaper
+ *  reads below this walk. The sanitizer prefixes every author id with `user-content-` and leaves url() values as written
+ *  (md-sanitize.ts), so an author's ordinary `id="p"` with `fill="url(#p)"` is dead in every printed note in every engine (a
+ *  dead mask or clip-path reference leaves the element unmasked, still no picture); the one shape that paints is a note
+ *  spelling the prefix, `fill="url(#user-content-p)"`, which the wait collects. Chromium reports no rect for an image inside
+ *  any of these containers, referenced or not, so the browser's own answer is read on the referencing element, never on the
+ *  image. A stand-in whose parents carry no namespace passes: the walk reads SVG containers alone, and the browser's own
+ *  answer and the walk in printable stand before it. */
 function inRenderingSvg(el: SvgWalkNode): boolean {
   for (let a = el.parentElement; a && a.namespaceURI === SVG_NS; a = a.parentElement) if (!svgContainerRenders(a)) return false;
   return true;
 }
-/** What the container walk reads of an svg <image> and its ancestors: the name, the namespace (absent on a stand-in) and the
- *  parent. An Element is one. */
-type SvgWalkNode = { parentElement: SvgWalkNode | null; namespaceURI?: string | null; localName: string };
+/** What the container walk reads of an svg <image> and its ancestors: the name, the namespace (absent on a stand-in), the
+ *  parent and, for a container the reference walk asks an id of, its attributes (absent on a stand-in: unreferenced). An
+ *  Element is one. */
+type SvgWalkNode = { parentElement: SvgWalkNode | null; namespaceURI?: string | null; localName: string; getAttribute?(name: string): string | null };
+/** The SVG containers whose content paints through a reference: an element's fill or stroke names a <pattern>, its mask
+ *  property a <mask>, a marker property a <marker>, each by url(#id). A <symbol> paints through <use>, which the sanitizer
+ *  drops, and <clipPath> content that is an image clips nothing, so neither is listed (inRenderingSvg's docstring). */
+const REFERENCED_CONTAINERS: readonly string[] = ["pattern", "mask", "marker"];
+/** The properties, as attributes, through which an svg element references one of those containers. An inline `style` is not
+ *  read: the sanitizer keeps colour declarations alone in it (md-sanitize.ts), so no url() reaches the page that way. */
+const REFERENCE_ATTRS: readonly string[] = ["fill", "stroke", "mask", "marker-start", "marker-mid", "marker-end", "marker"];
+const REFERENCE_SEL = REFERENCE_ATTRS.map((a) => "[" + a + "]").join(",");
+/** How many references deep the reach is followed (a rect filled by a pattern whose image stands inside a mask another
+ *  rect references, and so on): a cycle of references paints nothing and would otherwise recurse without end. */
+const REFERENCE_DEPTH = 4;
+/** The id `value` references as a same-document url(#id), quotes and spaces tolerated, or null for any other value. */
+function referencedId(value: string | null): string | null {
+  const m = value ? /^\s*url\(\s*(["']?)#([^"')\s]+)\1\s*\)\s*$/.exec(value) : null;
+  return m ? m[2] : null;
+}
+/** Whether the svg element `el` reaches the paper. With every SVG ancestor rendering its content (inRenderingSvg): printable,
+ *  the browser's own answer read on `el` itself. With the walk meeting a <pattern>, a <mask> or a <marker> that carries an
+ *  id: when some svg element in `body` references that id through one of REFERENCE_ATTRS and itself reaches the paper by
+ *  this rule, REFERENCE_DEPTH references deep at most, the browser's own answer read on that referrer, never on `el`
+ *  (Chromium reports no rect for an element inside such a container whether the container paints or not). With the walk
+ *  meeting any other container (defs above no such container, a symbol, a clipPath, metadata, a gradient, a filter, one
+ *  SVG_RENDERS does not name), or a container without an id: off the paper. A container stand-in without getAttribute, or a
+ *  body without querySelectorAll, reads as unreferenced. The round-7 review's cluster E (2026-09-21): from the round-7 fixes
+ *  to the round-8 fixes the walk alone decided, and the image inside a referenced pattern, which paints in every engine, was
+ *  collected in none. */
+function svgReachesPaper(el: PrintableNode & SvgWalkNode, body: ParentNode, depth = 0): boolean {
+  if (inRenderingSvg(el)) return printable(el);
+  let container: SvgWalkNode | null = null;
+  for (let a = el.parentElement; a && a.namespaceURI === SVG_NS; a = a.parentElement) if (!svgContainerRenders(a)) { container = a; break; }
+  if (!container || !REFERENCED_CONTAINERS.includes(container.localName) || typeof container.getAttribute !== "function" || depth >= REFERENCE_DEPTH) return false;
+  const id = container.getAttribute("id");
+  if (!id || typeof body.querySelectorAll !== "function") return false;
+  const found = body.querySelectorAll(REFERENCE_SEL);
+  return !!found && Array.from(found).some((r) => r.namespaceURI === SVG_NS && REFERENCE_ATTRS.some((k) => referencedId(r.getAttribute(k)) === id) && svgReachesPaper(r, body, depth + 1));
+}
 
 export type SettleWhy = "settled" | "deadline" | "cancelled";
 export type Settle = {
