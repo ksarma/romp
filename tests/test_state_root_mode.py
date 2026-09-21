@@ -3272,10 +3272,14 @@ class EntriesAreBornOwnerOnlyUnderAPermissiveUmask(unittest.TestCase):
     """THE BEHAVIOURAL PIN of round 4f (romp-manager's ruling, 2026-09-21): "if the kernel and the host make entries under
     the root at the process umask, then under a permissive umask the readers quarantine the process's OWN FRESH ENTRIES.
     That is a self-inflicted denial road, and 'the live umask is 0002 with private groups' is a bound held by the
-    environment rather than by the code. Entries born owner-only BY CODE." Every creator under the root now goes through
+    environment rather than by the code. Entries born owner-only BY CODE." Every creator in the writers census's
+    population (the eleven modules; bin/romp; the root-aware Python programs outside them) now goes through
     kernel/state_root_mode.py's make_dir, write_text, write_bytes, open_private and touch (0700 and 0600 before the first
-    byte, under any umask), through a rename of an entry so born, or sets its mode by code at its site; the population
-    is derived and pinned by tests/test_state_root_writers.py. This class runs the CREATION ROADS under umask 0022 and
+    byte, under any umask), through a rename of an entry so born, sets its mode by code at its site, or runs under a umask
+    of 077 set first in its main(); the population is derived and pinned by tests/test_state_root_writers.py. This class's
+    roads are the FOUR PROCESSES' OWN (the kernel served and in process, the bus, the session host), and its owner-only
+    assertion walks every entry under the hermetic root they ran on; a directory another program left loose under a live
+    root (an older perf export's perf-exports/) is outside these roads and, being never judged, outside the gate's reach. This class runs the CREATION ROADS under umask 0022 and
     0000, set in CHILD processes before the interpreter starts (_under_umask), on a hermetic 0700 root the harness
     pre-makes with its own entries owner-only: the served kernel (boot, a request, housekeeping passes, a parked op, a
     notice, a second request), the kernel in process (the boot check, a housekeeping pass, a parked op, a notice, a

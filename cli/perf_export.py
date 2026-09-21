@@ -45,6 +45,7 @@ import http.client
 import json
 import math
 import os
+import stat
 import re
 import sys
 import urllib.error
@@ -293,7 +294,22 @@ def default_path(state: Path, now=None) -> Path:
     return state / EXPORT_DIR / ("perf-export-%s.json" % now.strftime("%Y%m%dT%H%M"))
 
 
-def write_file(path: Path, text: str) -> int:
+def _tighten_ours(d: Path) -> None:
+    """An existing loose directory of OURS (an older export's perf-exports/, born at the umask's mode before main() set 077)
+    is re-moded 0700; a symlink, another uid's directory or a failure is left as it is (the state-root review, 2026-09-21).
+    Called for the default export directory under the state root only, never for a --out parent, which may be the user's."""
+    try:
+        st = os.lstat(d)
+    except OSError:
+        return
+    if stat.S_ISDIR(st.st_mode) and st.st_uid == os.geteuid() and stat.S_IMODE(st.st_mode) & 0o077:
+        try:
+            os.chmod(d, 0o700)
+        except OSError:
+            pass
+
+
+def write_file(path: Path, text: str, tighten_dir: bool = False) -> int:
     """Create or replace `path` as a regular file readable by the owner alone; the byte count written, which is
     every byte of `text`: os.write may write fewer than asked (a full disk, a size limit, an interruption), so the
     write loops over what is left and a write that makes no progress is an OSError, never a truncated file
@@ -302,7 +318,9 @@ def write_file(path: Path, text: str) -> int:
     nothing is lost by removing it, and a truncated 0600 file must not be left looking like an export (round 2).
     Not a temporary file moved over the target: a replace would swap out a symlink at --out, which O_NOFOLLOW
     refuses to follow."""
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(parents=True, exist_ok=True)   # born 0700 under main()'s umask 077, a missing root included
+    if tighten_dir:
+        _tighten_ours(path.parent)
     data = text.encode("utf-8")
     flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
     fd = os.open(str(path), flags, 0o600)
@@ -328,6 +346,10 @@ def write_file(path: Path, text: str) -> int:
 
 
 def main(argv=None) -> int:
+    os.umask(0o077)   # every directory this tool makes is born 0700 and every file 0600 under any umask, the state root itself
+                      # included when --from runs on a box with none yet: the root's gate exempts an EMPTY root made at the umask's
+                      # mode, and an export fills the root it makes in the same run, so a loose one would meet the import refusal
+                      # at the next boot (the state-root review, 2026-09-21; tests/test_state_root_writers.py holds this line first)
     ap = argparse.ArgumentParser(prog=PROG, description=__doc__.split("\n\n")[0],
                                  usage="%(prog)s --public [--from SNAPSHOT.json] [--usage] [--out PATH]")
     ap.add_argument("--public", action="store_true",
@@ -356,7 +378,7 @@ def main(argv=None) -> int:
         return 1
     path = Path(a.out) if a.out else default_path(state, now)
     try:
-        n = write_file(path, json.dumps(doc, indent=1, sort_keys=True) + "\n")
+        n = write_file(path, json.dumps(doc, indent=1, sort_keys=True) + "\n", tighten_dir=(path.parent == state / EXPORT_DIR))
     except OSError as e:
         sys.stderr.write("%s: cannot write %s (%s)\n" % (PROG, path, e.__class__.__name__))
         return 1

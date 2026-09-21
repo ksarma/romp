@@ -16,9 +16,13 @@ the same derivation of every expression that is a path under the root (module_fa
 per-process cache, so the derivation of kernel/kernel.py's 79k lines runs once for both censuses in one process). Which
 census PAYS that derivation is a property of collection order, not of the design: under pytest's alphabetical collection
 the readers census runs first and this one finds a warm cache (about 0.4 s for this module on a box, against about 7.8 s
-cold); under a -k that deselects the readers' census, under an xdist distribution that puts the two files on different
-workers or this one first, or after a rename, this census derives cold, and test_the_census_reuses_the_readers_derivation
-asserts the SHARING, not the warmth (it holds whichever census ran first). Over those expressions it lists every CREATION: Path.mkdir, os.mkdir, os.makedirs; Path.write_text, Path.write_bytes,
+cold). This census derives cold whenever the readers' tests have not run earlier in the same process, which is the derived
+set of conditions: a selection that excludes them (-k, -m, --deselect, a path argument naming this file alone), an order
+that puts this module first (--ff or --lf, a random-order plugin, a rename past test_state_root_w), or a distribution that
+separates the two files (xdist). test_the_census_reuses_the_readers_derivation proves the sharing AND the warmth without
+depending on that order: it clears the readers' caches, runs this census over one module and holds that the caches were
+filled through the shared derivation, then makes the parse and the derivation raise and runs it again (a cold second run
+reds), and shows the red by emptying the facts cache alone. Over those expressions it lists every CREATION: Path.mkdir, os.mkdir, os.makedirs; Path.write_text, Path.write_bytes,
 Path.touch; open, Path.open, io.open and gzip.open in a write or append mode (a mode the census cannot read is listed
 as "open:?"); os.open with O_CREAT; tempfile.* with its directory under the root; shutil.copy, copy2, copyfile, copytree
 and move onto a path under the root; os.rename, os.replace, os.link, os.symlink, Path.rename, Path.replace,
@@ -59,12 +63,20 @@ manager (bin/romp-manager: restart-audit.jsonl) and the shell the kernel runs on
 three command strings: restart-audit.jsonl, kernel.log and update.log on the far root) each write a few entries a kernel
 reads back through its guarded readers; no derivation runs over bash or JavaScript, so each site is held to set its mode
 by code where it writes (`umask 077` on the writing command or a subshell around it; appendFileSync's `mode: 0o600`) by
-test_the_writers_outside_the_eleven_modules_set_their_mode_at_the_site, a text pin with its own red checks. Two Python
-tools the CLI delegates to write under the root as well, stdlib-only and outside the eleven modules (cli/spend_rebuild.py: spend.json and a temp;
-cli/spend_repair.py: spend.json, turns.jsonl, spend-repair.jsonl and temps; the .bak copies each makes carry their
-source's mode), and the kernel reads spend.json back through a guarded reader: each sets `os.umask(0o077)` as the FIRST statement
-of main, so everything it makes is born owner-only, and the same test holds that by AST (the review of round 4f's
-preparation for round 3, 2026-09-21). THE REACH of the bin/romp rule is narrower than the census's over Python, and is
+test_the_writers_outside_the_eleven_modules_set_their_mode_at_the_site, a text pin with its own red checks. The Python
+programs OUTSIDE the eleven that know the root and create are a DERIVED population, not a list (root_aware_creating_programs:
+every Python file under kernel/, postal/, cli/, tools/ and bin/, symlinks resolved, the eleven and tests/ excluded, whose
+text names the state root and whose AST carries a creating call), held by equality and each member umask-first
+(`os.umask(0o077)` the first statement of main(), nothing created at import; by AST) or allowlisted with a reason and a
+check: cli/spend_rebuild.py and cli/spend_repair.py (stdlib-only tools the CLI delegates to; spend.json, turns.jsonl,
+spend-repair.jsonl and temps at the process umask until 2026-09-21, spend.json read back by the kernel's guarded reader;
+the .bak copies each makes carry their source's mode), cli/perf_export.py (its file was already os.open 0o600, its
+mkdir(parents=True) bare: a loose perf-exports/ under a 0700 root is never judged, verified by a served-kernel probe, but
+on an ABSENT root under a permissive umask the same mkdir made the ROOT at the umask's mode and the export filled it, the
+five CLI mkdirs' defect in a third place; umask-first now, and an older loose perf-exports/ of ours is tightened by the
+next export), kernel/state_root_mode.py (the creators themselves) and tools/perf-bench.py (refuses the live root; writes
+into its mkdtemp mirror, its shadow and --json), by
+test_the_python_programs_outside_the_eleven_that_know_the_root_and_create_are_umask_first_or_allowlisted. THE REACH of the bin/romp rule is narrower than the census's over Python, and is
 stated rather than assumed: ONE LEVEL of binding by assignment (an underscore-led name assigned from `$(_romp_state_dir)`
 or the XDG expression), REDIRECTS ONLY for the umask judgment, underscore-led names only (ROMP_NAMES_DIR is the one root
 binding the rule does not match; its one use is a read). What the rule does not judge is pinned BY EQUALITY instead, by
@@ -99,6 +111,7 @@ import re
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 if __package__:
@@ -174,7 +187,22 @@ CLI_COOCCURRENCES = [                                # every line carrying a roo
     'python3 - "$_cfile" "$_cmin" "$_cjson" <<\'PY\'',
     'umask 077; RA_ACTION="${1:-}" RA_WHEN="${2:-}" RA_REASON="${3:-}" RA_SHA="$_ra_sha" RA_PPID="$PPID" RA_PARENT="$(ps -o command= -p "$PPID" 2>/dev/null | head -1)" RA_TTY="$(tty 2>/dev/null || true)" RA_SID="$_ra_sid" RA_NAME="$_ra_name" python3 - >> "$_ra_dir/restart-audit.jsonl" <<\'PYEOF\'',
 ]
-CLI_UMASK_TOOLS = ("cli/spend_rebuild.py", "cli/spend_repair.py")   # os.umask(0o077) is the first statement of each main()
+# THE PYTHON PROGRAMS OUTSIDE THE ELEVEN (romp-manager's round-3 lens, 2026-09-21: "whether the derivation that found them is now
+# the thing guarding them, so a sixth site reds"). The population is DERIVED: every Python file under PROGRAM_DIRS (a .py, or a
+# python shebang; symlinks resolved, the eleven modules and tests/ excluded) whose text names the state root (ROOT_SPELLINGS)
+# and whose AST carries a creating call. Each is umask-first (os.umask(0o077) the first statement of main(), nothing created at
+# module level) or on PROGRAM_ALLOWLIST with a reason and a check of its own; a stale entry reds.
+PROGRAM_DIRS = ("kernel", "postal", "cli", "tools", "bin")
+ROOT_SPELLINGS = re.compile(r'ROMP_STATE_DIR|XDG_STATE_HOME|\.local/state|\bstate_dir\(|_romp_state_dir')
+PROGRAM_CREATING_ATTRS = {"write_text", "write_bytes", "mkdir", "makedirs", "touch", "symlink_to", "hardlink_to"}
+PROGRAM_ALLOWLIST = {
+    "kernel/state_root_mode.py": ("creators", "the one implementation: its creators make every entry 0700 or 0600 by code, pinned by "
+                                              "tests/test_state_root_mode.py"),
+    "tools/perf-bench.py": ("never-the-live-root", "refuses the live state directory (live_state_dirs) and writes only into its mkdtemp "
+                                                   "mirror, its shadow and --json"),
+}
+PROGRAMS_AS_OF_2026_09_21 = ["cli/perf_export.py", "cli/spend_rebuild.py", "cli/spend_repair.py", "kernel/state_root_mode.py",
+                             "tools/perf-bench.py"]
 MANAGER_WRITE = re.compile(r"(?:appendFileSync|writeFileSync)\((?:[^;]|\n)*?\);")
 
 
@@ -456,6 +484,91 @@ def tool_sets_umask_first(source):
                 if (isinstance(f, ast.Attribute) and f.attr in creators) or (isinstance(f, ast.Name) and f.id in creators):
                     return False
     return ok
+
+
+def _is_python_file(path):
+    if path.endswith(".py"):
+        return True
+    try:
+        with open(path, "rb") as fh:
+            return b"python" in fh.readline()
+    except OSError:
+        return False
+
+
+def _has_creating_call(tree):
+    """Whether a Python AST carries a call that creates a file or directory: Path.write_text/write_bytes/mkdir/touch/symlink_to/
+    hardlink_to, os.mkdir/makedirs/replace/rename/symlink/link, shutil.copy*/copytree/move, open or io.open in a w/a/x mode,
+    os.open with O_CREAT."""
+    for c in ast.walk(tree):
+        if not isinstance(c, ast.Call):
+            continue
+        f = c.func
+        if isinstance(f, ast.Attribute):
+            owner = f.value.id if isinstance(f.value, ast.Name) else None
+            if f.attr in PROGRAM_CREATING_ATTRS:
+                return True
+            if owner == "os" and f.attr in {"mkdir", "makedirs", "replace", "rename", "symlink", "link"}:
+                return True
+            if owner == "shutil" and f.attr in {"copy", "copy2", "copyfile", "copytree", "move"}:
+                return True
+            if owner == "os" and f.attr == "open" and any(isinstance(n, ast.Attribute) and n.attr == "O_CREAT" for a in c.args for n in ast.walk(a)):
+                return True
+        name = f.id if isinstance(f, ast.Name) else (f.attr if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "io" else None)
+        if name == "open":
+            mode = None
+            if len(c.args) > 1 and isinstance(c.args[1], ast.Constant):
+                mode = c.args[1].value
+            for kw in c.keywords:
+                if kw.arg == "mode" and isinstance(kw.value, ast.Constant):
+                    mode = kw.value.value
+            if isinstance(mode, str) and any(ch in mode for ch in "wax"):
+                return True
+    return False
+
+
+def root_aware_creating_programs(root):
+    """rel -> source for every Python program under PROGRAM_DIRS outside the eleven modules and tests/ that names the state root
+    and carries a creating call (the derived population of writers outside the census's modules)."""
+    eleven = {os.path.realpath(os.path.join(str(root), rel)) for rel in MODULES}
+    seen, out = set(), {}
+    for d in PROGRAM_DIRS:
+        base = os.path.join(str(root), d)
+        for dirpath, _dirs, files in os.walk(base):
+            for name in sorted(files):
+                p = os.path.join(dirpath, name)
+                real = os.path.realpath(p)
+                if real in eleven or real in seen or "/tests/" in real or not _is_python_file(p):
+                    continue
+                seen.add(real)
+                try:
+                    src = open(real, encoding="utf-8").read()
+                    tree = ast.parse(src)
+                except (OSError, SyntaxError, ValueError):
+                    continue
+                if ROOT_SPELLINGS.search(src) and _has_creating_call(tree):
+                    out[os.path.relpath(real, str(root))] = src
+    return out
+
+
+def _allowlist_check(kind, src):
+    if kind == "creators":
+        defs = {n.name for n in ast.parse(src).body if isinstance(n, ast.FunctionDef)}
+        return {"make_dir", "write_text", "write_bytes", "open_private", "touch"} <= defs
+    if kind == "never-the-live-root":
+        return "live_state_dirs(" in src and "tempfile.mkdtemp(" in src
+    return False
+
+
+def program_way(rel, src):
+    """How a program outside the eleven is owner-only by code: 'umask-first', its allowlist reason when its check holds, or None."""
+    if tool_sets_umask_first(src):
+        return "umask-first"
+    if rel in PROGRAM_ALLOWLIST:
+        kind, reason = PROGRAM_ALLOWLIST[rel]
+        if _allowlist_check(kind, src):
+            return "allowlisted: " + reason
+    return None
 
 
 def _mode_arg(call, idx):
@@ -748,8 +861,7 @@ class TheWritersCensus(unittest.TestCase):
         root binding CLI_ROOT_BINDING does not match, and its one use is a read; (6) the root expression appears outside a
         binding on CLI_INLINE_ROOT_USES lines, none a redirect onto it and none carrying a creating verb; (7) the coarse
         backstop: every line carrying both a root spelling and a creating verb or program word, whatever its position, is one
-        of CLI_COOCCURRENCES; (8) the two Python tools the CLI delegates to (CLI_UMASK_TOOLS) open main() with os.umask(0o077)
-        and create nothing at module level. Each check reds on a plant."""
+        of CLI_COOCCURRENCES; The Python programs outside the eleven have their own test below. Each check reds on a plant."""
         text = open(os.path.join(ROOT, "bin", "romp"), encoding="utf-8").read()
         names = cli_root_names(text)
         self.assertEqual(cli_second_level_bindings(text), [], "a name bound from a root-bound name: widen cli_redirects to follow it")
@@ -775,9 +887,6 @@ class TheWritersCensus(unittest.TestCase):
         self.assertEqual(len(inline), CLI_INLINE_ROOT_USES, "the root expression outside a binding: %r" % inline)
         self.assertEqual(cli_inline_misuse(text), [])
         self.assertEqual(cli_cooccurrences(text), CLI_COOCCURRENCES, "a line with a root spelling and a creating verb or program changed")
-        for rel in CLI_UMASK_TOOLS:
-            self.assertTrue(tool_sets_umask_first(open(os.path.join(ROOT, rel), encoding="utf-8").read()),
-                            "%s: os.umask(0o077) is not main()'s first statement, or the module creates a file at import" % rel)
         # THE RED SHAPES, one per check and per admitted branch, planted at the end of a copy of the CLI
         planted = text + "\n".join(["", '_pl="$(_romp_state_dir)"', '_pl3="$(_romp_state_dir)/one.json"', '_pl2="${_pl}/deeper"',
                                     'mkdir -p "$_pl/sub"', 'cp x "$_pl/y"', 'echo x | tee "${_pl}/z"', 'if mkdir "$_pl/lock"; then :; fi',
@@ -814,19 +923,72 @@ class TheWritersCensus(unittest.TestCase):
                                  '( umask 077; mkdir -p "$(dirname "$_pl3")" )', 'mv -f "$_pl/a.tmp" "$_pl/a"', 'mkdir -p "$_pl/cont"',
                                  'node - "$_pl/r.json" <<\'JS\'', 'X="$_pl/f" python3 -', 'echo x | tee "$(_romp_state_dir)/y"',
                                  'chmod 666 "$_pl/loose"']), "the backstop lists every planted line with a root spelling and a word, the continued one joined")
-        self.assertFalse(tool_sets_umask_first("import os\ndef main():\n    x = 1\n    os.umask(0o077)\n"), "umask not first")
-        self.assertFalse(tool_sets_umask_first("import os\nopen('x', 'w')\ndef main():\n    os.umask(0o077)\n"), "a module-level creator")
-        self.assertTrue(tool_sets_umask_first("import os\ndef main():\n    os.umask(0o077)\n    return 0\n"))
+
+    def test_the_python_programs_outside_the_eleven_that_know_the_root_and_create_are_umask_first_or_allowlisted(self):
+        """THE DERIVED POPULATION OF WRITERS OUTSIDE THE ELEVEN (romp-manager's round-3 lens, 2026-09-21). The review found
+        two cli/ tools writing under the root at the process umask by grep; a hand list of two would not red a third. Here the
+        population is derived (root_aware_creating_programs: every Python program under PROGRAM_DIRS outside the eleven and
+        tests/ that names the state root and carries a creating call) and held by equality to the list as of 2026-09-21; each
+        member is umask-first or allowlisted with a reason whose check holds; a stale allowlist entry reds; and the shapes red on
+        plants: a program with both predicates and no umask, an umask that is not main()'s first statement, a module-level
+        creator, an allowlisted creators module missing a creator. cli/perf_export.py joined the umask-first set after the probe
+        romp-manager asked for: an export under umask 000 left perf-exports/ at 777 under a 0700 root and the next boot was clean
+        (nothing judges it), but the same export on an ABSENT root made the root itself at the umask's mode and filled it, the
+        five CLI mkdirs' defect in a third place."""
+        pop = root_aware_creating_programs(Path(ROOT))
+        self.assertEqual(sorted(pop), PROGRAMS_AS_OF_2026_09_21, "the population of root-aware creating programs outside the eleven changed")
+        ways = {rel: program_way(rel, src) for rel, src in pop.items()}
+        self.assertEqual([rel for rel, way in ways.items() if way is None], [],
+                         "a program outside the eleven writes under the root at the process umask: %r" % {r: w for r, w in ways.items()})
+        self.assertEqual(sorted(rel for rel, way in ways.items() if way == "umask-first"),
+                         ["cli/perf_export.py", "cli/spend_rebuild.py", "cli/spend_repair.py"])
+        self.assertEqual(sorted(set(PROGRAM_ALLOWLIST) - set(pop)), [], "a stale allowlist entry: the file no longer qualifies")
+        # the red shapes
+        both = "import os\nfrom pathlib import Path\nstate = Path(os.environ.get('ROMP_STATE_DIR', '~/.local/state/romp'))\n"
+        self.assertIsNone(program_way("cli/planted.py", both + "def main():\n    (state / 'x').write_text('y')\n"), "no umask")
+        self.assertIsNone(program_way("cli/planted.py", both + "def main():\n    x = 1\n    os.umask(0o077)\n    (state / 'x').write_text('y')\n"), "umask not first")
+        self.assertIsNone(program_way("cli/planted.py", both + "open('x', 'w')\ndef main():\n    os.umask(0o077)\n"), "a module-level creator")
+        self.assertEqual(program_way("cli/planted.py", both + "def main():\n    os.umask(0o077)\n    (state / 'x').write_text('y')\n"), "umask-first")
+        self.assertIsNone(program_way("kernel/state_root_mode.py", "def make_dir(): pass\ndef write_text(): pass\n"), "a creators module missing its creators")
+        self.assertTrue(_has_creating_call(ast.parse("import os\nos.open('f', os.O_WRONLY | os.O_CREAT, 0o600)\n")))
+        self.assertTrue(_has_creating_call(ast.parse("open('f', mode='a')\n")))
+        self.assertFalse(_has_creating_call(ast.parse("open('f')\nx = 'a'.replace('b', 'c')\n")), "a read and a str.replace are not creations")
 
     def test_the_census_reuses_the_readers_derivation(self):
-        """One derivation per module per process: the facts the readers census cached (module_facts, _FACTS) are the ones
-        this census read, so the two censuses cost one parse and one derivation of each module between them. This asserts
-        SHARING, not warmth: it holds whichever census ran first (see the module docstring on collection order)."""
-        for rel in MODULES:
-            path = os.path.join(ROOT, rel)
-            st = os.stat(path)
-            self.assertIn((path, (st.st_size, st.st_mtime_ns)), R._FACTS, "%s derived once and cached" % rel)
-            self.assertIn(path, R._PARSED, "%s parsed once and cached" % rel)
+        """One derivation per module per process, PROVEN WITHOUT DEPENDING ON COLLECTION ORDER (romp-manager's round-3 lens,
+        2026-09-21: the first version held that the readers' caches carried every module's key after both censuses had run,
+        which holds whichever ran first and would not have failed had this census stopped sharing while the readers census
+        still filled the caches). Here: with the readers' caches emptied, one census over a module fills R._PARSED and
+        R._FACTS, so this census derives THROUGH the shared caches (sharing); a second census over the same module with the
+        parse and the derivation replaced by a raise completes, so a warm cache is read and nothing is parsed or derived
+        again (warmth); and with the facts cache alone emptied the same second census derives again and reds, so the raise
+        is live and the assertion is not vacuous. The caches are put back as they were, and one readers module object lives
+        in the process (the one this census imports), whichever import road brought it."""
+        rel = "kernel/palette.py"                                        # the smallest of the eleven: a parse and a derivation in milliseconds
+        path = os.path.join(ROOT, rel)
+        st = os.stat(path)
+        key = (path, (st.st_size, st.st_mtime_ns))
+        saved_parsed, saved_facts = dict(R._PARSED), dict(R._FACTS)
+        R._PARSED.clear()
+        R._FACTS.clear()
+        try:
+            census(Path(ROOT), [rel])
+            self.assertIn(path, R._PARSED, "the writers census parses through the readers' cache")
+            self.assertIn(key, R._FACTS, "the writers census derives through the readers' cache")
+
+            def cold(*_a, **_k):
+                raise AssertionError("the second census parsed or derived again: it was cold")
+            with mock.patch.object(R, "source_and_tree", cold), mock.patch.object(R, "_derive", cold):
+                census(Path(ROOT), [rel])                                # warm: nothing parsed, nothing derived
+            R._FACTS.clear()                                             # the red: facts gone, the parse kept, the derivation runs again
+            with mock.patch.object(R, "_derive", cold):
+                with self.assertRaises(AssertionError):
+                    census(Path(ROOT), [rel])
+        finally:
+            R._PARSED.clear()
+            R._PARSED.update(saved_parsed)
+            R._FACTS.clear()
+            R._FACTS.update(saved_facts)
         loaded = [m for name, m in sys.modules.items() if name.rsplit(".", 1)[-1] == "test_state_root_readers"]
         self.assertTrue(all(m is R for m in loaded), "one readers module object in this process, the one this census reads (%r)"
                         % [name for name in sys.modules if name.rsplit(".", 1)[-1] == "test_state_root_readers"])
