@@ -84,7 +84,7 @@ counters that the recorders do not wrap, or through a reference to a real door t
 even though it cannot be named. Outside both witnesses: a reader below the judge's loaders or beside its module, the
 kernel opening and parsing the store file itself, the kernel calling the judge's own file reader (`jd._read_store_json`,
 below the loaders) or a second judge module loaded under another name with a cache and counters of its own (three plants,
-each per session in the pass loop, re-taken at this head (named by role in the round-7 paragraph below), over its 39 cases, one at a time with
+each per session in the pass loop, re-taken at this head (named by role in the round-8 paragraph below), over its 40 cases, one at a time with
 the kernel, the judge and this module hashed before the plant, across the run and after the revert: the first two leave every case
 green with no file changed across a run, so they stay outside every witness here; the third has been refused since the consolidation
 pass by the kernel-wide birth pin, whose called population names `_PJ.load_goals_shared` as a fifth loader spelling, so a second judge
@@ -621,11 +621,11 @@ Review round 7 (2026-09-20; the reviewer's standard after round 6: no instrument
 any axis where the module can compute one, and every instrument states which axes it derives and which it bounds). Ten fixes landed,
 nine planned and one the records pass found, and the round's close landed the closures of the verifiers' eight findings, recorded at
 the end of this paragraph; every state below but the registry finding's pre-fix state, labelled by its tree where it stands, was
-taken at this head, the head of the round-7 fixes, over its 39 cases (the round adds one, the door witness's unread road), each
-landed on kernel/kernel.py, kernel/judge.py or this module and reverted, the kernel, the judge and this module hashed before the
-plant and after the revert and found equal, the module run single-process on 3.12 through the clean runner; where a plant left the
-module green on the tree before its fix the paragraph says so in words, and every figure is this head's but that one state's,
-which its sentence labels by its tree. The census floor (regression-1, extra4-2 and tests-3): _census_floor read two
+taken at the head of the round-7 fixes, over its 39 cases (the round adds one, the door witness's unread road), each landed on
+kernel/kernel.py, kernel/judge.py or this module and reverted, the kernel, the judge and this module hashed before the plant and
+after the revert and found equal, the module run single-process on 3.12 through the clean runner; where a plant left the module
+green on the tree before its fix the paragraph says so in words and gives no figure, and every figure is that head's but the
+registry finding's pre-fix state, which its sentence labels by its tree. The census floor (regression-1, extra4-2 and tests-3): _census_floor read two
 container shapes, a module-level def and a direct method of a module-level class, so a reader in any other container was attributed
 to nothing; it attributes every reader reference to its nearest def or class chain over the whole tree now, and the roster case pins
 the class chains and the module statements with a reason each. The states, each green before the fix: a census written as a method
@@ -652,7 +652,7 @@ spelling the clauses read reds the dup drive's sites, the coverage case, the ros
 35 passed). The two false sentences (regression-2; tests-2 with regression-3): the first paragraph's alias-control sentence said the
 door witness's thirteen cases run outside any pass, twelve calling the door once, where a profile of the door's frames counts
 seventeen calls over fourteen cases, thirteen under _drive and one each before the window in the three priming cases and after it in
-the refuse case, the figures the sentence carried until the round-8 fixes (no assertion read it; the profile at this head is the state); the case
+the refuse case, the figures the sentence carried until the round-8 fixes (no assertion read it; the profile at that head is the state); the case
 count's 'reads against N' copies, one each in the paragraphs of the consolidation pass and rounds 4, 5 and 6, sat in fragments the
 split at '3.12' left with no head label, so a stale copy was green wherever it stood; the copies are removed and the Docs case reads
 this paragraph whole by a census of its figures, so a stale copy written into this paragraph reds it naming the clause (1 failed, 38
@@ -699,12 +699,12 @@ raised from its code, so the first bypass plant, whose unclosed handle the colle
 five harness cases that drive a pass at their cleanup naming the registry and no stub, as did a warnings.warn call in the pass loop
 (5 failed, 34 passed each, on the tree of the door-names fix); the name is set aside, stated as a bound with its reason beside the
 tick allowance, and both plants leave the module green since (39 passed each) while the leak plants above red as before. The bypass
-plants and the alias control, re-taken at this head: the kernel opening and parsing the store file itself and the kernel calling
+plants and the alias control, re-taken at that head: the kernel opening and parsing the store file itself and the kernel calling
 jd._read_store_json, per session in the pass loop, leave every case green with no file changed across a run (39 passed each); a
 second judge module loaded under another name reds the birth pin alone, naming `_PJ.load_goals_shared` (1 failed, 38 passed); the
 alias control, the shared door bound at kernel import and called per session, reds the shared reconciliation on each of the five
 harness cases that drive a pass, 2 against 0, 7 against 5 twice, 6 against 4 and 3 against 1, and the birth pin, the door witness's
-cases green under it (6 failed, 33 passed). The round-6 paragraph's states were re-taken at this head as well, and that
+cases green under it (6 failed, 33 passed). The round-6 paragraph's states were re-taken at that head as well, and that
 paragraph's last sentences record the result. The round's close (the verifiers' eight findings on the round's delta, four of them the
 seventh-axis lens's). The class attributes (the lens's first find): the cleanup's check read the module globals of both modules
 and put one class attribute, Sessions.backend_for, back by hand, so a stub a case left on any other class attribute lived for
@@ -734,8 +734,89 @@ passed). The other four findings, prose corrections with no state each: this par
 head's while the registry finding's pre-fix figure is another tree's; the door witness said every drive seeds a one-node
 store, and five of the thirteen seed none (weakened at its four live places and in the round-5 paragraph); the module docstring
 and setUp's comment placed the shared door's name lookup in _or_fault, and the outer wrapper makes it; and _line_trace's Bounds
-sentence names the outer tracer's blind window. The clean module at this head, the head of the round-7 fixes: 39 passed single-process
-on 3.10, 3.11, 3.12, 3.13 and 3.14t.
+sentence names the outer tracer's blind window. The clean module at the head of the round-7 fixes: 39 passed single-process on
+3.10, 3.11, 3.12, 3.13 and 3.14t.
+
+Review round 8 (2026-09-21; the reviewer's verdict on round 7: three code defects, an ordering bug in the cleanup, a pin lost in a
+rewrite and two assertions that could not fail, and a body of sentence findings, all low, under a changed standard: a figure in prose
+beside its derivation is a copy and is deleted, not pinned; where an instrument and its sentence must exist as a pair, the pair's
+existence is pinned mechanically from the module's own AST and roster; a Bounds sentence is owed only where an instrument bounds
+something a reader would not expect, and no new Derives sentence is written). Eight fixes landed, one commit each but the finder
+case's two; the states of the seven fixes before the axis pin were each taken at the tree of their own commit, the module over its
+39 cases there, so a state's failed and passed figures sum to the count of that head; the axis pin, the eighth, adds a case, and its
+states, the bypass plants, the alias control and the clean line at the end of this paragraph were taken at this head, the head of
+the round-8 fixes, over its 40 cases (the round adds one, the axis pin); each plant landed on kernel/kernel.py, kernel/judge.py or
+this module and reverted, the three files hashed before the plant and after the revert and found equal, the module run
+single-process on 3.12 through the clean runner; where a plant left the module green on the tree before its fix the paragraph says
+so in words and gives no figure. The cleanup's order (correctness-1): _restore checked the TICK_REBOUND allowance rows before its
+two restore loops, so a stale row aborted the cleanup with the case's stubs live for every later test; it restores both containers
+first and reports a stale row beside the leaks. The states: a stale row for a global that does not exist, with a new-identity
+pass-through on km._nudge_response_ready in the wedge-gate sweep case, red every harness case at the stale-row line before the fix
+while a probe at the end of the session found the stub live; since, the same cases red at the one leak report, the wedge case naming
+the kernel name beside the row and every other harness case the row alone, and the probe finds the import-time object back (19
+failed, 20 passed); the row alone reds the same cases naming it, the probe finding the object back (19 failed, 20 passed). The
+class-attribute floor (extra5-1): the cleanup's class-attribute check derived its population from an ownership predicate with
+nothing asserting the derivation answered anything; setUp asserts each module's attribute map non-empty before any seam is rebound.
+The states: the predicate broken to always-false, with a new-identity pass-through on km.Sessions.live in the wedge-gate sweep case,
+left the module green before the fix, the probe finding the stub live at the end of the session; since, it reds every harness case
+at the floor naming zero attributes per module, and the two agreement-span pins, which drive a throwaway setUp and meet the floor's
+message where they expected the leak's (21 failed, 18 passed); the leak alone reds the wedge case at its cleanup naming the class
+attribute (1 failed, 38 passed). Every roster drive parses a real source (extra6-1): the round-6 head's no_class line, which held
+each roster row to the tree it names, was lost in the witness's rewrite, so a row narrowed to a trivial source kept the module green;
+the accept side records what each row parses and holds every recorded source real, a file of the three modules, a corpus row or the
+source of the kernel or judge def it names, and holds the files read across the rows equal to the three. The states, each green
+before the fix: the _loader_sites row rewired to read a def of this module, the _door_regions row parsing a literal with the door's
+spelling kept in a short-circuit, and the kernel birth-pin row reading this module's file each red the plant case naming the row and
+the source it read, or the file no row parsed (1 failed, 38 passed each). The control that could not red (extra7-3): the door
+witness's coverage case re-measured the singleton trace and asserted an intersection empty by set algebra once the composition line
+held; both are deleted, and the survivor holds each def nested in the stand-in to a line the stand-in's own frame never runs, naming
+the lost lines per def. The state: a tracer that accepts a frame when it or any frame above it runs a code object of the set, so the
+singleton records its nested frames' lines, reds the survivor naming both nested defs with the composition line green (1 failed, 38
+passed); with the survivor disabled, the deleted block stayed green under the same tracer before the fix. The trace's tree side
+(extra4-2 and extra7-4): _sites listed the defs nested in the door and the coverage case held them against the derived code objects
+both ways, so a class defined inside the door, a frame the trace reads, red the case naming the opposite cause; _sites lists classes
+too and the case asserts the one direction the guarantee needs, a def or class the tree holds among no code object of the derived
+set. The states: a class as the door's first statement red the case with the false cause before the fix and leaves the module green
+since (39 passed on 3.12 and 3.14t); a def the compiler drops as unreachable reds the one-way line naming it (1 failed, 38 passed on
+each); a type alias in the door, traced and on no node-class list, red the both-ways check before and leaves the module green since
+(39 passed). The finder's append sites (extra9-2): the finder case derived the forms the finder reports from the third element of
+every tuple appended to out and read a computed label as nothing; every out.append in the finder's def is held to a literal tuple of
+more than two elements whose third is a string constant and, this pass, every use of out in that def to its binding, an append or a
+read in the return, so a row added through extend or an augmented assignment is refused rather than unread. The states, each green
+before its fix: a fourth branch on a node class the module and the samples spell nowhere, its label computed, reds the shape line
+naming the append (1 failed, 38 passed); the getattr branch's tuple pre-built and appended by name reds the same line (1 failed, 38
+passed); a branch adding its row through out.extend, and one through an augmented assignment, each red the uses line naming the site
+(1 failed, 38 passed each). The sentence pass (extra4-1, extra7-1, extra8-2, extra8-3, regression-2, extra9-1, extra4-3, extra7-2
+and extra5-2, with the prep's one stronger sentence and its residue comment): the first paragraph's word-spelled counts of this
+module's own populations and its copy of the alias control's figure are deleted, the round-7 paragraph's copies with them;
+_class_attributes' first sentence and Derives clause say what the code reads and its Bounds clause names the residue; _line_trace's
+Bounds conclusion ends at its premise; the seven figures the round-7 close took on pre-fix or first-pin trees are dropped; the axis
+universal is withdrawn and the two roster rows and two test classes that carried no sentence are named; the round-4 paragraph's
+clean line is said to have been pinned by that head's Docs case. Nothing red before: the four counts and the copy rewritten to false
+values, and two sentences negated, each left the module green, which is why they are deleted or narrowed and not pinned. The axis
+pin (extra4-3, extra7-2 and extra5-2, the reviewer's second instruction): which docstrings carried a Derives and a Bounds sentence
+was a hand-kept population on an axis the module computes, and the round-7 paragraph's universal was false for two roster rows; the
+fifth case of TheWalkersRefuseAStrangerByExecution derives the hand-written rosters of this module from its own AST, every
+module-level name assigned a non-empty literal container or a frozenset, tuple, set, dict or list call over one, walks each roster
+row's def through _walk for the rosters it reads by Name, in its body or its argument defaults, and holds every reading row to a
+docstring carrying a Bounds sentence, the text from the last 'Bounds:' to the end, that spells each roster it reads, so the sentence
+and the code agree on what the row bounds (the pin reads the label and the spelling, not the truth of the sentence, and a roster
+read through a helper the row calls is outside it). At this head the reading rows are _traversal_references, _loader_births,
+_census_floor and _grammar_positions; the pin demanded two edits, _TRAVERSAL spelled in _traversal_references' Bounds sentence and
+a Bounds sentence for _grammar_positions naming _GRAMMAR_CORPUS and _AST_ABSTRACT, the corpus bounding what each position's record
+holds and not which positions are listed; no Derives sentence is written for it or for _door_regions, which reads no roster. The
+states: the case alone on the tree before those edits red naming _grammar_positions, whose docstring carried no Bounds sentence,
+and, with that sentence written, naming _traversal_references and _TRAVERSAL, the Docs count pin red beside it on both trees, a
+case added and the docstring's count not yet moved; since, the 'Bounds:' label removed from _census_floor's docstring reds the
+case at the existence line naming _census_floor and _TREE_READERS (1 failed, 39 passed), and _TREE_READERS respelled in that
+Bounds text as the three reader spellings reds it at the naming line (1 failed, 39 passed); both left the module green before the
+case existed. The bypass plants and the alias control, re-taken at this head: the kernel opening
+and parsing the store file itself and the kernel calling jd._read_store_json, per session in the pass loop, leave every case green
+with no file changed across a run (40 passed each); a second judge module loaded under another name reds the birth pin alone, naming
+`_PJ.load_goals_shared` (1 failed, 39 passed); the alias control, the shared door bound at kernel import and called per session,
+reds the shared reconciliation on each of the harness cases that drive a pass, 2 against 0, 7 against 5 twice, 6 against 4 and 3
+against 1, and the birth pin, the door witness's cases green under it (6 failed, 34 passed). The clean module at this head, the head
+of the round-8 fixes: 40 passed single-process on 3.10, 3.11, 3.12, 3.13 and 3.14t.
 
 Drives the real pass (_auto_nudge_tick) over two alive sessions with real transcript files and real goal stores, on the
 suite's fake clock (the pass takes `now`). SYNTHETIC fixtures only; a PRIVATE synthetic sid pair (the goal-store fixture
@@ -1048,7 +1129,7 @@ def _traversal_references(tree):
     over every roster census entry point of this module). The interpreter check beside the walker case scans vars(ast) for every node
     class and reds by name on a new one with no walker involved, so the version demand does not rest on this finder. Derives: every
     reference to a name of _TRAVERSAL in the three forms over the tree handed, each with its line, form, spelling and owner. Bounds:
-    the four names (the ruling's stop) and the three forms; and the owner label, which reads two container shapes, a module-body def
+    _TRAVERSAL, the four names (the ruling's stop), and the three forms; and the owner label, which reads two container shapes, a module-body def
     and a class with its direct methods, and labels a deeper reference by the module-body def, the class or the direct method that
     holds it, a label for the message and the exemption key and not a population. The roster's membership and the exemption rows
     are pinned by the finder case, not here."""
@@ -1646,7 +1727,10 @@ def _grammar_positions(corpus=_GRAMMAR_CORPUS):
     unobserved (None or [] on every instance), so the population is complete for this interpreter by execution and a field a new
     interpreter adds is exercised by the corpus or named here, and reds on a field whose children derive from two sum types, which
     no grammar version has. A roster row (_CENSUSES): it parses by attribute and walks through _walk, so the witness drives it over
-    its own corpus with a stranger planted, and _walk refuses the stranger before the derivation reads a field off it."""
+    its own corpus with a stranger planted, and _walk refuses the stranger before the derivation reads a field off it. Bounds:
+    _GRAMMAR_CORPUS, the sources it parses, and _AST_ABSTRACT, the sum types it folds an observed child's class to, both kept by hand;
+    a field no source of the corpus fills reds by name rather than going unlisted, so the corpus bounds what each position's record
+    holds, the kind, list shape, base and primitive types its instances showed, and not which positions are listed."""
     classes = {c.__name__: c for c in _AST_KNOWN}
     seen = {(name, field): {"nodes": set(), "prims": set(), "list": False} for name, c in classes.items() for field in c._fields}
     for source, mode, type_comments in corpus:
@@ -4387,7 +4471,10 @@ class TheWalkersRefuseAStrangerByExecution(unittest.TestCase):
     plant at that position over while the plant at another is refused, the per-position sensitivity the first case rests on. The
     fourth case is the negative control and the reason the contract rides on execution: two hand-rolled recursions, one over
     ast.iter_fields and one over node._fields, walk the same planted tree, return a census listing the stranger twice with no
-    refusal, and the finder answers no reference over either; ast.iter_fields is deliberately NOT added to _TRAVERSAL. Derives: the
+    refusal, and the finder answers no reference over either; ast.iter_fields is deliberately NOT added to _TRAVERSAL. The fifth case
+    holds each roster row that reads a hand-written roster of this module by Name to a Bounds sentence spelling it, the rosters and
+    the reading rows derived from this module's own AST (review round 7, extra4-3, extra7-2 and extra5-2: which docstrings owed the
+    sentence was a hand-kept population; the messages carry the rule and its bounds). Derives: the
     node positions from the running interpreter over the corpus (_grammar_positions, every field of every concrete class observed
     or red naming the field), the plantable residue as the positions of the mod roots other than Module (_plantable, re-derived by
     the instrument case), one drive per plantable position per roster row (the count asserted), and each stranger's base from the
@@ -4594,6 +4681,9 @@ class TheWalkersRefuseAStrangerByExecution(unittest.TestCase):
                                                              # (the control stands in for _walk under a patch)
             "TheWalkersRefuseAStrangerByExecution.test_the_roster_holds_its_count_and_its_floor":
                 ["ast.parse"],                               # this case: parses this module's text for _census_floor, a row
+            "TheWalkersRefuseAStrangerByExecution.test_every_roster_row_that_reads_a_hand_roster_names_it_in_a_bounds_sentence":
+                ["_walk", "ast.parse"],                      # parses this module's text and walks the roster defs for the names they read; a
+                                                             # reader of docstrings by AST position, no census
         }
         self.assertEqual(classes, pinned,
                          "the class chains reading a tree inline are exactly the pinned ones, each outside the roster for the reason beside "
@@ -4733,6 +4823,48 @@ class TheWalkersRefuseAStrangerByExecution(unittest.TestCase):
                                        "ast.iter_fields or node._fields spells none, so it is silent on this whole class (the early warning's "
                                        "stated limit; the contract rides on the execution case above, and iter_fields is deliberately not "
                                        "added to _TRAVERSAL): %r" % (census.__name__, refs))
+
+    def test_every_roster_row_that_reads_a_hand_roster_names_it_in_a_bounds_sentence(self):
+        tree = ast.parse(Path(os.path.realpath(__file__)).read_text(encoding="utf-8"))
+        builders = ("frozenset", "tuple", "set", "dict", "list")
+
+        def hand_written(value):
+            # a non-empty literal container, or one of the builders called over one; a computed value (a generator, a call over a
+            # name) is no roster, and an empty container names nothing
+            if isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id in builders and len(value.args) == 1 and not value.keywords:
+                return hand_written(value.args[0])
+            if isinstance(value, ast.Dict):
+                return bool(value.keys)
+            return isinstance(value, (ast.Tuple, ast.List, ast.Set)) and bool(value.elts)
+
+        rosters = sorted({t.id for s in tree.body if isinstance(s, ast.Assign) and hand_written(s.value) for t in s.targets if isinstance(t, ast.Name)})
+        self.assertTrue(rosters, "this module binds at least one hand-written roster at module level, a name assigned a non-empty literal "
+                                 "container or a frozenset, tuple, set, dict or list call over one (a derived expectation fails on empty)")
+        defs = {s.name: s for s in tree.body if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        reads = {}
+        for name in sorted({name for name, _shape, _drive in _CENSUSES}):
+            read = sorted({n.id for n in _walk(defs[name]) if isinstance(n, ast.Name) and n.id in rosters})
+            if read:
+                reads[name] = read
+        self.assertTrue(reads, "at least one roster row reads a hand-written roster by Name in its def, its body or its argument defaults "
+                               "(a derived expectation fails on empty); the rosters: %r" % rosters)
+        docs = {name: ast.get_docstring(defs[name]) or "" for name in reads}
+        bounds = {name: doc[doc.rfind("Bounds:"):] if "Bounds:" in doc else None for name, doc in docs.items()}
+        self.assertEqual(sorted(name for name in reads if bounds[name] is None), [],
+                         "a roster row whose def reads a hand-written module roster carries a Bounds sentence in its docstring, the text from "
+                         "the last 'Bounds:' to the end, so the sentence and the code can be held to agree on what the row bounds; these rows "
+                         "read a roster and carry none: %r. Every reading row and the rosters it reads: %r. The pin reads the label and the "
+                         "spelling, not the truth of the sentence; a roster read through a helper the row calls is outside it"
+                         % (sorted(name for name in reads if bounds[name] is None), reads))
+        unnamed = sorted((name, roster) for name, read in reads.items() for roster in read
+                         if not re.search(r"(?<![A-Za-z0-9_])%s(?![A-Za-z0-9_])" % re.escape(roster), bounds[name]))
+        self.assertEqual(unnamed, [],
+                         "a roster row whose def reads a hand-written module roster spells it in its Bounds sentence, the text from the last "
+                         "'Bounds:' to the end, so the sentence and the code agree on what the row bounds; each pair is a row and a roster its "
+                         "def reads by Name that its Bounds text does not spell: %r. Every reading row and the rosters it reads: %r; the Bounds "
+                         "text of each row named: %r. The pin reads the spelling, not the truth of the sentence; a roster read through a "
+                         "helper the row calls is outside it"
+                         % (unnamed, reads, {name: bounds[name] for name, _roster in unnamed}))
 
 
 class Docs(unittest.TestCase):
