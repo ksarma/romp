@@ -28,3 +28,4 @@
 # rostered leg in the Chromium it installs; a leg's Firefox and WebKit runs live elsewhere (a served pytest step, a
 # local run), and a line whose source reaches another engine is refused. A leg already in
 # ci-browser-legs-excluded.txt is moved, not copied: its line there goes in the same commit as its line here arrives.
+out-tests/ui/webview/real-viewer-leg-switch.test.js

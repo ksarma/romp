@@ -34,8 +34,11 @@
 //     test into a red naming the leg (node's record reports such a file as one passing test named by its path as node
 //     received it), prints the lost-browser remedy beside a leg whose failure names the switch, and passes node's own
 //     failure status through;
-//   - the phrase the script reads a lost browser by is the one inBrowser fails with in ui/webview/real-viewer-leg.ts, so
-//     a reword on either side is red here rather than a remedy dropped in silence.
+//   - the phrase the script reads a lost browser by is a literal in ui/webview/real-viewer-leg.ts's source, the SHARED
+//     PHRASE between the helper and the script, so a reword on either side is red here rather than a remedy dropped in
+//     silence. That pin reads text and guards the phrase alone: that inBrowser FAILS with it under the switch and skips
+//     without is executed by ui/webview/real-viewer-leg-switch.test.ts (a child node --test with PLAYWRIGHT_BROWSERS_PATH
+//     emptied), which the vscode-extension job runs under npm test and, rostered, in the step itself.
 // Synthetic values only in the script's trees. Run: node --test tools/ci-browser-legs.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -425,7 +428,10 @@ test('after node --test the script turns a skipped test into a red naming the te
   assert.ok(both.err.includes('skipped with ' + SWITCH + '=1'), both.err);
 });
 
-test('the phrase the script reads a lost browser by is the one inBrowser fails with in ui/webview/real-viewer-leg.ts, so a reword on either side is red here rather than a remedy dropped in silence', () => {
+/** The executed test of the switch's behaviour, which the phrase pin below names and does not replace. */
+const SWITCH_TEST = path.join(REPO, 'ui', 'webview', 'real-viewer-leg-switch.test.ts');
+
+test('the phrase the script reads a lost browser by is a literal in inBrowser\'s source, the shared phrase between ui/webview/real-viewer-leg.ts and the script, so a reword on either side is red here rather than a remedy dropped in silence; the behaviour is executed by ui/webview/real-viewer-leg-switch.test.ts, which exists and drives inBrowser', () => {
   const script = read(SCRIPT);
   assert.match(script, /^SWITCH=ROMP_BROWSER_LEGS_REQUIRE$/m, 'the script names the switch once, as SWITCH');
   const m = /awk -v msg="([^"]+)"/.exec(script);
@@ -433,5 +439,12 @@ test('the phrase the script reads a lost browser by is the one inBrowser fails w
   const phrase = m[1].replace(/\$SWITCH\b/g, SWITCH);
   assert.ok(phrase.startsWith(SWITCH + ' is set'), 'the phrase names the switch: ' + phrase);
   const helper = read(path.join(REPO, 'ui', 'webview', 'real-viewer-leg.ts'));
-  assert.ok(helper.includes('assert.fail("' + phrase + ': "'), 'ui/webview/real-viewer-leg.ts (inBrowser) fails with ' + JSON.stringify(phrase + ': <why>') + ', the phrase vscode-extension/scripts/ci-browser-legs.sh reads a lost browser by; a reword in one file moves the other, or the lost-browser remedy is never printed');
+  assert.ok(helper.includes('"' + phrase + ': "'), 'the shared phrase: ui/webview/real-viewer-leg.ts holds the literal ' + JSON.stringify(phrase + ': ') + ' that vscode-extension/scripts/ci-browser-legs.sh hands awk (awk -v msg=), so a reword in one file is red here and the lost-browser remedy is never dropped in silence. This reads source text and guards the phrase alone, not the behaviour: that inBrowser FAILS with it under ' + SWITCH + ' and skips without is executed by ' + path.relative(REPO, SWITCH_TEST) + ' (a child node --test with PLAYWRIGHT_BROWSERS_PATH emptied), which the vscode-extension job runs; a green here with that test red is a helper that carries the words and not the behaviour');
+  // the executed test this message points at exists and is rostered (so the step runs its leg with a browser on every CI
+  // run, and the Test step runs its two child arms); what it asserts is its own to state, and the census test holds it to the
+  // roster gate. The helper's playwrightInstalled export has that test as its consumer (the reason the child names is derived
+  // from the helper's own module read, never from a second one): presence pins, which say only that the file names these
+  assert.ok(fs.existsSync(SWITCH_TEST), 'the executed test of the switch exists at ' + path.relative(REPO, SWITCH_TEST));
+  assert.ok(read(SWITCH_TEST).includes('playwrightInstalled()'), path.relative(REPO, SWITCH_TEST) + ' consumes the helper\'s playwrightInstalled export (a presence pin: the export is not dead code in this tree)');
+  assert.ok(parseRoster(read(path.join(EXT, ROSTER))).some((e) => e.bundle === 'out-tests/ui/webview/real-viewer-leg-switch.test.js'), path.relative(REPO, SWITCH_TEST) + ' is rostered in ' + ROSTER + ', so the step runs its leg with a browser on every CI run');
 });
