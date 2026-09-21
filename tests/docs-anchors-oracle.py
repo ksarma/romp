@@ -6,15 +6,28 @@ every heading of the documentation as GitHub does, and the only thing that can s
 emphasis rules is right is a renderer. This recipe runs one: for every heading corpus_headings() derives (every ATX heading
 of the anchor pin's population and of plans/) and every shape battery() generates, node renders `## <heading>` with the marked
 in vscode-extension/node_modules (12.0.2 at this writing; the version is read from its package.json and recorded) and hands
-back the h element's inner HTML; its tags removed and then every character reference decoded (Python's html.unescape, which
-knows the whole HTML5 named set, as cmark-gfm's entity table does, and the numeric forms), it is the text content GitHub's
-anchor filter slugs. The slug is github-slugger's: lowercased, everything but letters, numbers, marks, spaces, hyphens and
-underscores removed, spaces to hyphens, letters, numbers and marks being Unicode's L, N and M categories (read from
-unicodedata). The first table's node program decoded five names (amp, lt, gt, quot, apos) beside the numeric forms and left
-any other name encoded, so its name entered the slug (`&copy; sign` gave copy-sign where the renderer's text is a copyright
-sign and a word, slugged -sign); the third round-12 fix-up moved the decode and the slug to Python and put two such shapes
-in the battery. GitHub itself renders with cmark-gfm rather than marked, replaces an emoji shortcode before it slugs,
-numbers a repeated slug and prefixes the id with user-content-; the module docstring says how each bears on the check.
+back the h element's inner HTML; its tags removed and then every well-formed character reference decoded once as CommonMark
+decodes it (test_docs_anchors.decode_references: an HTML5 name with its semicolon, the bounded numeric forms), it is the text
+content GitHub's anchor filter slugs. What marked leaves in that inner HTML, read by execution for the fourth round-12
+fix-up: a well-formed reference undecoded (`&copy;`, `&#169;`, and `&bogus;` too, a name HTML5 does not have) and a
+malformed one's ampersand escaped (`&copy sign` as `&amp;copy sign`), so the oracle must decode the reference marked left,
+once, and must not decode past the escape: `&amp;copy` is the literal `&copy`, never a sign. html.unescape, which decoded
+here from the third fix-up to the fourth, is HTML's text decoder and takes a legacy name without its semicolon, a bare
+numeric and a C1 control reference's Windows-1252 letter (`&#138;` to a letter the slug keeps, where cmark-gfm writes the
+control the slug drops); over marked's output only the last of those could bite, and the module, decoding raw headings with
+it, disagreed with this oracle on nine of sixteen probe shapes. The slug is github-slugger's: lowercased, everything but
+letters, marks, decimal numbers, letter numbers, spaces, hyphens and underscores removed, spaces to hyphens, the kept classes
+being Unicode's L, M, Nd and Nl categories (read from unicodedata; N as a whole, the rule until the fourth fix-up, kept an
+other number, a superscript or a fraction, which the slugger drops). What the categories cannot state: the slugger's data
+is Unicode 13.0, and its set is html-pipeline's \\p{Word}, Alphabetic beside marks, decimal numbers and connector
+punctuation, so a code point assigned since 13.0 (kept here under a newer table), a connector punctuation mark other than
+the underscore or an enclosed Latin letter symbol still differs; the module docstring states the residual, and a pin there
+refuses a table text carrying one of the latter two. The first table's node program decoded five names (amp, lt, gt, quot,
+apos) beside the numeric forms and left any other name encoded, so its name entered the slug (`&copy; sign` gave copy-sign
+where the renderer's text is a copyright sign and a word, slugged -sign); the third round-12 fix-up moved the decode and
+the slug to Python and put two such shapes in the battery. GitHub itself renders with cmark-gfm rather than marked,
+replaces an emoji shortcode before it slugs, numbers a repeated slug and prefixes the id with user-content-; the module
+docstring says how each bears on the check.
 
 The result is written to tests/fixtures/docs_anchor_slugs.json, one row per heading text, sorted, and
 tests/test_docs_anchors.py holds the slugger to it in the suite, where no node runs (CI's Python job installs no
@@ -22,7 +35,6 @@ node_modules). Run it when a heading is added or changed in the corpus, when bat
 moves marked: `python3 tests/docs-anchors-oracle.py` rewrites the table; `--check` rewrites nothing and exits 1 naming
 the rows that would change. Without node, or without marked under vscode-extension/node_modules (`npm ci` there
 installs it), it exits 2 saying so; it never skips."""
-import html
 import json
 import os
 import re
@@ -56,18 +68,27 @@ _TAG = re.compile(r"<[^>]*>")
 
 
 def text_content(inner_html):
-    """The h element's text content, which GitHub's anchor filter slugs: the tags gone, then every character reference decoded,
-    named or numeric. The tags go first, as a browser's textContent has it: a `&lt;tag&gt;` in the text is text, not a tag.
-    html.unescape knows every HTML5 named reference (html.entities.html5), as cmark-gfm does; the node program this replaces
-    (the first table's) knew five names and left any other's text in the slug."""
-    return html.unescape(_TAG.sub("", inner_html))
+    """The h element's text content, which GitHub's anchor filter slugs: the tags gone, then every well-formed character reference
+    decoded once as CommonMark decodes it (the module docstring says what marked leaves and what this must and must not decode).
+    The tags go first, as a browser's textContent has it: a `&lt;tag&gt;` in the text is text, not a tag. The decode is the
+    module's own decode_references, since it is CommonMark's rule and not the renderer's: cmark-gfm has decoded before GitHub's
+    filter reads the text, marked has not, so the oracle finishes marked's output with the rule the module applies to the raw
+    heading. The node program the third fix-up replaced (the first table's) knew five names and left any other's text in the slug."""
+    return anchors.decode_references(_TAG.sub("", inner_html))
+
+
+# github-slugger's keep set as Unicode categories, written here on its own beside the module's _KEEP_CATEGORIES so the table holds
+# the two statements of the rule to each other: letters, marks, decimal numbers and letter numbers (fourth round-12 fix-up)
+_KEPT_CATEGORIES = frozenset(("Lu", "Ll", "Lt", "Lm", "Lo", "Mn", "Mc", "Me", "Nd", "Nl"))
 
 
 def github_slug(text):
-    """github-slugger's rule: lowercased, everything but letters, numbers, marks, spaces, hyphens and underscores removed, spaces
-    to hyphens. Letters, numbers and marks are Unicode's L, N and M categories, the node program's \\p{L}\\p{N}\\p{M}, read from
-    unicodedata; a no-break space (`&nbsp;` decoded) is none of them and goes."""
-    kept = "".join(ch for ch in text.lower() if ch in " _-" or unicodedata.category(ch)[0] in "LNM")
+    """github-slugger's rule: lowercased, everything but letters, marks, decimal numbers, letter numbers, spaces, hyphens and
+    underscores removed, spaces to hyphens; the kept classes are Unicode's L, M, Nd and Nl categories read from unicodedata. N as
+    a whole, the rule until the fourth round-12 fix-up, kept an other number (a superscript two, a vulgar fraction), which the
+    slugger drops; a no-break space (`&nbsp;` decoded) is none of them and goes. The residual the categories cannot state is in
+    the module docstring: the slugger's Unicode 13.0 data, and its Alphabetic and connector-punctuation extras."""
+    kept = "".join(ch for ch in text.lower() if ch in " _-" or unicodedata.category(ch) in _KEPT_CATEGORIES)
     return kept.replace(" ", "-")
 
 

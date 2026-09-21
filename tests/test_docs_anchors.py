@@ -6,10 +6,11 @@ docs/reference.md's paragraph on the unit rewrite's identity refusal linked `#tw
 in the repository produces, so the one pointer that sentence gave the reader was dead, and it stayed green through nine review
 rounds because nothing read the anchors (CI renders no markdown). This module slugs every heading as GitHub does: the heading's
 inline markdown rendered to its text (a code span's text without the ticks, a link's text, nothing for an image, a tag dropped,
-an entity decoded, a backslash escape's character, and an emphasis delimiter, `*` or `_`, dropped only where CommonMark's
-left- and right-flanking rules and its process-emphasis pairing make it one, an intraword underscore run never being one and
-an unpaired run staying literal), then lowercased, everything but letters, digits, underscores, hyphens and spaces removed,
-spaces to hyphens, a repeated slug numbered -1, -2, ...; it takes an explicit `<a id=...>` or `<a name=...>` as a target too,
+a well-formed character reference decoded as CommonMark decodes it (decode_references below), a backslash escape's character,
+and an emphasis delimiter, `*` or `_`, dropped only where CommonMark's left- and right-flanking rules and its process-emphasis
+pairing make it one, an intraword underscore run never being one and an unpaired run staying literal), then lowercased,
+everything but letters, marks, decimal and letter numbers, underscores, hyphens and spaces removed (_kept below), spaces to
+hyphens, a repeated slug numbered -1, -2, ...; it takes an explicit `<a id=...>` or `<a name=...>` as a target too,
 skips fenced code on both sides, and resolves every `](#...)` reference in a file against that file's targets. The population
 is the documentation a reader is sent to: every tracked markdown file under docs/, at the top level, and bin/README.md and
 tests/README.md. Outside it, read once when this pin was written (2026-09-20) and left to their owners:
@@ -22,10 +23,11 @@ is every ATX heading of that population and of every tracked markdown file under
 grammar of emphasis runs generates (both delimiters, one to three on each side, seven contents, three surroundings) plus
 the pairing and flanking shapes CommonMark's own examples name, and tests/fixtures/docs_anchor_slugs.json holds, for each,
 the slug the renderer gives it: marked 12.0.2, the extension's, run by tests/docs-anchors-oracle.py, which renders the
-heading, takes the h element's text content as GitHub's anchor filter does (the tags gone, then every character reference
-decoded by html.unescape, the whole HTML5 named set as cmark-gfm decodes it; the first table's node program knew five names,
-amp, lt, gt, quot and apos, and left any other's name in the slug, so the battery carries a `&copy;` and a `&nbsp;` since
-the third round-12 fix-up) and slugs it by github-slugger's rule. The test below fails on a heading with no row, a row with
+heading, takes the h element's text content as GitHub's anchor filter does (the tags gone, then every well-formed character
+reference decoded once by decode_references below; the first table's node program knew five names, amp, lt, gt, quot and
+apos, and left any other's name in the slug, so the battery carries a `&copy;` and a `&nbsp;` since the third round-12
+fix-up, and the third fix-up's html.unescape decoded HTML's legacy forms too, so nineteen reference and number shapes join
+it at the fourth, the last paragraph here) and slugs it by github-slugger's rule. The test below fails on a heading with no row, a row with
 no heading, and any disagreement, naming each; CI's Python job has no node and no marked (the extension job alone installs
 vscode-extension/node_modules), so the table is the oracle there, and the recipe refuses to run without them rather than
 skipping; CI's extension job, which has both, runs its --check whether or not the test steps before it passed (a pin below
@@ -35,16 +37,39 @@ over the derived corpus that arm agreed on every real heading (none carries such
 third fix-up's head) and disagreed on 123 of the battery's 457 shapes at the round-12 commit: 110 carrying an underscore,
 10 an asterisk run with whitespace, or an end of the text, on both sides and 3 neither (a kbd tag, an ampersand entity, lt and
 gt entities beside a numeric one), a class the round-12 sentence did not name, that arm dropping no tag and decoding no entity; the third fix-up's
-two entity shapes fall in that class, 125 of 459, and RoundEleven below recomputes the split from the table and the round-11
-slugger, kept here for it (the round-12 sentence had 111 and 12, remembered, not derived). The slugger below disagreed on
-none of the 987 rows at the round-12 commit, before the merge of main, and on none of the 991 at the third fix-up (the
-table's corpus field names the counts at this head). What GitHub does that the oracle does not: it renders with cmark-gfm,
-which agrees with marked on everything the corpus and the battery hold; it replaces an emoji shortcode (`:name:`) before
-it slugs, so one contributes nothing where this module keeps the name (no heading here carries one); and it prefixes the
-id with user-content- and resolves the bare anchor by script, which the link never sees. Letters and digits here are
-Python's \\w, so a combining mark, which github-slugger keeps, would be dropped; no heading carries one, and the table
-would show it."""
-import html
+two entity shapes fall in that class, 125 of 459, and the fourth fix-up's nineteen shapes add eight more, 133 of 478,
+well-formed references that arm never decoded and other numbers its \\w kept (the class widened to admit an other number),
+and RoundEleven below recomputes the split from the table and the round-11 slugger, kept here for it (the round-12 sentence
+had 111 and 12, remembered, not derived). The slugger below disagreed on none of the 987 rows at the round-12 commit,
+before the merge of main, on none of the 991 at the third fix-up and on none of the 1010 at the fourth (the table's corpus
+field names the counts at this head). What GitHub does that the oracle does not: it renders with cmark-gfm, which agrees
+with marked on everything the corpus and the battery hold; it replaces an emoji shortcode (`:name:`) before it slugs, so
+one contributes nothing where this module keeps the name (no heading here carries one); and it prefixes the id with
+user-content- and resolves the bare anchor by script, which the link never sees.
+
+The fourth round-12 fix-up: two latent disagreements no corpus heading reached. The decode: html.unescape, which decoded a
+heading's character references here and the h element's text in the oracle until then, is HTML's text decoder, and HTML
+takes forms CommonMark leaves literal: a legacy name without its semicolon (`&copy sign`, and `&notin x` read as `&not`
+followed by in), a bare numeric (`&#169 sign`), and it remaps a C1 control reference (`&#138;`) to a Windows-1252 letter
+where CommonMark decodes the control it names. marked escapes a malformed reference's ampersand to `&amp;` and passes a
+well-formed one through undecoded (read by execution), so on nine of sixteen probe headings the renderer's slug kept the
+name and this module's dropped a sign. decode_references below decodes what CommonMark decodes, once: an HTML5 name with
+its semicolon, one to seven decimal digits or an x and one to six hex digits between `&#` and `;`, and nothing else; the
+nine, seven well-formed or malformed-literal counterparts, the C1 control reference (on which the two sides had agreed,
+both wrongly) and two other-number shapes join the battery. The keep set: Python's \\w, the rule here until then, keeps an
+other number (No: a superscript, a vulgar fraction, a circled digit; 915 code points in Unicode 15.0, Python 3.12's tables),
+which github-slugger drops, so `x² y` slugged x²-y here and x-y there; _kept below keeps letters, marks, decimal numbers
+and letter numbers (L, M, Nd, Nl), the slugger's set as far as Unicode categories state it. What still differs, stated
+rather than hidden: github-slugger 2.0.0 reads Unicode 13.0 data, so a heading carrying a letter, mark or number assigned
+since is kept by this module under a newer table and dropped by the slugger (5187 code points against 15.0 by the round-12
+finding's count; CI's Python 3.10 reads 13.0 itself, its 3.13 reads 15.1); and the slugger's set is html-pipeline's
+\\p{Word}, Alphabetic beside marks, decimal numbers and connector punctuation, which keeps 139 code points these categories
+drop, the nine connector punctuation marks beside the underscore (U+203F among them) and 130 enclosed Latin letter symbols
+(category So). No corpus or battery heading carries one. A pin below reads every table text against the two classes a
+category or a name can point at, connector punctuation and a symbol named an enclosed Latin letter (190 code points in
+15.0, the parenthesized letters both drop refused with the rest, since Python's tables carry no Alphabetic property), and
+reds naming the residual; the version delta it cannot see (unicodedata carries no age), so that part stays a statement."""
+import html.entities
 import itertools
 import json
 import os
@@ -66,7 +91,10 @@ _IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")                              # an i
 _LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")                              # a link: its text
 _AUTOLINK = re.compile(r"<([A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*)>")      # <scheme:...>: its text
 _TAG = re.compile(r"</?[A-Za-z][A-Za-z0-9-]*(?:\s[^<>]*)?/?>")            # an inline tag: nothing (its text stays)
-_KEEP = re.compile(r"[^\w\- ]", re.UNICODE)
+# the slug's keep set as Unicode categories (fourth round-12 fix-up of fork PR #778): letters, marks, decimal numbers and letter
+# numbers, github-slugger's set as far as categories state it; Python's \w, the rule until then, also kept an other number (No: a
+# superscript, a vulgar fraction, a circled digit), which the slugger drops. The module docstring states what the categories miss
+_KEEP_CATEGORIES = frozenset(("Lu", "Ll", "Lt", "Lm", "Lo", "Mn", "Mc", "Me", "Nd", "Nl"))
 _ASCII_PUNCT = set("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
 
 
@@ -164,20 +192,66 @@ def _emphasis(tokens):
     return "".join(t if isinstance(t, str) else t[0] * t[1] for t in tokens)
 
 
+# CommonMark's character references (0.31, section 6.2; fourth round-12 fix-up of fork PR #778): a name from the HTML5 set ended by
+# a semicolon (html.entities.html5's 2125 semicolon-ended keys; the 106 legacy names it also lists without one, `copy` for `copy;`,
+# are HTML's, which decodes `&copy` bare, and not CommonMark's), or one to seven decimal digits, or an x and one to six hex digits,
+# between `&#` and `;`; a code point of zero, above U+10FFFF or a surrogate decodes to U+FFFD. Anything else is literal text
+_NAMED_REFERENCES = {k: v for k, v in html.entities.html5.items() if k.endswith(";")}
+_REFERENCE = re.compile(r"&(?:([A-Za-z][A-Za-z0-9]*);|#([0-9]{1,7});|#[xX]([0-9A-Fa-f]{1,6});)")
+
+
+def _reference(m):
+    name, dec, hx = m.groups()
+    if name is not None:
+        return _NAMED_REFERENCES.get(name + ";", m.group(0))
+    n = int(dec) if dec is not None else int(hx, 16)
+    return chr(n) if 0 < n <= 0x10FFFF and not 0xD800 <= n <= 0xDFFF else "�"
+
+
+def decode_references(s):
+    """The text with every well-formed character reference decoded as CommonMark decodes it (the comment above), in one pass, so
+    `&amp;copy;` is the literal `&copy;` after and not a sign; a legacy name without its semicolon, a bare numeric and a malformed
+    form stay literal, where html.unescape, HTML's decoder, took each (the module docstring). The oracle decodes marked's inner
+    HTML with this same function, since marked leaves a well-formed reference undecoded and escapes any other ampersand."""
+    return _REFERENCE.sub(_reference, s)
+
+
+def _kept(ch):
+    """Whether the slug keeps ch: the space, the hyphen and the underscore, or a code point of a kept category (_KEEP_CATEGORIES)."""
+    return ch in " _-" or unicodedata.category(ch) in _KEEP_CATEGORIES
+
+
+def _slugger_keeps_where_kept_drops(ch):
+    """Why github-slugger 2.0.0 may keep ch where _kept drops it (the module docstring's residual), or None: connector punctuation
+    beside the underscore (Pc, nine code points), which its \\p{Word} set keeps, and a symbol (So) whose name marks it an enclosed
+    Latin letter, the class the set's Alphabetic property reaches into (the circled, squared, negative circled and negative squared
+    letters); Python's tables carry no Alphabetic property, so the whole class is refused, the parenthesized letters both drop
+    with it. The Unicode version delta between the slugger's data and Python's tables is no category and is not read here."""
+    category = unicodedata.category(ch)
+    if category == "Pc" and ch != "_":
+        return "connector punctuation (%s), which the slugger keeps and _kept drops" % unicodedata.name(ch, "U+%04X" % ord(ch))
+    if category == "So":
+        name = unicodedata.name(ch, "")
+        if "LATIN" in name and "LETTER" in name:
+            return "an enclosed Latin letter symbol (%s), which the slugger may keep as alphabetic and _kept drops" % name
+    return None
+
+
 def inline_text(heading):
     """The text GitHub's renderer gives a heading's inline markdown, which its anchor is slugged from (the module docstring)."""
     s = _IMAGE.sub("", heading)
     s = _LINK.sub(r"\1", s)
     s = _AUTOLINK.sub(r"\1", s)
     s = _TAG.sub("", s)
-    return html.unescape(_emphasis(_tokens(s)))
+    return decode_references(_emphasis(_tokens(s)))
 
 
 def slug(heading):
     """GitHub's anchor for a heading's text (github-slugger's rule over the rendered text): the heading trimmed as the block parser
-    trims it, its inline markdown rendered to text, lowercased, everything but letters, digits, underscores, hyphens and spaces
-    removed, spaces to hyphens. Nothing is trimmed after the rendering: an image at an end leaves its space, and the hyphen."""
-    return _KEEP.sub("", inline_text(heading.strip()).lower()).replace(" ", "-")
+    trims it, its inline markdown rendered to text, lowercased, everything but letters, marks, decimal and letter numbers,
+    underscores, hyphens and spaces removed (_kept), spaces to hyphens. Nothing is trimmed after the rendering: an image at an end
+    leaves its space, and the hyphen."""
+    return "".join(ch for ch in inline_text(heading.strip()).lower() if _kept(ch)).replace(" ", "-")
 
 
 def _unfenced(text):
@@ -246,7 +320,12 @@ def corpus_headings():
 # strong inside em and em inside strong, delimiters beside punctuation, intraword runs of each character, runs alone, escapes,
 # code spans holding delimiters, a tag, entities, an autolink, strikethrough, non-Latin text; and, since the third round-12
 # fix-up, a named character reference outside the five the first oracle decoded and a no-break space reference, which the
-# renderer decodes to a sign and a space its slug then drops
+# renderer decodes to a sign and a space its slug then drops; and, since the fourth, nineteen shapes for the decode and the keep
+# rule: the nine malformed references html.unescape decoded and CommonMark leaves literal (a legacy name without its semicolon,
+# `&notin` among them, which HTML reads as `&not` and in; a bare decimal and a bare hex numeric), seven counterparts that agree on
+# both readings (the well-formed forms; a name HTML5 does not have, literal everywhere; the empty forms `&;` and `&#;`), the C1
+# control reference html.unescape remaps to a letter where CommonMark decodes the control, and two other-number shapes (a
+# superscript two, a vulgar fraction), which Python's \w kept and github-slugger drops
 _BATTERY_SHAPES = (
     "*a _b* c_", "_a *b_ c*", "**a *b** c*", "*a **b* c**", "***a** b*", "*a **b*** c", "**a *b*** c", 'a*"foo"*', "*(*foo*)*",
     "_(_foo_)_", "foo-_(bar)_", "_foo_bar_baz_", "*foo*bar", "_foo_bar", "__foo, __bar__, baz__", "*foo**bar**baz*", "***foo** bar*",
@@ -258,7 +337,10 @@ _BATTERY_SHAPES = (
     "* *", "_ _", "*_*", "_*_", "*__*", "_**_", "**_a_**", "__*a*__", "***a***", "___a___", "**a**b", "__a__b", "a**b**", "a__b__",
     "*a **b** c*", "_a __b__ c_", "**bold** and __strong__ and *em* and _em_", "ROMP_STATE_DIR and ROMP_SERVICE_NO_LOAD",
     "x _y_z_ w", "`code_with_underscores` and `*stars*`", "[a _link_ text](x.md) and ![img](y.png)", "a_ _b", "foo_bar_ baz",
-    "2*3*4", "2 * 3 * 4", "&copy; sign", "a&nbsp;b")
+    "2*3*4", "2 * 3 * 4", "&copy; sign", "a&nbsp;b",
+    "&copy sign", "&#169 sign", "&#xA9 sign", "&amp x", "&nbsp x", "&eacute x", "&lt x", "&notin x", "&not x",
+    "&#169; sign", "&#xA9; sign", "&eacute; x", "&notin; x", "&not; x", "&bogus; x", "&; and &#; x", "&#138; x",
+    "x² y", "½ cup")
 
 
 def battery():
@@ -284,7 +366,9 @@ def _table():
 
 # the round-11 slugger of fork PR #778, its five substitutions and its rule verbatim, kept for RoundEleven below, which recomputes
 # the figure the module docstring and the ledger state for it: it read a code span, an image, a link, an asterisk run pair and an
-# underscore pair with no word character on either side, and nothing else (no tag, no entity, no flanking, no pairing)
+# underscore pair with no word character on either side, and nothing else (no tag, no entity, no flanking, no pairing); its keep
+# rule was Python's \w, which keeps an other number the slugger drops (the fourth fix-up moved the module to categories)
+_ROUND11_KEEP = re.compile(r"[^\w\- ]", re.UNICODE)
 _ROUND11_INLINE = [(re.compile(r"`([^`]*)`"), r"\1"),
                    (re.compile(r"!\[[^\]]*\]\([^)]*\)"), ""),
                    (re.compile(r"\[([^\]]*)\]\([^)]*\)"), r"\1"),
@@ -297,7 +381,7 @@ def _round11_slug(heading):
     text = heading
     for pat, rep in _ROUND11_INLINE:
         text = pat.sub(rep, text)
-    return _KEEP.sub("", text.strip().lower()).replace(" ", "-")
+    return _ROUND11_KEEP.sub("", text.strip().lower()).replace(" ", "-")
 
 
 class InPageAnchors(unittest.TestCase):
@@ -352,8 +436,33 @@ class AgainstTheRenderer(unittest.TestCase):
         shapes = battery()
         self.assertEqual(len(shapes), len(set(shapes)), "a shape is generated twice")
         self.assertEqual(len(shapes), 2 * 9 * 7 * 3 + len(_BATTERY_SHAPES))
-        for s in ("__a_b_", "_ spaced _", "lead __word_ tail", "___a__b___", "**a *b** c*"):
+        for s in ("__a_b_", "_ spaced _", "lead __word_ tail", "___a__b___", "**a *b** c*", "&copy sign", "&notin x", "&#138; x", "x² y"):
             self.assertIn(s, shapes)
+
+    def test_every_table_text_is_inside_the_set_where_the_category_rule_and_the_slugger_agree(self):
+        # fourth round-12 fix-up of fork PR #778: _kept is github-slugger's set as far as Unicode categories state it, and the oracle
+        # slugs by the same categories, so on a code point the slugger keeps beyond them the table and the module would agree on a slug
+        # GitHub does not give; the two such classes a category or a name can point at (the module docstring's residual) are refused
+        texts = [h for h, _ in _table()["rows"]]
+        self.assertTrue(texts, "the table is empty: run %s" % REGENERATE)
+        outside = []
+        for h in texts:
+            for ch in dict.fromkeys(h):
+                why = _slugger_keeps_where_kept_drops(ch)
+                if why:
+                    outside.append("%r: %r is %s" % (h, ch, why))
+        self.assertEqual(outside, [], "a table text carries a code point github-slugger keeps and the category rule here drops, so the "
+                         "table and the module agree on a slug GitHub does not give (the module docstring's residual; a heading in a "
+                         "script assigned after Unicode 13.0, the slugger's data, is the other residual, which no category points at):\n%s"
+                         % "\n".join(outside))
+
+    def test_the_residual_check_refuses_what_the_slugger_keeps_and_admits_what_both_drop_or_keep(self):
+        # the check run against what it refuses and what it must accept: an undertie (Pc) and a circled Latin capital A (So) are
+        # the slugger's; the underscore, a superscript two, a check mark, an arrow, a letter, a digit and a combining acute are agreed
+        self.assertIsNotNone(_slugger_keeps_where_kept_drops("‿"))
+        self.assertIsNotNone(_slugger_keeps_where_kept_drops("Ⓐ"))
+        for ch in "_²✓→a1́":
+            self.assertIsNone(_slugger_keeps_where_kept_drops(ch), repr(ch))
 
     def test_ci_runs_the_recipe_where_node_and_marked_are_installed(self):
         # round 12 fix-up of fork PR #778: on the Python matrix runners the table IS the oracle, so a table edited to agree with a
@@ -392,9 +501,10 @@ class RoundEleven(unittest.TestCase):
     """The figure the module docstring and the ledger's round-12 paragraph state for round 11's arm is derived, not remembered (third
     round-12 fix-up of fork PR #778): the round-12 commit wrote the split of its 123 battery disagreements as 111 underscore runs
     and 12 whitespace-flanked asterisk runs, where the derivation over the table gives 110, 10 and 3 with neither, a class the
-    sentence did not name (a tag and entities, which that arm neither dropped nor decoded). The classes are predicates over the
-    shape's text, in this order: it carries an underscore; else an asterisk run with whitespace or an end on both sides; else
-    neither. The battery is the fixed grammar and list above, so the counts move only when it does, and this message says so."""
+    sentence did not name (a tag and entities, which that arm neither dropped nor decoded; since the fourth fix-up also an other
+    number, which its \\w kept and the renderer's slug drops). The classes are predicates over the shape's text, in this order: it
+    carries an underscore; else an asterisk run with whitespace or an end on both sides; else neither. The battery is the fixed
+    grammar and list above, so the counts move only when it does, and this message says so."""
 
     def test_the_round_eleven_slugger_disagrees_with_the_table_on_the_derived_split(self):
         want = dict(_table()["rows"])
@@ -405,9 +515,10 @@ class RoundEleven(unittest.TestCase):
         asterisk = [h for h in disagree if "_" not in h and _WS_ASTERISK.search(h)]
         neither = [h for h in disagree if "_" not in h and not _WS_ASTERISK.search(h)]
         self.assertGreater(len(disagree), 0, "round 11's arm agrees with the renderer on every battery shape: the slugger kept here is not its")
-        self.assertEqual([h for h in neither if "<" not in h and "&" not in h], [],
-                         "the third class is what round 11 neither dropped nor decoded, a tag or an entity, and holds something else")
-        self.assertEqual((len(disagree), len(underscore), len(asterisk), len(neither)), (125, 110, 10, 5),
+        self.assertEqual([h for h in neither if "<" not in h and "&" not in h and not any(unicodedata.category(c) == "No" for c in h)], [],
+                         "the third class is what round 11 neither dropped nor decoded, a tag or an entity, or kept where the slugger "
+                         "drops it, an other number, and holds something else")
+        self.assertEqual((len(disagree), len(underscore), len(asterisk), len(neither)), (133, 110, 10, 13),
                          "the round-11 figure (disagreements over the battery; with an underscore; with a whitespace-flanked asterisk run; "
                          "neither) moved: restate it in this module's docstring and the ledger's round-12 paragraph with its vintage. "
                          "The third class now: %r" % (neither,))
@@ -437,6 +548,20 @@ class Slugs(unittest.TestCase):
         # the slug drops (the space before the word stays, as a hyphen), and a no-break space reference to a space the slug drops
         self.assertEqual(slug("&copy; sign"), "-sign")
         self.assertEqual(slug("a&nbsp;b"), "ab")
+        # fourth round-12 fix-up: a legacy name without its semicolon, a bare numeric and the empty forms stay literal as CommonMark
+        # leaves them (html.unescape took the first two; `&notin` it read as `&not` and in), a C1 control reference decodes to the
+        # control the slug drops (html.unescape gave a Windows-1252 letter), a name HTML5 does not have is literal, and an other
+        # number, a superscript or a fraction, goes as github-slugger drops it where Python's \w kept it
+        self.assertEqual(slug("&copy sign"), "copy-sign")
+        self.assertEqual(slug("&#169 sign"), "169-sign")
+        self.assertEqual(slug("&notin x"), "notin-x")
+        self.assertEqual(slug("&notin; x"), "-x")
+        self.assertEqual(slug("&; and &#; x"), "-and--x")
+        self.assertEqual(slug("&#138; x"), "-x")
+        self.assertEqual(slug("&bogus; x"), "bogus-x")
+        self.assertEqual(slug("&amp;copy; x"), "copy-x")
+        self.assertEqual(slug("x² y"), "x-y")
+        self.assertEqual(slug("½ cup"), "-cup")
 
     def test_a_correct_link_to_a_heading_with_two_underscores_resolves(self):
         # round 11 of fork PR #778 (correctness-1): the round-10 stripper read the heading's `_STATE_` and `_SERVICE_` as
