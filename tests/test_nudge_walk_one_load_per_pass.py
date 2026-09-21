@@ -4267,12 +4267,22 @@ class TheGrammarIsTheOneTheWalkersClassify(unittest.TestCase):
         # pinned both ways and the forms one way, so the four getattr rows removed with the finder's getattr branch deleted left the
         # module green). The finder's forms are derived from its own source: the string constant in the third position of every tuple
         # it appends to `out`, read through _walk over its parsed def, so a form added to the finder with no sample row reds here, as
-        # does a sample naming a form the finder does not report
-        finder = ast.parse(textwrap.dedent(inspect.getsource(_traversal_references)))
-        forms = {c.args[0].elts[2].value for c in _walk(finder)
-                 if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr == "append"
-                 and isinstance(c.func.value, ast.Name) and c.func.value.id == "out" and c.args and isinstance(c.args[0], ast.Tuple)
-                 and len(c.args[0].elts) > 2 and isinstance(c.args[0].elts[2], ast.Constant)}
+        # does a sample naming a form the finder does not report. Every out.append in the def is first held to that shape, a literal
+        # tuple whose third element is a string constant, and the forms are read off those appends (review round 7, extra9-2: the
+        # derivation read only appends of that shape, so a fourth branch labelling its form by a computed string red nothing, and an
+        # existing branch rewritten to append a pre-built tuple red the forms line naming the opposite cause, a lost branch)
+        src, start = inspect.getsourcelines(_traversal_references)
+        finder = ast.parse(textwrap.dedent("".join(src)))
+        appends = [c for c in _walk(finder) if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr == "append"
+                   and isinstance(c.func.value, ast.Name) and c.func.value.id == "out"]
+        unread = [(start - 1 + c.lineno, ast.unparse(c)) for c in appends
+                  if not (len(c.args) == 1 and isinstance(c.args[0], ast.Tuple) and len(c.args[0].elts) > 2
+                          and isinstance(c.args[0].elts[2], ast.Constant) and isinstance(c.args[0].elts[2].value, str))]
+        self.assertEqual(unread, [], "every out.append in the finder's def hands a literal tuple of more than two elements whose third is a "
+                                     "string constant, the shape the forms derivation below reads; an append of another shape, a computed "
+                                     "label, an f-string, a pre-built tuple, reports a form the derivation cannot read, by line in this "
+                                     "file and text: %r (widen the derivation with its reason, or write the literal)" % unread)
+        forms = {c.args[0].elts[2].value for c in appends}
         self.assertTrue(forms, "the finder's forms are derived from its source, the third element of every tuple it appends to out, and "
                                "the derivation answered none: the finder's shape changed, so read it again here")
         self.assertEqual(forms, set(_FINDER_FORMS),
@@ -4543,9 +4553,11 @@ class TheWalkersRefuseAStrangerByExecution(unittest.TestCase):
             "TheGrammarIsTheOneTheWalkersClassify.test_a_walker_refuses_a_node_it_does_not_classify_by_name":
                 ["_walk", "ast.parse"],                      # the refusal case's control over a synthetic grammar tree (the _WALK_EXEMPT row)
             "TheGrammarIsTheOneTheWalkersClassify.test_no_reference_to_a_traversal_name_sits_outside_walk":
-                ["_walk", "ast.parse", "inspect.getsource"], # parses this module's text and the samples for _traversal_references, a row
-                                                             # (the parse is the row's argument), and reads the finder's own def through
-                                                             # _walk for the forms it reports, a subtree of that def and no census
+                ["_walk", "ast.parse", "inspect.getsourcelines"],  # parses this module's text and the samples for _traversal_references,
+                                                             # a row (the parse is the row's argument), and reads the finder's own def
+                                                             # through _walk for its out.append sites and the forms they report, a subtree
+                                                             # of that def and no census (getsourcelines for the def's first line, so the
+                                                             # shape check names an append by its line in this file)
             "TheWalkersRefuseAStrangerByExecution.test_every_census_entry_point_refuses_a_planted_stranger_and_returns_unplanted":
                 ["ast.parse", "inspect.getsource"],          # keeps the real parse as a value: the recording parse (the accept side) and the
                                                              # planting parse (the refuse side) wrap it; the accept side's source check parses a
