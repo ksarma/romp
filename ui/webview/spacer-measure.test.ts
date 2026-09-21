@@ -440,6 +440,24 @@ test("a spacer row whose view was switched away before the frame carries no geom
   assert.deepEqual(w.diag.map((d) => [d.kind, d.data.sid, d.data.sh, d.data.ch, d.data.view]), [["spacer", "A", null, null, "inactive"]], "A's row: no geometry and the marker, never B's 9114 / 902 (the `view` key, one fixed word, inactive, and no host name, on the owner's approval: the owner 2026-09-21, who approved the field)");
 });
 
+test("a frame holding one row of the active view and one of a view switched away before it files each row with its own view's figures: the active view's with the frame's heights and no marker, the switched-away view's with nulls and the marker, never another view's figures (the maintainer's round 1 addendum; the owner 2026-09-21, who approved the field)", () => {
+  // the two frame tests above take one arm each: the active view's rows with the frame's figures, and a switched-away row in a frame with no
+  // active row, where the frame reads nothing and its figures are null whichever arm builds the row. This frame holds both, so a post that
+  // hands the frame's figures to the switched-away row (one call with a conditional marker, say) reds here by execution and not only at the
+  // census cell's source spelling and scroll-movers' regex.
+  const w = lift("A");
+  const A = viewOver(w, 200, 301, 221, () => ["turn turn-assistant", 90]);
+  const B = viewOver(w, 200, 301, 221, () => ["turn turn-assistant", 90]);
+  w.views.set("A", A.v); w.views.set("B", B.v);
+  buildOne(w, A.v, A.items);            // A is active: its spacer write queues A's row for the next frame
+  w.setActive("B");                     // the reader switched tabs before the frame ran
+  buildOne(w, B.v, B.items);            // B is active: its write queues B's row into the same frame
+  assert.equal(w.rafs.length, 1, "one frame for both rows");
+  w.rafs.shift()!();
+  assert.deepEqual(w.reads, { offsetHeight: 0, scrollHeight: 1, clientHeight: 1 }, "the scroller was read once, for B's row");
+  assert.deepEqual(w.diag.map((d) => [d.data.sid, d.data.sh, d.data.ch, "view" in d.data ? d.data.view : "<none>"]), [["A", null, null, "inactive"], ["B", 9114, 902, "<none>"]], "A's row: nulls and the marker, never B's 9114 / 902; B's row: the frame's figures and no marker");
+});
+
 test("spacerRow mints the `view` marker only when handed one, and only the one word (the owner 2026-09-21, who approved the field)", () => {
   // the marker is spread only when handed the one word: the shown view's row carries none, a null row handed nothing carries none, the
   // switched-away view's row carries the word, and a value the parameter's type does not name, handed past the type, mints nothing (the
@@ -449,7 +467,7 @@ test("spacerRow mints the `view` marker only when handed one, and only the one w
   // tsc green before the case variant was asserted), a truthy non-string answers a guard that holds strings to the word and lets a non-string
   // through; the guard's equality with the one word is what holds the rest. scroll-movers.test.ts and scroll-journal-audit.test.ts read the
   // unmarked numeric shape; the frame's post hands the marker on the switched-away arm alone, the census cell below pins that spelling and
-  // the test above runs it through the frame.
+  // the three frame tests above run it through the frame.
   assert.ok(!("view" in spacerRow("A", 1, 2, 0, 0, 9114, 902)), "no marker on the active view's row");
   assert.deepEqual(spacerRow("A", 1, 2, 0, 0, null, null), { sid: "A", top: [1, 2], bot: [0, 0], dTop: 1, dBot: 0, sh: null, ch: null }, "a null row handed no marker carries no `view` key");
   assert.deepEqual(spacerRow("A", 1, 2, 0, 0, null, null, "inactive"), { sid: "A", top: [1, 2], bot: [0, 0], dTop: 1, dBot: 0, sh: null, ch: null, view: "inactive" }, "the switched-away view's row: nulls and the marker, minted by the builder on the owner's approval of 2026-09-21");
@@ -703,11 +721,12 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   // shown view's row always carries numbers (a scroller with no box reads 0, an honest figure), so a null pair is built only for a view that was
   // not the live one in its frame, never with another view's figures. The two assertions after the frame's regex pin the marker on the frame's
   // SOURCE SPELLING (the call's two arms, the marker on the switched-away arm alone; the marker's word in the frame's code once, at that post);
-  // the property by execution is the two row tests above (the switched-away row carries the marker, through the builder as built; the active
-  // view's two rows carry no `view` key, so a marker handed on the active arm reds there and not only here) and
-  // tests/test_client_diag_allowlist.py's presence cell (the chat entry names the key; the marked row is stored whole).
+  // the property by execution is the three row tests above (the switched-away row carries the marker, through the builder as built; the active
+  // view's two rows carry no `view` key, so a marker handed on the active arm reds there and not only here; the mixed frame files the
+  // switched-away row with nulls beside the active view's row with the frame's figures, so a post handing the figures to both arms reds there
+  // and not only here) and tests/test_client_diag_allowlist.py's presence cell (the chat entry names the key; the marked row is stored whole).
   assert.match(inFrame, /requestAnimationFrame\(\(\) => \{[\s\S]*?const live = activeId;\s*\n\s*let sh: number \| null = null, ch: number \| null = null;\s*\n\s*if \(live && content && rows\.some\(\(\[rsid\]\) => rsid === live\)\) \{ sh = content\.scrollHeight; ch = content\.clientHeight; \}/, "the diag row's scroller read rides a frame, once, for the active view's rows alone");
-  assert.match(inFrame, /rsid === live \? spacerRow\(rsid, a, b, c, d, sh, ch\) : spacerRow\(rsid, a, b, c, d, null, null, "inactive"\)\)/, "a switched-away view's row: no geometry and the `view` marker, on the owner's approval of 2026-09-21; keyed on the call's source spelling, so a marker reached another way is for the executed pins: the two row tests above (the switched-away row marked, the active view's rows unmarked) and tests/test_client_diag_allowlist.py's presence cell");
+  assert.match(inFrame, /rsid === live \? spacerRow\(rsid, a, b, c, d, sh, ch\) : spacerRow\(rsid, a, b, c, d, null, null, "inactive"\)\)/, "a switched-away view's row: no geometry and the `view` marker, on the owner's approval of 2026-09-21; keyed on the call's source spelling, so a marker reached another way is for the executed pins: the three row tests above (the switched-away row marked, the active view's rows unmarked, the mixed frame's two rows each with their own view's figures) and tests/test_client_diag_allowlist.py's presence cell");
   assert.equal((code(inFrame).match(/"inactive"/g) || []).length, 1, "the marker's word is in the frame's code once, as the switched-away arm's string literal (the comment names it too; the code alone is counted)");
   assert.doesNotMatch(inFrame, /const sh = content \? content\.scrollHeight : 0/, "the batch read is gone");
   const uo = RENDER.slice(RENDER.indexOf("v.uo = new ResizeObserver((entries) => {"), RENDER.indexOf("v.mo = new MutationObserver("));
