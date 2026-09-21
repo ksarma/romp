@@ -76,11 +76,13 @@ MARKER = re.compile(r"^\s*(?:#|//|/\*|\*|<!--)?\s*")               # a comment m
 # artefact makes). The sweep inlined the qualifier Q on a line whose line above already ended with a word-prefix P of Q, and since
 # Q opens with P the joined prose reads P P and the rest of Q. So: a word run opening with "the", immediately repeated (the run up
 # to ten words, longer than the qualifier's eight; the repeat's case free, as re.I reads a backreference; a hyphenated number is a
-# word of the run), in a clause that names the author's or the maintainer's from the repeat on (the lookahead: the attribution's
-# possessive, inside the run or in the rest of Q after it, before the next period, semicolon or colon; a doubled "the" run in a
-# clause naming neither is not an attribution and is not this pin's, and a doubled article in an attribution's own clause is
-# refused with it). The bound is the clause and not the run because a run can be a whole added file, where a possessive stands
-# somewhere after almost anything (the pin read its own probe literal that way, in the pass that wrote it). A list of distinct forms
+# word of the run), where the text from the run's first word to the clause's end names the author's or the maintainer's (the
+# lookahead, anchored at the run's first word: the attribution's possessive inside the run or after it, before the next period,
+# semicolon or colon; a possessive BEFORE the run in its clause is outside the pin by choice, since the sweep's artefact keeps the
+# possessive inside the repeated prefix, so the clause behind the run is not read; a doubled "the" run followed in its clause by
+# neither is not an attribution and is not this pin's, and one followed by the attribution is refused with it). The bound is the
+# clause and not the run because a run can be a whole added file, where a possessive stands somewhere after almost anything (the
+# pin read its own probe literal that way, in the pass that wrote it). A list of distinct forms
 # has no adjacent equal runs and is not a repeat. Two copies that differ by a word (the author's pass after, then the author's fixer
 # pass after) are not equal runs either: that shape is the read-back's to find, not this pin's.
 DOUBLED = re.compile(r"(?=[^.;:]*?\b(?:author's|maintainer's)\b)\b(the\b(?:\s+[\w'-]+){0,9}?)\s+\1\b", re.I)
@@ -228,8 +230,8 @@ class RoundLabels(unittest.TestCase):
         """A mechanical rewrite over prose owes a read-back (the maintainer's round 6, H): the sweep that reworded the mentions
         inlined the full qualifier on a continuation line whose line above already ended with it, and a per-line census cannot see
         a doubling that spans the break. So the added lines are read as prose, joined_runs, and a doubled attribution in one run is refused
-        (DOUBLED, the property: a word run opening with "the" immediately repeated, in a clause that names the author's or the
-        maintainer's from the repeat on). The probes below derive every shape the sweep's artefact makes from the qualifier it inlined:
+        (DOUBLED, the property: a word run opening with "the" immediately repeated, where the text from the run's first word to the
+        clause's end names the author's or the maintainer's). The probes below derive every shape the sweep's artefact makes from the qualifier it inlined:
         under a line that ended with a word-prefix of the qualifier, the joined prose repeats that prefix, whatever its length. A list
         of distinct forms is not a repeat, and the probes say so too; every probe is assembled at run time, since this module is in
         the population and reads itself."""
@@ -262,7 +264,9 @@ class RoundLabels(unittest.TestCase):
         TT = " ".join(["the"] * 2)   # a doubled article, assembled: written out, the pin reads it in this module's own added lines
         self.assertEqual(DOUBLED.findall("%s same word twice, no attribution named" % TT), [], "a doubled run in a clause naming no attribution is not this pin's")
         self.assertEqual(DOUBLED.findall("%s census read; %s lines" % (TT, A)), [], "nor one whose attribution is in the next clause")
-        self.assertEqual(DOUBLED.findall("%s census read %s lines" % (TT, A)), ["the"], "a doubled article in the attribution's own clause is refused with it")
+        self.assertEqual(DOUBLED.findall("%s census read %s lines" % (TT, A)), ["the"], "a doubled article followed in its clause by the attribution is refused with it")
+        self.assertEqual(DOUBLED.findall("%s pass reads %s census" % (A, TT)), [], "a possessive before the run is outside the pin by choice: the sweep's "
+                                                                                   "artefact keeps the possessive inside the repeated prefix")
         self.assertEqual(joined_runs([(3, "# a"), (4, "#  b"), (7, "// c"), (8, " * d")]), [(3, 4, "a b"), (7, 8, "c d")], "runs by consecutive numbers, markers stripped")
 
     def test_the_diff_reader_numbers_added_lines_in_the_new_side(self):
