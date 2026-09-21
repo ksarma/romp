@@ -72,9 +72,12 @@ QUALIFIER = re.compile(r"\bmaintainer's\s+$", re.I)   # what must stand immediat
 MARKER = re.compile(r"^\s*(?:#|//|/\*|\*|<!--)?\s*")               # a comment marker and the whitespace around it, which a wrapped line begins with
 
 # a doubled attribution in one run of prose (the maintainer's round 6, H): the same possessive's "pass after" twice in a row (the
-# sweep's artefact, a qualifier inlined on a line whose line above already ended with it), or the same attribution twice adjacent
+# sweep's artefact, a qualifier inlined on a line whose line above already ended with it), the same attribution twice adjacent, or
+# the bare possessive itself twice in a row (the same artefact under a line that ended with the possessive alone, the shape the
+# wrapped-qualifier rule accepts on the mention's line: the author's fixer pass after the maintainer's round 6, guard-1)
 DOUBLED = re.compile(r"\b(the (?:author's|maintainer's))\s+(?:fixer\s+)?pass after\s+\1\s+(?:fixer\s+)?pass after\b"
-                     r"|\b(the (?:author's|maintainer's) (?:fixer pass|pass|round)(?:[- ]\d+)?)\s+\2\b", re.I)
+                     r"|\b(the (?:author's|maintainer's) (?:fixer pass|pass|round)(?:[- ]\d+)?)\s+\2\b"
+                     r"|\b(the (?:author's|maintainer's))\s+\3\b", re.I)
 
 # a hunk header of a unified diff: the new side's first line number (and its count, absent for one line)
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
@@ -213,7 +216,9 @@ class RoundLabels(unittest.TestCase):
         """A mechanical rewrite over prose owes a read-back (the maintainer's round 6, H): the sweep that reworded the mentions
         inlined the full qualifier on a continuation line whose line above already ended with it, and a per-line census cannot see
         a doubling that spans the break. So the added lines are read as prose, joined_runs, and a doubled attribution in one run is refused
-        (DOUBLED). A list of distinct forms is not a repeat, and the probes below say so."""
+        (DOUBLED: the same possessive's "pass after" twice, the same attribution twice, or the bare possessive twice in a row, the
+        shape a swept continuation line makes under a line that ended with the possessive alone). A list of distinct forms is not a
+        repeat, and the probes below say so."""
         added, how = branch_population()
         bad = []
         for rel, lines in sorted(added.items()):
@@ -225,8 +230,12 @@ class RoundLabels(unittest.TestCase):
                          "the sweep's doubling, the qualifier inlined on a line whose line above ended with it")
         self.assertEqual(len(DOUBLED.findall("%s %s 5 %s %s 5 on panel-3" % (M, R, M, R))), 1, "the same attribution twice adjacent")
         self.assertEqual(len(DOUBLED.findall("%s pass 4 %s pass 4" % (A, A))), 1)
+        for bare in ("%s %s %s 5, tests-1" % (M, M, R), "%s %s pass 4" % (A, A), "(%s %s fixer pass after %s %s 5)" % (A, A, M, R)):
+            self.assertEqual(len(DOUBLED.findall(bare)), 1, "the bare possessive twice in a row, a qualifier inlined under a line that "
+                                                            "ended with it: %r" % bare)
         for clean in ("the pass after %s %s 4, the pass after %s %s 5" % (M, R, M, R), "%s pass 4 and %s pass 5" % (A, A),
-                      "(%s fixer pass after %s %s 5, refusal-1: the census read)" % (A, M, R), "%s %s 5 and %s %s-4 ruling" % (M, R, M, R)):
+                      "(%s fixer pass after %s %s 5, refusal-1: the census read)" % (A, M, R), "%s %s 5 and %s %s-4 ruling" % (M, R, M, R),
+                      "%s %s 5 and %s %s 6" % (M, R, M, R), "%s pass after %s %s 5" % (A, M, R)):
             self.assertEqual(DOUBLED.findall(clean), [], "a list of distinct forms is not a repeat: %r" % clean)
         self.assertEqual(joined_runs([(3, "# a"), (4, "#  b"), (7, "// c"), (8, " * d")]), [(3, 4, "a b"), (7, 8, "c d")], "runs by consecutive numbers, markers stripped")
 
