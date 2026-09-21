@@ -19441,9 +19441,14 @@ class SdkBackend:
         walk) catches it, restores the live pair and the pending, files the row naming the skip and answers False, a
         refusal after the restore. CONSUMERS of the skip since this change (round 6's rule: the list, not a count): the
         guard's except arm (the restore and the row); set_auth_guarded (the door's sentence, _refuse_pick_write's
-        record-would-not-read wording); set_auth_followers (the unwritten bucket, taken only after the restore); the drain,
-        through the door (kernel/kernel.py _apply_pending_ops); and set_auth's dormant road, a plain False since its record
-        write is its whole change. The mirror sites that still drop the bool are the non-pick writers, a NAMED RESIDUAL
+        record-would-not-read wording); set_auth_followers (the unwritten bucket, taken only after the restore); set_auth's
+        dormant road, a plain False since its record write is its whole change; and, past the door, the three kernel roads
+        that carry the door's verdict and its sentence to the user (kernel/kernel.py; the third verifier pass of round 6,
+        2026-09-21, found this list stopping at the door): POST /billing's --now and plain roads in _billing_request, where
+        _set_auth_or_park_verdict's "refused" becomes _billing_refusal's 409 whose text _auth_refusal pops from the door
+        (pop_auth_refusal); the WS setAuth arm's boolean (_set_auth_or_park), whose warn frame pops the same sentence; and
+        the parked-op drain (_apply_pending_ops), which takes the verdict helper with the FIFO gate off and hands
+        _auth_refusal the sid for its settingRefused frame. The mirror sites that still drop the bool are the non-pick writers, a NAMED RESIDUAL
         (derived by git grep -nE '_mirror_auth(_pending)?[(]' -- kernel bin cli postal, minus the two defs, this sentence's
         own mention of the command, this method, follow_default_auth's live clear and the guard's two retry sites):
         _served_by_connect, _recover_picked_pending_at_init (two sites), _connect_landed (two sites),
@@ -19528,7 +19533,17 @@ class SdkBackend:
         # USED to run here, before the record write, so a refused write still moved the remembered account and, while a
         # flag-less write still seeded the next spawn (before fork PR #819), the next session born inherited a pick the
         # user's own session was told did not apply. This comment called the write "the machine seed", that PR's removed
-        # mechanism, until round 6's fix-up (2026-09-21; the merge-runs verifier).
+        # mechanism, until round 6's fix-up (2026-09-21; the merge-runs verifier). The name's other hits in the tree are
+        # history, each dated to before that PR: derived at round 6's completeness commit (2026-09-21, the third verifier
+        # pass) by grep -rn for the two-word name quoted above over tests/ kernel/ bin/ docs/ cli/, eight lines: five test
+        # comments in tests/test_billing_route.py recording round 3's move of the write under its name at that time
+        # (test_a_seed_write_that_fails_after_the_record_lands_answers_200_with_the_pick_applied_on_the_now_and_plain_roads,
+        # test_a_chip_write_that_fails_after_the_record_lands_leaves_the_pick_and_no_orphaned_reconnect,
+        # test_a_refused_record_write_never_moves_the_machine_seed_on_any_road,
+        # test_a_seed_write_that_fails_after_the_record_lands_leaves_the_pick_standing_on_every_road,
+        # test_a_walk_step_that_raises_after_its_mirror_has_the_reg_rolled_back_with_the_pair), the sentence above that
+        # quotes the name, and the clause "until fork PR #819" beside the name in set_auth_guarded's and
+        # _follow_default_guarded's docstrings (round 6's fix-up listed six of the eight; the two docstrings were missing).
         # the pick, the side the connect in progress launches, the side the running process launched and the side a
         # reconnect is applying, each as (side, stored login id): "" for the machine's own login and for the key
         pick = (side, login_id)
@@ -19840,6 +19855,15 @@ class SdkBackend:
             return None
         with self._lock:                       # the roster moves under other threads: _reconnect_default_followers' idiom
             sessions = list(self.sessions.values())
+        # THE UNWRITTEN BUCKET'S WRITERS AND READERS (round 6's rule; the list completed at the round's completeness commit,
+        # 2026-09-21, after the third verifier pass found one reader missing). WRITERS, both in this loop: the skip road (a
+        # RegUnreadable from the step's own write with nothing landed, filed after the guard's restore) and the door road
+        # (set_auth answering False before anything moved). READERS: this walk's summary line (the count and the names);
+        # kernel/kernel.py _billing_request, which reads the list into the answer's `unwritten` count and `unwrittenSessions`
+        # names; bin/romp's --all-following printer, four reads of those names: the read from the answer, the head's branch
+        # that keeps the head from denying the followers the tail names, the tail's gate (`if unwritten:`, the read the
+        # round's cluster A list omitted) and the tail's sentence with the count and the names; and the route and printer
+        # fixtures in tests/test_billing_route.py, which assert the names.
         moved, skipped, unwritten, failed, parked, diverged, outlook = [], [], [], [], [], [], {}
         superseded = 0
         label = self.login_display(login_id) if login_id else side
@@ -20652,6 +20676,12 @@ class SdkBackend:
                 with s._hold_write():
                     now = (s._auth_pending_target(), bool(s._relaunch_bounded),
                            (getattr(s, "auth", None), getattr(s, "auth_login", "") or ""), bool(getattr(s, "_landing_ask_bounded", False)))
+                    # OBSERVATION (2026-09-21, the third verifier pass of round 6; not ruled; disclosed for the reviewer): this
+                    # restore puts back what stood at the door whenever the live pair or the pending moved, and the retry
+                    # below mirrors that pair to the record, so a CONCURRENT pick by another request or pusher thread that
+                    # landed inside the failing step's window is undone with no row naming it: driven (D2d) with a second
+                    # thread whose set_auth answered True, its pick gone after this restore, the only row naming the failing
+                    # pick. Behaviour unchanged here.
                     if now != before:
                         s._auth_pending, s._auth_pending_login = before[0]
                         s._relaunch_bounded = before[1]

@@ -1588,8 +1588,12 @@ class Read(_RouteServer):
                                            "explicitPick": "login", "explicitWhy": ""})
 
     def test_the_default_is_what_a_follower_bills_not_the_pickers_preselection(self):
-        # a remembered per-session pick seeds the picker's preselected choice (_auth_avail's `default`) while no explicit
-        # default is set; a follower does not bill it, so the read must not say it does
+        # the picker's preselected choice (_auth_avail's `default`) is the explicit default when one is set, else the helper
+        # rule, the side that exists: since fork PR #819 a per-session pick's flag-less write preselects nothing (kernel/kernel.py
+        # _auth_avail reads the file's auth only beside authExplicit; this comment said the flag-less write seeded it until
+        # round 6's completeness commit, 2026-09-21). The two reads can still differ, as the stubs here make them (the picker
+        # preselects login, the backend says a follower bills the key), and a follower does not bill the preselection, so the
+        # read must not say it does
         fake = _FakeBackend(view=dict(self.VIEW), default="key", explicit=False)
         with mock.patch.multiple(km, **{"_gate_or_park": lambda sid, op: False, "_claude_account_label": lambda: MACHINE_LABEL,
                                         "_auth_avail_status": lambda: {"default": "login", "defaultExplicit": False}}), \
@@ -1949,13 +1953,13 @@ class BackendHelpers(unittest.TestCase):
         web.auth_live = "login"
         self._queue_loop(web)
         self.assertTrue(self.be.set_auth_guarded(web.sid, "key"))
-        self.assertEqual(sb.read_sdk_defaults(Path(self.d)), {"auth": "key", "authLogin": ""}, "the door's accepted pick seeds the next new session")
+        self.assertEqual(sb.read_sdk_defaults(Path(self.d)), {"auth": "key", "authLogin": ""}, "the door's accepted pick is written as the machine's record of the last pick (it seeds no new session since fork PR #819)")
         tests = self._sess("tests", launched="key")
         tests.auth_live = "key"
         self._queue_loop(tests)
         out = self.be.set_auth_followers("login")
         self.assertEqual((out["moved"], out["skipped"]), (["tests"], ["web"]))
-        self.assertEqual(sb.read_sdk_defaults(Path(self.d)), {"auth": "login", "authLogin": ""}, "the walk's accepted pick seeds too")
+        self.assertEqual(sb.read_sdk_defaults(Path(self.d)), {"auth": "login", "authLogin": ""}, "the walk's accepted pick writes the same record of the last pick, seeding nothing")
         # The merge of main in round 6 of the review (2026-09-20): this line said a session spawned after inherits the walk's
         # pick, the mechanism fork PR #819 removed (a flag-less write seeds no new session; only the explicit default does),
         # and redded at the merged head alone ('' != 'login'; green at the round-5 head and at the first round-6 commit). The
@@ -2161,6 +2165,99 @@ class BackendHelpers(unittest.TestCase):
             out = self.be.set_auth_followers("key")
         self.assertEqual((out["failed"], out["diverged"], out["unwritten"]), (["tests"], [], []),
                          "a failed follower and not a diverged one: its own write never landed")
+
+    def test_the_retry_writes_into_no_carrier_so_the_steps_carrier_says_what_the_step_alone_landed(self):
+        # round 6 of the review, the completeness commit (2026-09-21; the third verifier pass, its r1): the closing pass said
+        # the guard's ordering (the step's landing read from the carrier BEFORE the retry, which writes into no carrier) was
+        # pinned by test_a_loop_thread_mirror_landing_inside_a_failing_steps_window_files_no_divergence_over_a_record_the_step_never_wrote.
+        # It was not: every write of the record is refused there, so the retry lands nothing and the carrier cannot move
+        # whichever side of the retry it is read on. Run at the fix-up commit: the retry handed the carrier and the divergence
+        # check reading it after the retry, 176 passed; the local read moved below the retry with the compare-and-swap
+        # reading the carrier directly, 176 passed; both together, 176 passed (the local moved below the retry alone reds 11,
+        # each an UnboundLocalError at the compare-and-swap swallowed as the retry's failure, the restore never run). The
+        # property the ordering serves is pinned HERE by execution: the step's own write refused, the retry landing, and the
+        # carrier the caller minted for its step still saying nothing landed, on the door and on the walk. Red under the retry
+        # handed `token=token` at the carrier assertion: True is not False. What execution cannot reach at this head, the two
+        # reads' ORDER (moot while the retry writes into no carrier), is pinned by text in
+        # test_the_guard_reads_the_steps_landing_before_the_retry_and_never_after_it.
+        minted, real_cls = [], sb.StepWrite
+
+        def mint():
+            minted.append(real_cls())
+            return minted[-1]
+
+        def refusing_once(s):
+            """The step's own write of this session's record is refused; every later write of it (the retry) lands."""
+            real_write, writes = sb.write_reg, []
+
+            def write(state_dir, sid, reg):
+                if sid == s.sid:
+                    writes.append(dict(reg))
+                    if len(writes) == 1:
+                        raise OSError(28, "No space left on device", str(sb._reg_path(state_dir, sid)))
+                return real_write(state_dir, sid, reg)
+            return write, writes
+        # the door
+        web = self._sess("web", auth="login", launched="login")
+        web.auth_live = "login"
+        q = self._queue_loop(web)
+        write, writes = refusing_once(web)
+        with mock.patch.object(sb, "write_reg", write), mock.patch.object(sb, "StepWrite", mint):
+            self.assertFalse(self.be.set_auth_guarded(web.sid, "key"))
+        self.assertEqual(len(minted), 1, "the door minted one carrier for its step")
+        self.assertEqual([w["auth"] for w in writes], ["key", "login"], "the step's own write (refused), then the retry's (landed)")
+        self.assertEqual((web.auth, web._auth_pending, len(q), self._reg(web.sid)["auth"]), ("login", "", 0, "login"),
+                         "the restore, mirrored by the retry")
+        self.assertIs(minted[0].landed, False, "the retry writes into no carrier: the step's carrier says what the step alone landed, nothing")
+        self.assertEqual(self.be.pop_auth_refusal(web.sid),
+                         "web's pick key was not applied: its record would not write (OSError), so the session bills as it did")
+        # the walk
+        tests = self._sess("tests", launched="login")
+        tests.auth_live = "login"
+        self._queue_loop(tests)
+        write, writes = refusing_once(tests)
+        with mock.patch.object(sb, "write_reg", write), mock.patch.object(sb, "StepWrite", mint):
+            out = self.be.set_auth_followers("key")
+        self.assertEqual(len(minted), 2, "the walk minted one carrier for its follower's step")
+        self.assertEqual((len(writes), writes[0]["auth"]), (2, "key"), "the step's own write (refused), then the retry's (landed)")
+        self.assertEqual((out["failed"], out["diverged"], out["unwritten"]), (["tests"], [], []), "a failed follower, no divergence")
+        self.assertIs(minted[1].landed, False, "the walk's retry writes into no carrier either")
+
+    def test_the_guard_reads_the_steps_landing_before_the_retry_and_never_after_it(self):
+        # round 6 of the review, the completeness commit (2026-09-21; the third verifier pass, its r1). The ORDER of the guard's
+        # reads, the step's landing taken from the carrier before the retry mirror and never after it, is what keeps a retry
+        # that lands from ever reading as the step's write should the retry one day write into the carrier. No behaviour at
+        # this head can tell the order (the divergence check is gated on the retry's failure, under which the carrier cannot
+        # have landed, and the retry writes into no carrier, pinned by execution in
+        # test_the_retry_writes_into_no_carrier_so_the_steps_carrier_says_what_the_step_alone_landed), so this pin is by
+        # text over the guard's except arm and says so: a weaker guarantee than an executed one, kept because the executed
+        # pins are blind to the order. Red at the fix-up commit under the local read moved below the retry with the
+        # compare-and-swap reading the carrier directly (the reorder that raises no UnboundLocalError; 176 passed there
+        # before this test): the order assertion, with both line numbers; and under the divergence check reading the carrier
+        # after the retry: the no-read-after assertion.
+        mod = ast.parse(Path(BIN, "romp_sdk_backend.py").read_text())
+        guards = [n for n in ast.walk(mod) if isinstance(n, ast.FunctionDef) and n.name == "_follow_default_guarded"]
+        self.assertEqual(len(guards), 1)
+
+        def mirror_calls(node):
+            return [c for c in ast.walk(node) if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+                    and c.func.attr in ("_mirror_auth", "_mirror_auth_pending")]
+        arms = [h for t in ast.walk(guards[0]) if isinstance(t, ast.Try) for h in t.handlers if mirror_calls(h)]
+        self.assertEqual(len(arms), 1, "one except arm of the guard holds the retry")
+        arm = arms[0]
+        retries = mirror_calls(arm)
+        self.assertEqual(len(retries), 2, "the retry's two roads: the step's and the follower's")
+        first_retry = min(c.lineno for c in retries)
+        reads = [n for n in ast.walk(arm) if isinstance(n, ast.Attribute) and n.attr == "landed"
+                 and isinstance(n.value, ast.Name) and n.value.id == "token"]
+        local = [n for n in ast.walk(arm) if isinstance(n, ast.Assign) and any(n.value is r for r in reads)
+                 and [t.id for t in n.targets if isinstance(t, ast.Name)] == ["landed"]]
+        self.assertEqual(len(local), 1, "the arm reads the step's landing into one local")
+        self.assertLess(local[0].lineno, first_retry,
+                        "the step's landing is read before the retry (the read at line %d, the retry's first road at line %d)"
+                        % (local[0].lineno, first_retry))
+        self.assertEqual([n.lineno for n in reads if n.lineno > first_retry], [],
+                         "no read of the carrier's landing after the retry: the divergence check and the row read the local")
 
     def test_the_retry_puts_back_the_report_the_steps_own_write_replaced_not_the_door_time_value(self):
         # round 6 of the review (2026-09-20; its correctness-3 and kernel-3, the report-BEFORE-the-clear cell): the guard read
