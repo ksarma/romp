@@ -862,6 +862,24 @@ def _skip_reason(rep) -> str:
     return str(lr)
 
 
+def _fail_skipped_report(rep, longrepr) -> None:
+    """The one flip every belt uses: a skipped report (a TestReport or a CollectReport) becomes a failed one
+    carrying `longrepr`. An xfail's `wasxfail` attribute is removed first, and by hasattr, not truthiness: a bare
+    @pytest.mark.xfail sets it to "". pytest's session counts a failed report toward the exit status only when the
+    report has no `wasxfail` (Session.pytest_runtest_logreport), so a flipped xfail that kept it printed FAILED and
+    exited 0. The served switch did exactly that until the flip was shared here (2026-09-21): its caller flipped
+    the outcome without the delete while the never-skips belt beside it deleted, so the two belts disagreed on
+    the one report shape the shared _skip_reason has a branch for. Callers compute the skip's reason BEFORE this
+    call: _skip_reason reads wasxfail. A caller's exemption (the served switch's `optional:` skips) returns before
+    reaching here, so an exempt skip keeps its report untouched. Pinned by execution, each on an xfail that is a
+    file's ONLY skip, so the exit status is the assertion and no sibling skip carries it: the xfail-alone case in
+    tests/test_served_tests_require.py and NeverSkips' xfail-only case in tests/test_ci_sdk_pin.py."""
+    if hasattr(rep, "wasxfail"):
+        del rep.wasxfail
+    rep.outcome = "failed"
+    rep.longrepr = longrepr
+
+
 def _is_served_test_file(item) -> bool:
     name = _node_file(item)
     return name.startswith("test_") and (name.endswith("_browser.py") or name.endswith("_served.py"))
@@ -877,9 +895,8 @@ def _require_served_test_ran(item, rep) -> None:
         reason = _skip_reason(rep)
         if re.match(r"^(Skipped: )?optional:", reason):
             return
-        rep.outcome = "failed"
-        rep.longrepr = ("ROMP_SERVED_TESTS_REQUIRE=1: a browser-backed test skipped (at %s) where it must run: %s"
-                        % (rep.when, reason))
+        _fail_skipped_report(rep, "ROMP_SERVED_TESTS_REQUIRE=1: a browser-backed test skipped (at %s) where it must run: %s"
+                             % (rep.when, reason))
 
 
 # A file listed here declares that every one of its tests checks something on every road, so a skip outcome in it,
@@ -905,15 +922,11 @@ def _never_skip_longrepr(name, where, reason) -> str:
 
 def _require_never_skip_ran(item, rep) -> None:
     """A skipped report for a test in a _NEVER_SKIP_FILES file is a failure carrying the skip's reason. Called
-    from the one pytest_runtest_makereport above; always on. An xfail's `wasxfail` mark is removed with the flip:
-    pytest's session counts a failed report toward the exit status only without it, so a flipped xfail would
-    otherwise print FAILED and exit 0."""
+    from the one pytest_runtest_makereport above; always on. The flip is _fail_skipped_report's, which removes an
+    xfail's `wasxfail` so the failure counts toward the exit status."""
     if rep.skipped and _node_file(item) in _NEVER_SKIP_FILES:
         reason = _skip_reason(rep)
-        if hasattr(rep, "wasxfail"):
-            del rep.wasxfail
-        rep.outcome = "failed"
-        rep.longrepr = _never_skip_longrepr(_node_file(item), rep.when, reason)
+        _fail_skipped_report(rep, _never_skip_longrepr(_node_file(item), rep.when, reason))
 
 
 def _require_never_skip_collected(collector, rep) -> None:
@@ -921,5 +934,4 @@ def _require_never_skip_collected(collector, rep) -> None:
     module, which a module-level skip produces in place of any items, becomes a failed one, a collection error."""
     if rep.skipped and _node_file(collector) in _NEVER_SKIP_FILES:
         reason = _skip_reason(rep)
-        rep.outcome = "failed"
-        rep.longrepr = _never_skip_longrepr(_node_file(collector), "collection", reason)
+        _fail_skipped_report(rep, _never_skip_longrepr(_node_file(collector), "collection", reason))

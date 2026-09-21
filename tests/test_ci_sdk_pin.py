@@ -78,7 +78,10 @@ This module holds five things, and it never skips: a pin that skips reports gree
    carrying the skip's own reason, always, with no switch. NeverSkips proves that belt by execution, running pytest in
    a child over scratch files: a file of this name whose tests skip by every spelling (pytest.mark.skipif,
    unittest.skipIf, self.skipTest, SkipTest in setUpClass, an xfail) reds on each; one whose module level runs
-   pytest.importorskip reds as a collection error; a plain-named twin of the first keeps skipping. Until 2026-09-20 the
+   pytest.importorskip reds as a collection error; one whose ONLY skip is an xfail fails the run by its exit status
+   (a flipped xfail prints FAILED either way and counts toward the exit status only once the report's wasxfail is
+   removed, which the flip in tests/conftest.py does; alone, so no other skip carries that exit for it); a
+   plain-named twin of the first keeps skipping. Until 2026-09-20 the
    guard was a five-name list of unittest spellings read from this file's AST, which pytest.mark.skipif passed, and
    which a module-level importorskip removed from the run along with the rest of the module. What a report cannot
    show is a test that was never collected: renamed off the test_ prefix, deleted, or fenced behind an if, it reports
@@ -385,6 +388,16 @@ class Unreachable(unittest.TestCase):
     def test_never_collected(self):
         pass
 '''
+# An xfail that is the file's ONLY skip, under its own name and never bundled into SKIP_SPELLINGS: beside the other
+# spellings, whose flips already make the run non-zero, the exit status is carried for it and the case proves nothing.
+XFAIL_ONLY = '''
+import unittest
+import pytest
+class OnlyXfail(unittest.TestCase):
+    @pytest.mark.xfail(reason="synthetic xfail, the file's only skip")
+    def test_xfail(self):
+        self.fail("an xfail absorbs this")
+'''
 
 
 class NeverSkips(unittest.TestCase):
@@ -394,7 +407,11 @@ class NeverSkips(unittest.TestCase):
     (two the old five-name list never covered, pytest.mark.skipif and an xfail; three it did) and every one is red,
     each naming the belt and quoting its reason; the same content under a plain name skips as pytest always let it;
     a scratch file of this name whose module level runs pytest.importorskip, which collects no items, is a collection
-    error and the run stops red. Synthetic files only; no SDK, no network. The census case is in-process: the belt
+    error and the run stops red; a scratch file of this name whose ONLY skip is an xfail fails the RUN, its exit
+    status the assertion (pytest prints FAILED for a flipped xfail either way and counts it toward the exit status
+    only once the report's wasxfail attribute is removed, which the flip shared with the served switch does; bundled
+    with the other spellings that exit was carried for it, so removing the delete red nothing until this case,
+    2026-09-21). Synthetic files only; no SDK, no network. The census case is in-process: the belt
     reads reports, and a test that is never collected files none, so the one test the belt exists for is pinned by
     name against unittest's loader, the collection pytest performs on a TestCase. The children pass -p no:anyio, as
     every pytest the suite spawns does (ChildPytestLaunchers holds it on each launcher), so in a cell no child loads a
@@ -438,6 +455,19 @@ class NeverSkips(unittest.TestCase):
         self.assertIn("no_such_module_synthetic_xyz", out, "the collection error carries the skip's own reason: " + out[-3000:])
         self.assertNotIn("skipped", out.split("short test summary info")[-1].replace("never-skips: test_ci_sdk_pin.py skipped", ""),
                          "nothing in the run is reported as a skip: " + out[-3000:])
+
+    def test_an_xfail_that_is_the_files_only_skip_fails_the_run(self):
+        # What this case guards is the EXIT STATUS, not the FAILED line: pytest prints FAILED for a flipped xfail whether
+        # or not the report keeps its wasxfail attribute, and counts it toward the exit status only without it
+        # (tests/conftest.py, _fail_skipped_report, the flip the belt shares with the served switch). Alone, under its
+        # own name: with the delete removed and this file bundled into SKIP_SPELLINGS, the first case above read the
+        # same counts line and the same non-zero exit, carried by the other spellings' flips (4 passed both ways,
+        # 2026-09-21); alone, the same mutation reads "1 failed" and exit 0, and this case is red.
+        rc, out = self._run(self._write("test_ci_sdk_pin.py", XFAIL_ONLY))
+        self.assertNotEqual(rc, 0, "a flipped xfail must fail the RUN, not only print FAILED: " + out[-3000:])
+        self.assertIn("1 failed", out, "the xfail is reported as the one failure: " + out[-3000:])
+        self.assertIn("never-skips: test_ci_sdk_pin.py skipped (at call)", out, "the red names the belt and the file: " + out[-3000:])
+        self.assertIn("xfail: synthetic xfail, the file's only skip", out, "...and carries the xfail's own reason: " + out[-3000:])
 
     def test_a_module_level_importorskip_under_a_plain_name_still_skips_the_module(self):
         rc, out = self._run(self._write("test_fake_plain.py", MODULE_LEVEL_SKIP))
