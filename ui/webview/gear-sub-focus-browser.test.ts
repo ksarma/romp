@@ -21,9 +21,13 @@
 // gear-judge-fast-browser.test.ts pattern (a fake kernel behind page.route; skips with a stated reason without a playwright
 // browser). WHAT THE GATE CHECKS, and where (the maintainer's round 5, tests-1): CI's vscode-extension job runs `npm test` BEFORE
 // it installs Chromium, so at that step every browser leg in this file skips and the gate's read of this file is the source
-// pins alone (the parsed-sheet pins on the rules and the gear.js wiring pins); the job then installs Chromium and runs this
-// file again by name, the "Gear description browser legs" step under ROMP_GEAR_BROWSER_REQUIRE=1, where the browser legs run in
-// that Chromium and a skip is a failure naming its reason (the pane bench's stance), pinned by tests/test_served_labs_under_ci.py.
+// pins alone (the parsed-sheet pins on the rules and the gear.js wiring pins); the shared browser-legs step, which the job runs
+// after the Chromium install over the roster vscode-extension/ci-browser-legs.txt under ROMP_BROWSER_LEGS_REQUIRE=1, runs this
+// file's bundle again, where the browser legs run in that Chromium and a skip is a failure naming its reason (the pane bench's
+// stance). The launch is the shared helper's (real-viewer-leg.ts inBrowser, which reads the switch for every leg that launches
+// through it), so this file carries no switch read of its own; the step and this file's roster line land in their own change
+// (the reviewer's ruling of 2026-09-21), and tests/test_served_labs_under_ci.py pins the roster line once the step is in the
+// tree and the ledger entry's disclosure of the gap until then.
 // A developer's machine with playwright's Chromium runs both in one `npm test`. The surface the browser legs exclude: Firefox
 // and WebKit (the three-engine readings in the review record came from a scratch matrix, not this file), and every engine
 // generation that lacks :has(), which the degradation leg below MODELS rather than installs. And the STATES the legs do not
@@ -49,6 +53,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
+import { inBrowser, playwrightInstalled } from "./real-viewer-leg";   // the launch every browser leg of the fork shares, and its switch read
 
 const EXT = process.cwd();                                        // npm test runs in vscode-extension
 const requireCjs = createRequire(path.join(EXT, "package.json"));
@@ -264,23 +269,12 @@ const VERSION = { judgeModel: "opus", judgeEffort: "", indexModel: "opus", index
   judgeConcurrency: "", commentModel: "session", commentEffort: "session", commentFast: "session",
   judgeFast: "on", distillFast: "on", indexFast: "on", fastRefused: {}, autoNudge: true, settingsGt: {}, updateMode: "off" };
 
-let pw: any = null;
-try { pw = requireCjs("playwright"); } catch { pw = null; }
-// ROMP_GEAR_BROWSER_REQUIRE (CI's step after the Chromium install sets it) turns the browser legs' skip into a failure naming
-// the reason: the one CI run of these legs must not read green on a runner that lost its browser
-const required = !!process.env.ROMP_GEAR_BROWSER_REQUIRE;
-const skipOrFail = (t: any, why: string) => {
-  if (required) assert.fail("ROMP_GEAR_BROWSER_REQUIRE is set and this leg cannot run: " + why);
-  t.skip(why + " (in CI the Test step runs before the job installs Chromium, so the browser legs skip there and run in the step after the install)");
-};
-
 async function withGear(t: any, tab: string, body: (page: any, errors: string[]) => Promise<void>, height = 320, ctxOpts: Record<string, unknown> = {}, css = GEAR_CSS): Promise<void> {
-  if (!pw) { skipOrFail(t, "playwright is not installed under vscode-extension; the browser legs need it"); return; }
-  let browser: any;
-  try { browser = await pw.chromium.launch(); }
-  catch (e) { skipOrFail(t, "no playwright browser on this machine; the browser legs need one: " + String((e as Error).message).split("\n")[0]); return; }
-  const errors: string[] = [];
-  try {
+  // the launch is the shared helper's (real-viewer-leg.ts inBrowser): without a browser a skip naming the reason, and under
+  // ROMP_BROWSER_LEGS_REQUIRE, which CI's browser-legs step sets after the Chromium install, a failure naming the switch and the
+  // reason, so the one CI run of these legs cannot read green on a runner that lost its browser; the helper closes the browser
+  await inBrowser(t, async (browser) => {
+    const errors: string[] = [];
     const js = bundle();
     // a short window: the card (max-height 88vh) is shorter than the Debug pane, so the card scrolls, and the share row sits
     // low enough in it at scrollTop 0 that a popover below would run past the card (the T408 clip placeSub exists for) and
@@ -305,9 +299,7 @@ async function withGear(t: any, tab: string, body: (page: any, errors: string[])
     await page.waitForFunction(() => !(document.getElementById("rsettings") as HTMLElement).hidden, null, { timeout: 10000 });
     if (tab === "tasks") await page.waitForFunction(() => (document.getElementById("rs-judgefast") as HTMLInputElement).checked === true, null, { timeout: 10000 });
     await body(page, errors);
-  } finally {
-    await browser.close();
-  }
+  });
 }
 
 /** A REAL keyboard focus on the control `id`: the tabbable before it in the panel is focused without a scroll, then one Tab
@@ -451,14 +443,17 @@ test("the share switch's description opens on a keyboard focus and is placed: at
   });
 });
 
-test("ROMP_GEAR_BROWSER_REQUIRE turns the browser legs' skip into a failure that names the reason, and without it the skip stands: CI's step after the Chromium install sets it", { timeout: 120000 }, (t) => {
+test("ROMP_BROWSER_LEGS_REQUIRE, read in the shared launch helper, turns the browser legs' skip into a failure that names the switch and the reason, and without it the skip stands naming the reason: CI's browser-legs step after the Chromium install sets it", { timeout: 120000 }, (t) => {
   // a child run of this file's share-switch leg with playwright pointed at an empty browsers directory (the pane bench's probe):
   // under the switch the leg fails naming the switch and the reason; without it the leg skips, as the Test step's run does.
   // The reason the child names is this machine's: with the module installed and its browsers hidden, no browser; with the module
   // absent, no module (the maintainer's round 6, tests-6: the regex demanded the browser reason alone, so a runner without the
   // module reported a FAILURE here where the file's contract says every browser leg skips with a stated reason); derived from
-  // the same `pw` read the legs guard on, never a two-way alternation
-  const why = pw ? "no playwright browser" : "playwright is not installed under vscode-extension";
+  // the same module read the helper's launch guards on (playwrightInstalled), never a two-way alternation. The assertions read
+  // the property (the switch's name and the reason on the failure's line; the reason on the skip) and not the helper's
+  // connective wording, which is the shared helper's to choose.
+  const why = playwrightInstalled() ? "no playwright browser" : "playwright is not installed under vscode-extension";
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   t.diagnostic("the reason a browser leg names on this machine: " + why);
   const empty = fs.mkdtempSync(path.join(EXT, "out-tests", "no-browsers-"));
   try {
@@ -468,12 +463,12 @@ test("ROMP_GEAR_BROWSER_REQUIRE turns the browser legs' skip into a failure that
     for (const k of ["PATH", "HOME", "TMPDIR", "NODE_OPTIONS"]) if (process.env[k] !== undefined) base[k] = process.env[k] as string;
     const run = (env: Record<string, string>) => spawnSync(process.execPath, ["--test", "--test-name-pattern=share switch", __filename],
       { cwd: EXT, encoding: "utf8", timeout: 100000, env: { ...base, ...env, PLAYWRIGHT_BROWSERS_PATH: empty } });
-    const req = run({ ROMP_GEAR_BROWSER_REQUIRE: "1" });
-    assert.match(req.stdout, new RegExp("ROMP_GEAR_BROWSER_REQUIRE is set and this leg cannot run: " + why.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), "the switch: a failure naming it and the reason (" + why + ")\n" + req.stdout.slice(-1500));
-    assert.match(req.stdout, /^# fail 1$/m, "the leg failed under the switch");
+    const req = run({ ROMP_BROWSER_LEGS_REQUIRE: "1" });
+    assert.match(req.stdout, /^# fail 1$/m, "the leg failed under the switch\n" + req.stdout.slice(-1500));
+    assert.match(req.stdout, new RegExp("ROMP_BROWSER_LEGS_REQUIRE[^\\n]*" + esc(why)), "the switch: a failure naming it and the reason (" + why + ") on one line\n" + req.stdout.slice(-1500));
     const plain = run({});
     assert.match(plain.stdout, /^# skipped 1$/m, "without the switch the leg skips\n" + plain.stdout.slice(-1500));
-    assert.match(plain.stdout, /the Test step runs before the job installs Chromium/, "and the skip's reason states the step order");
+    assert.match(plain.stdout, new RegExp(esc(why)), "and the skip names the reason (" + why + ")\n" + plain.stdout.slice(-1500));
   } finally {
     fs.rmSync(empty, { recursive: true, force: true });
   }
