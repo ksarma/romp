@@ -418,7 +418,7 @@ test("sizeSpacers and the measure read no layout property: zero offsetHeight, sc
   w.rafs.shift()!();
   assert.equal(w.diag.length, before + 2, "the two writes' rows, filed together");
   assert.deepEqual(w.reads, { offsetHeight: 0, scrollHeight: 1, clientHeight: 1 }, "the scroller was read once, in the frame, for both rows");
-  assert.deepEqual(w.diag.map((d) => [d.kind, d.data.sid, d.data.sh, d.data.ch]), [["spacer", "A", 9114, 902], ["spacer", "A", 9114, 902]]);
+  assert.deepEqual(w.diag.map((d) => [d.kind, d.data.sid, d.data.sh, d.data.ch, "view" in d.data]), [["spacer", "A", 9114, 902, false], ["spacer", "A", 9114, 902, false]], "the active view's rows: the frame's figures and no `view` key (the marker is the switched-away row's alone, held here by execution and not by the frame's spelling alone; the test below reads it on that row)");
   // each row carries its own before/after, in that order (the tuple queueSpacerRow pushes and the frame drains): the T262j diagnosis reads
   // which way the head spacer moved, so an inverted pair would read backwards (the author's pass 0: the old assertion here compared a value with itself)
   assert.deepEqual(w.diag[0].data.top, [0, topOne], "build one's row: from nothing to the first spacer");
@@ -697,10 +697,11 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   // shown view's row always carries numbers (a scroller with no box reads 0, an honest figure), so a null pair is built only for a view that was
   // not the live one in its frame, never with another view's figures. The two assertions after the frame's regex pin the marker on the frame's
   // SOURCE SPELLING (the call's two arms, the marker on the switched-away arm alone; the marker's word in the frame's code once, at that post);
-  // the property by execution is the switched-away row test above (the filed row carries the marker, through the builder as built) and
+  // the property by execution is the two row tests above (the switched-away row carries the marker, through the builder as built; the active
+  // view's two rows carry no `view` key, so a marker handed on the active arm reds there and not only here) and
   // tests/test_client_diag_allowlist.py's presence cell (the chat entry names the key; the marked row is stored whole).
   assert.match(inFrame, /requestAnimationFrame\(\(\) => \{[\s\S]*?const live = activeId;\s*\n\s*let sh: number \| null = null, ch: number \| null = null;\s*\n\s*if \(live && content && rows\.some\(\(\[rsid\]\) => rsid === live\)\) \{ sh = content\.scrollHeight; ch = content\.clientHeight; \}/, "the diag row's scroller read rides a frame, once, for the active view's rows alone");
-  assert.match(inFrame, /rsid === live \? spacerRow\(rsid, a, b, c, d, sh, ch\) : spacerRow\(rsid, a, b, c, d, null, null, "inactive"\)\)/, "a switched-away view's row: no geometry and the `view` marker, on the owner's approval of 2026-09-21; keyed on the call's source spelling, so a marker reached another way is for the executed pins: the switched-away row test above and tests/test_client_diag_allowlist.py's presence cell");
+  assert.match(inFrame, /rsid === live \? spacerRow\(rsid, a, b, c, d, sh, ch\) : spacerRow\(rsid, a, b, c, d, null, null, "inactive"\)\)/, "a switched-away view's row: no geometry and the `view` marker, on the owner's approval of 2026-09-21; keyed on the call's source spelling, so a marker reached another way is for the executed pins: the two row tests above (the switched-away row marked, the active view's rows unmarked) and tests/test_client_diag_allowlist.py's presence cell");
   assert.equal((code(inFrame).match(/"inactive"/g) || []).length, 1, "the marker's word is in the frame's code once, as the switched-away arm's string literal (the comment names it too; the code alone is counted)");
   assert.doesNotMatch(inFrame, /const sh = content \? content\.scrollHeight : 0/, "the batch read is gone");
   const uo = RENDER.slice(RENDER.indexOf("v.uo = new ResizeObserver((entries) => {"), RENDER.indexOf("v.mo = new MutationObserver("));
