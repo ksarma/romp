@@ -192,9 +192,18 @@ BAD_EVS = ("delta-unknown-slot", "delta-unkeyed-base")
 # call allow-listed, every wait capped, by type), each module's docstring naming what it checks and the class it cannot see.
 CI_TEST_TIMEOUT_S = 600      # pytest --timeout on CI's served step
 BOOT_ROOM_S = 120            # setUpClass outside the drive: the kernels' boots, the dist copy, the readers after the drive
+PROBE_TIMEOUT_S = BOOT_ROOM_S // 4   # _boot's playwright-browser probe (node resolving the browser's path), the one subprocess of setUpClass that had
+#                              no timeout (the maintainer's round 6, extra4-3): a probe past it is an error naming the bound, never the no-browser skip
 DRIVER_TIMEOUT_S = 480       # the node driver's subprocess timeout: CI_TEST_TIMEOUT_S - BOOT_ROOM_S
-DRIVER_FIXED_S = 40          # the driver's work outside its waits and the control door: the browser launch (playwright's own
-#                              30 s cap, then exit 3), the snapshots and the visible reads
+LAUNCH_TIMEOUT_S = 30        # playwright's default launch timeout: chromium.launch is handed no timeout option (the parsed module's config cell pins that
+#                              the lab writes no `launch` key), so a launch that never comes ends there, then exit 3
+DRIVER_FIXED_S = LAUNCH_TIMEOUT_S + 10   # the driver's work outside its waits and the control door: the launch, carried as a fixed term at its own bound
+#                              (load-bearing against the headroom under DRIVER_TIMEOUT_S, which the arithmetic pin in
+#                              tests/test_federated_linkdrop_driver_bound.py reports and holds this term at least the launch's; the maintainer's
+#                              round 6, extra4-1: a sentence called the launch a wait the arithmetic does not count), and 10 s for the work between
+#                              the waits: the visible reads (locator.count, which does not auto-wait), the marks, the JSON. The snapshots and the
+#                              provisional-row read (page.evaluate, which takes no timeout option) are bounded reads that race against what is left
+#                              of the budget (budget.bounded, BUDGET_JS), so their time is the budget's, not this term's.
 POST_TIMEOUT_S = 5           # one control-door post to the remote (a notice, a todo); measured in milliseconds
 HUB_TERM_WAIT_S = 10         # _restart_hub waits this long for SIGTERM to end the hub before SIGKILL
 HUB_SPAWN_TRIES = 40         # _spawn_hub's /healthz tries, a 1 s probe and a 0.5 s pause each (the respawn answers in about a second)
@@ -229,10 +238,13 @@ def change_bundle_bound_s(changes):
 
 
 def driver_worst_case_s(cls):
-    """The longest the class's driver can run: its wait budget (every wait it places draws on it, BUDGET_JS) plus the
+    """The longest the class's driver can run: its wait budget (every wait it places draws on it, BUDGET_JS; the snapshots
+    and the provisional-row read race against what is left of it, budget.bounded, so they are inside this term) plus the
     work between the waits that the budget does not cover, each at its own bound: the down dwell, the hub restart, the
-    change bundles (A, D, B and, with the local drop, C), the phases' settles, the launch and the snapshots. Pinned
-    under DRIVER_TIMEOUT_S by tests/test_federated_linkdrop_driver_bound.py."""
+    change bundles (A, D, B and, with the local drop, C), the phases' settles, and DRIVER_FIXED_S (the launch at
+    playwright's default timeout and the work between the waits). The browser's close after the RESULT line is outside
+    this sum: it discards no measurement (_drive keeps a RESULT the kill left whole). Pinned under DRIVER_TIMEOUT_S by
+    tests/test_federated_linkdrop_driver_bound.py, which reports the headroom."""
     phases = 3 if cls.local_drop else 2
     restart = hub_restart_bound_s() if cls.local_drop else 0.0
     return ((cls.driver_budget_ms + cls.down_dwell_ms + phases * PHASE_SETTLE_MS) / 1000.0 + restart
@@ -447,9 +459,12 @@ class _Control(threading.Thread):
 # The driver's waits share ONE budget (cfg.driverBudgetMs, the class's driver_budget_ms): every timeout the driver hands
 # playwright and every poll loop of its own is capped at what is left of it, so a wait that never comes spends the budget
 # once, every later wait returns at once and is recorded as expired, and the driver ends inside its subprocess timeout
-# (DRIVER_TIMEOUT_S) instead of pytest-timeout ending the whole served pytest process at CI's per-test cap. Pure in `now`
-# and `sleep`, so tests/test_federated_linkdrop_driver_bound.py runs it under node with a clock of its own; DRIVER opens
-# with it.
+# (DRIVER_TIMEOUT_S) instead of pytest-timeout ending the whole served pytest process at CI's per-test cap. A page read with
+# no timeout of its own (page.evaluate takes no timeout option and waits on the page's promise with no default bound: the
+# snapshots, the provisional-row read) goes through `bounded`, a race against what is left of the budget that records an
+# expiry and returns the caller's fallback (the maintainer's round 6, extra4-2: those reads were allow-listed as calls known
+# not to wait). Pure in `now` and `sleep`, so tests/test_federated_linkdrop_driver_bound.py runs it under node with a clock
+# of its own; DRIVER opens with it.
 BUDGET_JS = r"""
 const makeBudget = ({ budgetMs, now, sleep, out }) => {
   const t0 = now();
@@ -460,7 +475,13 @@ const makeBudget = ({ budgetMs, now, sleep, out }) => {
     while (now() - s < cap) { if (await fn()) return true; await sleep(capped(250)); }
     out.timeouts.push(what + (left() === 0 ? " (the driver's wait budget was spent)" : "")); return false;
   };
-  return { left, capped, waitFor };
+  const expired = {};                                          // the race's own token: no page read returns it
+  const bounded = async (p, what, fallback) => {              // a read with no timeout of its own, raced against what is left of the budget
+    const v = await Promise.race([p, sleep(capped(left())).then(() => expired)]);
+    if (v !== expired) return v;
+    out.timeouts.push(what + " expired" + (left() === 0 ? " (the driver's wait budget was spent)" : "")); return fallback;
+  };
+  return { left, capped, waitFor, bounded };
 };
 """
 
@@ -480,7 +501,9 @@ try { browser = await chromium.launch(cfg.launch || {}); }
 catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
 const context = await browser.newContext({ viewport: { width: 1200, height: 700 } });
 const out = { pages: {}, marks: {}, phases: {}, tunnels: [], ctl: {}, timeouts: [], quietGaveUp: [], console: [], provBefore: null, died: null, budget: null };
-const budget = makeBudget({ budgetMs: cfg.driverBudgetMs, now: Date.now, sleep: (ms) => new Promise((r) => setTimeout(r, ms)), out });
+// the sleep's timer is unref'd: every bounded read leaves one pending for what was left of the budget, and a pending timer must not
+// hold the node process open after the drive (the browser connection holds it open through the drive, so the timer still fires on time)
+const budget = makeBudget({ budgetMs: cfg.driverBudgetMs, now: Date.now, sleep: (ms) => new Promise((r) => setTimeout(r, ms).unref()), out });
 const hook = (o) => {
   window.__socks = []; window.__sends = []; const W = window.WebSocket;
   const strip = (u) => o.stripCaps && u.indexOf("/remote/") !== -1 ? u.replace(/([?&])caps=[^&]*&?/, (m, sep) => sep).replace(/[?&]$/, "") : u;
@@ -516,7 +539,8 @@ const hook = (o) => {
 const pages = {};
 const APPS = cfg.apps;
 const mark = (k) => { out.marks[k] = Date.now(); };
-const snap = async (page) => page.evaluate(() => ({ socks: (window.__socks || []).map((s) => Object.assign({}, s, { frames: s.frames.slice() })), sends: (window.__sends || []).slice(), localUp: window.__rompLocalUp === undefined ? null : window.__rompLocalUp }));
+// a snapshot is a page.evaluate, a read with no timeout option: bounded by the budget (an expired snapshot is recorded in out.timeouts and reads as empty)
+const snap = async (page) => budget.bounded(page.evaluate(() => ({ socks: (window.__socks || []).map((s) => Object.assign({}, s, { frames: s.frames.slice() })), sends: (window.__sends || []).slice(), localUp: window.__rompLocalUp === undefined ? null : window.__rompLocalUp })), "snap", { socks: [], sends: [], localUp: null });
 const ctl = async (op, body) => {
   const r = await fetch(cfg.ctl + "/" + op, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
   const j = await r.json(); out.ctl[op + (body && body.phase ? ":" + body.phase : "")] = j; return j;
@@ -537,7 +561,7 @@ const quiet = async (what) => {
   }
   out.quietGaveUp.push(what);
 };
-const provText = () => pages.fleet ? pages.fleet.evaluate((sel) => { const e = document.querySelector(sel); return e ? e.textContent : null; }, cfg.provSel) : Promise.resolve(null);
+const provText = () => pages.fleet ? budget.bounded(pages.fleet.evaluate((sel) => { const e = document.querySelector(sel); return e ? e.textContent : null; }, cfg.provSel), "provText", null) : Promise.resolve(null);
 const cardSel = (ch, n) => '[data-key="a:notice:' + cfg.sid + ':' + ch.noticeKeys[n] + ':' + ch.noticeRevs[n] + '"]';
 const visible = async (ch) => {
   const v = { cards: [] };
@@ -750,8 +774,12 @@ class _LinkDrop(unittest.TestCase):
     def _boot(cls):
         if not os.path.isdir(os.path.join(EXT, "node_modules", "playwright")):
             raise unittest.SkipTest("extension deps absent (npm ci not run here), the served lab needs them")
-        probe = subprocess.run(["node", "-e", "const p=require(process.argv[1]);process.stdout.write(p.chromium.executablePath())",
-                                os.path.join(EXT, "node_modules", "playwright")], capture_output=True, text=True)
+        try:
+            probe = subprocess.run(["node", "-e", "const p=require(process.argv[1]);process.stdout.write(p.chromium.executablePath())",
+                                    os.path.join(EXT, "node_modules", "playwright")], capture_output=True, text=True, timeout=PROBE_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            raise AssertionError("the playwright browser probe (node resolving chromium's executable path) did not finish in %d s (PROBE_TIMEOUT_S, a quarter of "
+                                 "BOOT_ROOM_S): a wedged node, not a missing browser, so an error and no skip" % PROBE_TIMEOUT_S)
         if probe.returncode != 0 or not os.path.exists(probe.stdout.strip()):
             raise unittest.SkipTest("no playwright browser on this box, the served lab needs one (CI installs none)")
         cls._knobs()
@@ -793,7 +821,7 @@ class _LinkDrop(unittest.TestCase):
         cls.changes_made = []
         cls.ctl = _Control(cls)
         cls.ctl.start()
-        cls.result, cls.driver_error = None, None
+        cls.result, cls.driver_error, cls.driver_note = None, None, None
         cls._drive()
         cls.hub_row = cls._hub_tunnels_row()
         cls.remote_sha = (cls.hub_row or {}).get("kernelSha") or ""
@@ -963,8 +991,21 @@ class _LinkDrop(unittest.TestCase):
             p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=DRIVER_TIMEOUT_S,
                                env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
         except subprocess.TimeoutExpired as e:
+            # the driver prints its RESULT line before `await browser.close()`, so a kill at DRIVER_TIMEOUT_S can land in the close
+            # with the record whole in the partial output: that record is HELD, since a discarded measurement is not a hang (the
+            # maintainer's round 6, extra4-4); a RESULT line the kill truncated stays driver_error, and the kill is noted either way
             so = e.stdout if isinstance(e.stdout, str) else (e.stdout or b"").decode()
-            cls.driver_error = "driver timed out; partial output:\n%s" % so
+            line = next((ln for ln in so.splitlines() if ln.startswith("RESULT:")), None)
+            if line is None:
+                cls.driver_error = "driver timed out; partial output:\n%s" % so
+                return
+            try:
+                cls.result = json.loads(line[len("RESULT:"):])
+            except ValueError as err:
+                cls.driver_error = "driver timed out after printing a RESULT line the kill left truncated (%s); partial output:\n%s" % (err, so)
+                return
+            cls.driver_note = ("the driver outlived DRIVER_TIMEOUT_S (%d s) after printing its RESULT line and was killed in its close; the record is held whole "
+                               "(the browser's close is outside the arithmetic: it comes after the last mark and discards no measurement)" % DRIVER_TIMEOUT_S)
             return
         if p.returncode == 3:
             raise unittest.SkipTest("no playwright browser on this box, the served leg needs one (CI installs none)")
@@ -1029,7 +1070,7 @@ class _LinkDrop(unittest.TestCase):
                 k += ":" + str((r.get("data") or {}).get("ev"))
             by_kind[k] = by_kind.get(k, 0) + 1
         rec = {"lab": cls.__name__, "hub_root": cls.hub_root, "remote_root": cls.remote_root, "strip_caps": cls.strip_caps, "changes": list(cls.changes),
-               "remote_sha": cls.remote_sha, "driver_error": cls.driver_error, "result": cls.result, "remote_wire": cls.remote_wire,
+               "remote_sha": cls.remote_sha, "driver_error": cls.driver_error, "driver_note": cls.driver_note, "result": cls.result, "remote_wire": cls.remote_wire,
                "remote_sends": getattr(cls, "remote_sends", {}), "hub_diag_by_kind": by_kind, "hub_diag_rows": cls.hub_diag_rows,
                "remote_wsopen_relay": cls.remote_wsopen, "proxy_events": cls.proxy.events if cls.proxy else [], "hub_restarts": cls.hub_restarts,
                "changes_made": cls.changes_made}

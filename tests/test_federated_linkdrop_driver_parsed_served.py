@@ -107,13 +107,19 @@ waitForTimeout draws on the budget or is one of the two fixed dwells. The budget
 budget = makeBudget(...)`, held to exactly one by the driver cell; a second makeBudget, wherever it sits and whatever it is
 bound to, is refused, since its sleep would be a timer this census exempts and its poll a wait it reads as the budget's, with
 a deadline of its own. A bare `waitFor(` is the poll only when the tree binds that name to `budget.waitFor` in a scope the
-call sees; a bare wait-named call the tree binds to no poll is an unlisted form. A wait outside playwright and the budget is
+call sees; a bare wait-named call the tree binds to no poll is an unlisted form. A page's `evaluate` (UNTIMED_READS in the driver-bound
+module: a protocol read with no timeout option and no default bound, allow-listed at the pass-10 head as a call known not to
+wait, which it is not: the maintainer's round 6, extra4-2) is allowed only as the FIRST ARGUMENT of `budget.bounded(...)`, the
+budget's race of the read against what is left of it (BUDGET_JS), and is refused anywhere else, its promise awaited or bound
+before the race included. A wait outside playwright and the budget is
 refused by the ROAD to it, wherever the name appears as an identifier (a reference, a member name, a binding): a timer
 (setTimeout, setInterval, setImmediate, queueMicrotask) anywhere but the budget's own `sleep`, and there only when its delay
 is the sleep's own argument, resolved by scope to the sleep's first parameter (the poll hands it capped(250); a timer under
 the sleep with any other delay, nested a function deeper or not, is a wait the budget does not bound and is refused);
-`Promise` read anywhere but as that sleep's constructor or the object of a Promise.resolve or
-Promise.all call (an alias, a combinator that may never settle); `fetch` anywhere but as a callee, bare or as a member
+`Promise` read anywhere but as that sleep's constructor, the object of a Promise.resolve or
+Promise.all call, or the object of the Promise.race inside the budget's own maker (the function bound to `makeBudget`, whose
+`bounded` races a page read against the budget's sleep; a race anywhere else, an alias or another combinator is a promise that
+may never settle); `fetch` anywhere but as a callee, bare or as a member
 (counted there; an alias is refused); `Atomics`, `eval`, `Function`, `globalThis` and `global` (REFUSED_NAMES: script text
 or a name the census cannot read); a computed member call on a value the walk does not type (`x["set" + "Timeout"](...)`);
 and a SCRIPT_METHODS call (evaluate, evaluateHandle, waitForFunction, addInitScript and the rest) whose first argument is
@@ -134,9 +140,10 @@ a `timeout` on a launch or a context or a `waitUntil` on a navigation is a wait 
 there is an option the walk cannot name. Disclosed, the class the census cannot see, drawn as the rule over what the walk
 resolves to no receiver and not as a list of shapes: (1) a wait spelled by CONTROL FLOW rather than by a call the census
 reads: a loop whose exit is decided in its body (`for (;;) { if (await ...count()) break; }`, a flag a receiver read sets),
-a loop whose header reads no receiver (a busy loop over Date.now, in the driver or in a callback handed to evaluate or
-waitForFunction), CPU-bound work, and an awaited object whose `then` never settles, since the census reads call sites and
-their timeouts and resolves no loop's exit beyond the header rule and the cycle rule above; (2) a call of a known global (`String`,
+a loop whose header reads no receiver (a busy loop over Date.now in the driver; one inside a callback handed to evaluate is
+bounded by budget.bounded since pass 11, and one handed to waitForFunction by its capped timeout), CPU-bound work, and an awaited
+object whose `then` never settles, since the census reads call sites and their timeouts and resolves no loop's exit beyond the
+header rule and the cycle rule above; (2) a call of a known global (`String`,
 `setTimeout` inside the sleep, `fetch`) or of a known member of a global or a module (`Date.now`, `JSON.parse`, the driver's
 own `fs.readFileSync`), with ANY argument and however the member is reached (the root's name, an alias of the root, the
 member bound to a name, a name imported from the module): the census keys on WHICH global is read, WHICH module is loaded
@@ -146,8 +153,10 @@ it, a blocking one included; a member the driver does not read (`process.binding
 by construction; (3) an option a receiver call is handed as a VALUE the walk does not type: the driver's
 `chromium.launch(cfg.launch || {})` reads its launch options from the config, which the lab writes with no `launch` key (the
 config cell reads the dict literal the lab's _drive writes and pins it), so the launch runs on playwright's defaults, its own
-launch timeout among them, a wait outside the budget that the arithmetic does not count and no census reads. The budget is a
-deadline and bounds none of it. DISCLOSED names the plant rows of that class, witness rows for each member (several spellings
+launch timeout among them; the launch is outside the budget and read by no census, and the arithmetic CARRIES it as a fixed
+term at that default (the served module's LAUNCH_TIMEOUT_S inside DRIVER_FIXED_S, whose comment states the term and the
+arithmetic pin that holds it; the maintainer's round 6, extra4-1: an earlier sentence here called it a wait the arithmetic
+does not count). The budget is a deadline and bounds none of the three. DISCLOSED names the plant rows of that class, witness rows for each member (several spellings
 of the second), which pass by disclosure and are pinned as passing, so a census that learns to see one says so. The two
 fetches (ctl and tunnelsStatus) stay the acknowledged driver_error road, pinned at two.
 
@@ -268,7 +277,7 @@ KNOWN_GLOBALS = ("Array", "Date", "JSON", "Math", "Object", "Promise", "String",
 # list over the unplanted driver. A member reached through an alias of the root, bound to a name, or imported from the module
 # by name is the same member; what the member is called with is not read (the disclosed class, the module docstring).
 KNOWN_MEMBERS = (("Array", "isArray"), ("Date", "now"), ("JSON", "parse"), ("JSON", "stringify"), ("Math", "max"), ("Math", "min"),
-                 ("Object", "assign"), ("Object", "keys"), ("Promise", "all"), ("Promise", "resolve"), ("console", "error"), ("console", "log"),
+                 ("Object", "assign"), ("Object", "keys"), ("Promise", "all"), ("Promise", "race"), ("Promise", "resolve"), ("console", "error"), ("console", "log"),
                  ("document", "querySelector"), ("node:fs", "readFileSync"), ("process", "env"), ("process", "exit"),
                  ("window", "WebSocket"), ("window", "__rompLocalUp"), ("window", "__sends"), ("window", "__socks"))
 # the parents whose FIRST identifier child is a name being declared, not a reference read; and the parents under which an
@@ -353,6 +362,7 @@ class Walk:
         self.calls, self.waits, self.fetches, self.timers, self.imports, self.requires, self.poll_bindings, self.require_bindings = [], [], [], [], [], [], [], []
         self.globals, self.member_reads, self.options = {}, {}, {}
         self.budget_bindings = []   # the lines of the driver's one `const budget = makeBudget(...)` (a second makeBudget is a refusal)
+        self.bounded_reads = []     # the lines of every budget.bounded(...) call: the untimed reads (UNTIMED_READS) must sit as its first argument
         self.call_edges = set()     # (id(enclosing fn), id(callee fn)) for every call the walk follows: a cycle is a helper that recurs
         self.fn_nodes = {}          # id(fn node) -> the node, for the refusal at a cycle's helper
         self._declare_all()
@@ -688,6 +698,8 @@ class Walk:
                 self._options(n, ko, method, args)
                 if method in SCRIPT_METHODS:
                     self._script_arg(n, method, args)
+                if method in B.UNTIMED_READS.get(ko, ()):
+                    self._bounded_read(n, ko, method)
                 if WAIT_NAME.fullmatch(method):
                     self.waits.append(self._site(".waitFor" if method == "waitFor" else method, n, args))
                 if method in B.LOCATOR_MAKERS and ko in ("page", "locator"):
@@ -696,6 +708,8 @@ class Walk:
             if ko == "budget":
                 if method == "waitFor":
                     self.waits.append(self._site("waitFor", n, args))
+                elif method == "bounded":
+                    self.bounded_reads.append(line)
                 elif method not in ("capped", "left"):
                     self.refuse(n, "a call on the budget the census does not know: %s" % method)
                 return None
@@ -722,6 +736,21 @@ class Walk:
             self.call_edges.add((id(f), kc[1]))
             f = self._enclosing_fn(f)
         return self.fn_ret.get(kc[1])
+
+    def _bounded_read(self, call, ko, method):
+        """An untimed protocol read (UNTIMED_READS: a page's evaluate, no timeout option, no default bound) must be the FIRST
+        argument of a `budget.bounded(...)` call, the budget's race against what is left of it; placed anywhere else (awaited or
+        bound before the race, a later argument, a value) it is a wait no budget bounds and is refused (the maintainer's round 6,
+        extra4-2: the pass-10 allow-list named evaluate a call known not to wait)."""
+        p = self.parent[id(call)]
+        if p is not None and p["k"] == "CallExpression":
+            pk = self.kids(p)
+            callee = pk[0]
+            if len(pk) > 1 and pk[1] is call and callee["k"] == "PropertyAccessExpression":
+                ck = self.kids(callee)
+                if self.kind_of(ck[0]) == "budget" and ck[1].get("t") == "bounded":
+                    return
+        self.refuse(call, "%s.%s outside budget.bounded(...): an untimed protocol read (no timeout option, no default bound) that no budget bounds; race it as budget.bounded's first argument" % (ko, method))
 
     def _options(self, call, ko, method, args):
         """The object-literal arguments of a receiver call, read by node: every property name is an option of that (kind, method)
@@ -912,7 +941,7 @@ class Walk:
         for _ in range(rounds):
             self.changed = False
             self.kinds = {}
-            self.calls, self.waits, self.fetches, self.imports, self.requires, self.poll_bindings, self.require_bindings, self.budget_bindings = [], [], [], [], [], [], [], []
+            self.calls, self.waits, self.fetches, self.imports, self.requires, self.poll_bindings, self.require_bindings, self.budget_bindings, self.bounded_reads = [], [], [], [], [], [], [], [], []
             self.refusals, self.invoked, self.globals, self.member_reads, self.options, self.call_edges = set(), set(), {}, {}, {}, set()
             for n in self.nodes:
                 self.kind_of(n)
@@ -1112,6 +1141,18 @@ class Walk:
             """The CallExpression `p` is the callee of, else None."""
             gp = self.parent[id(p)]
             return gp if gp is not None and gp["k"] == "CallExpression" and self.kids(gp)[0] is p else None
+
+        def in_budget_maker(n):
+            """Whether `n` sits inside the function bound to `makeBudget` (`const makeBudget = (...) => {...}`), the budget's
+            own maker, whose `bounded` races a read against the budget's sleep."""
+            p = self.parent[id(n)]
+            while p is not None:
+                if p["k"] in FN_KINDS:
+                    q = self.parent[id(p)]
+                    if q is not None and q["k"] == "VariableDeclaration" and self.kids(q)[0].get("t") == "makeBudget":
+                        return True
+                p = self.parent[id(p)]
+            return False
         why = "a wait outside playwright and the budget (a timer or a promise constructor that is not the budget's sleep)"
         for n in self.nodes:
             if n["k"] == "NewExpression" and self.kids(n) and self.kids(n)[0].get("t") == "Promise" and sleep_of(n) is None:
@@ -1130,9 +1171,10 @@ class Walk:
                 self.refuse(at, "%s: %s" % (t, REFUSED_NAMES[t]))
             elif t == "Promise":
                 as_ctor = p is not None and p["k"] == "NewExpression" and sleep_of(n) is not None
-                as_object = p is not None and p["k"] == "PropertyAccessExpression" and self.kids(p)[0] is n and self.kids(p)[1].get("t") in PROMISE_ALLOWED and callee_of(p) is not None
+                member = self.kids(p)[1].get("t") if p is not None and p["k"] == "PropertyAccessExpression" and self.kids(p)[0] is n else None
+                as_object = member is not None and callee_of(p) is not None and (member in PROMISE_ALLOWED or (member == "race" and in_budget_maker(n)))
                 if not (as_ctor or as_object):
-                    self.refuse(at, "Promise read anywhere but as the budget's sleep constructor or as the object of a Promise.%s call: an alias or another combinator is a promise this census cannot see settle, a wait with no timer name" % "/Promise.".join(PROMISE_ALLOWED))
+                    self.refuse(at, "Promise read anywhere but as the budget's sleep constructor, as the object of a Promise.%s call, or as the object of the Promise.race inside the budget's own maker: an alias or another combinator is a promise this census cannot see settle, a wait with no timer name" % "/Promise.".join(PROMISE_ALLOWED))
             elif t == "fetch":
                 bare = p is not None and p["k"] == "CallExpression" and self.kids(p)[0] is n
                 member = p is not None and p["k"] == "PropertyAccessExpression" and self.kids(p)[1] is n and callee_of(p) is not None
@@ -1172,7 +1214,7 @@ def census(src, tree):
                 uncapped.append((line, form, first))
     return {"refusals": sorted(w.refusals), "unlisted": unlisted, "unlisted_waits": unlisted_waits, "uncapped": uncapped,
             "dwells": sorted(dwells), "fetches": len(w.fetches), "calls": w.calls, "waits": w.waits, "poll_bindings": w.poll_bindings,
-            "require_bindings": w.require_bindings, "budget_bindings": w.budget_bindings, "globals": sorted(w.globals), "member_reads": sorted(w.member_reads),
+            "require_bindings": w.require_bindings, "budget_bindings": w.budget_bindings, "bounded": w.bounded_reads, "globals": sorted(w.globals), "member_reads": sorted(w.member_reads),
             "options": sorted(w.options), "walk": w}
 
 
@@ -1203,11 +1245,11 @@ SEL = "cfg.provSel"
 # computed-method, newline-chain, paren-receiver, param-default, space-before-dot-wait, method-ref-binding, reflect-get,
 # third-fetch, set-default-timeout, bracket-page-control and template-string (four of them by an accident of spelling), and of
 # the fixer's, fetch-globalthis; the review record outside the repo carries that table, and no count is kept here.
-CONTROLS = ("count-control", "identity-control", "hook-control", "evaluate-fn-control", "bracket-locator-count-control")
+CONTROLS = ("count-control", "identity-control", "hook-control", "evaluate-fn-control", "bracket-locator-count-control", "evaluate-busy-bounded-control")
 # the disclosed class, passing by disclosure (the rule is the module docstring's Disclosed paragraph; these are its witness rows,
 # by member): a wait with no timer, promise, script, module or playwright name as a node, and a call on a root the walk resolves
 # to no receiver and reads nothing of (a known global or a known member of a global or a module, with any argument, however reached)
-DISCLOSED = ("busy-loop", "evaluate-busy", "thenable-await", "poll-break-loop", "cpu-bound-work", "array-sort-cpu", "date-now-bound-busy",
+DISCLOSED = ("busy-loop", "thenable-await", "poll-break-loop", "cpu-bound-work", "array-sort-cpu", "date-now-bound-busy",
              "fs-blocking-read", "fs-blocking-fifo", "fs-alias-read", "fs-member-bound", "named-import-known-member", "fs-default-import-read", "fs-namespace-import-read")
 PLANTS = (
     ("var-held-page", "const p = pages.feed; await p.locator(cfg.provSel).textContent();", "unlisted"),
@@ -1275,7 +1317,15 @@ PLANTS = (
     ("indirect-eval", 'const ev = eval; await ev("new Promise((r) => setTimeout(r, 100000))");', "refused"),
     ("function-ctor-bare", 'await Function("return new Promise((r) => setTimeout(r, 100000))")();', "refused"),
     ("hook-control", "await pages.feed.addInitScript(hook, { stripCaps: false });", "passed"),
-    ("evaluate-fn-control", "await pages.feed.evaluate(() => 1);", "passed"),
+    ("evaluate-fn-control", 'await budget.bounded(pages.feed.evaluate(() => 1), "c", null);', "passed"),
+    # pass 11 (the maintainer's round 6, extra4-2): a page's evaluate takes no timeout and waits on the page with no default bound, so it is
+    # an untimed read allowed only as budget.bounded's first argument; unbounded, or awaited before the race, it is refused
+    ("evaluate-unbounded", "await pages.feed.evaluate(() => 1);", "refused"),
+    ("evaluate-awaited-before-race", 'await budget.bounded(await pages.feed.evaluate(() => 1), "c", null);', "refused"),
+    ("evaluate-bound-then-raced", 'const ep = pages.feed.evaluate(() => 1); await budget.bounded(ep, "c", null);', "refused"),
+    ("evaluate-busy", "await pages.feed.evaluate(() => { const t0 = Date.now(); while (Date.now() - t0 < 100000) {} });", "refused"),
+    ("evaluate-busy-bounded-control", 'await budget.bounded(pages.feed.evaluate(() => { const t0 = Date.now(); while (Date.now() - t0 < 100000) {} }), "b", null);', "passed"),
+    ("promise-race-outside-maker", 'const rp = await Promise.race([pages.feed.evaluate(() => 1), Promise.resolve(null)]);', "refused"),
     # a module loaded any way but the driver's
     ("dynamic-import-timers", 'const tp = await import("node:timers/promises"); await tp.scheduler.wait(100000);', "refused"),
     ("dynamic-import-bracket", 'await (await import("node:timers/promises"))["setTimeout"](100000);', "refused"),
@@ -1299,7 +1349,6 @@ PLANTS = (
     # the disclosed class (DISCLOSED; the rule is the module docstring's Disclosed paragraph), its first member: no timer, promise,
     # script, module or playwright name as a node of the tree
     ("busy-loop", "for (const t0 = Date.now(); Date.now() - t0 < 100000;) {}", "passed"),
-    ("evaluate-busy", "await pages.feed.evaluate(() => { const t0 = Date.now(); while (Date.now() - t0 < 100000) {} });", "passed"),
     ("thenable-await", "await { then() {} };", "passed"),
     # pass 10 (the maintainer's round 5, tests-1): an identity helper, an arrow whose expression body is a bare identifier, returns its parameter
     ('walked-param-identity', 'const asPage = (page) => page; await asPage(pages.feed).locator(cfg.provSel).textContent();', 'unlisted'),
@@ -1431,6 +1480,8 @@ REFUSED_CELLS = {
     "atomics": ("Atomics.wait(x, 0, 0, 1);", "Atomics"),
     "globalthis": ("globalThis.x = 1;", "globalThis"),
     "computed-callee": ('x["a" + "b"]();', "a computed member call on a value the walk does not type"),
+    # pass 11 (the maintainer's round 6, extra4-2): an untimed read outside the budget's race
+    "evaluate-unbounded": ("await pages.feed.evaluate(() => 1);", "page.evaluate outside budget.bounded"),
     # pass 10 (the maintainer's round 5, tests-2): the branches no cell and no PLANTS row fired, each with its own cell now, so the
     # derived coverage assertion below is green (it is what closes the class; these cells are what it needs)
     "ternary-two-types": ("const p = cfg.x ? pages.feed : pages.feed.locator(s);", "yields a page and a locator"),
@@ -1551,13 +1602,17 @@ class TheDriverParsed(unittest.TestCase):
         self.assertEqual(c["budget_bindings"], [L.DRIVER.count("\n", 0, L.DRIVER.index("const budget = makeBudget(")) + 1],
                          "the module scope makes the driver's one budget, `const budget = makeBudget(...)`, exactly once (every other makeBudget is a refusal above): %r" % (c["budget_bindings"],))
         self.assertGreaterEqual(len(c["waits"]), 16, "the census saw the driver's wait sites (16 at the pass-9 head): %d" % len(c["waits"]))
+        evaluates = [ln for k, m, ln in c["calls"] if (k, m) == ("page", "evaluate")]
+        self.assertEqual(len(c["bounded"]), len(evaluates), "every page.evaluate of the driver (%r) sits inside a budget.bounded(...) call (%r), and the budget races nothing else" % (evaluates, c["bounded"]))
+        self.assertGreaterEqual(len(evaluates), 2, "the walk saw the driver's untimed reads (the snapshot and the provisional-row read): %r" % (evaluates,))
 
     def test_the_config_the_lab_writes_hands_the_launch_no_options(self):
         """The disclosed class's third member, pinned: the driver's `chromium.launch(cfg.launch || {})` hands the launch its
         config's `launch` key, a value the walk does not type. The config is the dict literal the lab's _drive writes to cfg.json,
         read here from the served module's parse: every key is a string constant (so the check is total) and none is `launch`,
-        so the launch runs on playwright's defaults (no slowMo, its own launch timeout, which the arithmetic does not count), and a
-        `launch` key added to the config is a red here until this census reads what it carries."""
+        so the launch runs on playwright's defaults (no slowMo, its own launch timeout, LAUNCH_TIMEOUT_S, which the arithmetic
+        carries as a fixed term inside DRIVER_FIXED_S: the maintainer's round 6, extra4-1), and a `launch` key added to the config is
+        a red here until this census reads what it carries."""
         with open(L.__file__, encoding="utf-8") as f:
             tree = ast.parse(f.read())
         drive = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_drive")
@@ -1586,8 +1641,12 @@ class TheDriverParsed(unittest.TestCase):
             "poll": PRELUDE_NAMES_JS + "const budget = makeBudget({}); const waitFor = budget.waitFor; await waitFor(async () => true, 1000, \"w\"); await budget.waitFor(fn, 1, \"w\"); const inner = () => { const waitFor = async () => true; return waitFor(); };",
             "invoked-helpers": root + "const inv = (f) => f(); await inv(() => pages.feed).locator(s).count(); const pi = await (async () => pages.feed)(); await pi.locator(s).count(); "
                                       "const gp = () => pages.feed; const alias = gp; await alias().locator(s).count(); const fns = [() => 1]; await fns[0]();",
-            "scripts-and-names": root + "const hk = (o) => { window.__socks = o; }; await pages.feed.addInitScript(hk, { stripCaps: false }); await pages.feed.evaluate(() => 1); "
+            "scripts-and-names": root + "const hk = (o) => { window.__socks = o; }; await pages.feed.addInitScript(hk, { stripCaps: false }); await budget.bounded(pages.feed.evaluate(() => 1), \"e\", null); "
                                         "await pages.feed.waitForFunction(() => true, null, { timeout: budget.capped(x) }); await Promise.all([]); const q = Promise.resolve(null); await fetch(u); await fetch(u);",
+            # the budget's own maker may race a read against its sleep (BUDGET_JS's bounded); the same race anywhere else is refused (REFUSED_CELLS promise-race)
+            "budget-maker-race": 'import { createRequire } from "node:module"; const require = createRequire(process.env.EXT_PKG); let s, x, u, f, fn, app, cfg, APPS, mth, read, Wrapper, holder; '
+                                 "const makeBudget = ({ sleep, out }) => { const gone = {}; const bounded = async (p, what) => { const v = await Promise.race([p, sleep(1).then(() => gone)]); return v === gone ? null : v; }; return { bounded }; }; "
+                                 "const budget = makeBudget({});",
         }
         trees = parse_js(list(cells.items()))[1]
         for name, src in cells.items():

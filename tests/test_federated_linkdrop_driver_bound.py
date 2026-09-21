@@ -31,7 +31,9 @@ kernel or a browser:
   must be one ALLOWED_CALLS names for that receiver kind, because a deny-list's gap passes (the pass-7 head listed the
   auto-waiting ACTIONS and not the auto-waiting locator READS, so `locator(...).textContent()`, which inherits playwright's
   30 s default that no budget caps, kept the census green while the pinned headroom under the subprocess timeout is 7.5 s
-  and 27.5 s); `evaluate` is allowed on a page receiver only, since a locator's evaluate auto-waits. Pass 8's fixer pass
+  and 27.5 s); `evaluate` is allowed on a page receiver only, since a locator's evaluate auto-waits, and since pass 11 only as
+  the first argument of budget.bounded(...), the budget's race against what is left of it, since a page's evaluate takes no
+  timeout option and waits on the page with no default bound (UNTIMED_READS; the maintainer's round 6, extra4-2). Pass 8's fixer pass
   closed the walk's own gap: the walk follows chains on the names it knows (page, pages, context, browser, chromium),
   so a receiver or a locator reachable under any other name was invisible to it and a bound locator's read left the census
   green; it refuses a binding or assignment to a name outside WALKED_NAMES, a locator-making call whose chain ends on it and
@@ -102,15 +104,23 @@ FIXED_DWELLS = ("cfg.phaseSettleMs", "cfg.downDwellMs")
 CAPPED = re.compile(r"budget\.capped\(\s*[\w.]+\s*\)")
 AUTO_WAITING_ACTIONS = ("click", "dblclick", "fill", "press", "type", "check", "uncheck", "hover", "tap", "selectOption", "setInputFiles", "dragTo", "focus")
 # The calls the driver may make on a playwright receiver, by the receiver's kind (the maintainer's round 3, regression-2): an ALLOW-list, so a
-# call it does not name fails by name whatever it is, where a deny-list's gap passes. Measured at this head (the refuter's
-# probe against the lab's playwright): locator.textContent, innerText, ariaSnapshot and locator.evaluate auto-wait under the
-# 30 s default; count, first, isVisible, isHidden, allTextContents and allInnerTexts do not. Only what the driver calls today
-# is listed: `evaluate` on a PAGE receiver (snap, provText) and not on a locator; the wait forms here (goto, waitForFunction,
-# waitForTimeout, waitFor) are the census's above, which requires their timeouts capped. A new call is added here with its
-# receiver kind once it is known not to wait, or added to WAIT_FORMS as a wait the budget caps.
+# call it does not name fails by name whatever it is, where a deny-list's gap passes. Every allowed call is in ONE of three
+# classes, and the rule is the split, not "known not to wait" (the maintainer's round 6, extra4-2: `evaluate` was listed under
+# that phrase and is not one): (1) a call with no round trip to the page, or one that does not auto-wait (measured at the
+# pass-8 head, the refuter's probe against the lab's playwright: locator.textContent, innerText, ariaSnapshot and a locator's
+# evaluate auto-wait under the 30 s default; count, first, isVisible, isHidden, allTextContents and allInnerTexts do not;
+# locator, on, addInitScript, newContext, newPage, launch and close are the driver's makers and hooks, the launch carried by the
+# arithmetic as a fixed term, LAUNCH_TIMEOUT_S); (2) a wait form, WAIT_FORMS, whose timeout the census above requires to be one
+# budget.capped(...) call; (3) an UNTIMED PROTOCOL READ, UNTIMED_READS (a page's evaluate: no timeout option, no default bound,
+# a wedged renderer holds it open), allowed ONLY as the first argument of budget.bounded(...), the budget's race of the read
+# against what is left of it (BUDGET_JS), which the arithmetic cell checks here by spelling (_bounded_reads) and the parsed
+# census by node. The classification is per CALL SITE wherever the site sits: a helper's inner calls are judged at their own
+# lines (provText's evaluate, reached from visible, is judged where it is written), so no call is classified by the helper it
+# sits in and no transitive rule is needed. A new call is added here in its class, or added to WAIT_FORMS as a wait the budget caps.
 ALLOWED_CALLS = {"page": ("locator", "evaluate", "goto", "waitForFunction", "waitForTimeout", "on", "addInitScript"),
                  "locator": ("first", "count", "waitFor"),
                  "context": ("newPage",), "browser": ("newContext", "close"), "chromium": ("launch",)}
+UNTIMED_READS = {"page": ("evaluate",)}   # class (3): allowed only as budget.bounded's first argument (BOUNDED_READ, below RECV_EXPR, is its spelling here)
 LOCATOR_MAKERS = ("locator", "first", "last", "nth", "filter", "and", "or", "getByText", "getByRole", "getByTestId", "getByLabel", "getByPlaceholder", "getByAltText", "getByTitle")
 RECEIVERS = re.compile(r"\b(?P<recv>pages\.\w+|pages\[(?:[^\[\]]|\[[^\[\]]*\])*\]|page|context|browser|chromium)(?=\s*\.)")
 MEMBER = re.compile(r"\s*\.\s*(?P<name>[\w$]+)\s*")
@@ -125,6 +135,7 @@ MEMBER = re.compile(r"\s*\.\s*(?P<name>[\w$]+)\s*")
 # measured rows (no count is kept here).
 WALKED_NAMES = ("page", "pages", "context", "browser", "chromium")
 RECV_EXPR = r"pages(?:\.\w+|\[[^\[\]]*\])?|page|context|browser|chromium"
+BOUNDED_READ = re.compile(r"budget\.bounded\(\s*(?P<recv>%s)\s*\.\s*evaluate\s*\(" % RECV_EXPR)   # class (3)'s spelling: the read opening budget.bounded's argument list
 BINDING = re.compile(r"(?:\b(?:const|let|var)\s+)?(?P<target>[\w$]+(?:\s*(?:\.\s*[\w$]+|\[[^\[\]]*\]))*|[\[{][^=;]*[\]}])\s*(?<![=!<>])=(?![=>])\s*(?:await\s+)?(?P<recv>%s)(?![\w$])" % RECV_EXPR)
 WALKED_TARGET = re.compile(r"page|context|browser|chromium|pages(?:\.\w+|\[[^\[\]]*\])?")
 PASSED_BARE = re.compile(r"(?:(?P<callee>[\w$]+(?:\.[\w$]+)*)\s*\(|,)\s*(?P<recv>%s)\s*(?=[,)])(?!\s*\)\s*=>)" % RECV_EXPR)   # not an arrow's parameter list
@@ -349,6 +360,18 @@ const out2 = { timeouts: [] }; clock = 0; let n = 0;
 const b2 = makeBudget({ budgetMs: 1000, now, sleep, out: out2 });
 res.r3 = await b2.waitFor(async () => ++n >= 3, 5000, "w3");
 res.clock3 = clock; res.left3 = b2.left(); res.timeouts3 = out2.timeouts;
+// the bounded read (pass 11): a read that settles returns its value and records nothing; one that never settles returns the
+// fallback when the budget's remaining time is spent and records the expiry; with the budget spent it returns at once
+const out3 = { timeouts: [] }; clock = 0;
+const b3 = makeBudget({ budgetMs: 1000, now, sleep, out: out3 });
+res.b1 = await b3.bounded(Promise.resolve(42), "settled", "fb");
+res.timeoutsB1 = out3.timeouts.slice();
+const out4 = { timeouts: [] }; clock = 0;
+const b4 = makeBudget({ budgetMs: 1000, now, sleep, out: out4 });
+res.b2 = await b4.bounded(new Promise(() => {}), "never", "fb");
+res.clockB2 = clock; res.leftB2 = b4.left(); res.timeoutsB2 = out4.timeouts.slice();
+res.b3 = await b4.bounded(new Promise(() => {}), "after", { empty: true });
+res.clockB3 = clock; res.timeoutsB3 = out4.timeouts.slice();
 console.log("RESULT:" + JSON.stringify(res));
 """
 
@@ -373,6 +396,8 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
             self.assertGreater(worst, cls.driver_budget_ms / 1000.0 + L.hub_restart_bound_s(),
                                "the worst case counts more than the budget and the restart (the bundles, the dwell, the settles): %r" % (worst,))
             self.assertLess(worst, L.DRIVER_TIMEOUT_S, "%s's driver at its worst (%.1f s) ends before its subprocess timeout (%d s)" % (cls.__name__, worst, L.DRIVER_TIMEOUT_S))
+            print("%s: driver_worst_case_s %.1f s, headroom %.1f s under DRIVER_TIMEOUT_S %d s (the launch term %d s of DRIVER_FIXED_S %d s)"
+                  % (cls.__name__, worst, L.DRIVER_TIMEOUT_S - worst, L.DRIVER_TIMEOUT_S, L.LAUNCH_TIMEOUT_S, L.DRIVER_FIXED_S))
             self.assertGreaterEqual(cls.down_dwell_ms, L.DOWN_WINDOW_MARGIN * cls.wait_ms + L.DOWN_READ_ROOM_MS,
                                     "%s's down dwell (%d ms) holds DOWN_WINDOW_MARGIN (%g) times wait_ms (%d ms), the cap waitVisible puts on the delivery the "
                                     "gate legs measure the dwell against, plus DOWN_READ_ROOM_MS (%d ms) for the reads after the wait (seen.waitedMs is stamped "
@@ -383,6 +408,14 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
                                     % (cls.__name__, cls.down_dwell_ms, L.DOWN_WINDOW_MARGIN, cls.wait_ms, L.DOWN_READ_ROOM_MS, int(L.DOWN_READ_ROOM_MS / L.DOWN_WINDOW_MARGIN)))
         self.assertLessEqual(L.DRIVER_TIMEOUT_S + L.BOOT_ROOM_S, L.CI_TEST_TIMEOUT_S,
                              "the subprocess timeout leaves BOOT_ROOM_S of CI's per-test cap for the rest of setUpClass")
+        # the launch is carried as a fixed term (the maintainer's round 6, extra4-1: a sentence called it a wait the arithmetic does not
+        # count, while DRIVER_FIXED_S's launch term is load-bearing against the headroom above; a term deleted from the sum would
+        # understate the driver by the launch and stay green, so the coupling is executed here)
+        self.assertEqual(L.LAUNCH_TIMEOUT_S, 30, "the launch term is playwright's default launch timeout, 30 s: chromium.launch is handed no timeout option (the parsed "
+                                                 "module's config cell pins the lab writes no `launch` key), so that default is the bound the launch runs under")
+        self.assertGreaterEqual(L.DRIVER_FIXED_S, L.LAUNCH_TIMEOUT_S, "DRIVER_FIXED_S carries the launch at its bound (%d s): a sum without the launch term is no bound on the driver" % L.LAUNCH_TIMEOUT_S)
+        self.assertGreater(L.PROBE_TIMEOUT_S, 0, "the browser probe has a bound of its own")
+        self.assertLessEqual(L.PROBE_TIMEOUT_S, L.BOOT_ROOM_S, "the browser probe's bound is inside BOOT_ROOM_S, the room the arithmetic leaves setUpClass outside the drive")
         served = self._served_step_line()
         self.assertIn("--timeout=%d --timeout-method=thread" % L.CI_TEST_TIMEOUT_S, served,
                       "CI_TEST_TIMEOUT_S is the cap the served step runs under: %r" % (served,))
@@ -435,6 +468,13 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
                               ("page", "addInitScript"), ("locator", "first"), ("locator", "count"), ("locator", "waitFor"), ("context", "newPage"),
                               ("browser", "newContext"), ("browser", "close"), ("chromium", "launch")}, {(kind, name) for kind, name, _ in calls},
                              "the walk is not vacuous: every receiver call the driver makes today is seen, by kind: %r" % (sorted({(kind, name) for kind, name, _ in calls}),))
+        # class (3) of the allow-list: every untimed read sits as budget.bounded's first argument (the spelling BOUNDED_READ; the parsed census reads the rule by node)
+        untimed = [(kind, name, ln) for kind, name, ln in calls if name in UNTIMED_READS.get(kind, ())]
+        bounded = [driver.count("\n", 0, m.start()) + 1 for m in BOUNDED_READ.finditer(driver)]
+        self.assertTrue(untimed, "the census saw the driver's untimed reads (the snapshot's and the provisional row's page.evaluate)")
+        self.assertEqual(sorted(ln for _, _, ln in untimed), sorted(bounded),
+                         "an untimed protocol read (a page's evaluate takes no timeout option and has no default bound) outside budget.bounded(...), the budget's race "
+                         "against what is left of it: the reads at %r, the bounded reads at %r" % (untimed, bounded))
         # the walk's own gap (pass 8's fixer pass): a receiver or a locator reaching a name the walk does not follow is refused
         self.assertEqual(escapes, [], "a locator made on a playwright receiver and not consumed by a call in its own chain (stored, returned or passed on) is read "
                                       "under a name the walk does not follow, so its reads never reach the allow-list (the spellings this walk reads: a receiver written "
@@ -1128,6 +1168,79 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         self.assertEqual(unread, [], "every value the cfg carries is read by the driver by name: %r" % (unread,))
         self.assertEqual(set(Drive.waits_ms), set(re.findall(r"cfg\.waitsMs\.(\w+)", driver)), "…and the driver reads no cap the class does not send")
 
+    def test_the_browser_probe_is_bounded_and_a_hang_there_is_an_error_not_a_skip(self):
+        """_boot's playwright-browser probe, the one subprocess of setUpClass that had no timeout (the maintainer's round 6, extra4-3),
+        runs under PROBE_TIMEOUT_S: with a `node` on PATH that never answers and the bound at one second, _boot raises an
+        AssertionError naming the bound (a wedged node is not a missing browser, so the no-browser skip is wrong for it, and under
+        ROMP_SERVED_TESTS_REQUIRE=1 a skip would be a red with the wrong words); with a node that exits non-zero the skip stands.
+        Red before: the probe ran with no timeout, so a hang there ran to pytest-timeout's cap and ended the served process."""
+        stub = tempfile.mkdtemp(prefix="linkdrop-node-stub-")
+        self.addCleanup(shutil.rmtree, stub, True)
+        scratch = tempfile.mkdtemp(prefix="linkdrop-probe-ext-")
+        self.addCleanup(shutil.rmtree, scratch, True)
+        os.makedirs(os.path.join(scratch, "node_modules", "playwright"))
+        node = os.path.join(stub, "node")
+
+        def stub_node(body):
+            with open(node, "w", encoding="utf-8") as f:
+                f.write("#!/bin/sh\n" + body + "\n")
+            os.chmod(node, 0o755)
+
+        class Boot(L._LinkDrop):
+            pass
+        stub_node("exec sleep 5")
+        with mock.patch.object(L, "EXT", scratch), mock.patch.object(L, "PROBE_TIMEOUT_S", 1), mock.patch.dict(os.environ, {"PATH": stub + os.pathsep + os.environ.get("PATH", "")}):
+            try:
+                Boot._boot()
+            except AssertionError as e:
+                got = e
+            except unittest.SkipTest as e:   # caught by name: a SkipTest escaping an assertRaises would skip this pin instead of redding it
+                self.fail("the probe's hang was read as a skip (the no-browser text, or another): %s" % e)
+            else:
+                self.fail("_boot returned past a probe that never answered")
+        self.assertIn("did not finish in 1 s", str(got), "the probe's hang is an error naming its bound: %s" % got)
+        self.assertNotIn("no playwright browser", str(got), "a hang is not the missing-browser skip")
+        stub_node("exit 7")
+        with mock.patch.object(L, "EXT", scratch), mock.patch.object(L, "PROBE_TIMEOUT_S", 1), mock.patch.dict(os.environ, {"PATH": stub + os.pathsep + os.environ.get("PATH", "")}):
+            with self.assertRaises(unittest.SkipTest) as cm:
+                Boot._boot()
+        self.assertIn("no playwright browser", str(cm.exception), "a probe that answers no browser stays the skip: %s" % cm.exception)
+
+    def test_a_drive_that_outlives_its_timeout_keeps_the_result_it_printed(self):
+        """_drive's TimeoutExpired branch (the maintainer's round 6, extra4-4): the driver prints its RESULT line before `await
+        browser.close()`, so a kill at DRIVER_TIMEOUT_S can land in the close with the record whole in the partial output. Under
+        node with a stub driver and the timeout at one second: a RESULT line followed by a sleep past the timeout leaves the record
+        HELD (result parsed, no driver_error, the kill noted in driver_note naming DRIVER_TIMEOUT_S); a RESULT line the kill left
+        truncated (unbalanced JSON) stays driver_error naming the truncation, with no result; a driver that printed no RESULT stays
+        the timed-out driver_error. Red before: the branch discarded a complete RESULT it was already holding."""
+        if not shutil.which("node"):
+            raise unittest.SkipTest("node absent: the stub driver needs it")
+        record = 'console.log("RESULT:" + JSON.stringify({ marks: { end: 1 }, held: true }));\n'
+        hang = "await new Promise((r) => setTimeout(r, 30000));\n"
+        cases = (("held", record + hang, {"marks": {"end": 1}, "held": True}, None, "outlived DRIVER_TIMEOUT_S (1 s)"),
+                 ("truncated", 'console.log("RESULT:{\\"marks\\": {\\"end\\": 1");\n' + hang, None, "the kill left truncated", None),
+                 ("no result", 'console.log("starting");\n' + hang, None, "driver timed out; partial output", None))
+        for name, js, want_result, want_error, want_note in cases:
+            with self.subTest(driver=name):
+                lab = tempfile.mkdtemp(prefix="linkdrop-held-")
+                self.addCleanup(shutil.rmtree, lab, True)
+
+                class Drive(L._LinkDrop):
+                    pass
+                Drive.lab, Drive.hport, Drive.htoken, Drive.ctl = lab, 1, "testtok-held", types.SimpleNamespace(port=2)
+                Drive.result, Drive.driver_error, Drive.driver_note = None, None, None
+                with mock.patch.object(L, "DRIVER", js), mock.patch.object(L, "DRIVER_TIMEOUT_S", 1):
+                    Drive._drive()
+                self.assertEqual(Drive.result, want_result, "%s: the record %s: result %r, error %r" % (name, "is held" if want_result else "is not read", Drive.result, Drive.driver_error))
+                if want_error is None:
+                    self.assertIsNone(Drive.driver_error, "%s: no driver_error for a record the kill left whole: %r" % (name, Drive.driver_error))
+                else:
+                    self.assertIn(want_error, Drive.driver_error or "", "%s: the error names its cause: %r" % (name, Drive.driver_error))
+                if want_note is None:
+                    self.assertIsNone(Drive.driver_note)
+                else:
+                    self.assertIn(want_note, Drive.driver_note or "", "%s: the kill after the RESULT line is noted: %r" % (name, Drive.driver_note))
+
     def test_the_budget_binds_every_wait_under_node(self):
         if not shutil.which("node"):
             raise unittest.SkipTest("node absent: the budget's node run needs it")
@@ -1151,6 +1264,11 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         self.assertEqual(res["timeouts2"], ["w1" + spent, "w2" + spent])
         self.assertEqual((res["r3"], res["clock3"], res["left3"], res["timeouts3"]), (True, 500, 500, []),
                          "a wait that comes on its third poll spends only what it took and records nothing: %r" % (res,))
+        self.assertEqual((res["b1"], res["timeoutsB1"]), (42, []), "a bounded read that settles returns its value and records nothing: %r" % (res,))
+        self.assertEqual((res["b2"], res["clockB2"], res["leftB2"], res["timeoutsB2"]), ("fb", 1000, 0, ["never expired" + spent]),
+                         "a bounded read that never settles returns the fallback when what was left of the budget is spent, and records the expiry: %r" % (res,))
+        self.assertEqual((res["b3"], res["clockB3"], res["timeoutsB3"]), ({"empty": True}, 1001, ["never expired" + spent, "after expired" + spent]),
+                         "with the budget spent a bounded read returns its fallback at once (the race's sleep is never 0): %r" % (res,))
 
 
 if __name__ == "__main__":
