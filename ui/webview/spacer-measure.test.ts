@@ -497,14 +497,30 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   const allCalls: ts.CallExpression[] = [], refs: ts.Identifier[] = [], strings = new Set<string>(), avgWrites: string[] = [];
   // a node that names the average: a property access or an element access on `avgTurnH`
   const namesAvg = (e: ts.Node): boolean => (ts.isPropertyAccessExpression(e) && e.name.text === "avgTurnH") || (ts.isElementAccessExpression(e) && ts.isStringLiteralLike(e.argumentExpression) && e.argumentExpression.text === "avgTurnH");
+  // the targets an assignment's left side writes: itself, or, for an object or array pattern, each of the pattern's targets (a property's
+  // value, a shorthand's name, a spread's expression, an element, a default's left side), so a destructuring assignment writes every field
+  // its pattern names
+  const targetsOf = (e: ts.Expression): ts.Expression[] => {
+    if (ts.isParenthesizedExpression(e)) return targetsOf(e.expression);
+    if (ts.isObjectLiteralExpression(e)) return e.properties.flatMap((q) => ts.isPropertyAssignment(q) ? targetsOf(q.initializer) : ts.isShorthandPropertyAssignment(q) ? [q.name] : ts.isSpreadAssignment(q) ? targetsOf(q.expression) : []);
+    if (ts.isArrayLiteralExpression(e)) return e.elements.flatMap((x) => ts.isOmittedExpression(x) ? [] : ts.isSpreadElement(x) ? targetsOf(x.expression) : targetsOf(x));
+    if (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.EqualsToken) return targetsOf(e.left);
+    return [e];
+  };
   const visit = (n: ts.Node): void => {
     if (ts.isCallExpression(n) && ts.isIdentifier(n.expression)) allCalls.push(n);
     if (ts.isIdentifier(n) && NAMES.has(n.text) && !(ts.isCallExpression(n.parent) && n.parent.expression === n) && !(ts.isFunctionDeclaration(n.parent) && n.parent.name === n)) refs.push(n);
     if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) strings.add(n.text);
     // every WRITE to the average, whatever its operator: an assignment of any kind (the compiler's FirstAssignment to LastAssignment: `=`,
     // `??=`, `||=`, `+=` and the rest), an increment or a delete (the closing pass over the author's fixer pass: `v.avgTurnH ??= 5` planted
-    // in showActive escaped a count of `=` alone)
-    if (ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && n.operatorToken.kind <= ts.SyntaxKind.LastAssignment && namesAvg(n.left)) avgWrites.push(ownerOf(n) + ": " + (n.operatorToken.kind === ts.SyntaxKind.EqualsToken ? "" : n.operatorToken.getText(sf) + " ") + n.right.getText(sf));
+    // in showActive escaped a count of `=` alone), and a write with no operator on the field itself: a destructuring assignment whose
+    // pattern holds the field as a target (`({ avg: v.avgTurnH } = m)`, `[v.avgTurnH] = [5]`: the second closing lens over the closing pass,
+    // the pattern's `=` has an object literal on its left and the count read the left alone) and a for-of or for-in over the field
+    if (ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && n.operatorToken.kind <= ts.SyntaxKind.LastAssignment) {
+      if (ts.isObjectLiteralExpression(n.left) || ts.isArrayLiteralExpression(n.left)) { if (targetsOf(n.left).some(namesAvg)) avgWrites.push(ownerOf(n) + ": " + n.getText(sf)); }
+      else if (namesAvg(n.left)) avgWrites.push(ownerOf(n) + ": " + (n.operatorToken.kind === ts.SyntaxKind.EqualsToken ? "" : n.operatorToken.getText(sf) + " ") + n.right.getText(sf));
+    }
+    if ((ts.isForOfStatement(n) || ts.isForInStatement(n)) && !ts.isVariableDeclarationList(n.initializer) && targetsOf(n.initializer).some(namesAvg)) avgWrites.push(ownerOf(n) + ": for (" + n.initializer.getText(sf) + (ts.isForOfStatement(n) ? " of " : " in ") + n.expression.getText(sf) + ")");
     if ((ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) && (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken) && namesAvg(n.operand)) avgWrites.push(ownerOf(n) + ": " + n.getText(sf));
     if (ts.isDeleteExpression(n) && namesAvg(n.expression)) avgWrites.push(ownerOf(n) + ": " + n.getText(sf));
     ts.forEachChild(n, visit);
@@ -673,7 +689,7 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   ].sort(), "every write of the family that runs under a reader of the take state, by reader and writer, direct or one hop through a named conduit (an inner owner, a wrapper and the conduit named where they apply): a write added under one of these readers, under any writer name, inside any inner function, through any registered wrapper or through a helper a reader calls, reds here and owes a harness case for its road");
   // every reset that clears the average clears the parked figures with it (forgetAverage), and none clears the figure bare
   assert.match(RENDER, /function forgetAverage\(v: View\): void \{\s*\n\s*v\.avgTurnH = undefined; v\.measured = undefined;\s*\n\}/);
-  assert.deepEqual(avgWrites.sort(), ["applyMeasure: m.avg", "forgetAverage: undefined", "untakeMeasure: before.avg"], "the average is written by the take, the untake and the one bare clear, the helper's (by owner from the syntax tree, under every assignment operator, an increment or a delete)");
+  assert.deepEqual(avgWrites.sort(), ["applyMeasure: m.avg", "forgetAverage: undefined", "untakeMeasure: before.avg"], "the average is written by the take, the untake and the one bare clear, the helper's (by owner from the syntax tree, under every assignment operator, an increment, a delete, a destructuring pattern that names the field or a for-of or for-in over it)");
   assert.deepEqual(byOwner("forgetAverage"), ["chatHead(v)", "rerenderAll(v)", "runPrebuild(v)", "showActive(v)"], "four resets, by owner from the syntax tree: the older-history re-anchor, the compact toggle's rerender, the prebuild's and the switch's re-collapse");
   assert.match(RENDER, /import \{ rowsFor, meanRowHeight, perTurnEstimate \} from "\.\/turn-estimate";/);
   assert.match(RENDER, /interface View \{[^\n]*measured\?: \{ avg\?: number; per\?: number \};/, "the parked figures live on the view");
