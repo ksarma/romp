@@ -933,8 +933,8 @@ class Guards(_World):
         real_file, real_fold, fired, folded = km._subagent_file, km._agent_launch_ids, [], []
         names = sorted("agent-%s.jsonl" % a for a in self.aids)
 
-        def racing(path, aid):
-            ap = real_file(path, aid)
+        def racing(path, aid, *a, **k):                      # `faults` passes through: the fold's fault plumbing under the stub
+            ap = real_file(path, aid, *a, **k)
             if not fired and sys._getframe(1).f_code.co_name == "launches":
                 fired.append("agent-%s.jsonl" % aid)
                 km._subagent_trees_forget([])              # the own root leaves the memo inside the resolution

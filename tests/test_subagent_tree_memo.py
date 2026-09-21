@@ -20,8 +20,11 @@ root no alive session owns and keeps the owned ones: from the jobs pass (_interr
 frame built at all), from the helper, and from the tracking-off frame, where a failed alive read evicts nothing; (7)
 /perf's memos.subagentTree reports the hits and misses; (8) a tree written within the racy window is re-listed until it
 has been quiet; (9) a listing that failed (EMFILE) or a child whose lstat failed (EIO) is never vouched: the next call
-re-lists and recovers the whole tree. Red-first on (1), the jobs-pass half of (6) and (9). Synthetic fixtures only:
-placeholder ids, invented text, a temp directory."""
+re-lists and recovers the whole tree; (10) a root whose own lstat fails for a reason other than absence (an EIO by mock, a
+real EACCES from its parent) is a read that did not happen, not an absent tree: nothing is popped, no eviction is
+recorded, nothing is noted absent, no counter moves, each reader answers its standing entry unheld or an unreadable
+marker, and the next call after the fault clears validates the standing entry. Red-first on (1), the jobs-pass half of
+(6), (9) and (10). Synthetic fixtures only: placeholder ids, invented text, a temp directory."""
 import errno
 import json
 import os
@@ -415,6 +418,137 @@ class Reported(_Tree):
         self.assertEqual((after["miss"] - rep["miss"], after["hit"] - rep["hit"]), (1, 0))
         self.assertGreaterEqual(after["walkMs"], rep["walkMs"])
         self.assertGreaterEqual(after["validateMs"], rep["validateMs"])
+
+
+class UnreadableRoot(_Tree):
+    """A root whose own lstat fails for a reason other than absence (EACCES from a parent without search permission, EIO)
+    is a read that did not happen, not an absent tree: nothing is popped, no eviction is recorded, nothing is noted absent,
+    no counter moves, each reader answers its standing entry unheld, and the next call after the fault clears reads the
+    disk again and finds the entry standing (a validation, never a walk). RED FIRST: until 2026-09-21 the root's
+    `except OSError` took every errno for absence, so an EIO popped the entry, moved the generation, answered (), () and
+    noted the tree absent to the chat build, which showed no subagents until the fault cleared; the module's own cases
+    drove only ENOENT there. Two faults: an EIO by mock on os.lstat of the root alone (every other path reads) and a REAL
+    EACCES from the parent directory without search permission (nothing under it reads either; skipped as root, whom
+    permission bits do not bind). The scope is open under the fault, so "nothing held" is executed, not implied."""
+
+    def _standing(self):
+        """The memo entry and the cached sidecar map, standing before the fault; the workflow agent's resolution cold."""
+        root = str(self.subdir)
+        km._subagent_dirs(root)
+        m = km._subagent_meta_map(str(self.tpath))
+        self.assertEqual(set(m), {TU, TU_WF})
+        self.addCleanup(km._SUBAGENT_FILE_CACHE.pop, (str(self.tpath), AID_WF), None)
+        km._SUBAGENT_FILE_CACHE.pop((str(self.tpath), AID_WF), None)
+        return root, km._SUBAGENT_TREES[root], m
+
+    def _open_scope(self):
+        """A cycle's scope, opened after every pre-fault read so nothing is held: the fault must be observed by the lstat, not
+        served from a hold (a served read never reaches the disk); what the fault must leave empty."""
+        km._subagent_scope_open()
+        self.addCleanup(km._subagent_scope_close)
+        self.assertEqual(km._subagent_scope()["trees"], {}, "premise: nothing held before the fault")
+
+    def _fault_holds(self, root, entry, m, errno_expected):
+        """Under the fault: the sidecar map first (the reader the chat build asks), then the memo, the feed key, the lookup."""
+        g0, evicted, before = km._SUBAGENT_TREES_GEN[0], dict(km._SUBAGENT_ROOT_EVICTED), dict(km._SUBAGENT_TREE_STATS)
+        deps = {"task_outs": [], "postal_any": False}
+        km._chat_dep_scope.deps = deps
+        try:
+            meta = km._subagent_meta_map(str(self.tpath))
+        finally:
+            km._chat_dep_scope.deps = None
+        self.assertIn(root, km._SUBAGENT_TREES, "the entry stands: a read that did not happen pops nothing")
+        self.assertIs(km._SUBAGENT_TREES[root], entry, "the same entry, untouched")
+        self.assertEqual(km._SUBAGENT_TREES_GEN[0], g0, "no eviction is recorded: the generation did not move")
+        self.assertEqual(km._SUBAGENT_ROOT_EVICTED, evicted, "and no root gained an eviction record")
+        self.assertNotIn((root, None), deps["task_outs"], "the tree is not noted absent to the chat build")
+        self.assertEqual(deps["task_outs"], [(root, km._TREE_UNREADABLE)],
+                         "it is noted unreadable, under a key no stat equals, so the tab is rebuilt next cycle and reads again")
+        self.assertIs(meta, m, "the standing map is answered, unheld (its cache entry neither popped nor re-keyed)")
+        self.assertEqual({k: km._SUBAGENT_TREE_STATS[k] - before[k] for k in ("hit", "miss", "served", "evict", "dirStats")},
+                         {"hit": 0, "miss": 0, "served": 0, "evict": 0, "dirStats": 0}, "no counter moves: the read answered no tree")
+        self.assertEqual(km._subagent_scope()["trees"], {}, "nothing is held in the cycle scope")
+        with self.assertRaises(km._SubagentTreeUnreadable) as cm:
+            km._subagent_tree(root)
+        self.assertEqual(cm.exception.error.errno, errno_expected, "the raise carries the lstat's own error")
+        self.assertIs(cm.exception.entry, entry, "and the standing entry")
+        with self.assertRaises(km._SubagentTreeUnreadable):
+            km._subagent_dirs(root)                             # never [], which is absence
+        self.assertIs(km._subagent_dirs_ident(SID, root), entry,
+                      "the feed key's component is the standing entry, not the missing root's (d,), (None,)")
+        self.assertEqual(km._subagent_scope()["trees"], {}, "still nothing held after the direct reads")
+
+    def _fold_has_the_calls_lifetime(self):
+        """The awaiting fold over a resolution that could not be made is held for the call alone, never the cycle."""
+        row = km._awaiting_item("agents", TU_WF, "Workflow", None, agent_id=AID_WF)
+        cmd = km._awaiting_item("commands", "toolu_tree_cmd1", "run the api tests", None)
+        agents, commands = km._awaiting_nest([row], [cmd], {}, str(self.tpath))
+        self.assertEqual((len(agents), len(commands)), (1, 1), "nothing attributed this call")
+        self.assertEqual(km._subagent_scope()["launches"], {},
+                         "the fold of a resolution that could not be made is held for the call alone, not the cycle")
+        return row, cmd
+
+    def _the_next_call_reads_again(self, root, m, row, cmd):
+        """After the fault clears: a validation of the standing entry (nothing listed), the standing map, the lookup made."""
+        before = dict(km._SUBAGENT_TREE_STATS)
+        with _Listings() as n:
+            dirs = km._subagent_dirs(root)
+        self.assertEqual(dirs, self._reference_walk(root), "the next call reads the disk again")
+        self.assertEqual(n.n, 0, "as a validation of the standing entry, nothing listed: the entry was never popped")
+        self.assertEqual((km._SUBAGENT_TREE_STATS["hit"] - before["hit"], km._SUBAGENT_TREE_STATS["miss"] - before["miss"]), (1, 0),
+                         "one validation, no walk")
+        self.assertIs(km._subagent_meta_map(str(self.tpath)), m, "the map's cache stood too")
+        wf_file = self.wf / ("agent-%s.jsonl" % AID_WF)
+        self.assertEqual(km._subagent_file(str(self.tpath), AID_WF), wf_file, "the lookup is made")
+        self.assertEqual(km._SUBAGENT_FILE_CACHE[(str(self.tpath), AID_WF)][1], wf_file, "and memoized now that it was")
+        km._awaiting_nest([row], [cmd], {}, str(self.tpath))
+        self.assertIn((str(self.tpath), AID_WF), km._subagent_scope()["launches"],
+                      "the next call in the cycle resolves the file and holds its fold")
+
+    def test_an_eio_on_the_roots_own_lstat_pops_records_and_notes_nothing_and_the_next_call_reads_the_disk_again(self):
+        root, entry, m = self._standing()
+        real = os.lstat
+
+        def eio(p, *a, **k):
+            if str(p) == root:
+                raise OSError(errno.EIO, "input/output error")
+            return real(p, *a, **k)
+        self._open_scope()
+        with mock.patch.object(os, "lstat", eio):
+            self._fault_holds(root, entry, m, errno.EIO)
+            faults = []
+            self.assertIsNone(km._subagent_file(str(self.tpath), AID_WF, faults),
+                              "the nested agent's lookup needs the tree: with no standing resolution, nothing is known")
+            self.assertEqual(faults, ["OSError"], "and the caller is told the lookup could not be made")
+            self.assertNotIn((str(self.tpath), AID_WF), km._SUBAGENT_FILE_CACHE, "a lookup that could not be made memoizes no miss")
+            row, cmd = self._fold_has_the_calls_lifetime()
+        self._the_next_call_reads_again(root, m, row, cmd)
+
+    def test_a_real_eacces_at_the_root_from_a_parent_without_search_permission_is_not_absence(self):
+        if os.geteuid() == 0:
+            self.skipTest("permission bits do not bind root: no EACCES to drive")
+        root, entry, m = self._standing()
+        wf_file = self.wf / ("agent-%s.jsonl" % AID_WF)
+        self.assertEqual(km._subagent_file(str(self.tpath), AID_WF), wf_file)   # a standing resolution this time
+        standing = km._SUBAGENT_FILE_CACHE[(str(self.tpath), AID_WF)]
+        self._open_scope()
+        parent = self.subdir.parent
+        self.addCleanup(lambda: os.path.isdir(parent) and os.chmod(parent, 0o755))   # a belt: tearDown removes the tree first
+        os.chmod(parent, 0o000)
+        try:
+            with self.assertRaises(PermissionError) as cm:
+                os.lstat(root)
+            self.assertEqual(cm.exception.errno, errno.EACCES, "the real fault this case drives")
+            self._fault_holds(root, entry, m, errno.EACCES)
+            faults = []
+            self.assertEqual(km._subagent_file(str(self.tpath), AID_WF, faults), wf_file,
+                             "the standing resolution is answered, unheld")
+            self.assertEqual(faults, ["PermissionError"], "and the caller is told the lookup could not be made")
+            self.assertIs(km._SUBAGENT_FILE_CACHE[(str(self.tpath), AID_WF)], standing, "its memo entry is untouched")
+            row, cmd = self._fold_has_the_calls_lifetime()
+        finally:
+            os.chmod(parent, 0o755)
+        self._the_next_call_reads_again(root, m, row, cmd)
 
 
 if __name__ == "__main__":

@@ -3760,7 +3760,12 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   across cycles and walked again at the next cycle's first read, but held
   for the rest of the cycle it was walked in like any clean walk; a walk
   with a failed listing or child lstat, a missing root and a stamp whose
-  stat fails are not held for the cycle: nothing failed is served; the
+  stat fails are not held for the cycle: nothing failed is served, and a
+  root whose lstat fails for a reason other than absence (EACCES from a
+  parent, EIO) is not read as absent either: its readers answer their
+  standing entries unheld or key the frame on an unreadable marker, and
+  the chat build is told to read again, the shape stated once in
+  `_subagent_tree`'s docstring in `kernel/kernel.py`; the
   scope also holds each awaiting agent's launch fold, and a fold that did
   not read the file, the reader's fail path, is held for the one read
   that observed it and never for the cycle, so that read folds it once,
