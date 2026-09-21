@@ -5,7 +5,12 @@
 # run, the TERM to the process running one, a synthetic suite decided candidate by candidate) and the oracle over the corpus
 # (BatsCorpus: every bare `!` in a test body of every suite the job's bats command names, its glob read off the workflow, decided
 # by running its test alone with the negation rewritten to `! true` and to `! false`, each rewrite run twice and its runs required
-# to agree). All skip in the python cells of CI, which install no bats; the shell job's `bats --print-output-on-failure tests/*.bats`
+# to agree; and, since fork PR #871's round 2, eleventh commit, its routes pin: a token and a state root planted in the python
+# process's environment reach no suite, the three candidates that read them decided in seconds). The corpus's other pin, the child
+# pytest with a polluting module collected and deselected, is not run here: it needs pytest importable by the runner's python3,
+# which this job does not install, and it skips there saying so (a skipping test here would pin nothing). All skip in the python
+# cells of CI, which install no bats (warning once per process, since the tenth commit); the shell job's
+# `bats --print-output-on-failure tests/*.bats`
 # (.github/workflows/ci.yml) picks this file up. That job has two cells, ubuntu-latest on every run and macos-latest on a manual
 # dispatch or the weekly schedule, and both install a bats: the Linux cell 1.11.1 from the release tarball (`Install bats (Linux)`),
 # the macOS cell Homebrew's bats-core (`Install bats (macOS)`); run_module_tests below skips every test of this file on Darwin, so
@@ -25,10 +30,13 @@
 # Every BATS_* variable is unset for the inner run. Under the job's BATS_TEST_TIMEOUT bats's timeout watcher is a background child
 # of each test, and a bare `wait` in a test waits on it: the register's D_bg shape hung to a 40 s kill with the variable set
 # (exit 124) and passed in 0.07 s without it. A nested bats must also not read the outer run's BATS_ROOT, BATS_RUN_TMPDIR and the
-# rest. The module strips them again at its own bats calls; the scrub here keeps the python process itself clean, so nothing it
-# starts inherits them either. The module also drops the outer's libexec directory from the inner run's PATH (bats puts it first
-# there, and the `bats` in it expects the BATS_ROOT this scrub removes: left on PATH, the inner bats ran with BATS_ROOT empty and
-# did not load at all under CI's /usr/local layout, measured with 1.11.1 from a scratch prefix as the outer and the inner bats).
+# rest. Since fork PR #871's round 2, tenth commit, the module builds the environment of every bats run it starts from a rule
+# (BATS_ENV_KEYS: PATH, a fresh HOME and TMPDIR, LANG) and from nothing else of its process, so no BATS_* variable and no
+# import-time write of a test module reaches them, by construction; the scrub here keeps the python process itself clean, so
+# nothing else it starts (its bash probes run under its own environment) inherits them either. The module also drops the outer's
+# libexec directory from the inner run's PATH (bats puts it first there, and the `bats` in it expects the BATS_ROOT this scrub
+# removes: left on PATH, the inner bats ran with BATS_ROOT empty and did not load at all under CI's /usr/local layout, measured
+# with 1.11.1 from a scratch prefix as the outer and the inner bats).
 #
 # macOS, the weekly and dispatch cell of the shell job, skips with the reason: its bash is 3.2.57 (actions/runner-images,
 # images/macos/macos-15-Readme.md) and Homebrew's bats-core is 1.14.0; the register's `|&`, `coproc` and `;;&` shapes do not parse
@@ -59,4 +67,8 @@ run_module_tests() {   # $1 the dotted name under tests.test_bats_bare_negation:
 
 @test "bats bare negation: every candidate of the tree is read by bats (tests/test_bats_bare_negation.py, the corpus)" {
     run_module_tests BatsCorpus.test_every_candidate_of_every_suite_is_read_by_bats
+}
+
+@test "bats bare negation: a token and a state root in the python process's environment reach no suite (tests/test_bats_bare_negation.py, the routes pin)" {
+    run_module_tests BatsCorpus.test_a_token_and_a_state_root_written_into_the_process_environment_reach_no_suite
 }

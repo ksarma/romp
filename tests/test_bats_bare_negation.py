@@ -217,10 +217,12 @@ candidate (541, 299 of them in tests recorded ok, 495 at line start), the 139 re
 register counted and every one off line start among them.
 
 This module is the first in the repository to run bats under pytest, and so the first detector of a class no test had seen: the
-environment a test module writes at import. 423 of the 934 test modules write ROMP_SERVE_TOKEN into os.environ at column 0
-(`os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")` or the like; a grep for a column-0 `os.environ` line naming it, 425 files
-under tests/), 752 name XDG_STATE_HOME at column 0 (747 rebind it to a fresh directory) and 4 write ROMP_STATE_DIR, and
-tests/conftest.py floors XDG_STATE_HOME for every run. A column-0 write runs when pytest COLLECTS the module, before any test
+environment a test module writes at import. Of the 934 test modules (tests/test_*.py), 423 write ROMP_SERVE_TOKEN into
+os.environ at column 0 (410 by `os.environ.setdefault("ROMP_SERVE_TOKEN", ...)`, 13 by assignment), 747 assign XDG_STATE_HOME at
+column 0 (a fresh directory each) and 4 assign ROMP_STATE_DIR (747 pop it), and tests/conftest.py floors XDG_STATE_HOME for every
+run; over every .py under tests/ (947 files, the package's own among them, conftest.py and __init__.py included) a column-0
+os.environ line names the token in 424 and XDG_STATE_HOME in 752 (every figure a grep at fork PR #871's round 2, eleventh
+commit). A column-0 write runs when pytest COLLECTS the module, before any test
 runs and whether or not one of the module's tests is selected, in every process that collects it (each xdist worker collects), so
 a subprocess started with a pass-through of the process's environment sees the union of those writes. bats saw
 ROMP_SERVE_TOKEN, which bin/romp reads over the state file (its _romp_token), and romp-sessions.bats's serve-token test, whose grep
@@ -247,10 +249,13 @@ Python cell says the corpus validation did not run in it. Installing bats in tho
 before the tenth commit the module alone cost `45 passed in 199.86s` with bats against `34 passed, 11 skipped in 17.56s` without,
 182 s more per cell (the register and the corpus most of it; at this head `48 passed in 263.03s (0:04:23)` with bats 1.10.0, the
 two new bats-backed pins among them and the child pytest 70 s of it, against `35 passed, 13 skipped, 1 warning in 17.13s`
-without), on cells whose margin under their 25-minute cap is 2 to 5 minutes (the 3.14t cell at about 23 of 25), for a bats
-install of 4 s; the shell job carries the validation inside its 35
-minutes (11 minutes at the ninth commit). The polluted shape, pytest over the whole tests/ with bats on PATH, exists in local
-sweeps only, where the two pins above run.
+without), on cells whose margin under their 25-minute cap was 4 to 8 minutes in fork PR #871's own CI run at the ninth commit
+(3.10 in 20m42s, 3.11 in 20m13s, 3.12 in 17m07s, 3.13 in 18m20s, 3.14t in 20m45s, read off that run's job times), for a bats
+install of 4 s; the shell job carries the validation inside its 35 minutes (11m02s in that run). The polluted shape, pytest over
+the whole tests/ with bats on PATH, exists in local sweeps only, where both pins above run; since the eleventh commit the wrapper
+runs the routes pin too (seconds; bash and bats are all it needs), and not the child pytest pin, which needs pytest importable by
+the runner's python3, which the shell job does not install: it skips there saying so, and a skipping test in the wrapper would
+pin nothing (a pytest install in that job is a workflow change, not made here).
 
 Deleted here, not fixed: the line scanner's frame model (the brace-depth walk, its block ends and the coverage pin over them), its
 heredoc classification (introducers, delimiter words, the skip) and its status-read grammar (`_plain_call`, `_helper_read`,
@@ -1011,9 +1016,11 @@ def _ere_literal(text):
 
 
 # The environment a bats run of this module's sees: the one statement of the rule. _bats_env builds it from these keys and from
-# nothing else the process holds, and the equality pin holds the built environment's keys to exactly this tuple
-# (BatsCorpus.test_the_environment_handed_to_bats_holds_exactly_the_allowed_keys_and_nothing_else_of_the_process), so a key added
-# here is a pass-through made visible and a key built but not listed is dropped. PATH: the process's own (os.defpath when it has
+# nothing else the process holds, and the equality pin
+# (BatsCorpus.test_the_environment_handed_to_bats_holds_exactly_the_allowed_keys_and_nothing_else_of_the_process) holds the built
+# environment's keys to a literal of its own and not to this tuple, so a key added here reds it until the key is added there too
+# (a pin reading the tuple was green on a key added through it, fork PR #871's round 2, eleventh commit) and a key built but not
+# listed is dropped. PATH: the process's own (os.defpath when it has
 # none), less every directory holding bats's libexec entry point (_bats_env says why); bats and every tool a suite calls resolve
 # through it, and the shell job's bats has the runner's. HOME and TMPDIR: a fresh directory each under the scratch the caller
 # hands over, so a suite reads and writes no state of this machine's and everything it makes under them goes with the scratch.
@@ -1021,14 +1028,16 @@ def _ere_literal(text):
 # locale sees the one the outer run has, the runner's under the shell job's bats and this box's under pytest here; the corpus and
 # the register need none (measured, the module docstring), and the process's LC_ALL, an override of its own, is not passed.
 # Nothing of the process beyond those: no ROMP_*, no XDG_*, no CLAUDE_*, no credential-shaped name, and no pass-through of the
-# rest, because 423 of the 934 test modules write ROMP_SERVE_TOKEN into os.environ at import (a column-0 write) and 752 name
+# rest, because 423 of the 934 test modules write ROMP_SERVE_TOKEN into os.environ at import (a column-0 write) and 747 assign
 # XDG_STATE_HOME there, and a column-0 write runs when pytest COLLECTS the module, so it is in the process before any test runs
 # and in every process that collects the module, whether or not one of its tests is selected. The pass-through this replaced
 # (every variable but BATS_*) handed bats the union of them: under any full-suite shape bin/romp read ROMP_SERVE_TOKEN over the
 # state file, romp-sessions.bats's serve-token test failed under both rewrites, and the corpus reported it undecided, while the
 # same test alone read 12 of 12 (fork PR #871's round 2, tenth commit). A denylist of the names found would close those and
 # leave the next one open (ROMP_STATE_DIR, which install.sh reads before XDG_STATE_HOME and four modules write at import): this
-# tuple is what bats MAY see.
+# tuple is what bats MAY see. The rule governs every bats run of this module's; its two bash probes (_bash_n, _declared) run
+# under the process's own environment with LC_ALL=C and execute nothing (a parse under -n, a function printed by declare -f), so
+# no suite is reached through them.
 BATS_ENV_KEYS = ("PATH", "HOME", "TMPDIR", "LANG")
 
 
@@ -1057,7 +1066,6 @@ def _bats_env(scratch):
     for var in ("HOME", "TMPDIR"):
         os.makedirs(built[var], exist_ok=True)
     return {k: built[k] for k in BATS_ENV_KEYS}
-    return env
 
 
 # one bats run of a test alone: the outcome (`ok`, `not ok`, or why bats gave no verdict: `skipped`, `did not load`, `no such
@@ -3702,12 +3710,15 @@ class BatsCorpus(unittest.TestCase):
         self.assertEqual(made, (True, True))
 
     def test_the_environment_handed_to_bats_holds_exactly_the_allowed_keys_and_nothing_else_of_the_process(self):
-        # the rule (BATS_ENV_KEYS) held by EQUALITY on the built environment's keys, never by membership: a token, a state root by
-        # both of its names and an arbitrary name are planted in os.environ around the call (the writes 423 test modules make at
-        # import, and one no census names), and none reaches the output; then every value is pinned to its source, PATH the
-        # process's (less a libexec directory, the test above), LANG the process's or `C`, HOME and TMPDIR the scratch's, so no
-        # value but PATH's and LANG's comes from os.environ. A pass-through added to _bats_env reds the first assertion whatever
-        # its key; a key added to BATS_ENV_KEYS is a pass-through announced there
+        # the rule (BATS_ENV_KEYS) held by EQUALITY on the built environment's keys against a literal of this test's own, never by
+        # membership and never against the tuple: _bats_env builds from the tuple, so a pin reading the tuple restates the
+        # mechanism, and a key added there (FOO, a name no route reads, built and listed) was green on it, fork PR #871's round 2,
+        # eleventh commit. A token, a state root by both of its names and an arbitrary name are planted in os.environ around the
+        # call (the writes 423 test modules make at import, and one no census names), and none reaches the output; then every
+        # value is pinned to its source, PATH the process's (less a libexec directory, the test above), LANG the process's or `C`,
+        # HOME and TMPDIR the scratch's, so no value but PATH's and LANG's comes from os.environ. A pass-through added to
+        # _bats_env reds the first assertion whatever its key, added through the tuple or after the comprehension; a key that is
+        # to reach bats is added to the tuple with its reason and to the literal here
         path = os.environ.get("PATH", os.defpath)
         with tempfile.TemporaryDirectory() as d:
             root = os.path.join(d, "state")
@@ -3717,9 +3728,10 @@ class BatsCorpus(unittest.TestCase):
             with unittest.mock.patch.dict(os.environ, {"PATH": path, "FOO": "1"}, clear=True):
                 bare = _bats_env(d)
         for built in (env, bare):
-            self.assertEqual(set(built), set(BATS_ENV_KEYS),
-                             "bats must see the Shell job environment and nothing of the pytest process: 423 test modules write os.environ at import, "
-                             "so a pass-through reaches bats whether or not their tests ran; the keys built were %s" % sorted(built))
+            self.assertEqual(set(built), {"PATH", "HOME", "TMPDIR", "LANG"},
+                             "bats must see the shell job environment and nothing of the pytest process: 423 test modules write os.environ at import, "
+                             "so a pass-through reaches bats whether or not their tests ran, added through BATS_ENV_KEYS or after it; a key that is "
+                             "to reach bats is added to the tuple with its reason and to this literal; the keys built were %s" % sorted(built))
         expected_path = os.pathsep.join(p for p in path.split(os.pathsep) if not os.path.isfile(os.path.join(p, "bats-exec-test")))
         self.assertEqual((env["PATH"], env["LANG"], env["HOME"], env["TMPDIR"]), (expected_path, "C.UTF-8", os.path.join(d, "home"), os.path.join(d, "tmp")))
         self.assertEqual((bare["PATH"], bare["LANG"], bare["HOME"], bare["TMPDIR"]), (expected_path, "C", os.path.join(d, "home"), os.path.join(d, "tmp")))
