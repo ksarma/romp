@@ -20,13 +20,16 @@ word, so a test whose outcome differs under them read the negation's status (`re
 candidate's own test, on the negation's line, on the line before a `( ! cmd )` subshell, or on the `[ ]` a saved `$?` reaches), one
 passing under both asserted nothing, and both failing, a failure blamed outside the test, a run not ending within RUN_TIMEOUT or a
 rewritten file bash does not parse is undecided and reported as such. The predicate over-approximates by construction: every `!`
-standing as its own word in a test's text (_BANG: bounded by bash's metacharacters, the line's ends or a backtick, so
-`!>/dev/null true`, `!(true)`, `` `! true` `` and a `!` alone on a line are words and `!=`, `$!` and `!cmd` are none), outside a
+standing as its own word in a test's text (_bang_at, over _word_ends, bash's word-break rule stated once and read for the `}`
+too: a metacharacter, the line's start or a backtick before it, and the word ending after it as bash ends a word, at a
+metacharacter or the line's end, a `<` or `>` before `(` and a lone `\` at the line's end excepted, or a backtick, so
+`!>/dev/null true`, `!(true)`, `` `! true` ``, a `!` alone on a line and `!\` continued onto ` true` are words and `!=`, `$!`,
+`!cmd`, `!<(true)` and `!\` continued onto `true` are none), outside a
 comment, a quoted string and a here-document's body, with no grammar of where a pipeline begins. Test bodies are
 bash_test_extents, bash's own parse of the file as bats-preprocess rewrites it (an opener line's tail and a one-line test are in the
-population): a test's close is the first `}` after its opener that bash reads as the word `}` (_close_words: the character after
-the brace a metacharacter, a blank or the line's end, the boundary _BANG reads for the `!`, one class both use, _METACHARACTERS; a
-brace glued to what precedes it is in the prefix and refused by the parse itself), by line then column, at which the opener through
+population): a test's close is the first `}` after its opener that bash reads as the word `}` (_close_words, over the same
+_word_ends: the brace ends a word where bash ends one; a brace glued to what precedes it is in the prefix and refused by the
+parse itself), by line then column, at which the opener through
 that brace parses as a complete function (_closes; _close_col reads the column), whether or not the rest of the brace's line parses
 on its own; the text before it is the test's, and whatever follows it, on that line and on the lines after up to the next opener,
 is file scope and no test's, a helper or a list on the close line, `    ! true; }; f() { ! false; }`, or one whose body runs on
@@ -35,6 +38,12 @@ brace glued to a following character, `    true; }x 2>/dev/null || true`, `}# no
 close, was asked as the prefix through the brace, which the cut ends at, and answered as a close: the test ended there, the
 negation on its later lines was no test's text and no candidate, and bats ran the file as written, `ok 1 x`, the negation unseen,
 the silent direction (the module said the close is found as bash reads it while asking of braces bash reads as no word). Before
+the eighth commit the boundary had two spellings, a regex for the `!` and a rule in _close_words for the `}`, each reading
+_METACHARACTERS as the whole rule: `}<(true)`, one word to bash with the process substitution, was a close, the test ended there
+and its later negation was no candidate, the silent direction; `!<(true)`, one word too, was a candidate bats reports; and `!\`
+continued onto ` true`, `! true` to bash, matched no regex, so the test's negation was no candidate, the silent direction. One
+function states the rule now, _word_ends, as bash's read_token_word reads the character after a word, and both readers use it
+(_close_words, _bang_at; the run of `!` words a rewrite keeps whole follows a continuation too, _bang_run). Before
 the fourth commit, the last brace after a `;` or `&` was read as
 the close and a one-liner's text ran to its line's end, so the helper's negation was the test's candidate, decided by running a
 test it is no part of: inert while armed, the silent direction; before the fifth commit the close was asked of a line whole, so
@@ -80,15 +89,15 @@ than passing an empty corpus as clean: suite_files; BatsSuites lists a file's ca
 them): 232 `!` words file-wide, 191 of them `[ !`, 24 inside comments and strings (the word rule takes a `!` next to a backtick, a
 `)` or a `>`), 5 at file scope, and 12 candidates in test bodies (bootstrap-sh.bats 184; install-optional-deps.bats 505;
 install-sh.bats 329, 400, 411; pr-orphans.bats 125; romp-serve.bats 117, 309, 334, 382; romp-service.bats 683; romp-sessions.bats
-84), listed in 7.52 s with the extents (one `bash -n` per `}` word of a test's lines through its close since the sixth commit,
-7.02 s there, and one per `}` word of the close line for its column; the fifth commit asked every brace, 8.36 s, and the head
-before it 6.89 s). bats
+84), listed in 7.35 s with the extents (one `bash -n` per `}` word of a test's lines through its close since the sixth commit,
+7.02 s there and 7.52 s at the seventh commit, and one per `}` word of the close line for its column; the fifth commit asked
+every brace, 8.36 s, and the head before it 6.89 s). bats
 reads all 12 (BatsCorpus, under 1.10.0 and 1.11.1): the nine at line start are `not
 ok` on their own line under `! true` and `ok` under `! false`; the three condition heads of romp-serve.bats (309, 334 and 382, `if
 ! _dead "$pid"; then kill ...; return 1; fi`) the reverse, `ok` under `! true` and `not ok` on their own line under `! false`, so
 they are read only through the second rewrite; 0 inert, 0 undecided. Each rewrite runs twice (REPEATS) and four candidates are
-decided at a time (CORPUS_WORKERS): 164.27 s of runs in 77.86 s on this box under 1.10.0 (77.65 s under 1.11.1), 115.81 s of the
-runs the three heads' probe tests, whose slowest side is romp-serve.bats 334 under `! true`, 27.19 s for its two runs, against
+decided at a time (CORPUS_WORKERS): 166.44 s of runs in 77.96 s on this box under 1.10.0 (74.75 s under 1.11.1), 119.63 s of the
+runs the three heads' probe tests, whose slowest side is romp-serve.bats 334 under `! true`, 27.81 s for its two runs, against
 which RUN_TIMEOUT stands at 60 s a run. The 5 file-scope `!` words sit in helpers and a setup (bats-state-isolation.bats 125, 126
 and 129 twice; romp-postal.bats 47): outside the subject, since a `!` there has no enclosing test to run alone, and so is one in
 the text after a test's close, on its close line or on the lines a construct opened there runs on to: a helper defined there, a
@@ -154,7 +163,16 @@ I_one_liner_glued_before_close: a walker asking every brace of the close line fo
 loses the candidate before the close, and records the file as written the same way), with the closes bash does read beside
 them, a `\` then an empty line, a comment after the close, and
 a parameter expansion's brace before the close (I_close_backslash_newline_then_test, I_close_then_comment,
-I_param_brace_then_close), so a split that stops short or runs past one changes a recorded verdict or loses one. Decision:
+I_param_brace_then_close), a brace glued to a process substitution, `}<(true)`, `}>(true)`, one word to bash
+(I_close_glued_procsub_*: a reader ending a word at every metacharacter reads a close, finds no candidate, and records the file
+as written), with a redirection from one after the close beside it (I_close_then_procsub_redirect), and the `!` side of the one
+rule: a `!` glued to a process substitution, one word, its `!` declared text (G_procsub_glued_*), one a blank away from it, a
+negation (G_procsub_separated_*), a `!` continued by a lone `\` onto ` true`, `! true` to bash (G_bang_backslash_newline_*: a
+reader with no continuation finds no candidate and records the file as written), onto `true`, one word, declared
+(G_bang_backslash_newline_glued_mid), `! \` onto `true` (G_bang_blank_backslash_newline_*) and `! \` onto `! true`, a doubled
+negation whose run the rewrite keeps whole (G_double_negation_continued_*: a run ending at the line's end drops the second `!`
+and the doubled negation's record changes), so a split that stops short or runs past one changes a recorded verdict or loses
+one. Decision:
 decide, asked about every test of the register holding one candidate from the same run's outcomes and blamed lines, reads every
 test whose verdicts differ, calls inert every one passing under both and undecided every one failing under both, so its refusal of
 a failure blamed outside the candidate's test fires on no deterministic shape (bash blames a `( ! cmd )` subshell's failure on the
@@ -172,23 +190,27 @@ test of this module that derives from bash skips under such a bash wherever it r
 (bash_shortfall, skip_unless_bash_serves: BASH_4_SYNTAX and the warning; the Python cells run the module on macOS with no bats,
 where before round 2's second commit the two recall tests, the extents and the candidates were red, and the two tests that need no bash run
 there). The inner bats resolves through a PATH without the outer's libexec directory (_bats_env), since the entry point there
-expects the BATS_ROOT the scrub removes and did not load under CI's /usr/local layout. Measured at this head: 515 shapes, 540
-tests, in 74.26 s under 1.10.0 and 76.76 s under 1.11.1; under `! true` 307 ok and 233 not ok, under `! false` 525 ok and 15 not
+expects the BATS_ROOT the scrub removes and did not load under CI's /usr/local layout. Measured at this head: 531 shapes, 557
+tests, in 75.61 s under 1.10.0 and 75.62 s under 1.11.1; under `! true` 317 ok and 240 not ok, under `! false` 540 ok and 17 not
 ok (the four condition heads whose branch fails the test, `command _h` and `env _h`, which find no shell function, `run ! true`,
-which run itself fails, the doubled negation mid and last, whose inversions cancel, `! true && false` mid and last, the
-backgrounded negation whose job status `wait %%` reads, mid and last, the status saved with `rc=$?` and read by `[ ]`, and the
-brace glued to a `#`, `}# not a comment`, a command found nowhere, `}#: command not found`, failing under both); decide over the
-510 tests holding one candidate: 234 read, 272 inert, 4 undecided (`command _h`, `env _h`, `! true && false` last and `}# not a
-comment`, failing under both), the 7 holding two (the doubled and tripled negations, `if ! _h` and `! _h` mid and last with
-their helpers) and the 23 holding none not asked (among them the thirteen `y` tests of I_close_then_*,
+which run itself fails, the doubled negation mid and last and the doubled negation across a line continuation mid and last,
+whose inversions cancel, `! true && false` mid and last, the backgrounded negation whose job status `wait %%` reads, mid and
+last, the status saved with `rc=$?` and read by `[ ]`, and the brace glued to a `#`, `}# not a comment`, a command found
+nowhere, `}#: command not found`, failing under both); decide over the 521 tests holding one candidate: 241 read, 276 inert, 4
+undecided (`command _h`, `env _h`, `! true && false` last and `}# not a comment`, failing under both), the 9 holding two (the
+doubled and tripled negations, the doubled negation across a line continuation, `if ! _h` and `! _h` mid and last with their
+helpers) and the 27 holding none not asked (among them the fourteen `y` tests of I_close_then_*,
 I_close_backslash_newline_then_test and I_one_liner_then_arming, which call or read what the file-scope text after a close
-defines, or run after it). The 513 shapes of the head before this commit keep their recorded verdicts under both bats, and their
-extents, close columns, candidates and rewrites are byte for byte that head's walker's (measured over every shape, the two this
-commit adds included since the walker is the same, and the corpus's 24 rewrites: 0 differences; the `!` word rule's matches too,
-over every line of both), as each head of fork PR #871's review kept the one before it (506, 497, 493, 481, 429 and 381 shapes);
-the 250 shapes of the earlier register keep their 260 recorded `! true` verdicts and are 260 ok under `! false`; every negation of
-the register is a candidate (526, 291 of them in tests recorded ok, 480 at line start), the 139 recorded-inert line-start sites the
-earlier register counted and every one off line start among them.
+defines, or run after it, and the three tests whose one `!` is declared one word with what follows it, G_procsub_glued_* and
+G_bang_backslash_newline_glued_mid). The 515 shapes of the head before this commit keep their recorded verdicts under both bats,
+and their extents, close columns, candidates and rewrites are byte for byte that head's walker's (measured over every one of
+them and the corpus's 24 rewrites: 0 differences; the `!` word rule's matches and the `}` words too, over every line of both; of
+the 16 shapes this commit adds, 8 move, the glued process substitutions on both sides, the `!` continued onto ` true` and the
+doubled negation across a join, and 8 read the same at both heads, the separated and the declared forms, controls), as each
+head of fork PR #871's review kept the one before it (513, 506, 497, 493, 481, 429 and 381 shapes); the 250 shapes of the
+earlier register keep their 260 recorded `! true` verdicts and are 260 ok under `! false`; every negation of the register is a
+candidate (541, 299 of them in tests recorded ok, 495 at line start), the 139 recorded-inert line-start sites the earlier
+register counted and every one off line start among them.
 
 Deleted here, not fixed: the line scanner's frame model (the brace-depth walk, its block ends and the coverage pin over them), its
 heredoc classification (introducers, delimiter words, the skip) and its status-read grammar (`_plain_call`, `_helper_read`,
@@ -235,20 +257,63 @@ _TEST_LINE = re.compile(r"^[ \t]*@test[ \t]+(.*[^ \t])[ \t]+\{(.*)$")
 # here, and a file of one each was one test to this module where bats ran two
 _TEST_LINE_COMMENT = re.compile(r"[ \t]*([^ \t()]+)[ \t]*\(?\)?[ \t]+\{[ \t]+#[ \t]*@test[ \t]*$")
 _TEST_OPENER = "_t() {"   # what a test's opener line is rewritten into here: the name dropped, the brace kept, the `@test` form's tail after it
-# bash's metacharacters, the characters that end a word (man bash, Definitions: blank, tab, `|`, `&`, `;`, `(`, `)`, `<`, `>`, and
-# the newline, a line's end here). A word ends at one of them or at the end of the input and at nothing else, so a `!` or a `}`
-# followed by any other character (`!=`, `!cmd`, `}x`, `}}`, `}#`, `}'x'`, `}$x`, one before a backtick) is that word's and not
-# the reserved word. The one spelling of the boundary, read by _BANG for the `!`, by _close_words for the `}` and by the walker
-# for where a `#` may begin a word (negated_pipeline)
+# bash's metacharacters (man bash, Definitions: blank, tab, `|`, `&`, `;`, `(`, `)`, `<`, `>`, and the newline, a line's end
+# here): the characters at which a word may end and after which one may begin. Where a word ENDS is _word_ends, the one statement
+# of bash's word-break rule here, read by _close_words for the `}` and by _bang_at for the `!`; this set alone is read where a
+# word may BEGIN, the character before a `!` (_bang_at) or before a `#` (negated_pipeline)
 _METACHARACTERS = " \t|&;()<>"
-# a `!` standing as its own word: bounded on each side by a metacharacter (_METACHARACTERS), the line's start or end, or a
-# backtick (a substitution's text begins and ends at one, and bash -n reads nothing inside one, so a `!` next to a backtick is a
-# candidate whatever bash makes of it, the safe side: `` !`true` `` is one word to bash, a command named by the substitution). So
-# `!>/dev/null true`, `!(true)`, `! ! true`, `` `! true` `` and a `!` alone on a line (a pipeline of nothing, status 1) are words;
-# `!=`, `$!` and `!cmd` are none. The rule is bash's word boundary, not a list of spellings: a `!` it takes that is no negation is
-# a candidate bats reports, never a miss
-_BANG = re.compile(r"(?<![^%s`])!(?=[%s`]|$)" % (_METACHARACTERS, _METACHARACTERS))
-_ANY_BANG = re.compile("!")   # every `!` character: the register's expected set (BatsGroundTruth), which owes nothing to _BANG
+_ANY_BANG = re.compile("!")   # every `!` character: the register's expected set (BatsGroundTruth), which owes nothing to the word rule
+
+
+def _word_ends(lines, i, j):
+    r"""Whether a word of lines[i] whose last character stands at column j - 1 ends there to bash: bash's word-break rule, stated
+    once and read for the `}` (_close_words) and for the `!` (_bang_at), as read_token_word in bash's parse.y reads the character
+    after the word. A metacharacter (_METACHARACTERS) or the line's end ends it, EXCEPT a `<` or a `>` immediately followed by
+    `(`, which opens a process substitution and is the word's (read_token_word takes `$(`, `${`, `<(` and `>(` as part of the
+    word before its word-break check; `$` is no metacharacter, so its forms glue by the last clause). A lone `\` at the line's end
+    is a line continuation, which bash removes with the newline before it reads the word, so the character read is the next
+    line's first, or the line after that's where the next line is a lone `\` again, and the word ends where there is no next line
+    or the next line is empty. Every other character, a quote, a backtick, a `$`, a `#`, a `\` before a character (an escape, that
+    character the word's), a word character, continues the word. bash -n (5.2.21): `f() { true; }` followed by each of ` ; true`,
+    a tab, `;`, `&`, `|cat`, `<x`, `>/dev/null`, `<<EOF` with its body, `<<<x`, `>&2`, `&>/dev/null`, `>|/dev/null`, `<&0`,
+    `|(true)`, `&(true)`, `;(true)` and nothing: exit 0, the brace the close; followed by `<(true)` or `>(true)`: `unexpected
+    end of file`, exit 2, and exit 0 with a later `}` line, the brace glued; followed by `< (true)` or `> (true)`: `syntax error
+    near unexpected token `('`, exit 2, the brace the close and the parenthesis refused (and ` <(true)`, a blank first: refused at
+    the `<(true)` word, a word after a function's close); by `$(true)`, `${x}`, `$x`, `}`, `# c`, `x`, `'x'`, `"x"`, a backtick,
+    `=1` or `\x`: exit 2, glued; by a lone `\` then `<(true)` on the next line: exit 2, glued through the join, and exit 0 with a
+    later `}` line; by a lone `\` then ` (true)`: refused at the parenthesis, the brace the close. The same rule on the `!`:
+    `f() { !<(true); }` and `f() { !>(true); }` parse, exit 0, one word, a command named `!/dev/fd/N` (`declare -f` keeps
+    `!<(true)`), where `f() { ! <(true); }` is that command negated; `f() { !\` then ` true; }` is `! true` to `declare -f`,
+    `!\` then `true` is `!true`, one word, and `!\` then `! true` is `!! true`, one word. Before fork PR #871's round 2, eighth
+    commit, the boundary had two spellings, a regex for the `!` and a rule in _close_words for the `}`, each reading
+    _METACHARACTERS as the whole rule: each read a `<` or `>` before `(` as a word's end (`}<(true)` a close bash does not read,
+    the silent direction; `!<(true)` a candidate bats reports), and the regex read no continuation (`!\` then ` true`, `! true` to
+    bash, no word and no candidate, the silent direction). The `!` reader adds one allowance on top of this rule, a backtick beside
+    the `!` (_bang_at); the `}` reader adds none."""
+    rest = lines[i][j:]
+    while rest == "\\" and i + 1 < len(lines):   # a continuation: the character after the word is the next line's first
+        i, rest = i + 1, lines[i + 1]
+    if rest in ("", "\\"):
+        return True
+    return rest[0] in _METACHARACTERS and not (rest[0] in "<>" and rest[1:2] == "(")
+
+
+def _bang_at(lines, i, j):
+    r"""Whether a `!` standing at column j of lines[i] is its own word to bash: the character before it is a metacharacter
+    (_METACHARACTERS), the line's start or a backtick, and the word ends after it (_word_ends), or a backtick follows it. So
+    `!>/dev/null true`, `!(true)`, `! ! true`, `` `! true` ``, `` `!` `` and a `!` alone on a line (a pipeline of nothing, status
+    1) are words, and `!=`, `$!`, `!cmd`, `!<(true)` and `!>(true)` (one word with the process substitution, a command bash finds
+    nowhere) are none; a `!` whose line ends in a lone `\` after it is a word when the next line's first character ends the word
+    (`!\` then ` true` is `! true` to bash) and none when it does not (`!\` then `true` is `!true`, `!\` then `! true` is
+    `!! true`). The backtick is the one allowance on top of _word_ends, the safe side: a substitution's text begins and ends at
+    one and bash -n reads nothing inside one, so `` `!` `` is a negation whose boundary this cannot see, and `` !`true` ``, one
+    word to bash, a command named by the substitution, is a candidate bats reports, never a miss. The character before a `!` at
+    a line's start is not read across a continuation (`true\` then `! true` is `true! true` to bash, one word): a `!` there is a
+    word here, the safe side again, a candidate bats reports. The rule is bash's word boundary and no list of spellings: a `!` it
+    takes that is no negation is a candidate bats reports."""
+    line = lines[i]
+    return (j < len(line) and line[j] == "!" and (j == 0 or line[j - 1] in _METACHARACTERS or line[j - 1] == "`")
+            and (line[j + 1:j + 2] == "`" or _word_ends(lines, i, j + 1)))
 # the word before a `!` that makes it an operator of `[` or `[[`, or bats's own inverted `run` (`run ! cmd` fails the test itself
 # when cmd succeeds, in a file declaring bats_require_minimum_version 1.5.0), rather than a command's negation
 _OPERATOR_OF = ("[", "[[", "run")
@@ -366,8 +431,9 @@ def bash_test_extents(lines):
     a construct the file-scope text after a close opened and a later line closes does not; the lines are read from the previous
     opener, whose test and the file-scope text after its close through the line before this opener must parse whole, which is
     the lines before it by induction), and its close is the first `}` after the opener that bash reads as the word `}`
-    (_close_words: the character after the brace a metacharacter, a blank or the line's end, or the next line's first character
-    where a lone `\` ends the line after it), by line then column, the opener line's own tail included (a one-line test), at
+    (_close_words, over _word_ends, the one statement of bash's word-break rule here, read for the `!` too: the character after
+    the brace a metacharacter or the line's end, a `<` or `>` before `(` excepted, or the next line's first character where a
+    lone `\` ends the line after it), by line then column, the opener line's own tail included (a one-line test), at
     which the opener through that brace parses as a complete function (_closes: a here-document the close introduces,
     `{ ! cat <<EOF; }` with its body and terminator after the brace, is read on past the close until bash reads none pending,
     since bash and bats read the test that way; before fork PR #871's round 2, second commit, the pending body left such a test
@@ -412,27 +478,26 @@ def bash_test_extents(lines):
 
 
 def _close_words(rewritten, c):
-    r"""The columns of every `}` of rewritten[c] that bash reads as the word `}`, left to right: the character after the brace is
-    a metacharacter or a blank (_METACHARACTERS, the boundary _BANG reads for the `!`) or the line's end, since bash ends a word
-    there and nowhere else, so a brace followed by anything else (`}x`, `}}`, `}#`, `}'x'`, `}$x`, `}=1`, `}\x`, one before a
-    backtick, `` }`true` ``) is part of a longer word and closes nothing (bash -n: `f() { true; }x` is `unexpected end of file`,
-    and with a later `}` line it parses; `f() { true; }(true)` and `f() { true; })` are refused at the parenthesis, the brace
-    read as the close). A `\` alone after the brace at the line's end is a line continuation, which bash removes before it reads
-    the word, so the character read is the first of the next line, or of the line after that where the next line is a lone `\`
-    again, and the word ends where there is no next line or the next line is empty (bash -n on `f() { true; }\` followed by an
-    empty line, by the end of the input, by ` ; true` or by `; true`: exit 0; followed by `x`, by `}`, by `\` then `x`, or by
-    the rewritten opener `_t() {`: `unexpected end of file`, and with a later `}` line the `x` form parses); two backslashes are
-    an escaped backslash, a character of the word (`}\\` glues: `unexpected end of file`). The character BEFORE the brace is in
-    the prefix _closes hands bash, so it needs no rule here: a brace continuing a preceding word (`x}`, `${x}`, `$(true)}`, the
+    r"""The columns of every `}` of rewritten[c] that bash reads as the word `}`, left to right: the brace ends a word where bash
+    ends one (_word_ends, the rule the `!` reader reads too): the character after it a metacharacter or the line's end, a `<` or
+    `>` before `(` excepted, or the next line's first character where a lone `\` ends the line after the brace. So a brace
+    followed by anything else (`}x`, `}}`, `}#`, `}'x'`, `}$x`, `}=1`, `}\x`, one before a backtick, `` }`true` ``, and
+    `}<(true)`, `}>(true)`, one word with the process substitution) is part of a longer word and closes nothing (bash -n:
+    `f() { true; }x` and `f() { true; }<(true)` are `unexpected end of file`, and with a later `}` line each parses;
+    `f() { true; }(true)`, `f() { true; })` and `f() { true; }< (true)` are refused at the parenthesis, the brace read as the
+    close). A `\` alone after the brace at the line's end is a line continuation, which bash removes before it reads the word, so
+    the character read is the first of the next line, or of the line after that where the next line is a lone `\` again, and the
+    word ends where there is no next line or the next line is empty (bash -n on `f() { true; }\` followed by an empty line, by
+    the end of the input, by ` ; true` or by `; true`: exit 0; followed by `x`, by `}`, by `\` then `x`, by `<(true)` or by the
+    rewritten opener `_t() {`: `unexpected end of file`, and with a later `}` line the `x` form parses); two backslashes are an
+    escaped backslash, a character of the word (`}\\` glues: `unexpected end of file`). The character BEFORE the brace is in the
+    prefix _closes hands bash, so it needs no rule here: a brace continuing a preceding word (`x}`, `${x}`, `$(true)}`, the
     second brace of `}}`) leaves the function open and the parse refuses it, and a brace after a `)` (`(true)}`) is the word,
     the `)` a metacharacter, and parses as bash reads it. bash_test_extents and _close_col ask _closes of these braces and no
     other; before fork PR #871's round 2, sixth commit, they asked every `}`, and the cut just past the brace hid the glued
-    character from bash."""
+    character from bash; before the eighth commit this read _METACHARACTERS as the whole rule, and `}<(true)` was a close."""
     for m in re.finditer(r"\}", rewritten[c]):
-        k, rest = c, rewritten[c][m.end():]
-        while rest == "\\" and k + 1 < len(rewritten):   # a continuation: the character after the brace is the next line's first
-            k, rest = k + 1, rewritten[k + 1]
-        if rest in ("", "\\") or rest[0] in _METACHARACTERS:
+        if _word_ends(rewritten, c, m.end()):
             yield m.start()
 
 
@@ -523,9 +588,13 @@ def _bangs(pattern, lines, o, c, rewritten=None):
 
 
 def _test_bangs(lines, o, c, rewritten=None):
-    """(line index, column) of every `!` word (_BANG) in the test's text: the predicate's tokens. The register's expected set is
-    every `!` character instead (_ANY_BANG through the same _bangs), so it owes nothing to this rule."""
-    return _bangs(_BANG, lines, o, c, rewritten)
+    """(line index, column) of every `!` word (_bang_at, over the file as written: a continuation reads the next line) in the
+    test's text (_test_text): the predicate's tokens. The register's expected set is every `!` character instead (_ANY_BANG
+    through _bangs), so it owes nothing to this rule."""
+    for i, start, end in _test_text(lines, o, c, rewritten):
+        for j in range(start, len(lines[i]) if end is None else end):
+            if _bang_at(lines, i, j):
+                yield i, j
 
 
 def _word_before(line, j):
@@ -727,14 +796,22 @@ def negated_pipeline_end(lines, cand):
     return None if ext is None else (ext.line, ext.col)
 
 
-def _bang_run(line, j):
-    """The number of `!` words (_BANG) in the run beginning at column j of the line, blanks between them: 1 for `! true`, 2 for
-    `! ! true`."""
+def _bang_run(lines, i, j):
+    r"""The number of `!` words (_bang_at) in the run beginning at column j of lines[i], blanks between them, and a lone `\` at a
+    line's end between them too, which bash removes with the newline so the next line's first word joins the run: 1 for `! true`
+    and for `!\` then ` true`, 2 for `! ! true` and for `! \` then `! true` (`! ! true` to bash, its status read: `f() { ! \`
+    then `! true; }` returns 0 and with `! false` returns 1), through a second lone `\` line too. Before fork PR #871's round 2,
+    eighth commit, the run ended at the line's end, so the rewrite of `! \` then `! true` dropped the second `!`."""
     k = 0
-    while j < len(line) and _BANG.match(line, j):
+    while _bang_at(lines, i, j):
         k, j = k + 1, j + 1
-        while j < len(line) and line[j] in " \t":
-            j += 1
+        while True:   # the blanks after the word, and a lone `\` ending the line, which joins the next line's first word to the run
+            while j < len(lines[i]) and lines[i][j] in " \t":
+                j += 1
+            if lines[i][j:] == "\\" and i + 1 < len(lines):
+                i, j = i + 1, 0
+            else:
+                break
     return k
 
 
@@ -750,7 +827,7 @@ def rewritten_negation(lines, cand, ext, repl):
     if tail[:1] == "#" or (ext.line != cand.line and tail and not tail[0].isspace()):
         tail = " " + tail
     out = list(lines)
-    out[cand.line] = lines[cand.line][:cand.col] + "! " * (_bang_run(lines[cand.line], cand.col) - 1) + repl + tail
+    out[cand.line] = lines[cand.line][:cand.col] + "! " * (_bang_run(lines, cand.line, cand.col) - 1) + repl + tail
     for k in ext.blank:
         out[k] = ""
     return out
@@ -1450,13 +1527,15 @@ class Extents(unittest.TestCase):
         # cuts the line just past the brace, so a brace glued to a following character, one word to bash and no close (`}x`,
         # `}#`, `}}`), was asked as the prefix through the brace and answered as a close. On `@test "x" {` / `    true; }x
         # 2>/dev/null || true` / `    ! false` / `}` the extents were [(0, 1)], _close_col 10 and the candidates [] (this pin's
-        # first assertion: `Lists differ: [(0, 1)] != [(0, 3)]`), while bash puts the body as `true; }x 2> /dev/null || true;
+        # extents assertion, its third: `Lists differ: [(0, 1)] != [(0, 3)]`; its first, the `}` words of the line, reds `Lists
+        # differ: [10] != []` under a _close_words yielding every brace), while bash puts the body as `true; }x 2> /dev/null || true;
         # ! false` with the close on line 4 (`declare -f`) and bats runs the file as written, `ok 1 x` under 1.10.0 and 1.11.1:
         # the negation unseen, the silent direction. The same for `}# not a comment` (bats `not ok 1 x`, `}#: command not found`,
         # status 127), for `}}`, for a brace before a quote, a `$` or a backtick, and for a lone `\` after the brace continuing
         # the line onto a word, through one join or two. Now the braces asked are the ones bash reads as the word `}`
         # (_close_words): the character after the brace is a metacharacter, a blank or the line's end (_METACHARACTERS, the class
-        # _BANG reads for the `!`), or the next line's first character where a lone `\` ends the line after the brace; the
+        # the `!` reader reads; since the eighth commit both read one function, _word_ends, which excepts a `<` or `>` before
+        # `(`), or the next line's first character where a lone `\` ends the line after the brace; the
         # character before it is in the prefix, and bash refuses a glued one itself. After: extents to the file's last line, the
         # candidate on the negation's line, _close_col 0, the negation the one line a rewrite touches (the register's
         # I_close_glued_* and I_close_backslash_newline_word record its read, `not ok` under `! true` and `ok` under `! false`)
@@ -1534,17 +1613,18 @@ class Extents(unittest.TestCase):
         self.assertEqual(bash_test_extents(lines), [(0, 3)])
         self.assertEqual(list(_close_words(["_t() {", "    (true)}"], 1)), [10])
         self.assertEqual(bash_test_extents(['@test "x" {', '    (true)}']), [(0, 1)])
-        # one boundary: the `!` word and the `}` word read the same class, and the tree's `[[ "${x}" = y ]]` brace, before a
-        # quote, is asked of nothing; the `!` keeps the backtick as its own boundary on the safe side (`` !`true` `` is one word
-        # to bash, a candidate here, reported by bats), where the `}` before a backtick is glued and no close
+        # one boundary: the `!` word and the `}` word read _word_ends (since the eighth commit; one class, two spellings, before
+        # it), and the tree's `[[ "${x}" = y ]]` brace, before a quote, is asked of nothing; the `!` keeps the backtick as its
+        # one allowance on the safe side (`` !`true` `` is one word to bash, a candidate here, reported by bats), where the `}`
+        # before a backtick is glued and no close
         for ch in _METACHARACTERS:
-            self.assertTrue(_BANG.search("!" + ch), repr(ch))
+            self.assertTrue(_bang_at(["!" + ch], 0, 0), repr(ch))
             self.assertEqual(list(_close_words(["}" + ch], 0)), [0], repr(ch))
         for ch in "x}#'\"$=":
-            self.assertIsNone(_BANG.search("!" + ch), repr(ch))
+            self.assertFalse(_bang_at(["!" + ch], 0, 0), repr(ch))
             self.assertNotIn(0, list(_close_words(["}" + ch], 0)), repr(ch))   # the first brace is glued (`}}`'s second is a word, at 1)
         self.assertEqual(list(_close_words(["}\\x"], 0)), [])   # a backslash before a character glues; a lone one at the line's end is the continuation above
-        self.assertTrue(_BANG.search("!`"))
+        self.assertTrue(_bang_at(["!`"], 0, 0))
         self.assertEqual(list(_close_words(["}`"], 0)), [])
         self.assertEqual(list(_close_words(['    [[ "${x}" = y ]]'], 0)), [])
 
@@ -1595,6 +1675,78 @@ class Extents(unittest.TestCase):
             self.assertEqual(_close_col(rewritten, 0, 0), close - len('@test "x" {') + len(_TEST_OPENER), line)   # 45 and 27: the name dropped
             self.assertEqual(list(_test_text([line], 0, 0, rewritten)), [(0, 11, close)], line)
             self.assertEqual(candidates([line], [(0, 0)]), [Candidate(0, 0, bang, False)], line)
+
+    def test_a_brace_glued_to_a_process_substitution_is_no_close_and_one_separated_from_it_by_a_blank_is_the_close(self):
+        # fork PR #871's round 2, eighth commit (F1 of the seventh's verifiers: the sixth commit's class again, the silent
+        # direction): _close_words read _METACHARACTERS as the whole rule, and `<` and `>` are in it, so a brace glued to a process
+        # substitution, `}<(true)`, `}>(true)`, one word to bash (read_token_word takes `<(` and `>(` as the word's before its
+        # word-break check; bash -n: `f() { true; }<(true)` is `unexpected end of file`, exit 2, and exit 0 with a later `}`
+        # line; `declare -f` puts `}<(true) 2> /dev/null || true;` and `! true` inside the body), was the word `}` here and, the
+        # prefix through it parsing, the close. On `@test "x" {` / `    true; }<(true) 2>/dev/null || true` / `    ! true` / `}`
+        # / `@test "y" {` / `    true` / `}` the module at the seventh commit gave _close_words(line 1) [10], extents [(0, 1),
+        # (4, 6)] and candidates [] (this pin's first assertion: `Lists differ: [10] != []`): both rewrites the file as written,
+        # nothing run, nothing reported, while bats runs the negation as x's last command, `not ok 1 x` then `ok 2 y` under
+        # 1.10.0 and 1.11.1. Population in tests/*.bats: 0. Now the boundary is one function, _word_ends, read for the `}` and
+        # the `!` alike, and a `<` or `>` immediately before `(` continues the word. Both directions: glued, no word, the extent
+        # to line 4 and the negation the one candidate (the register's I_close_glued_procsub_*); separated by a blank
+        # (`}< (true)`, `}> (true)`: bash -n `syntax error near unexpected token `('`, exit 2, the brace read as the close and
+        # the parenthesis refused; `} <(true)`: refused at the `<(true)` word, a word after a function's close), the brace is
+        # the word and the prefix through it parses, y unopened since the rest of the line does not parse; a redirection from a
+        # process substitution after the close, `} < <(true)`, `} > >(cat)` (exit 0), the brace the word, y opening after it
+        # (I_close_then_procsub_redirect); and each other metacharacter before a `(` ends the word (`}|(true)`, `}&(true)`,
+        # `};(true)`: exit 0, the brace the close), so the exception is the two characters read_token_word names and no wider
+        for glue in ("<(true)", ">(true)"):
+            line = "    true; }%s 2>/dev/null || true" % glue
+            lines = ['@test "x" {', line, '    ! true', '}', '@test "y" {', '    true', '}']
+            rewritten = _rewritten(lines)
+            self.assertEqual(list(_close_words(rewritten, 1)), [], line)
+            rc, err = _bash_n(["_t() {", "    true; }" + glue])
+            self.assertEqual((rc, "unexpected end of file" in err), (2, True), err)
+            self.assertEqual(_bash_n(["_t() {", "    true; }" + glue, "}"])[0], 0, glue)
+            extents = bash_test_extents(lines)
+            self.assertEqual(extents, [(0, 3), (4, 6)], line)
+            self.assertEqual(_close_col(rewritten, 0, 3), 0, line)
+            self.assertEqual(candidates(lines, extents), [Candidate(0, 2, 4, False)], line)
+            for repl in ("! true", "! false"):
+                out = rewritten_shape(lines, extents, repl)
+                self.assertEqual(out, lines[:2] + ["    " + repl] + lines[3:], line)
+                self.assertTrue(_bash_parses(_rewritten(out)), line)
+        for after, refused in (("< (true)", "`('"), ("> (true)", "`('"), (" <(true)", "`<(true)'")):
+            lines = ['@test "x" {', '    ! true; }' + after, '@test "y" {', '    ! false', '}']
+            rewritten = _rewritten(lines)
+            self.assertEqual(list(_close_words(rewritten, 1)), [len("    ! true; ")], after)
+            self.assertTrue(_closes(rewritten, 0, 1, len("    ! true; "))[0], after)
+            rc, err = _bash_n(rewritten[:2])
+            self.assertEqual((rc, "syntax error near unexpected token " + refused in err), (2, True), err)
+            self.assertEqual(bash_test_extents(lines), [(0, 1)], after)
+            self.assertEqual(unopened_test_lines(lines, bash_test_extents(lines)), [2], after)
+        for after in (" < <(true)", " > >(cat)", "|(true)", "&(true)", ";(true)"):
+            lines = ['@test "x" {', '    ! true; }' + after, '@test "y" {', '    ! false', '}']
+            rewritten = _rewritten(lines)
+            self.assertEqual(list(_close_words(rewritten, 1)), [len("    ! true; ")], after)
+            self.assertEqual(_bash_n(rewritten[:2])[0], 0, after)
+            self.assertEqual(bash_test_extents(lines), [(0, 1), (2, 4)], after)
+            self.assertEqual(candidates(lines, bash_test_extents(lines)), [Candidate(0, 1, 4, False), Candidate(1, 3, 4, False)], after)
+        # through a continuation: a lone `\` after the brace, then `<(true)` first on the next line, glues (bash -n: exit 2, and
+        # exit 0 with a later `}` line); then ` (true)`, a blank first, leaves the brace the word (refused at the parenthesis)
+        lines = ['@test "x" {', '    true; }\\', '<(true) 2>/dev/null || true', '    ! true', '}']
+        self.assertEqual(list(_close_words(_rewritten(lines), 1)), [])
+        self.assertEqual(_bash_n(["_t() {", "    true; }\\", "<(true)"])[0], 2)
+        self.assertEqual(_bash_n(["_t() {", "    true; }\\", "<(true)", "}"])[0], 0)
+        self.assertEqual(bash_test_extents(lines), [(0, 4)])
+        self.assertEqual(candidates(lines, bash_test_extents(lines)), [Candidate(0, 3, 4, False)])
+        self.assertEqual(list(_close_words(["_t() {", "    true; }\\", " (true)"], 1)), [10])
+        rc, err = _bash_n(["_t() {", "    true; }\\", " (true)"])
+        self.assertEqual((rc, "syntax error near unexpected token `('" in err), (2, True), err)
+        # one rule for both words: each metacharacter ends the word, a `<` or `>` before `(` does not, and the backtick beside
+        # the `!` is the one allowance on top of it
+        for ch in _METACHARACTERS:
+            self.assertTrue(_word_ends(["}" + ch], 0, 1), repr(ch))
+            self.assertEqual(_word_ends(["}" + ch + "("], 0, 1), ch not in "<>", repr(ch))
+            self.assertEqual(_bang_at(["!" + ch + "("], 0, 0), ch not in "<>", repr(ch))
+            self.assertEqual(list(_close_words(["}" + ch + "("], 0)), [] if ch in "<>" else [0], repr(ch))
+        self.assertFalse(_word_ends(["}`("], 0, 1))
+        self.assertTrue(_bang_at(["!`("], 0, 0))
 
     def test_a_test_line_inside_a_construct_the_text_after_a_close_opened_is_not_opened_and_the_problem_names_that_cause(self):
         # fork PR #871's round 2, sixth commit (docs): since the fifth commit the text after a close is file scope through the
@@ -1720,6 +1872,70 @@ class Candidates(unittest.TestCase):
         lines = '@test "x" {\n    echo "\n    ! true\n'.split("\n")
         with self.assertRaises(ValueError):
             candidates(lines, bash_test_extents(lines))
+
+    def test_a_negation_glued_to_a_process_substitution_is_one_word_and_separated_from_it_by_a_blank_a_negation(self):
+        # fork PR #871's round 2, eighth commit (F1 of the seventh's verifiers, the `!` side of the same rule, the safe side): the
+        # word rule was a regex over _METACHARACTERS, so `!<(true)` and `!>(true)`, one word to bash (read_token_word takes `<(`
+        # and `>(` as the word's; bash -n: `f() { !<(true); }` exit 0; `declare -f` keeps `!<(true) 2> /dev/null || true`, a
+        # command named `!/dev/fd/N`, found nowhere), were `!` words here and candidates bats reported, never a miss: at the
+        # seventh commit `candidates` gave [Candidate(0, 1, 4, False)] for the glued line (this pin's first assertion). Now
+        # _bang_at reads _word_ends, the rule _close_words reads for the `}`: glued, no word and no candidate (the register's
+        # G_procsub_glued_*, their `!` declared text, so a reader taking it reds the declaration as stale); separated by a blank,
+        # `! <(true)`, the negation of that command (bash -n `f() { ! <(true); }`: exit 0; `!< (true)`: `syntax error near
+        # unexpected token `('`, exit 2, the `!` a word and the parenthesis refused), a candidate whose rewrite touches its line
+        # alone (G_procsub_separated_*)
+        for glued in ("!<(true) 2>/dev/null || true", "!>(true) 2>/dev/null || true"):
+            lines = ['@test "x" {', "    " + glued, "    true", "}"]
+            extents = bash_test_extents(lines)
+            self.assertEqual(candidates(lines, extents), [], glued)
+            self.assertFalse(_bang_at(lines, 1, 4), glued)
+            self.assertEqual(_bash_n(["f() { %s; }" % glued])[0], 0, glued)
+            self.assertEqual(list(_bangs(_ANY_BANG, lines, 0, 3)), [(1, 4)], glued)   # the register's expected set holds it: the shape declares it
+        for text in ("! <(true) 2>/dev/null", "! >(true) 2>/dev/null"):
+            lines = ['@test "x" {', "    true", "    " + text, "}"]
+            extents = bash_test_extents(lines)
+            self.assertEqual(candidates(lines, extents), [Candidate(0, 2, 4, False)], text)
+            self.assertEqual(_bash_n(["f() { %s; }" % text])[0], 0, text)
+            for repl in ("! true", "! false"):
+                self.assertEqual(rewritten_shape(lines, extents, repl), lines[:2] + ["    " + repl, "}"], text)
+        rc, err = _bash_n(["f() { !< (true); }"])
+        self.assertEqual((rc, "syntax error near unexpected token `('" in err), (2, True), err)
+        self.assertTrue(_bang_at(["!< (true)"], 0, 0))
+
+    def test_a_negation_continued_by_a_lone_backslash_is_the_word_the_next_line_makes_it_and_a_run_follows_the_join(self):
+        # fork PR #871's round 2, eighth commit (F2 of the seventh's verifiers, the shared boundary's other clause, the silent
+        # direction): the word rule was a regex with no line-continuation reading, so `    !\` then ` true`, which bash joins to
+        # `! true` (`declare -f`: `! true`; `f() { !\` then ` true; }` returns 1), matched nothing, the test had no candidate,
+        # nothing ran and nothing was reported (at the seventh commit `candidates` gave [] here, this pin's first assertion),
+        # while bats reads the negation, `not ok 1 x` under 1.10.0 and 1.11.1 as the test's last command. The sibling forms
+        # agreed with bash already: `    ! \` then `true` a candidate (0, 1, 4), read, and `    !\` then `true`, `!true` to bash,
+        # one word, no candidate. Now _bang_at reads _word_ends, whose continuation clause _close_words read for the `}` since
+        # the sixth commit: a lone `\` at the line's end is removed with the newline and the character read is the next line's
+        # first, through a second lone `\` line. The character BEFORE a `!` is not read across a join: `!\` then `! true` is
+        # `!! true` to bash, one word, and the second `!`, at its line's start, is a word here, the safe side (its rewrite fails
+        # under both, reported). And the run of `!` words the rewrite keeps whole follows the join (_bang_run): `    ! \` then
+        # `    ! true` is `! ! true` to bash (returns 0; with `! false`, 1), two words, where a run ending at the line's end
+        # wrote `! true` for it and dropped a negation (the register's G_double_negation_continued_*)
+        lines = ['@test "x" {', "    true", "    !\\", " true", "}"]
+        extents = bash_test_extents(lines)
+        self.assertEqual(candidates(lines, extents), [Candidate(0, 2, 4, False)])
+        self.assertTrue(_bang_at(lines, 2, 4))
+        self.assertEqual(negated_pipeline(lines, Candidate(0, 2, 4, False)), Extent(3, 5, (3,)))
+        for repl in ("! true", "! false"):
+            self.assertEqual(rewritten_shape(lines, extents, repl), ['@test "x" {', "    true", "    " + repl, "", "}"])
+        for second, cands in (("true", []), ("<(true)", []), ("! true", [Candidate(0, 2, 0, False)]), (" true", [Candidate(0, 1, 4, False)]),
+                              ("\ttrue", [Candidate(0, 1, 4, False)]), (";true", [Candidate(0, 1, 4, False)]), ("", [Candidate(0, 1, 4, False)])):
+            lines = ['@test "x" {', "    !\\", second, "    true", "}"]
+            self.assertEqual(candidates(lines, bash_test_extents(lines)), cands, repr(second))
+        for rest, k in ((["    !\\", " true"], 1), (["    ! \\", "true"], 1), (["    ! \\", "    ! true"], 2), (["    ! \\", "\\", "! true"], 2),
+                        (["    ! ! true"], 2), (["    ! \\ ", "! true"], 1), (["    ! \\", "! \\", "! true"], 3), (["    !\\", "! true"], 0)):
+            self.assertEqual(_bang_run(rest, 0, 4), k, rest)
+        lines = ['@test "x" {', "    true", "    ! \\", "    ! true", "}"]
+        extents = bash_test_extents(lines)
+        self.assertEqual(candidates(lines, extents), [Candidate(0, 2, 4, False), Candidate(0, 3, 4, False)])
+        for repl in ("! true", "! false"):
+            self.assertEqual(rewritten_shape(lines, extents, repl), ['@test "x" {', "    true", "    ! " + repl, "", "}"])
+        self.assertEqual(rewrite(lines, Candidate(0, 3, 4, False), "! false"), ['@test "x" {', "    true", "    ! \\", "    ! false", "}"])
 
     def test_the_negated_pipeline_ends_at_the_first_top_level_operator_or_comment_and_follows_a_continuation(self):
         lines = ['@test "x" {',
@@ -2178,6 +2394,28 @@ def ground_truth_shapes():
     S["G_lone_bang_semicolon_mid"] = '@test "x" {\n    !; true\n    true\n}\n'
     S["G_backtick_glued_mid"] = '@test "x" {\n    echo `%s` > /dev/null\n    true\n}\n' % N
     S["G_backtick_lone_bang_mid"] = '@test "x" {\n    echo `!` > /dev/null\n    true\n}\n'
+    # the same rule on the `!` (fork PR #871's round 2, eighth commit): a `!` glued to a process substitution is one word with it,
+    # `!<(true)`, `!>(true)`, a command bash finds nowhere (`2>/dev/null || true` swallows that; its `!` is declared text, and a
+    # reader taking it as a word reds the declaration as stale), and separated from it by a blank it negates that command, a
+    # candidate; a `!` continued by a lone `\` onto the next line is the word the next line's first character makes it: ` true`
+    # joins to `! true`, a negation (a reader with no continuation found no candidate and recorded the file as written, (not ok,
+    # not ok) where the record says (not ok, ok) in the last position), `true` to `!true`, one word (declared), and `! \` onto
+    # `true` was read already; a doubled negation across the join, `! \` then `! true`, is `! ! true` to bash, whose run the
+    # rewrite keeps whole (_bang_run: a run ending at the line's end wrote `! true` for it, and the doubled negation's record,
+    # (ok, not ok), came back (not ok, ok))
+    S["G_procsub_glued_in_mid"] = '@test "x" {\n    !<(true) 2>/dev/null || true\n    true\n}\n'
+    S["G_procsub_glued_out_mid"] = '@test "x" {\n    !>(true) 2>/dev/null || true\n    true\n}\n'
+    S["G_procsub_separated_in_mid"] = '@test "x" {\n    ! <(true) 2>/dev/null\n    true\n}\n'
+    S["G_procsub_separated_in_last"] = '@test "x" {\n    true\n    ! <(true) 2>/dev/null\n}\n'
+    S["G_procsub_separated_out_mid"] = '@test "x" {\n    ! >(true) 2>/dev/null\n    true\n}\n'
+    S["G_procsub_separated_out_last"] = '@test "x" {\n    true\n    ! >(true) 2>/dev/null\n}\n'
+    S["G_bang_backslash_newline_mid"] = '@test "x" {\n    !\\\n true\n    true\n}\n'
+    S["G_bang_backslash_newline_last"] = '@test "x" {\n    true\n    !\\\n true\n}\n'
+    S["G_bang_backslash_newline_glued_mid"] = '@test "x" {\n    !\\\ntrue 2>/dev/null || true\n    true\n}\n'
+    S["G_bang_blank_backslash_newline_mid"] = '@test "x" {\n    ! \\\ntrue\n    true\n}\n'
+    S["G_bang_blank_backslash_newline_last"] = '@test "x" {\n    true\n    ! \\\ntrue\n}\n'
+    S["G_double_negation_continued_mid"] = '@test "x" {\n    ! \\\n    %s\n    true\n}\n' % N
+    S["G_double_negation_continued_last"] = '@test "x" {\n    true\n    ! \\\n    %s\n}\n' % N
     # a run of `!` words: bash reads a doubled negation's status (the inversions cancel and errexit applies) and exempts a tripled one
     S["G_double_negation_mid"] = '@test "x" {\n    ! %s\n    true\n}\n' % N
     S["G_double_negation_last"] = '@test "x" {\n    true\n    ! %s\n}\n' % N
@@ -2322,6 +2560,15 @@ def ground_truth_shapes():
     # (not ok, not ok) where the record says (not ok, ok); the recall gate reads the same text and could not see that, this record can
     S["I_close_glued_before_close"] = '@test "x" {\n    true; }x 2>/dev/null || true; %s; }\n' % N
     S["I_one_liner_glued_before_close"] = '@test "x" { true; }x 2>/dev/null || true; %s; }\n' % N
+    # a brace glued to a process substitution, `}<(true)`, `}>(true)`, one word to bash with it (fork PR #871's round 2, eighth
+    # commit, F1 of the seventh's verifiers, the sixth commit's class: bash's read_token_word takes `<(` and `>(` as the word's
+    # before its word-break check, and a reader ending the word at every metacharacter, the `<` and `>` among them, read a close
+    # bash does not read, found no candidate, and recorded the file as written under both rewrites, (not ok, not ok) where the
+    # record says (not ok, ok)); and a redirection from a process substitution after the close, `} < <(true)`, the brace the
+    # word, y opening after it
+    S["I_close_glued_procsub_in"] = '@test "x" {\n    true; }<(true) 2>/dev/null || true\n    %s\n}\n' % N
+    S["I_close_glued_procsub_out"] = '@test "x" {\n    true; }>(true) 2>/dev/null || true\n    %s\n}\n' % N
+    S["I_close_then_procsub_redirect"] = '@test "x" {\n    %s; } < <(true)\n@test "y" {\n    true\n}\n' % N
     # the comment form of a declaration, `name() { # @test` (bats-preprocess's BATS_TEST_PATTERN_COMMENT), which bats runs as it
     # runs a `@test` line: with and without the parentheses (`x { # @test` is no function to bash until rewritten), under the
     # `function` keyword (the name is the word before the brace, the pattern's leftmost match), indented with blanks inside the
@@ -2356,6 +2603,9 @@ NOT_A_NEGATION = dict(
     G_string_bang_mid={2: "text in a string"},
     G_eval_string_mid={2: "text in a string eval runs"},
     G_bash_c_string_mid={2: "text in a string bash -c runs"},
+    G_procsub_glued_in_mid={2: "one word with the process substitution, `!<(true)`, a command bash finds nowhere"},
+    G_procsub_glued_out_mid={2: "one word with the process substitution, `!>(true)`, a command bash finds nowhere"},
+    G_bang_backslash_newline_glued_mid={2: "one word with the next line's first word after the continuation, `!true`, a command bash finds nowhere"},
     I_close_then_heredoc_lines={6: "text in a string, the next test's comparison against the line a file-scope read took"},
     X_test_bracket_mid={2: "the operator of `[`"},
     X_test_dbracket_mid={2: "the operator of `[[`"},
@@ -2366,7 +2616,7 @@ NOT_A_NEGATION = dict(
 NO_NEGATION = {"I_one_liner_between": (2,), "E_setup_before_test": (1,), "I_close_then_helper": (2,), "I_close_then_helper_or_return": (2,),
                "I_close_then_group_arming": (2,), "I_one_liner_then_arming": (2,), "I_close_then_function_lines": (2,), "I_close_then_case_lines": (2,),
                "I_close_then_group_lines": (2,), "I_close_then_subshell_lines": (2,), "I_close_then_if_lines": (2,), "I_close_then_while_lines": (2,),
-               "I_close_backslash_newline_then_test": (2,), "I_close_then_comment": (2,)}
+               "I_close_backslash_newline_then_test": (2,), "I_close_then_comment": (2,), "I_close_then_procsub_redirect": (2,)}
 
 
 def record_under_bats(shapes, bats="bats"):
@@ -2710,6 +2960,11 @@ class BatsGroundTruth(unittest.TestCase):
         'G_ansi_quote_or_false_mid': ('not ok', 'ok'),
         'G_backtick_glued_mid': ('ok', 'ok'),
         'G_backtick_lone_bang_mid': ('ok', 'ok'),
+        'G_bang_backslash_newline_glued_mid': ('ok', 'ok'),
+        'G_bang_backslash_newline_last': ('not ok', 'ok'),
+        'G_bang_backslash_newline_mid': ('ok', 'ok'),
+        'G_bang_blank_backslash_newline_last': ('not ok', 'ok'),
+        'G_bang_blank_backslash_newline_mid': ('ok', 'ok'),
         'G_bash_c_string_mid': ('ok', 'ok'),
         'G_bg_last': ('ok', 'ok'),
         'G_bg_mid': ('ok', 'ok'),
@@ -2742,6 +2997,8 @@ class BatsGroundTruth(unittest.TestCase):
         'G_continued_or_true_mid': ('ok', 'ok'),
         'G_continued_pipe_last': ('not ok', 'ok'),
         'G_continued_pipe_mid': ('ok', 'ok'),
+        'G_double_negation_continued_last': ('ok', 'not ok'),
+        'G_double_negation_continued_mid': ('ok', 'not ok'),
         'G_double_negation_last': ('ok', 'not ok'),
         'G_double_negation_mid': ('ok', 'not ok'),
         'G_escaped_blank_arg_end_last': ('not ok', 'ok'),
@@ -2839,6 +3096,12 @@ class BatsGroundTruth(unittest.TestCase):
         'G_pipeamp_mid': ('ok', 'ok'),
         'G_pipeline_last': ('not ok', 'ok'),
         'G_pipeline_mid': ('ok', 'ok'),
+        'G_procsub_glued_in_mid': ('ok', 'ok'),
+        'G_procsub_glued_out_mid': ('ok', 'ok'),
+        'G_procsub_separated_in_last': ('not ok', 'ok'),
+        'G_procsub_separated_in_mid': ('ok', 'ok'),
+        'G_procsub_separated_out_last': ('not ok', 'ok'),
+        'G_procsub_separated_out_mid': ('ok', 'ok'),
         'G_quoted_operators_last': ('not ok', 'ok'),
         'G_redirect_glued_in_mid': ('ok', 'ok'),
         'G_redirect_glued_out_mid': ('ok', 'ok'),
@@ -2887,6 +3150,8 @@ class BatsGroundTruth(unittest.TestCase):
         'I_close_glued_before_close': ('not ok', 'ok'),
         'I_close_glued_brace': ('not ok', 'ok'),
         'I_close_glued_hash': ('not ok', 'not ok'),
+        'I_close_glued_procsub_in': ('not ok', 'ok'),
+        'I_close_glued_procsub_out': ('not ok', 'ok'),
         'I_close_glued_word': ('not ok', 'ok'),
         'I_close_introduces_heredoc_last': ('not ok', 'ok'),
         'I_close_introduces_heredoc_mid': ('ok', 'ok'),
@@ -2902,6 +3167,7 @@ class BatsGroundTruth(unittest.TestCase):
         'I_close_then_helper_or_return': ('not ok,ok', 'ok,ok'),
         'I_close_then_heredoc_lines': ('not ok,ok', 'ok,ok'),
         'I_close_then_if_lines': ('not ok,ok', 'ok,ok'),
+        'I_close_then_procsub_redirect': ('not ok,ok', 'ok,ok'),
         'I_close_then_subshell_lines': ('not ok,ok', 'ok,ok'),
         'I_close_then_while_lines': ('not ok,ok', 'ok,ok'),
         'I_comment_form_and_at_test': ('ok,not ok', 'ok,ok'),
