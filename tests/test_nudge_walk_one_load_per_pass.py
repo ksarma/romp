@@ -89,15 +89,14 @@ the kernel, the judge and this module hashed before the plant, across the run an
 green with no file changed across a run, so they stay outside every witness here; the third has been refused since the consolidation
 pass by the kernel-wide birth pin, whose called population names `_PJ.load_goals_shared` as a fifth loader spelling, so a second judge
 module is outside both execution witnesses and inside the static pin, which reds alone while every execution case stays green; and
-the alias control beside them reds the shared reconciliation on each of the five harness cases that drive a pass, and the birth pin
-(6 failed, 33 passed at this head; the door witness's fourteen cases run outside any pass, thirteen each driving
-one call of the door under _drive (three of them, hit, compare_miss and dup, priming the cache with a call of their own before the
-drive's window, and the refuse case calling again after it) and one reading the table, seventeen calls over the fourteen, counted by a
-profile of the door's frames at this head, and stay green under the control, so it reds five of the nineteen
-harness cases; review round 5, extra7-1: this sentence said every harness case, and one of the six at the head the round-5 ruling read
-drove no pass; a verifier of the round-5 fixes: it then said the door witness's cases call the door, one of them reading the table;
-review round 6, regression-2: it then said thirteen cases, twelve calling the door once, against sixteen calls the same profile
-counted at the head of the round-6 fixes, the three primes and the refuse case's second call among them). Review round 3, correctness-2 and
+the alias control beside them reds the shared reconciliation on each of the harness cases that drive a pass, and the birth pin, the
+figures in the current head's paragraph below (the door witness's cases run outside any pass, each drive calling the door once under
+_drive, hit, compare_miss and dup priming the cache with a call of their own before the drive's window and the refuse case calling
+again after it, and the table case calling none, so they stay green under the control; review round 5, extra7-1: this sentence said
+every harness case, and one of the six at the head the round-5 ruling read drove no pass; a verifier of the round-5 fixes: it then
+said the door witness's cases call the door, one of them reading the table; review round 6, regression-2: it then counted the
+witness's cases and their calls by hand and the counts were stale; review round 7, extra4-1: the corrected counts were written in as
+words, copies of counts the module computes that no pin read, and it carries none since). Review round 3, correctness-2 and
 regression-2: this sentence had been written at the head of the build's verifier pass after the round-2 fixes, over that
 head's cases, said every case green of all three plants, and went stale as cases and the pin were added, so the count here is pinned by
 a Docs case against the loader's count of this module's cases, and the plants are re-taken whenever it moves). The two
@@ -129,8 +128,8 @@ walk and the gate load nothing, the sweep loads once per pass and reaches the fa
 since its real body is a writer).
 
 Two provenances are named in this module, never by one word. The reviewer's rounds carry a number: review round 1 ruled
-twelve findings, round 2 fourteen, round 3 nine, round 4 seventeen, round 5 seventeen, round 6 thirteen (one refuted), and "the round-N fixes" are the changes that answer
-round N's rulings. The
+twelve findings, round 2 fourteen, round 3 nine, round 4 seventeen, round 5 seventeen, round 6 thirteen (one refuted), round 7 eighteen
+(one refuted), and "the round-N fixes" are the changes that answer round N's rulings. The
 build's own passes carry a role and never a number: the build's verifier pass after the round-1 fixes, the build's verifier
 pass after the round-2 fixes, and the consolidation pass, the build's pass between the round-2 fixes and the reviewer's round
 3, in which three lenses read the head, the reviewer ruled on what they found (the reviewer's rulings on the pre-emption,
@@ -413,7 +412,7 @@ passed; the same three lines at the head the round-4 ruling read, each naming an
 naming the classes by their count, five (1 failed, 21 passed); TypeIgnore deleted from the ast module at import reds the interpreter
 check naming the removal as the third cause (1 failed, 21 passed). The staleness (correctness-2, regression-4): the round-3
 paragraph's figures are labelled with the count they read against and its clean line with its head by role, and the clean module at
-that head is pinned by the Docs case beside the bypass count, the line's figures summed against the loader's count; the clean figure
+that head was pinned by that head's Docs case beside the bypass count, the line's figures summed against the loader's count; the clean figure
 set one below reds the Docs case at the clean line, 21 against 22 (1 failed, 21 passed), the bypass count set one behind reds it at
 the bypass line (1 failed, 21 passed), and the round-3 clean line set to 18 leaves the module green (22 passed), the historical lines
 being labelled and not pinned, the ruling's alternative.
@@ -653,14 +652,19 @@ spelling the clauses read reds the dup drive's sites, the coverage case, the ros
 35 passed). The two false sentences (regression-2; tests-2 with regression-3): the first paragraph's alias-control sentence said the
 door witness's thirteen cases run outside any pass, twelve calling the door once, where a profile of the door's frames counts
 seventeen calls over fourteen cases, thirteen under _drive and one each before the window in the three priming cases and after it in
-the refuse case, the figures the sentence carries since (no assertion reads it; the profile at this head is the state); the case
+the refuse case, the figures the sentence carried until the round-8 fixes (no assertion read it; the profile at this head is the state); the case
 count's 'reads against N' copies, one each in the paragraphs of the consolidation pass and rounds 4, 5 and 6, sat in fragments the
 split at '3.12' left with no head label, so a stale copy was green wherever it stood; the copies are removed and the Docs case reads
 this paragraph whole by a census of its figures, so a stale copy written into this paragraph reds it naming the clause (1 failed, 38
 passed) while the same copy in a historical paragraph leaves the module green by design (39 passed). The axis statements, the
-standard's second clause: every instrument's docstring carries a sentence naming what it derives and what it bounds, prose no
-assertion reads (of this module's docstrings the Docs case reads the module's own alone), each checked against the code; a Bounds
-sentence made false and a Derives clause negated each leave the module green (39 passed each), the stated bound. The hand-off keys
+standard's second clause: the round wrote a labelled Derives and Bounds sentence into the docstrings of module-level readers, of the
+harness with its cleanup and its pass, and of witness and pin classes and cases, prose no assertion read (of this module's docstrings
+the Docs case reads the module's own alone; a Bounds sentence made false and a Derives clause negated each left the module green, 39
+passed each); two roster rows, _door_regions and _grammar_positions, carried neither label, two test classes,
+OneSharedLoadPerAliveSessionPerPass and TheCountersOneSite, carried no docstring, and which docstrings carried the pair was a
+hand-kept population on an axis the module computes (review round 7, extra4-3, extra7-2 and extra5-2: the universal is withdrawn
+here; the reviewer's changed standard asks for the pair's existence pinned mechanically over the roster rows that key on a
+hand-written roster, and for a Bounds sentence only where the bound would surprise a reader). The hand-off keys
 (the plan's hunt for a seventh hand-written axis, the class of extra7-1 and tests-2): SHARED_HANDOFF_KEYS was pinned by nothing
 while its three siblings are pinned against the door's AST; the roster pin derives the keys from the door's statement lists, the
 direct bump keys of every list whose last statement returns a call of load_goals, and holds them equal to the tuple both ways, and
@@ -700,30 +704,31 @@ jd._read_store_json, per session in the pass loop, leave every case green with n
 second judge module loaded under another name reds the birth pin alone, naming `_PJ.load_goals_shared` (1 failed, 38 passed); the
 alias control, the shared door bound at kernel import and called per session, reds the shared reconciliation on each of the five
 harness cases that drive a pass, 2 against 0, 7 against 5 twice, 6 against 4 and 3 against 1, and the birth pin, the door witness's
-fourteen cases green under it (6 failed, 33 passed). The round-6 paragraph's states were re-taken at this head as well, and that
+cases green under it (6 failed, 33 passed). The round-6 paragraph's states were re-taken at this head as well, and that
 paragraph's last sentences record the result. The round's close (the verifiers' eight findings on the round's delta, four of them the
 seventh-axis lens's). The class attributes (the lens's first find): the cleanup's check read the module globals of both modules
 and put one class attribute, Sessions.backend_for, back by hand, so a stub a case left on any other class attribute lived for
-every later test unnamed; _class_attributes derives every attribute of every class either module defines from the classes' own
-dicts, setUp snapshots it and _restore checks it after the globals are back, and setUp saves backend_for from the class dict so
+every later test unnamed; _class_attributes derives every attribute of every class either module binds in its globals and owns by
+__module__ from the classes' own dicts, setUp snapshots it and _restore checks it after the globals are back, and setUp saves
+backend_for from the class dict so
 the staticmethod object goes back. The states: a new-identity pass-through on km.Sessions.live and on jd._ParseStore.get in the
 wedge-gate sweep case, with a probe at the module's last case reading both class-dict entries against the import-time objects,
-left the wedge case's cleanup green with the probe red before (1 failed, 38 passed), and reds the wedge case at its cleanup naming
+left the wedge case's cleanup green with the probe red before, and reds the wedge case at its cleanup naming
 both under the class-attributes labels since, the probe green (1 failed, 38 passed); a probe at the last case reading the class
-dict's backend_for against the import-time staticmethod found a plain function before (1 failed, 38 passed) and the staticmethod
+dict's backend_for against the import-time staticmethod found a plain function before and the staticmethod
 since (39 passed). REPLACED_DATA (the second find): the tuple was pinned by the census's count alone, and its two Bounds clauses
 said a callable put on it was skipped unseen; setUp derives it from the kernel objects it found, the names of REPLACED_KM whose
 object is not callable, and holds it equal to the tuple both ways. The states: a callable added to the tuple red the census's
-count line alone, 20 against 21 (1 failed, 38 passed), so the clause was false in the safe direction, and with the count edited
-to match left the module green (39 passed); the same reds the nineteen harness cases at setUp naming both tuples since, and the
+count line alone, one behind, so the clause was false in the safe direction, and with the count edited
+to match left the module green; the same reds the harness cases at setUp naming both tuples since, and the
 agreement-span pin, whose expected refusal that line pre-empts (20 failed, 19 passed). The _pass Bounds sentence (the third
 find) said CASE_KM and CASE_JD were pinned by nothing past the cleanup fix that pins them; it says what the class docstring
 says now, prose only. The finder's forms (the fourth find): the samples pinned the roster by name both ways and by form one
 way; the forms the finder reports are derived from its own source and the forms the samples cover from the rows, and each is
 held to _FINDER_FORMS, a roster like _TRAVERSAL, both ways. The states: the four getattr sample rows removed, alone and with
-the finder's getattr branch deleted as well, each left the module green before (39 passed each); with the source derivation
-held against the samples alone, the close's first pin, the rows alone red the finder case naming getattr (1 failed, 38 passed)
-while the rows and the branch together left it green (39 passed), the two derived sets agreeing; each reds the finder case
+the finder's getattr branch deleted as well, each left the module green before; with the source derivation
+held against the samples alone, the close's first pin, the rows alone red the finder case naming getattr
+while the rows and the branch together left it green, the two derived sets agreeing; each reds the finder case
 naming getattr since (1 failed, 38 passed each), and the branch deleted with the rows intact reds the same case (1 failed, 38
 passed). The other four findings, prose corrections with no state each: this paragraph's framing sentence, above, said every figure was this
 head's while the registry finding's pre-fix figure is another tree's; the door witness said every drive seeds a one-node
@@ -809,7 +814,7 @@ SHARED_HANDOFF_KEYS = ("absent", "fallback", "corrupt", "unreadable_journal")
 # TheCountersOneSite: the keys the door bumps are the two rosters exactly, and every second-key bump sits below every call-key bump.
 # The third, that a call bumps AT MOST ONE second key, is carried by execution: TheDoorBumpsAtMostOneSecondKeyPerCall drives one
 # road per key of both rosters, nine, a second road for the unreadable_journal key's second site, and three raise roads on the real
-# door and reads the counters per call, and ties each drive to the door's bump SITES by a trace of the door's frame, every site of
+# door and reads the counters per call, and ties each drive to the door's bump SITES by a trace of the door's frames, every site of
 # the door driven by a row, or stated undriven with its reason, none today (review
 # round 6, lens two: a second site under an already driven key was on no driven road with the module green). The roster pin's
 # AST clauses are an early warning for that premise: they refuse the forms they name (a second-key bump that is not a statement of a
@@ -1870,9 +1875,10 @@ def _line_trace(codes, hit):
     whether the site runs in the door's own frame or in the frame of a helper defined inside the door (review round 7, the
     seventh-axis hunt). Derives: nothing; it records the lines that run. Bounds: `codes`, the caller's set; this thread; and a tracer
     already installed on it, which is set aside for the block, receives no event for anything entered inside it (a frame of a code
-    object in `codes` or not), and is put back after it, so a coverage tool or a debugger that rides on sys.settrace records
-    nothing the drives run (measured with an outer settrace tracer over the door witness on every interpreter this module runs on:
-    it saw none of the thirteen in-window door calls and every door call outside a window)."""
+    object in `codes` or not), and is put back after it, so a coverage tool or a debugger that rides on sys.settrace sees no frame
+    entered inside the block, the door's among them, and keeps receiving the line and return events of the frames it was already
+    tracing (measured with an outer settrace tracer over the door witness on every interpreter this module runs on: it saw no door
+    call made inside a window and every door call made outside one)."""
     ids = {id(c) for c in codes}
 
     def local(frame, event, _arg):
@@ -1913,20 +1919,22 @@ def _caller(frame, boundary):
 
 
 def _class_attributes(mod):
-    """Every attribute of every class `mod` defines, {(class name, attribute): object}, read from the classes' own dicts (vars(c), so
-    a staticmethod is the descriptor object and not the function it wraps) for every type bound in the module's globals whose
-    __module__ is the module's name. The cleanup's leak check (_restore) compares this against setUp's snapshot: one container below
+    """Every attribute of every class `mod` binds in its globals and owns by __module__ (every type in vars(mod) whose __module__ is
+    the module's name), {(class name, attribute): object}, read from the classes' own dicts (vars(c), so a staticmethod is the
+    descriptor object and not the function it wraps). The cleanup's leak check (_restore) compares this against setUp's snapshot: one
+    container below
     the module globals, the level the fixture's own seam sits at (Sessions.backend_for). Before it, a stub a case left on any other
     class attribute of either module lived for every later test with the cleanup naming nothing (review round 7, the seventh-axis
     verifier: a new-identity pass-through on km.Sessions.live and on jd._ParseStore.get in the wedge-gate sweep case was still live at
     the module's last case), and the one hand-picked restore was itself lossy, since setUp read backend_for through getattr, the plain
     function a staticmethod hands out, and the restore put that function into the class dict in place of the staticmethod object
     (inert by reading: the kernel calls backend_for on the class at every site and never instantiates Sessions). Derives: the classes
-    from the module's globals and their attributes from the class dicts, so every attribute of every class the module owns by
-    __module__ is inside the check.
+    from the module's globals and their attributes from the class dicts, so every attribute of every class the module binds in its
+    globals and owns by __module__ is inside the check.
     Bounds: the containers read, a module's globals and its classes' dicts; the contents of a module-level dict, list or set, an
-    instance's attributes and an imported module's attributes are outside it; and the ownership test, __module__ equal to the
-    module's name, so a class the module imports, or builds under another module's name, is not read."""
+    instance's attributes, an imported module's attributes and the attributes of a class the module owns by __module__ but binds in
+    no global of its own (a nested class, a class built inside a function) are outside it; and the ownership test, __module__ equal
+    to the module's name, so a class the module imports, or builds under another module's name, is not read."""
     return {(cn, an): v for cn, c in vars(mod).items() if isinstance(c, type) and c.__module__ == mod.__name__
             for an, v in vars(c).items()}
 
@@ -1955,8 +1963,9 @@ class _WalkHarness(unittest.TestCase):
     against setUp's first snapshot by identity once the saved names are back, the names the restoring rebind moves subtracted, so a
     name a case rebound outside every list is named at that case's cleanup and put back (until the round-7 fixes _restore put the
     saved names back and checked no other name, so a new-identity pass-through on such a kernel name left the module green and the
-    stub live for every later test), and every attribute of every class either module defines against the same snapshot, read
-    from the classes' own dicts (_class_attributes; the container Sessions.backend_for sits in, which the cleanup put back by hand
+    stub live for every later test), and every attribute of every class either module binds in its globals and owns by __module__
+    against the same snapshot, read from the classes' own dicts (_class_attributes; the container Sessions.backend_for sits in, which
+    the cleanup put back by hand
     while a stub on any other class attribute was named by nothing until the round-7 close). Bounds: REPLACED_KM, REPLACED_JD,
     CASE_KM and CASE_JD, what the fixture replaces and what a
     case may, a policy, the first two pinned by execution in setUp and the last two by the cleanup's check (a case may replace only
@@ -2142,7 +2151,8 @@ class _WalkHarness(unittest.TestCase):
         journals, the state root; then the check the saved lists cannot make: every kernel and judge global is the object setUp's
         first snapshot held, by identity, over the union of the names then and now, the names jd._rebind_state moves subtracted (the
         diff across the restoring rebind, as setUp reads them across its own), and then the same check one container below, every
-        attribute of every class either module defines against setUp's snapshot of the class dicts (_class_attributes), read after
+        attribute of every class either module binds in its globals and owns by __module__ against setUp's snapshot of the class
+        dicts (_class_attributes), read after
         the globals are back so a rebound class name reaches the snapshot's class. A name a case rebound, added or deleted outside
         REPLACED_KM, CASE_KM, REPLACED_JD, CASE_JD, the two doors and Sessions.backend_for, at either level, is put back and this
         cleanup reds naming it (a class attribute as Class.attr under a kernel or judge class-attributes label), so the case that
@@ -2211,7 +2221,8 @@ class _WalkHarness(unittest.TestCase):
         stale = ([k for k in TICK_REBOUND_KM if k not in self.before_km] + [k for k in TICK_REBOUND_JD if k not in self.before_jd])
         if stale:                                        # read after both restores, so a stale row reds this cleanup with no leak left in place
             leaked["stale allowance rows"] = stale
-        self.assertEqual(leaked, {}, "every kernel and judge global, and every attribute of every class either module defines, is the "
+        self.assertEqual(leaked, {}, "every kernel and judge global, and every attribute of every class either module binds in its "
+                                     "globals and owns by __module__, is the "
                                      "object setUp's first snapshot held once the saved names are back (the names the rebind moves "
                                      "subtracted); these were rebound, added or deleted by this case outside REPLACED_KM, CASE_KM, "
                                      "REPLACED_JD, CASE_JD, the two doors and Sessions.backend_for, and are put back here; a key "
@@ -2897,7 +2908,7 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
                                                     "with no method %r, methods with no row %r"
                                                     % (sorted(set(self.ROADS) - declared), sorted(declared - set(self.ROADS))))
         # the sites (review round 6, lens two): every bump site of the door, read from its source as (key, ordinal), is named by a row's
-        # sites column, which its drive holds by a trace of the door's frame, or by UNDRIVEN_SITES with its reason, and by neither both,
+        # sites column, which its drive holds by a trace of the door's frames, or by UNDRIVEN_SITES with its reason, and by neither both,
         # so a second site under an already driven key reds here naming its line, where the key set above cannot see it
         for road, (calls, second, _loads, _raises, road_sites) in self.ROADS.items():
             self.assertEqual({k for k, _i in road_sites}, set(calls) | set(second),
@@ -4796,8 +4807,7 @@ class Docs(unittest.TestCase):
         'twelve cases', whose head is the build's verifier pass after the round-2 fixes, a role the label regex does not know); the
         historical clean lines (labelled by role, not summed); a paragraph's per-state figures, 'F failed, P passed', which ride on
         the paragraph's framing count and are re-taken with it (the current head's paragraph's are read for their form alone by the
-        census below, and the first paragraph's alias-control figure, in a fragment naming this head outside that paragraph, by
-        neither); and a historical paragraph's description of a mutation that spells 'this head' as the mutation's words, the
+        census below); and a historical paragraph's description of a mutation that spells 'this head' as the mutation's words, the
         round-5 paragraph's, whose figures are that head's. The current head's paragraph is then read whole by a census (review
         round 6, tests-2 and regression-3: the round-5 paragraph restated the head's count in a second form, 'so a figure here reads
         against 37', which the sweep does not read and which sat, as every per-state figure does, in a fragment the split at '3.12'
