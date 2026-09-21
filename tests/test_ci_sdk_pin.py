@@ -86,9 +86,25 @@ This module holds five things, and it never skips: a pin that skips reports gree
    which a module-level importorskip removed from the run along with the rest of the module. What a report cannot
    show is a test that was never collected: renamed off the test_ prefix, deleted, or fenced behind an if, it reports
    nothing to flip and the module reads green with the version equality never checked (20 passed, exit 0, in CI's
-   shape on a venv without the SDK, with InstalledVersion's method renamed). NeverSkips' census case closes that road
-   for the one test the belt exists for: unittest's loader, which is pytest's collection of a TestCase, must find
-   InstalledVersion's single test under its name. The belt's subject is checked against the tree as well
+   shape on a venv without the SDK, with InstalledVersion's method renamed). NeverSkips closes that road for the one
+   test the belt exists for by asking pytest's own collector: a child `pytest --collect-only -q` over this module, run
+   from the repo root, must list the test's node id (tests/test_ci_sdk_pin.py::InstalledVersion::<method>) as one
+   whole line; keyed on that line's PRESENCE, never on a collected count, which would red on every test added here. A
+   second, in-process case pins the method's name against unittest's loader over the class. The loader is not the
+   collector: pytest's UnitTestCase.collect calls the loader and then drops the class, or the method, whose __test__
+   is False, which the loader never reads, so the loader case alone read green with the test out of every run
+   (2026-09-21: `__test__ = False` on the class or on the method, 48 of 49 collected and no InstalledVersion item, the
+   loader case 1 passed, exit 0), and the collect-only case is red on both. What neither case can see is a road that
+   drops this module from a RUN without touching the file, the residual stated here and above tests/conftest.py's
+   tuple: a module-level __test__ = False empties the module's collection, this census with it (the child would list
+   nothing, and never runs); the child hands pytest the file as an argument, and pytest asks pytest_ignore_collect
+   only about paths it did not receive as arguments, so a collect_ignore, a collect_ignore_glob or a
+   pytest_ignore_collect hook in a conftest is not asked in the child; a -k, -m or --deselect and an --ignore or
+   --ignore-glob live on the run's own command line, not the child's; the module renamed or deleted takes the census
+   with it (the rename reds the membership case below, the deletion the existence half in
+   tests/test_served_tests_require.py). None of these is on ci.yml's Run pytest line (no path, no -k, no --ignore) and
+   no conftest in the tree sets collect_ignore or the hook, as read on 2026-09-21; nothing pins that. The belt's
+   subject is checked against the tree as well
    (2026-09-21): NeverSkips asserts this file's own basename is in _NEVER_SKIP_FILES as written in tests/conftest.py
    (never_skip_files_as_written there: ast.literal_eval over the text, so a tuple spelled any other way is reported
    as such rather than raising), and tests/test_served_tests_require.py, outside this module, asserts every entry names
@@ -417,15 +433,21 @@ class NeverSkips(unittest.TestCase):
     status the assertion (pytest prints FAILED for a flipped xfail either way and counts it toward the exit status
     only once the report's wasxfail attribute is removed, which the flip shared with the served switch does; bundled
     with the other spellings that exit was carried for it, so removing the delete red nothing until this case,
-    2026-09-21). Synthetic files only; no SDK, no network. Two cases are in-process. The census case: the belt
-    reads reports, and a test that is never collected files none, so the one test the belt exists for is pinned by
-    name against unittest's loader, the collection pytest performs on a TestCase. The membership case: this file's
+    2026-09-21). Synthetic files only; no SDK, no network. Two cases are in-process. The census, two cases: the belt
+    reads reports, and a test that is never collected files none, so the one test the belt exists for is pinned in
+    a child `pytest --collect-only -q` over this real module, pytest's own collector, whose listing must hold the
+    test's node id (present, never a count), and in process by name against unittest's loader over the class. The
+    loader is not the collector: UnitTestCase.collect calls it and then gates on __test__ on the class and on each
+    method, which the loader never reads, so the in-process case pins the method's name and the child pins its
+    collection. The collect-only child runs nothing, so it spawns no grandchild. The membership case: this file's
     own basename is in _NEVER_SKIP_FILES as written in tests/conftest.py, the literal every report is keyed on; the
     existence half of that check, every entry a file under tests/, lives in tests/test_served_tests_require.py,
     outside this module, where a deletion of this file can still red it. The children pass -p no:anyio, as
     every pytest the suite spawns does (ChildPytestLaunchers holds it on each launcher), so in a cell no child loads a
     plugin the box's default run does not (pytest accepts the flag where anyio is absent, as on the box venvs)."""
     INSTALLED_VERSION_TEST = "test_the_installed_sdk_is_the_pin_where_it_imports_and_the_pin_is_well_formed_where_it_does_not"
+    INSTALLED_VERSION_NODE = "%s::%s::%s" % (os.path.relpath(os.path.realpath(__file__), ROOT), InstalledVersion.__name__,
+                                             INSTALLED_VERSION_TEST)     # as pytest prints it from the repo root
 
     def setUp(self):
         self.d = tempfile.mkdtemp(prefix="never-skips-")
@@ -484,13 +506,36 @@ class NeverSkips(unittest.TestCase):
         self.assertIn("1 skipped", out, out[-3000:])
         self.assertNotIn("never-skips:", out, "the belt did not fire: " + out[-3000:])   # the colon: the scratch dir is named never-skips-
 
-    def test_the_test_the_belt_exists_for_is_collected_under_its_name(self):
+    def test_the_test_the_belt_exists_for_is_listed_by_unittests_loader_under_its_name(self):
         # the belt flips skipped REPORTS; a test that is never collected (renamed off the test_ prefix, deleted, fenced
         # behind an if) reports nothing, and the module read 20 passed, exit 0, in CI's shape on a venv without the SDK
-        # with this method renamed (2026-09-20). unittest's loader over the class is the collection pytest performs on
-        # a TestCase: exactly one test, under this name.
+        # with this method renamed (2026-09-20). Keyed on unittest's loader over the class listing exactly one method,
+        # under this name: the METHOD's presence, in process. The loader is not pytest's collector, which calls it and
+        # then drops a class or a method whose __test__ is False (this case stayed green under both, 2026-09-21); the
+        # collector's answer is the next case's.
         self.assertEqual(unittest.defaultTestLoader.getTestCaseNames(InstalledVersion), [self.INSTALLED_VERSION_TEST],
-                         "InstalledVersion's test is not collected under its name: the pin the belt guards is not in the run")
+                         "unittest's loader does not list InstalledVersion's one test under its name: the method the belt "
+                         "guards is renamed, deleted or fenced (keyed on the loader's listing, not on pytest's collection)")
+
+    def test_the_test_the_belt_exists_for_is_collected_by_pytest_under_its_node_id(self):
+        # pytest's own collector, asked directly: a child `pytest --collect-only -q` over the real module, run from the
+        # repo root (node ids rootdir-relative; tests/conftest.py loads for the path on its own, so no -p tests.conftest;
+        # nothing runs, so no grandchild), must list the guarded test's node id as one whole line. Keyed on that line's
+        # PRESENCE, never on a collected count: a count reds on every test added to this file. This is the road the
+        # loader case above cannot see: with `__test__ = False` on InstalledVersion or on its method the collector
+        # listed 48 of 49 and no InstalledVersion item while the loader case read 1 passed, exit 0 (2026-09-21). What
+        # this case does not see is a road that drops the module from a RUN without touching the file, itself included
+        # (a module-level `__test__ = False` empties the module's collection: the child would list nothing, and never
+        # runs); the module docstring, item 4, and the comment above _NEVER_SKIP_FILES in tests/conftest.py state that
+        # residual.
+        p = subprocess.run([sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider", "-p", "no:anyio",
+                            os.path.relpath(os.path.realpath(__file__), ROOT)],
+                           cwd=ROOT, env=dict(os.environ), capture_output=True, text=True, timeout=240)
+        out = p.stdout + p.stderr
+        self.assertIn(self.INSTALLED_VERSION_NODE, out.splitlines(),
+                      "pytest's collector does not list %s (keyed on that node id as one whole line of `pytest --collect-only -q` "
+                      "run from the repo root; child exit %d): the test the belt guards is out of the run, whatever unittest's "
+                      "loader lists: %s" % (self.INSTALLED_VERSION_NODE, p.returncode, out[-3000:]))
 
     def test_this_files_name_is_in_the_belts_tuple_as_written(self):
         # The belt keys every report on a basename literal in tests/conftest.py, and nothing else tied that literal
