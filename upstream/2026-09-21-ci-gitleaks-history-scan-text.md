@@ -3,7 +3,7 @@ title: CI gitleaks history scan reads textual diffs through a committed -diff at
 status: candidate
 where: .github/workflows/ci.yml (the secrets job's history-scan step); tests/gitleaks-config.bats (the committed -diff attribute case)
 added: 2026-09-21
-pr:
+pr: 890
 tier: fix
 offered:
 closed:
