@@ -453,7 +453,7 @@ test("Raw ⇄ Rendered exists for markdown ONLY, and nothing reaches innerHTML u
   const mdFn = VIEW.split("function mdBlock(")[1].split("export function rewriteFigureSrcs")[0];
   assert.match(mdFn, /if \(doc && doc\.kind === "file"\) \{/, "the file kind has its own arm");
   assert.match(mdFn, /\n {4}linkMarkdownAnchors\(box, doc\.path\);/, "a file's links: the module's walk, on every render (no `rendered` gate since Slice 7 of plans/markdown-viewer.md, item 1: mdBlock has no fallback to skip)");
-  assert.match(mdFn, /a\.setAttribute\("target", "_blank"\);\s*\n\s*a\.setAttribute\("rel", "noopener"\);/, "a URL document's links: stamped here, as attributes");
+  assert.match(mdFn, /anchor\.setAttribute\("target", "_blank"\);\s*\n\s*anchor\.setAttribute\("rel", "noopener"\);/, "a URL document's links: stamped here, as attributes (the local is `anchor` since the round-8 fixes of the print PR: the census keys an entry on a name declared once per function)");
   assert.doesNotMatch(mdFn, /\ba\.(target|rel)\s*=/, "no property write on either");
   const linkFn = web("file-view-links.ts").split("export function linkMarkdownAnchors(")[1];
   assert.match(linkFn, /a\.setAttribute\("target", "_blank"\);\s*\n\s*a\.setAttribute\("rel", "noopener"\);/, "…and the module stamps a web link the same way");

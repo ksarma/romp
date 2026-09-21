@@ -8644,7 +8644,7 @@ prints the whole file (6 to 7 pages of a hundred paragraphs) and stays live. The
 side (the round-2 review, 2026-09-19: the first derivation read every child it had not seen as content, the permissive
 side for a print button, so an unwired pane would have had a live button and a silent print of whatever stood; the
 census below is what makes a root the viewer gains a red test rather than a dead button: since the round-7 fixes it refuses a seat it has not read on the call, assignment, receiver, argument and write axes, by name:
-a method call, by its name; a member assignment, by its name, a computed name refused wherever it stands; the receiver a seat stands on and each name it seats, read by their bindings (a reflection global among them; a listed name declared twice in a function refused at every seat); a node of the tree handed to any callee, and an element the census can see by its shape handed to a callee the file does not declare, bare or inside a literal; and a write of a URL from anything but a literal, by an assignment, by `setAttribute`, by a CSS property through `style` or `style.setProperty`, by a method of `location` or by `window.open`, read for whether the value can reach the network and what gates it, or of an attribute under a name the census cannot read as a literal. A root the viewer seats by any of the five reds until read, and the promise holds on those five axes and on no other: what a listed helper does with a node or an element, what a listed receiver is and what a listed method does by its name are read by hand when listed, never derived, and an element the census cannot see by its shape (a call's value it does not know) handed to an imported helper is not read (the author's closing pass over the round-7 build, 2026-09-20: the verifiers found the promise false for an `el()`-built const and a query result handed to an imported helper, and the argument axis was widened to them). The PDF kind is the one
+a method call, by its name; a member assignment, by its name, a computed name refused wherever it stands; the receiver a seat stands on and each name it seats, read by their bindings (a reflection global among them; a listed name declared twice in a function refused at every seat); a node of the tree handed to any callee, and an element the census can see by its shape handed to a callee the file does not declare, bare or inside a literal; and a write of a URL from anything but a literal, by an assignment, by `setAttribute`, by a CSS property through `style` or `style.setProperty`, by a method of `location` or by `window.open`, read for whether the value can reach the network and what gates it, or of an attribute under a name the census cannot read as a literal. A root the viewer seats by any of the five reds until read, and the promise holds on those five axes and on no other: what a listed helper does with a node or an element, what a listed receiver is and what a listed method does by its name are read by hand when listed, never derived, and an argument the census cannot name by its shape handed to a callee the file does not declare is refused by the compiler's type when that type can hold a node, `any` and `unknown` among them, until listed with the mark `unnamed` (the round-8 fixes, 2026-09-21, on the round-7 review's cluster C: the shape rule passed what it could not name, and the round-7 merge deleted the entry that read the sanitized body handed to `gateRemoteFigures` rather than repointing it from `box` to `clean`, so two live hand-offs were read on no axis; the author's closing pass over the round-7 build, 2026-09-20, had widened the axis to an `el()`-built const and a query result handed to an imported helper, the verifiers having found the promise false for both). The PDF kind is the one
 exception, for the loader: `bodyReady` takes the file's kind (the host's `kind`, read at every observer callback and at
 the press through the driver's `ready`), and for a PDF the loader (`PDF_LOADER_ROOT`, `div.fileview-load`) reads as
 content, so the Comments panel's pages attempt with no frame kept, the loader alone in the body, leaves Print live and a
@@ -8772,7 +8772,8 @@ receiver of a member call alone, every other read (an alias `const R = Reflect`,
 failing with its line (before this the global was known by its spelling, so `const R = Reflect; R.set(...)` passed with no
 site and no refusal while the census's header said it failed); and the ARGUMENT and WRITE axes are read: a node of the tree handed to any
 callee, and an element the census can see by its shape (`el(...)`, a `createElement` or `querySelector` result, a local
-builder's result, a parameter typed as an element) handed to a callee the file does not declare, each read bare and inside
+builder's result, a parameter typed as an element), or one it cannot name by shape whose type the compiler reads as able to
+hold a node (marked `unnamed` in the table; the round-8 fixes), handed to a callee the file does not declare, each read bare and inside
 an object literal, an array literal, a spread or a concise arrow's value, pass only as a site `ARGS_READ_BY_HAND` lists,
 one entry per hand-off; a URL written from a value that is not a literal, by an assignment to a member the assignment
 axis's hand read flags as a URL or to a member of `location`, by `setAttribute` under any name but `aria-*`, `data-*` or one
@@ -8806,11 +8807,20 @@ URL with a page fragment, no network; two chunk script tags derived from the pag
 bundle's origin; the download route, a same-origin click the code makes; the GitHub link, a remote host the kernel names,
 reached on the person's click alone; the URL viewer's own document URL, same-origin by the caller's test, reached on a
 click), and no string road: the count that run printed as its refusals, recorded here as that run's fact and held as a
-literal. The tables have outgrown it since the closing pass widened both rules: they list 26 argument sites over 29
-hand-offs, three entries standing for two byte-identical hand-offs each (scrollToSourceOffset's two `renderedBlockElements`,
-codeBlock's two `linkifyFileText`, failedSource's two `pictureDest`), and 20 URL writes today, four numbers the record test
-counts from the census file by text and holds this sentence to, and the census module holds to the tables it runs and prints
-in its `second read:` diagnostic; each is listed with the reason. The derived set is printed with its lines as a
+literal. The tables have outgrown it since the closing pass widened both rules and the round-8 fixes inverted the shape
+rule: they list 54 argument sites over 59 hand-offs, five entries standing for two hand-offs each, three of them byte-identical
+calls (scrollToSourceOffset's two `renderedBlockElements`, codeBlock's two `linkifyFileText`, failedSource's two `pictureDest`)
+and two the same argument handed to the same callee by two calls that differ after it (mdBlock's two `gateRemoteFigures`,
+mdBlock's two `addCopyBtn`), 28 of the entries marked `unnamed` for the 30 hand-offs the census cannot name by shape and the
+compiler types as able to hold a node, and 20 URL writes today, six numbers the record test counts from the census file by
+text and holds this sentence to (the split between the byte-identical calls and the rest it cannot make without the compiler:
+that is the census module's), and the census module holds to the tables it runs and prints in its `second read:` diagnostic;
+each is listed with the reason. Three locals of file-view.ts were renamed for those entries and for nothing else, the SVG
+source toggle's callback parameter `t` to `txt` and mdBlock's two link-pass locals `a` to `link` and `anchor`: the census keys
+an entry on a NAME resolved to one declaration per function and refuses a name declared twice there (census-2's shadow rule),
+so `t` and `a`, each declared more than once in its function, could hold no entry for the four hand-offs of them; a unique
+name is a stable key where a block-keyed entry would drift like a line citation, and the rule stays strict and self-enforcing
+(the maintainer's round-8 ruling on cluster C, 2026-09-21). The derived set is printed with its lines as a
 diagnostic, held equal to the three lists, and `bodyReady` is executed over each root as its list says, over an unlisted
 child alone and beside every content root (not in), and under the PDF kind over each wait and line root (the loader
 alone in, the rest not). A root the viewer gains fails the census until it is listed, a `body` token the census

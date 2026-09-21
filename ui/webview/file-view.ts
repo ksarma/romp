@@ -1580,7 +1580,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   srcBtn.addEventListener("click", () => {
     if (svgText === null) {
       if (!mediaBlob) return;
-      void mediaBlob.text().then((t) => { svgText = t; svgSource = true; renderBody(); takeKeyboard(); });
+      void mediaBlob.text().then((txt) => { svgText = txt; svgSource = true; renderBody(); takeKeyboard(); });
       return;
     }
     svgSource = !svgSource;
@@ -4404,12 +4404,12 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   if (doc && doc.kind === "url") {
     // A URL document's links resolve against the document too (its figures did above, before the adoption).
     box.querySelectorAll(LINK_SEL).forEach((node) => {
-      const a = node as HTMLElement | SVGElement;
-      const href = linkHref(a);
+      const link = node as HTMLElement | SVGElement;
+      const href = linkHref(link);
       if (!href || href.startsWith("#") || /^[a-z][a-z0-9+.-]*:/i.test(href)) return;   // in-document, or already absolute
       // Absolute now, so the chat's document-level anchor delegate sees a scheme: a same-origin
       // .md target opens in this viewer (isMarkdownUrl), everything else in a new tab.
-      a.setAttribute("href", resolveDocRelative(href, doc.href));
+      link.setAttribute("href", resolveDocRelative(href, doc.href));
     });
   }
   if (doc && doc.kind === "file") {
@@ -4432,10 +4432,10 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
     // not strict there) and an SVG link kept navigating the pane; the attribute is what the browser reads on every
     // one of these elements.
     box.querySelectorAll(LINK_SEL).forEach((node) => {
-      const a = node as HTMLElement | SVGElement;
-      if (linkHref(a).startsWith("#")) { a.dataset.act = "fv-anchor"; return; }
-      a.setAttribute("target", "_blank");
-      a.setAttribute("rel", "noopener");
+      const anchor = node as HTMLElement | SVGElement;
+      if (linkHref(anchor).startsWith("#")) { anchor.dataset.act = "fv-anchor"; return; }
+      anchor.setAttribute("target", "_blank");
+      anchor.setAttribute("rel", "noopener");
     });
   }
   // URLs and paths written in the prose and the code blocks, after the highlight rewrote the blocks' markup

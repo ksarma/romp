@@ -748,7 +748,14 @@ test("bodyReady reads the element children through `children`, else through `chi
 // for one spelled alike in two branches), each read by hand for what the callee does with the node (the verifiers'
 // records-1 and census-3 of the round-7 build, 2026-09-20: before this the axis knew NODE_MEMBERS chains handed bare, so
 // an imported helper handed the card, the bar or the markdown root, and a node inside an object literal, were read on no
-// axis while the promise named every axis); a bare eval, setTimeout, setInterval or Function (by binding) with a first
+// axis while the promise named every axis); and AN ARGUMENT THE CENSUS CANNOT NAME BY SHAPE handed to a callee this file
+// does not declare is refused by the compiler's TYPE when that type can hold a node (a member assignable to Node or that
+// Node is assignable to, or any or unknown, which the compiler cannot vouch for) unless ARGS_READ_BY_HAND lists it marked
+// `unnamed`, the mark held to the road that reads it, so the two populations never blur (the round-8 fixes, the round-7
+// review's tests-2 and regression-1, 2026-09-21: the shape rule enumerated on the unsafe side and PASSED what it could
+// not name, and the merge deleted the entry reading the sanitized body handed to gateRemoteFigures rather than repointing
+// it, so two live hand-offs were read on no axis; a function expression, a string literal and a chain on the `body` token
+// are not asked, the last being the first read's); a bare eval, setTimeout, setInterval or Function (by binding) with a first
 // argument that is not a function, `new Function` and `import(...)` are string roads and fail; and a destructuring by a
 // computed key fails. THE WRITE AXIS (the URL roads; the verifiers' census-1 and census-4 of the round-7 build, 2026-09-20:
 // before this the axis read the assignment spelling alone, so `a.setAttribute("href", x)`, `location.replace(x)` under
@@ -776,6 +783,12 @@ test("bodyReady reads the element children through `children`, else through `chi
 // (`mdBlock(...)`) to the `el(...)` assigned to the variable the builder's last `return` names; a bare variable to the
 // expression assigned to it last before the site; a ternary to both its branches; an `el("<tag>", "<class>")` to itself;
 // anything else fails with the expression.
+// WHERE THIS MODULE LIVES (the maintainer's round-8 ruling on cluster C, 2026-09-21): the census builds a TypeScript PROGRAM
+// over the viewer (ts.createProgram, programOver) and runs under npm test in vscode-extension, where node_modules stands, so it
+// is permanently a vscode-extension-leg module; no part of it moves under tools/. The record module there
+// (tools/markdown-viewer-plan-print-record.test.mjs) runs in CI's shell job with NO node_modules and reaches no compiler, so
+// the two modules' claims are one split, this module executing what needs the compiler and that one holding the same
+// sentences by text, never a contradiction.
 /** file-view.ts with its comments blanked: every comment range the TypeScript parser reports (leading and trailing trivia of
  *  every token, a doc comment, a `//` at the start of a line or after a `;`, a `//` after a space or a tab, a block comment
  *  anywhere), each replaced by spaces of its own length with its newlines kept, so an index still maps to its line and no
@@ -808,8 +821,37 @@ const stripComments = (src: string): string => {
   out.push(src.slice(last));
   return out.join("");
 };
-const VIEWER_RAW = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "file-view.ts"), "utf8");
+const VIEWER_PATH = path.resolve(process.cwd(), "..", "ui", "webview", "file-view.ts");
+const VIEWER_RAW = fs.readFileSync(VIEWER_PATH, "utf8");
 const VIEWER_SRC = stripComments(VIEWER_RAW);
+/** A TypeScript PROGRAM over `src` standing as file-view.ts (the round-8 fixes, the round-7 review's tests-2 and regression-1,
+ *  2026-09-21: the argument axis names an element by its shape and passed what it could not name, so the compiler's TYPE is
+ *  the namer of last resort now, seatSites.unnamedShape). The host serves `src` for file-view.ts's own path and the disk for
+ *  every other file, so a mutant of the viewer type-checks against the real modules it imports; the options are
+ *  vscode-extension's (strict, the DOM lib, `paths` into its node_modules for marked's types). ONE program per distinct
+ *  source text (the maintainer's round-8 ruling on cluster C: the mutant case calls the census over the live source many
+ *  times and over each mutant once, and a program per call took the case from 116 s to 288 s in the probe), the parsed
+ *  files other than file-view.ts cached across programs and the last program handed to the next as its predecessor. This
+ *  module reaches the compiler under npm test with node_modules present: see the census header's rider on where it lives. */
+const PROGRAM_OPTIONS: ts.CompilerOptions = { target: ts.ScriptTarget.ES2021, lib: ["lib.es2021.d.ts", "lib.dom.d.ts", "lib.dom.iterable.d.ts"], strict: true, module: ts.ModuleKind.CommonJS, moduleResolution: ts.ModuleResolutionKind.Node10, esModuleInterop: true, skipLibCheck: true, noEmit: true, types: [], baseUrl: process.cwd(), paths: { "*": ["node_modules/*"] } };
+const programFiles = new Map<string, ts.SourceFile>();
+let lastProgram: { src: string; program: ts.Program } | null = null;
+function programOver(src: string): ts.Program {
+  if (lastProgram !== null && lastProgram.src === src) return lastProgram.program;
+  const host = ts.createCompilerHost(PROGRAM_OPTIONS, true);
+  const fromDisk = host.getSourceFile;
+  host.getSourceFile = (fileName, languageVersion, onError, shouldCreateNewSourceFile) => {
+    if (path.resolve(fileName) === VIEWER_PATH) return ts.createSourceFile(fileName, src, languageVersion, true, ts.ScriptKind.TS);
+    const hit = programFiles.get(fileName);
+    if (hit) return hit;
+    const read = fromDisk.call(host, fileName, languageVersion, onError, shouldCreateNewSourceFile);
+    if (read) programFiles.set(fileName, read);
+    return read;
+  };
+  const program = ts.createProgram([VIEWER_PATH], PROGRAM_OPTIONS, host, lastProgram?.program);
+  lastProgram = { src, program };
+  return program;
+}
 /** The text between the bracket at `at` and its match, strings skipped. */
 function balancedAt(src: string, at: number): string {
   let depth = 0;
@@ -1085,9 +1127,10 @@ function census(src: string, table: SeatRead[] = SEATS_READ_BY_HAND, indexTable:
   // ARGS_READ_BY_HAND like a node of the tree (the verifiers' records-1 of the round-7 build)
   for (const h of second.elementsHanded) {
     const e = argTable.find((x) => argKey(h, x));
-    if (!e) { refused.push("line " + h.line + ": " + h.text + " hands `" + h.arg + "`, " + h.member + (h.decl ? " (bound by `" + h.decl + "`)" : "") + ", to " + h.to + "(...) in " + h.fn + ", a callee this file does not declare and the census has not read by hand for what it does with an element it is handed (it could seat the element in the body, or seat into it, where the census cannot follow): read it and list the site in ARGS_READ_BY_HAND"); continue; }
+    if (!e) { refused.push("line " + h.line + ": " + h.text + " hands `" + h.arg + "`, " + h.member + (h.decl ? " (bound by `" + h.decl + "`)" : "") + ", to " + h.to + "(...) in " + h.fn + ", a callee this file does not declare and the census has not read by hand for what it does with an element it is handed (it could seat the element in the body, or seat into it, where the census cannot follow): read it and list the site in ARGS_READ_BY_HAND" + (h.unnamed ? ", marked `unnamed` (the shape rule cannot name it; the compiler's type is what refuses it)" : "")); continue; }
     if (h.decl !== e.decl) { refused.push("line " + h.line + ": " + h.text + " hands `" + h.arg + "` bound to `" + (h.decl ?? "no binding") + "`, where ARGS_READ_BY_HAND read `" + (e.decl ?? "no binding") + "`: the argument is not the one read by hand"); continue; }
     if (h.shadowed) { refused.push("line " + h.line + ": " + h.text + " in " + h.fn + ": " + h.shadowed); continue; }
+    if (!!h.unnamed !== !!e.unnamed) { refused.push("line " + h.line + ": " + h.text + " hands `" + h.arg + "`, " + h.member + ", where ARGS_READ_BY_HAND's entry " + (e.unnamed ? "is marked `unnamed` and the census now names the shape" : "is not marked `unnamed` and the census cannot name the shape") + ": the two populations must not blur, so the mark follows the road that reads the hand-off"); continue; }
     const why = reassignable(h, e.holds, "`" + h.arg + "`");
     if (why) refused.push("line " + h.line + ": " + h.text + " hands " + why);
   }
@@ -1294,9 +1337,10 @@ type SecondRead = {
  *  method (`const s = Reflect.set`), an argument, an array element, a return; as a call's receiver the call is a site the
  *  table must list. THE ARGUMENT AXIS (the round-6 review's item 7; the verifiers' records-1 and census-3 of the round-7
  *  build): a node of the tree handed to any callee is a `handedNode` (nodeHanded), and an element the census can see by
- *  its shape (elementShape) handed to a bare callee this file does not declare (foreignCallee) is an `elementHanded`, each
- *  read bare and inside an object literal, an array literal, a spread or a concise arrow's value (handedIn), passed only as
- *  a site ARGS_READ_BY_HAND lists; a bare eval, setTimeout, setInterval or Function by its binding with a first argument
+ *  its shape (elementShape) handed to a bare callee this file does not declare (foreignCallee) is an `elementHanded`, and
+ *  so is one the census cannot name by shape whose type the compiler reads as able to hold a node (unnamedShape, marked
+ *  `unnamed`; the round-8 fixes), each read bare and inside an object literal, an array literal, a spread or a concise
+ *  arrow's value (handedIn), passed only as a site ARGS_READ_BY_HAND lists; a bare eval, setTimeout, setInterval or Function by its binding with a first argument
  *  that is not a function, `new Function`, and `import(...)` are `stringRoads` and refused. THE WRITE AXIS (the URL roads;
  *  the verifiers' census-1 and census-4 of the round-7 build): an assignment to a member NON_SEATING_WRITES flags as a URL
  *  or to a member of `location`, a setAttribute or setAttributeNS under a name that is neither `aria-*` nor `data-*` nor
@@ -1321,7 +1365,10 @@ type SecondRead = {
  *  `bodyDecl` and refused. The tree is the compiler's, so a receiver of any shape (a query result, a parentElement chain,
  *  a variable, a call's value) is one text the table can hold or refuse. */
 function seatSites(src: string): SecondRead {
-  const sf = ts.createSourceFile("file-view.ts", src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const program = programOver(src);
+  const sf = program.getSourceFile(VIEWER_PATH)!;
+  assert.ok(sf !== undefined && sf.text === src, "the program's file-view.ts is the source handed in");
+  const checker = program.getTypeChecker();
   const lineOf = (n: ts.Node): number => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
   const flat = (s: string): string => s.replace(/\s+/g, " ");
   /** A text an entry is HELD to (a declaration's initializer, a loop's head, an unnamed callback's call, a hand-off's argument or
@@ -1573,6 +1620,34 @@ function seatSites(src: string): SecondRead {
     }
     return null;
   };
+  /** The compiler's answer for an argument elementShape cannot name (the round-8 fixes, the round-7 review's tests-2 and
+   *  regression-1, 2026-09-21: the shape rule enumerated on the UNSAFE side, an element it could not name PASSED, and the
+   *  merge moved the sanitized body handed to the imported gateRemoteFigures into that gap after the entry that read it was
+   *  deleted rather than repointed; the refuters found addCopyBtn(host, ...), a conditional, and wrapCodeLines(codeEl), a cast
+   *  of an untyped callback parameter, in the same gap, which no syntactic rule reaches). The road asks what the value CAN BE
+   *  rather than how it was spelled: the argument's type, as the compiler reads it, with every non-nullish member tested for
+   *  being assignable to `Node`, for `Node` being assignable to it (EventTarget, ParentNode, object, `{}`) or for being `any`
+   *  or `unknown` (a type the compiler cannot vouch for is the safe side). A function expression and a string literal are
+   *  never a node and are not asked; a property or element access on the `body` token is the first read's and yields, as
+   *  nodeHanded does (a read there would red one signal twice). Null when the type can hold no node; else the text the
+   *  hand-off is refused with until ARGS_READ_BY_HAND lists it, marked `unnamed`. */
+  let nodeType: ts.Type | null = null;
+  const canHoldNode = (t: ts.Type): boolean => {
+    if (nodeType === null) { const sym = checker.resolveName("Node", undefined, ts.SymbolFlags.Type, false); assert.ok(sym !== undefined, "the DOM lib's Node is in the program"); nodeType = checker.getDeclaredTypeOfSymbol(sym); }
+    const node = nodeType;
+    return (t.isUnion() ? t.types : [t]).some((m) => {
+      if (m.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined | ts.TypeFlags.Void | ts.TypeFlags.Never)) return false;
+      if (m.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) return true;
+      return checker.isTypeAssignableTo(m, node) || checker.isTypeAssignableTo(node, m);
+    });
+  };
+  const unnamedShape = (a: ts.Expression): string | null => {
+    const r = peel(a);
+    if (ts.isArrowFunction(r) || ts.isFunctionExpression(r) || ts.isStringLiteral(r) || ts.isNoSubstitutionTemplateLiteral(r)) return null;
+    if ((ts.isPropertyAccessExpression(r) || ts.isElementAccessExpression(r)) && isBodyToken(peel(r.expression))) return null;
+    const t = checker.getTypeAtLocation(a);
+    return canHoldNode(t) ? "an argument the census cannot name by shape, typed `" + checker.typeToString(t) + "` by the compiler, a type that can hold a node" : null;
+  };
   /** One argument of a call, or a node inside it (the verifiers' census-3 of the round-7 build: the argument axis read direct
    *  arguments alone, so a node handed inside an object literal passed): an object literal's property values, an array
    *  literal's elements, a spread's expression and a concise arrow's value are read in turn, each spelled with its path
@@ -1588,8 +1663,10 @@ function seatSites(src: string): SecondRead {
     const h = nodeHanded(a);
     if (h) { handedNodes.push({ line: lineOf(n), text: text(n), whole: flat(n.getText(sf)), fn: fnOf(n), to: calleeText(n), arg: spell(held(flat(a.getText(sf)))), ...h }); return; }
     if (!foreign) return;
-    const shape = elementShape(a);
-    if (shape) { const e = peel(a); if (ts.isIdentifier(e) && isBodyToken(e)) return; const b = ts.isIdentifier(e) ? { ...bindingOf(e), ...(shadowOf(e) ? { shadowed: shadowOf(e)! } : {}) } : {}; elementsHanded.push({ line: lineOf(n), text: text(n), whole: flat(n.getText(sf)), fn: fnOf(n), to: calleeText(n), arg: spell(held(flat(a.getText(sf)))), member: shape, ...b }); }
+    const named = elementShape(a);
+    const unnamed = named === null ? unnamedShape(a) : null;   // the shape first; the compiler's type for what the shape cannot name (the round-8 fixes)
+    const shape = named ?? unnamed;
+    if (shape !== null) { const e = peel(a); if (ts.isIdentifier(e) && isBodyToken(e)) return; const b = ts.isIdentifier(e) ? { ...bindingOf(e), ...(shadowOf(e) ? { shadowed: shadowOf(e)! } : {}) } : {}; elementsHanded.push({ line: lineOf(n), text: text(n), whole: flat(n.getText(sf)), fn: fnOf(n), to: calleeText(n), arg: spell(held(flat(a.getText(sf)))), member: shape, ...(unnamed !== null ? { unnamed: true as const } : {}), ...b }); }
   };
   let bodyWrites = 0;
   /** An argument as the seat key spells it: an object literal, an array literal or a function abbreviated, the rest as written. */
@@ -1939,7 +2016,7 @@ const INDEX_READS_BY_HAND: IndexRead[] = [
 /** A node of the tree handed to a callee (seatSites.nodeHanded): its line and text, the nearest named function (`fn`), the
  *  callee as spelled (`to`), the argument as spelled (`arg`), the NODE_MEMBERS member it reads through, and, for a name,
  *  its binding (the declaration, its kind and every write to it). */
-type HandedNode = Use & { fn: string; to: string; arg: string; member: string; whole: string; shadowed?: string } & Partial<Binding>;   // `whole`: the flattened call text uncut, beside the message's `text` cut at 100
+type HandedNode = Use & { fn: string; to: string; arg: string; member: string; whole: string; shadowed?: string; unnamed?: true } & Partial<Binding>;   // `whole`: the flattened call text uncut, beside the message's `text` cut at 100; `unnamed`: an element the census could not name by shape, typed by the compiler (the round-8 fixes)
 /** A URL member written from a value that is not a literal (seatSites): its line and text, the function, the target as
  *  spelled (`on`), the value as spelled (`value`) and, for a bare name, its binding. */
 type UrlWrite = Use & { fn: string; on: string; value: string; shadowed?: string } & Partial<Binding>;
@@ -1951,8 +2028,10 @@ type UrlWrite = Use & { fn: string; on: string; value: string; shadowed?: string
  *  that it seats nothing in the body through it. The round-6 review's item 7 (2026-09-20): the argument axis, whose first
  *  run is the census (the plan's P7 records the count); a hand-off the table does not list fails with its line, one bound
  *  elsewhere than the entry says fails, an entry two hand-offs match fails unless it says `times`, and an entry the source
- *  has no hand-off for fails too. */
-type ArgRead = { in: string; to: string; arg: string; is: string; decl?: string; holds?: string; times?: number };
+ *  has no hand-off for fails too. `unnamed` marks an entry for a hand-off the shape rule cannot name, which the compiler's
+ *  type refuses (the round-8 fixes): the census holds the mark to the road, so an entry marked for a hand-off the shape
+ *  names, or unmarked for one it cannot, is refused. */
+type ArgRead = { in: string; to: string; arg: string; is: string; decl?: string; holds?: string; times?: number; unnamed?: true };
 const ARGS_READ_BY_HAND: ArgRead[] = [
   // Array.from over a node list: the language's copy into an array, whose elements are then only read (a tag name, a text, a style property set); the array seats nothing and is handed to no seat
   { in: "stamp", to: "Array.from", arg: "md.children", is: "the markdown root's element children copied into an array so the top-level tables among them get the body's width as a CSS variable (style.setProperty); read and styled, never seated (watchBodyWidth's stamp)" },
@@ -1988,6 +2067,43 @@ const ARGS_READ_BY_HAND: ArgRead[] = [
   { in: "rewriteFigureSrcs", to: "figureRefs", arg: "root", decl: "a parameter of rewriteFigureSrcs", is: "figure-gate.ts figureRefs: querySelectorAll over the media elements under the root and a read of each fetching attribute (FETCH_ATTRS); returns the references; seats nothing" },
   { in: "resolveFigureRefs", to: "figureRefs", arg: "root", decl: "a parameter of resolveFigureRefs", is: "the same read over a URL document's root; seats nothing" },
   { in: "failedSource", to: "pictureDest", arg: "img", decl: "a parameter of failedSource", times: 2, is: "file-comments.ts pictureDest: reads the picture's data-fv-src, else its src, and returns the string; seats nothing (called in two branches of the label's source read, each read)" },
+  // an argument the census cannot name by shape, handed to a callee this file does not declare, whose TYPE the compiler reads as
+  // able to hold a node (the round-8 fixes, the round-7 review's tests-2 and regression-1, 2026-09-21: the shape rule passed
+  // what it could not name, and the merge deleted the entry that read the sanitized body handed to gateRemoteFigures rather
+  // than repointing it, so two live hand-offs were read on no axis). Each is marked `unnamed`, the mark the census holds to
+  // the road that refuses it (the shape rule names none of these), and each is read in the callee's own module for what it
+  // does with what it is handed. The two `times` entries here are the same argument handed to the same callee by two calls
+  // that differ after the argument (the second argument), not byte-identical calls; the P7 case says so.
+  { in: "mdBlock", to: "gateRemoteFigures", arg: "clean", decl: "const clean = sanitizeMd(dirty, mintHeadingIds)", times: 2, unnamed: true, is: "figure-gate.ts gateRemoteFigures: wraps each media root inside the sanitized body (`clean`, the sanitizer's own document's body, HTMLElement by md-sanitize.ts's signature) whose sources name a host outside the allowed set in a placeholder span (gate: the figure's fetch attributes moved onto data-fv-gated-* names, the wrapper put where the figure stood, inside the body), and installs once a settings listener that re-judges the document's placeholders; every seat it makes is inside the body, whose child nodes the markdown root then adopts (box.replaceChildren, the seat listed in SEATS_READ_BY_HAND); called in the URL kind's branch with the document's own host and in the file kind's, each read. The entry the round-7 merge deleted (its `box` repointed to `clean`), restored" },
+  { in: "mdBlock", to: "addCopyBtn", arg: "host", decl: "const host = pre && pre.tagName === \"PRE\" ? pre : null", times: 2, unnamed: true, is: "code-block.ts addCopyBtn: appends a Copy button INTO the pre it is handed, a fence inside the sanitized body (`host` is the code element's parent when that parent is a pre, else null and the call is skipped), so the one seat it makes is inside the fence; called in the math-source branch and after the highlight, each read (the refuters' conditional, which no shape rule names)" },
+  { in: "mdBlock", to: "wrapCodeLines", arg: "codeEl", decl: "const codeEl = node as HTMLElement", unnamed: true, is: "code-block.ts wrapCodeLines: rewrites the code element's innerHTML into one span per line and sets a style property on it; every seat is inside the code element it is handed, a fence inside the sanitized body (the refuters' cast of an untyped callback parameter)" },
+  { in: "mdBlock", to: "linkHref", arg: "link", decl: "const link = node as HTMLElement | SVGElement", unnamed: true, is: "md-links.ts linkHref: reads the element's href, else its xlink:href, and returns the string; seats nothing (the URL kind's link pass; the local was `a` and is `link` since the round-8 fixes, so the census's shadow rule admits one entry per name in mdBlock)" },
+  { in: "mdBlock", to: "linkHref", arg: "anchor", decl: "const anchor = node as HTMLElement | SVGElement", unnamed: true, is: "the same read in the new-tab stamping pass over every link element; seats nothing (the local was `a` and is `anchor` since the round-8 fixes, for the same reason)" },
+  { in: "underEye", to: "getComputedStyle", arg: "h", decl: "a parameter of the callback handed to heads.forEach", unnamed: true, is: "the browser's getComputedStyle over a heading element, read for its scroll margin; a read of the element, no seat" },
+  { in: "revealRemembered", to: "revealFragmentTarget", arg: "e", decl: "const e of renderedBlockElements(md, shownText, b)", unnamed: true, is: "md-sanitize.ts revealFragmentTarget: walks the element's ancestors, removes hidden=until-found and opens a closed details; attribute writes on elements already in the tree, no element made, no seat" },
+  { in: "scrollToSourceOffset", to: "revealFragmentTarget", arg: "target", decl: "let target", holds: "renderedBlockElements(md, src, k)[0]", unnamed: true, is: "the same helper over the offset's block element (`target`, a let the two search loops assign the same expression, and nothing else writes: `holds` pins it); attribute writes on the tree, no seat" },
+  { in: "scrollToFragment", to: "fragmentTarget", arg: "box.querySelector(\".fileview-md\") || box", unnamed: true, is: "file-view-links.ts fragmentTarget: userContentTarget and a querySelector by id over the root it is handed (the markdown root, else the card); returns the element found, seats nothing (the refuters' bare `||`, which no shape rule names)" },
+  { in: "scrollToFragment", to: "revealFragmentTarget", arg: "target", decl: "const target = fragmentTarget(box.querySelector(\".fileview-md\") || box, frag)", unnamed: true, is: "the same reveal over the fragment's target; attribute writes on the tree, no seat" },
+  { in: "sectionHidden", to: "fragmentTarget", arg: "root", decl: "const root = box.querySelector(\".fileview-md\") || box", unnamed: true, is: "the same lookup over the markdown root, else the card; returns, seats nothing" },
+  { in: "openFileView", to: "gateOf", arg: "t", decl: "const t = ev.target as Element | null", unnamed: true, is: "figure-gate.ts gateOf: the click target's closest placeholder when it is inside the body it is handed beside, else null; a read, no seat (the SVG source toggle's callback parameter was `t` and is `txt` since the round-8 fixes, so this name is declared once in openFileView and the shadow rule admits the entry)" },
+  { in: "openFileView", to: "panelMark", arg: "t", decl: "const t = ev.target as Element | null", unnamed: true, is: "file-comments.ts panelMark: walks the target's ancestors against the panel's mark set and answers whether the click was on the panel's own mark; a read, no seat" },
+  { in: "gateKeys", to: "gateOf", arg: "ev.target", unnamed: true, is: "gateOf over a keydown's target (EventTarget | null to the compiler), the same read as the click's; no seat" },
+  { in: "loadGate", to: "loadGatedHost", arg: "document", decl: "a global", unnamed: true, is: "figure-gate.ts loadGatedHost: adds the host to the page's loaded set and re-judges every placeholder of the document it is handed (regateFigures), putting each restored figure's media element back where its placeholder stands, inside the markdown root; no seat beside the body's roots" },
+  // String() over a value the compiler cannot type (a caught error is unknown or any; the host's message fields are any): the
+  // language's conversion to a string, which reads and seats nothing; each listed because the compiler cannot vouch for the value
+  { in: "fellMessage", to: "String", arg: "err", decl: "a parameter of fellMessage", unnamed: true, is: "a render failure's value (unknown) made a string for the failure line's text; String reads and seats nothing" },
+  { in: "undoneLanded", to: "String", arg: "(r as { id?: unknown }).id", unnamed: true, is: "an undo record's id made a string for a Set of ids; no seat" },
+  { in: "showPdfPages", to: "String", arg: "err && (err as Error).message || err", unnamed: true, is: "the pages attempt's caught error made a string for the fallback's message; no seat" },
+  { in: "enterEdit", to: "String", arg: "err && (err as Error).message || err", unnamed: true, is: "the editor chunk's caught error made a string for the failure text; no seat" },
+  { in: "doSave", to: "String", arg: "e && e.error || \"the save failed\"", unnamed: true, is: "a save reply's error text made a string (`{}` to the compiler, the type a caught value narrows to here); no seat" },
+  { in: "doSave", to: "String", arg: "e.code", unnamed: true, is: "the save reply's code made a string; no seat" },
+  { in: "fetchFile", to: "String", arg: "err && err.message || err", unnamed: true, is: "the fetch's caught error made a string for the failure pane's text; no seat" },
+  { in: "openUrlView", to: "String", arg: "err && (err as Error).message || err", unnamed: true, is: "the URL viewer's caught error made a string for its failure text; no seat" },
+  { in: "initFileView", to: "String", arg: "m.url || \"\"", unnamed: true, is: "the kernel's fileGitLink reply's url field (any: the listener's message record) made a string and handed to the GitHub link's apply (its URL write is listed in URL_WRITES_READ_BY_HAND); no seat" },
+  { in: "initFileView", to: "String", arg: "m.reason || \"\"", unnamed: true, is: "the same reply's reason field made a string; no seat" },
+  { in: "initFileView", to: "String", arg: "m.mtimeNs || \"\"", unnamed: true, is: "the fileSaved reply's mtime field made a string for the save hooks; no seat" },
+  { in: "initFileView", to: "String", arg: "m.error || \"the save failed\"", unnamed: true, is: "the fileSaveFailed reply's error field made a string for the failure text; no seat" },
+  { in: "initFileView", to: "String", arg: "m.text || \"the session's host is not answering \u2014 the save was not sent\"", unnamed: true, is: "a federation warn's text field made a string for the failure text (the source spells a dash character in the fallback; the entry spells it as an escape); no seat" },
 ];
 /** A URL written from a value that is not a literal in file-view.ts (an assignment to a member flagged `url` in
  *  NON_SEATING_WRITES or to a member of `location`; a setAttribute or setAttributeNS under a name that is neither `aria-*`
@@ -2022,7 +2138,7 @@ const URL_WRITES_READ_BY_HAND: UrlWriteRead[] = [
   // person's click
   { in: "openUrlTab", on: "window.open", value: "href", decl: "a parameter of openUrlTab", is: "the href of a URL anchor inside the body (openLink, the one caller: openUrlTab(x.getAttribute(\"href\") || \"\") for an anchor wearing URL_LINK_CLASS, the document's own web links as file-view-links.ts stamped them): it CAN carry a remote host, the author's. The network is reached by a navigation in a NEW TAB on the person's MODIFIED click alone (own = wantsOwnTab: Ctrl, Cmd or the middle button; a plain click is the browser's own open of the anchor, target _blank and rel noopener stamped on it), and only where canPreview() (the web dashboard; the VS Code webview posts openLink to the host instead). The gate is the sanitizer's URI rule on the href before the stamp (DOMPurify's allowed-URI test over every href, so a javascript: value never reaches the anchor), the modified click and canPreview; established by reading openLink and the two stamps" },
   { in: "mdBlock", on: "a.setAttribute(\"href\")", value: "xl", decl: "const xl = a.getAttributeNS(XLINK_NS, \"href\")", is: "an SVG anchor's xlink:href moved to a plain href, after the sanitize and the adoption (box.replaceChildren(...Array.from(clean.childNodes)) above this loop): the author's value, so it CAN carry a remote host. The network is reached on a click alone (an anchor navigates when clicked; for a file document linkMarkdownAnchors then stamps a web link target _blank and takes the href off a path link, and a URL document's links are stamped _blank below), never at the write. The gate is DOMPurify's allowed-URI test over xlink:href (dompurify's _isValidAttribute reads every attribute's value against IS_ALLOWED_URI, so a javascript: value is gone before this loop) plus the click; established by the sanitize call above and the sanitizer's source" },
-  { in: "mdBlock", on: "a.setAttribute(\"href\")", value: "resolveDocRelative(href, doc.href)", is: "a URL document's relative link made absolute against the document's own URL (doc.href, the page's origin by the caller's isMarkdownUrl test, render.ts): a relative reference resolves to the document's host; a protocol-relative `//host/path` takes the document's scheme with the AUTHOR's host, so the value CAN name another host; an absolute reference, a `#fragment` and an empty value return early above (the scheme test) and are not written here. The network is reached on a click alone: the chat page's anchor delegate opens a same-origin .md in this viewer and every other link in a new tab (target _blank, rel noopener stamped on every link element below). The gate is the sanitizer's URI rule before the loop (a javascript: scheme never reaches this branch, and DOMPurify dropped it anyway), the click and the delegate; established by reading the loop's early return, md-links.ts resolveDocRelative and render.ts's delegate" },
+  { in: "mdBlock", on: "link.setAttribute(\"href\")", value: "resolveDocRelative(href, doc.href)", is: "a URL document's relative link made absolute against the document's own URL (doc.href, the page's origin by the caller's isMarkdownUrl test, render.ts): a relative reference resolves to the document's host; a protocol-relative `//host/path` takes the document's scheme with the AUTHOR's host, so the value CAN name another host; an absolute reference, a `#fragment` and an empty value return early above (the scheme test) and are not written here. The network is reached on a click alone: the chat page's anchor delegate opens a same-origin .md in this viewer and every other link in a new tab (target _blank, rel noopener stamped on every link element below). The gate is the sanitizer's URI rule before the loop (a javascript: scheme never reaches this branch, and DOMPurify dropped it anyway), the click and the delegate; established by reading the loop's early return, md-links.ts resolveDocRelative and render.ts's delegate" },
   { in: "rewriteFigureSrcs", on: "el.setAttribute(\"srcset\")", value: "serializeSrcset(cands)", is: "a file document's figure srcset with each relative candidate re-pointed at the kernel's /file route (fileUrl over the file's directory, the page's origin) and every absolute, protocol-relative, data: or empty candidate left AS WRITTEN (path() returns null for those): the serialized value CAN carry a remote host, the author's. The network is reached when the picture lays out, for the page's origin at once; for a host outside the gear's list the figure gate runs after this rewrite (mdBlock: rewriteFigureSrcs, then gateRemoteFigures) and moves the attribute into the placeholder, so the fetch waits for the person's click on the placeholder or Print with them. The gate is fileUrl for the relative candidates and figure-gate's allowed-host list plus the click or the print for the rest; established by reading path(), mdBlock's order and gateRemoteFigures" },
   { in: "rewriteFigureSrcs", on: "el.setAttribute(\"href\")", value: "p === null ? ref.value : p", is: "an svg image's xlink:href folded into href in a file document: the /file route when the value was relative (p), else the value as written (an absolute, protocol-relative, data: or empty href), so it CAN carry a remote host. The network is reached when the image renders, for the page's origin at once; a host outside the list is gated by gateRemoteFigures after this rewrite (figureRefs reads href on an svg image) until the click or the print. The gate is fileUrl, DOMPurify's URI rule before the rewrite (a javascript: value is gone), and the figure gate plus the click or the print; established by reading path(), mdBlock's order and figure-gate's FETCH_ATTRS" },
   { in: "rewriteFigureSrcs", on: "el.setAttribute(ref.attr)", value: "p", decl: "const p = path(ref.value)", is: "the figure reference's attribute (src or poster here: srcset, xlink:href and a null p returned above) written from the /file route path() built with fileUrl over the file's directory and the session: the page's origin and no other host (a value with a scheme, a `//` or nothing returns null and never reaches this line). The network is reached when the element lays out, a same-origin request the kernel answers from the session's disk, never gated since the page's own origin is never a gated host. The gate is fileUrl; established by reading path() and the continue above" },
@@ -2108,7 +2224,7 @@ test("the census of the body's roots, its default refusing: every `body` token i
   const roots = [...seated.keys()].sort();
   t.diagnostic("census: " + roots.map((r) => r + " (line " + seated.get(r)!.join(", ") + ")").join("; "));
   const second = seatSites(VIEWER_SRC);
-  t.diagnostic("second read: " + second.sites.length + " seats and site-read calls (" + second.sites.filter((s) => s.body).length + " on the body token, " + second.sites.filter((s) => !s.body).length + " on other receivers, " + SEATS_READ_BY_HAND.length + " entries listed over " + SEATS_READ_BY_HAND.reduce((n, e) => n + (e.times ?? 1), 0) + " seats, one entry per seat), " + second.indexReads.length + " stored index reads (" + INDEX_READS_BY_HAND.length + " distinct sites listed), " + NON_SEATING_METHODS.length + " method names listed as seating nothing; member writes on receivers other than the body token: " + (second.writes.length + second.sites.filter((s) => !s.body && s.assign).length) + " over " + new Set([...second.writes.map((w) => w.name), ...second.sites.filter((s) => !s.body && s.assign).map((s) => s.via.split(" ")[0])]).size + " distinct names (" + second.sites.filter((s) => !s.body && s.assign).length + " seats, " + second.writes.filter((w) => w.through === undefined).length + " by " + NON_SEATING_WRITES.length + " names listed as seating nothing, " + second.writes.filter((w) => w.through !== undefined).length + " through style or dataset by the rule), the body token's " + second.bodyWrites + "; " + second.handedNodes.length + " nodes handed to callees and " + second.elementsHanded.length + " elements handed to callees the file does not declare (" + ARGS_READ_BY_HAND.length + " entries listed over " + ARGS_READ_BY_HAND.reduce((n, e) => n + (e.times ?? 1), 0) + " hand-offs), " + second.urlWrites.length + " URL writes (" + URL_WRITES_READ_BY_HAND.length + " entries listed over " + URL_WRITES_READ_BY_HAND.reduce((n, e) => n + (e.times ?? 1), 0) + " writes), " + second.styleWrites.length + " CSS properties written through style from a non-literal under a name listed as taking no url() (" + NON_URL_STYLE_PROPS.length + " names listed), " + second.attrNames.length + " attribute names read by hand (" + ATTR_NAMES_READ_BY_HAND.length + " listed), " + second.attrWrites.length + " attributes set from a non-literal under an aria-* or data-* name (" + NON_URL_ATTRS.length + " names listed as carrying no URL)");
+  t.diagnostic("second read: " + second.sites.length + " seats and site-read calls (" + second.sites.filter((s) => s.body).length + " on the body token, " + second.sites.filter((s) => !s.body).length + " on other receivers, " + SEATS_READ_BY_HAND.length + " entries listed over " + SEATS_READ_BY_HAND.reduce((n, e) => n + (e.times ?? 1), 0) + " seats, one entry per seat), " + second.indexReads.length + " stored index reads (" + INDEX_READS_BY_HAND.length + " distinct sites listed), " + NON_SEATING_METHODS.length + " method names listed as seating nothing; member writes on receivers other than the body token: " + (second.writes.length + second.sites.filter((s) => !s.body && s.assign).length) + " over " + new Set([...second.writes.map((w) => w.name), ...second.sites.filter((s) => !s.body && s.assign).map((s) => s.via.split(" ")[0])]).size + " distinct names (" + second.sites.filter((s) => !s.body && s.assign).length + " seats, " + second.writes.filter((w) => w.through === undefined).length + " by " + NON_SEATING_WRITES.length + " names listed as seating nothing, " + second.writes.filter((w) => w.through !== undefined).length + " through style or dataset by the rule), the body token's " + second.bodyWrites + "; " + second.handedNodes.length + " nodes handed to callees and " + second.elementsHanded.length + " elements handed to callees the file does not declare, " + second.elementsHanded.filter((h) => h.unnamed).length + " of them named by the compiler's type alone (" + ARGS_READ_BY_HAND.length + " entries listed over " + ARGS_READ_BY_HAND.reduce((n, e) => n + (e.times ?? 1), 0) + " hand-offs, " + ARGS_READ_BY_HAND.filter((e) => e.unnamed).length + " of the entries marked `unnamed`), " + second.urlWrites.length + " URL writes (" + URL_WRITES_READ_BY_HAND.length + " entries listed over " + URL_WRITES_READ_BY_HAND.reduce((n, e) => n + (e.times ?? 1), 0) + " writes), " + second.styleWrites.length + " CSS properties written through style from a non-literal under a name listed as taking no url() (" + NON_URL_STYLE_PROPS.length + " names listed), " + second.attrNames.length + " attribute names read by hand (" + ATTR_NAMES_READ_BY_HAND.length + " listed), " + second.attrWrites.length + " attributes set from a non-literal under an aria-* or data-* name (" + NON_URL_ATTRS.length + " names listed as carrying no URL)");
   t.diagnostic("live seats on receivers other than the body token: " + JSON.stringify(second.sites.filter((s) => !s.body).map((s) => ({ in: s.fn, on: s.on, via: s.via, seats: s.seats, decl: s.decl, kind: s.kind, writes: s.writes, line: s.line }))));
   assert.ok([...seated.values()].reduce((n, ls) => n + ls.length, 0) >= 10, "the seating sites are found in file-view.ts");
   const listed = [...READY_ROOTS, ...NOT_READY_ROOTS, ...LINE_ROOTS].sort();
@@ -2892,16 +3008,24 @@ test("P7's derived numbers are the tables this module runs: the seat-keyed table
   assert.equal(printSeats.length, seats - Number(base[0][1]), "the PR's own seats over the merge-base cell are the print.button seats");
   assert.ok(P7.includes("the census module holds it to the table it runs and prints the same two in its `second read:` diagnostic"), "P7 says this module holds the sentence to the table it runs");
   const args = ARGS_READ_BY_HAND.length, argSeats = tableTimes(ARGS_READ_BY_HAND), urls = URL_WRITES_READ_BY_HAND.length, urlSeats = tableTimes(URL_WRITES_READ_BY_HAND);
-  const sizes = [...P7.matchAll(/(\d+) argument sites over (\d+) hand-offs, (\w+) entries standing for two byte-identical hand-offs each \(([^)]*)\), and (\d+) URL writes today/g)];
-  assert.equal(sizes.length, 1, "today's table sizes stand in P7 once");
+  const sizes = [...P7.matchAll(/(\d+) argument sites over (\d+) hand-offs, (\w+) entries standing for two hand-offs each, (\w+) of them byte-identical calls \(([^)]*)\) and (\w+) the same argument handed to the same callee by two calls that differ after it \(([^)]*)\), (\d+) of the entries marked `unnamed` for the (\d+) hand-offs the census cannot name by shape and the compiler types as able to hold a node, and (\d+) URL writes today/g)];
+  assert.equal(sizes.length, 1, "today's table sizes stand in P7 once, in the sentence's form (a sentence the pattern does not find is a loud failure here, never a default)");
   const argTwice = ARGS_READ_BY_HAND.filter((e) => e.times !== undefined);
   assert.ok(argTwice.length > 0 && argTwice.every((e) => e.times === 2), "every argument entry with a `times` reads two hand-offs (" + JSON.stringify(argTwice.map((e) => e.times)) + ")");
-  assert.deepEqual([sizes[0][1], sizes[0][2], sizes[0][3], sizes[0][5]], [String(args), String(argSeats), COUNT_WORDS[argTwice.length], String(urls)], "P7's argument sites, hand-offs, entries reading two hand-offs and URL writes are the tables' (" + args + " over " + argSeats + ", " + argTwice.length + " reading two, " + urls + ")");
-  assert.equal(sizes[0][4], argTwice.map((e) => e.in + "'s two `" + e.to + "`").join(", "), "the sentence names each entry reading two hand-offs, in table order");
+  const unnamedEntries = ARGS_READ_BY_HAND.filter((e) => e.unnamed), unnamedHanded = live.elementsHanded.filter((h) => h.unnamed);
+  assert.deepEqual([sizes[0][1], sizes[0][2], sizes[0][3], sizes[0][8], sizes[0][9], sizes[0][10]], [String(args), String(argSeats), COUNT_WORDS[argTwice.length], String(unnamedEntries.length), String(unnamedHanded.length), String(urls)], "P7's argument sites, hand-offs, entries reading two hand-offs, entries marked `unnamed`, hand-offs the compiler's type refuses and URL writes are the tables' and the run's (" + args + " over " + argSeats + ", " + argTwice.length + " reading two, " + unnamedEntries.length + " marked over " + unnamedHanded.length + ", " + urls + ")");
+  assert.equal(tableTimes(unnamedEntries), unnamedHanded.length, "the marked entries' `times` sum to the hand-offs the compiler's type refuses");
+  // the entries reading two hand-offs, in two groups by execution (the round-8 fixes): the calls byte-identical whole, and the same
+  // argument handed to the same callee by two calls that differ after it (the record test holds the two lists as one sequence in
+  // table order and cannot make the split, which is this run's)
+  const identical: ArgRead[] = [], differing: ArgRead[] = [];
   for (const e of argTwice) {
     const texts = [...live.handedNodes, ...live.elementsHanded].filter((h) => h.fn === e.in && h.to === e.to && h.arg === e.arg).map((h) => h.whole);   // the whole call text, as above
-    assert.equal(texts.length, 2, "the entry reads two live hand-offs: " + JSON.stringify(texts)); assert.equal(new Set(texts).size, 1, "and the two are byte-identical calls, whole: " + JSON.stringify(texts));
+    assert.equal(texts.length, 2, "the entry reads two live hand-offs: " + JSON.stringify(texts));
+    (new Set(texts).size === 1 ? identical : differing).push(e);
   }
+  const names = (es: ArgRead[]): string => es.map((e) => e.in + "'s two `" + e.to + "`").join(", ");
+  assert.deepEqual([sizes[0][4], sizes[0][5], sizes[0][6], sizes[0][7]], [COUNT_WORDS[identical.length], names(identical), COUNT_WORDS[differing.length], names(differing)], "the sentence counts and names the byte-identical pairs and the differing pairs, each group in table order (" + identical.length + " and " + differing.length + ")");
   assert.equal(urlSeats, urls, "no URL write is spelled alike twice at this head (the sentence carries one number for the URL writes; a `times` on an entry would make it two)");
   assert.ok(P7.includes("the census module holds to the tables it runs and prints in its `second read:` diagnostic"), "P7 says this module holds the sentence to the tables it runs");
   const setAttr = URL_WRITES_READ_BY_HAND.filter((e) => /\.setAttribute(?:NS)?\(/.test(e.on)).length;
@@ -2928,6 +3052,66 @@ test("P7's derived numbers are the tables this module runs: the seat-keyed table
   const urlLiteral = literal("const URL_WRITES_READ_BY_HAND: UrlWriteRead[] = [");
   assert.deepEqual(textCount(urlLiteral), { entries: urls, seats: urlSeats, twice: 0 }, "the text count of the URL table's literal is the table run here");
   assert.equal([...urlLiteral.matchAll(/^  \{ in: "[^"]*", on: "[^"]*\.setAttribute(?:NS)?\(/gm)].length, setAttr, "the text count of the URL table's setAttribute entries is the table's");
+});
+
+// the round-8 fixes (the round-7 review's cluster C, tests-2 and regression-1, 2026-09-21): the argument axis's pass road refused
+// nothing it could not name, and the merge deleted the entry reading the sanitized body handed to gateRemoteFigures. The
+// population that road passed is derived here and held to the marked entries by set and by count, the deletion is executed as
+// the mutant it was, and the four shapes the refuters said no syntactic rule reaches (a conditional, a cast of an untyped
+// callback parameter, a bare `||`, a property access) are held live: dropping each entry reds its own hand-offs
+test("the argument axis refuses what elementShape cannot name (the round-8 fixes on the round-7 review's cluster C): the hand-offs the compiler's type refuses over the live viewer are exactly the entries marked `unnamed`, by key set and by count, the count P7 carries is the run's, the mark follows the road (an entry marked for a hand-off the shape names, or unmarked for one it cannot, is refused), the entry fef739ca7 deleted is restored and its deletion reds the two gateRemoteFigures lines and nothing else (FAILS BEFORE: the two hand-offs were read on no axis), the sanitized body handed to a third imported callee under a cast is refused with the compiler's type (FAILS BEFORE: passed, the diagnostic unchanged), each of the four shapes no syntactic rule reaches is held by its entry, a chain on the body token yields to the first read, and a program is built once per source", () => {
+  const live = seatSites(VIEWER_SRC);
+  assert.deepEqual(census(VIEWER_SRC).refused, [], "the live viewer passes under the table, so every refusal below is the plant's or the dropped entry's");
+  const unnamed = live.elementsHanded.filter((h) => h.unnamed), marked = ARGS_READ_BY_HAND.filter((e) => e.unnamed);
+  const key = (x: { fn?: string; in?: string; to: string; arg: string }): string => (x.fn ?? x.in) + " | " + x.to + " | " + x.arg;
+  assert.ok(unnamed.length > 0 && marked.length > 0, "the population exists at this head (" + unnamed.length + " hand-offs, " + marked.length + " entries)");
+  assert.deepEqual([...new Set(unnamed.map(key))].sort(), marked.map(key).sort(), "the hand-offs the compiler's type refuses are the marked entries, as a set of (function, callee, argument) keys: an entry deleted or a hand-off gained reds by set difference, not by count alone");
+  assert.equal(marked.length, new Set(marked.map(key)).size, "one marked entry per key");
+  assert.equal(tableTimes(marked), unnamed.length, "...and their `times` sum to the hand-offs");
+  assert.ok(unnamed.every((h) => /^an argument the census cannot name by shape, typed `[^`]+` by the compiler, a type that can hold a node$/.test(h.member)), "each refusal names the compiler's type: " + JSON.stringify(unnamed.map((h) => h.member)));
+  assert.ok(live.elementsHanded.every((h) => h.unnamed || !h.member.startsWith("an argument the census cannot name")), "an unmarked hand-off is one the shape rule named");
+  const P7 = sectionPart("P7. **", "**Derivations and their unknown cases.**");
+  const stated = [...P7.matchAll(/(\d+) of the entries marked `unnamed` for the (\d+) hand-offs the census cannot name by shape/g)];
+  assert.equal(stated.length, 1, "P7 states the unnamed population once (a sentence the pattern does not find is a loud failure, never a default)");
+  assert.deepEqual([stated[0][1], stated[0][2]], [String(marked.length), String(unnamed.length)], "P7's two numbers are this run's (" + marked.length + " entries over " + unnamed.length + " hand-offs)");
+  // the mark follows the road: an entry marked for a hand-off the shape rule names, and one unmarked for a hand-off it cannot, are refused
+  const flashEntry = ARGS_READ_BY_HAND.find((e) => e.in === "openFileView" && e.to === "flash")!, gateEntry = ARGS_READ_BY_HAND.find((e) => e.in === "mdBlock" && e.to === "gateRemoteFigures")!;
+  const misMarked = census(VIEWER_SRC, undefined, undefined, ARGS_READ_BY_HAND.map((e) => (e === flashEntry ? { ...e, unnamed: true as const } : e)));
+  assert.equal(misMarked.refused.length, 1, "an entry marked `unnamed` for a hand-off the shape rule names: " + JSON.stringify(misMarked.refused)); assert.match(misMarked.refused[0], /^line \d+: flash\(outlineBtn\) hands `outlineBtn`, el\(\.\.\.\) bound to `outlineBtn`, where ARGS_READ_BY_HAND's entry is marked `unnamed` and the census now names the shape: the two populations must not blur/);
+  const unMarked = census(VIEWER_SRC, undefined, undefined, ARGS_READ_BY_HAND.map((e) => (e === gateEntry ? { ...e, unnamed: undefined } : e)));
+  assert.equal(unMarked.refused.length, 2, "an entry not marked for the two hand-offs the shape rule cannot name: " + JSON.stringify(unMarked.refused)); for (const r of unMarked.refused) assert.match(r, /gateRemoteFigures\(clean, [^)]*\) hands `clean`, an argument the census cannot name by shape, typed `HTMLElement` by the compiler, a type that can hold a node, where ARGS_READ_BY_HAND's entry is not marked `unnamed` and the census cannot name the shape/);
+  // the deletion fef739ca7 made, executed as a mutant: the entry dropped reds the two lines that hand the sanitized body to
+  // gateRemoteFigures and nothing else (FAILS BEFORE: both passed, and the census stayed green over two hand-offs read on no axis)
+  const gateLines = VIEWER_SRC.split("\n").flatMap((l, i) => (l.includes("gateRemoteFigures(clean") ? [String(i + 1)] : []));
+  assert.equal(gateLines.length, 2, "the viewer hands `clean` to gateRemoteFigures twice: lines " + gateLines.join(", "));
+  const deleted = census(VIEWER_SRC, undefined, undefined, ARGS_READ_BY_HAND.filter((e) => e !== gateEntry));
+  assert.deepEqual(deleted.refused.map((r) => /^line (\d+):/.exec(r)![1]), gateLines, "FAILS BEFORE: the entry deleted reds the two hand-offs by line, and nothing else: " + JSON.stringify(deleted.refused));
+  for (const r of deleted.refused) assert.match(r, /hands `clean`, an argument the census cannot name by shape, typed `HTMLElement` by the compiler, a type that can hold a node \(bound by `const clean = sanitizeMd\(dirty, mintHeadingIds\)`\), to gateRemoteFigures\(\.\.\.\) in mdBlock, a callee this file does not declare and the census has not read by hand for what it does with an element it is handed .* marked `unnamed`/);
+  // the plant: the sanitized body handed to a third imported callee under a cast, a spelling the seam test's exact-call pin does
+  // not read (FAILS BEFORE: 0 refusals, the diagnostic unchanged)
+  const after = "\n    gateRemoteFigures(clean, document.baseURI);\n";
+  assert.equal(VIEWER_SRC.split(after).length, 2, "the file kind's gate call is written once");
+  const plantAt = VIEWER_SRC.indexOf(after) + after.length;
+  const planted = VIEWER_SRC.slice(0, plantAt) + '    addCopyBtn(clean as HTMLElement, "");\n' + VIEWER_SRC.slice(plantAt);
+  const plantLine = VIEWER_SRC.slice(0, plantAt).split("\n").length;
+  const plant = census(planted);
+  assert.equal(plant.refused.length, 1, "FAILS BEFORE: the sanitized body under a cast handed to addCopyBtn: " + JSON.stringify(plant.refused));
+  assert.match(plant.refused[0], new RegExp("^line " + plantLine + ": addCopyBtn\\(clean as HTMLElement, \"\"\\) hands `clean as HTMLElement`, an argument the census cannot name by shape, typed `HTMLElement` by the compiler, a type that can hold a node \\(bound by `const clean = sanitizeMd\\(dirty, mintHeadingIds\\)`\\), to addCopyBtn\\(\\.\\.\\.\\) in mdBlock"));
+  const aliased = census(VIEWER_SRC.slice(0, plantAt) + '    const c2 = clean; addCopyBtn(c2, "");\n' + VIEWER_SRC.slice(plantAt));
+  assert.equal(aliased.refused.length, 1, "...and through an alias, which the seam test's pin does not read either: " + JSON.stringify(aliased.refused)); assert.match(aliased.refused[0], /hands `c2`, an argument the census cannot name by shape, typed `HTMLElement` by the compiler, a type that can hold a node \(bound by `const c2 = clean`\), to addCopyBtn/);
+  // the four shapes the refuters said no syntactic rule reaches, each a live hand-off held by its entry: dropping the entry reds its line(s) alone
+  for (const [inFn, to, arg, what] of [["mdBlock", "addCopyBtn", "host", "a conditional"], ["mdBlock", "wrapCodeLines", "codeEl", "a cast of an untyped callback parameter"], ["scrollToFragment", "fragmentTarget", 'box.querySelector(".fileview-md") || box', "a bare `||`"], ["gateKeys", "gateOf", "ev.target", "a property access"]] as const) {
+    const e = ARGS_READ_BY_HAND.find((x) => x.in === inFn && x.to === to && x.arg === arg)!;
+    assert.ok(e !== undefined && e.unnamed, what + " is listed and marked: " + inFn + "/" + to + "/" + arg);
+    const r = census(VIEWER_SRC, undefined, undefined, ARGS_READ_BY_HAND.filter((x) => x !== e));
+    assert.equal(r.refused.length, e.times ?? 1, what + ": the entry dropped reds its hand-off(s) and nothing else: " + JSON.stringify(r.refused));
+    for (const one of r.refused) assert.match(one, new RegExp("^line \\d+: .* to " + to + "\\(\\.\\.\\.\\) in " + inFn + ", a callee this file does not declare"));
+  }
+  // a chain on the body token yields to the first read (the round-8 build's run 4: without the yield, `pick(body.firstChild)` red twice)
+  assert.ok(!live.elementsHanded.some((h) => /^body\./.test(h.arg)), "no hand-off of a chain on the body token is on this axis");
+  // the program is built once per source text: two reads of one source share it, a second source gets its own
+  assert.strictEqual(programOver(VIEWER_SRC), programOver(VIEWER_SRC), "one program for one source text");
+  assert.notStrictEqual(programOver(planted), programOver(VIEWER_SRC), "another source, another program (the last one handed on as the predecessor)");
 });
 
 /** A row of the figure leg's table as `shapes()` builds it: the fields the record's pins read (the leg's own `Shape` type
