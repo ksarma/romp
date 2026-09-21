@@ -997,14 +997,20 @@ test("a composed frame whose gen matched but whose newGen genOf cannot read is r
   }
 });
 
+// A source file read as prose: a line break and the comment marker after it read as one space and whitespace collapsed, so a
+// comment's wrapping is not part of any claim over its words. The one joiner for the two source pins below, the pair statement's
+// and the premise's (the closing fixer pass after the maintainer's round 6, close-3: the premise pin's three statements had read
+// the raw copies beside a second joiner of its own, so they held by the wrap and not by the property).
+const asProse = (text: string) => text.replace(/\n\s*(?:\/\/\s*|\*\s*)?/g, " ").replace(/\s+/g, " ");
+
 // The one statement of what the declared pair does today (the author's pass 3, 2026-09-20): federation.ts says it once, at
 // Conn.feedHeld, in the words the other sites point at, and no comment on either road claims in the present tense that
 // kernel.py reads the pair at the compose (no kernel in this repo reads a held member or an ask's pair). A source pin, the
 // way perf-beacon-settings.test.ts pins the gear copy.
 test("federation.ts states once what the pair does today (no kernel in this repo stamps a gen yet, so nothing declares one today) and no comment on either road says kernel.py reads the pair at the compose", () => {
   const UI = path.resolve(process.cwd(), "..", "ui", "webview");
-  // the comments' wrapping is not part of the claim: a line break and its comment marker read as one space
-  const flat = (f: string) => fs.readFileSync(path.join(UI, f), "utf8").replace(/\n\s*(\/\/|\*)\s?/g, " ").replace(/\s+/g, " ");
+  // the comments' wrapping is not part of the claim: each file read through asProse
+  const flat = (f: string) => asProse(fs.readFileSync(path.join(UI, f), "utf8"));
   const fedSrc = flat("federation.ts"), vdSrc = flat("view-deltas.ts");
   const home = "no kernel in this repo stamps a gen yet, so nothing declares one today";
   assert.equal(fedSrc.split("What the pair does today, stated here once").length, 2, "the home statement, once, at Conn.feedHeld");
@@ -1241,19 +1247,24 @@ test("the local bound's stated reason is a choice, not a missing event: no copy 
     "docs/read-side.md": fs.readFileSync(path.join(root, "docs", "read-side.md"), "utf8"),
     "the ledger entry": fs.readFileSync(path.join(root, "upstream", "2026-09-19-relay-dial-page-caps-ws-bytes-by-host.md"), "utf8"),
   };
-  // each copy is read as prose across its line breaks, a comment marker stripped at each break, so a copy of the premise wrapped
-  // over two lines is the same statement as one on a line (the author's fixer pass after the maintainer's round 6, text-4: the
-  // pin had read the raw text, and federation.ts's own mention of the earlier wording sat across a break where the regex could
-  // not see it, so the pin held by the wrap and not by the property)
-  const prose = (t: string) => t.replace(/\n\s*(?:\/\/\s*|\*\s*)?/g, " ");
-  assert.match(prose("// the earlier text: a dial this manager never\n  // sees it"), /a dial this manager never sees/, "the rig: the prose reader joins a wrapped comment");
-  for (const [name, text] of Object.entries(copies)) {
-    const hit = prose(text).match(/(a dial (this|the) manager never sees|sees no dial|no dial event)/);
+  // each copy is read as prose across its line breaks (asProse, the file's one joiner), for the refusals and the three statements
+  // alike, so a copy of the premise or of the statement wrapped over two lines is the same text as one on a line (the author's
+  // fixer pass after the maintainer's round 6, text-4: the pin had read the raw text, and federation.ts's own mention of the
+  // earlier wording sat across a break where the regex could not see it; the closing fixer pass after the maintainer's round 6,
+  // close-3: the three statements had still read the raw copies, so the federation.ts statement held by its phrase sitting on
+  // one line, and a reflow of that comment would have redded it for the wrong reason)
+  const prose: Record<string, string> = {};
+  for (const [name, text] of Object.entries(copies)) prose[name] = asProse(text);
+  assert.match(asProse("// the earlier text: a dial this manager never\n  // sees it"), /a dial this manager never sees/, "the rig: the prose reader joins a wrapped comment");
+  assert.match(asProse("  // frame that\n  // reaches inbound()"), /frame that reaches inbound\(\)/, "the rig: and a statement wrapped mid-phrase");
+  for (const [name, text] of Object.entries(prose)) {
+    const hit = text.match(/(a dial (this|the) manager never sees|sees no dial|no dial event)/);
     assert.equal(hit === null ? null : hit[0], null, name + " states the premise the shim's own code refutes, on one line or across a line break");
   }
-  assert.match(copies["federation.ts"], /in-band \{type:"wsup"\} frame that reaches inbound\(\)/, "federation.ts names the event that exists and says the reset on it is unhandled by choice");
-  assert.match(copies["docs/read-side.md"], /by choice: the\s+shim redials the local socket in-page and announces the reopen/, "the docs state the choice");
-  assert.match(copies["the ledger entry"], /announces the reopen to the manager, which resets nothing on it/, "the ledger entry states the choice");
+  // the three statements, each tested on the joined copy (assert.ok over a test, so a failure names the claim and not the whole copy)
+  assert.ok(/in-band \{type:"wsup"\} frame that reaches inbound\(\)/.test(prose["federation.ts"]), "federation.ts names the event that exists and says the reset on it is unhandled by choice");
+  assert.ok(/by choice: the shim redials the local socket in-page and announces the reopen/.test(prose["docs/read-side.md"]), "the docs state the choice");
+  assert.ok(/announces the reopen to the manager, which resets nothing on it/.test(prose["the ledger entry"]), "the ledger entry states the choice");
 });
 
 test("a remote feedDelta whose `top` is a string onto a held pair is refused like any apply throw (the author's fixer pass after the maintainer's round 5, refusal-5): the pair stands at (G, 1), the raw base is unchanged and carries no index keys, one bare ask, the row asked on the wire road; before the guard it applied and moved the pair to (G, 2) with '0', '1', '2' as the frame's keys", async () => {
