@@ -283,6 +283,8 @@ class ReplySheetServed(unittest.TestCase):
         # the drag guard, on the other todo's sheet: an inline height written as the grip writes it stands through a
         # keystroke (before the guard every keystroke snapped a dragged box back to its content's height)
         d = r["drag"]
+        self.assertNotIn("skipped", d, where + "the drag step ran (the composition's sheet had closed by the send): %r" % (d,))
+        self.assertNotIn("error", d, where + "the drag step ran to its end: %r" % (d,))
         self.assertEqual(d["draggedStyleH"], "150px", where + "the inline height was written: %r" % (d,))
         self.assertGreater(d["draggedH"], d["openH"] + 30, where + "the written height laid out taller than the floor: %r" % (d,))
         self.assertEqual(d["afterKeyStyleH"], "150px", where + "one keystroke after the drag: the inline height the person set stands, grow stood down (before the guard it snapped back to the content's height): %r" % (d,))

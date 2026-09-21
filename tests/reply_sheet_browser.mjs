@@ -214,19 +214,24 @@ try {
     sent: window.__wsSent.filter((f) => f.includes('"userTodoAnswer"') && f.includes(tid)).map((f) => f.slice(0, 200)),
   }), cfg.tid);
   // the drag guard on the other todo's sheet: an inline height written as the resize grip writes it (the headless grip does
-  // not move in every engine, so the write stands in for the pull), then one keystroke; the height the person set stands
-  if (cfg.tid2) {
-    await openReply(cfg.tid2);
-    const at = await measure();
-    await page.evaluate(() => { document.querySelector("#ut-reply-prompt .ut-reply-input").style.height = "150px"; });
-    await settle();
-    const dragged = await measure();
-    await page.locator("#ut-reply-prompt .ut-reply-input").focus();
-    await page.keyboard.type("a");
-    await settle();
-    const typed = await measure();
-    out.drag = { openStyleH: at.inputStyleH, openH: at.inputH, draggedStyleH: dragged.inputStyleH, draggedH: dragged.inputH, afterKeyStyleH: typed.inputStyleH, afterKeyH: typed.inputH };
-    await page.locator("#ut-reply-prompt .confirm-actions button").first().click();   // Cancel
+  // not move in every engine, so the write stands in for the pull), then one keystroke; the height the person set stands.
+  // Its own failure is recorded, never fatal, so the composition's record above reaches the Python side whole: on a tree
+  // where the tap missed, the composition's sheet is still up and covers the other todo's button
+  if (cfg.tid2 && out.after.overlayUp) out.drag = { skipped: "the composition's sheet is still up after the tap" };
+  else if (cfg.tid2) {
+    try {
+      await openReply(cfg.tid2);
+      const at = await measure();
+      await page.evaluate(() => { document.querySelector("#ut-reply-prompt .ut-reply-input").style.height = "150px"; });
+      await settle();
+      const dragged = await measure();
+      await page.locator("#ut-reply-prompt .ut-reply-input").focus();
+      await page.keyboard.type("a");
+      await settle();
+      const typed = await measure();
+      out.drag = { openStyleH: at.inputStyleH, openH: at.inputH, draggedStyleH: dragged.inputStyleH, draggedH: dragged.inputH, afterKeyStyleH: typed.inputStyleH, afterKeyH: typed.inputH };
+      await page.locator("#ut-reply-prompt .confirm-actions button").first().click();   // Cancel
+    } catch (e) { out.drag = { error: String(e).slice(0, 400) }; }
   }
   await result({ ready: true });
 } catch (e) {
