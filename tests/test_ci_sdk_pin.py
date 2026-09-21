@@ -88,7 +88,12 @@ This module holds five things, and it never skips: a pin that skips reports gree
    nothing to flip and the module reads green with the version equality never checked (20 passed, exit 0, in CI's
    shape on a venv without the SDK, with InstalledVersion's method renamed). NeverSkips' census case closes that road
    for the one test the belt exists for: unittest's loader, which is pytest's collection of a TestCase, must find
-   InstalledVersion's single test under its name.
+   InstalledVersion's single test under its name. The belt's subject is checked against the tree as well
+   (2026-09-21): NeverSkips asserts this file's own basename is in _NEVER_SKIP_FILES as written in tests/conftest.py
+   (never_skip_files_as_written there: ast.literal_eval over the text, so a tuple spelled any other way is reported
+   as such rather than raising), and tests/test_served_tests_require.py, outside this module, asserts every entry names
+   a file under tests/, so a rename of this file reds in both and a deletion reds there; before those two checks a
+   copy renamed test_ci_sdk_pin_v2.py ran green with the belt inert, a skip in it a plain skip.
 5. The launcher census (ChildPytestLaunchers; round 3's ruling, 2026-09-20). The workflow's flag blocks the plugin in
    the step's own process; a pytest child a test spawns is a new pytest process in the same interpreter, where the SDK
    step installed anyio, and without the flag it auto-loads the plugin (at round 3's head one of nine launchers passed
@@ -130,6 +135,7 @@ import unittest
 import warnings
 from unittest import mock
 from romp_load import load_source
+from tests.conftest import never_skip_files_as_written
 import sdk_blocker   # noqa: E402  the shared test helper, registered by name in tests/__init__.py like romp_load
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -411,9 +417,12 @@ class NeverSkips(unittest.TestCase):
     status the assertion (pytest prints FAILED for a flipped xfail either way and counts it toward the exit status
     only once the report's wasxfail attribute is removed, which the flip shared with the served switch does; bundled
     with the other spellings that exit was carried for it, so removing the delete red nothing until this case,
-    2026-09-21). Synthetic files only; no SDK, no network. The census case is in-process: the belt
+    2026-09-21). Synthetic files only; no SDK, no network. Two cases are in-process. The census case: the belt
     reads reports, and a test that is never collected files none, so the one test the belt exists for is pinned by
-    name against unittest's loader, the collection pytest performs on a TestCase. The children pass -p no:anyio, as
+    name against unittest's loader, the collection pytest performs on a TestCase. The membership case: this file's
+    own basename is in _NEVER_SKIP_FILES as written in tests/conftest.py, the literal every report is keyed on; the
+    existence half of that check, every entry a file under tests/, lives in tests/test_served_tests_require.py,
+    outside this module, where a deletion of this file can still red it. The children pass -p no:anyio, as
     every pytest the suite spawns does (ChildPytestLaunchers holds it on each launcher), so in a cell no child loads a
     plugin the box's default run does not (pytest accepts the flag where anyio is absent, as on the box venvs)."""
     INSTALLED_VERSION_TEST = "test_the_installed_sdk_is_the_pin_where_it_imports_and_the_pin_is_well_formed_where_it_does_not"
@@ -482,6 +491,18 @@ class NeverSkips(unittest.TestCase):
         # a TestCase: exactly one test, under this name.
         self.assertEqual(unittest.defaultTestLoader.getTestCaseNames(InstalledVersion), [self.INSTALLED_VERSION_TEST],
                          "InstalledVersion's test is not collected under its name: the pin the belt guards is not in the run")
+
+    def test_this_files_name_is_in_the_belts_tuple_as_written(self):
+        # The belt keys every report on a basename literal in tests/conftest.py, and nothing else tied that literal
+        # to this file: renamed test_ci_sdk_pin_v2.py, this module ran with the belt inert (a skip in it a plain
+        # skip, exit 0) and every test here green, the scratch files above being written under the LISTED name
+        # whatever this file is called (2026-09-21). Keyed on this file's basename against the tuple read from
+        # tests/conftest.py's text, as written. The other half, that every entry names a file under tests/, is
+        # tests/test_served_tests_require.py's, outside this module: a check in here cannot fire once this file is
+        # deleted.
+        names = never_skip_files_as_written()
+        self.assertIn(os.path.basename(__file__), names,
+                      "the never-skips belt does not name this file: _NEVER_SKIP_FILES in tests/conftest.py, as written, is %r" % (names,))
 
 
 class RequireSwitch(unittest.TestCase):

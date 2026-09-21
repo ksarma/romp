@@ -4,6 +4,7 @@ any test that skips its own rebind writes into the REAL ~/.local/state/romp (the
 judge-errors.jsonl lines from legacy-flag fixtures made that visible). conftest.py imports before every
 test module, so this is a suite-wide floor; per-class _rebind_state/tempdir isolation still layers on
 top exactly as before."""
+import ast
 import atexit
 import importlib.util
 import os
@@ -910,9 +911,45 @@ def _require_served_test_ran(item, rep) -> None:
 # 2026-09-20: the guard before this was a five-name list of unittest spellings inside the module, which
 # pytest.mark.skipif and a module-level pytest.importorskip passed, and which a module-level skip removed from the run
 # entirely (the guard never ran). Proved by execution in tests/test_ci_sdk_pin.py's NeverSkips. What a report cannot
-# show is a test that was never collected (renamed off the test_ prefix, deleted, fenced behind an if): it files
-# nothing to flip, so NeverSkips also pins by name, in process, that the one test the belt exists for is collected.
+# show is a test that was never collected: a method renamed off the test_ prefix, deleted or fenced behind an if files
+# nothing to flip, so NeverSkips' census case also pins by name, in process, that the ONE test the belt exists for,
+# InstalledVersion's, is collected; that census covers that one test, not the module. The literal below is checked
+# against the tree (2026-09-21; before this a copy renamed test_ci_sdk_pin_v2.py ran with the belt inert, a skip in it
+# a plain skip and every test green): NeverSkips asserts its own module's basename is in the tuple as written, and
+# tests/test_served_tests_require.py, outside the guarded module, asserts every entry names a file under tests/, so
+# a rename reds in both and a deletion reds there; both read it through never_skip_files_as_written below. The
+# residual, stated for what it is: the census lives in the module it guards, so a road that drops the whole module
+# from a run without touching the file files no report, takes the census with it, and the run stays green: a
+# collect_ignore or collect_ignore_glob in a conftest, --ignore or --ignore-glob, a -k, -m or --deselect deselection,
+# a module-level __test__ = False. Today none of these is on ci.yml's Run pytest line (no path, no -k, no --ignore)
+# and no conftest in the tree sets collect_ignore, so that step collects the module in every cell.
 _NEVER_SKIP_FILES = ("test_ci_sdk_pin.py",)
+
+
+def never_skip_files_as_written(path=None) -> tuple:
+    """The tuple assigned to _NEVER_SKIP_FILES above, read from THIS FILE'S TEXT with ast.literal_eval rather than
+    returned from the name: the two checks that consume it (NeverSkips' membership case in tests/test_ci_sdk_pin.py,
+    the existence case in tests/test_served_tests_require.py) are about the literal a reader sees and the belt keys
+    on, whichever conftest object their process loaded. A missing assignment, or one whose value is not a literal
+    tuple (a name, a call, a comprehension, a list), is an AssertionError that says so and names the line, never an
+    AttributeError from a walk over elts; `path` exists so those refusals can be run against a scratch file
+    (tests/test_served_tests_require.py), and defaults to this file."""
+    path = os.path.realpath(path or __file__)
+    where = os.path.join(os.path.basename(os.path.dirname(path)), os.path.basename(path))   # tests/conftest.py
+    with open(path) as f:
+        tree = ast.parse(f.read(), path)
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "_NEVER_SKIP_FILES" for t in node.targets):
+            try:
+                value = ast.literal_eval(node.value)
+            except (ValueError, TypeError):
+                raise AssertionError("%s:%d: _NEVER_SKIP_FILES is not a literal tuple (a %s)"
+                                     % (where, node.lineno, type(node.value).__name__))
+            if not isinstance(value, tuple):
+                raise AssertionError("%s:%d: _NEVER_SKIP_FILES is a literal %s, not a tuple"
+                                     % (where, node.lineno, type(value).__name__))
+            return value
+    raise AssertionError("%s assigns no _NEVER_SKIP_FILES at module level" % where)
 
 
 def _never_skip_longrepr(name, where, reason) -> str:

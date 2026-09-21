@@ -21,12 +21,22 @@ served switch and the never-skips belt share); beside the pair's other skips, wh
 non-zero, that exit would be carried for it and the case would prove nothing. Red before the flip was shared: the
 switch flipped the outcome and left the attribute, so the child printed "1 failed" and exited 0 (2026-09-21). Off,
 the same file is one xfailed test and exit 0. Synthetic fixtures only; no browser, no kernel, no network.
+
+This module also holds the existence half of the never-skips belt's subject check (tests/conftest.py,
+_NEVER_SKIP_FILES; NeverSkipFilesExist below), placed here because it must live OUTSIDE the module that belt guards:
+every entry in the tuple, read from the conftest's text as written, names a file under tests/, and the tuple is not
+empty. The membership half, that the guarded module's own basename is in the tuple, is NeverSkips' in
+tests/test_ci_sdk_pin.py; a check inside that module cannot fire once the file is deleted, and this one does. Before
+the pair (2026-09-21) a stale second entry and a module renamed test_ci_sdk_pin_v2.py both read green, the belt inert.
 """
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+
+from tests.conftest import never_skip_files_as_written
 
 REPO = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 
@@ -117,6 +127,44 @@ class ServedTestsRequire(unittest.TestCase):
         self.assertEqual(rc, 0, "off the switch an xfail is pytest's xfail: " + out[-2000:])
         self.assertIn("1 xfailed", out, out[-2000:])
         self.assertNotIn("ROMP_SERVED_TESTS_REQUIRE", out, "the switch's message does not appear off the switch: " + out[-2000:])
+
+
+class NeverSkipFilesExist(unittest.TestCase):
+    """Every file the never-skips belt names exists: the existence half of the check on tests/conftest.py's
+    _NEVER_SKIP_FILES, outside the module the belt guards (the module docstring says why here). Keyed on the tuple
+    as written in the conftest's text (never_skip_files_as_written: ast.literal_eval, so a tuple spelled any other way
+    is reported as such rather than raising), each entry a bare basename, since the belt compares a report's file BASENAME to
+    the entries, that names a file under tests/."""
+
+    def test_every_name_the_belt_lists_is_a_file_under_tests(self):
+        names = never_skip_files_as_written()
+        self.assertTrue(names, "the never-skips belt names no file: an empty _NEVER_SKIP_FILES flips no report")
+        not_basenames = [n for n in names if os.path.basename(n) != n]
+        self.assertEqual(not_basenames, [], "the belt compares a report's file basename to each entry, so an entry with a "
+                         "directory part never matches: %r" % (not_basenames,))
+        missing = [n for n in names if not os.path.isfile(os.path.join(REPO, "tests", n))]
+        self.assertEqual(missing, [], "an entry of _NEVER_SKIP_FILES names no file under tests/ (the module renamed or "
+                         "deleted, or a stale entry): %r; as written the tuple is %r" % (missing, names))
+
+    def test_the_reader_reports_a_tuple_not_written_as_a_literal_and_reads_one_that_is(self):
+        # the reader run against what it refuses, over scratch copies of the assignment: a value ast.literal_eval
+        # cannot read (a call), a literal that is not a tuple (a list), and no assignment at all each raise an
+        # AssertionError that names the shape and the line; a literal tuple is returned as written
+        d = tempfile.mkdtemp(prefix="never-skip-reader-")
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        def scratch(body):
+            path = os.path.join(d, "conftest.py")
+            with open(path, "w") as f:
+                f.write(body)
+            return path
+        self.assertEqual(never_skip_files_as_written(scratch('import os\n_NEVER_SKIP_FILES = ("test_a.py", "test_b.py")\n')),
+                         ("test_a.py", "test_b.py"))
+        with self.assertRaisesRegex(AssertionError, r"conftest.py:2: _NEVER_SKIP_FILES is not a literal tuple \(a Call\)"):
+            never_skip_files_as_written(scratch('NAMES = ["test_a.py"]\n_NEVER_SKIP_FILES = tuple(NAMES)\n'))
+        with self.assertRaisesRegex(AssertionError, r"conftest.py:1: _NEVER_SKIP_FILES is a literal list, not a tuple"):
+            never_skip_files_as_written(scratch('_NEVER_SKIP_FILES = ["test_a.py"]\n'))
+        with self.assertRaisesRegex(AssertionError, r"assigns no _NEVER_SKIP_FILES at module level"):
+            never_skip_files_as_written(scratch('def f():\n    _NEVER_SKIP_FILES = ("test_a.py",)\n'))
 
 
 if __name__ == "__main__":
