@@ -4337,7 +4337,9 @@ class TheMutationCellsApply(unittest.TestCase):
                         % mutation_cell_text(__doc__, "boundary-link-dropped"))
         for cell in MUTATIONS:                            # no cell's text opens on another's derive id or a block head
             text = mutation_cell_text(__doc__, cell)
-            self.assertFalse(text.startswith("derive: ") or "a derive id: " in text, "%s: %s" % (cell, text[:120]))
+            self.assertFalse(text.startswith("derive: ") or "a derive id: " in text,
+                             "%s: the cell's text opens on a derive id or carries a block head, so mutation_cell_text "
+                             "started it at a neighbour's close: %r" % (cell, text[:120]))
 
     def test_the_table_is_not_short(self):
         counts = cell_counts()
