@@ -205,8 +205,10 @@ status=0
 # --test-timeout bounds each FILE's whole run (node cancels the file and ends the run, naming it; a leg's own { timeout } names
 # its test and leaves the process alive on a live browser handle), so a hung leg fails by name inside the step's own
 # timeout-minutes (.github/workflows/ci.yml) instead of the job being cancelled nameless. The value sits above the largest
-# { timeout } a rostered leg passes and under the step's bound; tools/ci-browser-legs.test.mjs holds both edges.
-printf '%s\n' "${legs[@]}" | xargs -r node --test --test-timeout=300000 --test-reporter=spec --test-reporter-destination=stdout --test-reporter="$REPORTER" --test-reporter-destination="$rep" || status=$?
+# { timeout } a rostered leg passes and under the step's bound; tools/ci-browser-legs.test.mjs holds both edges. The roster
+# array is node's argument list directly (no xargs, whose mapping of a failed command's status differs by platform: 123 on
+# GNU, 1 on BSD and macOS), so the status below is node's own everywhere.
+node --test --test-timeout=300000 --test-reporter=spec --test-reporter-destination=stdout --test-reporter="$REPORTER" --test-reporter-destination="$rep" "${legs[@]}" || status=$?
 
 # One pass over the record with the roster on stdin: per rostered leg a TALLY line (passes that count, fails that count,
 # skips, todos, todo failures, suites, file-level results); and one line per result the step reads a red from: SKIP, TODOFAIL,

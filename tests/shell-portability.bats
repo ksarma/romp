@@ -43,7 +43,7 @@ _shell_files() {   # the surfaces: every TRACKED shell script the repo ships, fo
                    # set (the tagged tip's confirming macOS run stalled here for the job's whole 180 s per-test bound where the proof
                    # run took 3.3 s, with no shell file changed between them, 2026-09-16)
     local f
-    git -C "$REPO" ls-files -z -- bin 'scripts/*.sh' install.sh bootstrap.sh 'hooks/*.sh' .githooks tools vscode-extension/install.sh 2>/dev/null \
+    git -C "$REPO" ls-files -z -- bin 'scripts/*.sh' install.sh bootstrap.sh 'hooks/*.sh' .githooks tools vscode-extension/install.sh vscode-extension/scripts 2>/dev/null \
         | tr '\0' '\n' | while IFS= read -r f; do
             [ -n "$f" ] && [ -f "$REPO/$f" ] || continue
             head -1 "$REPO/$f" | grep -qE '^#!.*(/|env )(ba)?sh([[:space:]]|$)' && echo "$REPO/$f"
@@ -96,6 +96,7 @@ _scan() {   # $@ files: every non-comment line holding a construct, as "family: 
     [[ "$output" == *"/hooks/romp-wake.sh"* ]]
     [[ "$output" == *"/.githooks/pre-push"* ]]
     [[ "$output" == *"/vscode-extension/install.sh"* ]]
+    [[ "$output" == *"/vscode-extension/scripts/ci-browser-legs.sh"* ]]   # the extension's CI scripts (the browser-legs step runs this one on the macOS cell too)
     [[ "$output" == *"/tools/romp-lab/lab.sh"* ]]      # the tools live one directory down: tools/*/*.sh
     [[ "$output" == *"/tools/ui-verify/shot.sh"* ]]
     [[ "$output" != *".py"* ]]                        # a python file under bin/ is not read

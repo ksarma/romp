@@ -30,8 +30,9 @@
 //     reason to one commit in one line, every row carrying the reason carries the header's sentence, and whether each such
 //     source existed at that commit is the census test's history read (this job's checkout is depth 1 and fetches nothing);
 //   - the script the step calls (vscode-extension/scripts/ci-browser-legs.sh) exists, is executable, calls the census
-//     module once (--tsv) and node --test through xargs with the reporter scripts/ci-browser-legs-reporter.mjs beside the
-//     spec reporter, and prints "no legs in the roster" on an empty roster; run on synthetic trees with a stub node on PATH
+//     module once (--tsv) and node --test over the roster array (no xargs, so node's status is the step's on every platform)
+//     with the reporter scripts/ci-browser-legs-reporter.mjs beside the spec reporter, and prints "no legs in the roster" on
+//     an empty roster; run on synthetic trees with a stub node on PATH
 //     that answers the census call from a TABLE this module writes (so what is executed here is the script's READING of a
 //     census, never the census), it refuses a stale line, a leg in neither file, a leg in both, a line without a reason, a
 //     duplicate, a line naming no leg, a missing bundle, a malformed line or a line without a reason (the LINE shown with its
@@ -150,7 +151,7 @@ test('the step exists once in the ' + JOB + ' job, directly after the Chromium i
   assert.ok(install > testAt, 'the Chromium install is after the Test step, so the legs still skip under npm test and run only here');
   const step = all[at];
   assert.deepEqual(step.env, { [SWITCH]: '"1"' }, 'the step\'s env is the switch alone, set to "1"');
-  assert.equal(step.fields.run, RUN_LINE, 'the run line calls the script, which reads the roster into xargs node --test');
+  assert.equal(step.fields.run, RUN_LINE, 'the run line calls the script, which runs node --test over the roster');
   assert.ok(!('working-directory' in step.fields), 'no working-directory override: the roster, the script and out-tests/ are under the job\'s default, vscode-extension/');
   assert.match(job.lines.join('\n'), /^    defaults:\n      run:\n        working-directory: vscode-extension$/m, 'the job\'s default working directory is vscode-extension');
   const comment = step.comments.join('\n');
@@ -309,6 +310,21 @@ test('the exclusions header binds the grandfather reason to one commit, in one l
   assert.ok(read(CENSUS_TEST).includes('is bound to commit'), path.relative(REPO, CENSUS_TEST) + ' reads the bound line (a presence pin: the executed check lives there, in the vscode-extension job, and this module does not run it because the Shell job\'s depth-1 checkout lacks commit ' + sha + ' and fetches nothing)');
 });
 
+/** vscode-extension/.vscodeignore's patterns hold a relative path: the glob semantics tests/test_lab_dist.py reads the same file
+ *  with (`**` any run of path characters including /, `*` a run inside one segment), anchored to the whole path. */
+function vscodeignored(patterns, rel) {
+  return patterns.some((p) => new RegExp('^' + p.split(/(\*\*|\*)/).map((piece) => piece === '**' ? '.*' : piece === '*' ? '[^/]*' : piece.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('') + '$').test(rel));
+}
+
+test('the CI-only files under vscode-extension/ (the roster, the exclusions, the script, the census module and the reporter) are named by .vscodeignore, so vsce ships none of them in the extension people install', () => {
+  const patterns = read(path.join(EXT, '.vscodeignore')).split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
+  for (const rel of [ROSTER, EXCLUDED, path.relative(EXT, SCRIPT), path.relative(EXT, CENSUS), path.relative(EXT, REPORTER)]) {
+    assert.ok(fs.existsSync(path.join(EXT, rel)), rel + ' exists under vscode-extension/ (a moved file re-anchors this pin)');
+    assert.ok(vscodeignored(patterns, rel), rel + ' would ship in the VSIX: name it in vscode-extension/.vscodeignore (a pattern the file\'s glob semantics match: ' + JSON.stringify(patterns) + ')');
+  }
+  assert.ok(!vscodeignored(patterns, 'package.json') && !vscodeignored(patterns, 'dist/extension.js'), 'the matcher does not swallow shipped files (a pattern over-matching would pass the pin for the wrong reason)');
+});
+
 // ── the script ────────────────────────────────────────────────────────────────────────────────────────
 
 function bash(args, opts = {}) {
@@ -317,7 +333,7 @@ function bash(args, opts = {}) {
   return r;
 }
 
-test('the script exists, is executable, calls the census module once and node --test through xargs with the reporter beside the spec reporter, and spells the empty-roster guard (each executed below through the stub)', () => {
+test('the script exists, is executable, calls the census module once and node --test over the roster array (no xargs) with the reporter beside the spec reporter, and spells the empty-roster guard (each executed below through the stub)', () => {
   assert.ok(fs.existsSync(SCRIPT), 'the step\'s script exists at ' + path.relative(REPO, SCRIPT));
   assert.ok(fs.statSync(SCRIPT).mode & 0o111, 'the script is executable');
   assert.ok(fs.existsSync(REPORTER), 'the reporter the script passes to node --test exists at ' + path.relative(REPO, REPORTER));
@@ -327,7 +343,8 @@ test('the script exists, is executable, calls the census module once and node --
   assert.match(src, /^CENSUS=scripts\/browser-legs-census\.mjs$/m, 'the script names the census module once, as CENSUS');
   assert.equal((src.match(/node "\$CENSUS" --tsv/g) || []).length, 1, 'the census is run once, as node "$CENSUS" --tsv (the stub below answers that call; the script\'s --list-legs against the real census is compared in ' + path.relative(REPO, CENSUS_TEST) + ')');
   assert.ok(src.includes('echo "no legs in the roster"; exit 0'), 'the empty-roster guard is spelled in the script (executed below)');
-  assert.ok(/\| xargs -r node --test /m.test(src), 'the roster is read into xargs node --test (executed below)');
+  assert.match(src, /^node --test .*"\$\{legs\[@\]\}" \|\| status=\$\?$/m, 'node --test runs the roster array directly and its status is kept, so the status is node\'s own on every platform (xargs would map a failed command\'s status to 123 on GNU and to 1 on BSD and macOS; executed below: 1 and 7 pass through)');
+  assert.ok(!src.split('\n').some((l) => !/^\s*#/.test(l) && /xargs/.test(l)), 'no xargs on a code line of the script (a comment may name it)');
 });
 
 /** A synthetic tree: the script under vscode-extension/scripts; under ui/webview five browser legs and one plain test module
@@ -584,20 +601,20 @@ test('after node --test the script derives per rostered leg that at least one at
   assert.ok(two.err.includes('ci-browser-legs: ' + B + ': no test of this leg passed') && !two.err.includes('ci-browser-legs: ' + A + ': no test'), 'the leg that ran nothing is named and the one that passed is not:\n' + two.err);
   // a file that failed as a whole (node's file-level result failing: a timeout under --test-timeout, or a throw at load)
   const timedOut = run(A + '\n', excluded, { report: rec(A, 'fail', 'test', '-', 'file-level', A, 'test timed out after 300000ms', 'testTimeoutFailure'), exit: 1 });
-  assert.equal(timedOut.status, 123, 'node\'s failure stands');
+  assert.equal(timedOut.status, 1, 'node\'s failure stands');
   assert.ok(timedOut.err.includes('ci-browser-legs: ' + A + ' failed as a whole (testTimeoutFailure: test timed out after 300000ms): a file that timed out under node\'s --test-timeout, or threw at load, ran no test that counts'), timedOut.err);
   assert.ok(!timedOut.err.includes('no test of this leg passed'), 'a failed file is node\'s red, not called unrun on top:\n' + timedOut.err);
-  // xargs answers a command's exit of 1 to 125 with 123, so that is the status a failed leg gives the step
+  // node's own exit status is the step's: the roster array is node's argument list, with no xargs to map it (GNU 123, BSD 1)
   const failed = run(A + '\n', excluded, { report: rec(A, 'fail', 'test', '-', 'test', 'leg a opens the page', 'an assertion of the leg\'s own failed', 'testCodeFailure'), exit: 1 });
-  assert.equal(failed.status, 123, 'node\'s failure is the step\'s (through xargs, which answers 123)');
+  assert.equal(failed.status, 1, 'node\'s failure is the step\'s, as node\'s own status');
   assert.equal(failed.err, '', 'a failure for a reason of the leg\'s own gets no label of the script\'s (node\'s own report carries it):\n' + failed.err);
   // a failure whose message names the switch is inBrowser failing to launch under it: the remedy is printed beside the leg
   const LOST = SWITCH + ' is set and this leg cannot run: no playwright browser on this box; the browser leg needs one: browserType.launch: Executable doesn\'t exist at /nowhere';
   const lost = run(A + '\n', excluded, { report: rec(A, 'fail', 'test', '-', 'test', 'leg a opens the page', LOST, 'testCodeFailure'), exit: 1 });
-  assert.equal(lost.status, 123);
+  assert.equal(lost.status, 1);
   assert.ok(lost.err.includes('ci-browser-legs: ' + A + ': \'leg a opens the page\' failed under ' + SWITCH + '=1 because inBrowser could not launch (' + LOST + '): the runner lost its browser: check the Chromium install step'), lost.err);
   const both = run(A + '\n', excluded, { report: rec(A, 'pass', 'test', 'skip', 'test', 'leg a opens the page', 'why', '-'), exit: 7 });
-  assert.equal(both.status, 123, 'with a failure and a skip node\'s status stands and the skip is still named');
+  assert.equal(both.status, 7, 'with a failure and a skip node\'s own status (7) stands, not overwritten by the skip\'s status=1, and the skip is still named');
   assert.ok(both.err.includes('skipped with ' + SWITCH + '=1'), both.err);
 });
 
@@ -655,7 +672,7 @@ test('the composition, executed: the script with the real node and the real repo
   const census = TABLE + rows.join('\n') + '\n';
   const excl = (...keep) => EXCLUDE_REST() + Object.values(S).filter((b) => !keep.includes(b)).map((b) => b + '\treason\n').join('');
   const all = run(Object.values(S).join('\n') + '\n', excl(...Object.values(S)), { census, real: true });
-  assert.equal(all.status, 123, 'node exit 1 (the lost shape) through xargs; stderr: ' + all.err);
+  assert.equal(all.status, 1, 'node\'s exit 1 (the lost shape) is the script\'s; stderr: ' + all.err);
   for (const b of [S.todoBoth, S.describeNone, S.nothing, S.todoFail]) assert.ok(all.err.includes('ci-browser-legs: ' + b + ': no test of this leg passed in this run'), b + ' is red as unrun:\n' + all.err);
   for (const b of [S.passSkip, S.mixed, S.describePass, S.lost]) assert.ok(!all.err.includes('ci-browser-legs: ' + b + ': no test of this leg passed'), b + ' is not called unrun:\n' + all.err);
   assert.ok(all.err.includes('ci-browser-legs: ' + S.todoFail + ': \'a real failure inside a todo\' failed inside a todo (the leg is broken)') && all.err.includes('ci-browser-legs: ' + S.mixed + ': \'a swallowed failure\' failed inside a todo (the leg is broken)'), all.err);
