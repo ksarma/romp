@@ -791,7 +791,9 @@ def derive_deselect_targets(nodes=None):
     "test", the prefix unittest and pytest collect (a helper is refused). A node id naming a class alone deselects the
     class, and its method is None here. derive_command calls this before it builds the command, so derive refuses
     before the scratch directory and the plant; TheDerivationIsRunnable executes it over the tuple and over a wrong
-    path, an unknown class, a function, a base that is no test case, an unknown method, a helper and a bare path."""
+    path, an unknown class, a function, a base that is no test case, an unknown method, a helper, a test case this
+    module only imports (bound on the module for the test, its __module__ another's: the round-8 review found the
+    __module__ clause pinned by no test, the module green with it deleted) and a bare path."""
     module = sys.modules[__name__]
     targets = []
     for node in DERIVE_DESELECT if nodes is None else nodes:
@@ -844,13 +846,17 @@ def derive_red_lines(stdout):
             for cls in sorted(failed, key=lambda c: (ids[c], c))]
 
 
-def main_block():
+def main_block(source=None):
     """The module's `if __name__ == "__main__":` block, compiled from this file's source to run in a namespace: the
     dispatch of `--derive <id>`, `--derive all` and `--count`, with unittest.main as the fallthrough. No run of the
     module as a test reaches it (the block runs when the file is the script), so TheDerivationIsRunnable executes it
-    with derive replaced by a recorder. Exactly one such block is read; two, or none, is a loud error."""
-    with open(__file__) as f:
-        tree = ast.parse(f.read(), filename=__file__)
+    with derive replaced by a recorder. Exactly one such block is read; two, or none, is a loud error naming the
+    count. `source` is this file's text when None; a synthetic text pins the count (TheDerivationIsRunnable, over
+    two blocks and none: the round-8 review found the count's raise executed by no test)."""
+    if source is None:
+        with open(__file__) as f:
+            source = f.read()
+    tree = ast.parse(source, filename=__file__)
     blocks = [node for node in tree.body
               if isinstance(node, ast.If) and ast.unparse(node.test) == "__name__ == '__main__'"]
     if len(blocks) != 1:
@@ -2740,18 +2746,23 @@ def private_kernel_loaders(sources=None):
     return private_kernel_census(sources).get(PRIVATE_KERNEL_NAME, [])
 
 
-def ratchet_comment_text():
+def ratchet_comment_text(text=None):
     """The ratchet's design comment in tests/conftest.py, the hash stripped, joined by one space with whitespace
     collapsed, so a needle reads across the wrapped lines of a paragraph: the contiguous block of comment lines that
-    opens with RATCHET_COMMENT_OPENS and ends at the first line that is not a comment, the code it documents. A conftest
-    without the opener raises. The round-7 review found the first form joining every comment line in the file, so the
-    stated-limit paragraph could leave the design comment for the end of the file with its pin green."""
-    with open(os.path.join(HERE, "conftest.py")) as f:
-        lines = f.read().split("\n")
+    opens with RATCHET_COMMENT_OPENS and ends at the first line that is not a comment, the code it documents. A text
+    without the opener raises naming where it looked. The round-7 review found the first form joining every comment
+    line in the file, so the stated-limit paragraph could leave the design comment for the end of the file with its
+    pin green. `text` is the conftest's when None; a synthetic text pins the block's end and the raise
+    (TheCaseRostersNameEveryCase's third test: the round-8 review found the raise executed by no test)."""
+    where = "tests/conftest.py" if text is None else "the text given"
+    if text is None:
+        with open(os.path.join(HERE, "conftest.py")) as f:
+            text = f.read()
+    lines = text.split("\n")
     start = next((i for i, line in enumerate(lines) if line.startswith("# " + RATCHET_COMMENT_OPENS)), None)
     if start is None:
-        raise AssertionError("no comment line in tests/conftest.py opens with %r: the design comment was not found"
-                             % RATCHET_COMMENT_OPENS)
+        raise AssertionError("no comment line in %s opens with %r: the design comment was not found"
+                             % (where, RATCHET_COMMENT_OPENS))
     block = []
     for line in lines[start:]:
         if not line.startswith("#"):
@@ -3366,14 +3377,21 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
         mis-shaped entry. The names are derived from the texts: a constant equal to a head the refusal renders, one
         that is a piece of the boundary's clause through a name the renderer uses, and one folded from a literal and
         a name into a piece of the gone report's link are the copies, and so is a constant bound under a module-level
-        if whose value is a piece a renderer reaches through a constant bound under a try; a conftest constant bound in
+        if whose value is a piece a renderer reaches through a constant bound under a try, and so are constants bound,
+        on both sides, under a try's except handler, its else and its finally, whose texts a renderer uses
+        (module_statements' reach on each side: the round-8 review found those three arms pinned by no test, the
+        module green with each dropped); a conftest constant bound in
         BOTH arms of a version gate gives both texts, so the module's copy of either arm is derived (before 2026-09-21
         the dead arm's text overwrote the live one's), a module constant bound in both arms is derived when either
         text is a piece, and a constant folded through such a name folds to both concatenations (the same union, in
         the fold's own Name arm); a piece of the gone report's
         own head, of a renderer's docstring, or of a text outside those sites is not; a conftest with no such text
-        raises. The whole test runs with HERE pointed at a directory holding no conftest, so every call here passes
-        its texts and a call that fell to a default read of the real files would red as a FileNotFoundError."""
+        raises, and so does a source whose _NestedRun has no subclass (the round-8 review found that raise executed by
+        no test). The conftest's design comment is read from a passed text too (ratchet_comment_text: the block from
+        the opener to the first line that is not a comment, a later comment outside it; a text without the opener
+        raises naming the text given). The whole test runs with HERE pointed at a directory holding no conftest, so
+        every call here passes its texts and a call that fell to a default read of the real files would red as a
+        FileNotFoundError."""
         empty = tempfile.mkdtemp()                        # no conftest here: a default read of the real texts is loud
         self.addCleanup(shutil.rmtree, empty)
         patcher = mock.patch.object(sys.modules[__name__], "HERE", empty)
@@ -3451,6 +3469,8 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
             case_population(synthetic.replace("SCRATCH = SCRATCH_Z", "SCRATCH = SCRATCH_HEAD + 'x'"), names=())
         with self.assertRaisesRegex(AssertionError, "no _NestedRun class"):
             case_population("class Pin(unittest.TestCase):\n    pass\n", names=())
+        with self.assertRaisesRegex(AssertionError, "no class derives from _NestedRun"):
+            case_population("class _NestedRun:\n    pass\n", names=())
         conftest = textwrap.dedent('''\
             _HEAD = "the start read had found the singleton over a root that is not the run's"
             _CLAUSE = "The object this scope found is the refused one: at whose end the slot no longer held it"
@@ -3458,7 +3478,11 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
             try:
                 _TRIED = "and the value it held"
             except Exception:
-                pass
+                _CAUGHT = "the text bound under the handler"
+            else:
+                _OTHERWISE = "the text bound under the else"
+            finally:
+                _FINALLY = "the text bound under the finally"
             if sys.version_info >= (3, 0):
                 _GATED = "the live gated text"
             else:
@@ -3469,7 +3493,7 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
                 return "%s, because of a build over a directory since removed" % _HEAD
 
             def _sdk_found_refused(verdict, start, end):
-                return "%s. %s, %s %s" % (verdict, _CLAUSE, _TRIED, _GATED)
+                return "%s. %s, %s %s %s %s %s" % (verdict, _CLAUSE, _TRIED, _GATED, _CAUGHT, _OTHERWISE, _FINALLY)
 
             def _sdk_inherited(start, before):
                 link = ("It is the object the first window refused. " if _sdk_refused(before.be) else "")
@@ -3493,16 +3517,26 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
                 TRIED = "an unrelated dead text"
                 PART = "unrelated"
             FOLDED_TRIED = PART + " it held"
+            try:
+                pass
+            except Exception:
+                CAUGHT = "bound under the handler"
+            else:
+                OTHERWISE = "bound under the else"
+            finally:
+                FINALLY = "bound under the finally"
             ''')
         self.assertEqual(refusal_text_names(conftest, module),
-                         ("FOLDED_TRIED", "GATED_DEAD", "GATED_LIVE", "HEAD", "LINK", "PART", "REFUSED", "TAIL", "TRIED"),
+                         ("CAUGHT", "FINALLY", "FOLDED_TRIED", "GATED_DEAD", "GATED_LIVE", "HEAD", "LINK", "OTHERWISE",
+                          "PART", "REFUSED", "TAIL", "TRIED"),
                          "the module's copies of the refusal's texts (refusal_text_names over the synthetic pair: every "
                          "module constant whose value is a piece of a text the conftest renders for the refusal or for the "
                          "link to it; a conftest constant bound in both arms of a gate gives both texts, a module constant "
                          "bound in both arms is derived when either is a piece, and one folded through a name bound in both "
                          "arms folds to both concatenations, the union at every step, keyed on every declaration a name "
-                         "resolves to; a docstring, the gone report's own head, a tuple and a text no renderer uses are no "
-                         "piece)")
+                         "resolves to; a constant bound under a try's except handler, its else or its finally is read on "
+                         "both sides, module_statements' reach; a docstring, the gone report's own head, a tuple and a text "
+                         "no renderer uses are no piece)")
         with self.assertRaisesRegex(AssertionError, "no refusal or link text found in the conftest"):
             refusal_text_names("def _sdk_other():\n    return 'x'\n", module)
         with self.assertRaisesRegex(AssertionError, "no constant of this module is a piece"):
@@ -3523,6 +3557,13 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
             conftest_roster_ids(text.replace("S9 and S10, two", "the pair, two"))
         with self.assertRaisesRegex(AssertionError, "no roster in one parenthesis"):
             conftest_roster_ids("x. %s. y" % CONFTEST_ROSTER_OPENS)
+        comment = "# %s one\n#  two\nx = 1\n# three\n" % RATCHET_COMMENT_OPENS
+        self.assertEqual(ratchet_comment_text(comment), "%s one two" % RATCHET_COMMENT_OPENS,
+                         "the design comment over a synthetic text (ratchet_comment_text: the comment block from the line "
+                         "opening with RATCHET_COMMENT_OPENS to the first line that is not a comment, hashes stripped and "
+                         "joined by one space; the comment after the code is outside the block)")
+        with self.assertRaisesRegex(AssertionError, "no comment line in the text given opens with"):
+            ratchet_comment_text("# a comment that is not the opener\nx = 1\n")
 
 
 class TheReadersRosterNamesEveryReader(unittest.TestCase):
@@ -3537,7 +3578,10 @@ class TheReadersRosterNamesEveryReader(unittest.TestCase):
     here and so does an entry whose helper is gone. The round-7 review found the candidates read from the module's
     top-level statements alone and the output read from the first positional argument alone, so a reader under a
     version gate or a try, or one passed the output by keyword, was outside the population with the module green: the
-    second test plants all three and reads them found. Until round 7 the derivation matched the spelling `out` in the
+    second test plants all three and reads them found; since the round-8 review found module_statements'
+    except-handler, else and finally arms pinned by no test, it also plants a reader under each of those arms, and
+    one passed an output bound to a bare name by a module-level unpacking (the Name arm of the binding read, which
+    the same review found executed by no test). Until round 7 the derivation matched the spelling `out` in the
     parameter list, so a reader with
     any other first-parameter name was outside the population with the module green (the round-6 review's B): the
     second test plants that reader in a synthetic source and reads it found. The round-7 review found the first form
@@ -3563,10 +3607,13 @@ class TheReadersRosterNamesEveryReader(unittest.TestCase):
 
     def test_the_population_is_keyed_on_the_call_sites_and_not_on_a_parameters_spelling(self):
         """A reader whose first parameter is not spelled `out` is found, and so is one defined after the class that
-        makes the run, one under a module-level if, one under a try, and one passed the output by keyword; a function
-        spelled `out` that no call passes the output to is not, a helper called on a literal
-        is not, and the binding's name comes from the unpacking. The roster reader accepts joined openers and refuses a
-        mis-shaped entry and a missing parenthesis."""
+        makes the run, one under a module-level if, one under each arm of a try (its body, its except handler, its
+        else and its finally: the round-8 review found module_statements' three other arms pinned by no test, the
+        module green with each dropped), one passed the output by keyword, and one passed an output bound to a bare
+        name by a module-level unpacking (the Name arm of the binding read: the round-8 review found it executed by
+        no test); a function spelled `out` that no call passes the output to is not, a helper called on a literal
+        is not, and the binding's names come from the unpackings, an attribute's and a bare name's. The roster reader
+        accepts joined openers and refuses a mis-shaped entry and a missing parenthesis."""
         synthetic = textwrap.dedent("""\
             def nested_run(text):
                 return 0, text
@@ -3588,10 +3635,23 @@ class TheReadersRosterNamesEveryReader(unittest.TestCase):
                 def tried(text):
                     return text
             except Exception:
-                pass
+                def caught(text):
+                    return text
+            else:
+                def otherwise(text):
+                    return text
+            finally:
+                def finally_reader(text):
+                    return text
 
             def keyed(text):
                 return text
+
+            def plainly(text):
+                return text
+
+            rc, plain = nested_run("")
+            plainly(plain)
 
             class _NestedRun:
                 @classmethod
@@ -3605,17 +3665,24 @@ class TheReadersRosterNamesEveryReader(unittest.TestCase):
                     later(self.result)
                     gated(self.result)
                     tried(self.result)
+                    caught(self.result)
+                    otherwise(self.result)
+                    finally_reader(self.result)
                     keyed(text=self.result)
 
             def later(text):
                 return text
             """)
-        self.assertEqual(reader_population(synthetic), ({"probe", "later", "gated", "tried", "keyed"}, {"result"}),
+        self.assertEqual(reader_population(synthetic),
+                         ({"probe", "later", "gated", "tried", "caught", "otherwise", "finally_reader", "keyed", "plainly"},
+                          {"result", "plain"}),
                          "(readers, output names): reader_population over the synthetic module, keyed on the call sites "
-                         "that pass the nested run's output, the name its unpacking binds, as the first positional or a "
-                         "keyword argument (a call with a literal and a nested function's call are no reader's)")
+                         "that pass the nested run's output, a name its unpackings bind (an attribute, result, and a bare "
+                         "name, plain), as the first positional or a keyword argument; a reader under each arm of a try is "
+                         "read, module_statements' reach (a call with a literal and a nested function's call are no reader's)")
         with self.assertRaisesRegex(AssertionError, "no unpacking of a nested_run result"):
-            reader_population(synthetic.replace("cls.rc, cls.result = nested_run(\"\")", "pass"))
+            reader_population(synthetic.replace("cls.rc, cls.result = nested_run(\"\")", "pass")
+                              .replace("rc, plain = nested_run(\"\")", "pass"))
         with self.assertRaisesRegex(AssertionError, "a shape reader_population does not read"):
             reader_population(synthetic.replace("cls.rc, cls.result = nested_run(\"\")", "cls.result = nested_run(\"\")"))
         text = "x %s (a: one; b, c and d: two, with a comma; e_f: three). y" % READERS_ROSTER_OPENS
@@ -3715,8 +3782,9 @@ class TheDeriveEnvironmentIsNestedRuns(unittest.TestCase):
 class TheDerivationIsRunnable(unittest.TestCase):
     """derive()'s parts are executed by the suite, each over what it keys on. derive_deselect_targets: every node id
     of DERIVE_DESELECT resolves on this module (its class a unittest.TestCase subclass this module defines, its
-    method, when named, a callable test of that class), and a node id naming no test is refused with a SystemExit
-    naming it before any scratch directory is made (tempfile.mkdtemp mocked to raise, so the wrong road is a loud
+    method, when named, a callable test of that class), and a node id naming no test, a test case this module only
+    imports among them, is refused with a SystemExit naming it before any scratch directory is made (tempfile.mkdtemp
+    mocked to raise, so the wrong road is a loud
     AssertionError and never a real derivation, minutes long, against this checkout). derive_command: the argv pairs
     every node id with its own --deselect, in the tuple's order, and ends in MODULE_PATH. derive_red_lines: over a
     fabricated -rf output, the lines carry the case id by SCRATCH identity (the case class taken from
@@ -3739,7 +3807,8 @@ class TheDerivationIsRunnable(unittest.TestCase):
     this file's source by main_block and run with derive replaced by a recorder over a synthetic table written out
     of order) calls derive once per key in sorted order for `all` and once for a named cell, and an argv the arms
     do not name falls through to unittest.main; before that test the dispatch ran only when the file was the
-    script. Not read here: a real pytest run and a real worktree; the real table's exact-once count and parse over
+    script; main_block over a synthetic text compiles that text's block, and over two blocks or none raises naming
+    the count. Not read here: a real pytest run and a real worktree; the real table's exact-once count and parse over
     the checkout's fixture, and the --count arm run as a process, are TheMutationCellsApply's (derive's own count,
     parse and exit-code checks run here over the synthetic text alone)."""
 
@@ -3787,14 +3856,30 @@ class TheDerivationIsRunnable(unittest.TestCase):
                          % [(n.lineno, n.value) for n in spelled if n is not binding.value])
 
     def test_a_node_naming_no_test_is_refused_before_the_plant(self):
+        """Each node id of the bad list, appended to DERIVE_DESELECT, is refused by derive with a SystemExit naming it
+        and no scratch directory made: a wrong path, an unknown class, a function, a base that is no test case, an
+        unknown method, a helper, a test case this module only imports and a bare path. The imported case binds
+        unittest.FunctionTestCase on the module under the name Imported for its run: a unittest.TestCase subclass
+        whose __module__ is unittest.case, so every other clause of derive_deselect_targets' predicate holds and the
+        __module__ clause alone refuses it (the round-8 review found that clause pinned by no test: deleted, the
+        module stayed green; here the node would resolve and the plant's mkdtemp raise)."""
         module = sys.modules[__name__]
+        imported = MODULE_PATH + "::Imported"
+        self.assertTrue(issubclass(unittest.FunctionTestCase, unittest.TestCase)
+                        and unittest.FunctionTestCase.__module__ != module.__name__ and not hasattr(module, "Imported"),
+                        "the imported case's premise does not hold (unittest.FunctionTestCase a TestCase subclass defined "
+                        "by another module, and this module binding no Imported of its own): %r, %r"
+                        % (unittest.FunctionTestCase.__module__, getattr(module, "Imported", None)))
         bad = ("tests/test_other.py::TheMutationCellsApply", MODULE_PATH + "::NoSuchClass", MODULE_PATH + "::nested_run",
                MODULE_PATH + "::_NestedRun", MODULE_PATH + "::TheMutationCellsApply::test_no_such",
-               MODULE_PATH + "::TheCaseRostersNameEveryCase::_assert_same", MODULE_PATH)
+               MODULE_PATH + "::TheCaseRostersNameEveryCase::_assert_same", imported, MODULE_PATH)
         for node in bad:
-            with mock.patch.object(module, "DERIVE_DESELECT", DERIVE_DESELECT + (node,)), \
-                 mock.patch.object(tempfile, "mkdtemp", side_effect=AssertionError("the plant ran")) as mkdtemp, \
-                 self.assertRaises(SystemExit) as refused:
+            with contextlib.ExitStack() as stack:
+                if node == imported:
+                    stack.enter_context(mock.patch.object(module, "Imported", unittest.FunctionTestCase, create=True))
+                stack.enter_context(mock.patch.object(module, "DERIVE_DESELECT", DERIVE_DESELECT + (node,)))
+                mkdtemp = stack.enter_context(mock.patch.object(tempfile, "mkdtemp", side_effect=AssertionError("the plant ran")))
+                refused = stack.enter_context(self.assertRaises(SystemExit))
                 derive(sorted(MUTATIONS)[0])
             self.assertEqual(str(refused.exception), "derive: DERIVE_DESELECT names no test of this module: %s" % node,
                              "the refusal does not name the node id it could not resolve (derive_deselect_targets' "
@@ -3974,7 +4059,9 @@ class TheDerivationIsRunnable(unittest.TestCase):
         by a synthetic table written out of sorted order and unittest.main by a raiser: `--derive all` calls derive
         once per key of the table in sorted order (the sort is read, since the table is not written sorted) and
         prints a blank line after each; `--derive <id>` calls it once with the id; an argv the arms do not name
-        reaches unittest.main. The --count arm is run as a process by TheMutationCellsApply."""
+        reaches unittest.main. main_block over a synthetic text compiles that text's block, and over two blocks or
+        none raises naming the count (the round-8 review found the count's raise executed by no test). The --count
+        arm is run as a process by TheMutationCellsApply."""
         module = sys.modules[__name__]
         table = {"refusal-b": None, "boundary-a": None, "refusal-a": None}
         code = main_block()
@@ -3994,6 +4081,14 @@ class TheDerivationIsRunnable(unittest.TestCase):
                          "--derive <id> does not call derive once with the id (the calls and the output)")
         with self.assertRaisesRegex(AssertionError, "unittest.main ran"):
             run("--derive")
+        block = 'if __name__ == "__main__":\n    derive("x")\n'
+        calls = []
+        exec(main_block(block), {"derive": calls.append})
+        self.assertEqual(calls, ["x"], "main_block over a synthetic text did not compile that text's block (the calls its "
+                         "block made when run with derive a recorder)")
+        for text, n in ((block + block, 2), ("derive = None\n", 0)):
+            with self.assertRaisesRegex(AssertionError, re.escape('carries %d `if __name__ == "__main__":` blocks, not one' % n)):
+                main_block(text)
 
 
 class TheMutationCellsApply(unittest.TestCase):
@@ -4036,6 +4131,10 @@ class TheMutationCellsApply(unittest.TestCase):
             text = mutation_cell_text(__doc__, cell)
             self.assertIsNotNone(text, "%s: no cell of the module docstring carries 'derive: %s' (mutation_cell_text)" % (cell, cell))
             self.assertIn("(red: ", text, "%s: the cell states no rule: %s" % (cell, text))
+        self.assertNotIn("no-such-cell", in_doc, "the probe id below is carried by a cell, so it probes nothing")
+        self.assertIsNone(mutation_cell_text(__doc__, "no-such-cell"),
+                          "a derive id no cell of the module docstring carries gives a text, not None (mutation_cell_text "
+                          "over an id outside the table; the round-8 review found the None return executed by no test)")
 
     def test_each_blocks_paragraph_carries_exactly_the_keys_of_its_prefixes(self):
         """The blocks --count reports (cell_counts, by key prefix) are the blocks the docstring's heads open: each
