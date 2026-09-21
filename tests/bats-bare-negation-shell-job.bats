@@ -32,8 +32,9 @@
 #
 # macOS, the weekly and dispatch cell of the shell job, skips with the reason: its bash is 3.2.57 (actions/runner-images,
 # images/macos/macos-15-Readme.md) and Homebrew's bats-core is 1.14.0; the register's `|&`, `coproc` and `;;&` shapes do not parse
-# under that bash, and the record is verified against 1.10.0 and 1.11.1 only. The module's own register tests skip under such a
-# bash too, wherever they run (BatsGroundTruth.skip_under_an_old_bash), since the Python cells run them on macOS with no bats.
+# under that bash, which also gives no here-document warning under -n (the module reads it to find where a here-document
+# ends), and the record is verified against 1.10.0 and 1.11.1 only. Every test of the module that derives from bash skips
+# under such a bash too, wherever it runs (skip_unless_bash_serves), since the Python cells run the module on macOS with no bats.
 
 # Runs tests of the module under python3 with every BATS_* variable unset, from the repository root.
 run_module_tests() {   # $1 the dotted name under tests.test_bats_bare_negation: a class, or one test

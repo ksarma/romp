@@ -34,17 +34,23 @@ two. Comment, string and heredoc are bash's call too: the test's text up to the 
 and its pipeline ends at the closing backtick. Three exclusions are lexical, by the word before the `!`: `[ !`, `[[ !` and `run !`
 (_OPERATOR_OF). A `!` that is another command's argument (`find . ! -name x`) is a candidate, and bats reports it as inert or
 undecided: a false report on the visible side, none in the tree today. The one piece of grammar left is the negated pipeline's
-extent (negated_pipeline): from the `!` to the line's first top-level `;`, `&&`, `||`, lone `&` or unmatched `)`, or the closing
-backtick of the substitution the `!` sits in, with `|` and `|&` inside; at a comment or at the line's end the pipeline ends where
-bash reads its text so far as complete (the text in a brace group, under `bash -n`: _pipeline_complete) and runs on to the next
-line where bash wants more, after a `|` or `|&` with or without a comment after it, after a trailing `\`, inside an open quote,
-parenthesis, brace group or compound; a here-document the pipeline introduces is its lines through the terminator, counted by
-bash (one warning per here-document still pending, whatever the form: `<<WORD`, `<<-WORD`, the word quoted or not, two on one
-line, an introducer line ending in a comment or a `|`; the body of another command's here-document introduced on the line before
-the `!` comes first and stays), and `$'...'` is one word. Quotes and parentheses the walker tracks itself, to find the operators;
-where a command ends is bash's call, pinned by the register below one form each. The rewrite keeps every `!` of a run (`! ! true`
-negates twice, and bash reads a doubled negation's status), replaces the command after it, and leaves the pipeline's later lines
-(continuations, here-document bodies and terminators) empty, the line count kept.
+extent (negated_pipeline), and bash decides it too: the walker proposes where the text may end, at every `;`, `&&`, `||`, lone
+`&` or unmatched `)` outside the quotes and parentheses it tracks, at a `#` at the start of a word, and at the line's end, and at
+each proposal asks `bash -n` whether the text so far, in a brace group, is a complete command (_pipeline_complete). Where it is,
+the pipeline ends there (the closing backtick of the substitution the `!` sits in ends it unasked). Where an operator is not the
+end, it is inside something bash reads whole, a `[[ ]]`, a `${ }`, a backtick substitution, a `$( )` whose nested quotes the
+tracker paired otherwise, or a compound the `!` negates (`! { true; false; }`, `! if ...; fi`, `! case ... esac`), and the scan goes
+on past it to the construct's end. Whether a `#` begins a comment is bash's call as well (_begins_comment: after a blank, a `|`
+or a subshell's `)` it does; glued to a `$( )` it is part of the word). At a comment or at the line's end where bash wants more,
+the pipeline runs on to the next line: after a `|` or `|&` with or without a comment after it, after a trailing `\`, inside an
+open quote, parenthesis, brace group or compound; a here-document the pipeline introduces is its lines through the terminator,
+counted by bash (one warning per here-document still pending, whatever the form: `<<WORD`, `<<-WORD`, the word quoted or not,
+two on one line, an introducer line ending in a comment or a `|`; the body of another command's here-document introduced on the
+line before the `!` comes first and stays), and `$'...'` is one word. The tracking proposes and bash disposes, so the tracker's
+one hazard is a quote it reads open where bash reads none, which hides an operator from the proposal; the register below pins
+every form one shape each. The rewrite keeps every `!` of a run (`! ! true` negates twice, and bash reads a doubled negation's
+status), replaces the command after it, and leaves the pipeline's later lines (continuations, here-document bodies and
+terminators) empty, the line count kept.
 
 Over the 46 suites at this head (the population is the glob CI's shell job hands bats, `tests/*.bats`, read off
 .github/workflows/ci.yml by the reading tests/test_ci_bats_bound.py pins that step with, and a glob naming no file raises rather
@@ -52,12 +58,12 @@ than passing an empty corpus as clean: suite_files; BatsSuites lists a file's ca
 them): 232 `!` words file-wide, 191 of them `[ !`, 24 inside comments and strings (the word rule takes a `!` next to a backtick, a
 `)` or a `>`), 5 at file scope, and 12 candidates in test bodies (bootstrap-sh.bats 184; install-optional-deps.bats 505;
 install-sh.bats 329, 400, 411; pr-orphans.bats 125; romp-serve.bats 117, 309, 334, 382; romp-service.bats 683; romp-sessions.bats
-84), listed in 5.25 s with the extents. bats reads all 12 (BatsCorpus, under 1.10.0 and 1.11.1): the nine at line start are `not
+84), listed in 4.90 s with the extents. bats reads all 12 (BatsCorpus, under 1.10.0 and 1.11.1): the nine at line start are `not
 ok` on their own line under `! true` and `ok` under `! false`; the three condition heads of romp-serve.bats (309, 334 and 382, `if
 ! _dead "$pid"; then kill ...; return 1; fi`) the reverse, `ok` under `! true` and `not ok` on their own line under `! false`, so
 they are read only through the second rewrite; 0 inert, 0 undecided. Each rewrite runs twice (REPEATS) and four candidates are
-decided at a time (CORPUS_WORKERS): 159.65 s of runs in 72.63 s on this box under 1.10.0 (76.23 s under 1.11.1), 113.88 s of the
-runs the three heads' probe tests, whose slowest side is romp-serve.bats 334 under `! true`, 26.57 s for its two runs, against
+decided at a time (CORPUS_WORKERS): 166.60 s of runs in 76.91 s on this box under 1.10.0 (71.28 s under 1.11.1), 119.73 s of the
+runs the three heads' probe tests, whose slowest side is romp-serve.bats 334 under `! false`, 29.34 s for its two runs, against
 which RUN_TIMEOUT stands at 60 s a run. The 5 file-scope `!` words sit in helpers and a setup (bats-state-isolation.bats 125, 126
 and 129 twice; romp-postal.bats 47): outside the subject, since a `!` there has no enclosing test to run alone. Two classes this
 instrument does not see: that file scope, and a negation inside a string another shell runs (`eval "! true; true"`,
@@ -65,15 +71,17 @@ instrument does not see: that file scope, and a negation inside a string another
 G_bash_c_string_mid, declared in the register). The classes it reports without deciding, by construction, each with the case that
 pins it (the register cannot hold them: record_under_bats runs its directory whole, so a shape that never ends would take every
 verdict with it and a file bash does not parse loads no test; the pins are BatsRoad's, on synthetic suites down the corpus's own
-road): a rewrite that does not terminate, a loop whose condition is the negation (`while ! cmd; do sleep 1; done` never ends under
-one rewrite), ended at RUN_TIMEOUT and reported undecided, its row's head printed before its runs so a run an outer bound ends is
-attributable too (the poll case of the synthetic-suite test); a test whose runs under one rewrite disagree, a failure
-nondeterministic for a reason unrelated to the negation, reported undecided with the disagreement named rather than read from a
-pair that happened to differ (the alternating case); a negated compound command whose first line holds a top-level `;`, `&&` or
-`||` (`! { true; false; }`, `! if true; then`), whose extent ends at that operator so the rewritten file does not parse under bash
--n, reported undecided with bash's words (the group case); and a pipeline or a here-document body running off the end of the text
-(Candidates' continuation-past-the-text case, and a test bash cannot close is refused before any candidate of it is read). None
-in the tree today, by the 12 rows.
+road, and decide's synthetic runs): a rewrite that does not terminate, a loop whose condition is the negation (`while ! cmd; do
+sleep 1; done` never ends under one rewrite), ended at RUN_TIMEOUT and reported undecided, its row's head printed before its runs
+so a run an outer bound ends is attributable too (the poll case of the synthetic-suite test); a test whose runs under one rewrite
+disagree, a failure nondeterministic for a reason unrelated to the negation, reported undecided with the disagreement named rather
+than read from a pair that happened to differ (the alternating case); a test that skips (bats gives no verdict: `skipped`, the TAP
+reader's case); two tests of one name in a file, which bats refuses whole (`Error: Duplicate test name(s) in file`, no TAP: the TAP
+reader's duplicate case); a test failing under both rewrites, and one whose failure is blamed outside the test (the later-failure
+and read-in-teardown cases); and a pipeline or a here-document body running off the end of the text (Candidates'
+continuation-past-the-text case, and a test bash cannot close is refused before any candidate of it is read). A negated compound
+command is not among them since fork PR #871's round 3: its operators are inside what bash reads whole, so the extent runs to its
+close and bats decides it (the group case of the synthetic-suite test, undecided before). None in the tree today, by the 12 rows.
 
 The register (ground_truth_shapes, BatsGroundTruth) is the gate on the three things the instrument still asserts. Recall: every `!`
 character of a shape's tests is a candidate unless NOT_A_NEGATION declares it text or an operator, and a test recorded `ok` with no
@@ -85,9 +93,12 @@ versions it was verified against (RECORDED_WITH: 1.10.0 on this box and 1.11.1, 
 shape each: its terminators (`; true`, `|| ...`, `&& false`, a lone `&` before `wait %%`, the unmatched `)`, the closing backtick,
 a comment holding operators), its continuations (the line continued by `\`, by `|` with and without a comment after it, by `|&`
 with one, by a comment line inside it, by an open quote, parenthesis or brace group: G_cont_*), `|&` inside it, the here-documents
-it introduces in every form, mid and last (C_negated_heredoc_*, whose bodies are `false`), `$'it\'s'` in it, and a close sharing
-its line (I_close_shares_last_line_*), so a split that stops short or runs past one changes a recorded verdict or loses one.
-Decision:
+it introduces in every form, mid and last (C_negated_heredoc_*, whose bodies are `false`), `$'it\'s'` in it and `$'a\'b'` before a
+list operator (G_ansi_quote_*), an operator inside something bash reads whole (a `[[ ]]`, nested quotes, a `${ }`, backticks:
+G_op_in_*), a `#` glued to a metacharacter where bash begins a comment and glued to a `$( )` where it does not (G_glued_*), a
+negated compound of every kind followed to its close (G_negated_*), a close sharing its line (I_close_shares_last_line_*) and one
+introducing a here-document (I_close_introduces_heredoc_*, I_one_liner_heredoc), so a split that stops short or runs past one
+changes a recorded verdict or loses one. Decision:
 decide, asked about every test of the register holding one candidate from the same run's outcomes and blamed lines, reads every
 test whose verdicts differ, calls inert every one passing under both and undecided every one failing under both, so its refusal of
 a failure blamed outside the candidate's test fires on no deterministic shape (bash blames a `( ! cmd )` subshell's failure on the
@@ -100,21 +111,23 @@ register class, the road class (the corpus road's pieces against bats: the TAP r
 running one, a suite decided end to end) and the corpus test under python3 with every BATS_* variable unset (the job's
 BATS_TEST_TIMEOUT would otherwise hang a shape's bare `wait` on bats's timeout watcher) and skips every one of them on the macOS
 cell, whose bash 3.2.57 (actions/runner-images, images/macos/macos-15-Readme.md; ubuntu-latest ships 5.2.21) refuses the register's
-bash-4 syntax and whose Homebrew bats 1.14.0 the record is not verified against; the register's own tests skip under such a bash
-wherever they run, since the two recall tests need no bats and run in every Python cell (BASH_4_SYNTAX). The inner bats resolves
-through a PATH without the outer's libexec directory (_bats_env), since the entry point there expects the BATS_ROOT the scrub
-removes and did not load under CI's /usr/local layout. Measured at this head: 429 shapes, 440 tests, in 55.07 s under 1.10.0 and
-65.08 s under 1.11.1; under `! true` 261 ok and 179 not ok, under `! false` 426 ok and 14 not ok (the four condition heads whose
-branch fails the test, `command _h` and `env _h`, which find no shell function, `run ! true`, which run itself fails, the doubled
-negation mid and last, whose inversions cancel, `! true && false` mid and last, the backgrounded negation whose job status
-`wait %%` reads, mid and last, and the status saved with `rc=$?` and read by `[ ]`); decide over the 423 tests holding one
-candidate: 181 read, 239 inert, 3 undecided (`command _h`, `env _h` and `! true && false` last, failing under both), the 7 holding
-two (the doubled and tripled negations, `if ! _h` and `! _h` mid and last with their helpers) and the 10 holding none not asked.
-The 381 shapes of fork PR #871's round 1 keep their recorded verdicts under both bats, and their extents and rewrites are byte for
-byte the round-1 walker's (measured over every shape and the corpus's 24 rewrites); the 250 shapes of the earlier register keep
-their 260 recorded `! true` verdicts and are 260 ok under `! false`; every negation of the register is a candidate (439, 258 of
-them in tests recorded ok, 400 at line start), the 139 recorded-inert line-start sites the earlier register counted and every one
-off line start among them.
+bash-4 syntax, gives no here-document warning under -n, and whose Homebrew bats 1.14.0 the record is not verified against. Every
+test of this module that derives from bash skips under such a bash wherever it runs, naming the bash and what it lacks
+(bash_shortfall, skip_unless_bash_serves: BASH_4_SYNTAX and the warning; the Python cells run the module on macOS with no bats,
+where before round 3 the two recall tests, the extents and the candidates were red, and the two tests that need no bash run
+there). The inner bats resolves through a PATH without the outer's libexec directory (_bats_env), since the entry point there
+expects the BATS_ROOT the scrub removes and did not load under CI's /usr/local layout. Measured at this head: 481 shapes, 493
+tests, in 63.74 s under 1.10.0 and 66.93 s under 1.11.1; under `! true` 285 ok and 208 not ok, under `! false` 479 ok and 14 not
+ok (the four condition heads whose branch fails the test, `command _h` and `env _h`, which find no shell function, `run ! true`,
+which run itself fails, the doubled negation mid and last, whose inversions cancel, `! true && false` mid and last, the
+backgrounded negation whose job status `wait %%` reads, mid and last, and the status saved with `rc=$?` and read by `[ ]`); decide
+over the 476 tests holding one candidate: 210 read, 263 inert, 3 undecided (`command _h`, `env _h` and `! true && false` last,
+failing under both), the 7 holding two (the doubled and tripled negations, `if ! _h` and `! _h` mid and last with their helpers)
+and the 10 holding none not asked. The 429 shapes of fork PR #871's round 2 keep their recorded verdicts under both bats, and their
+extents and rewrites are byte for byte the round-2 walker's (measured over every shape and the corpus's 24 rewrites: 0
+differences), as round 2's kept round 1's 381; the 250 shapes of the earlier register keep their 260 recorded `! true` verdicts
+and are 260 ok under `! false`; every negation of the register is a candidate (492, 282 of them in tests recorded ok, 452 at line
+start), the 139 recorded-inert line-start sites the earlier register counted and every one off line start among them.
 
 Deleted here, not fixed: the line scanner's frame model (the brace-depth walk, its block ends and the coverage pin over them), its
 heredoc classification (introducers, delimiter words, the skip) and its status-read grammar (`_plain_call`, `_helper_read`,
@@ -205,6 +218,45 @@ def _bash_parses(lines):
     return rc == 0 and "delimited by end-of-file" not in err
 
 
+# what this module reads off the local bash, `bash -n` over a test's text, and the two things a bash must give for that reading to
+# hold. The bash-4 syntax register shapes use, one construct each: `|&` (bash 4.0; A_pipeamp_*, G_pipeamp_*, G_cont_pipeamp_*),
+# `coproc` (4.0; A_coproc_*) and `;;&` (4.0; T_case_fallthrough_*); candidates() raises on a test whose text it cannot parse, so a
+# bash refusing one cannot parse the register or the snippets that use them. And the warning of a here-document the end of the
+# input cuts off (`here-document at line N delimited by end-of-file`, exit 0), which _bash_parses reads to refuse a prefix cut
+# inside one and _pending_heredocs counts to find where a negated pipeline's here-document ends: a bash without it opens a test
+# line inside a file-scope here-document as a test and ends a negated pipeline's here-document at its introducer line, round 1's
+# defect, silently. Every test deriving from bash skips under a bash lacking either, whole and loudly, naming the bash and what it
+# lacks (skip_unless_bash_serves; fresh-1 of fork PR #871's round 1 gated the register's recall tests, which need no bats and run
+# in every Python cell, and round 3 the rest of the module, which the same bash red the same way). The matrix's bashes, from the
+# runner images' READMEs (actions/runner-images, images/ubuntu/Ubuntu2404-Readme.md and images/macos/macos-15-Readme.md):
+# ubuntu-latest 5.2.21; macos-latest 3.2.57, which refuses all three constructs and prints no such warning (`printf 'cat <<EOF\n' |
+# bash -n` is silent, exit 0, under 3.2.57), in the Python cells on a dispatch or the weekly schedule only
+BASH_4_SYNTAX = ("true |& cat", "coproc { true; }", "case a in a) true ;;& esac")
+_BASH_PROBE = {}   # "shortfall": (the bash's version, what it lacks) or False, once probed (bash_shortfall)
+
+
+def bash_shortfall():
+    """(the local bash's version, what it lacks of what this module reads) when it lacks something, else False: the first construct
+    of BASH_4_SYNTAX it refuses, or the here-document warning it does not give under -n; probed once per process."""
+    if "shortfall" not in _BASH_PROBE:
+        lacks = next(("refuses `%s`, which register shapes use" % text for text in BASH_4_SYNTAX if not _bash_parses([text])), None)
+        if lacks is None and not _pending_heredocs(["cat <<EOF"]):
+            lacks = "gives no warning of a here-document the end of the input cuts off under -n, which is how a here-document's end is read here"
+        version = subprocess.run(["bash", "-c", 'printf %s "$BASH_VERSION"'], capture_output=True, text=True).stdout.strip() if lacks else None
+        _BASH_PROBE["shortfall"] = (version, lacks) if lacks else False
+    return _BASH_PROBE["shortfall"]
+
+
+def skip_unless_bash_serves(case):
+    """Skips the test case, saying so on stdout too, when the local bash lacks something this module reads (bash_shortfall)."""
+    lacking = bash_shortfall()
+    if lacking:
+        reason = ("NOT RUN: bash %s %s, so nothing here can be derived under it; it runs under CI's Linux cells (bash 5.2.21) and skips "
+                  "on macOS (3.2.57)" % lacking)
+        print(reason)
+        case.skipTest(reason)
+
+
 def _test_line(line):
     """The match of whichever of bats-preprocess's two test patterns the line fits (_TEST_LINE, then _TEST_LINE_COMMENT, the order
     bats tries them), None for a line that is no test: bats reads a line as a test when `=~` finds either pattern in it, and `=~`
@@ -248,9 +300,11 @@ def bash_test_extents(lines):
     does not; the lines are read from the last point known to parse whole, the previous test's close, which is the same test by
     induction), and its close is its own line when the rewritten line parses whole on its own (a one-line test), else the first
     later line that may close one (_CLOSE_CANDIDATE: beginning with `}`, or ending in `}` after `;` or `&`) at which the opener and
-    the lines through it parse as a complete function. None for the close: no such line, because the file does not parse under
-    this bash or the close is written in a form no candidate line matches (_no_close says which). One `bash -n` per opener plus
-    one per candidate close, no execution."""
+    the lines through it parse as a complete function (_closes: a here-document the close line introduces, `{ ! cat <<EOF; }`
+    with its body and terminator after the brace, is read on past the close until bash reads none pending, since bash and bats
+    read the test that way; before fork PR #871's round 3 the pending body left such a test with no close). None for the close:
+    no such line, because the file does not parse under this bash or the close is written in a form no candidate line matches
+    (_no_close says which). One `bash -n` per opener plus one per candidate close and one per line of such a body, no execution."""
     rewritten = _rewritten(lines)
     extents, after = [], 0   # after: the first line not yet known to be parsed whole, so the lines before an opener are checked once each
     for o, line in enumerate(lines):
@@ -258,17 +312,32 @@ def bash_test_extents(lines):
             continue
         if not _bash_parses(rewritten[after:o]):   # the lines since the last known-complete point do not parse whole: not a top-level opener
             continue
-        close = None
-        if _bash_parses(rewritten[o:o + 1]):
-            close = o
-        else:
-            for c in range(o + 1, len(lines)):
-                if _CLOSE_CANDIDATE.match(lines[c]) and _bash_parses(rewritten[o:c + 1]):
-                    close = c
+        close, end = None, len(lines) - 1
+        for c in range(o, len(lines)):
+            if c == o or _CLOSE_CANDIDATE.match(lines[c]):
+                closed, read_to = _closes(rewritten, o, c)
+                if closed:
+                    close, end = c, read_to
                     break
         extents.append((o, close))
-        after = (close if close is not None else len(lines)) + 1
+        after = end + 1
     return extents
+
+
+def _closes(rewritten, o, c):
+    """(whether the rewritten opener at o through line c parses as a complete function, the last line read): the lines o..c go
+    through `bash -n`, and while bash reports a here-document still pending at the end of them (one line c introduces, its body
+    after the brace: `{ ! cat <<EOF; }`, then the body, then `EOF`) the next line is appended and bash asked again, so the close
+    is the brace's line and the body is read past it, as bash reads the file. A pending here-document another line introduced
+    (a `}` inside its body) reads on to its terminator too, and then the function is unclosed, so that line closes nothing."""
+    text, end = rewritten[o:c + 1], c
+    while True:
+        rc, err = _bash_n(text)
+        pending = err.count("delimited by end-of-file")
+        if not pending or end + 1 >= len(rewritten):
+            return rc == 0 and not pending, end
+        end += 1
+        text.append(rewritten[end])
 
 
 def _no_close(lines, o):
@@ -367,8 +436,9 @@ def _pipeline_complete(own):
     """Whether bash reads the negated pipeline's own text (its lines from the `!`, the bodies and terminators of its here-documents
     included) as a complete command: the text wrapped in a brace group goes through `bash -n`, and a pipeline still wanting its
     next stage (a trailing `|` or `|&`, a comment after either or not), a trailing `\\`, an open quote, parenthesis, group or
-    compound, or a pending here-document leaves the group unclosed. The one reading of whether a pipeline runs on to the next
-    line; the walker's own quote and parenthesis tracking finds operators and nothing more."""
+    compound, an operator inside a `[[ ]]`, a `${ }` or a backtick substitution, or a pending here-document leaves the group
+    unclosed. The one reading of where a pipeline ends: at an operator the walker found, at a comment, at a line's end; the
+    walker's own quote and parenthesis tracking proposes operators and nothing more."""
     return _bash_parses(["{"] + own + ["}"])
 
 
@@ -398,77 +468,101 @@ def _heredoc_lines(lines, cand, i, cut):
     return others, ours
 
 
+def _begins_comment(own, text):
+    """Whether a `#` following `text` (the pipeline's text so far on its line, after its earlier lines, own) begins a comment to
+    bash: the text with `#'` appended and with `#"` appended go through `bash -n`, and a `#` that begins a comment hides either
+    quote, so bash says the same of both; a `#` that is part of a word (`a#b`, `$#`, one inside a `${ }` or inside a quoted string
+    the tracker paired otherwise) leaves a quote open, a different one each time. Asked only of a `#` at the start of a word, one
+    at column 0 or after a blank or one of bash's metacharacters (`|#`, `)#`, `(#`), since a `#` inside a word never begins a
+    comment; a `#` after a `)` begins one when the `)` closed a subshell (`(true)# note`) and not when it closed a `$( )`
+    (`$(x)#b`, one word), which is bash's call to make."""
+    return _bash_n(["{"] + own + [text + "#'"])[1] == _bash_n(["{"] + own + [text + '#"'])[1]
+
+
 def negated_pipeline(lines, cand):
-    r"""The Extent of the negated pipeline that begins at the candidate's `!`. Its text ends at the first `;`, `&&`, `||`, lone `&`
-    (a redirection's `&>`, `>&` or `<&` is none) or unmatched `)` outside quotes and parentheses; at a comment or at its line's
-    end it ends where bash reads the text so far as complete (_pipeline_complete) and runs on to the next line where bash wants
-    more: after a `|` or `|&` (a comment after either too: bash continues the pipeline past it, and before fork PR #871's round 2
-    the comment ended the extent there, so the rewrite split one pipeline into two commands and an armed site read as inert),
-    after a trailing `\`, inside an open quote, parenthesis, brace group or compound. Quotes are tracked as bash reads them,
-    `'...'`, `"..."` with backslash escapes and ANSI-C `$'...'` with backslash escapes (read as a plain single quote before round 2,
-    `$'it\'s'` ended at the escaped quote and the tracker ran off the text). A here-document the pipeline introduces is bash's
-    call as well (_heredoc_lines): its body and terminator lines are the pipeline's, blank in the rewrite, whatever the form
-    (`<<WORD` or `<<-WORD`, the word quoted or not; two on one line, bodies in introduction order; an introducer line ending in a
-    comment or in a `|`, the next stage following the terminator), and the body of a here-document another command introduced
-    on the line before the `!` comes first and stays. Before round 2 the extent stopped at the introducer line's end, and the
-    rewrite left the body and its terminator to run as commands. For a `!` inside a backtick substitution (cand.backticks) the
-    first backtick not escaped by a backslash ends it, whatever quote is open, since that is where bash closes the substitution.
-    None when the pipeline, or a body, runs off the end of the text: undecided, the safe side."""
+    r"""The Extent of the negated pipeline that begins at the candidate's `!`. The walker proposes where the pipeline's text may
+    end, and bash decides at every proposal: a `;`, `&&`, `||`, lone `&` (a redirection's `&>`, `>&` or `<&` is none) or
+    unmatched `)` outside the quotes and parentheses the walker tracks ends the pipeline where bash reads the text so far as a
+    complete command (_pipeline_complete), and where it does not the operator is inside something bash reads whole and the scan
+    goes on past it: a `[[ ]]` (`! [[ a == b && c == d ]]`), a `${ }` (`${x:-a;b}`), a backtick substitution, a `$( )` whose
+    nested quotes the tracker paired otherwise (`"$(printf "%s && %s" a b)"`), or a compound the `!` negates (`! { true; false; }`,
+    `! if true; then ...; fi`, `! case a in a) ... esac`, followed to its close; before fork PR #871's round 3 the walker ended
+    the extent at the first such operator unasked, so the rewrite split the construct, and the remainder parsing on its own, an
+    inert site read as read). A `#` at the start of a word begins a comment where bash reads one (_begins_comment: after a
+    blank, a `|`, a `)` closing a subshell), and there, and at the line's end, the pipeline ends where bash reads the text so far
+    as complete and runs on to the next line where bash wants more: after a `|` or `|&` (a comment after either too: bash
+    continues the pipeline past it, and before round 2 the comment ended the extent there, so the rewrite split one pipeline into
+    two commands and an armed site read as inert), after a trailing `\`, inside an open quote, parenthesis, brace group or
+    compound. Quotes are tracked as bash reads them, `'...'`, `"..."` with backslash escapes and ANSI-C `$'...'` with backslash
+    escapes (read as a plain single quote before round 2, `$'it\'s'` ended at the escaped quote and the tracker ran off the
+    text); the tracking finds operators to propose and nothing more, and its one hazard is a quote it reads open where bash reads
+    none, which hides an operator from the proposal. A here-document the pipeline introduces is bash's call as well
+    (_heredoc_lines): its body and terminator lines are the pipeline's, blank in the rewrite, whatever the form (`<<WORD` or
+    `<<-WORD`, the word quoted or not; two on one line, bodies in introduction order; an introducer line ending in a comment or
+    in a `|`, the next stage following the terminator), and the body of a here-document another command introduced on the line
+    before the `!` comes first and stays. Before round 2 the extent stopped at the introducer line's end, and the rewrite left the
+    body and its terminator to run as commands. For a `!` inside a backtick substitution (cand.backticks) the first backtick not
+    escaped by a backslash ends it, whatever quote is open, since that is where bash closes the substitution. None when the
+    pipeline, or a body, runs off the end of the text: undecided, the safe side."""
     i, j, q, depth = cand.line, cand.col + 1, None, 0
-    own, keep, last = [], set(), cand.line
+    own, keep = [], set()
     while i < len(lines):
         line, n = lines[i], len(lines[i])
-        stop, ask = n, True   # where the pipeline's text stops on this line, and whether bash is asked if it is complete there
-        while j < n:
-            ch = line[j]
-            if cand.backticks and ch == "`":
-                stop, ask = j, False
-                break
-            if q == "'":
-                if ch == "'":
-                    q = None
-            elif q == '"':
-                if ch == "\\":
+        start = cand.col if i == cand.line else 0
+        while True:
+            stop, kind = n, "end"   # where the pipeline's text may stop on this line, and what stands there
+            while j < n:
+                ch = line[j]
+                if cand.backticks and ch == "`":
+                    stop, kind = j, "backtick"
+                    break
+                if q == "'":
+                    if ch == "'":
+                        q = None
+                elif q in ('"', "$'"):
+                    if ch == "\\":
+                        j += 1
+                    elif ch == q[-1]:
+                        q = None
+                elif ch == "\\":
                     j += 1
-                elif ch == '"':
-                    q = None
-            elif q == "$'":
-                if ch == "\\":
+                elif ch == "$" and line.startswith("'", j + 1):   # a `$` the scan reads as itself, before a quote: ANSI-C quoting
+                    q, j = "$'", j + 1
+                elif ch in "'\"":
+                    q = ch
+                elif ch == "(":
+                    depth += 1
+                elif ch == ")" and depth:
+                    depth -= 1
+                elif ch == "|" and line.startswith("|&", j):   # one operator, inside the pipeline: its `&` is no lone `&`
                     j += 1
-                elif ch == "'":
-                    q = None
-            elif ch == "\\":
+                elif depth == 0 and (ch in ";)" or line.startswith(("&&", "||"), j)
+                                     or (ch == "&" and not line.startswith("&>", j) and not (j and line[j - 1] in "<>"))):
+                    stop, kind = j, "operator"
+                    break
+                elif ch == "#" and (j == 0 or line[j - 1] in " \t|&;()<>") and _begins_comment(own, line[start:j]):
+                    stop, kind = j, "comment"
+                    break
                 j += 1
-            elif ch == "$" and line.startswith("'", j + 1):   # a `$` the scan reads as itself, before a quote: ANSI-C quoting
-                q, j = "$'", j + 1
-            elif ch in "'\"":
-                q = ch
-            elif ch == "(":
-                depth += 1
-            elif ch == ")" and depth:
-                depth -= 1
-            elif ch == "|" and line.startswith("|&", j):   # one operator, inside the pipeline: its `&` is no lone `&`
-                j += 1
-            elif depth == 0 and (ch in ";)" or line.startswith(("&&", "||"), j)
-                                 or (ch == "&" and not line.startswith("&>", j) and not (j and line[j - 1] in "<>"))):
-                stop, ask = j, False
-                break
-            elif depth == 0 and ch == "#" and (j == 0 or line[j - 1] in " \t"):
-                stop = j
-                break
-            j += 1
-        cut = len(line[:stop].rstrip())
-        own.append(line[cand.col if i == cand.line else 0:cut])
-        bodies = _heredoc_lines(lines, cand, i, cut)
-        if bodies is None:
-            return None
-        others, ours = bodies
-        keep.update(others)
-        own.extend(lines[k] for k in ours)
-        last = max([i] + others + ours)
-        if not ask or _pipeline_complete(own):
-            return Extent(i, cut, tuple(k for k in range(cand.line + 1, last + 1) if k not in keep))
-        i, j = last + 1, 0
+            cut = len(line[:stop].rstrip())
+            text = line[start:cut]
+            bodies = _heredoc_lines(lines, cand, i, cut)
+            if bodies is not None:
+                others, ours = bodies
+                if kind == "backtick" or _pipeline_complete(own + [text] + [lines[k] for k in ours]):
+                    keep.update(others)
+                    last = max([i] + others + ours)
+                    return Extent(i, cut, tuple(k for k in range(cand.line + 1, last + 1) if k not in keep))
+            if kind == "operator":   # not the pipeline's end to bash: inside something it reads whole, so the scan goes on past it
+                j = stop + (2 if line.startswith(("&&", "||"), stop) else 1)
+                continue
+            if bodies is None:
+                return None
+            own.append(text)   # bash wants more: the pipeline runs on to the line after this one and its here-document lines
+            keep.update(bodies[0])
+            own.extend(lines[k] for k in bodies[1])
+            i, j = max([i] + bodies[0] + bodies[1]) + 1, 0
+            break
     return None
 
 
@@ -495,9 +589,10 @@ def rewritten_negation(lines, cand, ext, repl):
     introduced) is left empty, a line of another command's here-document among them stays, and what followed the pipeline on its
     last line follows repl. Every `!` of the run at the candidate stays before repl (`! ! true` becomes `! ! false`): bash reads a
     doubled negation's status and exempts a tripled one, so the run is part of what bats is asked about, and the command after it
-    is what is replaced."""
+    is what is replaced. A tail beginning with `#` (a comment glued to the pipeline's last character, `! (true)# note`) gets a
+    blank before it, since to bash a `#` begins a comment only at the start of a word and `true#` would be one word."""
     tail = lines[ext.line][ext.col:]
-    if ext.line != cand.line and tail and not tail[0].isspace():
+    if tail[:1] == "#" or (ext.line != cand.line and tail and not tail[0].isspace()):
         tail = " " + tail
     out = list(lines)
     out[cand.line] = lines[cand.line][:cand.col] + "! " * (_bang_run(lines[cand.line], cand.col) - 1) + repl + tail
@@ -911,6 +1006,9 @@ FIXTURE_LINE_REMEDY = ("bats-preprocess rewrites every line matching its test pa
 
 
 class BatsSuites(unittest.TestCase):
+    def setUp(self):
+        skip_unless_bash_serves(self)
+
     def test_every_test_of_every_suite_is_closed_by_bash_and_its_candidates_are_listed(self):
         # the population is every suite the shell job's bats glob names (suite_files, read off the workflow; a glob naming no file
         # raises there); per file, bash's own parse (bash_test_extents) is the derivation of each test's text: a test bash cannot
@@ -1004,6 +1102,9 @@ class Population(unittest.TestCase):
 class Extents(unittest.TestCase):
     """bash_test_extents on synthetic files: bash's parse, not this module's rules, decides what a test is and where it ends."""
 
+    def setUp(self):
+        skip_unless_bash_serves(self)
+
     def test_bash_test_extents_reads_the_tests_bash_parses(self):
         # opens inside a heredoc, a string or another test are not tests; a one-line @test is rewritten so the file parses and is
         # an extent of no lines; a file that does not parse yields None for the close
@@ -1070,6 +1171,27 @@ class Extents(unittest.TestCase):
             self.assertIn(said, str(cm.exception))
             self.assertIn("no close for this test", str(cm.exception))
 
+    def test_a_close_sharing_a_line_with_a_here_document_introducer_closes_the_test_and_the_body_is_the_pipelines(self):
+        # round 3 of fork PR #871 (the walker verifier): `@test "x" { ! cat <<EOF; }` with its body and terminator after the brace,
+        # and `    ! cat > /dev/null <<EOF; }` inside a multi-line test, are tests bats runs, and the close line's pending body
+        # left them with no close (the opener through the brace does not parse whole), so candidates raised; where a later `}`
+        # closed a following test, the first test swallowed the file instead. The body is read on past the close now (_closes),
+        # the close stays the brace's line, the next opener is read after the body, the `!` before the introducer is a candidate,
+        # and its extent blanks the body and terminator; a `}` inside another here-document's body still closes nothing
+        lines = ['@test "x" { ! cat > /dev/null <<EOF; }', 'false', 'EOF', '@test "y" {', '    true', '    ! cat > /dev/null <<EOF; }', 'false', 'EOF',
+                 '@test "z" {', '    cat <<EOF', '}', 'EOF', '    ! true', '}']
+        extents = bash_test_extents(lines)
+        self.assertEqual(extents, [(0, 0), (3, 5), (8, 13)])
+        found = candidates(lines, extents)
+        self.assertEqual(found, [Candidate(0, 0, 12, False), Candidate(1, 5, 4, False), Candidate(2, 12, 4, False)])
+        self.assertEqual(negated_pipeline(lines, found[0]), Extent(0, len('@test "x" { ! cat > /dev/null <<EOF'), (1, 2)))
+        self.assertEqual(negated_pipeline(lines, found[1]), Extent(5, len('    ! cat > /dev/null <<EOF'), (6, 7)))
+        self.assertEqual(rewritten_shape(lines, extents, "! true"),
+                         ['@test "x" { ! true; }', '', '', '@test "y" {', '    true', '    ! true; }', '', '', '@test "z" {', '    cat <<EOF', '}', 'EOF',
+                          '    ! true', '}'])
+        self.assertTrue(_bash_parses(_rewritten(rewritten_shape(lines, extents, "! false"))))
+        self.assertEqual(bash_test_extents(lines[:2]), [(0, None)], "a body running off the text closes nothing")
+
     def test_a_heredoc_whose_terminator_comes_after_the_next_test_leaves_the_file_unparsed(self):
         # the `<<WORD` swallows the test's close and the next test whole; bash finds no close for the first test and no second test
         text = '@test "a" {\n    cat <<WORD\n    ! true\n    true\n}\n\n@test "b" {\n    true\n}\nWORD\n'
@@ -1085,6 +1207,9 @@ class Extents(unittest.TestCase):
 class Candidates(unittest.TestCase):
     """The predicate and the rewrite on synthetic snippets: what the register cannot say (columns, the refusal of an unparsed test,
     the extent's end positions and the None past the text). Whether a candidate's status is read is not asked here."""
+
+    def setUp(self):
+        skip_unless_bash_serves(self)
 
     SNIPPET = ('@test "one-liner" { ! true; }\n'
                '@test "opener tail" { ! true\n'
@@ -1221,6 +1346,67 @@ class Candidates(unittest.TestCase):
                          ['@test "x" {', '    ! true; true', '', '', '    cat > /dev/null <<A; ! true', '    kept', 'A', '', '', '',
                           '    ! true', '', '    ! true', '', '    ! true', '', '', '    ! true', '    ! true', '    true', '}'])
         self.assertTrue(_bash_parses(_rewritten(rewritten_shape(lines, extents, "! false"))))
+
+    def test_an_operator_inside_a_construct_bash_reads_whole_does_not_end_the_pipeline_and_a_glued_comment_is_bashs_call(self):
+        # round 3 of fork PR #871 (the walker verifier): the walker ended the extent at a `;`, `&&`, `||` or `)` its own tracking
+        # found without asking bash, so an operator inside a `[[ ]]`, a `${ }`, a backtick substitution or a `$( )` whose nested
+        # quotes the tracker paired otherwise split the construct (`! [[ a == a && b == b ]]` mid became `! true && b == b ]]`, and
+        # the remainder parsing on its own, an inert site read as read), and a negated compound ended at its first operator (the
+        # rewritten file did not parse: undecided). Every proposed stop is bash's call now (_pipeline_complete), and so is whether
+        # a `#` glued to a metacharacter begins a comment (_begins_comment: after `|` and after a subshell's `)` it does, after a
+        # `$( )` it is part of the word). The forms, one each: the two `[[ ]]` operators, a `&&` and a `;` inside nested quotes,
+        # inside a `${ }` and inside backticks, a comment glued to `|`, to a subshell's `)` and to `(`, a word glued to `$( )`, a
+        # negated group, `if`, `case`, `for`, `while`, `until`, arithmetic and subshell compound, and the ANSI-C quote before a
+        # list operator (fresh-2's arm, which G_ansi_quote_* did not arm: with the arm removed the tracker read `b' || false` as a
+        # string and the extent ran to the line's end, where bash reads the whole line as complete)
+        lines = ['@test "x" {',
+                 '    ! [[ a == a && b == b ]]',                         # 1
+                 '    ! [[ a == a || b == b ]]',                         # 2
+                 '    ! echo "$(printf "%s && %s" a b)" > /dev/null',    # 3
+                 '    ! echo "$(echo "a;b")" > /dev/null',               # 4
+                 '    ! echo ${x:-a&&b} > /dev/null',                    # 5
+                 '    ! echo ${x:-a;b} > /dev/null',                     # 6
+                 '    ! echo `echo a; echo b` > /dev/null',              # 7
+                 '    ! true |# a && false',                             # 8: a comment glued to `|`; the pipeline continues past it
+                 '        cat',
+                 '    ! (true)# a && false',                             # 10: a comment glued to a subshell's `)`
+                 '    ! echo $(true)#b || false',                        # 11: no comment: `$(true)#b` is one word
+                 '    ! (# a && false',                                  # 12: a comment glued to `(`
+                 '        true)',
+                 '    ! { false; true; }',                               # 14: a negated group, its `;` operators inside
+                 '    ! if true; then',                                  # 15: a negated compound over three lines
+                 '        true',
+                 '    fi',
+                 '    ! case a in a) true;; esac',                       # 18: the `)` and `;;` inside
+                 '    ! for i in 1; do true; done',                      # 19
+                 '    ! while false; do true; done',                     # 20
+                 '    ! until true; do false; done',                     # 21
+                 '    ! (( 1 && 1 ))',                                   # 22
+                 '    ! (true; true)',                                   # 23
+                 "    ! echo $'a\\'b' || false",                          # 24: the ANSI-C quote, then a list operator
+                 '}']
+        extents = bash_test_extents(lines)
+        found = {c.line: c for c in candidates(lines, extents)}
+        self.assertEqual(sorted(found), [1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 14, 15, 18, 19, 20, 21, 22, 23, 24])
+        whole = {i: Extent(i, len(lines[i]), ()) for i in (1, 2, 3, 4, 5, 6, 7, 14, 18, 19, 20, 21, 22, 23)}
+        whole.update({8: Extent(9, len('        cat'), (9,)), 10: Extent(10, len('    ! (true)'), ()), 11: Extent(11, len('    ! echo $(true)#b'), ()),
+                      12: Extent(13, len('        true)'), (13,)), 15: Extent(17, len('    fi'), (16, 17)), 24: Extent(24, len("    ! echo $'a\\'b'"), ())})
+        for i, cand in sorted(found.items()):
+            self.assertEqual(negated_pipeline(lines, cand), whole[i], lines[i])
+        rewritten = rewritten_shape(lines, extents, "! true")
+        self.assertEqual(rewritten, ['@test "x" {'] + ['    ! true'] * 7 + ['    ! true', '', '    ! true # a && false', '    ! true || false', '    ! true', '',
+                                                        '    ! true', '    ! true', '', '', '    ! true', '    ! true', '    ! true', '    ! true',
+                                                        '    ! true', '    ! true', '    ! true || false', '}'])
+        self.assertTrue(_bash_parses(_rewritten(rewritten)))
+        self.assertTrue(_bash_parses(_rewritten(rewritten_shape(lines, extents, "! false"))))
+        # bash's comment rule, asked of the text: a `#` after a blank or a metacharacter begins a comment unless it is inside a word
+        self.assertTrue(_begins_comment([], "! true "))
+        self.assertTrue(_begins_comment([], "! true |"))
+        self.assertTrue(_begins_comment([], "! (true)"))
+        self.assertTrue(_begins_comment(["! true |"], ""))
+        self.assertFalse(_begins_comment([], "! echo $(true)"))
+        self.assertFalse(_begins_comment([], "! echo ${x:-a "))
+        self.assertFalse(_begins_comment([], '! echo "$(echo "a '))
 
     def test_the_rewrite_keeps_the_line_count_and_what_follows_the_pipeline_and_every_bang_of_a_run(self):
         lines = ['@test "x" {', '    ! echo "$(echo a; echo b)" | cat || true   # note', '    ! true \\', '        --flag || false', '    ! true   # note',
@@ -1438,6 +1624,30 @@ def ground_truth_shapes():
     # the tracker ran off the text and the register raised on the shape)
     S["G_ansi_quote_mid"] = "@test \"x\" {\n    ! echo $'it\\'s' > /dev/null\n    true\n}\n"
     S["G_ansi_quote_last"] = "@test \"x\" {\n    true\n    ! echo $'it\\'s' > /dev/null\n}\n"
+    # an operator inside something bash reads whole, which the walker's tracking proposes as the pipeline's end and bash refuses
+    # (round 3 of fork PR #871: the walker stopped there unasked, the rewrite split the construct and the remainder ran on its
+    # own, an inert site read as read), one form each, mid and last: the two `[[ ]]` operators; a `&&` and a `;` inside quotes
+    # nested in a `$( )` inside quotes (the tracker pairs the inner quote with the outer), inside a `${ }` and inside backticks; a
+    # `#` glued to `|` and to a subshell's `)`, where bash begins a comment, glued to `(`, and glued to a `$( )`, where it is part
+    # of the word (`$(true)#b || false`: an extent ending at the `#` would drop the `|| false` and its verdict); a negated compound
+    # (man bash, Compound Commands: a group, `if`, `case`, `for`, `while`, `until`, `(( ))`, a subshell with a `;` inside), on one
+    # line and over several, followed to its close; and the ANSI-C quote before a list operator, which arms the `$'` arm (with the
+    # arm removed the tracker reads `b' || false` as a string and the extent runs to the line's end, where bash reads the whole
+    # line as complete, so G_ansi_quote_* alone did not pin it)
+    for name, text in (("op_in_dbracket_and", "! [[ a == a && b == b ]]"), ("op_in_dbracket_or", "! [[ a == a || b == b ]]"),
+                       ("op_in_nested_quotes_and", '! echo "$(printf "%s && %s" a b)" > /dev/null'), ("op_in_nested_quotes_semi", '! echo "$(echo "a;b")" > /dev/null'),
+                       ("op_in_param_and", "! echo ${x:-a&&b} > /dev/null"), ("op_in_param_semi", "! echo ${x:-a;b} > /dev/null"),
+                       ("op_in_backticks_and", "! echo `true && echo b` > /dev/null"), ("op_in_backticks_semi", "! echo `echo a; echo b` > /dev/null"),
+                       ("glued_comment_pipe", "! true |# a && false\n        cat"), ("glued_comment_subshell", "! (true)# a && false"),
+                       ("glued_comment_open_paren", "! (# a && false\n        true)"), ("glued_word_subst", "! echo $(true)#b || false"),
+                       ("negated_group", "! { false; true; }"), ("negated_group_lines", "! {\n        false\n        true\n    }"),
+                       ("negated_if", "! if true; then true; fi"), ("negated_if_lines", "! if true; then\n        true\n    fi"),
+                       ("negated_case", "! case a in a) true;; esac"), ("negated_case_lines", "! case a in\n      a) true ;;\n    esac"),
+                       ("negated_for", "! for i in 1; do true; done"), ("negated_while", "! while false; do true; done"),
+                       ("negated_until", "! until true; do false; done"), ("negated_arith", "! (( 1 && 1 ))"), ("negated_subshell_semi", "! (true; true)"),
+                       ("ansi_quote_or_false", "! echo $'a\\'b' || false")):
+        S["G_%s_mid" % name] = '@test "x" {\n    %s\n    true\n}\n' % text
+        S["G_%s_last" % name] = '@test "x" {\n    true\n    %s\n}\n' % text
     S["G_or_return_var_mid"] = '@test "x" {\n    rc=1\n    %s || return "$rc"\n    true\n}\n' % N
     S["G_or_return_var_last"] = '@test "x" {\n    rc=1\n    %s || return "$rc"\n}\n' % N
     S["G_quoted_operators_last"] = '@test "x" {\n    true\n    ! echo "a;b||c" > /dev/null\n}\n'
@@ -1532,6 +1742,13 @@ def ground_truth_shapes():
     # and the message blamed bash -n for a file bash parses and bats runs)
     S["I_close_shares_last_line_last"] = '@test "x" {\n    true\n    %s; }\n' % N
     S["I_close_shares_last_line_mid"] = '@test "x" {\n    %s\n    true; }\n' % N
+    # a test whose closing brace shares its line with a here-document introducer, the body and terminator after the brace (round 3
+    # of fork PR #871: the pending body left the test with no close, and where a later `}` closed a following test the first
+    # swallowed the file); the body, `false`, is data unless a rewrite leaves it outside the here-document
+    S["I_close_introduces_heredoc_last"] = '@test "x" {\n    true\n    ! cat > /dev/null <<EOF; }\nfalse\nEOF\n'
+    S["I_close_introduces_heredoc_mid"] = '@test "x" {\n    ! cat > /dev/null <<EOF; true; }\nfalse\nEOF\n'
+    S["I_one_liner_heredoc"] = '@test "x" { ! cat > /dev/null <<EOF; }\nfalse\nEOF\n'
+    S["I_close_introduces_heredoc_then_test"] = '@test "a" {\n    true\n    ! cat > /dev/null <<EOF; }\nfalse\nEOF\n@test "b" {\n    ! true\n    true\n}\n'
     S["I_one_liner_between"] = '@test "a" {\n    %s\n    true\n}\n@test "b" { true; }\n@test "c" {\n    true\n    %s\n}\n' % (N, N)
     S["I_one_liner_negation"] = '@test "x" { ! true; }\n'
     S["I_one_liner_subshell"] = '@test "x" { ( ! true ); }\n'
@@ -1651,39 +1868,11 @@ class BatsGroundTruth(unittest.TestCase):
     under both and undecided every one failing under both, so decide's refusal of a failure blamed outside the candidate's test
     fires on no deterministic shape; the verdicts alone could not see that clause. Without bats the last two SKIP, saying where they
     run (WHERE_BATS_RUNS: CI's shell job's Linux cell; both of its cells install a bats and the wrapper skips on macOS), since a run
-    that verified nothing must not read like one that verified every shape. Under a bash that refuses the bash-4 syntax some
-    shapes use (`|&`, `coproc`, `;;&`: BASH_4_SYNTAX) all four skip too, naming that bash (fresh-1 of fork PR #871's round 1: the
-    recall tests need no bats and run in every Python cell, macOS's bash 3.2.57 among them, where candidates() would raise)."""
-
-    # the bash-4 syntax the register's shapes use, one construct each: `|&` (bash 4.0; A_pipeamp_*, G_pipeamp_*, G_cont_pipeamp_*),
-    # `coproc` (4.0; A_coproc_*) and `;;&` (4.0; T_case_fallthrough_*). A bash that refuses any of them cannot parse those shapes
-    # (candidates() raises on a test it cannot close), so every test of the register skips under it, whole and loudly, rather than
-    # shape by shape (fresh-1 of fork PR #871's round 1). The matrix's bashes, from the runner images' READMEs (actions/runner-images,
-    # images/ubuntu/Ubuntu2404-Readme.md and images/macos/macos-15-Readme.md): ubuntu-latest 5.2.21, macos-latest 3.2.57, the latter
-    # in the Python cells on a dispatch or the weekly schedule only
-    BASH_4_SYNTAX = ("true |& cat", "coproc { true; }", "case a in a) true ;;& esac")
-    _old_bash = None   # (version, the refused construct) of a bash that refuses one, or False, probed once per process
-
-    @classmethod
-    def refusing_bash(cls):
-        """(the local bash's version, the first of BASH_4_SYNTAX it refuses) when it refuses one, else False."""
-        if cls._old_bash is None:
-            cls._old_bash = False
-            for text in cls.BASH_4_SYNTAX:
-                if not _bash_parses([text]):
-                    version = subprocess.run(["bash", "-c", 'printf %s "$BASH_VERSION"'], capture_output=True, text=True).stdout.strip()
-                    cls._old_bash = (version, text)
-                    break
-        return cls._old_bash
-
-    def skip_under_an_old_bash(self):
-        """Skips the test, saying so on stdout too, when the local bash refuses the register's bash-4 syntax."""
-        refused = self.refusing_bash()
-        if refused:
-            reason = ("NOT RUN: bash %s refuses `%s`, which register shapes use, so the register cannot be parsed here; it runs under "
-                      "CI's Linux cells (bash 5.2.21) and skips on macOS (3.2.57)" % refused)
-            print(reason)
-            self.skipTest(reason)
+    that verified nothing must not read like one that verified every shape. Under a bash that lacks what this module reads (the
+    bash-4 syntax some shapes use, `|&`, `coproc` and `;;&`, or the here-document warning under -n: BASH_4_SYNTAX, bash_shortfall)
+    all four skip too, naming that bash (fresh-1 of fork PR #871's round 1: the recall tests need no bats and run in every Python
+    cell, macOS's bash 3.2.57 among them, where candidates() would raise); the two tests of this class that need no bash run
+    everywhere."""
 
     # the bats versions RECORDED was verified against by the agreement test below with that bats on PATH: 1.10.0, the box the
     # record was taken on, and 1.11.1, CI's pin (.github/workflows/ci.yml installs it from the release tarball), installed from the
@@ -1944,6 +2133,8 @@ class BatsGroundTruth(unittest.TestCase):
         'G_and_then_mid': ('ok', 'ok'),
         'G_ansi_quote_last': ('not ok', 'ok'),
         'G_ansi_quote_mid': ('ok', 'ok'),
+        'G_ansi_quote_or_false_last': ('not ok', 'ok'),
+        'G_ansi_quote_or_false_mid': ('not ok', 'ok'),
         'G_backtick_glued_mid': ('ok', 'ok'),
         'G_backtick_lone_bang_mid': ('ok', 'ok'),
         'G_bash_c_string_mid': ('ok', 'ok'),
@@ -1982,12 +2173,58 @@ class BatsGroundTruth(unittest.TestCase):
         'G_double_negation_mid': ('ok', 'not ok'),
         'G_eval_string_mid': ('ok', 'ok'),
         'G_first_command': ('ok', 'ok'),
+        'G_glued_comment_open_paren_last': ('not ok', 'ok'),
+        'G_glued_comment_open_paren_mid': ('ok', 'ok'),
+        'G_glued_comment_pipe_last': ('not ok', 'ok'),
+        'G_glued_comment_pipe_mid': ('ok', 'ok'),
+        'G_glued_comment_subshell_last': ('not ok', 'ok'),
+        'G_glued_comment_subshell_mid': ('ok', 'ok'),
+        'G_glued_word_subst_last': ('not ok', 'ok'),
+        'G_glued_word_subst_mid': ('not ok', 'ok'),
         'G_last_command': ('not ok', 'ok'),
         'G_last_past_comment_blank': ('not ok', 'ok'),
         'G_lone_bang_last': ('not ok', 'ok'),
         'G_lone_bang_mid': ('ok', 'ok'),
         'G_lone_bang_semicolon_mid': ('ok', 'ok'),
         'G_mid_after_run': ('ok', 'ok'),
+        'G_negated_arith_last': ('not ok', 'ok'),
+        'G_negated_arith_mid': ('ok', 'ok'),
+        'G_negated_case_last': ('not ok', 'ok'),
+        'G_negated_case_lines_last': ('not ok', 'ok'),
+        'G_negated_case_lines_mid': ('ok', 'ok'),
+        'G_negated_case_mid': ('ok', 'ok'),
+        'G_negated_for_last': ('not ok', 'ok'),
+        'G_negated_for_mid': ('ok', 'ok'),
+        'G_negated_group_last': ('not ok', 'ok'),
+        'G_negated_group_lines_last': ('not ok', 'ok'),
+        'G_negated_group_lines_mid': ('ok', 'ok'),
+        'G_negated_group_mid': ('ok', 'ok'),
+        'G_negated_if_last': ('not ok', 'ok'),
+        'G_negated_if_lines_last': ('not ok', 'ok'),
+        'G_negated_if_lines_mid': ('ok', 'ok'),
+        'G_negated_if_mid': ('ok', 'ok'),
+        'G_negated_subshell_semi_last': ('not ok', 'ok'),
+        'G_negated_subshell_semi_mid': ('ok', 'ok'),
+        'G_negated_until_last': ('not ok', 'ok'),
+        'G_negated_until_mid': ('ok', 'ok'),
+        'G_negated_while_last': ('not ok', 'ok'),
+        'G_negated_while_mid': ('ok', 'ok'),
+        'G_op_in_backticks_and_last': ('not ok', 'ok'),
+        'G_op_in_backticks_and_mid': ('ok', 'ok'),
+        'G_op_in_backticks_semi_last': ('not ok', 'ok'),
+        'G_op_in_backticks_semi_mid': ('ok', 'ok'),
+        'G_op_in_dbracket_and_last': ('not ok', 'ok'),
+        'G_op_in_dbracket_and_mid': ('ok', 'ok'),
+        'G_op_in_dbracket_or_last': ('not ok', 'ok'),
+        'G_op_in_dbracket_or_mid': ('ok', 'ok'),
+        'G_op_in_nested_quotes_and_last': ('not ok', 'ok'),
+        'G_op_in_nested_quotes_and_mid': ('ok', 'ok'),
+        'G_op_in_nested_quotes_semi_last': ('not ok', 'ok'),
+        'G_op_in_nested_quotes_semi_mid': ('ok', 'ok'),
+        'G_op_in_param_and_last': ('not ok', 'ok'),
+        'G_op_in_param_and_mid': ('ok', 'ok'),
+        'G_op_in_param_semi_last': ('not ok', 'ok'),
+        'G_op_in_param_semi_mid': ('ok', 'ok'),
         'G_or_exit_1_last': ('not ok', 'ok'),
         'G_or_exit_1_mid': ('not ok', 'ok'),
         'G_or_fail_last': ('not ok', 'ok'),
@@ -2058,6 +2295,9 @@ class BatsGroundTruth(unittest.TestCase):
         'H_time_p_mid': ('ok', 'ok'),
         'H_until_head_break_mid': ('ok', 'ok'),
         'H_while_head_return_mid': ('ok', 'not ok'),
+        'I_close_introduces_heredoc_last': ('not ok', 'ok'),
+        'I_close_introduces_heredoc_mid': ('ok', 'ok'),
+        'I_close_introduces_heredoc_then_test': ('not ok,ok', 'ok,ok'),
         'I_close_shares_last_line_last': ('not ok', 'ok'),
         'I_close_shares_last_line_mid': ('ok', 'ok'),
         'I_comment_form_and_at_test': ('ok,not ok', 'ok,ok'),
@@ -2067,6 +2307,7 @@ class BatsGroundTruth(unittest.TestCase):
         'I_comment_form_mid': ('ok', 'ok'),
         'I_comment_form_no_parens_mid': ('ok', 'ok'),
         'I_one_liner_between': ('ok,ok,not ok', 'ok,ok,ok'),
+        'I_one_liner_heredoc': ('not ok', 'ok'),
         'I_one_liner_negation': ('not ok', 'ok'),
         'I_one_liner_subshell': ('not ok', 'ok'),
         'I_opener_indented_last': ('not ok', 'ok'),
@@ -2136,7 +2377,7 @@ class BatsGroundTruth(unittest.TestCase):
         # succeeding, are the ones a miss would hide; the read ones are counted too): the expected set is every `!` CHARACTER of the
         # test's text (_ANY_BANG, not the predicate's word rule _BANG), minus the lines NOT_A_NEGATION declares, so it is derived
         # from the shapes and the record and from no rule of this module's, and a `!` the word rule misses is a miss here
-        self.skip_under_an_old_bash()
+        skip_unless_bash_serves(self)
         shapes = ground_truth_shapes()
         self.assertEqual(sorted(shapes), sorted(self.RECORDED), "the register and the record cover the same shapes")
         negations, inert, line_start, misses = 0, 0, 0, []
@@ -2161,7 +2402,7 @@ class BatsGroundTruth(unittest.TestCase):
         # the other recall half: a test recorded `ok` with no candidate is either text-only (every `!` in it declared) or holds no
         # `!` and says so in NO_NEGATION; a shape with such a test and neither reds. And the declarations themselves: a declared
         # line holds a `!` the predicate does not take, a NO_NEGATION test is recorded ok and holds no `!`
-        self.skip_under_an_old_bash()
+        skip_unless_bash_serves(self)
         shapes = ground_truth_shapes()
         without, problems = 0, []
         for name in sorted(shapes):
@@ -2200,42 +2441,61 @@ class BatsGroundTruth(unittest.TestCase):
                                                         "  D_w: recorded 'ok', bats said None"])
         self.assertEqual(_differing_shapes(got, dict(got)), [])
 
-    def test_under_a_bash_refusing_the_registers_bash_4_syntax_every_register_test_skips_naming_that_bash(self):
+    def test_under_a_bash_lacking_what_the_module_reads_every_test_deriving_from_bash_skips_naming_that_bash(self):
         # fresh-1 of fork PR #871's round 1: the two recall tests run in every Python cell, parsing every shape with the local bash,
-        # and macOS's bash 3.2.57 refuses `|&`, `coproc` and `;;&`, so candidates() would raise there. Simulated with a bash on PATH
-        # that refuses the three constructs under -n and reports 3.2.57 as its version: the probe names the version and the
-        # construct, and each register test skips, loudly, saying where the register runs
-        with tempfile.TemporaryDirectory() as d:
-            shim = os.path.join(d, "bash")
-            with open(shim, "w", encoding="utf-8") as f:
-                f.write("#!/bin/bash\n"
-                        'if [ "$1" = -c ]; then printf %s "3.2.57(1)-release"; exit 0; fi\n'
-                        'input=$(cat)\n'
-                        "if printf '%s' \"$input\" | grep -qE '\\|&|coproc|;;&'; then echo 'bash: line 1: syntax error near unexpected token' >&2; exit 2; fi\n"
-                        "printf '%s\\n' \"$input\" | exec /bin/bash \"$@\"\n")
-            os.chmod(shim, 0o755)
-            previous = BatsGroundTruth._old_bash
-            BatsGroundTruth._old_bash = None
-            try:
-                with unittest.mock.patch.dict(os.environ, {"PATH": d + os.pathsep + os.environ.get("PATH", "")}):
-                    self.assertEqual(self.refusing_bash(), ("3.2.57(1)-release", "true |& cat"))
+        # and macOS's bash 3.2.57 refuses `|&`, `coproc` and `;;&`, so candidates() would raise there; round 3 (the verifiers, with a
+        # bash 3.2.57 built from the GNU tarball): the same bash gives no here-document warning under -n, on which the extents and
+        # the here-document extent rest, so the Extents and Candidates tests red there too, and this pin's own closing assertion
+        # that the local bash refuses nothing FAILED under that bash, where the ruling asked for a gate. Simulated with two bashes
+        # on PATH, each reporting 3.2.57 as its version: one refusing the three constructs under -n, one giving no here-document
+        # warning; under either, the probe names the version and what is lacking, each register test and each test of the
+        # classes deriving from bash skips, loudly, saying where they run, and the two tests here that need no bash do not. The
+        # real bash's probe is restored after; whatever it says stands, since under a bash that lacks something the skips above
+        # are the gate at work, not a failure of this pin
+        refusing = ("#!/bin/bash\n"
+                    'if [ "$1" = -c ]; then printf %s "3.2.57(1)-release"; exit 0; fi\n'
+                    'input=$(cat)\n'
+                    "if printf '%s' \"$input\" | grep -qE '\\|&|coproc|;;&'; then echo 'bash: line 1: syntax error near unexpected token' >&2; exit 2; fi\n"
+                    "printf '%s\\n' \"$input\" | exec /bin/bash \"$@\"\n")
+        unwarning = ("#!/bin/bash\n"
+                     'if [ "$1" = -c ]; then printf %s "3.2.57(2)-release"; exit 0; fi\n'
+                     '/bin/bash "$@" 2> "$0.err"; rc=$?\n'
+                     "grep -v 'delimited by end-of-file' \"$0.err\" >&2\n"
+                     "exit $rc\n")
+        deriving = [Extents("test_bash_test_extents_reads_the_tests_bash_parses"), Candidates("test_candidates_refuses_a_test_bash_cannot_close"),
+                    BatsSuites("test_every_test_of_every_suite_is_closed_by_bash_and_its_candidates_are_listed"),
+                    BatsRoad("test_run_test_alone_reads_what_bats_says_of_a_frame_a_skip_an_unloadable_file_and_a_missing_name")]
+        for text, expected in ((refusing, ("3.2.57(1)-release", "refuses `true |& cat`, which register shapes use")),
+                               (unwarning, ("3.2.57(2)-release", "gives no warning of a here-document the end of the input cuts off under -n, "
+                                                                  "which is how a here-document's end is read here"))):
+            with tempfile.TemporaryDirectory() as d:
+                shim = os.path.join(d, "bash")
+                with open(shim, "w", encoding="utf-8") as f:
+                    f.write(text)
+                os.chmod(shim, 0o755)
+                with unittest.mock.patch.dict(_BASH_PROBE, clear=True), \
+                        unittest.mock.patch.dict(os.environ, {"PATH": d + os.pathsep + os.environ.get("PATH", "")}):
+                    self.assertEqual(bash_shortfall(), expected)
                     self.assertTrue(_bash_parses(["true | cat"]), "the shim refuses more than the bash-4 syntax: this pins nothing")
                     for test in (self.test_every_negation_of_the_register_is_a_candidate_unless_declared_an_operator_or_text,
                                  self.test_an_ok_test_without_a_candidate_holds_only_declared_bangs_or_none_and_every_declaration_holds,
                                  self.test_the_record_is_what_bats_says_under_both_rewrites,
-                                 self.test_decide_reads_every_test_of_the_register_whose_verdicts_differ_and_refuses_none):
+                                 self.test_decide_reads_every_test_of_the_register_whose_verdicts_differ_and_refuses_none,
+                                 BatsCorpus("test_every_candidate_of_every_suite_is_read_by_bats").test_every_candidate_of_every_suite_is_read_by_bats,
+                                 *(case.setUp for case in deriving)):
                         with self.assertRaises(unittest.SkipTest) as cm:
                             test()
-                        self.assertIn("NOT RUN: bash 3.2.57(1)-release refuses `true |& cat`", str(cm.exception))
+                        self.assertIn("NOT RUN: bash %s %s" % expected, str(cm.exception))
                         self.assertIn("CI's Linux cells", str(cm.exception))
-            finally:
-                BatsGroundTruth._old_bash = previous
-        self.assertFalse(self.refusing_bash(), "the bash on PATH refuses the register's syntax: the register did not run here")
+                    self.test_the_agreement_message_names_every_shape_that_differs_with_both_verdicts()
+                    Population("test_a_dead_glob_beside_a_live_one_raises_naming_the_dead_one").setUp()
 
     def test_without_bats_the_agreement_half_skips_and_names_where_it_runs(self):
         # regression-1 of fork PR #778: absent bats is a skip that names CI's shell job and the versions the record stands on, never
-        # a pass that verified nothing
-        with unittest.mock.patch("shutil.which", return_value=None):
+        # a pass that verified nothing. The bash probe is held at "nothing lacking" for the test, since under a bash that lacks
+        # something the bash gate fires first and this message is never reached (round 3: under bash 3.2.57 this test failed on the
+        # gate's message, which has its own pin above)
+        with unittest.mock.patch.dict(_BASH_PROBE, {"shortfall": False}), unittest.mock.patch("shutil.which", return_value=None):
             for test in (self.test_the_record_is_what_bats_says_under_both_rewrites, self.test_decide_reads_every_test_of_the_register_whose_verdicts_differ_and_refuses_none):
                 with self.assertRaises(unittest.SkipTest) as cm:
                     test()
@@ -2254,7 +2514,7 @@ class BatsGroundTruth(unittest.TestCase):
         return cls._record
 
     def skip_without_bats(self):
-        self.skip_under_an_old_bash()
+        skip_unless_bash_serves(self)
         if not shutil.which("bats"):
             self.skipTest("bats is not on PATH: the record (bats %s) stands unverified here; %s" % (" and ".join(self.RECORDED_WITH), WHERE_BATS_RUNS))
 
@@ -2332,6 +2592,7 @@ class BatsCorpus(unittest.TestCase):
     SKIP = CORPUS_SKIP
 
     def test_every_candidate_of_every_suite_is_read_by_bats(self):
+        skip_unless_bash_serves(self)
         if not shutil.which("bats"):
             self.skipTest(self.SKIP)
         root, files = ROOT, suite_files()
@@ -2381,7 +2642,9 @@ class BatsCorpus(unittest.TestCase):
         self.assertEqual((env["HOME"], env["TMPDIR"]), (os.path.join(d, "home"), os.path.join(d, "tmp")))
 
     def test_without_bats_the_corpus_skips_and_names_where_it_runs(self):
-        with unittest.mock.patch("shutil.which", return_value=None):
+        # the bash probe held at "nothing lacking", as in the register's without-bats pin: the bash gate fires first under a bash
+        # that lacks something, and this is the message of the other gate
+        with unittest.mock.patch.dict(_BASH_PROBE, {"shortfall": False}), unittest.mock.patch("shutil.which", return_value=None):
             with self.assertRaises(unittest.SkipTest) as cm:
                 self.test_every_candidate_of_every_suite_is_read_by_bats()
         self.assertIn("shell job", str(cm.exception))
@@ -2409,6 +2672,7 @@ class BatsCorpus(unittest.TestCase):
                            ([ok, bad(None)], "blamed on tests/x.bats line None, outside the candidate's test"),
                            ([BatsRun("skipped", None, None, "ok 1 x # skip why", 0.0), ok], "the outcome was `skipped`"),
                            ([ok, BatsRun("no such test", None, None, "", 0.0)], "the outcome was `no such test`"),
+                           ([ok, BatsRun("no TAP", None, None, "Error: Duplicate test name(s) in file", 0.0)], "the outcome was `no TAP`"),
                            ([BatsRun("did not load", None, None, "", 0.0), bad(10)], "the outcome was `did not load`"),
                            ([ok, BatsRun("timed out", None, None, "1..1", 61.2)], "under `! false` bats gave no verdict on the test: the run was ended after 61 s with no verdict"),
                            ([BatsRun("no run", None, None, "the rewritten file does not parse under bash -n: x", 0.0), ok], "does not parse under bash -n"),
@@ -2490,6 +2754,9 @@ class BatsRoad(unittest.TestCase):
     POLL = ('@test "poll" {\n    while ! test -e "$TMPDIR/ready"; do sleep 0.1; done\n}\n'
             'teardown() {\n    echo torn > "$TMPDIR/torn"\n}\n')
 
+    def setUp(self):
+        skip_unless_bash_serves(self)
+
     def hanging_suite(self, d):
         """A tree under d holding tests/hang.bats (POLL); returns the tree."""
         tree = os.path.join(d, "tree")
@@ -2501,7 +2768,9 @@ class BatsRoad(unittest.TestCase):
     def test_run_test_alone_reads_what_bats_says_of_a_frame_a_skip_an_unloadable_file_and_a_missing_name(self):
         # the TAP reader against the bats on PATH: a failure inside a helper is blamed on the helper's line (the innermost frame),
         # a skipped test is no verdict, a file bash cannot load is `did not load` under both bats names for it, a name bats runs
-        # no test for is `no such test`, and a name holding ERE metacharacters and a `$` is matched literally, as written
+        # no test for is `no such test`, a file holding two tests of one name is refused by bats whole (`Error: Duplicate test
+        # name(s) in file`, no plan line: `no TAP`, with bats's words in the detail; the other test of that file runs), and a name
+        # holding ERE metacharacters and a `$` is matched literally, as written
         if not shutil.which("bats"):
             self.skipTest(CORPUS_SKIP)
         with tempfile.TemporaryDirectory() as d:
@@ -2511,7 +2780,13 @@ class BatsRoad(unittest.TestCase):
                         '@test "line start" {\n    true\n    ! true\n}\n@test "skipped one" {\n    skip "no reason"\n}\n@test "ok one" {\n    ! true\n    true\n}\n')
             with open(os.path.join(d, "tree", "tests", "bad.bats"), "w", encoding="utf-8") as f:
                 f.write('@test "bad" {\n    echo "\n}\n')
+            with open(os.path.join(d, "tree", "tests", "dup.bats"), "w", encoding="utf-8") as f:
+                f.write('@test "dup" {\n    ! true\n}\n@test "dup" {\n    true\n}\n@test "other" {\n    true\n}\n')
             tree = os.path.join(d, "tree")
+            run = run_test_alone(tree, "tests/dup.bats", "dup", d)
+            self.assertEqual(run.outcome, "no TAP", run.detail)
+            self.assertIn("Duplicate test name", run.detail)
+            self.assertEqual(run_test_alone(tree, "tests/dup.bats", "other", d).outcome, "ok")
             run = run_test_alone(tree, "tests/probe.bats", "helper (x) $HOME", d)
             self.assertEqual((run.outcome, run.line, run.file), ("not ok", 4, "tests/probe.bats"), run.detail)
             self.assertIn("from function `_h'", run.detail)
@@ -2560,8 +2835,8 @@ class BatsRoad(unittest.TestCase):
     # _end_group's wait returns at once and the KILL follows about 3 ms after the TERM, while the teardown's marker appears 0.9 to
     # 2.4 ms after the TERM; and with the KILL removed and one CPU the marker still never appeared, bats-exec-file reporting its
     # run directory gone (`bats.<pid>.out: No such file or directory`: the leader's EXIT cleanup removes BATS_RUN_TMPDIR while the
-    # test process is still in its exit trap). The reviewer ruled it carried here as an observation, not closed and not called a
-    # flake: the marker assertion stands as written, _end_group's claim that a teardown runs under TERM holds under the condition
+    # test process is still in its exit trap). The reviewer ruled it carried here as an observation, not closed and given no
+    # label: the marker assertion stands as written, _end_group's claim that a teardown runs under TERM holds under the condition
     # it was measured in (a CPU to run it), and the next red has this first sighting to compare against
     def test_a_run_past_the_bound_is_timed_out_with_its_teardown_run_and_no_process_of_it_left(self):
         # F2 of fork PR #871's commit-3 review: run_test_alone had no bound, so a rewrite that never terminates hung the oracle,
@@ -2708,8 +2983,9 @@ class BatsRoad(unittest.TestCase):
         # message says so (F2); a test declared `comment_form() { # @test` goes down the same road, its name matched by bats's `-f`
         # (tests-1: no such test before, when the module opened on the `@test` form alone); a helper ending in `! true` called by a
         # bare `! _h` is two candidates, each read (correctness-4 of round 1: the oracle's answer at the site fork PR #778's Scanner
-        # mis-classified, recorded here); a negated brace group whose first line holds a top-level `;` has its extent end at the
-        # `;`, and the rewritten file does not parse: undecided, by construction, with the cause named
+        # mis-classified, recorded here); a negated brace group whose line holds `;` operators is followed to its close, since bash
+        # reads none of them as the pipeline's end, and decided like any other (inert here; before fork PR #871's round 3 the extent
+        # ended at the first `;`, the rewritten file did not parse, and the candidate was undecided)
         if not shutil.which("bats"):
             self.skipTest(CORPUS_SKIP)
         text = ('@test "mid" {\n    ! true\n    true\n}\n'
@@ -2735,11 +3011,11 @@ class BatsRoad(unittest.TestCase):
         self.assertEqual([(x.test, x.verdict) for x in decisions],
                          [("mid", "inert"), ("last", "read"), ("head", "read"), ("later failure", "undecided"), ("subshell", "read"),
                           ("read in teardown", "undecided"), ("poll", "undecided"), ("comment_form", "inert"), ("bang helper", "read"),
-                          ("bang helper", "read"), ("group", "undecided")])
+                          ("bang helper", "read"), ("group", "inert")])
         self.assertEqual([(r.outcome, r.line) for r in decisions[8].runs], [("ok", None), ("not ok", 40)])   # bats blames the helper's line, the last it ran
         self.assertEqual([(r.outcome, r.line) for r in decisions[9].runs], [("not ok", 42), ("ok", None)])
-        self.assertIn("the rewritten file does not parse under bash -n", decisions[10].message)
-        self.assertEqual([r.outcome for r in decisions[10].runs], ["no run", "no run"])
+        self.assertEqual([s.strip() for s in decisions[10].rewritten], ["! true", "! false"])   # the whole group replaced
+        self.assertEqual([(r.outcome, r.line) for r in decisions[10].runs], [("ok", None), ("ok", None)])
         self.assertEqual([(r.outcome, r.line) for r in decisions[7].runs], [("ok", None), ("ok", None)])
         self.assertIn("tests/one.bats:34 in test 'comment_form': INERT", report(decisions[7]))
         self.assertEqual([(r.outcome, r.line) for r in decisions[1].runs], [("not ok", 7), ("ok", None)])
