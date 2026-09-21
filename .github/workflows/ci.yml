@@ -332,7 +332,7 @@ jobs:
         # is red too, naming the test or the leg; an empty roster prints "no legs in the roster" and exits 0 without
         # starting node --test, whose default glob would rerun the whole suite. Step seconds, job minutes and the job's
         # 40-minute cap:
-        # (measured on the runner at the pushed head: TO FILL).
+        # (measured on the runner at the first pushed head, whose only difference from this one is this sentence: 9 s for this step with the roster empty, the census and the pre-run checks over the 188 exclusions, in a job of 33 min 51 s, under the 40-minute cap; each PR that adds a leg states its own leg's numbers in its body).
         env:
           ROMP_BROWSER_LEGS_REQUIRE: "1"
         run: bash scripts/ci-browser-legs.sh
