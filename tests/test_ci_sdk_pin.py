@@ -621,19 +621,22 @@ STEP_KEY_PAD = "        "                                                     # 
 RUN_RE = re.compile(r"^        run:(.*)$", re.M)
 BLOCK_INDICATOR_RE = re.compile(r"^[ \t]*([|>])([+-]?)([0-9]?)[ \t]*(#.*)?$")
 UNNAMED = "(unnamed step)"
-# a command that runs pytest: `python -m pytest`, `python3.12 -m pytest`, a bare `pytest` or `py.test`, at command
-# position (the start of a command, or after `;`, `&`, `|`, `(`, so `&&` and `||` too), after any inline VAR=value
-# prefixes (read into the invocation's env). A `$PYTEST` variable, `uvx pytest`, `tox`, `uv run pytest` or a wrapper
-# script is NOT read as a command; a run line that mentions pytest and is neither a match nor a pip install line is
-# reported as `unparsed` and reds the population test until the parser reads it (or the mention moves to a comment),
-# so the parser's limits fail loud rather than green.
-PYTEST_CMD_RE = re.compile(r"(?:^[ \t]*|[;&|(][ \t]*)(?P<env>(?:[A-Za-z_][A-Za-z0-9_]*=\S*[ \t]+)*)"
-                           r"(?:\S*/)?(?:python[0-9.]*[ \t]+-m[ \t]+pytest|pytest|py\.test)(?=\s|$)(?P<args>[^\n]*)")
+# a command that runs pytest: `python -m pytest`, `python3.12 -m pytest`, a bare `pytest` or `py.test`, at the START of a
+# command (the run line is split into its commands first, _shell_commands: at `&&`, `||`, `;`, `|`, `&`, a subshell's
+# parentheses, whatever the spacing, and cut at a comment), after any inline VAR=value prefixes (read into the
+# invocation's env); the command's own arguments are the rest of that command and nothing after it. Until 2026-09-21 the
+# regex took the rest of the LINE as the arguments and the split cut only at an operator with whitespace before it, so a
+# second `python -m pytest` on the line was never read, and its flag, or one in a trailing comment, read as the first
+# command's. A `$PYTEST` variable, `uvx pytest`, `tox`, `uv run pytest` or a wrapper script is NOT read as a command; a
+# command that mentions pytest and is neither a match nor a pip install line is reported as `unparsed` and reds the
+# population test until the parser reads it (a mention in a comment is cut with the comment), so the parser's limits
+# fail loud rather than green.
+PYTEST_CMD_RE = re.compile(r"^(?P<env>(?:[A-Za-z_][A-Za-z0-9_]*=\S*[ \t]+)*)"
+                           r"(?:\S*/)?(?:python[0-9.]*[ \t]+-m[ \t]+pytest|pytest|py\.test)(?=\s|$)(?P<args>.*)$")
 # a mention: the word in any case (so `$PYTEST` and `${PYTEST_CMD}` count), or py.test; a mention that is not a command
 # hit and not a pip line is `unparsed`
 PYTEST_WORD_RE = re.compile(r"\bpytest\b|\bpy\.test\b|\$\{?pytest", re.I)
 PIP_INSTALL_RE = re.compile(r"\bpipx?\b.*\binstall\b")
-SHELL_SPLIT_RE = re.compile(r"[ \t](?:&&|\|\||[;|&])(?:[ \t]|$)")           # where a command's own arguments end
 INLINE_ENV_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=(\S*)")
 SWITCH = "ROMP_SDK_REQUIRE"
 FLAG_SPELLING = "-p no:anyio"
@@ -685,6 +688,64 @@ def _env_block(text, env_indent):
 
 def _line_of(src, offset):
     return src.count("\n", 0, offset) + 1
+
+
+def _shell_commands(text):
+    """The commands of one shell line, in order, each stripped, empty ones dropped: the line split at its operators
+    outside quotes (`&&`, `||`, `;`, `|`, a lone `&`; not the `&` of a redirection, `2>&1`, `>&2`, `&>`), at a `(` or
+    `)` that is a subshell's own boundary (`$(...)` is kept whole, at any depth), and cut at an unquoted `#` at the
+    start or after whitespace (a comment: what follows it is not a command's arguments, so a flag spelled in a comment
+    is not passed). A single-quoted or double-quoted span holds no operator and no comment; a backslash outside single
+    quotes escapes the next character. Word splitting is not attempted: the caller reads each command's text."""
+    out, cur, i, n = [], [], 0, len(text)
+    quote, depth = None, 0
+    while i < n:
+        ch = text[i]
+        if quote:
+            cur.append(ch)
+            if ch == "\\" and quote == '"' and i + 1 < n:
+                cur.append(text[i + 1])
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch in "'\"":
+            quote = ch
+            cur.append(ch)
+            i += 1
+            continue
+        if ch == "\\" and i + 1 < n:
+            cur.append(text[i:i + 2])
+            i += 2
+            continue
+        if ch == "#" and (i == 0 or text[i - 1] in " \t"):
+            break
+        if text.startswith("$(", i):
+            depth += 1
+            cur.append("$(")
+            i += 2
+            continue
+        if depth:
+            depth -= ch == ")"
+            cur.append(ch)
+            i += 1
+            continue
+        if text.startswith(("&&", "||"), i):
+            out.append("".join(cur))
+            cur = []
+            i += 2
+            continue
+        if ch in ";|()" or (ch == "&" and (i == 0 or text[i - 1] not in "<>") and text[i + 1:i + 2] != ">"):
+            out.append("".join(cur))
+            cur = []
+            i += 1
+            continue
+        cur.append(ch)
+        i += 1
+    out.append("".join(cur))
+    return [c for c in (c.strip() for c in out) if c]
 
 
 def _paragraphs(raw):
@@ -751,10 +812,12 @@ def _step_run(stext):
 def pytest_invocations(src):
     """Every pytest invocation in a workflow's text, as dicts: job, step (the `name:`, else "(unnamed step)"), line (in
     the file), env (the workflow's env updated by the job's, by the step's, then by VAR=value prefixes on the command
-    itself: the scopes GitHub Actions merges, later overriding earlier), args (the command's own arguments, cut at the
-    next shell operator), run (the step's whole run text), job_run (every run text in the job) and cwd (the step's
-    working-directory, else the job's default, else None); plus, for a run line that mentions pytest without being a
-    command the parser reads or a pip install line, a dict with `unparsed` set to the reason and args None.
+    itself: the scopes GitHub Actions merges, later overriding earlier), args (the command's own arguments: the rest
+    of ITS command, the line split into commands at its operators and cut at a comment first by _shell_commands, so a
+    line running two pytest commands is two invocations at one line and a flag in the next command or in a comment is
+    not this one's), run (the step's whole run text), job_run (every run text in the job) and cwd (the step's
+    working-directory, else the job's default, else None); plus, for a command that mentions pytest without being one
+    the parser reads or a pip install line, a dict with `unparsed` set to the reason and args None.
     A text parse over the file's own indentation (top-level keys at column 0, jobs at 2, job keys at 4, steps at 6,
     step keys at 8, env keys and run block lines at 10), the way this file's other pins and tests/test_ci_bats_bound.py
     read it: no YAML library in the test deps. The run forms read are _step_run's; comment lines are skipped; a line
@@ -810,14 +873,20 @@ def pytest_invocations(src):
                 if not PYTEST_WORD_RE.search(cmd):
                     continue
                 base = {"job": job, "step": step, "line": at, "run": run_text, "cwd": cwd, "cmd": cmd}
-                hits = [] if unreadable else list(PYTEST_CMD_RE.finditer(cmd))
-                for hit in hits:
-                    inv_env = dict(env)
-                    inv_env.update(INLINE_ENV_RE.findall(hit.group("env")))
-                    parsed.append(dict(base, env=inv_env, args=SHELL_SPLIT_RE.split(hit.group("args"), 1)[0], unparsed=None))
-                if not hits and not PIP_INSTALL_RE.search(cmd):
-                    parsed.append(dict(base, env=dict(env), args=None,
-                                       unparsed=unreadable or "a form the parser does not read as a command"))
+                if unreadable:
+                    if not PIP_INSTALL_RE.search(cmd):
+                        parsed.append(dict(base, env=dict(env), args=None, unparsed=unreadable))
+                    continue
+                for command in _shell_commands(cmd):
+                    if not PYTEST_WORD_RE.search(command):
+                        continue
+                    hit = PYTEST_CMD_RE.match(command)
+                    if hit:
+                        inv_env = dict(env)
+                        inv_env.update(INLINE_ENV_RE.findall(hit.group("env")))
+                        parsed.append(dict(base, env=inv_env, args=hit.group("args"), unparsed=None))
+                    elif not PIP_INSTALL_RE.search(command):
+                        parsed.append(dict(base, env=dict(env), args=None, unparsed="a form the parser does not read as a command"))
         for inv in parsed:
             inv["job_run"] = "".join(job_runs)
         found.extend(parsed)
@@ -1143,6 +1212,73 @@ class PopulationCheckReds(unittest.TestCase):
         # an expression-valued switch is never read as 1: the safe side
         found = {i["step"]: i for i in pytest_invocations(self._with_shell_job_env(src, "${{ matrix.require }}"))}
         self.assertEqual(verdict(found["Literal (pytest)"]), "unlisted", _describe(found["Literal (pytest)"]))
+
+    def test_a_second_pytest_command_on_the_same_run_line_is_read_and_judged_on_its_own(self):
+        # Until 2026-09-21 the command regex took the rest of the line as the first command's arguments, so a second
+        # `python -m pytest` on the line was never an invocation, and with no whitespace before the operator (`-q;`,
+        # `-q&&`) or with a `#` comment the split never cut, so a flag spelled in the NEXT command or in the comment
+        # read as the first command's (probed by execution: `ok`, one invocation, where a red was owed). Now the line
+        # is split at its operators first (_shell_commands) and each command is judged alone: two invocations at the
+        # same line, the flagged one ok under the job's env and the unflagged one unlisted, whatever the spacing.
+        for label, op in (("spaced &&", " && "), ("spaced ;", " ; "), ("unspaced ;", ";"), ("unspaced &&", "&&"),
+                          ("spaced ||", " || "), ("a pipe", " | ")):
+            with self.subTest(form=label):
+                line = "python -m pytest tests/test_a.py -q -p no:anyio%spython -m pytest tests/test_b.py -q" % op
+                src = self._with_shell_job_env(self._with_step_in_shell_job("      - name: Two (pytest)\n        run: %s\n" % line)[0])
+                new = self._new(src)
+                self.assertEqual([(verdict(i), i["args"].strip()) for i in new],
+                                 [("ok", "tests/test_a.py -q -p no:anyio"), ("unlisted", "tests/test_b.py -q")],
+                                 "%s: two commands on one line are two invocations, each with its own arguments: %r"
+                                 % (label, [_describe(i) for i in new]))
+                self.assertEqual({src.splitlines()[i["line"] - 1].strip() for i in new}, {"run: " + line}, "both at the line that holds them")
+                self.assertIn("lacks -p no:anyio", _describe(new[1]))
+        # the first command unflagged and the second flagged, unspaced: the flag is the second's, not the first's
+        src, first = self._with_step_in_shell_job("      - name: Two (pytest)\n        run: python -m pytest tests/test_a.py -q;python -m pytest tests/test_b.py -q -p no:anyio\n")
+        new = self._new(self._with_shell_job_env(src))
+        self.assertEqual([(verdict(i), i["args"].strip()) for i in new], [("unlisted", "tests/test_a.py -q"), ("ok", "tests/test_b.py -q -p no:anyio")])
+
+    def test_a_flag_spelled_in_a_trailing_comment_is_not_the_commands(self):
+        line = "python -m pytest tests/test_a.py -q  # TODO pass -p no:anyio once anyio is installed"
+        src, first = self._with_step_in_shell_job("      - name: Commented (pytest)\n        run: %s\n" % line)
+        new = self._new(self._with_shell_job_env(src))
+        self.assertEqual([(verdict(i), i["args"].strip()) for i in new], [("unlisted", "tests/test_a.py -q")],
+                         "the comment is cut from the command's arguments: %r" % [_describe(i) for i in new])
+        self.assertIn("lacks -p no:anyio", _describe(new[0]))
+        # a `#` that is not preceded by whitespace is not a comment (an argument's own character)
+        src, first = self._with_step_in_shell_job("      - name: Hash (pytest)\n        run: python -m pytest tests/test_a.py -q -k a#b -p no:anyio\n")
+        self.assertEqual([(verdict(i), i["args"].strip()) for i in self._new(self._with_shell_job_env(src))], [("ok", "tests/test_a.py -q -k a#b -p no:anyio")])
+
+    def test_a_redirection_a_quoted_operator_and_a_subshell_keep_the_command_whole(self):
+        for label, line, args in (
+                ("2>&1 then a pipe to tee", "python -m pytest tests/test_a.py -q -p no:anyio 2>&1 | tee log.txt", "tests/test_a.py -q -p no:anyio 2>&1"),
+                ("a quoted ; inside -k", 'python -m pytest tests/test_a.py -q -k "a; b" -p no:anyio', 'tests/test_a.py -q -k "a; b" -p no:anyio'),
+                ("a single-quoted && inside -k", "python -m pytest tests/test_a.py -q -k 'a && b' -p no:anyio", "tests/test_a.py -q -k 'a && b' -p no:anyio"),
+                ("a subshell", "(cd tests && python -m pytest test_a.py -q -p no:anyio)", "test_a.py -q -p no:anyio"),
+                ("a $( ) substitution in an argument", "python -m pytest tests/test_a.py -q --basetemp=$(mktemp -d) -p no:anyio", "tests/test_a.py -q --basetemp=$(mktemp -d) -p no:anyio")):
+            with self.subTest(form=label):
+                src, first = self._with_step_in_shell_job("      - name: Whole (pytest)\n        run: %s\n" % line)
+                new = self._new(self._with_shell_job_env(src))
+                self.assertEqual([(verdict(i), i["args"].strip()) for i in new], [("ok", args)],
+                                 "%s: one command, its arguments whole: %r" % (label, [_describe(i) for i in new]))
+        # the flag inside a quoted argument is not the flag: keyed on the spelling in the command's own arguments
+        src, first = self._with_step_in_shell_job('      - name: Quoted (pytest)\n        run: python -m pytest tests/test_a.py -q -k "-p no:anyio"\n')
+        self.assertEqual([verdict(i) for i in self._new(self._with_shell_job_env(src))], ["unlisted"])
+
+    def test_the_command_split_reads_operators_quotes_comments_and_redirections(self):
+        for line, segments in (
+                ("a && b || c ; d | e & f", ["a", "b", "c", "d", "e", "f"]),
+                ("a&&b;c|d", ["a", "b", "c", "d"]),
+                ("a 2>&1 | b >&2 &> log", ["a 2>&1", "b >&2 &> log"]),
+                ("a 'x; y' \"p && q\" ; b", ["a 'x; y' \"p && q\"", "b"]),
+                ("a \\; b", ["a \\; b"]),
+                ("a --x=$(b; c) ; d", ["a --x=$(b; c)", "d"]),
+                ("(a && b) ; c", ["a", "b", "c"]),
+                ("a -q  # b ; c", ["a -q"]),
+                ("# a ; b", []),
+                ("a -k x#y ; b", ["a -k x#y", "b"]),
+                ("", [])):
+            with self.subTest(line=line):
+                self.assertEqual(_shell_commands(line), segments)
 
     def test_a_pytest_mention_the_parser_does_not_read_as_a_command_is_unparsed_and_named(self):
         # the parser's limits fail loud: each form it does not read is red until it is read (or moved to a comment)
