@@ -53,10 +53,16 @@ is Chromium; a leg's Firefox and WebKit runs live elsewhere (a served pytest ste
 and a leg that launches on its own is refused from the roster until it takes the shared
 launcher; after the run a skipped test, or a leg that registered no test, is red. Every other
 browser leg is listed in `vscode-extension/ci-browser-legs-excluded.txt`
-with a reason. A PR that wants its legs run moves them to the roster (a leg already in the
-exclusions loses its line there in the same commit), and `tools/ci-browser-legs.test.mjs`
-holds every browser leg in the tree to one file or the other and fails on a line whose source
-is gone.
+with a reason. What a browser leg is, `vscode-extension/scripts/browser-legs-census.mjs` reads
+from each test module's tree with the TypeScript compiler (a call of the shared launcher through
+its import under any name, a playwright package named by any specifier, or a driver string that
+loads one; a form it cannot classify is refused with file and line). A PR that wants its legs
+run moves them to the roster (a leg already in the exclusions loses its line there in the same
+commit). `ui/webview/ci-browser-legs-census.test.ts`, in the extension's `npm test`, holds every
+browser leg in the tree to one file or the other and fails on a line whose source is gone, and
+the step's script checks the same before it runs a leg; `tools/ci-browser-legs.test.mjs`, which
+CI's shell job runs without `npm ci`, holds the two files' shape and reasons and runs the script
+over synthetic trees.
 
 `tests/gitleaks-config.bats` checks the secret-scanning rules in `.gitleaks.toml`
 against the real scanner and skips itself when `gitleaks` is not installed

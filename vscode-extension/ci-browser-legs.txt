@@ -11,13 +11,20 @@
 #   out-tests/ui/webview/gear-sub-focus-browser.test.js
 # Blank lines and lines starting with # are ignored. A PR that wants its legs run adds them as lines here and puts
 # the step's measured seconds in its body. A leg the job does not run is listed in ci-browser-legs-excluded.txt
-# with a reason; every browser leg in the tree is in exactly one of the two files, never neither
-# (tools/ci-browser-legs.test.mjs and scripts/ci-browser-legs.sh hold that; a line whose source moved or was
-# deleted turns both red). A leg listed here launches through inBrowser, called by that name, with no launch or skip
-# of its own: only inBrowser reads the switch, so a launch or a skip of the leg's own stands outside it (a private
-# skip stays a skip, and a private launch that fails is never the failure naming the switch), and both checkers
-# refuse its line until it launches through inBrowser alone. After the run, a skipped test or a leg that registered
-# no test is red: either is coverage the step would claim and not have. The gating job runs a
+# with a reason; every browser leg in the tree is in exactly one of the two files, never neither. What a browser
+# leg is, the census scripts/browser-legs-census.mjs reads from each test module's tree with the TypeScript
+# compiler (a call of the shared launcher through its import under any binding, a playwright package named by any
+# specifier, or a driver string that loads one; a form it cannot classify is refused with file and line);
+# ui/webview/ci-browser-legs-census.test.ts (the vscode-extension job) holds the two files to it and
+# scripts/ci-browser-legs.sh checks the same before it runs a leg, while tools/ci-browser-legs.test.mjs (the Shell
+# job, no compiler) holds the files' shape; a line whose source moved or was deleted turns all three red. A leg listed
+# here passes the roster gate the census reads: it calls inBrowser through its import of ui/webview/real-viewer-leg.ts
+# (an alias is a call), loads no playwright itself, holds no launch, skip or todo of its own, and drives no child
+# process: only inBrowser reads the switch, so a launch or a skip of the leg's own stands outside it (a private
+# skip stays a skip, and a private launch that fails is never the failure naming the switch), and the checkers
+# refuse its line with the gap the census read until it launches through inBrowser alone (a shared call inside a
+# try with a catch clause is admitted; the census test prints how many there are). After the run, a skipped test or
+# a leg that registered no test is red: either is coverage the step would claim and not have. The gating job runs a
 # rostered leg in the Chromium it installs; a leg's Firefox and WebKit runs live elsewhere (a served pytest step, a
-# local run), and a line whose source names another engine outside a comment is refused. A leg already in
+# local run), and a line whose source reaches another engine is refused. A leg already in
 # ci-browser-legs-excluded.txt is moved, not copied: its line there goes in the same commit as its line here arrives.

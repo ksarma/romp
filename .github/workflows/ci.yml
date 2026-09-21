@@ -319,12 +319,15 @@ jobs:
         # leg that cannot launch fails naming the switch and the reason, so a runner that lost its browser turns this
         # step red rather than green with the coverage gone (the ROMP_UI_BENCH_REQUIRE stance below), and the script
         # prints "the runner lost its browser: check the Chromium install step" beside the failing leg. Only inBrowser
-        # reads the switch, so the script refuses a roster line whose source does not launch through it (no inBrowser(
-        # call by that name, or a launch or skip of the leg's own: a private skip stays a skip, and a private launch
-        # that fails is never the failure naming the switch). The roster is the file each PR adds
-        # its legs to, one compiled bundle path per line; a leg the job does not run is in ci-browser-legs-excluded.txt
-        # with a reason, and tools/ci-browser-legs.test.mjs holds every browser leg in the tree to one file or the
-        # other. The step sits directly after the Chromium install with nothing before the Test step moved, so
+        # reads the switch, so the script refuses a roster line whose source does not launch through it (no call of
+        # inBrowser through its import, or a playwright, launch, skip or todo of the leg's own: a private skip stays a
+        # skip, and a private launch that fails is never the failure naming the switch). The roster is the file each PR
+        # adds its legs to, one compiled bundle path per line; a leg the job does not run is in ci-browser-legs-excluded.txt
+        # with a reason. What a browser leg is, scripts/browser-legs-census.mjs reads from each test module's tree with
+        # the TypeScript compiler this job's npm ci installs; ui/webview/ci-browser-legs-census.test.ts, in this job's
+        # Test step, holds every browser leg in the tree to one file or the other, and the script checks the same here
+        # before it runs a leg (tools/ci-browser-legs.test.mjs, in the shell job, holds the files' shape without the
+        # compiler). The step sits directly after the Chromium install with nothing before the Test step moved, so
         # plans/markdown-viewer.md's CI sentence and the pin that reads it (tools/markdown-viewer-plan-gate-adopt.test.mjs)
         # stay true. The script checks before node --test that every roster line's bundle is under out-tests/ (the
         # Test step's npm test built it; the Build step writes dist/ only) and that the roster and the tree agree, a

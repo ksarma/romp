@@ -10,14 +10,26 @@
 #   - a line in both files, a duplicate line, an exclusions line with no reason, a line naming no browser leg: fix it;
 #   - a malformed line (trailing whitespace or a carriage return counts): printed with the whitespace visible, and the leg
 #     it names is reported as named by that line, not as missing from both files;
-#   - a roster line whose source does not launch through the one shared launcher: a rostered leg imports
-#     ./real-viewer-leg and calls inBrowser( by that name, and holds no .launch( and no .skip( of its own on a code
-#     line. Only inBrowser reads the switch, so a launch or a skip of the leg's own stands outside it: a private skip
-#     stays a skip, and a private launch that fails is never the failure naming the switch, which the step's red relies
-#     on. The check reads the text (a call under an import alias is not read as an inBrowser( call), so an aliased leg
-#     is refused until it calls inBrowser( by that name;
-#   - a roster line whose source names Firefox or WebKit outside a comment: the gating job installs Chromium only;
+#   - a roster line whose source does not pass the roster gate, with the gap the census read: it never imports the shared
+#     launcher, or imports it and never calls inBrowser through that import, or loads playwright itself, or holds a launch
+#     of its own, or drives playwright from a child process, or holds a skip or todo of its own. Only inBrowser reads the
+#     switch, so a launch or a skip of the leg's own stands outside it: a private skip stays a skip, and a private launch
+#     that fails is never the failure naming the switch, which the step's red relies on. A shared call inside a try with
+#     a catch clause is admitted (the census reports it; the census test prints the count);
+#   - a roster line whose source reaches Firefox or WebKit: the gating job installs Chromium only;
 #   - a roster line whose bundle is not under out-tests/: the Test step's npm test builds it (node esbuild.js --tests).
+# THE CENSUS is scripts/browser-legs-census.mjs, run once here (--tsv) for the population and every per-line verdict: it
+# reads each test module's tree with the TypeScript compiler (a leg calls the shared launcher through its import under
+# any binding, or names a playwright package by any specifier, or holds a driver string that does; engines and launches
+# from playwright-derived expressions; skips and todos from the tree, so a comment holds none) and REFUSES, with file and
+# line, a form it cannot classify, on which this script exits 1 having judged nothing. The compiler lives under
+# vscode-extension/node_modules, present in the vscode-extension job after its npm ci; without it the census exits 1
+# naming CI's Shell job and this script stops the same way. ui/webview/ci-browser-legs-census.test.ts (the job's test
+# leg) holds the roster plus the exclusions to the census and runs the planted forms; tools/ci-browser-legs.test.mjs
+# (the Shell job, no node_modules) holds the parse-free checks and runs this script over synthetic trees with a stub
+# node that answers the census call from a table, so what it executes is this script's reading of the census, not the
+# census. `--list-legs` prints the census's legs; `--check` runs the pre-run checks alone and starts no node --test
+# (it does not check that the bundles are built, which the step's run does).
 # After node --test it reads the run's TAP record: a test skipped under the switch is red too, with the skipped tests
 # named as node names them, the switch's state in the run and the rostered sources whose text holds each name (node's
 # TAP escaping undone), since a skip here is coverage the step claims and does not have (with the switch unset, as a
@@ -26,8 +38,7 @@
 # read green with the leg's coverage gone); and a failed test whose error names the switch (inBrowser could not launch)
 # is printed
 # beside its leg, read from the record's location line, with the remedy: the runner lost its browser, check the Chromium
-# install step. The census rule is the one tools/ci-browser-legs.test.mjs states; that test runs `--list-legs` here and holds
-# the two to the same set, and runs the checks above on synthetic trees. An empty roster prints "no legs in the roster"
+# install step. An empty roster prints "no legs in the roster"
 # and exits 0 without starting node --test: with no file arguments node --test runs its default glob, the whole suite
 # again.
 set -euo pipefail
@@ -36,51 +47,36 @@ ROOT=$(cd .. && pwd)
 ROSTER=ci-browser-legs.txt
 EXCLUDED=ci-browser-legs-excluded.txt
 SWITCH=ROMP_BROWSER_LEGS_REQUIRE
+CENSUS=scripts/browser-legs-census.mjs
 # The switch's state in this run, printed by the messages after node --test: the step sets it to 1; a local run may not,
 # and a skip with it unset is inBrowser skipping as designed, so the remedy differs.
 if [ -n "${!SWITCH:-}" ]; then switch_state="$SWITCH=${!SWITCH}"; else switch_state="$SWITCH unset"; fi
 
-# A browser leg: a test module esbuild's test build bundles (a .test.ts directly in vscode-extension/src, ui or ui/webview)
-# that, on a line that is not a // comment, requires or imports the "playwright" package, or imports ./real-viewer-leg and
-# calls its inBrowser(. Named by the bundle path the roster uses: out-tests/<dir>/<name>.test.js.
-code_of() { grep -v '^[[:space:]]*//' "$1" || [ $? -eq 1 ]; }
-is_leg() {
-  local code
-  code=$(code_of "$1")
-  # here-strings, not pipes: under pipefail a printf whose reader (grep -q) stops at the first match fails the pipeline
-  if grep -qE '\([[:space:]]*"playwright"[[:space:]]*\)|from[[:space:]]+"playwright"' <<<"$code"; then return 0; fi
-  grep -q '"\./real-viewer-leg"' <<<"$code" && grep -q 'inBrowser(' <<<"$code"
-}
-# The gap between the leg and the one shared launcher, printed; nothing when the leg launches through it. A rostered leg
-# imports ./real-viewer-leg and calls inBrowser( by that name on a line that is not a // comment, and holds no .launch(
-# and no .skip( of its own on such a line: inBrowser is the one launch that reads the switch, and a private launch or
-# skip stands outside it. The check is textual: a call under an import alias (inBrowser as <alias>) is not read as an
-# inBrowser( call. tools/ci-browser-legs.test.mjs's launchesShared states the same rule.
-shared_launch_gap() {
-  local code
-  code=$(code_of "$1")
-  if ! grep -q '"\./real-viewer-leg"' <<<"$code" || ! grep -q 'inBrowser(' <<<"$code"; then printf '%s' "no inBrowser( call beside an import of ./real-viewer-leg; a call under an import alias is not read as one"; return 0; fi
-  if grep -q '\.launch(' <<<"$code"; then printf '%s' "holds a launch of its own (.launch( on a code line)"; return 0; fi
-  if grep -q '\.skip(' <<<"$code"; then printf '%s' "holds a skip of its own (.skip( on a code line)"; return 0; fi
-}
-# The engines other than Chromium the leg names outside comments ("firefox"/"webkit", pw.firefox/pw.webkit), joined by " and ".
-other_engines() {
-  local code n=""
-  code=$(code_of "$1")
-  if grep -qE '"firefox"|\.firefox\.' <<<"$code"; then n="Firefox"; fi
-  if grep -qE '"webkit"|\.webkit\.' <<<"$code"; then n="${n:+$n and }WebKit"; fi
-  printf '%s' "$n"
-}
-census() {
-  local dir f rel
-  for dir in vscode-extension/src ui ui/webview; do
-    for f in "$ROOT/$dir"/*.test.ts; do
-      [ -e "$f" ] || continue
-      if is_leg "$f"; then rel=${f#"$ROOT/"}; printf 'out-tests/%s.test.js\n' "${rel%.test.ts}"; fi
-    done
-  done | sort
-}
+# The census, once: one line per test module read, bundle TAB 1|0 (a browser leg or not) TAB the roster gap (- when the
+# leg passes the gate; for a module that is not a leg, the launcher import it never calls, or -) TAB the engines other
+# than Chromium it reaches (- when none) TAB its class. Exit 2 is a refusal (the lines above it name file and line);
+# any other non-zero exit is the census not running (the compiler absent); either way nothing is judged.
+census_err=$(mktemp)
+census_rc=0
+census_tsv=$(node "$CENSUS" --tsv 2>"$census_err") || census_rc=$?
+if [ "$census_rc" -ne 0 ]; then
+  cat "$census_err" >&2; rm -f "$census_err"
+  if [ "$census_rc" -eq 2 ]; then
+    echo "ci-browser-legs: the census refused a form it cannot classify (above, with file and line): rewrite that form, or teach $CENSUS to read it; nothing else was judged and no leg ran" >&2
+  else
+    echo "ci-browser-legs: the census did not run (exit $census_rc, above), so nothing was judged and no leg ran" >&2
+  fi
+  exit 1
+fi
+rm -f "$census_err"
+census_field() { awk -v k="$1" -v f="$2" -F '\t' '$1 == k { print $f; exit }' <<<"$census_tsv"; }
+is_leg() { [ "$(census_field "$1" 2)" = "1" ]; }
+gap_of() { local g; g=$(census_field "$1" 3); if [ "$g" != "-" ]; then printf '%s' "$g"; fi; return 0; }
+engines_of() { local e; e=$(census_field "$1" 4); if [ "$e" != "-" ]; then printf '%s' "$e"; fi; return 0; }
+census() { awk -F '\t' '$2 == "1" { print $1 }' <<<"$census_tsv"; }
 if [ "${1:-}" = "--list-legs" ]; then census; exit 0; fi
+check_only=0
+if [ "${1:-}" = "--check" ]; then check_only=1; fi
 
 for f in "$ROSTER" "$EXCLUDED"; do
   if [ ! -f "$f" ]; then echo "ci-browser-legs: $f is not in vscode-extension/, where the roster and the exclusions are read from: restore it" >&2; exit 1; fi
@@ -116,12 +112,12 @@ while IFS= read -r line || [ -n "$line" ]; do
   roster_seen="$roster_seen$line	$n"$'\n'
   src=$(source_of "$line")
   if [ ! -f "$src" ]; then red "$ROSTER line $n: '$line' names ${src#"$ROOT/"}, which is not in the tree (the source moved or was deleted): fix the roster line"; continue; fi
-  if ! is_leg "$src"; then red "$ROSTER line $n: '$line' names no browser leg (${src#"$ROOT/"} reaches no browser): remove the line"; continue; fi
-  gap=$(shared_launch_gap "$src")
+  gap=$(gap_of "$line")
+  if ! is_leg "$line"; then red "$ROSTER line $n: '$line' names no browser leg: ${src#"$ROOT/"} ${gap:-reaches no browser (the census rule in $CENSUS): remove the line}"; continue; fi
   if [ -n "$gap" ]; then red "$ROSTER line $n: '$line' does not launch through the one shared launcher ($gap): only inBrowser reads $SWITCH, so a launch or a skip of the leg's own stands outside the switch (a private skip stays a skip; a private launch that fails is never the failure naming the switch): launch through inBrowser (ui/webview/real-viewer-leg.ts), with no launch or skip of the leg's own, before rostering it"; continue; fi
-  engines=$(other_engines "$src")
-  if [ -n "$engines" ]; then red "$ROSTER line $n: '$line' names $engines outside a comment; the gating job installs Chromium only, so under the switch that launch is red: keep the leg in $EXCLUDED with that reason"; continue; fi
-  if [ ! -f "$line" ]; then red "$ROSTER line $n: '$line' is not under out-tests/ (the Test step's npm test builds it; locally, node esbuild.js --tests): build the bundles before this step"; continue; fi
+  engines=$(engines_of "$line")
+  if [ -n "$engines" ]; then red "$ROSTER line $n: '$line' reaches $engines; the gating job installs Chromium only, so under the switch that launch is red: keep the leg in $EXCLUDED with that reason"; continue; fi
+  if [ "$check_only" -eq 0 ] && [ ! -f "$line" ]; then red "$ROSTER line $n: '$line' is not under out-tests/ (the Test step's npm test builds it; locally, node esbuild.js --tests): build the bundles before this step"; continue; fi
   legs+=("$line")
 done < "$ROSTER"
 
@@ -140,7 +136,7 @@ while IFS= read -r line || [ -n "$line" ]; do
   if [ -n "$at" ]; then red "$EXCLUDED line $n: '$bundle' is also $ROSTER line $at: a leg is in one file or the other, keep one"; continue; fi
   src=$(source_of "$bundle")
   if [ ! -f "$src" ]; then red "$EXCLUDED line $n: '$bundle' names ${src#"$ROOT/"}, which is not in the tree (the source moved or was deleted): fix the line"; continue; fi
-  if ! is_leg "$src"; then red "$EXCLUDED line $n: '$bundle' names no browser leg (${src#"$ROOT/"} reaches no browser): remove the line"; fi
+  if ! is_leg "$bundle"; then gap=$(gap_of "$bundle"); red "$EXCLUDED line $n: '$bundle' names no browser leg: ${src#"$ROOT/"} ${gap:-reaches no browser (the census rule in $CENSUS): remove the line}"; fi
 done < "$EXCLUDED"
 
 while IFS= read -r leg; do
@@ -156,6 +152,7 @@ while IFS= read -r leg; do
 done < <(census)
 
 if [ "$fail" -ne 0 ]; then echo "ci-browser-legs: the roster and the tree disagree (above); no leg ran" >&2; exit 1; fi
+if [ "$check_only" -eq 1 ]; then echo "ci-browser-legs: the roster and the tree agree: ${#legs[@]} rostered, $(census | awk 'END { print NR }') browser legs in the census (--check judges the two files against the tree and starts no node --test; the step's run also checks that each rostered bundle is built under out-tests/)"; exit 0; fi
 
 if [ "${#legs[@]}" -eq 0 ]; then echo "no legs in the roster"; exit 0; fi
 # The run's TAP record goes to a file beside the spec output on stdout, for the skip check below.

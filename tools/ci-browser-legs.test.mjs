@@ -1,45 +1,42 @@
-// The shared browser-legs CI step, held to the tree. The gating vscode-extension job runs npm test before it installs a
-// browser, so every browser leg skips at launch there; the step "Browser legs (node --test over ci-browser-legs.txt)"
-// runs the legs named in vscode-extension/ci-browser-legs.txt after the job's Chromium install with
-// ROMP_BROWSER_LEGS_REQUIRE=1: the one shared launcher, inBrowser in ui/webview/real-viewer-leg.ts, reads the switch (any
-// non-empty value arms it) and under it a leg that cannot launch fails naming the switch and the reason instead of
-// skipping. This module holds, from the repo root and with no dependency installed (CI's shell job runs tools/*.test.mjs
-// with no npm ci):
+// The shared browser-legs CI step, held to the tree from CI's Shell job, which runs tools/*.test.mjs with no npm ci. The
+// gating vscode-extension job runs npm test before it installs a browser, so every browser leg skips at launch there; the
+// step "Browser legs (node --test over ci-browser-legs.txt)" runs the legs named in vscode-extension/ci-browser-legs.txt
+// after the job's Chromium install with ROMP_BROWSER_LEGS_REQUIRE=1: the one shared launcher, inBrowser in
+// ui/webview/real-viewer-leg.ts, reads the switch (any non-empty value arms it) and under it a leg that cannot launch fails
+// naming the switch and the reason instead of skipping.
+// WHICH GATE HOLDS WHICH. The census (what a browser leg IS) lives in vscode-extension/scripts/browser-legs-census.mjs and
+// reads each test module's tree with the TypeScript compiler, which is installed only under vscode-extension/node_modules.
+// So the completeness property, the roster PLUS vscode-extension/ci-browser-legs-excluded.txt EQUALS the tree's browser legs
+// with every roster line passing the roster gate and every reason's engine and driver words true of its source, is EXECUTED
+// in ui/webview/ci-browser-legs-census.test.ts, in the vscode-extension job's test leg (npm test), and by the script's own
+// pre-run check in that job; this module cannot run the census and does not claim it. A green here is the parse-free half:
 //   - the step exists once in that job, directly after the Chromium install step (by step NAMES), with the switch and
 //     the run line, in the job's default working directory, and no step before the Test step installs or caches
 //     Playwright (the property plans/markdown-viewer.md's CI sentence states and tools/markdown-viewer-plan-gate-adopt.test.mjs
 //     pins, restated here so the two pins cannot disagree);
-//   - completeness is derived, not asserted: the roster PLUS vscode-extension/ci-browser-legs-excluded.txt EQUALS the
-//     tree's browser legs, no line is in both, no line is duplicated, every line names an existing source that is a
-//     browser leg, every exclusions line carries a reason, and a reason that names Firefox or WebKit is true of the
-//     source (and a source that launches one of them says so), so a leg added later takes a verdict: roster or exclusions,
-//     never neither;
-//   - a rostered leg launches through the one shared launcher: its source imports ./real-viewer-leg and calls inBrowser(
-//     by that name on a code line, and holds no .launch( and no .skip( of its own on a code line. Only inBrowser reads
-//     the switch, so a launch or a skip of the leg's own stands outside it: a private skip stays a skip, and a private
-//     launch that fails is never the failure naming the switch, which the step's red relies on. The check is textual (a
-//     call under an import alias is not read as an inBrowser( call), so an aliased leg is refused until it calls
-//     inBrowser( by that name. A rostered leg names no engine but Chromium: the gating job runs a rostered leg in
-//     the Chromium it installs, and a leg's Firefox and WebKit runs live elsewhere (a served pytest step, a local run);
-//   - the script the step calls (vscode-extension/scripts/ci-browser-legs.sh) derives the same census (`--list-legs`,
-//     run here and compared), and, run on synthetic trees with a stub node on PATH, refuses a stale line, a leg in
-//     neither file, a leg in both, a line without a reason, a duplicate, a line naming no leg, a missing bundle, a
-//     malformed line (shown with its whitespace visible, the leg it names attributed to it), a leg that never calls
-//     inBrowser, a leg with a launch or a skip of its own beside inBrowser, and a leg naming Firefox, naming the line and the
-//     remedy; prints "no legs in the roster" on an empty roster without starting node; and after node --test turns a
-//     skipped test into a red naming the test, the switch's state in the run (set to 1 as the step has it, or unset as
-//     a local run may) and the rostered sources whose text holds its name with node's TAP escaping undone, turns a
-//     rostered leg that registered no test into a red naming the leg (node's record reports such a file as one passing
-//     test named by its path as node received it), prints the lost-browser remedy beside a leg whose failure names the switch, and passes
-//     node's own failure status through;
+//   - the vscode-extension job runs on every pull request: the workflow's pull_request trigger has no paths or paths-ignore
+//     filter and the job has no job-level if:, so the census test there gates every PR that could add a browser leg (the
+//     equality holds in that one job after the split, and this is the derivation that it is enough);
+//   - both files are well formed: every line is a bundle path (out-tests/<dir>/<name>.test.js), no line is duplicated, no
+//     line is in both files, every line names a source that exists in the tree, every exclusions line carries a reason
+//     with no em dash, and a reason that names Firefox or WebKit says the gating job installs Chromium only (whether the
+//     source reaches that engine, and whether a line names a browser leg at all, is the census test's to say);
+//   - the script the step calls (vscode-extension/scripts/ci-browser-legs.sh) exists, is executable, calls the census
+//     module once (--tsv) and node --test through xargs, and prints "no legs in the roster" on an empty roster; run on
+//     synthetic trees with a stub node on PATH that answers the census call from a TABLE this module writes (so what is
+//     executed here is the script's READING of a census, never the census), it refuses a stale line, a leg in neither
+//     file, a leg in both, a line without a reason, a duplicate, a line naming no leg, a missing bundle, a malformed line
+//     (shown with its whitespace visible, the leg it names attributed to it), a roster line whose census row carries a gap
+//     or an engine, naming the line, the census's sentence and the remedy; stops, judging nothing, when the census exits
+//     1 (no compiler) or 2 (a refusal, whose lines it prints); and after node --test turns a skipped test into a red
+//     naming the test, the switch's state in the run (set to 1 as the step has it, or unset as a local run may) and the
+//     rostered sources whose text holds its name with node's TAP escaping undone, turns a rostered leg that registered no
+//     test into a red naming the leg (node's record reports such a file as one passing test named by its path as node
+//     received it), prints the lost-browser remedy beside a leg whose failure names the switch, and passes node's own
+//     failure status through;
 //   - the phrase the script reads a lost browser by is the one inBrowser fails with in ui/webview/real-viewer-leg.ts, so
 //     a reword on either side is red here rather than a remedy dropped in silence.
-// THE CENSUS RULE (the script states the same one): a browser leg is a test module esbuild's test build bundles (a
-// .test.ts directly in vscode-extension/src, ui or ui/webview; esbuild.js testBuild reads those three directories) that,
-// on a line that is not a // comment, requires or imports the "playwright" package (`("playwright")` or `from
-// "playwright"`), or imports ./real-viewer-leg and calls its inBrowser(, the shared launcher. Its roster name is the
-// bundle esbuild writes: out-tests/<dir>/<name>.test.js (outbase is the repo root). Synthetic values only in the
-// script's trees. Run: node --test tools/ci-browser-legs.test.mjs
+// Synthetic values only in the script's trees. Run: node --test tools/ci-browser-legs.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -55,13 +52,16 @@ const CI = path.join(REPO, '.github', 'workflows', 'ci.yml');
 const ROSTER = 'ci-browser-legs.txt';
 const EXCLUDED = 'ci-browser-legs-excluded.txt';
 const SCRIPT = path.join(EXT, 'scripts', 'ci-browser-legs.sh');
+const CENSUS = path.join(EXT, 'scripts', 'browser-legs-census.mjs');
+const CENSUS_TEST = path.join(REPO, 'ui', 'webview', 'ci-browser-legs-census.test.ts');
+/** The census's home, named in every message here that stops where the parse begins. */
+const CENSUS_HOME = 'the census (what a browser leg is, whether a line names one, the roster gate and the engines) is executed by ' + path.relative(REPO, CENSUS_TEST) + ' in the vscode-extension job, not here';
 const STEP = 'Browser legs (node --test over ci-browser-legs.txt)';
 const INSTALL = 'Install the pinned Playwright Chromium';
 const TEST_STEP = 'Test';
 const JOB = 'vscode-extension';
 const SWITCH = 'ROMP_BROWSER_LEGS_REQUIRE';
 const RUN_LINE = 'bash scripts/ci-browser-legs.sh';
-const LEG_DIRS = ['vscode-extension/src', 'ui', 'ui/webview'];
 const read = (p) => fs.readFileSync(p, 'utf8');
 
 // ── ci.yml by lines (no YAML library: the shell job installs nothing) ──────────────────────────────────
@@ -153,44 +153,6 @@ test('no step before the Test step installs a Playwright browser or restores its
 
 const WELL_FORMED = /^out-tests\/\S+\.test\.js$/;
 const sourceOf = (bundle) => path.join(REPO, bundle.replace(/^out-tests\//, '').replace(/\.test\.js$/, '.test.ts'));
-const bundleOf = (dir, file) => 'out-tests/' + dir + '/' + file.replace(/\.test\.ts$/, '.test.js');
-const code = (src) => src.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
-/** THE RULE: the module reaches a browser (see the header). */
-function reachesBrowser(src) {
-  const c = code(src);
-  return /\(\s*"playwright"\s*\)|from\s+"playwright"/.test(c) || (c.includes('"./real-viewer-leg"') && c.includes('inBrowser('));
-}
-/** The gap between the module and the one shared launcher, or null when it launches through it: the module imports
- *  ./real-viewer-leg and calls inBrowser( by that name on a code line, and holds no .launch( and no .skip( of its own on
- *  a code line (inBrowser is the one launch that reads the switch; a private launch or skip stands outside it). The
- *  check is textual: a call under an import alias (inBrowser as <alias>) is not read as an inBrowser( call. The
- *  script's shared_launch_gap states the same rule. */
-function launchesShared(src) {
-  const c = code(src);
-  if (!(c.includes('"./real-viewer-leg"') && c.includes('inBrowser('))) return 'no inBrowser( call beside an import of ./real-viewer-leg; a call under an import alias is not read as one';
-  if (c.includes('.launch(')) return 'holds a launch of its own (.launch( on a code line)';
-  if (c.includes('.skip(')) return 'holds a skip of its own (.skip( on a code line)';
-  return null;
-}
-/** The engines other than Chromium a leg names outside comments: as the string "firefox"/"webkit" or as pw.firefox / pw.webkit. */
-function otherEngines(src) {
-  const c = code(src);
-  const out = [];
-  if (/"firefox"|\.firefox\./.test(c)) out.push('Firefox');
-  if (/"webkit"|\.webkit\./.test(c)) out.push('WebKit');
-  return out;
-}
-function census(root = REPO) {
-  const out = [];
-  for (const dir of LEG_DIRS) {
-    const abs = path.join(root, dir);
-    if (!fs.existsSync(abs)) continue;
-    for (const f of fs.readdirSync(abs).filter((f) => f.endsWith('.test.ts')).sort()) {
-      if (reachesBrowser(read(path.join(abs, f)))) out.push(bundleOf(dir, f));
-    }
-  }
-  return out.sort();
-}
 /** Roster lines: [{ n, bundle }], comments and blanks dropped. */
 function parseRoster(text) {
   return text.split('\n').map((line, i) => ({ n: i + 1, line })).filter(({ line }) => !/^\s*(#|$)/.test(line)).map(({ n, line }) => ({ n, bundle: line }));
@@ -203,11 +165,30 @@ function parseExcluded(text) {
   });
 }
 
-test('the roster plus the exclusions equals the tree\'s browser legs, each line names an existing browser leg once, no line is in both, and every exclusions line carries a reason', () => {
+test('the vscode-extension job runs on every pull request (no paths filter on the trigger, no job-level if:), so the census test there gates every PR that could add a browser leg', () => {
+  const text = read(CI);
+  const lines = text.split('\n');
+  const on = lines.findIndex((l) => /^on:\s*$/.test(l));
+  assert.ok(on >= 0, 'ci.yml has an on: block');
+  let end = on + 1;
+  while (end < lines.length && !/^\S/.test(lines[end])) end++;
+  const trigger = lines.slice(on + 1, end);
+  const pr = trigger.findIndex((l) => /^  pull_request:/.test(l));
+  assert.ok(pr >= 0, 'the workflow triggers on pull_request; the on: block: ' + JSON.stringify(trigger));
+  let prEnd = pr + 1;
+  while (prEnd < trigger.length && /^    /.test(trigger[prEnd])) prEnd++;
+  const prBlock = trigger.slice(pr, prEnd).filter((l) => !/^\s*#/.test(l));
+  assert.ok(!prBlock.some((l) => /^\s+paths(-ignore)?:/.test(l)), 'the pull_request trigger has no paths or paths-ignore filter, so a PR adding a browser leg anywhere runs the workflow; ' + CENSUS_HOME + '; the block: ' + JSON.stringify(prBlock));
+  const job = extensionJob();
+  assert.ok(!job.lines.some((l) => /^    if:/.test(l)), 'the ' + JOB + ' job has no job-level if:, so it runs whenever the workflow does; ' + CENSUS_HOME);
+  assert.ok(fs.existsSync(CENSUS_TEST), 'the census test this module points at exists: ' + path.relative(REPO, CENSUS_TEST));
+  assert.ok(fs.existsSync(CENSUS), 'the census module exists: ' + path.relative(REPO, CENSUS));
+});
+
+test('both files are well formed: each line is a bundle path naming a source in the tree, once, in one file, and every exclusions line carries a reason (whether a line names a browser leg, and the equality with the tree, are the census test\'s in the vscode-extension job)', () => {
   const roster = parseRoster(read(path.join(EXT, ROSTER)));
   const excluded = parseExcluded(read(path.join(EXT, EXCLUDED)));
-  const legs = census();
-  assert.ok(legs.length > 100, 'the tree holds browser legs (the census found ' + legs.length + '; a count near zero means the rule stopped matching, not that the legs left)');
+  assert.ok(excluded.length + roster.length > 100, 'the two files hold the tree\'s browser legs (' + (excluded.length + roster.length) + ' lines; a count near zero means the files emptied, not that the legs left); ' + CENSUS_HOME);
   const where = (file, e) => file + ' line ' + e.n + ' (' + e.bundle + ')';
   for (const [file, entries] of [[ROSTER, roster], [EXCLUDED, excluded]]) {
     const seen = new Map();
@@ -217,38 +198,17 @@ test('the roster plus the exclusions equals the tree\'s browser legs, each line 
       seen.set(e.bundle, e.n);
       const src = sourceOf(e.bundle);
       assert.ok(fs.existsSync(src), where(file, e) + ' names ' + path.relative(REPO, src) + ', which is not in the tree (the source moved or was deleted): fix the line');
-      assert.ok(reachesBrowser(read(src)), where(file, e) + ' names no browser leg (' + path.relative(REPO, src) + ' reaches no browser by the census rule): remove the line');
     }
-  }
-  for (const e of roster) {
-    const gap = launchesShared(read(sourceOf(e.bundle)));
-    assert.equal(gap, null, where(ROSTER, e) + ' does not launch through the one shared launcher (' + gap + '): only inBrowser reads ' + SWITCH + ', so a launch or a skip of the leg\'s own stands outside the switch (a private skip stays a skip; a private launch that fails is never the failure naming the switch): launch through inBrowser (ui/webview/real-viewer-leg.ts), with no launch or skip of the leg\'s own, before rostering it');
   }
   for (const e of excluded) {
     assert.ok(e.reason !== null && e.reason.trim() !== '', where(EXCLUDED, e) + ' has no reason: write the bundle path, a tab, and why the gating job does not run it');
     assert.ok(!e.reason.includes(String.fromCharCode(0x2014)), where(EXCLUDED, e) + ': no em dash');
+    // the parse-free half of the engine rule: a reason that names an engine says why the gating job cannot run the leg;
+    // that the source reaches that engine, and only that one, is read from the tree by the census test
+    if (/Firefox|WebKit/.test(e.reason)) assert.ok(e.reason.includes('the gating job installs Chromium only'), where(EXCLUDED, e) + ': an engine reason says why the gating job cannot run the leg; ' + CENSUS_HOME);
   }
   const rostered = new Set(roster.map((e) => e.bundle));
   for (const e of excluded) assert.ok(!rostered.has(e.bundle), where(EXCLUDED, e) + ' is also in ' + ROSTER + ': a leg is in one file or the other, keep one');
-  const listed = new Set([...rostered, ...excluded.map((e) => e.bundle)]);
-  const neither = legs.filter((b) => !listed.has(b));
-  assert.deepEqual(neither, [], 'browser legs in neither ' + ROSTER + ' nor ' + EXCLUDED + ' (add each to the roster, or to the exclusions with a tab and a reason): ' + JSON.stringify(neither));
-  assert.deepEqual([...listed].sort(), legs, 'the roster plus the exclusions is exactly the tree\'s browser legs');
-});
-
-test('an exclusions reason that names Firefox or WebKit is true of the source, a source that launches one says so, and no rostered leg launches an engine the gating job does not install', () => {
-  const excluded = parseExcluded(read(path.join(EXT, EXCLUDED)));
-  for (const e of excluded) {
-    const engines = otherEngines(read(sourceOf(e.bundle)));
-    for (const eng of ['Firefox', 'WebKit']) {
-      assert.equal(e.reason.includes(eng), engines.includes(eng), EXCLUDED + ' line ' + e.n + ' (' + e.bundle + '): the reason ' + (engines.includes(eng) ? 'names ' : 'does not name ') + eng + ' when the source ' + (engines.includes(eng) ? 'launches it' : 'does not name it outside a comment') + '; the reason reads: ' + e.reason);
-    }
-    if (engines.length) assert.ok(e.reason.includes('the gating job installs Chromium only'), EXCLUDED + ' line ' + e.n + ': an engine reason says why the gating job cannot run the leg');
-  }
-  for (const e of parseRoster(read(path.join(EXT, ROSTER)))) {
-    const engines = otherEngines(read(sourceOf(e.bundle)));
-    assert.deepEqual(engines, [], ROSTER + ' line ' + e.n + ' (' + e.bundle + ') names ' + engines.join(' and ') + ' outside a comment; the gating job installs Chromium only, so under the switch that launch is red: keep the leg in ' + EXCLUDED + ' with that reason (a leg\'s Firefox and WebKit runs live in a served pytest step or a local run, not in the roster)');
-  }
 });
 
 // ── the script ────────────────────────────────────────────────────────────────────────────────────────
@@ -259,27 +219,31 @@ function bash(args, opts = {}) {
   return r;
 }
 
-test('the script\'s census (--list-legs) is the same set of legs this module derives', () => {
+test('the script exists, is executable, calls the census module once and node --test through xargs, and spells the empty-roster guard (each executed below through the stub)', () => {
   assert.ok(fs.existsSync(SCRIPT), 'the step\'s script exists at ' + path.relative(REPO, SCRIPT));
   assert.ok(fs.statSync(SCRIPT).mode & 0o111, 'the script is executable');
-  const r = bash([SCRIPT, '--list-legs']);
-  assert.equal(r.status, 0, r.stderr);
-  const listed = r.stdout.split('\n').filter(Boolean).sort();
-  assert.deepEqual(listed, census(), 'the script and this test derive the same browser legs');
   const src = read(SCRIPT);
+  assert.match(src, /^CENSUS=scripts\/browser-legs-census\.mjs$/m, 'the script names the census module once, as CENSUS');
+  assert.equal((src.match(/node "\$CENSUS" --tsv/g) || []).length, 1, 'the census is run once, as node "$CENSUS" --tsv (the stub below answers that call; the script\'s --list-legs against the real census is compared in ' + path.relative(REPO, CENSUS_TEST) + ')');
   assert.ok(src.includes('echo "no legs in the roster"; exit 0'), 'the empty-roster guard is spelled in the script (executed below)');
   assert.ok(/\| xargs -r node --test /m.test(src), 'the roster is read into xargs node --test (executed below)');
 });
 
-/** A synthetic tree: the script under vscode-extension/scripts; under ui/webview five browser legs and one plain test module:
- *  a and b launch through inBrowser (a has a bundle, b none; a's second test has a newline and a # in its name, spelled \n
- *  and # in the source as node's record escapes them), p launches through its own playwright copy with a bundle, m
- *  calls inBrowser but keeps a launch of its own beside it, k calls inBrowser but keeps a skip of its own before it, f
- *  launches through inBrowser but names Firefox, each with a bundle; and a stub node on PATH that records its arguments,
- *  writes CBL_STUB_TAP (when set) to the tap reporter's destination and exits CBL_STUB_EXIT (0 unless set). Returns a
- *  runner over roster/exclusions text that runs the script with the switch set to 1 as the step does (stub.switch names
- *  another value; null runs it unset, as a local run may); `node` in its result is the argument list without the
- *  reporter flags. `ext` is the physical path of the tree's vscode-extension, as node spells a bundle in its record. */
+/** A synthetic tree: the script under vscode-extension/scripts; under ui/webview five browser legs and one plain test module
+ *  as SOURCES (a and b launch through inBrowser (a has a bundle, b none; a's second test has a newline and a # in its name,
+ *  spelled \n and # in the source as node's record escapes them), p launches through its own playwright copy with a bundle,
+ *  m calls inBrowser but keeps its own playwright beside it, k calls inBrowser but keeps a skip of its own before it, f
+ *  launches through inBrowser but reaches Firefox, each with a bundle); and a stub node on PATH that answers the script's
+ *  census call (node scripts/browser-legs-census.mjs --tsv) with the TABLE below, CBL_STUB_CENSUS (bundle TAB 1|0 TAB gap
+ *  TAB engines TAB class, the module's --tsv shape; the sentences are the module's shapes, as values of this table), exiting
+ *  CBL_STUB_CENSUS_EXIT with CBL_STUB_CENSUS_ERR on stderr when set, and otherwise records its arguments, writes CBL_STUB_TAP
+ *  (when set) to the tap reporter's destination and exits CBL_STUB_EXIT (0 unless set). The sources' text decides nothing
+ *  here: what runs is the script's reading of the table (the census over real sources is executed by the census test in the
+ *  vscode-extension job). Returns a runner over roster/exclusions text that runs the script with the switch set to 1 as the
+ *  step does (stub.switch names another value; null runs it unset, as a local run may; stub.census replaces the table,
+ *  stub.censusExit and stub.censusErr the census call's exit and stderr); `node` in its result is the argument list of the
+ *  node --test call without the reporter flags. `ext` is the physical path of the tree's vscode-extension, as node spells a
+ *  bundle in its record. */
 function syntheticTree(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cbl-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -296,11 +260,15 @@ function syntheticTree(t) {
   web('m-browser.test.ts', priv + shared + 'test("leg m opens the page", async (t) => { await inBrowser(t, async (browser) => {}); const own = await pw.chromium.launch(); });\n');
   web('k-browser.test.ts', shared + 'test("leg k opens the page", async (t) => { if (!process.env.SYNTHETIC_FIXTURE) { t.skip("no fixture"); return; } await inBrowser(t, async (browser) => {}); });\n');
   web('f-browser.test.ts', shared + 'test("leg f opens the page", async (t) => { await inBrowser(t, async (browser) => { if (browser.browserType().name() !== "firefox") return; }); });\n');
-  web('plain.test.ts', '// a comment that names requireCjs("playwright") is not a launch\nconst x = 1;\n');
+  web('plain.test.ts', 'const x = 1;\n');
   for (const b of ['a-browser', 'p-browser', 'm-browser', 'k-browser', 'f-browser']) fs.writeFileSync(path.join(ext, 'out-tests', 'ui', 'webview', b + '.test.js'), '');
   const log = path.join(root, 'node-args.txt');
   fs.writeFileSync(path.join(root, 'bin', 'node'), [
     '#!/bin/sh',
+    'case "${1:-}" in *browser-legs-census.mjs)',
+    '  if [ -n "${CBL_STUB_CENSUS_ERR:-}" ]; then printf \'%s\\n\' "$CBL_STUB_CENSUS_ERR" >&2; fi',
+    '  printf \'%s\' "${CBL_STUB_CENSUS:-}"; exit "${CBL_STUB_CENSUS_EXIT:-0}";;',
+    'esac',
     'printf \'%s\\n\' "$@" > "' + log + '"',
     'prev=""',
     'for a in "$@"; do',
@@ -311,12 +279,20 @@ function syntheticTree(t) {
     '',
   ].join('\n'), { mode: 0o755 });
   const A = 'out-tests/ui/webview/a-browser.test.js', B = 'out-tests/ui/webview/b-browser.test.js', P = 'out-tests/ui/webview/p-browser.test.js', M = 'out-tests/ui/webview/m-browser.test.js', K = 'out-tests/ui/webview/k-browser.test.js', F = 'out-tests/ui/webview/f-browser.test.js', PLAIN = 'out-tests/ui/webview/plain.test.js';
+  // the table the stub answers the census call with: one row per module, the module's --tsv shape
+  const GAP_P = 'never imports the shared launcher, ui/webview/real-viewer-leg.ts';
+  const GAP_M = 'loads playwright itself (playwright): inBrowser owns the one playwright read a rostered leg needs';
+  const GAP_K = 'holds a skip or todo of its own (line 3: .skip()';
+  const CENSUS_TABLE = [[A, '1', '-', '-', 'shared'], [B, '1', '-', '-', 'shared'], [P, '1', GAP_P, '-', 'own'], [M, '1', GAP_M, '-', 'both'], [K, '1', GAP_K, '-', 'shared'], [F, '1', '-', 'Firefox', 'shared'], [PLAIN, '0', '-', '-', 'none']].map((r) => r.join('\t')).join('\n') + '\n';
   const run = (roster, excluded, stub = {}) => {
     if (roster === null) fs.rmSync(path.join(ext, ROSTER), { force: true }); else fs.writeFileSync(path.join(ext, ROSTER), roster);
     if (excluded === null) fs.rmSync(path.join(ext, EXCLUDED), { force: true }); else fs.writeFileSync(path.join(ext, EXCLUDED), excluded);
     fs.rmSync(log, { force: true });
     const env = { ...process.env, PATH: path.join(root, 'bin') + path.delimiter + process.env.PATH };
-    delete env.CBL_STUB_TAP; delete env.CBL_STUB_EXIT;
+    delete env.CBL_STUB_TAP; delete env.CBL_STUB_EXIT; delete env.CBL_STUB_CENSUS_EXIT; delete env.CBL_STUB_CENSUS_ERR;
+    env.CBL_STUB_CENSUS = stub.census !== undefined ? stub.census : CENSUS_TABLE;
+    if (stub.censusExit !== undefined) env.CBL_STUB_CENSUS_EXIT = String(stub.censusExit);
+    if (stub.censusErr !== undefined) env.CBL_STUB_CENSUS_ERR = stub.censusErr;
     env[SWITCH] = '1';
     if (stub.switch === null) delete env[SWITCH]; else if (stub.switch !== undefined) env[SWITCH] = stub.switch;
     if (stub.tap !== undefined) env.CBL_STUB_TAP = stub.tap;
@@ -325,7 +301,7 @@ function syntheticTree(t) {
     const args = fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean) : null;
     return { status: r.status, out: r.stdout, err: r.stderr, node: args && args.filter((a) => !a.startsWith('--test-reporter')), reporters: args && args.filter((a) => a.startsWith('--test-reporter')) };
   };
-  return { run, root, ext: fs.realpathSync(ext), A, B, P, M, K, F, PLAIN };
+  return { run, root, ext: fs.realpathSync(ext), A, B, P, M, K, F, PLAIN, GAP_P, GAP_M, GAP_K, TABLE: CENSUS_TABLE };
 }
 
 const EXCLUDE_REST = (...keep) => ['a', 'b', 'p', 'm', 'k', 'f'].filter((n) => !keep.includes(n)).map((n) => 'out-tests/ui/webview/' + n + '-browser.test.js\treason ' + n + '\n').join('');
@@ -343,8 +319,8 @@ test('the script runs the rostered legs through node --test when the roster and 
   assert.equal(empty.node, null, 'node was not started: with no file arguments node --test would run its default glob');
 });
 
-test('the script refuses, naming the line and the remedy, on: a missing file, a stale line, a leg in neither file, a leg in both, a line without a reason, a duplicate, a line naming no leg, a missing bundle, a malformed line, a leg that never calls inBrowser, a leg with a launch of its own beside inBrowser, a leg with a skip of its own beside inBrowser, a leg naming Firefox', (t) => {
-  const { run, A, B, P, M, K, F, PLAIN } = syntheticTree(t);
+test('the script refuses, naming the line and the remedy, on: a missing file, a stale line, a leg in neither file, a leg in both, a line without a reason, a duplicate, a line naming no leg, a missing bundle, a malformed line, a roster line whose census row carries a gap (never imports the launcher; loads playwright itself; a skip of its own) or an engine (Firefox); and stops, judging nothing, when the census exits 1 or 2', (t) => {
+  const { run, A, B, P, M, K, F, PLAIN, GAP_P, GAP_M, GAP_K, TABLE } = syntheticTree(t);
   const C = 'out-tests/ui/webview/c-browser.test.js';
   const refused = (r, ...needles) => {
     assert.equal(r.status, 1, 'exit 1; stderr: ' + r.err);
@@ -362,7 +338,10 @@ test('the script refuses, naming the line and the remedy, on: a missing file, a 
   refused(run(A + '\n', B + '\t  \n' + rest), EXCLUDED + ' line 1', 'has no reason');
   refused(run(A + '\n' + A + '\n', B + '\treason\n' + rest), ROSTER + ' line 2: \'' + A + '\' duplicates line 1: remove one');
   refused(run(A + '\n', B + '\treason\n' + B + '\tagain\n' + rest), EXCLUDED + ' line 2: \'' + B + '\' duplicates line 1: remove one');
-  refused(run(A + '\n' + PLAIN + '\n', B + '\treason\n' + rest), ROSTER + ' line 2: \'' + PLAIN + '\' names no browser leg (ui/webview/plain.test.ts reaches no browser): remove the line');
+  refused(run(A + '\n' + PLAIN + '\n', B + '\treason\n' + rest), ROSTER + ' line 2: \'' + PLAIN + '\' names no browser leg: ui/webview/plain.test.ts reaches no browser (the census rule in scripts/browser-legs-census.mjs): remove the line');
+  // a module the census marks 0 with a gap in its row: the launcher imported and never called; the row's sentence is printed with the line
+  const importer = run(A + '\n' + PLAIN + '\n', B + '\treason\n' + rest, { census: TABLE.replace(PLAIN + '\t0\t-', PLAIN + '\t0\timports ui/webview/real-viewer-leg.ts and never calls its inBrowser through that import: call it, or remove the line') });
+  refused(importer, ROSTER + ' line 2: \'' + PLAIN + '\' names no browser leg: ui/webview/plain.test.ts imports ui/webview/real-viewer-leg.ts and never calls its inBrowser through that import: call it, or remove the line');
   refused(run(B + '\n', A + '\treason\n' + rest), ROSTER + ' line 1: \'' + B + '\' is not under out-tests/ (the Test step\'s npm test builds it', 'build the bundles before this step');
   refused(run('ui/webview/a-browser.test.ts\n', A + '\treason\n' + B + '\treason\n' + rest), ROSTER + ' line 1: ui/webview/a-browser.test.ts is not a bundle path (out-tests/<dir>/<name>.test.js; a trailing space, tab or carriage return counts', 'fix the line');
   // a carriage return at the end of the line: the line is shown as bash's %q spells it, so the invisible cause is visible,
@@ -371,15 +350,21 @@ test('the script refuses, naming the line and the remedy, on: a missing file, a 
   refused(crlf, ROSTER + ' line 1: $\'' + A + '\\r\' is not a bundle path', 'browser leg \'' + A + '\' is named by a malformed line (' + ROSTER + ' line 1, above): fix that line');
   assert.ok(!crlf.err.includes('is in neither'), 'the leg the malformed line names is not reported as missing from both files:\n' + crlf.err);
   refused(run(A + '\n', B + '\treason\n' + P + '  \treason\n' + EXCLUDE_REST('a', 'b', 'p')), EXCLUDED + ' line 2: ' + P + '\\ \\  is not a bundle path', 'browser leg \'' + P + '\' is named by a malformed line (' + EXCLUDED + ' line 2, above): fix that line');
-  // a leg with a launch and a skip of its own never calls inBrowser, the one launch that reads the switch: rostered, its
-  // skip would stay a skip under the step and leave it green
-  refused(run(A + '\n' + P + '\n', B + '\treason\n' + EXCLUDE_REST('a', 'b', 'p')), ROSTER + ' line 2: \'' + P + '\' does not launch through the one shared launcher (no inBrowser( call beside an import of ./real-viewer-leg; a call under an import alias is not read as one): only inBrowser reads ' + SWITCH + ', so a launch or a skip of the leg\'s own stands outside the switch (a private skip stays a skip; a private launch that fails is never the failure naming the switch): launch through inBrowser (ui/webview/real-viewer-leg.ts), with no launch or skip of the leg\'s own, before rostering it');
-  // a leg that calls inBrowser but keeps a launch of its own beside it: the private launch stands outside the switch
-  refused(run(A + '\n' + M + '\n', B + '\treason\n' + EXCLUDE_REST('a', 'b', 'm')), ROSTER + ' line 2: \'' + M + '\' does not launch through the one shared launcher (holds a launch of its own (.launch( on a code line)): only inBrowser reads');
-  // a leg that calls inBrowser but skips on its own first: under the step that skip stays a skip
-  refused(run(A + '\n' + K + '\n', B + '\treason\n' + EXCLUDE_REST('a', 'b', 'k')), ROSTER + ' line 2: \'' + K + '\' does not launch through the one shared launcher (holds a skip of its own (.skip( on a code line)): only inBrowser reads');
-  // a leg that launches through inBrowser but names Firefox: the gating job installs Chromium only
-  refused(run(A + '\n' + F + '\n', B + '\treason\n' + EXCLUDE_REST('a', 'b', 'f')), ROSTER + ' line 2: \'' + F + '\' names Firefox outside a comment; the gating job installs Chromium only, so under the switch that launch is red: keep the leg in ' + EXCLUDED + ' with that reason');
+  // a roster line whose census row carries a gap: the row's sentence is printed between the line and the remedy (p never
+  // imports the launcher; m loads playwright itself beside its inBrowser call; k keeps a skip of its own), so rostered, its
+  // skip would stay a skip under the step and its private launch would never be the failure naming the switch
+  refused(run(A + '\n' + P + '\n', B + '\treason\n' + EXCLUDE_REST('a', 'b', 'p')), ROSTER + ' line 2: \'' + P + '\' does not launch through the one shared launcher (' + GAP_P + '): only inBrowser reads ' + SWITCH + ', so a launch or a skip of the leg\'s own stands outside the switch (a private skip stays a skip; a private launch that fails is never the failure naming the switch): launch through inBrowser (ui/webview/real-viewer-leg.ts), with no launch or skip of the leg\'s own, before rostering it');
+  refused(run(A + '\n' + M + '\n', B + '\treason\n' + EXCLUDE_REST('a', 'b', 'm')), ROSTER + ' line 2: \'' + M + '\' does not launch through the one shared launcher (' + GAP_M + '): only inBrowser reads');
+  refused(run(A + '\n' + K + '\n', B + '\treason\n' + EXCLUDE_REST('a', 'b', 'k')), ROSTER + ' line 2: \'' + K + '\' does not launch through the one shared launcher (' + GAP_K + '): only inBrowser reads');
+  // a roster line whose census row names an engine: the gating job installs Chromium only
+  refused(run(A + '\n' + F + '\n', B + '\treason\n' + EXCLUDE_REST('a', 'b', 'f')), ROSTER + ' line 2: \'' + F + '\' reaches Firefox; the gating job installs Chromium only, so under the switch that launch is red: keep the leg in ' + EXCLUDED + ' with that reason');
+  // the census did not run (exit 1: no compiler) or refused a form (exit 2): its stderr is shown, nothing is judged, no leg ran
+  const noCensus = run(A + '\n', B + '\treason\n' + rest, { census: '', censusExit: 1, censusErr: 'browser-legs-census: the typescript compiler is not installed under vscode-extension/node_modules (a synthetic message)' });
+  refused(noCensus, 'browser-legs-census: the typescript compiler is not installed', 'ci-browser-legs: the census did not run (exit 1, above), so nothing was judged and no leg ran');
+  assert.ok(!noCensus.err.includes('names no browser leg') && !noCensus.err.includes('is in neither'), 'nothing is judged over a census that did not run:\n' + noCensus.err);
+  const refusal = run(A + '\n', B + '\treason\n' + rest, { census: '', censusExit: 2, censusErr: 'browser-legs-census: REFUSED ui/webview/a-browser.test.ts:2: a synthetic refusal' });
+  refused(refusal, 'browser-legs-census: REFUSED ui/webview/a-browser.test.ts:2', 'ci-browser-legs: the census refused a form it cannot classify (above, with file and line): rewrite that form, or teach scripts/browser-legs-census.mjs to read it; nothing else was judged and no leg ran');
+  assert.ok(!refusal.err.includes('names no browser leg') && !refusal.err.includes('is in neither'), 'nothing else is judged over a refusal:\n' + refusal.err);
   const stale = run(A + '\n', B + '\treason\n' + C + '\treason\n' + rest);
   refused(stale, EXCLUDED + ' line 2: \'' + C + '\' names ui/webview/c-browser.test.ts, which is not in the tree (the source moved or was deleted): fix the line');
 });

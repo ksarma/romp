@@ -1,21 +1,29 @@
 # The browser legs the gating CI job does NOT run, each with its reason. The step "Browser legs (node --test over
 # ci-browser-legs.txt)" in .github/workflows/ci.yml runs the legs in ci-browser-legs.txt with a browser; every other
-# browser leg in the tree (a test module that launches a Playwright browser: it requires or imports "playwright", or
-# imports ./real-viewer-leg and calls inBrowser) is listed here, so a leg added later takes a verdict: it is in the
-# roster or in this file, never neither (tools/ci-browser-legs.test.mjs and scripts/ci-browser-legs.sh hold that, and
-# a line whose source moved or was deleted turns both red).
+# browser leg in the tree is listed here, so a leg added later takes a verdict: it is in the roster or in this file,
+# never neither. A browser leg is what the census, scripts/browser-legs-census.mjs, reads from a test module's tree
+# with the TypeScript compiler: it calls the shared launcher (inBrowser in ui/webview/real-viewer-leg.ts) through its
+# import under any binding, or names a playwright package by any specifier, or holds a driver string that loads one; a
+# form the census cannot classify is refused with file and line, never counted absent. ui/webview/ci-browser-legs-census.test.ts
+# (the vscode-extension job) holds the roster plus this file to that census and scripts/ci-browser-legs.sh checks the
+# same before it runs a leg; tools/ci-browser-legs.test.mjs (the Shell job) holds the two files' shape and reasons
+# without the compiler. A line whose source moved or was deleted turns all three red.
 #
 # Format: one compiled bundle path per line, relative to vscode-extension/, as the Test step's npm test builds it
 # (ui/webview/<name>.test.ts builds to out-tests/ui/webview/<name>.test.js), then a TAB, then the reason. Blank
 # lines and lines starting with # are ignored. The reasons at the roster's creation are derived from the sources: a
-# leg that launches Firefox or WebKit cannot run green in a job that installs Chromium only (these legs launch on
-# their own and never read the switch, so under the step they would skip as they do without it; the one that calls
-# inBrowser beside its own Firefox launch is refused by the launcher rule too); every other leg predates the roster
-# and has not been measured in the gating job,
+# leg that reaches Firefox or WebKit (the census reads the engines from playwright-derived expressions, not from
+# strings) cannot run green in a job that installs Chromium only, and its reason names the engine, checked both ways
+# (these legs launch on their own and never read the switch, so under the step they would skip as they do without it;
+# the one that calls inBrowser beside its own Firefox launch is refused by the roster gate too); a leg whose only
+# playwright is in a driver string it runs as a child process carries the sentence "loads playwright in a child process
+# it drives from a string; the switch never reaches it", checked both ways, and can never be rostered; every other leg
+# predates the roster and has not been measured in the gating job,
 # so its owner moves it to the roster with the step's measured numbers. To move a leg, delete its line here and add
-# the bundle path to ci-browser-legs.txt (a leg in both files turns both checkers red); a leg that launches through
+# the bundle path to ci-browser-legs.txt (a leg in both files turns the checkers red); a leg that launches through
 # its own playwright copy first switches its launch to inBrowser in ui/webview/real-viewer-leg.ts, the one shared
-# launcher and the one read of ROMP_BROWSER_LEGS_REQUIRE, and drops its own launch and skip, or the roster refuses it.
+# launcher and the one read of ROMP_BROWSER_LEGS_REQUIRE, and drops its own playwright, launch, skip and todo, or the
+# roster gate refuses it with the gap it read.
 out-tests/ui/timeline-tags-scale-browser.test.js	launches Firefox; the gating job installs Chromium only
 out-tests/ui/webview/anchor-map-cells-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
 out-tests/ui/webview/anchor-map-code-lines-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
@@ -29,7 +37,7 @@ out-tests/ui/webview/anchor-map-wrappers-browser.test.js	existing before the ros
 out-tests/ui/webview/browse-route.test.js	launches Firefox; the gating job installs Chromium only
 out-tests/ui/webview/chat-visibility.test.js	launches Firefox and WebKit; the gating job installs Chromium only
 out-tests/ui/webview/composer-mention-pane.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
-out-tests/ui/webview/dense-chrome-layout.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/dense-chrome-layout.test.js	loads playwright in a child process it drives from a string; the switch never reaches it
 out-tests/ui/webview/feed-css-kept-embed.test.js	launches Firefox; the gating job installs Chromium only
 out-tests/ui/webview/feed-css-margin-fit.test.js	launches Firefox; the gating job installs Chromium only
 out-tests/ui/webview/feed-css-margin-footer-rule.test.js	launches Firefox; the gating job installs Chromium only
@@ -182,11 +190,11 @@ out-tests/ui/webview/pdf-chunk-staged-draw.test.js	existing before the roster, u
 out-tests/ui/webview/pdf-chunk-worker.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
 out-tests/ui/webview/pdf-lazy-render.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
 out-tests/ui/webview/pinned-notes-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
-out-tests/ui/webview/queued-romp-layout.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/queued-romp-layout.test.js	loads playwright in a child process it drives from a string; the switch never reaches it
 out-tests/ui/webview/render-todo-file-chip-sheet.test.js	launches Firefox; the gating job installs Chromium only
 out-tests/ui/webview/sessions-menu.test.js	launches Firefox; the gating job installs Chromium only
 out-tests/ui/webview/shell-gutter-drag-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
-out-tests/ui/webview/staged-list-layout.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/staged-list-layout.test.js	loads playwright in a child process it drives from a string; the switch never reaches it
 out-tests/ui/webview/styles-fc-arrivals-line-fit.test.js	launches Firefox; the gating job installs Chromium only
 out-tests/ui/webview/styles-fc-chip.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
 out-tests/ui/webview/styles-fc-hl-code-row-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
