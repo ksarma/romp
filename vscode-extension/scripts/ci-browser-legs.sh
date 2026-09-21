@@ -17,7 +17,12 @@
 #     that fails is never the failure naming the switch, which the step's red relies on. A shared call inside a try with
 #     a catch clause is admitted (the census reports it; the census test prints the count);
 #   - a roster line whose source reaches Firefox or WebKit: the gating job installs Chromium only;
-#   - a roster line whose bundle is not under out-tests/: the Test step's npm test builds it (node esbuild.js --tests).
+#   - a roster line whose bundle is not under out-tests/: the Test step's npm test builds it (node esbuild.js --tests);
+#   - an exclusions reason "pending #<PR>: <why>" names a leg an open PR brings: allowed while the leg's source is absent
+#     from the tree (the line is then in neither the roster nor the census, and the census pass below is over the roster
+#     plus the exclusions lines whose source is present); once the source is present the line is red with the promotion
+#     remedy the census derives from the source (a roster line, a reason of its own, or no line), and the leg is not also
+#     called missing from both files; a pending reason that names no PR is red.
 # THE CENSUS is scripts/browser-legs-census.mjs, run once here (--tsv) for the population and every per-line verdict: it
 # reads each test module's tree with the TypeScript compiler (a leg calls the shared launcher through its import under
 # any binding, or names a playwright package by any specifier, or holds a driver string that does; engines and launches
@@ -74,6 +79,17 @@ is_leg() { [ "$(census_field "$1" 2)" = "1" ]; }
 gap_of() { local g; g=$(census_field "$1" 3); if [ "$g" != "-" ]; then printf '%s' "$g"; fi; return 0; }
 engines_of() { local e; e=$(census_field "$1" 4); if [ "$e" != "-" ]; then printf '%s' "$e"; fi; return 0; }
 census() { awk -F '\t' '$2 == "1" { print $1 }' <<<"$census_tsv"; }
+promotion_of() {   # $1 the bundle of a pending line whose source is present: the remedy the census derives from that source
+  local gap engines cls why=""
+  gap=$(gap_of "$1"); engines=$(engines_of "$1"); cls=$(census_field "$1" 5)
+  if ! is_leg "$1"; then printf '%s' "remove the line (the source reaches no browser by the census rule${gap:+; $gap})"; return 0; fi
+  if [ "$cls" = "embedded" ]; then printf '%s' "keep the line and replace the reason with the embedded-driver sentence the header of $EXCLUDED states (the leg's only playwright is in a driver string it runs as a child process, which the switch never reaches)"; return 0; fi
+  if [ -z "$gap" ] && [ -z "$engines" ]; then printf '%s' "delete this line and add '$1' to $ROSTER (the source launches through inBrowser alone and reaches no engine but Chromium), with the step's measured seconds in the PR body"; return 0; fi
+  if [ -n "$engines" ]; then why="launches $engines; the gating job installs Chromium only"; fi
+  if [ -n "$gap" ]; then why="${why:+$why; }$gap"; fi
+  printf '%s' "keep the line and replace the reason with why the gating job does not run it ($why)"
+}
+pending_re='^[[:space:]]*pending #([0-9]+): [^[:space:]]'
 if [ "${1:-}" = "--list-legs" ]; then census; exit 0; fi
 check_only=0
 if [ "${1:-}" = "--check" ]; then check_only=1; fi
@@ -92,6 +108,8 @@ well_formed() { [[ "$1" =~ ^out-tests/[^[:space:]]+\.test\.js$ ]]; }
 roster_seen=""
 excluded_seen=""
 malformed_seen=""
+pending_seen=""   # "bundle<TAB>line number" for each pending line whose source is present: red in the loop, not "in neither" too
+pending_n=0
 seen_at() { awk -v k="$1" -F '\t' '$1 == k { print $2; exit }' <<<"$2"; }
 malformed() {   # $1 the file, $2 the line number, $3 the line: red with the whitespace visible, and remember the bundle it names
   local shown stripped
@@ -135,6 +153,17 @@ while IFS= read -r line || [ -n "$line" ]; do
   at=$(seen_at "$bundle" "$roster_seen")
   if [ -n "$at" ]; then red "$EXCLUDED line $n: '$bundle' is also $ROSTER line $at: a leg is in one file or the other, keep one"; continue; fi
   src=$(source_of "$bundle")
+  if [[ "$reason" =~ ^[[:space:]]*pending ]]; then
+    if [[ ! "$reason" =~ $pending_re ]]; then red "$EXCLUDED line $n: '$bundle' has a pending reason that names no PR ('$reason'): a pending line reads 'pending #<PR>: <why>', the PR whose merge of main brings the leg and promotes the line"; continue; fi
+    pr=${BASH_REMATCH[1]}
+    if [ -f "$src" ]; then
+      pending_seen="$pending_seen$bundle	$n"$'\n'
+      red "$EXCLUDED line $n: '$bundle' is pending #$pr and its source ${src#"$ROOT/"} is in the tree, so the leg has arrived (#$pr merged main, or this is #$pr's branch) and the line's condition has passed: promote it: $(promotion_of "$bundle")"
+    else
+      pending_n=$((pending_n + 1))
+    fi
+    continue
+  fi
   if [ ! -f "$src" ]; then red "$EXCLUDED line $n: '$bundle' names ${src#"$ROOT/"}, which is not in the tree (the source moved or was deleted): fix the line"; continue; fi
   if ! is_leg "$bundle"; then gap=$(gap_of "$bundle"); red "$EXCLUDED line $n: '$bundle' names no browser leg: ${src#"$ROOT/"} ${gap:-reaches no browser (the census rule in $CENSUS): remove the line}"; fi
 done < "$EXCLUDED"
@@ -142,6 +171,7 @@ done < "$EXCLUDED"
 while IFS= read -r leg; do
   [ -n "$leg" ] || continue
   if [ -z "$(seen_at "$leg" "$roster_seen")" ] && [ -z "$(seen_at "$leg" "$excluded_seen")" ]; then
+    if [ -n "$(seen_at "$leg" "$pending_seen")" ]; then continue; fi   # red above with the promotion remedy
     at=$(seen_at "$leg" "$malformed_seen")
     if [ -n "$at" ]; then
       red "browser leg '$leg' is named by a malformed line ($at, above): fix that line"
@@ -152,7 +182,7 @@ while IFS= read -r leg; do
 done < <(census)
 
 if [ "$fail" -ne 0 ]; then echo "ci-browser-legs: the roster and the tree disagree (above); no leg ran" >&2; exit 1; fi
-if [ "$check_only" -eq 1 ]; then echo "ci-browser-legs: the roster and the tree agree: ${#legs[@]} rostered, $(census | awk 'END { print NR }') browser legs in the census (--check judges the two files against the tree and starts no node --test; the step's run also checks that each rostered bundle is built under out-tests/)"; exit 0; fi
+if [ "$check_only" -eq 1 ]; then echo "ci-browser-legs: the roster and the tree agree: ${#legs[@]} rostered, $(census | awk 'END { print NR }') browser legs in the census, $pending_n pending lines naming absent sources (--check judges the two files against the tree and starts no node --test; the step's run also checks that each rostered bundle is built under out-tests/)"; exit 0; fi
 
 if [ "${#legs[@]}" -eq 0 ]; then echo "no legs in the roster"; exit 0; fi
 # The run's TAP record goes to a file beside the spec output on stdout, for the skip check below.

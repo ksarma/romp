@@ -24,6 +24,14 @@
 # its own playwright copy first switches its launch to inBrowser in ui/webview/real-viewer-leg.ts, the one shared
 # launcher and the one read of ROMP_BROWSER_LEGS_REQUIRE, and drops its own playwright, launch, skip and todo, or the
 # roster gate refuses it with the gap it read.
+# A reason reading "pending #<PR>: <why>" names a browser leg an open PR brings and is allowed only while the leg's
+# source is absent from the tree: the line is then in neither the roster nor the census, and the equality the checkers
+# hold is the roster PLUS the lines here whose source is present EQUALS the census's legs. Once the source is present
+# (the PR merged main, or the checkers run on the PR's own branch) every checker turns the line red with the promotion
+# remedy derived from the source (a roster line, a reason of its own here, or no line), so the owner promotes it in
+# that merge; a pending reason that names no PR is red. A pending line whose PR closes without the leg never turns red
+# on its own (nothing in the tree reads a PR's state) and is removed by hand;
+# `grep 'pending #' vscode-extension/ci-browser-legs-excluded.txt` lists the pending lines.
 out-tests/ui/timeline-tags-scale-browser.test.js	launches Firefox; the gating job installs Chromium only
 out-tests/ui/webview/anchor-map-cells-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
 out-tests/ui/webview/anchor-map-code-lines-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
@@ -212,3 +220,13 @@ out-tests/ui/webview/track-decorations.test.js	existing before the roster, unmea
 out-tests/ui/webview/waiting-file-chip-unframed.test.js	launches Firefox; the gating job installs Chromium only
 out-tests/ui/webview/waiting-pane-browser.test.js	launches Firefox; the gating job installs Chromium only
 out-tests/ui/webview/waiting-pane-chip-ellipsis-browser.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/waiting-reply-sheet-browser.test.js	pending #859: the Reply sheet legs launch on their own over three engines; at its merge of main the owner replaces this reason with the engine reason
+out-tests/ui/webview/render-reply-sheet-browser.test.js	pending #859: the Reply sheet legs launch on their own over three engines; at its merge of main the owner replaces this reason with the engine reason
+out-tests/ui/webview/gear-sub-focus-browser.test.js	pending #860: launches through inBrowser; at its merge of main the owner moves it to the roster with the step's measured seconds
+out-tests/ui/webview/file-figure-open-browser.test.js	pending #862: launches through inBrowser; at its merge of main the owner moves it to the roster with the step's measured seconds
+out-tests/ui/webview/file-trail-browser.test.js	pending #862: launches through inBrowser; at its merge of main the owner moves it to the roster with the step's measured seconds
+out-tests/ui/webview/file-view-figure-chosen-browser.test.js	pending #862: launches through inBrowser; at its merge of main the owner moves it to the roster with the step's measured seconds
+out-tests/ui/webview/file-view-figure-floor-browser.test.js	pending #862: launches through inBrowser; at its merge of main the owner moves it to the roster with the step's measured seconds
+out-tests/ui/webview/file-view-figure-recent-browser.test.js	pending #862: launches through inBrowser; at its merge of main the owner moves it to the roster with the step's measured seconds
+out-tests/ui/webview/file-view-figure-shapes-browser.test.js	pending #862: launches through inBrowser; at its merge of main the owner moves it to the roster with the step's measured seconds
+out-tests/ui/webview/file-view-figure-state-browser.test.js	pending #862: launches through inBrowser; at its merge of main the owner moves it to the roster with the step's measured seconds

@@ -63,6 +63,13 @@ browser leg in the tree to one file or the other and fails on a line whose sourc
 the step's script checks the same before it runs a leg; `tools/ci-browser-legs.test.mjs`, which
 CI's shell job runs without `npm ci`, holds the two files' shape and reasons and runs the script
 over synthetic trees.
+A PR that adds a browser leg files its roster or exclusions line after merging main; until then
+an exclusions line reading `pending #<PR>: <why>` names the leg, allowed while its source is absent
+from the tree, and once the source is present (the PR merged main, or the checkers run on its
+branch) every checker turns the line red with the promotion remedy (a roster line, a reason of its
+own, or no line), so the owner promotes it in that merge. A pending line whose PR closes without the
+leg never turns red on its own and is removed by hand;
+`grep 'pending #' vscode-extension/ci-browser-legs-excluded.txt` lists the pending lines.
 
 `tests/gitleaks-config.bats` checks the secret-scanning rules in `.gitleaks.toml`
 against the real scanner and skips itself when `gitleaks` is not installed

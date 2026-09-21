@@ -4,9 +4,12 @@
 // The census that decides what a browser leg IS lives in vscode-extension/scripts/browser-legs-census.mjs, which reads each
 // test module's tree with the TypeScript compiler (its header states the rule), and the compiler is installed only under
 // vscode-extension/node_modules, so this test, in the extension's own suite (npm test, this job), is where the completeness
-// property is executed: the roster PLUS the exclusions EQUALS the census's legs, no refusal, every roster line passes the roster
-// gate and reaches Chromium alone, an exclusions reason names Firefox or WebKit when and only when the source reaches it, and
-// carries the embedded-driver sentence when and only when the leg is one. tools/ci-browser-legs.test.mjs, in CI's Shell job with
+// property is executed: the roster PLUS the exclusions whose source is present EQUALS the census's legs, no refusal, every roster
+// line passes the roster gate and reaches Chromium alone, an exclusions reason names Firefox or WebKit when and only when the
+// source reaches it, and carries the embedded-driver sentence when and only when the leg is one. An exclusions reason "pending
+// #<PR>: <why>" names a leg an open PR brings and stands while its source is absent; once the source is present the line is red
+// here with the promotion remedy derived from the census's record of that source (a roster line for a shared Chromium leg, a
+// reason of its own for any other leg, no line for a module that is no leg). tools/ci-browser-legs.test.mjs, in CI's Shell job with
 // no node_modules, holds the parse-free half (file shape, duplicates, both files, reasons, the ci.yml pins) and runs the script
 // over synthetic trees with a stub node that answers the census call from a table; the script's reading of the REAL census is
 // executed here, over the tree and over a synthetic root. The planted forms under tests/fixtures/browser-legs-plants are the
@@ -50,14 +53,30 @@ const read = (p: string): string => fs.readFileSync(p, "utf8");
 const sourceOf = (bundle: string): string => path.join(REPO, bundle.replace(/^out-tests\//, "").replace(/\.test\.js$/, ".test.ts"));
 /** Roster lines: [{ n, bundle }], comments and blanks dropped. */
 const parseRoster = (text: string) => text.split("\n").map((line, i) => ({ n: i + 1, line })).filter(({ line }) => !/^\s*(#|$)/.test(line)).map(({ n, line }) => ({ n, bundle: line }));
-/** Exclusions lines: [{ n, bundle, reason }] (reason null when the line has no tab). */
-const parseExcluded = (text: string) => text.split("\n").map((line, i) => ({ n: i + 1, line })).filter(({ line }) => !/^\s*(#|$)/.test(line)).map(({ n, line }) => {
+/** Exclusions lines: [{ n, bundle, reason, pending }] (reason null when the line has no tab; `pending` is undefined for an
+ *  ordinary reason, { pr } for a reason of the class "pending #<PR>: <why>", with pr null when it names no PR). */
+type Excluded = { n: number; bundle: string; reason: string | null; pending?: { pr: string | null } };
+const parseExcluded = (text: string): Excluded[] => text.split("\n").map((line, i) => ({ n: i + 1, line })).filter(({ line }) => !/^\s*(#|$)/.test(line)).map(({ n, line }) => {
   const tab = line.indexOf("\t");
-  return tab < 0 ? { n, bundle: line, reason: null as string | null } : { n, bundle: line.slice(0, tab), reason: line.slice(tab + 1) as string | null };
+  const e: Excluded = tab < 0 ? { n, bundle: line, reason: null } : { n, bundle: line.slice(0, tab), reason: line.slice(tab + 1) };
+  if (e.reason !== null && /^\s*pending/.test(e.reason)) { const m = /^\s*pending #(\d+): \S/.exec(e.reason); e.pending = { pr: m ? m[1] : null }; }
+  return e;
 });
+/** The promotion remedy for a pending line whose source has arrived, derived from the census's record of the source (the
+ *  script's promotion_of states the same rule over the same record). */
+function promotionOf(c: Census, r: Rec | undefined, bundle: string): string {
+  const { rosterGap, engineNames, classOf } = c;
+  if (!r || !r.reaches) return "remove the line (the source reaches no browser by the census rule" + (r && r.launcherImported ? "; " + rosterGap(r) : "") + ")";
+  if (classOf(r) === "embedded") return "keep the line and replace the reason with the embedded-driver sentence the header of " + EXCLUDED + " states (the leg's only playwright is in a driver string it runs as a child process, which the switch never reaches)";
+  const gap = rosterGap(r), engines = engineNames(r);
+  if (gap === null && engines.length === 0) return "delete this line and add '" + bundle + "' to " + ROSTER + " (the source launches through inBrowser alone and reaches no engine but Chromium), with the step's measured seconds in the PR body";
+  const why = [engines.length ? "launches " + engines.join(" and ") + "; the gating job installs Chromium only" : null, gap].filter(Boolean).join("; ");
+  return "keep the line and replace the reason with why the gating job does not run it (" + why + ")";
+}
 
-test("the roster plus the exclusions equals the census's legs, with no refusal; every roster line passes the roster gate and reaches Chromium alone; an exclusions reason names Firefox or WebKit, or carries the embedded-driver sentence, when and only when the source does", async (t) => {
-  const { census, rosterGap, engineNames, classOf, EMBEDDED_PHRASE } = await load();
+test("the roster plus the exclusions whose source is present equals the census's legs, with no refusal; every roster line passes the roster gate and reaches Chromium alone; an exclusions reason names Firefox or WebKit, or carries the embedded-driver sentence, when and only when the source does; a pending line names a PR and stands while its source is absent, and is red with the promotion remedy once it is present", async (t) => {
+  const mod = await load();
+  const { census, rosterGap, engineNames, classOf, EMBEDDED_PHRASE } = mod;
   const c = census(REPO);
   assert.deepEqual(c.refusals, [], "the census refused a form it cannot classify (file:line above each): rewrite the form, or teach scripts/browser-legs-census.mjs to read it");
   assert.ok(c.legs.length > 100, "the tree holds browser legs (the census found " + c.legs.length + "; a count near zero means the rule stopped matching, not that the legs left)");
@@ -70,7 +89,14 @@ test("the roster plus the exclusions equals the census's legs, with no refusal; 
     assert.equal(rosterGap(r), null, where(ROSTER, e) + " does not launch through the one shared launcher (" + rosterGap(r) + "): only inBrowser reads ROMP_BROWSER_LEGS_REQUIRE, so a launch or a skip of the leg's own stands outside the switch; launch through inBrowser (ui/webview/real-viewer-leg.ts), with no launch, skip or playwright of the leg's own, before rostering it");
     assert.deepEqual(engineNames(r), [], where(ROSTER, e) + " reaches " + engineNames(r).join(" and ") + "; the gating job installs Chromium only, so under the switch that launch is red: keep the leg in " + EXCLUDED + " with that reason");
   }
+  const pending = excluded.filter((e) => e.pending);
+  for (const e of pending) {
+    assert.ok(e.pending && e.pending.pr !== null, where(EXCLUDED, e) + " has a pending reason that names no PR (" + JSON.stringify(e.reason) + "): a pending line reads 'pending #<PR>: <why>', the PR whose merge of main brings the leg and promotes the line");
+    const pr = (e.pending as { pr: string }).pr, src = sourceOf(e.bundle);
+    assert.ok(!fs.existsSync(src), where(EXCLUDED, e) + " is pending #" + pr + " and its source " + path.relative(REPO, src) + " is in the tree, so the leg has arrived (#" + pr + " merged main, or this is #" + pr + "'s branch) and the line's condition has passed: promote it: " + (fs.existsSync(src) ? promotionOf(mod, c.byBundle.get(e.bundle), e.bundle) : ""));
+  }
   for (const e of excluded) {
+    if (e.pending) continue;   // its source is absent (asserted above), so the census has no record of it and the reason's engine and driver words are not about a source in the tree
     const r = c.byBundle.get(e.bundle);
     assert.ok(r && r.reaches, where(EXCLUDED, e) + " names no browser leg" + (r && r.launcherImported ? ": " + rosterGap(r) : " (the source reaches no browser by the census rule): remove the line"));
     assert.ok(e.reason !== null, where(EXCLUDED, e) + " has no tab, so it has no reason to read here: tools/ci-browser-legs.test.mjs refuses it and says how to fix it");
@@ -83,10 +109,12 @@ test("the roster plus the exclusions equals the census's legs, with no refusal; 
     const isEmbedded = classOf(r) === "embedded";
     assert.equal(e.reason.includes(EMBEDDED_PHRASE), isEmbedded, where(EXCLUDED, e) + ": the reason " + (e.reason.includes(EMBEDDED_PHRASE) ? "carries" : "does not carry") + " the embedded-driver sentence and the leg " + (isEmbedded ? "is one (its only playwright is in a driver string it runs as a child process)" : "is not one (class " + classOf(r) + ")") + "; the sentence is " + JSON.stringify(EMBEDDED_PHRASE) + "; the reason reads: " + e.reason);
   }
-  const listed = new Set([...roster.map((e) => e.bundle), ...excluded.map((e) => e.bundle)]);
+  // the equality is over the roster plus the exclusions whose source is present: a pending line names an absent source (asserted
+  // above), so it is a member of neither the listed set nor the census, and the two stay equal
+  const listed = new Set([...roster.map((e) => e.bundle), ...excluded.filter((e) => !e.pending).map((e) => e.bundle)]);
   const neither = c.legs.filter((b) => !listed.has(b));
   assert.deepEqual(neither, [], "browser legs in neither " + ROSTER + " nor " + EXCLUDED + " (add each to the roster, or to the exclusions with a tab and a reason): " + JSON.stringify(neither));
-  assert.deepEqual([...listed].sort(), c.legs, "the roster plus the exclusions is exactly the census's legs");
+  assert.deepEqual([...listed].sort(), c.legs, "the roster plus the present-source exclusions is exactly the census's legs");
   // the population, derived from this run (figures for a PR body come from here, never from a constant kept elsewhere)
   const recs = c.legs.map((b) => c.byBundle.get(b) as Rec);
   const count = (f: (r: Rec) => boolean) => recs.filter(f).length;
@@ -94,7 +122,7 @@ test("the roster plus the exclusions equals the census's legs, with no refusal; 
   for (const r of recs) classes[classOf(r)] = (classes[classOf(r)] || 0) + 1;
   const engineSets: Record<string, number> = {};
   for (const r of recs) { const k = (r.engines || []).join("+") || "none"; engineSets[k] = (engineSets[k] || 0) + 1; }
-  t.diagnostic("census: " + c.byBundle.size + " modules read, " + c.legs.length + " legs, " + roster.length + " rostered, " + excluded.length + " excluded");
+  t.diagnostic("census: " + c.byBundle.size + " modules read, " + c.legs.length + " legs, " + roster.length + " rostered, " + (excluded.length - pending.length) + " excluded, " + pending.length + " pending (absent sources, PRs " + JSON.stringify([...new Set(pending.map((e) => "#" + (e.pending as { pr: string }).pr))]) + ")");
   t.diagnostic("classes: " + JSON.stringify(classes) + "; engines: " + JSON.stringify(engineSets));
   t.diagnostic("rosterable by the gate: " + count((r) => rosterGap(r) === null) + "; legs importing the launcher and never calling it: " + count((r) => !!r.launcherImported && r.sharedCalls === 0) + "; shared calls inside try/catch (admitted, reported): " + count((r) => (r.swallow || []).length > 0) + "; legs with a skip or todo: " + count((r) => (r.skipTodo || []).length > 0) + "; own launches: " + recs.reduce((n, r) => n + (r.launches || []).length, 0) + " sites in " + count((r) => (r.launches || []).length > 0) + " modules");
 });
@@ -267,6 +295,26 @@ test("a rostered leg reaching an engine the gating job does not install is red n
   assert.ok(r.stderr.includes(ROSTER + " line 2: '" + P09B + "' does not launch through the one shared launcher"), r.stderr);
   const excluded = run(P01 + "\n", P09B + "\tlaunches Firefox and WebKit; the gating job installs Chromium only\n");
   assert.equal(excluded.status, 0, excluded.stderr);
+});
+
+test("the script's reading of the real census over a pending line: allowed while the source is absent (counted on the agreement line); red naming no PR; once the source is present, red with the remedy derived from the source (a shared Chromium leg to the roster; an engine leg keeps the line with the engine reason; a non-leg importer removes the line; an embedded driver keeps the line with the header's sentence) and never as in neither", (t) => {
+  const { run } = syntheticRoot(t, ["p01-alias.test.ts", "p19-default-core.test.ts", "p10-block-comment-mention.test.ts", "p26-embedded-driver.test.ts"]);
+  const P01 = B("p01-alias.test.ts"), P19 = B("p19-default-core.test.ts"), P10 = B("p10-block-comment-mention.test.ts"), P26 = B("p26-embedded-driver.test.ts");
+  const ABSENT = "out-tests/ui/webview/zz-absent-browser.test.js";
+  const rest = P19 + "\tlaunches WebKit; the gating job installs Chromium only\n" + P26 + "\tloads playwright in a child process it drives from a string; the switch never reaches it\n";
+  const absent = run(P01 + "\n", rest + ABSENT + "\tpending #999: a leg an open PR brings\n");
+  assert.equal(absent.status, 0, "a pending line naming an absent source is allowed; stderr: " + absent.stderr);
+  assert.match(absent.stdout, /the roster and the tree agree: 1 rostered, 3 browser legs in the census, 1 pending lines naming absent sources/, absent.stdout);
+  const refused = (r: ReturnType<typeof run>, ...needles: string[]) => {
+    assert.equal(r.status, 1, "exit 1; stderr: " + r.stderr);
+    for (const n of needles) assert.ok(r.stderr.includes(n), "stderr names " + JSON.stringify(n) + ":\n" + r.stderr);
+    assert.ok(!r.stderr.includes("is in neither"), "the arrived leg is not also called missing from both files:\n" + r.stderr);
+  };
+  refused(run(P01 + "\n", rest + ABSENT + "\tpending: a leg with no PR named\n"), EXCLUDED + " line 3: '" + ABSENT + "' has a pending reason that names no PR ('pending: a leg with no PR named'): a pending line reads 'pending #<PR>: <why>'");
+  refused(run("", rest + P01 + "\tpending #862: launches through inBrowser\n"), EXCLUDED + " line 3: '" + P01 + "' is pending #862 and its source ui/webview/p01-alias.test.ts is in the tree, so the leg has arrived (#862 merged main, or this is #862's branch) and the line's condition has passed: promote it: delete this line and add '" + P01 + "' to " + ROSTER + " (the source launches through inBrowser alone and reaches no engine but Chromium), with the step's measured seconds in the PR body");
+  refused(run(P01 + "\n", P26 + "\tloads playwright in a child process it drives from a string; the switch never reaches it\n" + P19 + "\tpending #859: launches on its own\n"), "'" + P19 + "' is pending #859", "promote it: keep the line and replace the reason with why the gating job does not run it (launches WebKit; the gating job installs Chromium only; never imports the shared launcher, ui/webview/real-viewer-leg.ts)");
+  refused(run(P01 + "\n", rest + P10 + "\tpending #861: a module\n"), "'" + P10 + "' is pending #861", "promote it: remove the line (the source reaches no browser by the census rule; imports ui/webview/real-viewer-leg.ts and never calls its inBrowser through that import: call it, or remove the line)");
+  refused(run(P01 + "\n", P19 + "\tlaunches WebKit; the gating job installs Chromium only\n" + P26 + "\tpending #863: a driver\n"), "'" + P26 + "' is pending #863", "promote it: keep the line and replace the reason with the embedded-driver sentence the header of " + EXCLUDED + " states");
 });
 
 test("a form the census cannot classify stops the script with the file and line, judging nothing; without the compiler the census exits 1 naming CI's Shell job and the script stops the same way", (t) => {

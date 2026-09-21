@@ -20,7 +20,10 @@
 //   - both files are well formed: every line is a bundle path (out-tests/<dir>/<name>.test.js), no line is duplicated, no
 //     line is in both files, every line names a source that exists in the tree, every exclusions line carries a reason
 //     with no em dash, and a reason that names Firefox or WebKit says the gating job installs Chromium only (whether the
-//     source reaches that engine, and whether a line names a browser leg at all, is the census test's to say);
+//     source reaches that engine, and whether a line names a browser leg at all, is the census test's to say); an
+//     exclusions reason "pending #<PR>: <why>" (a leg an open PR brings) names a PR and its source is ABSENT from the
+//     tree: a present source is red here as arrived, and the promotion remedy derived from that source (a roster line, a
+//     reason of its own, or no line) is the census test's and the script's to print;
 //   - the script the step calls (vscode-extension/scripts/ci-browser-legs.sh) exists, is executable, calls the census
 //     module once (--tsv) and node --test through xargs, and prints "no legs in the roster" on an empty roster; run on
 //     synthetic trees with a stub node on PATH that answers the census call from a TABLE this module writes (so what is
@@ -160,11 +163,15 @@ const sourceOf = (bundle) => path.join(REPO, bundle.replace(/^out-tests\//, '').
 function parseRoster(text) {
   return text.split('\n').map((line, i) => ({ n: i + 1, line })).filter(({ line }) => !/^\s*(#|$)/.test(line)).map(({ n, line }) => ({ n, bundle: line }));
 }
-/** Exclusions lines: [{ n, bundle, reason }] (reason null when the line has no tab). */
+/** Exclusions lines: [{ n, bundle, reason, pending }] (reason null when the line has no tab; `pending` is undefined for an
+ *  ordinary reason, { pr: '<PR>' } for a reason of the class "pending #<PR>: <why>", and { pr: null } for a reason that starts
+ *  with "pending" and names no PR). */
 function parseExcluded(text) {
   return text.split('\n').map((line, i) => ({ n: i + 1, line })).filter(({ line }) => !/^\s*(#|$)/.test(line)).map(({ n, line }) => {
     const tab = line.indexOf('\t');
-    return tab < 0 ? { n, bundle: line, reason: null } : { n, bundle: line.slice(0, tab), reason: line.slice(tab + 1) };
+    const e = tab < 0 ? { n, bundle: line, reason: null } : { n, bundle: line.slice(0, tab), reason: line.slice(tab + 1) };
+    if (e.reason !== null && /^\s*pending/.test(e.reason)) { const m = /^\s*pending #(\d+): \S/.exec(e.reason); e.pending = { pr: m ? m[1] : null }; }
+    return e;
   });
 }
 
@@ -188,7 +195,7 @@ test('the vscode-extension job runs on every pull request (no paths filter on th
   assert.ok(fs.existsSync(CENSUS), 'the census module exists: ' + path.relative(REPO, CENSUS));
 });
 
-test('both files are well formed: each line is a bundle path naming a source in the tree, once, in one file, and every exclusions line carries a reason (whether a line names a browser leg, and the equality with the tree, are the census test\'s in the vscode-extension job)', () => {
+test('both files are well formed: each line is a bundle path naming a source in the tree, once, in one file, and every exclusions line carries a reason; a pending line names a PR and its source is absent (whether a line names a browser leg, the equality with the tree, and the promotion remedy for an arrived pending leg are the census test\'s in the vscode-extension job)', () => {
   const roster = parseRoster(read(path.join(EXT, ROSTER)));
   const excluded = parseExcluded(read(path.join(EXT, EXCLUDED)));
   assert.ok(excluded.length + roster.length > 100, 'the two files hold the tree\'s browser legs (' + (excluded.length + roster.length) + ' lines; a count near zero means the files emptied, not that the legs left); ' + CENSUS_HOME);
@@ -200,6 +207,11 @@ test('both files are well formed: each line is a bundle path naming a source in 
       assert.ok(!seen.has(e.bundle), where(file, e) + ' duplicates line ' + seen.get(e.bundle) + ': remove one');
       seen.set(e.bundle, e.n);
       const src = sourceOf(e.bundle);
+      if (e.pending) {   // a leg an open PR brings: the reason names the PR, and the line stands only while the source is absent
+        assert.ok(e.pending.pr !== null, where(file, e) + ' has a pending reason that names no PR (' + JSON.stringify(e.reason) + '): a pending line reads \'pending #<PR>: <why>\', the PR whose merge of main brings the leg and promotes the line');
+        assert.ok(!fs.existsSync(src), where(file, e) + ' is pending #' + e.pending.pr + ' and its source ' + path.relative(REPO, src) + ' is in the tree, so the leg has arrived (#' + e.pending.pr + ' merged main, or this is #' + e.pending.pr + '\'s branch) and the line\'s condition has passed: promote it (a roster line, a reason of its own, or no line: the remedy derived from the source is printed by ' + path.relative(REPO, CENSUS_TEST) + ' in the vscode-extension job and by scripts/ci-browser-legs.sh --check)');
+        continue;
+      }
       assert.ok(fs.existsSync(src), where(file, e) + ' names ' + path.relative(REPO, src) + ', which is not in the tree (the source moved or was deleted): fix the line');
     }
   }
@@ -244,7 +256,7 @@ test('the script exists, is executable, calls the census module once and node --
  *  here: what runs is the script's reading of the table (the census over real sources is executed by the census test in the
  *  vscode-extension job). Returns a runner over roster/exclusions text that runs the script with the switch set to 1 as the
  *  step does (stub.switch names another value; null runs it unset, as a local run may; stub.census replaces the table,
- *  stub.censusExit and stub.censusErr the census call's exit and stderr); `node` in its result is the argument list of the
+ *  stub.censusExit and stub.censusErr the census call's exit and stderr; stub.check runs --check); `node` in its result is the argument list of the
  *  node --test call without the reporter flags. `ext` is the physical path of the tree's vscode-extension, as node spells a
  *  bundle in its record. */
 function syntheticTree(t) {
@@ -300,7 +312,7 @@ function syntheticTree(t) {
     if (stub.switch === null) delete env[SWITCH]; else if (stub.switch !== undefined) env[SWITCH] = stub.switch;
     if (stub.tap !== undefined) env.CBL_STUB_TAP = stub.tap;
     if (stub.exit !== undefined) env.CBL_STUB_EXIT = String(stub.exit);
-    const r = bash([path.join(ext, 'scripts', 'ci-browser-legs.sh')], { cwd: root, env });
+    const r = bash([path.join(ext, 'scripts', 'ci-browser-legs.sh'), ...(stub.check ? ['--check'] : [])], { cwd: root, env });
     const args = fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean) : null;
     return { status: r.status, out: r.stdout, err: r.stderr, node: args && args.filter((a) => !a.startsWith('--test-reporter')), reporters: args && args.filter((a) => a.startsWith('--test-reporter')) };
   };
@@ -370,6 +382,40 @@ test('the script refuses, naming the line and the remedy, on: a missing file, a 
   assert.ok(!refusal.err.includes('names no browser leg') && !refusal.err.includes('is in neither'), 'nothing else is judged over a refusal:\n' + refusal.err);
   const stale = run(A + '\n', B + '\treason\n' + C + '\treason\n' + rest);
   refused(stale, EXCLUDED + ' line 2: \'' + C + '\' names ui/webview/c-browser.test.ts, which is not in the tree (the source moved or was deleted): fix the line');
+});
+
+test('the script allows a pending line while its source is absent, reds a pending reason that names no PR, and once the source is present reds the line with the promotion remedy the census derives (a roster line for a shared Chromium leg; the real reason for a private or engine leg; no line for a non-leg) and not as "in neither" too', (t) => {
+  const { run, root, A, P, F, PLAIN, GAP_P, TABLE } = syntheticTree(t);
+  const C = 'out-tests/ui/webview/c-browser.test.js';
+  const rest = EXCLUDE_REST('a');
+  const absent = run(A + '\n', C + '\tpending #860: a leg an open PR brings\n' + rest);
+  assert.equal(absent.status, 0, 'a pending line with an absent source is allowed; stderr: ' + absent.err);
+  assert.deepEqual(absent.node, ['--test', A], 'the rostered leg ran');
+  const check = run(A + '\n', C + '\tpending #860: a leg an open PR brings\n' + rest, { check: true });
+  assert.equal(check.status, 0, check.err);
+  assert.match(check.out, /1 rostered, 6 browser legs in the census, 1 pending lines naming absent sources/, 'the agreement line counts the pending lines: ' + check.out);
+  const noPr = run(A + '\n', C + '\tpending: a leg with no PR named\n' + rest);
+  assert.equal(noPr.status, 1, noPr.err);
+  assert.ok(noPr.err.includes(EXCLUDED + ' line 1: \'' + C + '\' has a pending reason that names no PR (\'pending: a leg with no PR named\'): a pending line reads \'pending #<PR>: <why>\''), noPr.err);
+  assert.equal(noPr.node, null, 'no leg ran');
+  // the source arrives (the census table gains its row: a shared Chromium leg): red with the roster remedy naming the PR, once
+  fs.writeFileSync(path.join(root, 'ui', 'webview', 'c-browser.test.ts'), 'import { inBrowser } from "./real-viewer-leg";\ntest("leg c opens the page", async (t) => { await inBrowser(t, async (browser) => {}); });\n');
+  const present = run(A + '\n', C + '\tpending #860: a leg an open PR brings\n' + rest, { census: TABLE + [C, '1', '-', '-', 'shared'].join('\t') + '\n' });
+  assert.equal(present.status, 1, present.err);
+  assert.ok(present.err.includes(EXCLUDED + ' line 1: \'' + C + '\' is pending #860 and its source ui/webview/c-browser.test.ts is in the tree, so the leg has arrived (#860 merged main, or this is #860\'s branch) and the line\'s condition has passed: promote it: delete this line and add \'' + C + '\' to ' + ROSTER + ' (the source launches through inBrowser alone and reaches no engine but Chromium), with the step\'s measured seconds in the PR body'), present.err);
+  assert.ok(!present.err.includes('is in neither'), 'the arrived leg is not also called missing from both files:\n' + present.err);
+  assert.equal(present.node, null, 'no leg ran');
+  // a private leg (p: never imports the launcher), an engine leg (f: Firefox) and a non-leg (plain) arriving under pending lines
+  const priv = run(A + '\n', P + '\tpending #859: a private leg\n' + EXCLUDE_REST('a', 'p'));
+  assert.equal(priv.status, 1, priv.err);
+  assert.ok(priv.err.includes('\'' + P + '\' is pending #859') && priv.err.includes('promote it: keep the line and replace the reason with why the gating job does not run it (' + GAP_P + ')'), priv.err);
+  const eng = run(A + '\n', F + '\tpending #859: an engine leg\n' + EXCLUDE_REST('a', 'f'));
+  assert.equal(eng.status, 1, eng.err);
+  assert.ok(eng.err.includes('\'' + F + '\' is pending #859') && eng.err.includes('promote it: keep the line and replace the reason with why the gating job does not run it (launches Firefox; the gating job installs Chromium only)'), eng.err);
+  const none = run(A + '\n', PLAIN + '\tpending #861: a module that is no leg\n' + rest);
+  assert.equal(none.status, 1, none.err);
+  assert.ok(none.err.includes('\'' + PLAIN + '\' is pending #861') && none.err.includes('promote it: remove the line (the source reaches no browser by the census rule)'), none.err);
+  for (const r of [priv, eng, none]) assert.ok(!r.err.includes('is in neither'), 'no second red:\n' + r.err);
 });
 
 test('after node --test the script turns a skipped test into a red naming the test, the rostered sources holding its name (node\'s TAP escaping undone) and the remedy, turns a rostered leg that registered no test into a red naming the leg, prints the lost-browser remedy beside a leg whose failure names the switch, and passes node\'s own failure status through', (t) => {

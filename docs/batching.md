@@ -32,13 +32,18 @@ also runs on every push to main).
    stated", which costs the maintainer a look.
 4. For an upstream-worthy change, add the ledger entry file and commit it with the change. Do not
    edit UPSTREAM.md.
-5. Do not click merge. If a change must land now, say so in the body; the maintainer merges it
+5. If the PR adds a browser leg (a test module that launches a Playwright browser), file its line in
+   `vscode-extension/ci-browser-legs.txt` or `vscode-extension/ci-browser-legs-excluded.txt` after
+   merging main (CONTRIBUTING.md, the browser-legs paragraph). A `pending #<PR>` line in the
+   exclusions may name the leg until then; once the source is on the branch the checkers red that
+   line with the promotion remedy, and the batch PR's CI shows it until the promotion is on the branch.
+6. Do not click merge. If a change must land now, say so in the body; the maintainer merges it
    alone or asks for it by name.
-6. Once the batcher has commented `in batch <name> at <sha>` on your PR, do not push to the branch.
+7. Once the batcher has commented `in batch <name> at <sha>` on your PR, do not push to the branch.
    If a review finds something, push the fix and tell the batcher by postal (kind: coordinate); it
    re-pins your head and rebuilds. A push after the cut leaves your PR open after the batch merges,
    and `finish` reports that rather than hiding it.
-7. When the batch merges, remove your worktree and local branch. `finish` deletes the remote one.
+8. When the batch merges, remove your worktree and local branch. `finish` deletes the remote one.
 
 ## If you are the maintainer
 
