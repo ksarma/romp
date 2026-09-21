@@ -1349,7 +1349,7 @@ class TheOverrideFileIsSaid(PriceFeedCase):
         """The other edge of round 3's predicate, the reason a bare float() was not restored: every string float() reads that is
         not a plain decimal whole is the row road's report. "inf", "-inf" and "nan" (float reads them as such), "1e999" (reads
         as inf), whitespace either side and a trailing newline, an underscore separator ("1_0" reads as 10.0), a leading plus
-        (refused by the decision _price_rate_value's docstring states: JSON's grammar has none), a bare dot either side, an
+        (refused by the rule _price_rate_value's docstring states: the same value as 0.5, so refusing it costs no real input), a bare dot either side, an
         empty string, text and hex. Guards at this tree against the arm widening, green over the 2a5fc1dce archive (every
         string was refused there); with the strict-form check cut out of _price_rate_value (a mutant that reads every string
         with float()) the seven shapes only that check refuses go red ("1_0", the three padded forms, "+0.5", ".5", "5.") and

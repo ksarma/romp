@@ -52733,13 +52733,16 @@ def _price_rate_value(raw):
     round 2 refused every string, a regression on "0.5", which both earlier heads accepted, and the alternative, a bare
     float() on a string, accepts everything the regex refuses: "inf", "-inf", "nan" and "1e999" (which reads as inf),
     " 0.5", "0.5 " and "0.5\\n" (whitespace either side, a trailing newline included), "1_0" (an underscore separator, which
-    reads as 10.0), "+0.5" (a leading plus), ".5" and "5." (a bare dot). The leading plus is refused by this decision:
-    JSON's own number grammar has no leading plus, so the string arm admits no sign form the number arm does not (the
-    exponent's sign is JSON's and stays); the reviewer named the plus among float()'s leniencies; and no price is written
-    with one, so nothing legitimate is refused, and a refusal is visible on the row road. A leading zero ("007" reads as
-    7.0) is admitted: the round's regex admits it and its value is unambiguous, so admitting it hides nothing. A negative
-    rate passes as the JSON number -0.5 does. An int too wide for a float (json.loads yields a 400-digit integer as an int,
-    and float() raises OverflowError on it) is the not-finite refusal, not an escape from the row's try. The premise,
+    reads as 10.0), "+0.5" (a leading plus), ".5" and "5." (a bare dot). The property the regex encodes, ruled in that
+    round so neither edge is re-decided on its own: the accepted set is the plain decimal forms a feed or a person
+    plausibly writes, and everything that could be a misread or a special value is refused; the members that matter are
+    inf and nan, 1e999 (an exponent that overflows to inf), underscore separators, surrounding whitespace and the empty
+    string. Both edges are consequences of that one rule: "007" is accepted (a padded figure, the same value as 7, no
+    misread possible), and "+0.5" is refused (the same value as 0.5, so refusing it costs no real input, and the strict
+    set is the smallest covering the inputs that occur). The exponent keeps its own sign because that is how a small or a
+    large rate is written ("3e-06", "1e+20"). A negative rate, "-0.5", is a plain decimal and passes, as the number -0.5
+    does: finite is the one range check either arm has. An int too wide for a float (json.loads yields a 400-digit integer
+    as an int, and float() raises OverflowError on it) is the not-finite refusal, not an escape from the row's try. The premise,
     answered here so the next reader does not derive it again: the live feed sends NUMBERS. The document at PRICE_FEED_URL,
     fetched once at 2026-09-21T16:46:51Z (HTTP 200, 4,337 rows), carried a JSON number at every one of the 9,438 values present
     under the four keys the worker reads and a string at none, and 0 strings among the 14,185 values under every cost- or
