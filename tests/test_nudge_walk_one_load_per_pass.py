@@ -1972,6 +1972,10 @@ class _WalkHarness(unittest.TestCase):
         self.before_km, self.before_jd = before_km, before_jd   #   and _restore compares every global of both modules against them
         self.before_cls = {label: _class_attributes(mod) for label, mod in (("kernel", km), ("judge", jd))}   # and every class
         #                                                   attribute of both, the container the fixture's own seam sits in (_restore)
+        self.assertTrue(all(self.before_cls.values()), "the class-attribute floor derives attributes for both modules from their "
+                        "class dicts (a derived expectation fails on empty: this names a derivation that answered nothing, not a "
+                        "class the ownership test dropped, the stated bound); attributes per module: %r"
+                        % {label: len(attrs) for label, attrs in self.before_cls.items()})
         self.td = tempfile.TemporaryDirectory()
         self.addCleanup(self.td.cleanup)                  # cleanups run last in, first out: the seams go back, then the dir
         td = Path(self.td.name)
