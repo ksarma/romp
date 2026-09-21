@@ -475,6 +475,63 @@ test('the re-aimed sentence: its count is the number of pre-existing test module
   }, '; the re-aimed count is held to the sentence\'s own list alone here');
 });
 
+// ── the browser legs in the job that gates a landing (the file review's landing round, extra8-2) ─────────────────────
+
+/** The follow-on's browser legs, derived from the tree: the `*-browser.test.ts` modules under ui/webview whose own text names the
+ *  follow-on (claimants, above). Two derivations must agree: the Tests paragraph's list of browser modules is the same set. */
+const browserLegs = () => claimants(['ui', 'webview'], /-browser\.test\.ts$/);
+
+test('the follow-on\'s browser legs run in the job that gates a landing: the step that sets the switch real-viewer-leg.ts exports runs, as compiled files under out-tests, every browser leg whose own text names the follow-on and no other, stands after that job\'s Chromium install and after its Test step (which runs the legs first, where they skip) inside the one job that runs npm test, and each leg launches through the helper that reads the switch; the Tests paragraph says so, naming the switch and no count', () => {
+  const legs = browserLegs();
+  assert.ok(legs.length > 0, 'browser legs naming the follow-on are on disk');
+  const tests = section.slice(section.indexOf('**Tests.**'));
+  const named = [...new Set([...tests.matchAll(/ui\/webview\/([\w-]+-browser\.test\.ts)\b/g)].map((m) => m[1]))].sort();
+  assert.deepEqual(named, legs, 'the browser modules the Tests paragraph names are the legs whose own text names the follow-on: the two derivations of the roster agree');
+  const helper = read('ui', 'webview', 'real-viewer-leg.ts');
+  const sw = /^export const BROWSER_REQUIRE = "(ROMP_[A-Z_]+)";$/m.exec(helper);
+  assert.ok(sw, 'real-viewer-leg.ts exports the switch\'s name as BROWSER_REQUIRE');
+  const SWITCH = sw[1];
+  assert.ok(/if \(env\[BROWSER_REQUIRE\]\) assert\.fail\(/.test(helper), 'the helper fails under the switch (file-figure-open-browser.test.ts drives both roads under both settings)');
+  for (const f of legs) {
+    const src = read('ui', 'webview', f);
+    assert.ok(/import \{[^}]*\binBrowser\b[^}]*\} from "\.\/real-viewer-leg";/.test(src), f + ' imports inBrowser from real-viewer-leg.ts, the one helper that reads the switch (a private launch would skip under it)');
+    assert.ok(!/chromium\.launch\(/.test(src), f + ' launches through the helper alone');
+  }
+  const ci = read('.github', 'workflows', 'ci.yml');
+  const lines = ci.split('\n');
+  const at = lines.flatMap((l, i) => (l.trim() === SWITCH + ': "1"' ? [i] : []));
+  assert.equal(at.length, 1, 'one step sets ' + SWITCH + ' to "1": lines ' + JSON.stringify(at.map((i) => i + 1)));
+  const step = at[0];
+  let k = step;
+  while (k < lines.length && !/^\s+run:/.test(lines[k]) && !/^\s+- /.test(lines[k])) k++;
+  assert.ok(k < lines.length && /^\s+run:/.test(lines[k]), 'the step that sets the switch has a run line before the next step');
+  const run = lines[k].replace(/^\s+run:\s*/, '');
+  const m = /^node --test((?: out-tests\/ui\/webview\/[\w-]+\.test\.js)+)$/.exec(run);
+  assert.ok(m, 'the run line is node --test over compiled files under out-tests/ui/webview and nothing else: ' + run);
+  const ran = m[1].trim().split(/\s+/).map((f) => f.replace(/^out-tests\/ui\/webview\//, '').replace(/\.js$/, '.ts')).sort();
+  assert.deepEqual(ran, legs, 'the step runs every browser leg naming the follow-on and no other (a leg dropped from the line, or one added to the tree without the line, reds here)');
+  // the step's place: after the install and after Test, inside the job that runs npm test (the job's block runs from its key to the next)
+  const jobsAt = lines.findIndex((l) => l === 'jobs:');
+  assert.ok(jobsAt >= 0, 'ci.yml has a jobs: map');
+  const keys = lines.flatMap((l, i) => (i > jobsAt && /^  [a-z][a-z-]*:$/.test(l) ? [i] : []));
+  const jobOf = (i) => keys.filter((j) => j < i).pop();
+  const npmTest = lines.findIndex((l) => /^\s+run: npm test\s*$/.test(l));
+  const install = lines.findIndex((l) => /^\s+run: npx playwright install chromium\s*$/.test(l));
+  assert.ok(npmTest >= 0 && install >= 0, 'the Test step and the Chromium install are in the workflow');
+  assert.equal(lines.filter((l) => /^\s+run: npm test\s*$/.test(l)).length, 1, 'one step runs npm test');
+  assert.equal(jobOf(step), jobOf(npmTest), 'the step is in the job that runs npm test (' + lines[jobOf(step)].trim() + ')');
+  assert.equal(jobOf(install), jobOf(npmTest), 'and so is the Chromium install');
+  assert.ok(npmTest < install && install < step, 'the order inside the job: Test (line ' + (npmTest + 1) + '), the Chromium install (' + (install + 1) + '), the legs (' + (step + 1) + '): nothing before Test moves, so the gate-before-adoption section\'s CI sentence and its pin stand');
+  // the Tests paragraph: the property, the switch by name, no count
+  const sentenceAt = tests.indexOf('The browser legs named here skip where Playwright\'s engines are absent');
+  assert.ok(sentenceAt >= 0, 'the Tests paragraph states the legs skip where the engines are absent');
+  const sentence = tests.slice(sentenceAt, tests.indexOf('. ', sentenceAt) + 1);
+  assert.ok(sentence.includes('in the Test step of the job that gates a landing too, which runs before that job installs Chromium'), 'and that the gating job\'s Test step is such a place: ' + sentence);
+  assert.ok(sentence.includes('run in the step after that install under `' + SWITCH + '`'), 'and that they run in the step after the install under the switch, by its name: ' + sentence);
+  assert.equal((tests.match(new RegExp('`' + SWITCH + '`', 'g')) || []).length, 1, 'the switch is named once in the Tests paragraph');
+  assert.ok(!/\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|\d+) browser legs\b/i.test(sentence), 'the sentence counts no legs (the roster is derived here, never typed there): ' + sentence);
+});
+
 // ── the gate on L6's verifications ─────────────────────────────────────────────────────────────────
 
 test('L6\'s gate (the file review\'s round 5, tests-7): a pure function over git\'s answers, pinned in all four cells; in a temp repo shaped as the open PR branch (origin/main moved past the branch\'s fork point, the branch adding this module\'s path) the verifications run and read the delta, a kernel edit there is what the kernel stat would red on; origin/main at the branch\'s head holds them off on the merge-base part, a later branch adding another file on the module part, no origin/main on the first', () => {

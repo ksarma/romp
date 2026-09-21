@@ -11,13 +11,14 @@
 // exception L2 states is driven too (the file review's round 2, extra8-1): a Forward step to the picture is a Back or Forward
 // open, which the Files pane records as any open there (openFromViewer through the host's opener), so it DOES mint the
 // picture's row, one per step, where the figure's own open did not; open point 12 states it beside the default.
-// Skips LOUDLY without a playwright browser (CI installs none). Synthetic values only: the notes-api world, a placeholder
+// Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there and runs in the step after the install under ROMP_FILEVIEW_BROWSER_REQUIRE, where the skip is a failure: real-viewer-leg.ts inBrowser). Synthetic values only: the notes-api world, a placeholder
 // session id, /repo/notes-api paths.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
+import { inBrowser as withBrowser } from "./real-viewer-leg";
 
 const EXT = process.cwd();                                        // npm test runs in vscode-extension
 const requireCjs = createRequire(path.join(EXT, "package.json"));
@@ -66,9 +67,6 @@ ${fs.readFileSync(path.join(UI, "files-pane.css"), "utf8")}
 <script>window.__posts=[];window.acquireVsCodeApi=function(){return{postMessage:function(m){window.__posts.push(m);}}};${READERS}</script>
 <script src=/dist/files.js></script></body></html>`;
 
-let pw: any = null;
-try { pw = requireCjs("playwright"); } catch { pw = null; }
-
 type Top = { text: string; scrollTop: number } | null;
 type Nav = { present: boolean; title?: string; disabled?: string | null };
 type H = {
@@ -79,13 +77,11 @@ type H = {
   back: () => Promise<Nav>; shape: () => Promise<{ back: string[]; current: string | null; forward: string[] }>;
   top: () => Promise<Top>; putAtTop: (t: string) => Promise<void>; base: () => Promise<string | null>; frames: (n?: number) => Promise<null>;
 };
+/** This leg's harness over the shared launch (real-viewer-leg.ts inBrowser: the skip on either road, the failure under CI's switch,
+ *  the close), so one home carries the stand-down; the page here is the leg's own, not the shared module's. */
 async function inBrowser(t: any, body: (h: H) => Promise<void>): Promise<void> {
-  if (!pw) { t.skip("playwright is not installed under vscode-extension: the browser leg needs it (CI installs no browsers)"); return; }
-  let browser: any;
-  try { browser = await pw.chromium.launch(); }
-  catch (e) { t.skip("no playwright browser on this box, and the browser leg needs one (CI installs none): " + String((e as Error).message).split("\n")[0]); return; }
-  const errors: string[] = [];
-  try {
+  await withBrowser(t, async (browser: any) => {
+    const errors: string[] = [];
     const js = bundle();
     const ctx = await browser.newContext({ viewport: { width: 900, height: 600 } });
     const page = await ctx.newPage();
@@ -130,9 +126,7 @@ async function inBrowser(t: any, body: (h: H) => Promise<void>): Promise<void> {
     await body({ page, open, painted, recent, back, shape, top, putAtTop, base, frames });
     assert.deepEqual(errors, [], "no page errors");
     await ctx.close();
-  } finally {
-    await browser.close();
-  }
+  });
 }
 const near = (a: number, b: number, tol = 1) => Math.abs(a - b) <= tol;
 

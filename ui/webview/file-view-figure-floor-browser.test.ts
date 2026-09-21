@@ -32,7 +32,7 @@
 // viewer is hidden (armFigureControls is not skipped): a picture re-fetched while the card is display:none is decided at its
 // load over its 0 by 0 box, under the floor, so a standing control leaves at that load and the show's report of the real box
 // brings it back (before: decided over the natural size, the control stood through the hidden load).
-// Skipped LOUDLY where playwright has no browser (CI installs none). Synthetic
+// Skipped LOUDLY where playwright has no browser (in CI the Test step runs before the job's Chromium install, so the leg skips there and runs in the step after the install under ROMP_FILEVIEW_BROWSER_REQUIRE, where the skip is a failure: real-viewer-leg.ts inBrowser). Synthetic
 // values only: the notes-api world, a placeholder session id, example.invalid addresses, /repo/notes-api paths.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";

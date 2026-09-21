@@ -23,7 +23,7 @@
 // owns window.fetch and the route never sees a fetch; and the route reads each request's Cookie header, with three cookies
 // seated on the host before the open (SameSite=Lax, SameSite=Strict, and SameSite=None with Secure, the class a third-party
 // host sets), so which classes ride the image request and which ride the tab's document request is measured here and not
-// stated (this leg's table is Chromium's; the record says so). Skips LOUDLY without a playwright browser (CI installs none).
+// stated (this leg's table is Chromium's; the record says so). Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there and runs in the step after the install under ROMP_FILEVIEW_BROWSER_REQUIRE, where the skip is a failure: real-viewer-leg.ts inBrowser).
 // Synthetic values only: the notes-api world, a placeholder session id, example.invalid addresses, /repo/notes-api paths.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";

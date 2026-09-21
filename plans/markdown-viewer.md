@@ -8655,7 +8655,14 @@ opens the source's file, and since its round 2 a failed local figure with a box 
 nothing) and ui/webview/file-view-figure-recent-browser.test.ts (Chromium over the real Files page: a picture
 opened from a figure, by the control and by the plain click, takes no Recent row while Back returns to the report at the
 reader's block, a Forward step onto the picture mints its row, and a link's open still takes its row).
-Sixteen standing suites were re-aimed, not undone:
+The browser legs named here skip where Playwright's engines are absent, in the Test step of the job that gates a landing too,
+which runs before that job installs Chromium (the gate-before-adoption section's Tests paragraph states that job's shape
+and tools/markdown-viewer-plan-gate-adopt.test.mjs holds it), and run in the step after that install under
+`ROMP_FILEVIEW_BROWSER_REQUIRE`, where a runner without the browser turns the job red rather than green with the coverage
+gone; tools/markdown-viewer-plan-linknav.test.mjs derives those legs from the tree, as the browser modules whose own text
+names this follow-on, and holds the step's run line to them and the step's place after the install and after the Test step
+(the file review's landing round, extra8-2: the legs were the feature's evidence and none of them ran where landing is
+gated, the gating run's log showing every browser scenario of theirs as SKIP). Sixteen standing suites were re-aimed, not undone:
 ui/webview/file-view-text-size.test.ts (its real-module bar leg at 380, 420, 480 and 600 px in the chat and feed modals
 reads the group hidden on a fresh open and, once a link is followed, measures the two glyphs among the actions, case 8), ui/webview/file-view.test.ts and ui/webview/file-view-links.test.ts
 (the delegate's open through openFromViewer; the model import), ui/webview/file-view-figure-error.test.ts and
@@ -8686,7 +8693,7 @@ control cannot red on), ui/webview/md-config-figure-gate-place.test.ts (readPlac
 inside the block's paragraph and beside its text; and, extra9-1, wearing a control that carries a text node of its own, the
 executed case of reader-place.ts's fv-figopen entry) and, correctness-1, ui/webview/file-view-place-blocks.test.ts (readPlace
 over a top-level html-block figure wearing the control reads the figure at the figure's box, at the root's level and nested in
-an html wrapper: the consumer of the structural read's element lists, driven where a pin on the two control lists' contents
+an html wrapper, and over a right-floated figure wearing the failed figure's label at its top, the pair's other member: the consumer of the structural read's element lists, driven where a pin on the two control lists' contents
 stayed green while the structural read read neither, since the control stood in the text read's list alone and a top-level
 control's box, ending above the edge, sent the level's search past the figure to the paragraph after it; the structural read
 now leaves a figure's two companions out by the pair predicate the map's pairing uses, blockElementsOf with isFigureCompanion,

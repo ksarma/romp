@@ -15,12 +15,11 @@
 // open on a COARSE pointer the layer's overlay is off, so the plain tap reaches the figure listener itself, which stands down
 // to the comment offer (the guard's own execution: nothing opens, the trail does not move) while a Ctrl-click and the control
 // keep their opens; print media shows no control even when it holds the focus; a device with no hover keeps it visible. Red
-// over the unchanged viewer at the first control assertion (no control exists). Skips LOUDLY without a playwright browser (CI
-// installs none). Synthetic values only: the notes-api world, a placeholder session id, example.invalid addresses,
+// over the unchanged viewer at the first control assertion (no control exists). Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there and runs in the step after the install under ROMP_FILEVIEW_BROWSER_REQUIRE, where the skip is a failure: real-viewer-leg.ts inBrowser). Synthetic values only: the notes-api world, a placeholder session id, example.invalid addresses,
 // /repo/notes-api paths.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { inBrowser, openViewer, openPanel, frames, topBlock, putAtTop, ROOT, REPORT, SID, PARA } from "./real-viewer-leg";
+import { inBrowser, openViewer, openPanel, frames, topBlock, putAtTop, ROOT, REPORT, SID, PARA, BROWSER_REQUIRE } from "./real-viewer-leg";
 
 const NOTES = ROOT + "/docs/notes.md";
 const PLOT = ROOT + "/docs/figs/plot.svg";
@@ -352,4 +351,30 @@ test("in a browser, the Comments panel open on a coarse pointer: the layer's ove
     assert.deepEqual(errors, [], "no page errors");
     await page.close();
   });
+});
+
+// ── the stand-down under CI's switch: node-only, so it runs in the Test step where the legs above skip ─────────────────
+test("the legs' stand-down (real-viewer-leg.ts inBrowser, the one helper every leg here launches through): without the switch a leg that cannot run SKIPS on either road, no playwright module or a launch that throws, saying where the legs do run and no longer that CI installs no browser; with " + BROWSER_REQUIRE + " set it FAILS on either road naming the reason, so CI's step after the Chromium install turns red rather than green when the browser is gone; the body runs on neither", async () => {
+  const skips: string[] = [];
+  const t = { skip: (m: string) => { skips.push(m); } };
+  let ran = 0;
+  const body = async () => { ran++; };
+  const throwing = { chromium: { launch: async () => { throw new Error("browserType.launch: Executable doesn't exist at /nowhere/chrome\n  a second line the message cuts"); } } };
+  const off = {}, on = { [BROWSER_REQUIRE]: "1" };
+  await inBrowser(t, body, { pw: null, env: off });
+  await inBrowser(t, body, { pw: throwing, env: off });
+  assert.equal(skips.length, 2, "both roads skip without the switch");
+  assert.match(skips[0], /^playwright is not installed under vscode-extension/);
+  assert.match(skips[1], /^no playwright browser on this box; the browser leg needs one: browserType\.launch: Executable doesn't exist at \/nowhere\/chrome \(/, "the launch error's first line alone");
+  for (const m of skips) {
+    assert.ok(m.includes("in CI the Test step runs before the job installs Chromium") && m.includes("under " + BROWSER_REQUIRE + ", where this skip is a failure"), "the skip says where the legs run: " + m);
+    assert.doesNotMatch(m, /installs none|installs no browsers/, "no longer the false claim that CI installs no browser (it installs Chromium after the Test step)");
+  }
+  await assert.rejects(inBrowser(t, body, { pw: null, env: on }), { name: "AssertionError", message: BROWSER_REQUIRE + " is set and this browser leg cannot run: playwright is not installed under vscode-extension; the browser leg needs it" }, "the module road fails under the switch");
+  await assert.rejects(inBrowser(t, body, { pw: throwing, env: on }), { name: "AssertionError", message: BROWSER_REQUIRE + " is set and this browser leg cannot run: no playwright browser on this box; the browser leg needs one: browserType.launch: Executable doesn't exist at /nowhere/chrome" }, "the launch road fails under the switch");
+  assert.equal(skips.length, 2, "no skip under the switch");
+  assert.equal(ran, 0, "the body never ran on any of the four");
+  // an empty value is unset (a `VAR=` in a shell), and the switch is read at the call, not at import
+  await inBrowser(t, body, { pw: null, env: { [BROWSER_REQUIRE]: "" } });
+  assert.equal(skips.length, 3, "an empty value leaves the skip");
 });

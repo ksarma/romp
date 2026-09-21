@@ -17,7 +17,7 @@
 // (3) A `data:` CANDIDATE: a srcset figure whose chosen candidate is a `data:` URI wore the control the paint added from the
 //     src, and its click did nothing (figureTarget answers null for a data: URL). Now the load decides against it: no
 //     control.
-// Skipped LOUDLY where playwright has no browser (CI installs none). Synthetic values only: the notes-api world, a placeholder
+// Skipped LOUDLY where playwright has no browser (in CI the Test step runs before the job's Chromium install, so the leg skips there and runs in the step after the install under ROMP_FILEVIEW_BROWSER_REQUIRE, where the skip is a failure: real-viewer-leg.ts inBrowser). Synthetic values only: the notes-api world, a placeholder
 // session id, /repo/notes-api paths.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
