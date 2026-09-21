@@ -4438,12 +4438,16 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   // that re-parses markup, so it runs before this block and this block judges what its re-parse creates (its comment says
   // what that is). The passes after the adoption write a video's style, a list item's class, anchors' attributes (class,
   // title, data-*, target, rel, tabindex, role, an href set, resolved or removed) and new anchors and spans in place of the
-  // prose's and the code blocks' text nodes, and none re-parses: after the adoption line this function, and every module a pass
-  // after it reaches (the callees' modules and their imports, derived from the code), holds no write of innerHTML or outerHTML
-  // and no insertAdjacentHTML, insertAdjacentElement, createContextualFragment, DOMParser, document.write, setHTML,
-  // setHTMLUnsafe, parseHTMLUnsafe or template element; file-view-seam.test.ts derives that population from the
-  // comment-stripped code (its RE_PARSE pattern) and pins it, so a new such site after the adoption is red there until it is
-  // judged.
+  // prose's and the code blocks' text nodes, and none re-parses under `box`: after the adoption line this function, and every
+  // module a pass after it reaches (the callees' modules, the reached locals' imported callees' modules and their imports under
+  // every import form, transitively, derived from the code), holds no use of innerHTML or outerHTML and no insertAdjacentHTML,
+  // insertAdjacentElement, createContextualFragment, DOMParser, document.write, setHTML, setHTMLUnsafe, parseHTMLUnsafe or
+  // template element beyond the sites file-view-seam.test.ts judges, each with its reason (the viewer's own constant markup on a
+  // node outside the Rendered box, a write onto a node that enters no document, the figure control's glyph among them, a parse
+  // into a document of its own, a type annotation naming the property, and wrapCodeLines before the adoption; JUDGED_SITES per
+  // module, and file-view.ts's own by its whole-file count); that test derives the population from the comment-stripped code (its
+  // RE_PARSE pattern) and pins it, so a new such site in this function after the adoption or anywhere in a reached module is red
+  // there until it is judged.
   if (doc && doc.kind === "url") {
     // Every attribute a figure fetches through resolves against the document (resolveFigureRefs, below): this arm read
     // `img[src]` alone, so a relative `srcset` candidate, a video's `src` or `poster`, an audio's, a `source`'s or a

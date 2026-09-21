@@ -1410,9 +1410,13 @@ test("the inertness premise, held where CI runs: MD_PURIFY is its six-key litera
 // string-serializing reads a write can round-trip through, and a template element, whose content is parsed markup: innerHTML and
 // outerHTML writes, insertAdjacentHTML, insertAdjacentElement, createContextualFragment, DOMParser, document.write, setHTMLUnsafe
 // and parseHTMLUnsafe (which the installed lib.dom.d.ts carries), setHTML (the Sanitizer API's, not in those typings yet), and a
-// template created by createElement or this module's `el` helper under any quote (the fork PR review's verification found the
-// first spelling of this list without setHTML, setHTMLUnsafe and parseHTMLUnsafe, and matching the double-quoted createElement
-// alone, 2026-09-20). The derivation itself is pinned (the callee list, the reached locals, the imported callees, the module
+// template created by createElement or this module's `el` helper under any spelling of the argument (`[^)]*template`, the
+// form the derivation command below and the plan's paragraph spell: a name under any quote, or one chosen or assembled inside
+// the call; the fork PR review's verification found the first spelling of this list without setHTML, setHTMLUnsafe and
+// parseHTMLUnsafe, and matching the double-quoted createElement alone, 2026-09-20, and the author's closing pass after the
+// file review's landing round found RE_PARSE matching a name under a quote alone while the command spelled the wider form,
+// and widened RE_PARSE to the command's form, the same lines matching at that head under both). The derivation itself is
+// pinned (the callee list, the reached locals, the imported callees, the module
 // set, the package list, and the import forms the resolver follows, by a synthetic module holding each form), so a new pass,
 // call or import widens it here first, and a new such site after the adoption is red until it is judged in this list. The
 // judged sites: mdBlock holds one write, the hljs highlight's, inside the fence pass BEFORE the adoption (escaped text: hljs
@@ -1435,7 +1439,7 @@ test("the inertness premise, held where CI runs: MD_PURIFY is its six-key litera
 // codeOnly): grep -nE '\b(?:innerHTML|outerHTML)\b|insertAdjacentHTML|createContextualFragment|DOMParser|document\.write\b|
 // insertAdjacentElement|\bsetHTML\w*\s*\(|parseHTMLUnsafe|createElement\(\s*[^)]*template|\bel\(\s*[^)]*template' over
 // file-view.ts's mdBlock after the adoption line and over the modules REACHED_MODULES names.
-const RE_PARSE = /\b(?:innerHTML|outerHTML)\b|insertAdjacentHTML|createContextualFragment|DOMParser|document\.write\b|insertAdjacentElement|\bsetHTML\w*\s*\(|parseHTMLUnsafe|createElement\(\s*['"`]template|\bel\(\s*['"`]template/;
+const RE_PARSE = /\b(?:innerHTML|outerHTML)\b|insertAdjacentHTML|createContextualFragment|DOMParser|document\.write\b|insertAdjacentElement|\bsetHTML\w*\s*\(|parseHTMLUnsafe|createElement\(\s*[^)]*template|\bel\(\s*[^)]*template/;
 /** The local functions of file-view.ts a post-adoption pass reaches, transitively over bare calls (derived below; a new one
  *  widens this list first and is judged against RE_PARSE with the rest). */
 const REACHED_LOCALS = ["keepVideoShape", "addFigureControls", "pxDimension", "decideFigureControl", "figureAnchor", "figureControlAfter", "figureWantsControl", "removeFigureControl", "el", "figureControlGlyph", "oneImg", "linkAround", "figureState", "figureHasPicture", "figureTooSmall", "figureTarget", "linkAbove", "ringOf", "figureBox", "chosenSource", "absUrl"];
@@ -1475,7 +1479,7 @@ const JUDGED_SITES: Record<string, Array<[line: string, why: string]>> = {
   ],
   "status-widgets.ts": [["span.innerHTML = FOLDER_ICON_SVG;", "the statusline's folder icon, this module's constant markup, on the status line"]],
 };
-test("no re-parse after the adoption: mdBlock's post-adoption region and every module a pass there reaches, derived from the code through the reached locals' imported callees and every import form transitively, hold no use of innerHTML or outerHTML (a write under any spelling, or a read) and no insertAdjacentHTML, insertAdjacentElement, createContextualFragment, DOMParser, document.write, setHTML, setHTMLUnsafe, parseHTMLUnsafe or template element outside the judged sites; the two judged sites on the road sit before the adoption; the whole file's count for file-view.ts is pinned in the one assertion the plan's paragraph reads", () => {
+test("no re-parse after the adoption: mdBlock's post-adoption region and every module a pass there reaches, derived from the code through the reached locals' imported callees and every import form transitively, hold no use of innerHTML or outerHTML (a write under any spelling, or a read) and no insertAdjacentHTML, insertAdjacentElement, createContextualFragment, DOMParser, document.write, setHTML, setHTMLUnsafe, parseHTMLUnsafe or template element outside the judged sites; the two judged sites on the road before the adoption sit inside the fence pass and the third, a reached local's, writes onto a holder that enters no document; the whole file's count for file-view.ts is pinned in the one assertion the plan's paragraph reads", () => {
   const mdCode = codeOnly(VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0]);
   const adopt = "box.replaceChildren(...Array.from(clean.childNodes));";
   const adoptAt = mdCode.indexOf(adopt);
