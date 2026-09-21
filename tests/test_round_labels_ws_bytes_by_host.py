@@ -87,7 +87,11 @@ MARKER = re.compile(r"^\s*(?:#|//|/\*|\*|<!--)?\s*")               # a comment m
 # clause and not the run because a run can be a whole added file, where a possessive stands somewhere after almost anything (the
 # pin read its own probe literal that way, in the pass that wrote it). A list of distinct forms
 # has no adjacent equal runs and is not a repeat. Two copies that differ by a word (the author's pass after, then the author's fixer
-# pass after) are not equal runs either: that shape is the read-back's to find, not this pin's.
+# pass after) are not equal runs either: that shape is the read-back's to find, not this pin's. A doubling completed by an UNCHANGED
+# line above the run (the base's line ending with a word-prefix of the qualifier, the branch adding the continuation alone) is outside
+# the population, the branch's added lines by the maintainer's round 6 ruling, and outside this pin, which joins added lines only (the
+# census reads the previous line for the wrapped qualifier, and for nothing else); disclosed, not pinned (the fixer pass over the
+# second closing lens after the maintainer's round 6, F1-4).
 DOUBLED = re.compile(r"(?=(?:(?![.:](?:\s|$)|;).)*?\b(?:author's|maintainer's)\b)\b(the\b(?:\s+[\w'-]+){0,9}?)\s+\1\b", re.I)
 
 # a hunk header of a unified diff: the new side's first line number (and its count, absent for one line)
