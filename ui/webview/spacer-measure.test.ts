@@ -594,10 +594,17 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   const paintSide = code(span.replace(inFrame, ""));
   assert.ok(paintSide.includes("function sizeSpacers(v") && paintSide.includes("function measureUnits(v") && paintSide.includes("function applyMeasure(v"), "the span holds the paint-side functions");
   assert.doesNotMatch(paintSide, /offsetHeight|scrollHeight|clientHeight|getBoundingClientRect|offsetTop/, "sizeSpacers, the trim, the eviction, the measure and the apply read no layout property");
-  // the frame's read is per row, not per batch (the maintainer's round 1 addendum): once, only when a queued row is the shown view's, and a row of a view switched
-  // away since it was queued is filed with no geometry and the inactive marker, never another view's figures
+  // the frame's read is per row, not per batch (the maintainer's round 1 addendum): once, only when a queued row is the shown view's. A row of a
+  // view switched away since it was queued is filed with no geometry (sh and ch null) and NO marker: the `view` field that said so is WITHDRAWN
+  // pending the owner's approval (the reviewer's ruling of 2026-09-21), and the nulls alone carry the meaning because the shown view's row
+  // always carries numbers (a scroller with no box reads 0, an honest figure), so a null pair is built only for a view that was not the live one
+  // in its frame, never with another view's figures. The two assertions after the frame's regex pin the withdrawn state on the frame's SOURCE
+  // SPELLING (the call's two arms; the marker's word in no code of the frame); the property by execution is the switched-away row test above
+  // (the filed row carries no `view`) and tests/test_client_diag_allowlist.py's absence cell (no surface admits the key; a posted `view` is
+  // dropped with the kernel's line naming it). Until the author's pass after the maintainer's round 4 ruling (kernel-2 with records-3) this
+  // comment described the pre-withdrawal row, the opposite of the assertions beneath it.
   assert.match(inFrame, /requestAnimationFrame\(\(\) => \{[\s\S]*?const live = activeId;\s*\n\s*let sh: number \| null = null, ch: number \| null = null;\s*\n\s*if \(live && content && rows\.some\(\(\[rsid\]\) => rsid === live\)\) \{ sh = content\.scrollHeight; ch = content\.clientHeight; \}/, "the diag row's scroller read rides a frame, once, for the active view's rows alone");
-  assert.match(inFrame, /rsid === live \? spacerRow\(rsid, a, b, c, d, sh, ch\) : spacerRow\(rsid, a, b, c, d, null, null\)\)/, "a switched-away view's row: no geometry, and no `view` marker while the field awaits the owner's approval (the reviewer's ruling of 2026-09-21)");
+  assert.match(inFrame, /rsid === live \? spacerRow\(rsid, a, b, c, d, sh, ch\) : spacerRow\(rsid, a, b, c, d, null, null\)\)/, "a switched-away view's row: no geometry and no `view` marker while the field awaits the owner's approval (the reviewer's ruling of 2026-09-21); keyed on the call's source spelling, so a marker reached another way is for the executed pins: the switched-away row test above and tests/test_client_diag_allowlist.py's absence cell");
   assert.doesNotMatch(code(inFrame), /inactive/, "the withdrawn marker's word is in no code of the frame (the comment names it as withdrawn; the code posts it nowhere)");
   assert.doesNotMatch(inFrame, /const sh = content \? content\.scrollHeight : 0/, "the batch read is gone");
   const uo = RENDER.slice(RENDER.indexOf("v.uo = new ResizeObserver((entries) => {"), RENDER.indexOf("v.mo = new MutationObserver("));
