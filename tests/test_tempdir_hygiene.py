@@ -2004,8 +2004,11 @@ class HarnessSocketBudget(unittest.TestCase):
     `host-served-XXXXXXXX/xdg/romp`, 30 bytes below the root) cannot grow by a byte, and a new hosts-on lab may be
     at most as deep. A maintainer who hits this arm has three honest moves: shorten the lab (its prefix or its
     state suffix), shrink the box rule's TMPDIR template (SWEEP_TMPDIR_TEMPLATE, and the rule it states), or relax
-    the margin requirement (min_margin=level, which is what makes a re-nesting of a worker's root red here) —
-    never widen the budget, which is the kernel's sun_path.
+    the margin requirement (min_margin=level). Never widen the budget, which is the kernel's sun_path. Relaxing the
+    margin does NOT let a re-nested worker root through: the unconditional catch for that is the arm's
+    `assertEqual(harness.levels, 1)`, which runs before assert_socket_fits and reds on its own; the margin is a
+    second, independent guard (with two levels the margin computes to 0 against the 20 required), verified by
+    execution in review (2026-09-21: the re-nesting mutant reds at the levels line first).
 
     THE LEDGER (2026-09-21): every occurrence of the session-hosts name in a module is accounted for — a classified
     write (on, off, opaque; a removal, a touch or a truncating open reads as on), a read, a comparison, a message, a
