@@ -523,9 +523,10 @@ class _World(unittest.TestCase):
         self.assertEqual(rec.get("counts"), [A] * CALLS, "the stubbed job made its %d reads and each saw the A agents: %r" % (CALLS, rec))
         self._assert_asks(what, rec.get("asked") or [], d, CALLS)
         self.assertEqual(t["dir_stat"], 0,
-                         "os.stat on the tree's %d directories over one %s: %d; the bound is 0, every agent-file hit's stamp re-check "
-                         "(_dir_stamps) served from the scope _subagent_tree filled at the cycle's one validation; before the scope "
-                         "it was CALLS x A x D = %d, one re-stat of every directory per agent per _session_awaiting call"
+                         "os.stat on the tree's %d directories over one %s: %d; keyed on 0, the count alone: no agent-file hit's stamp "
+                         "re-check (_dir_stamps) reached os.stat (that the tree read was answered the held pair is _assert_asks's identity "
+                         "pin, and a re-check through another call class is the census pin below); before the scope it was "
+                         "CALLS x A x D = %d, one re-stat of every directory per agent per _session_awaiting call"
                          % (D, what, t["dir_stat"], CALLS * A * D))
         self.assertEqual(t["dir_lstat"], D,
                          "os.lstat on the tree's directories over one %s: %d; the bound is D = %d, the one validation (the root's "
@@ -584,9 +585,10 @@ class _World(unittest.TestCase):
         self.assertGreater(len(flat), CALLS, "the asks on the root: %r; the miss walk asked the tree too, beyond the %d reads' own asks "
                                              "(and was served: the shape above)" % (rec.get("asked"), CALLS))
         self.assertEqual(t["dir_stat"], 0,
-                         "os.stat on the tree's %d directories over one %s: %d; keyed on 0, the walk's notes "
-                         "to the chat build taken from the served pair and the stamp re-checks served as in the bound (round 1 of #882: "
-                         "the own tree's note was a fresh stat, 1 per walk)" % (D, what, t["dir_stat"]))
+                         "os.stat on the tree's %d directories over one %s: %d; keyed on 0, the count alone: neither the walk's notes "
+                         "to the chat build nor the stamp re-checks reached os.stat (which object answered them is _assert_asks's identity "
+                         "pin for the tree read, not this count; round 1 of #882: the own tree's note was a fresh stat, 1 per walk)"
+                         % (D, what, t["dir_stat"]))
         self.assertEqual(t["dir_lstat"], D + G * W,
                          "os.lstat on the tree's directories: %d; expected D + G x W = %d + %d x %d, the one validation plus each walk's "
                          "symlink checks of the own root" % (t["dir_lstat"], D, G, W))
@@ -747,9 +749,10 @@ class PerCycleNotSticky(_World):
         self.assertIn("toolu_stamps_0099", rec2.get("meta") or set(), "the new sidecar reached the map in cycle two")
         self.assertEqual(rec2.get("counts"), [A + 1] * CALLS, "every read in cycle two saw the fourth agent: %r" % (rec2,))
         self.assertEqual(d["miss"], 1, "cycle two's first read walked the tree again (workflows/ changed): one miss, not one per reader")
-        self.assertEqual(t["dir_stat"], 0, "no reader in cycle two re-stat'd the %d directories: the walk's pair served every "
-                                           "agent-file re-check (before the scope each later read alone paid (A + 1) x D = %d)"
-                         % (D + 1, (A + 1) * (D + 1)))
+        self.assertEqual(t["dir_stat"], 0, "os.stat on the tree's %d directories over cycle two: %d; keyed on 0, the count alone: no "
+                                           "agent-file re-check reached os.stat after the cycle's walk (before the scope each later read alone "
+                                           "paid (A + 1) x D = %d)"
+                         % (D + 1, t["dir_stat"], (A + 1) * (D + 1)))
         per = rec2.get("per_call") or []
         self.assertEqual(len(per), CALLS)
         later = [(c["dir_lstat"] - per[i - 1]["dir_lstat"], c["dir_stat"] - per[i - 1]["dir_stat"]) for i, c in enumerate(per) if i]
@@ -902,7 +905,7 @@ class Guards(_World):
     point is pinned through the real cycles above)."""
 
     def test_a_forget_that_evicts_the_root_makes_the_next_read_walk_again_while_one_that_evicts_nothing_leaves_it_served(self):
-        self._open()
+        sc = self._open()
         b = self._stats()
         with self._spy() as sp:
             km._subagent_tree(str(self.sub)); km._subagent_tree(str(self.sub))
@@ -912,9 +915,12 @@ class Guards(_World):
         # accept: a forget over a live set that owns the root evicts nothing, moves no gen, and the scope keeps serving
         km._subagent_trees_forget([{"path": self.path}])
         self.assertEqual(self._delta(b)["evict"], 0)
+        held = sc["trees"][str(self.sub)]                 # the pair the scope holds, read before the call it should answer
         with self._spy() as sp:
-            km._subagent_tree(str(self.sub))
-        self.assertEqual(sp.total()["dir_lstat"], 0, "served: nothing was evicted, the held pair stands")
+            out = km._subagent_tree(str(self.sub))
+        self.assertEqual(sp.total()["dir_lstat"], 0, "os.lstat on the tree's directories on the read after the forget that evicted nothing: "
+                                                     "%d; keyed on 0 (the read reached no disk)" % sp.total()["dir_lstat"])
+        self.assertIs(out, held[0], "that read was answered the pair the scope held before it (served), keyed on identity")
         served_before_eviction = self._delta(b)["served"]
         self.assertEqual(served_before_eviction, 2, "memos.subagentTree served so far: %d; keyed on 2, the first pair's second read and "
                                                     "the read after the forget that evicted nothing, both answered the held pair" % served_before_eviction)
@@ -1013,11 +1019,14 @@ class Guards(_World):
         self.assertEqual(self._delta(b)["miss"], 2, "the next call re-walked instead of being served the unclean pair")
         self.assertEqual(len(dirs2), D)
         self.assertIn(str(self.sub), sc["trees"], "accepted: the clean walk is held")
+        held = sc["trees"][str(self.sub)]
         with self._spy() as sp:
-            dirs3, _s3 = km._subagent_tree(str(self.sub))
-        self.assertEqual(sp.total()["dir_lstat"], 0, "served from the scope")
+            out3 = km._subagent_tree(str(self.sub))
+        self.assertEqual(sp.total()["dir_lstat"], 0, "os.lstat on the tree's directories on the read after the held clean walk: %d; keyed on 0"
+                         % sp.total()["dir_lstat"])
+        self.assertIs(out3, held[0], "that read was answered the pair the clean walk left in the scope (served), keyed on identity")
         self.assertEqual(self._delta(b)["miss"], 2)
-        self.assertEqual(dirs3, dirs2)
+        self.assertEqual(out3[0], dirs2)
 
     def test_a_racy_tree_is_held_for_the_cycle_it_was_walked_in_and_walked_again_next_cycle(self):
         """The racy hold with the REAL window (regression-1 and tests-3 of the round-1 review: setUp closes the window for
@@ -1086,7 +1095,7 @@ class Guards(_World):
         read costing D lstats (a validation): a generation read after the root's lstat counts the eviction and serves the
         pair (0)."""
         root = str(self.sub)
-        self._open()
+        sc = self._open()
         real_lstat, fired = os.lstat, [0]
 
         def racing(p, *a, **k):
@@ -1106,9 +1115,12 @@ class Guards(_World):
                          "eviction inside it: %r; keyed on (D = %d, D): the hold is outdated by that eviction, so this read validates again; "
                          "a generation read after the root's lstat counts the eviction and serves the pair (0, D)"
                          % ((sp.total()["dir_lstat"], len(dirs2)), D))
+        held = sc["trees"][root]                          # the pair the second read's validation held, under the generation after the eviction
         with self._spy() as sp:
-            km._subagent_tree(root)
-        self.assertEqual(sp.total()["dir_lstat"], 0, "held again, under a generation that counts the eviction: served")
+            out = km._subagent_tree(root)
+        self.assertEqual(sp.total()["dir_lstat"], 0, "os.lstat on the tree's directories on the third read: %d; keyed on 0 (held again, under a "
+                                                     "generation that counts the eviction)" % sp.total()["dir_lstat"])
+        self.assertIs(out, held[0], "the third read was answered the pair the scope held before it (served), keyed on identity")
 
     def test_an_eviction_landing_inside_a_validation_lstat_after_the_hit_was_read_outdates_the_hit_paths_hold_too(self):
         """The pair's other hold site, the validated hit's (the case above drives the clean walk's). _subagent_tree holds the
@@ -1152,9 +1164,12 @@ class Guards(_World):
         self.assertEqual((d2["miss"] - d1["miss"], d2["served"] - d1["served"]), (1, 0),
                          "that read is a walk and not a served read: (miss, served) moved %r; keyed on (1, 0)" % ((d2["miss"] - d1["miss"], d2["served"] - d1["served"]),))
         self.assertIn(root, km._SUBAGENT_TREES, "the walk re-inserted the root")
+        held = sc["trees"][root]                          # the pair the second read's walk held, under the generation after the eviction
         with self._spy() as sp:
-            km._subagent_tree(root)
-        self.assertEqual(sp.total()["dir_lstat"], 0, "held again, under a generation that counts the eviction: served")
+            out = km._subagent_tree(root)
+        self.assertEqual(sp.total()["dir_lstat"], 0, "os.lstat on the tree's directories on the third read: %d; keyed on 0 (held again, under a "
+                                                     "generation that counts the eviction)" % sp.total()["dir_lstat"])
+        self.assertIs(out, held[0], "the third read was answered the pair the scope held before it (served), keyed on identity")
 
     def test_an_eviction_landing_inside_an_own_stat_outdates_the_stamp_so_it_is_re_taken(self):
         """The own stat's site of the rule above: the eviction fires inside os.stat of the directory (no tree read this cycle,
@@ -1182,9 +1197,12 @@ class Guards(_World):
                          "keyed on 1 (the hold is outdated, the stamp re-taken); a generation read after the stat serves it (0)"
                          % sp.total()["dir_stat"])
         self.assertEqual(r1, r2)
+        held = sc["stamps"][target]                       # the stamp the re-take held, read before the call it should answer
         with self._spy() as sp:
-            km._dir_stamp(target)
-        self.assertEqual(sp.total()["dir_stat"], 0, "held again: served")
+            r3 = km._dir_stamp(target)
+        self.assertEqual(sp.total()["dir_stat"], 0, "os.stat for the directory's stamp on the third call: %d; keyed on 0 (held again)"
+                         % sp.total()["dir_stat"])
+        self.assertIs(r3, held[0], "the third call was answered the stamp the scope held before it (served), keyed on identity")
 
     def test_an_eviction_landing_inside_a_launch_folds_resolution_outdates_the_fold_so_it_is_redone(self):
         """The launch fold's site of the rule above: the own root leaves the memo inside the FIRST fold's resolution of its
@@ -1333,8 +1351,13 @@ class Guards(_World):
         sc = self._open()
         b = self._stats()
         with self._spy() as sp:
-            km._subagent_tree(str(self.sub)); km._subagent_tree(str(self.sub))
-        self.assertEqual(sp.total()["dir_lstat"], D, "the held tree: one validation, then served")
+            first = km._subagent_tree(str(self.sub))
+            held = sc["trees"][str(self.sub)]
+            second = km._subagent_tree(str(self.sub))
+        self.assertEqual(sp.total()["dir_lstat"], D, "os.lstat on the tree's directories over two reads in the scope: %d; keyed on D = %d, one "
+                                                     "validation (the second read reached no disk)" % (sp.total()["dir_lstat"], D))
+        self.assertIs(first, held[0], "the first read's validated pair is what the scope holds")
+        self.assertIs(second, held[0], "and the second read was answered it (served), keyed on identity")
         self.assertIn(str(self.sub), sc["trees"])
         shutil.rmtree(other)
         g0 = km._SUBAGENT_TREES_GEN[0]
@@ -1344,11 +1367,13 @@ class Guards(_World):
         self.assertNotIn(str(other), km._SUBAGENT_TREES)
         self.assertEqual(km._SUBAGENT_TREES_GEN[0] - g0, 1, "the missing-root pop that removed an entry moved _SUBAGENT_TREES_GEN")
         with self._spy() as sp:
-            dirs, _stats = km._subagent_tree(str(self.sub))
-        self.assertEqual(sp.total()["dir_lstat"], 0, "os.lstat on the held sibling's directories after the pop: %d; keyed on the sibling being "
-                                                     "served (0), since the eviction was the other root's and its pair is as fresh as before; "
-                                                     "one process-wide generation emptied the scope and cost D = %d lstats again"
+            out = km._subagent_tree(str(self.sub))
+        dirs = out[0]
+        self.assertEqual(sp.total()["dir_lstat"], 0, "os.lstat on the held sibling's directories after the pop: %d; keyed on 0, since the "
+                                                     "eviction was the other root's and its pair is as fresh as before; one process-wide "
+                                                     "generation emptied the scope and cost D = %d lstats again"
                          % (sp.total()["dir_lstat"], D))
+        self.assertIs(out, held[0], "and the read was answered the pair held before the pop (served), keyed on identity")
         self.assertEqual(len(dirs), D)
         self.assertEqual(km._SUBAGENT_ROOT_EVICTED.get(str(other)), km._SUBAGENT_TREES_GEN[0],
                          "the pop recorded the removed root's eviction at the value the gen moved to: what a scope holds for it is dropped")
@@ -1356,9 +1381,12 @@ class Guards(_World):
         g1 = km._SUBAGENT_TREES_GEN[0]
         self.assertEqual(km._subagent_tree(str(other)), ((), ()))
         self.assertEqual(km._SUBAGENT_TREES_GEN[0], g1, "a missing root with no entry moves no gen")
+        held = sc["trees"][str(self.sub)]
         with self._spy() as sp:
-            km._subagent_tree(str(self.sub))
-        self.assertEqual(sp.total()["dir_lstat"], 0, "served: nothing was evicted")
+            out = km._subagent_tree(str(self.sub))
+        self.assertEqual(sp.total()["dir_lstat"], 0, "os.lstat on the held tree's directories after the second missing-root read: %d; keyed on 0 "
+                                                     "(nothing was evicted this time)" % sp.total()["dir_lstat"])
+        self.assertIs(out, held[0], "and the read was answered the held pair (served), keyed on identity")
         self.assertEqual((self._delta(b)["hit"], self._delta(b)["miss"]), (1, 0), "one validated hit in the scope, before the eviction; "
                                                                                    "none after (the sibling was served)")
 
@@ -1441,13 +1469,16 @@ class Guards(_World):
         self._assert_not_a_tree(got, shape, "the holder's read after the pop")
         self.assertNotIn(str(other), sc["trees"], "the holder's scope no longer holds the popped root")
         served_reads = 0                                  # this session's held tree, read twice below and answered the held pair each time
+        held = sc["trees"][str(self.sub)]
         with self._spy() as sp:
-            dirs, _stats = km._subagent_tree(str(self.sub))
+            out = km._subagent_tree(str(self.sub))
+        dirs = out[0]
         served_reads += 1
         self.assertEqual((sp.total()["dir_lstat"], len(dirs)), (0, D),
                          "this session's held tree on the read after the sibling's pop: (lstats, directories) %r; keyed on (0, D = %d), "
-                         "served, since the eviction recorded is the sibling's; one process-wide generation emptied this hold too"
+                         "since the eviction recorded is the sibling's; one process-wide generation emptied this hold too"
                          % ((sp.total()["dir_lstat"], len(dirs)), D))
+        self.assertIs(out, held[0], "and the read was answered the pair held before the pop (served), keyed on identity")
         # accept: no entry stands, so a second read of the same root pops nothing, moves no gen and records nothing new
         g1, rec1 = km._SUBAGENT_TREES_GEN[0], km._SUBAGENT_ROOT_EVICTED.get(str(other))
         with _Spy(oset, other) as osp:
@@ -1457,10 +1488,13 @@ class Guards(_World):
         self.assertEqual((km._SUBAGENT_TREES_GEN[0], km._SUBAGENT_ROOT_EVICTED.get(str(other))), (g1, rec1),
                          "a %s root with no entry standing moves no gen and records nothing new: (gen, record) %r against %r"
                          % (shape, (km._SUBAGENT_TREES_GEN[0], km._SUBAGENT_ROOT_EVICTED.get(str(other))), (g1, rec1)))
+        held = sc["trees"][str(self.sub)]
         with self._spy() as sp:
-            km._subagent_tree(str(self.sub))
+            out = km._subagent_tree(str(self.sub))
         served_reads += 1
-        self.assertEqual(sp.total()["dir_lstat"], 0, "this session's tree still served")
+        self.assertEqual(sp.total()["dir_lstat"], 0, "os.lstat on this session's held tree after the second %s-root read: %d; keyed on 0"
+                         % (shape, sp.total()["dir_lstat"]))
+        self.assertIs(out, held[0], "this session's read was answered the pair the scope held before it (served), keyed on identity")
         d = self._delta(b)
         self.assertEqual((d["hit"], d["miss"], d["served"]), (2, 0, served_reads),
                          "memos.subagentTree over the case: (hit, miss, served) %r; keyed on the two holds' validated hits, no walk, and served "
@@ -1503,18 +1537,23 @@ class Guards(_World):
         self.assertEqual(sp.total()["dir_lstat"], D, "the hold: the cycle's one validation")
         held_stamp = km._dir_stamp(self.dirs[3])
         self.assertIsNotNone(held_stamp[1])
+        held_pair = sc["trees"][root]
+        self.assertIs(held_stamp, sc["stamps"][self.dirs[3]][0], "premise: the stamp answered before the removal is the one the scope holds")
         shutil.rmtree(self.sub)
         g0 = km._SUBAGENT_TREES_GEN[0]
         with self._spy() as sp:
-            dirs, _stats = km._subagent_tree(root)
+            out = km._subagent_tree(root)
             stamp = km._dir_stamp(self.dirs[3])
+        dirs = out[0]
         t = sp.total()
         self.assertEqual((len(dirs), t["dir_lstat"], t["dir_stat"]), (D, 0, 0),
                          "(directories answered, os.lstat, os.stat) on this thread's read of a held root after its removal on disk: %r; "
-                         "keyed on (D = %d, 0, 0), the served pair and stamp (the served call precedes the root's lstat: the lag the "
+                         "keyed on (D = %d, 0, 0): the reads reached no disk (the served call precedes the root's lstat: the lag the "
                          "design states, one cycle at most); a read that lstats the root before serving answers () at one lstat"
                          % ((len(dirs), t["dir_lstat"], t["dir_stat"]), D))
-        self.assertEqual(stamp, held_stamp, "the removed directory's stamp is served from the hold too: %r against the held %r" % (stamp, held_stamp))
+        self.assertIs(out, held_pair[0], "the read after the removal was answered the pair held before it (served), keyed on identity")
+        self.assertIs(stamp, held_stamp, "and the removed directory's stamp call the stamp held before it (served), keyed on identity: %r"
+                      % (stamp,))
         self.assertEqual(km._SUBAGENT_TREES_GEN[0], g0, "no pop ran on the served read: the gen stands")
         self.assertIn(root, km._SUBAGENT_TREES, "the cross-cycle entry stands: nothing has found the root gone")
         self.assertIn(root, sc["trees"], "the scope still holds the pair")
@@ -1578,36 +1617,42 @@ class ScopedInvalidation(_World):
 
     def test_a_held_tree_survives_the_eviction_of_a_root_it_is_not(self):
         _op, other = self._other_root()
-        self._open()
+        sc = self._open()
         b = self._stats()
         with self._spy() as sp:
             km._subagent_tree(str(self.sub))
         self.assertEqual(sp.total()["dir_lstat"], D, "the hold: the cycle's one validation")
         self._evict([other], [])
+        held = sc["trees"][str(self.sub)]
         with self._spy() as sp:
-            dirs, _stats = km._subagent_tree(str(self.sub))
+            out = km._subagent_tree(str(self.sub))
+        dirs = out[0]
         self.assertEqual(sp.total()["dir_lstat"], 0,
-                         "os.lstat on the held tree's directories on the read after an unrelated root's eviction: %d; keyed on the held pair "
-                         "being served (0), since another root leaving the memo leaves this pair as fresh as it was; one process-wide "
-                         "generation emptied the scope and cost D = %d lstats again, once per forget" % (sp.total()["dir_lstat"], D))
+                         "os.lstat on the held tree's directories on the read after an unrelated root's eviction: %d; keyed on 0, since "
+                         "another root leaving the memo leaves this pair as fresh as it was; one process-wide generation emptied the scope "
+                         "and cost D = %d lstats again, once per forget" % (sp.total()["dir_lstat"], D))
+        self.assertIs(out, held[0], "and the read was answered the pair held before the eviction (served), keyed on identity")
         self.assertEqual(len(dirs), D)
         self.assertEqual((self._delta(b)["hit"], self._delta(b)["miss"]), (1, 0), "one validation in the scope, none after the eviction")
 
     def test_a_held_stamp_survives_the_eviction_of_a_root_its_directory_is_not_under(self):
         _op, other = self._other_root()
-        self._open()
+        sc = self._open()
         km._subagent_tree(str(self.sub))                  # the D directories' stamps indexed from the held tree
         target = self.dirs[3]
+        held = sc["stamps"][target]
         with self._spy() as sp:
             r1 = km._dir_stamp(target)
-        self.assertEqual(sp.total()["dir_stat"], 0, "served from the held tree's index before the eviction")
+        self.assertEqual(sp.total()["dir_stat"], 0, "os.stat for the directory's stamp before the eviction: %d; keyed on 0" % sp.total()["dir_stat"])
+        self.assertIs(r1, held[0], "the call was answered the stamp indexed from the held tree (served), keyed on identity")
         self._evict([other], [])
         with self._spy() as sp:
             r2 = km._dir_stamp(target)
         self.assertEqual(sp.total()["dir_stat"], 0,
-                         "os.stat for a held stamp on the read after an unrelated root's eviction: %d; keyed on the stamp being served (0), "
-                         "since it was indexed from a tree that did not leave the memo; one process-wide generation emptied the scope's "
-                         "stamps and cost one stat per held stamp" % sp.total()["dir_stat"])
+                         "os.stat for a held stamp on the read after an unrelated root's eviction: %d; keyed on 0, since the stamp was "
+                         "indexed from a tree that did not leave the memo; one process-wide generation emptied the scope's stamps and "
+                         "cost one stat per held stamp" % sp.total()["dir_stat"])
+        self.assertIs(r2, held[0], "and the read after the eviction was answered the same held stamp (served), keyed on identity")
         self.assertEqual(r1, r2)
         self.assertIsNotNone(r2[1])
 
@@ -1647,7 +1692,8 @@ class ScopedInvalidation(_World):
             p1 = km._subagent_file(self.path, aid)
         self.assertIsNotNone(p1)
         self.assertTrue(Path(p1).is_file())
-        self.assertEqual(sp.total()["dir_stat"], 0, "the hit's stamp re-check served from the scope")
+        self.assertEqual(sp.total()["dir_stat"], 0, "os.stat on the tree's directories for the hit's stamp re-check: %d; keyed on 0 (the re-check "
+                                                    "reached no disk: the stamps are indexed from the held tree)" % sp.total()["dir_stat"])
         shutil.rmtree(self.sub)
         errs, seen = [], {}
 
@@ -1730,9 +1776,12 @@ class ScopedInvalidation(_World):
         self.assertEqual(sp.total()["dir_stat"], 1)
         self.assertIsNotNone(r1[1])
         self.assertIsNone(sc["stamps"][target][1], "premise: held as an own stat, root None")
+        held = sc["stamps"][target]
         with self._spy() as sp:
-            km._dir_stamp(target)
-        self.assertEqual(sp.total()["dir_stat"], 0, "held within the cycle: served")
+            r1b = km._dir_stamp(target)
+        self.assertEqual(sp.total()["dir_stat"], 0, "os.stat for the own stat's directory on the second call in the cycle: %d; keyed on 0"
+                         % sp.total()["dir_stat"])
+        self.assertIs(r1b, held[0], "the second call was answered the own stat the scope held (served), keyed on identity")
         self._evict([other], [])
         with self._spy() as sp:
             r2 = km._dir_stamp(target)
@@ -1745,11 +1794,13 @@ class ScopedInvalidation(_World):
         self.assertEqual(sc["stamps"][target][1], str(self.sub), "premise: now indexed from the held tree, vouched by its root")
         _op2, other2 = self._other_root("other2")
         self._evict([other2], [])
+        held = sc["stamps"][target]
         with self._spy() as sp:
             r3 = km._dir_stamp(target)
         self.assertEqual(sp.total()["dir_stat"], 0,
                          "os.stat for the same directory's stamp, indexed from the held tree, after another unrelated eviction: %d; keyed "
-                         "on 0 (served: its root did not leave the memo), the contrast with the own stat's 1" % sp.total()["dir_stat"])
+                         "on 0 (its root did not leave the memo), the contrast with the own stat's 1" % sp.total()["dir_stat"])
+        self.assertIs(r3, held[0], "and the call was answered the stamp indexed from the held tree (served), keyed on identity")
         self.assertEqual(r3, r1)
 
     def test_held_launch_folds_are_dropped_when_their_own_root_leaves_the_memo(self):
@@ -1946,7 +1997,7 @@ class ScopedInvalidation(_World):
         with mock.patch.object(km, "_SUBAGENT_ROOT_EVICTED_MAX", cap), mock.patch.dict(km._SUBAGENT_ROOT_EVICTED, {}, clear=True), \
                 mock.patch.object(km, "_SUBAGENT_ROOTS_CLEARED_GEN", [0]):
             others = [self._other_root("other%d" % i) for i in range(cap + 1)]   # cap + 1 unowned roots, one transcript each
-            self._open()
+            sc = self._open()
             with self._spy() as sp:
                 km._subagent_tree(str(self.sub))
             self.assertEqual(sp.total()["dir_lstat"], D, "the hold")
@@ -1954,12 +2005,17 @@ class ScopedInvalidation(_World):
             with self._counting_fold(folded), self._spy() as sp:
                 aw = km._session_awaiting(SID, self.path, True)   # the launch folds held, the stamps served from the held tree
             self.assertEqual(((aw or {}).get("count"), sorted(folded), sp.total()["dir_lstat"], sp.total()["dir_stat"]), (A, names, 0, 0),
-                             "the hold, launches half: one fold per agent, the tree and its stamps served: %r" % ((aw or {}).get("count"),))
+                             "(count, folds, tree lstats, stamp stats) on the read after the hold: %r; keyed on (A = %d, one fold per agent, "
+                             "0, 0): the read reached the disk for the folds alone"
+                             % (((aw or {}).get("count"), sorted(folded), sp.total()["dir_lstat"], sp.total()["dir_stat"]), A))
             for i in range(cap):                          # cap evictions of distinct roots fill the table; the held pair survives each
                 self._evict([others[i][1]], [p for p, _r in others[i + 1:]])
+                held = sc["trees"][str(self.sub)]
                 with self._spy() as sp:
-                    km._subagent_tree(str(self.sub))
-                self.assertEqual(sp.total()["dir_lstat"], 0, "eviction %d of %d distinct roots: the held pair still served" % (i + 1, cap))
+                    out = km._subagent_tree(str(self.sub))
+                self.assertEqual(sp.total()["dir_lstat"], 0, "os.lstat on the held tree's directories after eviction %d of %d distinct roots: %d; "
+                                                             "keyed on 0" % (i + 1, cap, sp.total()["dir_lstat"]))
+                self.assertIs(out, held[0], "and the read after eviction %d was answered the held pair (served), keyed on identity" % (i + 1,))
             self.assertEqual(len(km._SUBAGENT_ROOT_EVICTED), cap, "the table holds one entry per evicted root, at its cap")
             self._evict([others[cap][1]], [])             # one more distinct root: the table is cleared
             self.assertEqual(sorted(km._SUBAGENT_ROOT_EVICTED), [str(others[cap][1])], "cleared, then the clearing root recorded")
@@ -1987,9 +2043,14 @@ class ScopedInvalidation(_World):
                              "and serves the folds held before it (0)" % (sorted(folded), A))
             self.assertEqual(((aw or {}).get("count"), sp.total()["dir_lstat"], sp.total()["dir_stat"]), (A, 0, 0),
                              "the read after the clear costs the tree nothing more: re-held by the read above, its stamps re-indexed")
+            held_pair, held_stamp = sc["trees"][str(self.sub)], sc["stamps"][target]
             with self._spy() as sp:
-                km._subagent_tree(str(self.sub)); km._dir_stamp(target)
-            self.assertEqual((sp.total()["dir_lstat"], sp.total()["dir_stat"]), (0, 0), "held again under the new generation: served, pair and stamp")
+                out, r = km._subagent_tree(str(self.sub)), km._dir_stamp(target)
+            self.assertEqual((sp.total()["dir_lstat"], sp.total()["dir_stat"]), (0, 0),
+                             "(tree lstats, stamp stats) on the reads after the re-hold: %r; keyed on (0, 0), held again under the new generation"
+                             % ((sp.total()["dir_lstat"], sp.total()["dir_stat"]),))
+            self.assertIs(out, held_pair[0], "the tree read was answered the re-held pair (served), keyed on identity")
+            self.assertIs(r, held_stamp[0], "and the stamp call the re-indexed stamp (served), keyed on identity")
 
 
 class DependencyKey(_World):
