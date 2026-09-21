@@ -14,6 +14,9 @@
 //     the run line, in the job's default working directory, and no step before the Test step installs or caches
 //     Playwright (the property plans/markdown-viewer.md's CI sentence states and tools/markdown-viewer-plan-gate-adopt.test.mjs
 //     pins, restated here so the two pins cannot disagree);
+//   - the step carries a timeout-minutes of its own that fits the margin under the job's cap at the measured head (the job's
+//     comment derives it and names the same number), and the script passes node a --test-timeout above the largest own
+//     { timeout } a rostered leg passes and under the step's bound, so a hung leg fails by name before the step is cut;
 //   - the vscode-extension job runs on every pull request: the workflow's pull_request trigger has no paths or paths-ignore
 //     filter and the job has no job-level if:, so the census test there gates every PR that could add a browser leg (the
 //     equality holds in that one job after the split, and this is the derivation that it is enough);
@@ -150,6 +153,44 @@ test('the step exists once in the ' + JOB + ' job, directly after the Chromium i
     'the step\'s comment carries the three numbers: the step\'s seconds, the job\'s minutes and the 40-minute cap');
   assert.ok(comment.includes(ROSTER) && comment.includes(EXCLUDED), 'the comment names both files');
   assert.ok(!step.lines.join('\n').includes(String.fromCharCode(0x2014)), 'no em dash');
+});
+
+/** The per-file bound the script passes node, in ms, read from its node --test line (one such flag). */
+function testTimeoutMs() {
+  const m = read(SCRIPT).match(/--test-timeout=(\d+)/g) || [];
+  assert.equal(m.length, 1, 'the script passes node --test one --test-timeout: ' + JSON.stringify(m));
+  return Number(m[0].slice('--test-timeout='.length));
+}
+
+test('the step is bounded twice: its own timeout-minutes fits the margin under the job\'s cap at the measured head and the job\'s comment derives that number; node\'s --test-timeout in the script sits above the largest own { timeout } a rostered leg passes and under the step\'s bound, so a hung leg fails by name before the step is cut', () => {
+  const job = extensionJob();
+  const capLine = job.lines.find((l) => /^    timeout-minutes: \d+$/.test(l));
+  assert.ok(capLine, 'the ' + JOB + ' job has one plain timeout-minutes line (a matrix expression here needs this pin re-anchored, not skipped)');
+  const cap = Number(/(\d+)$/.exec(capLine)[1]);
+  const step = steps(job).find((s) => s.name === STEP);
+  assert.ok(step, 'the step exists (the first test holds the rest of its shape)');
+  const bound = Number(step.fields['timeout-minutes']);
+  assert.ok(Number.isInteger(bound) && bound >= 1, 'the step carries a timeout-minutes of its own (a roster whose legs exceed it fails this step by name rather than cancelling the job nameless): ' + JSON.stringify(step.fields['timeout-minutes']));
+  // the margin the bound was cut from: the job's measured minutes and seconds in the step's own comment, under the cap
+  const comment = step.comments.join('\n');
+  const took = /in a job of (\d+) min (\d+) s/.exec(comment);
+  assert.ok(took, 'the step\'s comment states the measured job time as "in a job of N min N s"');
+  const marginSeconds = cap * 60 - (Number(took[1]) * 60 + Number(took[2]));
+  assert.ok(bound * 60 <= marginSeconds, 'the step\'s bound (' + bound + ' min) fits the margin under the cap at the measured head (' + marginSeconds + ' s): a step that runs to its bound still ends the job under ' + cap + ' minutes; a larger roster raises the bound and the cap together');
+  const jobComment = job.lines.slice(0, job.lines.indexOf(capLine)).filter((l) => /^\s*#/.test(l)).join('\n');
+  assert.ok(new RegExp('\\b' + bound + ' minutes \\(its timeout-minutes\\)').test(jobComment), 'the job\'s cap comment derives the step\'s bound and names the same number (' + bound + ' minutes (its timeout-minutes)): a changed bound rewrites the sentence');
+  // node's per-file bound: above every own { timeout: N } a rostered source passes (else a legitimate slow leg is cut), under
+  // the step's bound (else the step is cut nameless first)
+  const ms = testTimeoutMs();
+  const own = [];
+  for (const e of parseRoster(read(path.join(EXT, ROSTER)))) {
+    const src = sourceOf(e.bundle);
+    if (!fs.existsSync(src)) continue;   // a stale line is the well-formed test's red
+    for (const m of read(src).matchAll(/\btimeout:\s*(\d+)/g)) own.push({ bundle: e.bundle, ms: Number(m[1]) });
+  }
+  const largest = own.reduce((a, b) => (b.ms > a.ms ? b : a), { bundle: '(no rostered source passes a timeout)', ms: 0 });
+  assert.ok(ms > largest.ms, 'node\'s --test-timeout (' + ms + ' ms) exceeds the largest own timeout a rostered leg passes (' + largest.ms + ' ms in ' + largest.bundle + '), so a leg that runs to its own bound is not cut by the file bound');
+  assert.ok(ms < bound * 60 * 1000, 'node\'s --test-timeout (' + ms + ' ms) is under the step\'s bound (' + bound + ' min = ' + bound * 60 * 1000 + ' ms), so a hung file fails by name before the step is cut');
 });
 
 test('no step before the Test step installs a Playwright browser or restores its cache (the CI_SKIP property the gate-adopt pin reads; the legs skip under npm test and run only in the step above)', () => {
@@ -330,7 +371,7 @@ function syntheticTree(t) {
     if (stub.real) env.CBL_STUB_REAL_NODE = process.execPath;
     const r = bash([path.join(ext, 'scripts', 'ci-browser-legs.sh'), ...(stub.check ? ['--check'] : [])], { cwd: root, env });
     const args = fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean) : null;
-    return { status: r.status, out: r.stdout, err: r.stderr, node: args && args.filter((a) => !a.startsWith('--test-reporter')), reporters: args && args.filter((a) => a.startsWith('--test-reporter')) };
+    return { status: r.status, out: r.stdout, err: r.stderr, node: args && args.filter((a) => !a.startsWith('--test-reporter') && !a.startsWith('--test-timeout=')), reporters: args && args.filter((a) => a.startsWith('--test-reporter')), testTimeout: args && args.find((a) => a.startsWith('--test-timeout=')) };
   };
   const real = fs.realpathSync(ext);
   const rec = (bundle, ...fields) => [path.join(real, bundle), ...fields].join('\t') + '\n';
@@ -345,6 +386,7 @@ test('the script runs the rostered legs through node --test when the roster and 
   const ok = run('# header\n\n' + A + '\n', '# header\n' + EXCLUDE_REST('a'), { report: rec(A, 'pass', 'test', '-', 'test', 'leg a opens the page', '', '-') });
   assert.equal(ok.status, 0, ok.err);
   assert.deepEqual(ok.node, ['--test', A], 'node --test received the roster\'s one bundle');
+  assert.equal(ok.testTimeout, '--test-timeout=' + testTimeoutMs(), 'node --test received the per-file bound the script spells (its edges are pinned above)');
   assert.deepEqual(ok.reporters.filter((a) => !a.startsWith('--test-reporter-destination=')), ['--test-reporter=spec', '--test-reporter=./scripts/ci-browser-legs-reporter.mjs'], 'the spec reporter for the log and the step\'s own reporter for the post-run read');
   assert.ok(!ok.out.includes('no legs in the roster'));
   const empty = run('# only a comment\n\n   \n', EXCLUDE_REST());
@@ -509,7 +551,7 @@ test('after node --test the script derives per rostered leg that at least one at
   // a file that failed as a whole (node's file-level result failing: a timeout under --test-timeout, or a throw at load)
   const timedOut = run(A + '\n', excluded, { report: rec(A, 'fail', 'test', '-', 'file-level', A, 'test timed out after 300000ms', 'testTimeoutFailure'), exit: 1 });
   assert.equal(timedOut.status, 123, 'node\'s failure stands');
-  assert.ok(timedOut.err.includes('ci-browser-legs: ' + A + ' failed as a whole (testTimeoutFailure: test timed out after 300000ms): a file that timed out or threw at load ran no test that counts'), timedOut.err);
+  assert.ok(timedOut.err.includes('ci-browser-legs: ' + A + ' failed as a whole (testTimeoutFailure: test timed out after 300000ms): a file that timed out under node\'s --test-timeout, or threw at load, ran no test that counts'), timedOut.err);
   assert.ok(!timedOut.err.includes('no test of this leg passed'), 'a failed file is node\'s red, not called unrun on top:\n' + timedOut.err);
   // xargs answers a command's exit of 1 to 125 with 123, so that is the status a failed leg gives the step
   const failed = run(A + '\n', excluded, { report: rec(A, 'fail', 'test', '-', 'test', 'leg a opens the page', 'an assertion of the leg\'s own failed', 'testCodeFailure'), exit: 1 });

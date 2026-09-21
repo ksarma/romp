@@ -44,8 +44,8 @@
 # the file-level result), since the step would otherwise claim coverage it did not run; a leg whose results all fail is
 # node's red, passed through. Beside that property: a test skipped is red naming the test, its reason and the switch's state
 # in the run (with the switch unset, as a local run may have it, the remedy is to run with it set); a failure inside a todo is
-# red (node discards it: # fail 0, exit 0); a file that failed as a whole (node's file-level result failing: a timeout, or a
-# throw at load) is red naming the file; and a failed test whose message names the switch (inBrowser could not launch) is printed beside its
+# red (node discards it: # fail 0, exit 0); a file that failed as a whole (node's file-level result failing: a timeout under
+# the run's --test-timeout, or a throw at load) is red naming the file; and a failed test whose message names the switch (inBrowser could not launch) is printed beside its
 # leg with the remedy: the runner lost its browser, check the Chromium install step. One pass over the record (awk),
 # linear in its length. An empty roster prints "no legs in the roster" and exits 0 without starting node --test: with no
 # file arguments node --test runs its default glob, the whole suite again.
@@ -202,7 +202,11 @@ if [ "${#legs[@]}" -eq 0 ]; then echo "no legs in the roster"; exit 0; fi
 rep=$(mktemp)
 trap 'rm -f "$rep"' EXIT
 status=0
-printf '%s\n' "${legs[@]}" | xargs -r node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter="$REPORTER" --test-reporter-destination="$rep" || status=$?
+# --test-timeout bounds each FILE's whole run (node cancels the file and ends the run, naming it; a leg's own { timeout } names
+# its test and leaves the process alive on a live browser handle), so a hung leg fails by name inside the step's own
+# timeout-minutes (.github/workflows/ci.yml) instead of the job being cancelled nameless. The value sits above the largest
+# { timeout } a rostered leg passes and under the step's bound; tools/ci-browser-legs.test.mjs holds both edges.
+printf '%s\n' "${legs[@]}" | xargs -r node --test --test-timeout=300000 --test-reporter=spec --test-reporter-destination=stdout --test-reporter="$REPORTER" --test-reporter-destination="$rep" || status=$?
 
 # One pass over the record with the roster on stdin: per rostered leg a TALLY line (passes that count, fails that count,
 # skips, todos, todo failures, suites, file-level results); and one line per result the step reads a red from: SKIP, TODOFAIL,
@@ -238,7 +242,7 @@ while IFS=$'\t' read -r kind leg a b c d e f g; do
       echo "ci-browser-legs: $leg: '$a' failed inside a todo ($b): node discards the failure (# fail 0, exit 0), so the step would read green over a broken test: remove the todo, or fix the test and remove it" >&2
       [ "$status" -ne 0 ] || status=1;;
     FILEFAIL)
-      echo "ci-browser-legs: $leg failed as a whole ($a: $b): a file that timed out or threw at load ran no test that counts" >&2
+      echo "ci-browser-legs: $leg failed as a whole ($a: $b): a file that timed out under node's --test-timeout, or threw at load, ran no test that counts" >&2
       [ "$status" -ne 0 ] || status=1;;
     LOST)
       echo "ci-browser-legs: $leg: '$a' failed under $switch_state because inBrowser could not launch ($b): the runner lost its browser: check the Chromium install step" >&2

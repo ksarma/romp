@@ -262,7 +262,11 @@ jobs:
     # names its slowest labs (--durations=20) so the next growth is visible in the log. The labs kept
     # growing: PR 1790's run 35138058863 was cancelled at 25 min 04 s mid served-lab on a slow runner,
     # every step green up to the cut (2026-09-16). 40 min: the served step's 20-odd minutes on a slow
-    # runner plus the 600 s per-test timeout plus setup.
+    # runner plus the 600 s per-test timeout plus setup. The Browser legs step below carries a bound of
+    # its own, 6 minutes (its timeout-minutes), the roster's budget: the job's margin under this cap at
+    # the head that measured it (33 min 51 s in a 40-minute job, 369 s) rounded down to whole minutes,
+    # so a step that runs to its bound fails by name and the job still ends under this cap. A roster
+    # whose legs together exceed that bound raises the step's timeout-minutes and this cap in the same PR.
     timeout-minutes: 40
     defaults:
       run:
@@ -331,11 +335,18 @@ jobs:
         # plans/markdown-viewer.md's CI sentence and the pin that reads it (tools/markdown-viewer-plan-gate-adopt.test.mjs)
         # stay true. The script checks before node --test that every roster line's bundle is under out-tests/ (the
         # Test step's npm test built it; the Build step writes dist/ only) and that the roster and the tree agree, a
-        # red naming the line and the fix; after node --test a skipped test, or a rostered leg that registered no test,
-        # is red too, naming the test or the leg; an empty roster prints "no legs in the roster" and exits 0 without
-        # starting node --test, whose default glob would rerun the whole suite. Step seconds, job minutes and the job's
-        # 40-minute cap:
-        # (measured on the runner at the first pushed head, whose only difference from this one is this sentence: 9 s for this step with the roster empty, the census and the pre-run checks over the 188 exclusions, in a job of 33 min 51 s, under the 40-minute cap; each PR that adds a leg states its own leg's numbers in its body).
+        # red naming the line and the fix; after node --test it reads its own reporter's record (scripts/ci-browser-legs-reporter.mjs)
+        # and a rostered leg with no passing test of its own, a skipped test, a failure inside a todo, or a file that
+        # failed as a whole is red too, naming the leg or the test; an empty roster prints "no legs in the roster" and
+        # exits 0 without starting node --test, whose default glob would rerun the whole suite. Two bounds: this step's
+        # timeout-minutes (the job comment above derives it from the margin under the job's cap), so a roster whose legs
+        # together exceed it fails this step by name instead of cancelling the job nameless; and node's --test-timeout
+        # in the script, a per-FILE bound under the step's, so one hung leg fails by name (node ends the run; a leg's own
+        # { timeout } does not, since a live browser handle keeps the process up after the named failure). Nothing reads a
+        # leg's cost before it runs: a PR that rosters a leg measures it in its own run and raises both bounds together
+        # when the total needs it. Step seconds, job minutes and the job's 40-minute cap:
+        # (measured on the runner at ebbc5fdde, the first pushed head, whose roster was empty: 9 s for this step, the census and the pre-run checks over the 188 exclusions, in a job of 33 min 51 s, under the 40-minute cap; this head rosters one leg, unmeasured on the runner until its first run, whose numbers replace these; each PR that adds a leg states its own leg's numbers in its body).
+        timeout-minutes: 6
         env:
           ROMP_BROWSER_LEGS_REQUIRE: "1"
         run: bash scripts/ci-browser-legs.sh
