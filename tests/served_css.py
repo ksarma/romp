@@ -19,11 +19,19 @@ a script), which the served pages do not use. Where the tokenizer parts from HTM
 (round 9, 2026-09-20, the maintainer's round 5 ruling): a `<![CDATA[` marked section, which html.parser consumes whole to `]]>`
 where HTML reads `<!` followed by anything but `--` or DOCTYPE as a bogus comment ending at the FIRST `>`, so a live style
 element after a `>` inside the section was invisible to elements() and rules() with no refusal (the fourth silent divergence
-this module closed; the plant is a unit case), and a tag or attribute name outside ASCII (the attribute paragraph below). The
-enumeration of what the tokenizer hands this reader is DERIVED, not kept by hand: `TOKENIZER_SURFACE` names every handle_*
-method and unknown_decl of html.parser with what this reader does on it (read, comment, event, refused) and HTML's behaviour
-beside it, and tests/test_shell_viewport_fit.py walks the class for the handler surface, the CDATA and RCDATA element sets and
-the constructor's parameters, and reds on a member the table does not classify. The tokenizer's CDATA end-tag and comment rules were tightened in the 3.12 and
+this module closed; the plant is a unit case); an abruptly closed comment, `<!-->` or `<!--->`, which html.parser closes at the
+NEXT `-->` where HTML closes it at its own `>`, so a live style, link or meta between the two was invisible with no refusal (the
+author's fixer pass after round 9, the fifth; the shape HTML reads as an empty comment refuses too, a loud over-refusal of a shape
+no served page carries); a character reference in a tracked element's attribute value that html.unescape decodes and HTML keeps
+as written (the attribute paragraph below); and a tag or attribute name outside ASCII (the same paragraph). The enumeration of
+what the tokenizer hands this reader is DERIVED, not kept by hand: `TOKENIZER_SURFACE` names every handle_* method and
+unknown_decl of html.parser with what this reader does on it (read, comment, event, refused) and HTML's behaviour beside it;
+`TOKENIZER_EXTENTS` names every other public method of the class, the parse_* layer where the EXTENT of each construct is decided
+(where a comment closes, where a start or end tag ends, where a declaration's `>` is) and the loop and plumbing around it, with the
+extent the tokenizer takes and HTML's beside it, each extent rule pinned by an executed shape and the two methods html.parser
+never calls (parse_marked_section, parse_declaration) shown unreached by a spy; tests/test_shell_viewport_fit.py walks the class
+for both surfaces, the CDATA and RCDATA element sets and the constructor's parameters, and reds on a member either table does not
+classify. The tokenizer's CDATA end-tag and comment rules were tightened in the 3.12 and
 3.13 maintenance releases (a `</script` ends the element only before whitespace, `/` or `>`; a comment closes at `-->` or
 `--!>`); the shapes this module's unit cases pin read the same under 3.10, 3.11, 3.12, 3.13 and 3.14, and the eight served
 pages gave byte-identical spans, scripts and rules under each at round 8. Refuses a script or style element the page never
@@ -35,7 +43,11 @@ holds a container whose content HTML does not parse as this reader parses the el
 `<math>` both engines parse a script's or style's content as MARKUP, not raw text, and an svg `<link>` loads nothing; a
 `<template>`'s content is inert; a `<noscript>`'s is text to a scripting browser; `<title>`, `<textarea>`, `<iframe>`, `<noembed>`,
 `<noframes>`, `<xmp>` and `<plaintext>` are text to HTML and to a tokenizer release that knows the set, and a start tag to one that
-does not, so the outcome under any release is a refusal or no element, never a live read. The round-8 roster (`<template>` and
+does not, so the outcome under any release is a refusal or no element, never a live read; and inside `<frameset>` HTML IGNORES a
+tracked start tag (the in-frameset insertion mode drops anything but frameset, frame and noframes: both engines drop a `<style>`
+there, measured; the author's fixer pass after round 9). Tree construction's other rules that could drop or move a tracked start
+tag are outside this model, and the modes a served page could put one in were measured live in both engines (select, option,
+table, td, colgroup: a style there is live to the engines and to this reader). The round-8 roster (`<template>` and
 `<noscript>`, "no served page carries either") is gone: it omitted `<svg>`, which two served pages carry as live markup, and the
 justification is a CENSUS now, derived over every page the kernel's GET dispatch serves (tests/test_served_pins_read_elements.py:
 the containers each tracked element sits under, and the pages carrying each container), red when a tracked element sits under
@@ -58,7 +70,14 @@ attribute names: HTML lower-cases them over ASCII, the tokenizer over Unicode (s
 ASCII whose lowercase is inside it (the Kelvin sign), so a tag or attribute NAME outside ASCII refuses rather than take the
 tokenizer's fold (read from the raw tag text, `_raw_names`); a duplicated attribute keeps its first value (HTML drops the later
 one; `attr`). The case folds here are ASCII folds (`_ascii_lower`), never str.lower: over the keyword sets compared the two agree
-(no character outside ASCII lower-cases to a letter of text/css, all, screen or stylesheet), and the fold is HTML's. A script
+(no character outside ASCII lower-cases to a letter of text/css, all, screen or stylesheet), and the fold is HTML's. Attribute
+VALUES (the author's fixer pass after round 9): the tokenizer decodes character references with html.unescape's TEXT rule, and
+HTML's attribute rule differs in two places: a legacy named reference without its `;` (`&amp`, `&AMP`, `&not`) is kept as written
+when `=` or an ASCII alphanumeric follows the name (`a&amp=b`, `&ampx` and `&notit;x` are literal in every engine, measured, and
+read `a&=b`, `&x` and `\xacit;x` here), and a control or noncharacter code point a numeric reference names is kept where
+html.unescape drops it (`&#x0b;`); a tracked element whose raw attribute value carries such a reference REFUSES
+(`_attr_reference_divergence`, html.unescape's own lookup replayed over the raw text, so the predicate is exactly where the two
+part); every other reference decodes the same in both, so the tokenizer's value is HTML's. A script
 element's `type` is read and not judged (below), so it is compared nowhere; HTML strips it before its match, the opposite rule
 from the style element's, recorded so a future judge takes that rule and not this file's.
 
@@ -124,6 +143,8 @@ Loads no romp code, so it needs no state preamble.
 import functools
 import re
 from collections import namedtuple
+from html import unescape
+from html.entities import html5
 from html.parser import HTMLParser
 
 Rule = namedtuple("Rule", "index at selector declarations decls")
@@ -145,15 +166,17 @@ def _ascii_lower(s):
     return s.translate(_ASCII_FOLD)
 
 
-def _raw_names(raw):
-    """The tag name and attribute names of a start tag's raw text as WRITTEN, before the tokenizer's fold, for the ASCII check
-    (round 9, 2026-09-20): the name after `<` to whitespace, `/` or `>`; then, per attribute, the name to whitespace, `/`, `>`
-    or `=`, skipping a quoted or unquoted value after `=`."""
-    names, i, n = [], 1, len(raw)
+def _raw_attrs(raw):
+    """The tag name and the (name, raw value) pairs of a start tag's raw text as WRITTEN, before the tokenizer's fold and decode
+    (round 9, 2026-09-20; the values since the author's fixer pass after round 9): the name after `<` to whitespace, `/` or `>`; then,
+    per attribute, the name to whitespace, `/`, `>` or `=`, and after `=` a quoted value to its closing quote (to the end of the tag
+    text when never closed) or an unquoted one to whitespace or `>`, the extents the tokenizer's attribute pattern takes; None for a
+    bare attribute."""
+    attrs, i, n = [], 1, len(raw)
     j = i
     while j < n and raw[j] not in _ASCII_WS + "/>":
         j += 1
-    names.append(raw[i:j])
+    tag = raw[i:j]
     i = j
     while i < n:
         while i < n and raw[i] in _ASCII_WS + "/":
@@ -163,7 +186,7 @@ def _raw_names(raw):
         j = i
         while j < n and raw[j] not in _ASCII_WS + "/>=":
             j += 1
-        names.append(raw[i:j])
+        name, value = raw[i:j], None
         i = j
         while i < n and raw[i] in _ASCII_WS:
             i += 1
@@ -173,11 +196,50 @@ def _raw_names(raw):
                 i += 1
             if i < n and raw[i] in "'\"":
                 q = raw.find(raw[i], i + 1)
+                value = raw[i + 1:n if q < 0 else q]
                 i = n if q < 0 else q + 1
             else:
-                while i < n and raw[i] not in _ASCII_WS + ">":
-                    i += 1
-    return [x for x in names if x]
+                j = i
+                while j < n and raw[j] not in _ASCII_WS + ">":
+                    j += 1
+                value = raw[i:j]
+                i = j
+        if name:
+            attrs.append((name, value))
+    return tag, attrs
+
+
+def _raw_names(raw):
+    """The tag name and attribute names of a start tag's raw text as WRITTEN, for the ASCII check (round 9, 2026-09-20)."""
+    tag, attrs = _raw_attrs(raw)
+    return [x for x in [tag] + [name for name, _ in attrs] if x]
+
+
+# html.unescape's own reference pattern (html/__init__.py), replayed over a RAW attribute value to find the references it decodes
+_CHARREF = re.compile(r"&(#[0-9]+;?|#[xX][0-9a-fA-F]+;?|[^\t\n\f <&#;]{1,32};?)")
+
+
+def _attr_reference_divergence(value):
+    """The first character reference in a RAW attribute value that html.unescape (the tokenizer's decode) reads otherwise than HTML's
+    attribute rule does, or None (the author's fixer pass after round 9). Two divergences: a legacy NAMED reference without its `;`
+    (the html5 table's names without a semicolon: amp, AMP, not, lt ...), which HTML keeps as written when the character after the
+    name is `=` or an ASCII alphanumeric (`a&amp=b`, `&ampx`, `&notit;x`: literal in every engine, measured) and html.unescape decodes
+    by its longest-prefix lookup (`a&=b`, `&x`, `\xacit;x`); and a NUMERIC reference naming a control or noncharacter code point,
+    which HTML keeps (`&#x0b;` is U+000B in both engines, measured) and html.unescape drops. Every other reference (a name with its
+    `;`, a legacy name followed by anything else, a numeric reference to any other code point) decodes the same in both."""
+    for m in _CHARREF.finditer(value):
+        s = m.group(1)
+        if s[0] == "#":
+            if unescape(m.group(0)) == "":
+                return m.group(0)
+            continue
+        key = s if s in html5 else next((s[:x] for x in range(len(s) - 1, 1, -1) if s[:x] in html5), None)
+        if key is None or key.endswith(";"):
+            continue
+        after = s[len(key)] if len(key) < len(s) else value[m.end():m.end() + 1]
+        if after == "=" or (after.isascii() and after.isalnum()):
+            return m.group(0)
+    return None
 _IMPORTANT = re.compile(r"!\s*important\s*$", re.I)
 _BARE_VAR = re.compile(r"^var\(\s*(--[\w-]+)\s*(?:,(.*))?\)$", re.S | re.I)
 # a style element's media attribute that conditions nothing: absent, empty, `all`, or `screen` (every page here is a screen)
@@ -193,12 +255,15 @@ _CSS_TYPES = {"", "text/css"}
 # is otherwise ignored), `refused` (a loud assertion).
 TOKENIZER_SURFACE = {
     "handle_starttag": ("read", "a script, style, link or meta element is recorded (a script or style opens its content span; a link or meta is its tag);"
-                                " any other tag is an event; a tag or attribute name outside ASCII refuses. HTML: a start tag token, names ASCII-lowercased"),
+                                " any other tag is an event; a tag or attribute name outside ASCII refuses, and so does a tracked element's attribute value carrying a"
+                                " character reference HTML keeps as written. HTML: a start tag token, names ASCII-lowercased, values decoded by the attribute rule"),
     "handle_startendtag": ("read", "a link or meta is recorded; a self-closing <script/> or <style/> refuses (HTML reads the slash as a start tag and the element stays open);"
                                    " other tags are events"),
     "handle_endtag": ("read", "a </script> or </style> closes the open element's content span at the tag (an end tag with no open element refuses); other end tags are events."
                               " HTML: the same end-tag rule inside script data and RAWTEXT (the 3.12 and 3.13 maintenance releases aligned the tokenizer's end-tag match)"),
-    "handle_comment": ("comment", "a `<!-- -->` outside a script or style element, and every bogus comment html.parser reports here (`<!foo>`, `</ >` shapes). HTML: comment tokens, text a pin can be satisfied by"),
+    "handle_comment": ("comment", "a `<!-- -->` outside a script or style element, and every bogus comment html.parser reports here (`<!foo>`, `</ >` shapes); an abruptly closed"
+                                  " comment (`<!-->`, `<!--->`) REFUSES: html.parser closes it at the next `-->` where HTML closes it at its own `>`, so an element between the"
+                                  " two was invisible here. HTML: comment tokens, text a pin can be satisfied by"),
     "handle_data": ("event", "text; HTML: character tokens. Inside a script or style element the content is the element's span, read by offsets, not through this handler"),
     "handle_entityref": ("event", "a named character reference in text (convert_charrefs is False, so it is reported, not decoded); HTML: a character token"),
     "handle_charref": ("event", "a numeric character reference in text; HTML: a character token"),
@@ -206,8 +271,53 @@ TOKENIZER_SURFACE = {
     "handle_pi": ("comment", "a `<?...>` to the first `>`; HTML has no processing instructions and reads `<?` as a bogus comment to the first `>`, the same extent"),
     "unknown_decl": ("refused", "a `<![CDATA[` marked section refuses: html.parser consumes it to `]]>` where HTML reads a bogus comment to the FIRST `>` (in foreign content,"
                                 " svg or math, HTML does read a CDATA section, but this reader refuses those containers). Any other `<![...]>` form html.parser reports here"
-                                " (`<![if !IE]>`, to the first `>`) is a comment: HTML reads a bogus comment of the same extent (Python 3.10 and 3.11 route it through"
-                                " _markupbase.parse_marked_section, which raises on a keyword it does not know: a refusal of its own)"),
+                                " (`<![if !IE]>`, to the first `>`) is a comment: HTML reads a bogus comment of the same extent. On every release with the HTML5"
+                                " tokenizer backport (3.10.20, 3.11.15, 3.12.3, 3.13.14 and 3.14.6, executed) html.parser ends every `<![` form but CDATA at the first"
+                                " `>` itself and never reaches _markupbase.parse_marked_section (the TOKENIZER_EXTENTS spy); older 3.10 and 3.11 patch releases routed"
+                                " it there, where an unknown keyword raised"),
+}
+# the rest of html.parser's public surface (the author's fixer pass after round 9): the parse_* layer, where the EXTENT of each
+# construct is decided, and the loop and plumbing around it, each with the extent the tokenizer takes and HTML's beside it;
+# tests/test_shell_viewport_fit.py walks the class for every public method that is not a handler, reds on one this table does not
+# name, executes one shape per extent rule, and shows the two unreached methods unreached by a spy. Kinds: `extent` (a rule about where
+# a construct ends, pinned by a shape), `unreached` (a method html.parser never calls on the releases the shapes ran under), `plumbing`
+# (buffering and positions, no extent of its own)
+TOKENIZER_EXTENTS = {
+    "goahead": ("extent", "the loop: text runs to the next `<` or `&`; a `<` not followed by a letter, `!`, `/` or `?` is text; `</` before a non-letter is a bogus"
+                          " comment to the first `>` (`</3>`) and `</>` is dropped with no token. HTML: the data, tag-open and end-tag-open states, the same extents"),
+    "parse_starttag": ("extent", "a start tag ends at the first `>` outside a quoted attribute value (a `>` inside quotes is value text, round 8); a quote never closed"
+                                 " swallows the rest of the page and yields no element; the tag name runs to whitespace, `/` or `>` (`<style<b>` is the tag style<b)."
+                                 " HTML: the tag-name and attribute-value states, the same extents; EOF inside a tag emits nothing"),
+    "check_for_whole_start_tag": ("extent", "whether the start tag's `>` is in the buffer, over quoted values, the same rule as parse_starttag. HTML: the same"),
+    "parse_endtag": ("extent", "an end tag ends at the first `>` outside a quoted attribute value (`</style a='>'>` closes the element and ends after the quoted `>`);"
+                               " inside script or style content only the element's own end tag followed by whitespace, `/` or `>` closes it (`</styleX>` is content;"
+                               " `</style/>` and `</style\t>` close). HTML: an end tag may carry attributes, dropped, and the appropriate-end-tag rule in RAWTEXT and"
+                               " script data is the same"),
+    "parse_comment": ("extent", "a comment closes at `-->` or `--!>` (`<!---->` is empty, `<!----->` holds `-`); an abruptly closed comment (`<!-->`, `<!--->`) REFUSES in"
+                                " handle_comment: html.parser closes it at the NEXT `-->`, HTML at its own `>`. HTML: the comment states, the same close rules but for the"
+                                " abrupt close"),
+    "parse_bogus_comment": ("extent", "`<!foo>` and `</3>` to the first `>`. HTML: the bogus-comment state, the same extent"),
+    "parse_html_declaration": ("extent", "the `<!` dispatch: `<!--` to parse_comment; `<![CDATA[` to unknown_decl, consumed to `]]>` (REFUSED); `<!doctype` to the first"
+                                         " `>`, even inside a quoted identifier; any other `<![` to the first `>` (unknown_decl when it ends with `]`, else a comment); the"
+                                         " rest to parse_bogus_comment. HTML: the markup-declaration-open state; the DOCTYPE and bogus-comment extents are the same (a `>`"
+                                         " inside a DOCTYPE's quoted identifier ends it in HTML too), the CDATA section's is not, so it is refused"),
+    "parse_marked_section": ("unreached", "_markupbase's `<![` reader, never called by html.parser on the releases the shapes ran under (3.10.20, 3.11.15, 3.12.3,"
+                                          " 3.13.14, 3.14.6: parse_html_declaration handles `<![` itself); a spy asserts it. HTML has no marked sections"),
+    "parse_declaration": ("unreached", "_markupbase's `<!` reader, never called by html.parser on those releases (parse_html_declaration is); a spy asserts it. HTML has"
+                                       " no such construct"),
+    "parse_pi": ("extent", "`<?` to the first `>` (handle_pi, a comment span). HTML: a bogus comment to the first `>`, the same extent"),
+    "set_cdata_mode": ("extent", "entering a script, style or other text element: the content runs to the element's own end tag (a `</style>` inside a script is"
+                                 " script text). HTML: the RAWTEXT, RCDATA, script-data and PLAINTEXT states, the same rule"),
+    "clear_cdata_mode": ("extent", "leaving that content at the element's end tag. HTML: the same"),
+    "feed": ("plumbing", "buffers the page; this reader feeds the whole page in one call, so no construct is split across a buffer boundary. HTML: no equivalent"),
+    "close": ("plumbing", "flushes an unterminated construct at the end of the page (an unterminated `<!--` is a comment to the end, an unterminated start tag is"
+                          " text; an unterminated script or style element refuses here). HTML: the EOF rules, the same for a comment and a tag"),
+    "reset": ("plumbing", "the initial state, set by the constructor. HTML: no equivalent"),
+    "getpos": ("plumbing", "the line and column of the construct in hand, which this reader maps onto absolute offsets (a CRLF page with a multi-line start tag"
+                           " maps to the right offsets, a shape). HTML: no equivalent"),
+    "updatepos": ("plumbing", "advances the line and column past a construct. HTML: no equivalent"),
+    "get_starttag_text": ("plumbing", "the start tag's raw text, which this reader scans for names and attribute values AS WRITTEN (the ASCII-name and the"
+                                      " character-reference checks). HTML: no equivalent"),
 }
 # the element sets html.parser reads as text, by version: CDATA (RAWTEXT to HTML) and RCDATA; a script or style element inside one is
 # text to HTML and to a tokenizer that knows the set, and a start tag to one that does not (3.10 knows script and style alone), so the
@@ -215,8 +325,9 @@ TOKENIZER_SURFACE = {
 TOKENIZER_TEXT_ELEMENTS = {"script", "style", "xmp", "iframe", "noembed", "noframes", "textarea", "title", "plaintext", "noscript"}
 # the containers whose content HTML does not parse as this reader parses a tracked element (round 9, 2026-09-20): foreign content
 # (svg, math: markup where the reader reads raw text; an svg link loads nothing), inert content (template), text to a scripting
-# browser (noscript), and the text elements above other than script and style
-REFUSED_CONTAINERS = frozenset({"svg", "math", "template", "noscript"}) | (frozenset(TOKENIZER_TEXT_ELEMENTS) - {"script", "style"})
+# browser (noscript), the text elements above other than script and style, and frameset, where HTML IGNORES a tracked start tag
+# (the author's fixer pass after round 9: both engines drop a style there, and the reader had read it live)
+REFUSED_CONTAINERS = frozenset({"svg", "math", "template", "noscript", "frameset"}) | (frozenset(TOKENIZER_TEXT_ELEMENTS) - {"script", "style"})
 # HTML's void elements: a start tag with no end tag and no content, never pushed on the container stack
 _VOID = frozenset({"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"})
 
@@ -260,13 +371,21 @@ class _Elements(HTMLParser):
         # never too little
         held = [c for c in self.stack if c in REFUSED_CONTAINERS]
         assert not held, "a <%s> at offset %d inside <%s>: HTML does not parse its content as this reader does (%s), so the element is refused rather than read" % (
-            tag, pos, held[-1], "foreign content, parsed as markup" if held[-1] in ("svg", "math") else "inert or text content")
+            tag, pos, held[-1], "foreign content, parsed as markup" if held[-1] in ("svg", "math") else "a start tag HTML ignores there" if held[-1] == "frameset" else "inert or text content")
 
     def _ascii_names(self, pos, names):
         # round 9 (2026-09-20): HTML lower-cases tag and attribute names over ASCII, the tokenizer over Unicode, and the two part on
         # a letter outside ASCII whose lowercase is inside it (the Kelvin sign reads as k); a name outside ASCII refuses
         for name in names:
             assert name.isascii(), "a tag or attribute name outside ASCII at offset %d (%r): HTML folds names over ASCII and the tokenizer over Unicode; this reader refuses it" % (pos, name)
+
+    def _references(self, tag, pos):
+        # the author's fixer pass after round 9: the tokenizer decodes attribute values by html.unescape's text rule; where HTML's
+        # attribute rule keeps the reference as written (_attr_reference_divergence) a tracked element refuses rather than carry the
+        # tokenizer's value into a compare or a returned content
+        for name, value in _raw_attrs(self.get_starttag_text())[1]:
+            bad = _attr_reference_divergence(value) if value else None
+            assert bad is None, "a <%s> at offset %d carries the character reference %r in its %s attribute, which html.parser decodes and HTML keeps as written (a legacy name without its ; before = or an alphanumeric, or a control or noncharacter code point); this reader refuses it" % (tag, pos, bad, name)
 
     def handle_starttag(self, tag, attrs):
         pos = self._pos()
@@ -275,6 +394,7 @@ class _Elements(HTMLParser):
         self.tags[tag] = self.tags.get(tag, 0) + 1
         if tag in ("script", "style", "link", "meta"):
             self._container(tag, pos)
+            self._references(tag, pos)
         if tag in ("script", "style"):
             self.open = (tag, pos, pos + len(self.get_starttag_text()), tuple(attrs), tuple(self.stack))
         elif tag in ("link", "meta"):
@@ -290,6 +410,7 @@ class _Elements(HTMLParser):
         assert tag not in ("script", "style"), "a self-closing <%s/> at offset %d is a start tag to HTML; this reader refuses it" % (tag, pos)
         if tag in ("link", "meta"):
             self._container(tag, pos)
+            self._references(tag, pos)
             self._void(tag, pos, attrs)
         if tag in REFUSED_CONTAINERS - {"svg", "math"}:   # HTML ignores the self-closing flag on an HTML element (it honours it on a foreign one)
             self.stack.append(tag)
@@ -310,6 +431,12 @@ class _Elements(HTMLParser):
     def handle_comment(self, data):
         pos = self._pos()
         self._event(pos)
+        # the author's fixer pass after round 9: html.parser closes a comment at the NEXT `-->` (or `--!>`) and takes `<!-->` or `<!--->`
+        # as the abrupt close only when no later close exists, where HTML closes an abruptly closed comment at its own `>`, so
+        # `<!--><style>...</style><!-- x -->` was ONE comment here and a live style to every engine, with no refusal: the same silent
+        # class as the CDATA section, refused the same way, wherever it sits (the shape HTML reads as an empty comment is refused too, a
+        # loud over-refusal of a shape no served page carries)
+        assert not self.html.startswith(("<!-->", "<!--->"), pos), "an abruptly closed comment (<!--> or <!--->) at offset %d: html.parser closes it at the next --> where HTML closes it at its own >, so an element between the two was invisible here; this reader refuses it" % pos
         self.pending = pos
 
     def handle_data(self, data):

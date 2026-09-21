@@ -327,6 +327,25 @@ class ParsedSheetReads(unittest.TestCase):
         with self.assertRaises(AssertionError):
             served_css.rules("<svg><![CDATA[ <style>#a{top:0}</style> ]]></svg>")
 
+    def test_an_abruptly_closed_comment_refuses_where_html_parser_reads_past_it(self):
+        # the author's fixer pass after round 9 (unruled): html.parser closes a comment at the NEXT `-->` or `--!>` and takes `<!-->` or
+        # `<!--->` as an abrupt close only when no later close exists, where HTML closes an abruptly closed comment at its own `>`, so
+        # every live style, link and meta between the two was invisible to elements(), rules(), linked_sheets() and meta_content() with
+        # no refusal: the same silent class the CDATA refusal closed, on every interpreter (3.10.20 to 3.14.6 carry the same
+        # parse_comment). Both engines read an empty comment and the elements live (measured). Refused wherever it sits, the shape HTML
+        # reads as an empty comment included (no later close, or `-->` as text after it: a loud over-refusal; no served page carries
+        # one); the closed shapes read as before, `--!>` closing and `<!----->` holding a `-`
+        for page in ("<!--><style>#a{top:0}</style><!-- x -->", "<!---><style>#a{top:0}</style><!-- x -->", "<!--><style>#a{top:0}</style>", "<!--->",
+                     "<!--><meta name=viewport content=a><!-- x --><meta name=viewport content=b>", "<!--><link rel=stylesheet href=x.css><!-- x -->",
+                     "<!-->--><style>#a{top:0}</style>", "<div><!---></div>"):
+            with self.assertRaises(AssertionError, msg=page) as cm:
+                served_css.elements(page)
+            self.assertIn("abruptly closed comment", str(cm.exception), page)
+        for page, spans in (("<!-- --><style>#a{top:0}</style><!-- x -->", ["<!-- -->", "<!-- x -->"]), ("<!--x--><style>#a{top:0}</style>", ["<!--x-->"]),
+                            ("<!----><style>#a{top:0}</style>", ["<!---->"]), ("<!-----><style>#a{top:0}</style>", ["<!----->"]),
+                            ("<!-- x --!><style>#a{top:0}</style>", ["<!-- x --!>"]), ("<!-- -> --><style>#a{top:0}</style>", ["<!-- -> -->"])):
+            self.assertEqual(([r.selector for r in served_css.rules(page)], [page[s:e] for s, e in served_css.html_comment_spans(page)]), (["#a"], spans), page)
+
     def test_a_tracked_element_under_a_container_html_parses_otherwise_refuses(self):
         # round 9 (2026-09-20), the maintainer's round 5 ruling: the reader read a script's or style's content as raw text everywhere,
         # and inside <svg> both engines parse it as MARKUP, so the extent was wrong there; the round-8 roster of untracked containers
@@ -338,10 +357,18 @@ class ParsedSheetReads(unittest.TestCase):
         for page in ("<svg><style>#a{top:0}</style></svg>", "<svg><script>var a=1;</script></svg>", "<math><style>#a{top:0}</style></math>",
                      "<svg><link rel=stylesheet href=x.css></svg>", "<svg><meta name=viewport content=x></svg>",
                      "<template><style>#a{top:0}</style></template>", "<template/><style>#a{top:0}</style>",
-                     "<noscript><style>#a{top:0}</style></noscript>", "<div><svg><g><style>#a{top:0}</style></g></svg></div>"):
+                     "<noscript><style>#a{top:0}</style></noscript>", "<div><svg><g><style>#a{top:0}</style></g></svg></div>",
+                     "<html><head></head><frameset><style>#a{top:0}</style></frameset></html>", "<frameset><link rel=stylesheet href=x.css></frameset>"):
             with self.assertRaises(AssertionError, msg=page) as cm:
                 served_css.elements(page)
             self.assertIn("HTML does not parse its content as this reader does", str(cm.exception), page)
+        # the author's fixer pass after round 9: inside <frameset> HTML IGNORES a tracked start tag (both engines drop the style,
+        # measured), a container the round-9 set had not named; tree construction's other rules are outside the model, and the modes a
+        # served page could put a style in were measured live in both engines: select, option, table, td and colgroup, live here too
+        for page in ("<select><style>#a{top:0}</style></select>", "<select><option><style>#a{top:0}</style></option></select>", "<table><style>#a{top:0}</style></table>",
+                     "<table><tr><td><style>#a{top:0}</style></td></tr></table>", "<table><colgroup><style>#a{top:0}</style></colgroup></table>"):
+            self.assertEqual([r.selector for r in served_css.rules(page)], ["#a"], page)
+        self.assertIn("frameset", served_css.REFUSED_CONTAINERS)
         # the container closed, the element after it is live (the stack pops to the match); a self-closing svg is empty to HTML
         for page in ("<svg></svg><style>#a{top:0}</style>", "<svg/><style>#a{top:0}</style>", "<div><svg><g></g></svg></div><style>#a{top:0}</style>",
                      "<template></template><style>#a{top:0}</style>"):
@@ -386,6 +413,63 @@ class ParsedSheetReads(unittest.TestCase):
                          "every text element but script and style is a refused container for a tracked element")
         params = sorted(inspect.signature(HTMLParser.__init__).parameters)
         self.assertEqual(sorted(set(params) - {"self", "convert_charrefs", "scripting"}), [], "a constructor parameter the module has not considered: %r" % (params,))
+
+    def test_the_tokenizers_extent_rules_are_enumerated_and_pinned_by_execution(self):
+        # the author's fixer pass after round 9 (unruled): the handler table covers what the tokenizer HANDS the reader, and the extent
+        # of each construct (where a comment closes, where a tag ends, where a declaration's `>` is) is decided in the parse_* layer and
+        # the loop around it, which no row named, so a release changing an extent could not red here (the abrupt comment's close is
+        # such an extent). The rest of the class's public surface is enumerated in TOKENIZER_EXTENTS, red on a member the table does
+        # not name; every extent rule is pinned by an executed shape, the tokenizer's extent against HTML's; the two unreached methods
+        # by a spy
+        members = sorted(n for n in dir(HTMLParser) if not n.startswith("_") and callable(getattr(HTMLParser, n)) and not (n.startswith("handle_") or n == "unknown_decl"))
+        self.assertEqual(members, sorted(served_css.TOKENIZER_EXTENTS), "a public tokenizer method the module's extent table does not classify")
+        for name, (kind, what) in served_css.TOKENIZER_EXTENTS.items():
+            self.assertIn(kind, {"extent", "unreached", "plumbing"}, name)
+            self.assertTrue(what and "HTML" in what, "HTML's extent stands beside the tokenizer's: %s" % name)
+        self.assertEqual(sorted(n for n, (kind, _) in served_css.TOKENIZER_EXTENTS.items() if kind == "unreached"), ["parse_declaration", "parse_marked_section"])
+        rules = lambda page: [r.selector for r in served_css.rules(page)]
+        spans = lambda page: [page[s:e] for s, e in served_css.html_comment_spans(page)]
+        els = lambda page: [(e.kind, e.start, e.content_start, e.content_end, e.end) for e in served_css.elements(page)]
+        # goahead: a `<` before a non-letter is text, `</3>` a bogus comment to the first `>`, `</>` no token at all
+        self.assertEqual((rules("a < b <3 <style>#a{top:0}</style>"), spans("a < b <3 <style>#a{top:0}</style>")), (["#a"], []))
+        self.assertEqual(spans("<div></3 x><style>#a{top:0}</style>"), ["</3 x>"])
+        self.assertEqual((rules("<div></><style>#a{top:0}</style>"), spans("<div></><style>#a{top:0}</style>")), (["#a"], []))
+        # parse_starttag and check_for_whole_start_tag: the tag ends at the first `>` outside a quoted value; a quote never closed yields
+        # no element and no refusal (HTML emits nothing at EOF inside a tag either); the tag name runs to whitespace, `/` or `>`, so
+        # `<style<b>` is the tag style<b to both, and the stray </style> after it refuses
+        self.assertEqual(len(served_css.linked_sheets("<link title='a>b' rel=stylesheet href=x>")), 1)
+        self.assertEqual(els("<style a='x\">#a{top:0}</style>"), [])
+        with self.assertRaises(AssertionError) as cm:
+            served_css.elements("<style<b>#a{top:0}</style>")
+        self.assertIn("no open style element", str(cm.exception))
+        # parse_endtag: the end tag ends after a quoted `>`; inside style content only the element's own end tag followed by whitespace,
+        # `/` or `>` closes it
+        self.assertEqual(els("<style>#a{top:0}</style a='>'>#b{top:0}"), [("style", 0, 7, 16, 28)])
+        self.assertEqual(els("<style>#a{top:0}</styleX>#b{top:0}</style>"), [("style", 0, 7, 34, 42)])
+        self.assertEqual([els("<style>#a{top:0}</style%s>x" % t)[0][3] for t in ("/", "\t", "")], [16, 16, 16])
+        # parse_comment: the close rules (the abrupt shapes refuse, the test above)
+        self.assertEqual(spans("<!-- x --!><!----><!-----><style>#a{top:0}</style>"), ["<!-- x --!>", "<!---->", "<!----->"])
+        # parse_bogus_comment, parse_pi, parse_html_declaration: to the first `>`; the DOCTYPE to its first `>` even inside a quoted
+        # identifier (HTML's abrupt-doctype-public-identifier rule ends it there too)
+        self.assertEqual(spans("<!foo bar><?php 'a>b' ?><![foo><![if a]><style>#a{top:0}</style>"), ["<!foo bar>", "<?php 'a>", "<![foo>", "<![if a]>"])
+        self.assertEqual(els("<!DOCTYPE html PUBLIC '>'><style>#a{top:0}</style>"), [("style", 26, 33, 42, 50)])
+        # set_cdata_mode and clear_cdata_mode: content runs to the element's own end tag
+        self.assertEqual(served_css.scripts("<script>x='</style>';</script><style>#a{top:0}</style>"), ["x='</style>';"])
+        # the unreached methods, by a spy: html.parser handles `<![` and `<!` itself on this release, so neither is called
+        class Spy(served_css._Elements):
+            def parse_marked_section(self, *a, **k):
+                raise RuntimeError("parse_marked_section reached")
+            def parse_declaration(self, *a, **k):
+                raise RuntimeError("parse_declaration reached")
+        for page in ("<![if a]><style>#a{top:0}</style><![endif]>", "<![foo><style>#a{top:0}</style>", "<!foo><style>#a{top:0}</style>", "<!DOCTYPE html><style>#a{top:0}</style>"):
+            self.assertEqual([e.kind for e in Spy(page).elements], ["style"], page)
+        with self.assertRaises(AssertionError):   # the CDATA refusal, not the spy
+            Spy("<![CDATA[x]]>")
+        # getpos and updatepos: offsets on a CRLF page with a multi-line start tag and a multi-line comment
+        page = "<!--\r\n a\r\n--><link\r\n rel='style\r\nsheet'\r\n href=x>\r\n<style\r\n>\r\n#a{top:0}</style>"
+        self.assertEqual(spans(page), ["<!--\r\n a\r\n-->"])
+        self.assertEqual([(e.kind, e.start, page[e.content_start:e.content_end]) for e in served_css.elements(page)],
+                         [("link", page.index("<link"), ""), ("style", page.index("<style"), "\r\n#a{top:0}")])
 
     def test_the_viewport_meta_is_read_from_the_element(self):
         # round 9 (2026-09-20): meta elements join the layer (D in the maintainer's round 5 ruling: the one regex over raw page text
@@ -454,6 +538,25 @@ class ParsedSheetReads(unittest.TestCase):
         # a value outside ASCII is a value, not a name: read as written
         el = served_css.elements("<link title='\u00dc>x' rel=stylesheet href=x.css>")[0]
         self.assertEqual((el.kind, served_css.attr(el, "title")), ("link", "\u00dc>x"))
+        # attribute VALUES (the author's fixer pass after round 9): the tokenizer decodes character references by html.unescape's text
+        # rule; HTML's attribute rule keeps a legacy named reference without its `;` as written when `=` or an ASCII alphanumeric
+        # follows the name, and keeps a control or noncharacter code point a numeric reference names where html.unescape drops it.
+        # Both engines measured: a&amp=b, &ampx, &notit;x, &AMP=b, &amp1 and a&#x0b;b stay literal or whole there (the reader had read
+        # a&=b, &x, \xacit;x, &=b, &1 and ab); &notin;x, &amp;x, &amp x, &a=b, a&#44;b, &amp-, &Amp;x, &amp and &lt;b&gt; read the same in
+        # both. The divergent shapes refuse, on a meta's content and on a link's rel; the agreeing shapes read the tokenizer's value; a
+        # reference on an element the reader does not track is not judged (no value of it is read)
+        meta = lambda page: served_css.meta_content(page, "viewport")
+        for v in ("a&amp=b", "&ampx", "&notit;x", "&AMP=b", "&amp1", "a&#x0b;b", "&#1;"):
+            with self.assertRaises(AssertionError, msg=v) as cm:
+                meta("<meta name=viewport content='%s'>" % v)
+            self.assertIn("character reference", str(cm.exception), v)
+        with self.assertRaises(AssertionError) as cm:
+            served_css.linked_sheets("<link rel='stylesheet &ampx' href=x>")
+        self.assertIn("character reference", str(cm.exception))
+        for v, read in (("&notin;x", "\u2209x"), ("&amp;x", "&x"), ("&amp x", "& x"), ("&a=b", "&a=b"), ("a&#44;b", "a,b"), ("&amp-", "&-"), ("&Amp;x", "&Amp;x"),
+                        ("&amp", "&"), ("x&", "x&"), ("&lt;b&gt;", "<b>"), ("&#0;", "\ufffd")):
+            self.assertEqual(meta("<meta name=viewport content='%s'>" % v), read, v)
+        self.assertEqual(rules("<div title='a&amp=b'></div><style>#a{top:0}</style>"), [("#a", ())])
 
     def test_a_statement_at_rule_is_consumed_and_the_rule_after_it_is_read(self):
         # a statement at-rule had accumulated into the next rule's prelude, which then began with @ and was dropped with its
