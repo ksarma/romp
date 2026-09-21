@@ -238,10 +238,12 @@ test("render.ts: one owner per hover class. The tail paint (both paths and the t
   // module all passed it (the mutations note, R4-M32 and its variants). Second axis: every string, template or regular-expression literal
   // naming an owned class as a token, every literal read through a regular expression's escape rules first (so a RegExp source in a string,
   // `"\\bext-glow\\b"`, names ext-glow, where its text tokenized to `bext-glow` before the second closing lens), by (module, owner), a
-  // closed multiset, so a literal handed to a helper that mutates by parameter, or a new selector on the class, is enumerated here or reds. Outside the census: a mutator whose class comes from a parameter or a computed
-  // value with no literal at its site (41 such mutators are reached at this head; none is handed an owned class by any literal the second
-  // axis sees, and a caller passing the class through a variable shows up as its module's literal), and a className write that names no
-  // class at all (a wipe to "", a list rebuilt from a computed value), which takes every class off a node it does not own.
+  // closed multiset, so a literal handed to a helper that mutates by parameter, or a new selector on the class, is enumerated here or reds. Outside the two axes: a mutator whose class comes from a parameter or a computed
+  // value with no literal at its site, enumerated below as a closed multiset by (module, owner, method), so a mutator added with no
+  // constant class is named or reds (the second closing lens over the closing pass: the count stood in a comment alone); none is handed an
+  // owned class by any literal the second axis sees, and a caller passing the class through a variable shows up as its module's literal.
+  // Outside the census: a className write that names no class at all (a wipe to "", a list rebuilt from a computed value), which takes
+  // every class off a node it does not own.
   const dir = path.resolve(process.cwd(), "..", "ui", "webview");
   const files = new Map<string, ts.SourceFile>();
   const load = (rel: string): void => {
@@ -265,7 +267,7 @@ test("render.ts: one owner per hover class. The tail paint (both paths and the t
   const regexClasses = (src: string): string => src.replace(/^\/([\s\S]*)\/[a-z]*$/, "$1").replace(/\\([^A-Za-z0-9])/g, "$1").replace(/\\[A-Za-z]/g, " ");
   const namesOwned = (text: string): boolean => regexClasses(text).split(/[^A-Za-z0-9_-]+/).some((t) => OWNED.has(t));
   const REMOVERS = new Set(["classList.remove", "classList.toggle", "classList.replace", "className=", "setAttribute(class)"]);
-  const mutations: string[] = [], literals: string[] = [], tailPaint: string[] = [], ringCalls: string[] = [];
+  const mutations: string[] = [], literals: string[] = [], tailPaint: string[] = [], ringCalls: string[] = [], unresolved: string[] = [];
   let clearHoverMarks = 0;
   for (const [p, sf] of files) {
     const rel = path.relative(dir, p);
@@ -305,7 +307,7 @@ test("render.ts: one owner per hover class. The tail paint (both paths and the t
     const record = (n: ts.Node, method: string, args: readonly ts.Expression[]): void => {
       const owner = ownerOf(n);
       if ((owner === "syncViewInner" || owner === "trimUnitsFrom") && REMOVERS.has(method)) tailPaint.push(rel + ":" + owner + ":" + method);
-      for (const a of args) { const r = resolve(a); if (r != null && namesOwned(r)) mutations.push(rel + ":" + owner + ":" + method + ":" + r.trim()); }
+      for (const a of args) { const r = resolve(a); if (r == null) unresolved.push(rel + ":" + owner + ":" + method); else if (namesOwned(r)) mutations.push(rel + ":" + owner + ":" + method + ":" + r.trim()); }
     };
     // a className write's class arguments: the right side whole and, when it is built by a `.replace` or `.replaceAll` chain (a rewrite that
     // strips or swaps a class), each call's pattern and replacement
@@ -337,6 +339,25 @@ test("render.ts: one owner per hover class. The tail paint (both paths and the t
     'render.ts:drawRailBand:"rail-ring"',                                                                                                 // the adder
     'render.ts:paintGlowRuler:".turn.ext-glow"', 'render.ts:paintRailBand:".turn.ext-glow"',                                                // the two READERS of the glow: the ruler mirrors it, the band reads it
   ].sort(), "every string, template or regular-expression literal in the bundle naming a hover class as a token, by module and owner: the owners, the two readers, nothing else (a literal handed to a helper that mutates by parameter, a new selector on the class, or a pattern that strips it, a regular-expression literal or a RegExp source string, is enumerated here or reds)");
+  // the mutators the two axes cannot read (a parameter, a computed value), by module, owner and method, a closed multiset; the message names
+  // what was added and what is gone, so a 42nd is enumerated here (and its class, when a literal reaches it, on the literal axis) or reds
+  const EXPECTED_UNRESOLVED = [
+    "anchor-map.ts:makeMark:setAttribute(class)", "anchor-map.ts:makePoint:setAttribute(class)", "anchor-map.ts:stampBlock:setAttribute(class)",
+    "code-block.ts:el:className=", "ctx-menu.ts:addMenuItem:className=", "ctx-menu.ts:menuCard:className=", "file-browse.ts:el:className=",
+    "file-comments-regions.ts:mk:className=", "file-comments.ts:el:className=", "file-comments.ts:frameImage:classList.add", "file-comments.ts:graft:className=",
+    "file-comments.ts:stripBlockPaint:classList.remove", "file-comments.ts:unframeImage:classList.remove", "file-view-links.ts:withClass:setAttribute(class)",
+    "file-view.ts:copySay:classList.add", "file-view.ts:el:className=", "path-links.ts:el:className=", "path-links.ts:markPathLink:setAttribute(class)",
+    "pinned-notes.ts:make:className=", "preview.ts:say:classList.add",
+    "render.ts:applyFold:classList.add", "render.ts:applyTabStatus:classList.add", "render.ts:dress:className=", "render.ts:el:className=",
+    "render.ts:notice:classList.add", "render.ts:notice:classList.add", "render.ts:onMoveDirCompletions:className=", "render.ts:rememberFold:classList.toggle",
+    "render.ts:renderDirMenu:className=", "render.ts:renderFilePreview:className=", "render.ts:renderPendingGroup:className=", "render.ts:updateCommentRail:className=",
+    "render.ts:updateStatusline:classList.add",
+    "status-chip.ts:statusChip:className=", "status-controls.ts:el:className=", "status-widgets.ts:el:className=",
+    "tab-widgets.ts:composeTabRing:classList.add", "tab-widgets.ts:composeTabRing:classList.remove", "tab-widgets.ts:el:className=",
+    "url-links.ts:linkifyUrls:className=", "url-links.ts:urlChip:className=",
+  ];
+  const multisetLess = (a: string[], b: string[]): string[] => { const left = new Map<string, number>(); for (const x of b) left.set(x, (left.get(x) ?? 0) + 1); return a.filter((x) => { const n = left.get(x) ?? 0; if (n > 0) { left.set(x, n - 1); return false; } return true; }); };
+  assert.deepEqual(unresolved.sort(), [...EXPECTED_UNRESOLVED].sort(), "every class mutator in the bundle whose class is no constant of the source (a parameter, a computed value), by module, owner and method, a closed multiset: added " + JSON.stringify(multisetLess(unresolved, EXPECTED_UNRESOLVED)) + ", gone " + JSON.stringify(multisetLess(EXPECTED_UNRESOLVED, unresolved)) + "; a mutator added with no constant class is enumerated here or reds");
   assert.deepEqual(tailPaint, [], "the tail paint (syncViewInner, both paths, and the trim) removes or replaces no class of any kind itself, by owner from the tree");
   assert.deepEqual(ringCalls.filter((c) => c.startsWith("render.ts:syncViewInner")), ["render.ts:syncViewInner(v.el)", "render.ts:syncViewInner(v.el)"], "both tail paths hand the view's own host to the band module's remover (the compact seam's append branch, normal mode's exact tail; compact-tail-differential.test.ts lifts the remover and executes both paths)");
   assert.equal(clearHoverMarks, 0, "the second remover is gone: no identifier in the bundle names it");
