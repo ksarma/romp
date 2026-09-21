@@ -16,6 +16,7 @@ import { spacerRow, unitChanges } from "./scroll-write";
 import { meanRowHeight, perTurnEstimate, rowsFor } from "./turn-estimate";
 import type { DisplayItem } from "./compact";
 import { hideEdges } from "../test-dom-shim";
+import { WRITER_WRAPPERS } from "./landing-settle";
 import * as ts from "typescript";
 
 const requireCjs = createRequire(__filename);
@@ -494,11 +495,18 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   const ownerOf = (n: ts.Node): string => { for (let p: ts.Node | undefined = n.parent; p; p = p.parent) { if (ts.isFunctionLike(p)) { const nm = nameOf(p); if (nm) return nm; } } return "<module>"; };
   const NAMES = new Set(["renderWindowItems", "syncView", "untakeMeasure"]);
   const allCalls: ts.CallExpression[] = [], refs: ts.Identifier[] = [], strings = new Set<string>(), avgWrites: string[] = [];
+  // a node that names the average: a property access or an element access on `avgTurnH`
+  const namesAvg = (e: ts.Node): boolean => (ts.isPropertyAccessExpression(e) && e.name.text === "avgTurnH") || (ts.isElementAccessExpression(e) && ts.isStringLiteralLike(e.argumentExpression) && e.argumentExpression.text === "avgTurnH");
   const visit = (n: ts.Node): void => {
     if (ts.isCallExpression(n) && ts.isIdentifier(n.expression)) allCalls.push(n);
     if (ts.isIdentifier(n) && NAMES.has(n.text) && !(ts.isCallExpression(n.parent) && n.parent.expression === n) && !(ts.isFunctionDeclaration(n.parent) && n.parent.name === n)) refs.push(n);
     if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) strings.add(n.text);
-    if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isPropertyAccessExpression(n.left) && n.left.name.text === "avgTurnH") avgWrites.push(ownerOf(n) + ": " + n.right.getText(sf));
+    // every WRITE to the average, whatever its operator: an assignment of any kind (the compiler's FirstAssignment to LastAssignment: `=`,
+    // `??=`, `||=`, `+=` and the rest), an increment or a delete (the closing pass over the author's fixer pass: `v.avgTurnH ??= 5` planted
+    // in showActive escaped a count of `=` alone)
+    if (ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && n.operatorToken.kind <= ts.SyntaxKind.LastAssignment && namesAvg(n.left)) avgWrites.push(ownerOf(n) + ": " + (n.operatorToken.kind === ts.SyntaxKind.EqualsToken ? "" : n.operatorToken.getText(sf) + " ") + n.right.getText(sf));
+    if ((ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) && (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken) && namesAvg(n.operand)) avgWrites.push(ownerOf(n) + ": " + n.getText(sf));
+    if (ts.isDeleteExpression(n) && namesAvg(n.expression)) avgWrites.push(ownerOf(n) + ": " + n.getText(sf));
     ts.forEachChild(n, visit);
   };
   visit(sf);
@@ -609,25 +617,38 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   assert.deepEqual(censusCalls.filter((c) => (c.expression as ts.Identifier).text === "untakeMeasure").map((c) => ownerOf(c)).sort(),
     ["appendActive", "fillInPlace", "fillInPlace", "keepPlaceAcrossWindow", "landActive", "landNearestMoment", "scrollToAnchor", "scrollToAnchor", "toggleToolGroup", "virtualizeToViewport"].sort(),
     "the take is given back at every road that can end unanchored: appendActive's raw write, the fill's two raw roads, the keep's double miss, landActive's land-saved after a take, the moment's miss, scrollToAnchor's two misses, the toggle's raw write, the re-window's lost focus unit");
-  // 5. the raw writes by reader (the author's fixer pass over pass 4, its own finding): axis 4 pins the untake SITES and the harnesses drive the
-  //    roads they name, so a raw write added inside a listed reader after its take, with no untake, was caught by nothing (a planted
-  //    `writeScroll(content, 12345, "planted-raw")` road in landActive ran green through every leg). Every writeScroll call whose owner is on
-  //    the untake list, as (owner, writer), a closed multiset: a write added to one of these readers reds here and owes its road a harness case
-  //    (the six harnesses are the executed guard on the raw roads); keepPlaceAcrossWindow and landNearestMoment write through restoreScrollAnchor
-  //    and scrollToAnchor and own no write of their own; a write outside these readers is outside the take rule and outside this census.
+  // 5. the raw writes by reader (the author's fixer pass over pass 4, its own finding, narrowed by the closing pass over it): axis 4 pins the
+  //    untake SITES and the harnesses drive the roads they name, so a raw write added inside a listed reader after its take, with no untake,
+  //    was caught by nothing when it reused a writer name the family already has (`writeScroll(content, 12345, "land-saved")` planted in
+  //    landActive ran green through spacer-measure, land-active-keep and landing-settle before this census); a write under a NEW name
+  //    (`"planted-raw"`) was refused by landing-settle.test.ts's writer census, an unclassified writer, before this census existed, so that
+  //    shape is caught twice. Every call of the write family (writeScroll and the wrappers writer-census.ts registers, landing-settle.ts's
+  //    WRITER_WRAPPERS, the writer read at each one's registered position) whose lexical chain holds a reader on the untake list, as
+  //    (reader, writer), a closed multiset: a write added to one of these readers reds here and owes its road a harness case (the six
+  //    harnesses are the executed guard on the raw roads). The reader is the first function on the call's chain, innermost outward, that is
+  //    on the list, so a write inside a named inner function of a reader is the reader's and is named with its inner owner (the closing
+  //    pass: attributed to the nearest name and filtered by the list, `const later = () => writeScroll(...); later();` planted in landActive
+  //    fell out of the census and passed every leg, where the same write in an anonymous callback was counted). keepPlaceAcrossWindow and
+  //    landNearestMoment write through restoreScrollAnchor and scrollToAnchor and own no write of their own; a write outside these readers
+  //    is outside the take rule and outside this census.
   const UNTAKERS = new Set(["appendActive", "fillInPlace", "keepPlaceAcrossWindow", "landActive", "landNearestMoment", "scrollToAnchor", "toggleToolGroup", "virtualizeToViewport"]);
-  const writerOf = (c: ts.CallExpression): string => { const a = c.arguments[2]; return !a ? "absent" : ts.isStringLiteral(a) ? a.text : a.getText(sf); };
-  assert.deepEqual(callsTo("writeScroll").filter((c) => UNTAKERS.has(ownerOf(c))).map((c) => ownerOf(c) + ": " + writerOf(c)).sort(), [
+  const FAMILY: Readonly<Record<string, number>> = WRITER_WRAPPERS;   // the write family and the writer's position in each call (writeScroll 2, scrollContentBy 2, scrollElInto 3, land 0, settleLand 1), the table writer-census.ts pins
+  const inFamily = (c: ts.CallExpression): boolean => Object.prototype.hasOwnProperty.call(FAMILY, (c.expression as ts.Identifier).text);
+  const readerOf = (n: ts.Node): string | null => { for (let p: ts.Node | undefined = n.parent; p; p = p.parent) { if (ts.isFunctionLike(p)) { const nm = nameOf(p); if (nm && UNTAKERS.has(nm)) return nm; } } return null; };
+  const writerOf = (c: ts.CallExpression): string => { const a = c.arguments[FAMILY[(c.expression as ts.Identifier).text]]; return !a ? "absent" : ts.isStringLiteral(a) ? a.text : a.getText(sf); };
+  const familyCalls = allCalls.filter(inFamily);
+  assert.ok(familyCalls.length > 12, "the write family is called across render.ts, inside the readers and out: " + familyCalls.length + " calls");
+  assert.deepEqual(familyCalls.flatMap((c) => { const r = readerOf(c); if (!r) return []; const o = ownerOf(c), fn = (c.expression as ts.Identifier).text; return [r + (o === r ? "" : " (inside " + o + ")") + ": " + writerOf(c) + (fn === "writeScroll" ? "" : " via " + fn)]; }).sort(), [
     "appendActive: append-raw", "appendActive: append-stick",                                                        // the raw road (the untake before it) and the follow
     "fillInPlace: gap-fill", "fillInPlace: gap-fill",                                                                // the two raw roads, each with its untake
     "landActive: land-bottom", "landActive: land-saved", "landActive: reload-restore", "landActive: reload-restore",   // the bottom land; the saved place (the untake before it); the reload restore's two shapes (the take stands there, by measurement)
     "scrollToAnchor: keep-offset",                                                                                   // the keep-offset re-land; the two misses write nothing after their untake
     "toggleToolGroup: toolgroup-toggle",                                                                             // the raw road (the untake before it)
     "virtualizeToViewport: rewindow", "virtualizeToViewport: rewindow",                                              // the bottom, and the focus unit's offset (the untake when the unit is gone)
-  ].sort(), "every scroll write inside a reader of the take state, by owner and writer: a raw write added to one of them reds here and owes a harness case for its road");
+  ].sort(), "every write of the family inside a reader of the take state, by reader and writer (an inner owner and a wrapper named where they apply): a raw write added to one of these readers, under any writer name, inside any inner function, through any registered wrapper, reds here and owes a harness case for its road");
   // every reset that clears the average clears the parked figures with it (forgetAverage), and none clears the figure bare
   assert.match(RENDER, /function forgetAverage\(v: View\): void \{\s*\n\s*v\.avgTurnH = undefined; v\.measured = undefined;\s*\n\}/);
-  assert.deepEqual(avgWrites.sort(), ["applyMeasure: m.avg", "forgetAverage: undefined", "untakeMeasure: before.avg"], "the average is written by the take, the untake and the one bare clear, the helper's (by owner from the syntax tree)");
+  assert.deepEqual(avgWrites.sort(), ["applyMeasure: m.avg", "forgetAverage: undefined", "untakeMeasure: before.avg"], "the average is written by the take, the untake and the one bare clear, the helper's (by owner from the syntax tree, under every assignment operator, an increment or a delete)");
   assert.deepEqual(byOwner("forgetAverage"), ["chatHead(v)", "rerenderAll(v)", "runPrebuild(v)", "showActive(v)"], "four resets, by owner from the syntax tree: the older-history re-anchor, the compact toggle's rerender, the prebuild's and the switch's re-collapse");
   assert.match(RENDER, /import \{ rowsFor, meanRowHeight, perTurnEstimate \} from "\.\/turn-estimate";/);
   assert.match(RENDER, /interface View \{[^\n]*measured\?: \{ avg\?: number; per\?: number \};/, "the parked figures live on the view");
