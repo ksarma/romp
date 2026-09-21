@@ -8617,7 +8617,11 @@ modules: ui/webview/file-trail.test.ts (the pure functions, the chord table, the
 source: the one tag, both exits, the reload, the bar and the listener), ui/webview/file-trail-browser.test.ts
 (Chromium over the real Files page and a chat-modal page: the contract's cases 1 to 5 and 7),
 ui/webview/file-figure-open.test.ts (L3's source pins) and ui/webview/file-figure-open-browser.test.ts (Chromium over
-the real chat modal: case 6 and L4). The review's round 1 added two modules outside those two stems:
+the real chat modal: case 6 and L4; since the author's closing pass after the file review's landing round's second read,
+a top-level html-block figure wearing the production control with the reader partway into it, the control's box
+measured at 22px at the figure's top, the Raw switch landing on the img's own row and Rendered putting the figure back,
+the structural read's exclusion of the control in the real layout, which the node scene in
+ui/webview/file-view-place-blocks.test.ts stands in for with a fixture box). The review's round 1 added two modules outside those two stems:
 ui/webview/file-view-figure-shapes.test.ts (the source pins for L3's round-1 rules: figureTarget's web test before
 the model's join, the one decision's order in figureWantsControl (the state, the floor, the target, any link above),
 the measure's reads, the bare

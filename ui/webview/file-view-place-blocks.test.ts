@@ -874,8 +874,10 @@ test("a stand-in node enumerates its primitives alone, and a dump of one names n
 // ── the link-navigation follow-on's L3: a figure's "Open the picture" control beside a top-level figure ─────────────
 /** The control file-view.ts places after a loaded figure (decideFigureControl): `button.fv-figopen[data-fv-figopen]`, the img's
  *  next sibling in the img's own parent, holding the glyph's clone and no text of its own; its box the one the sheets give it
- *  (`vertical-align: top; top: 6px; padding: 3px`: about 22px at the figure's top), so it ends above the edge while the figure it
- *  stands beside ends below it. */
+ *  (`vertical-align: top; top: 6px; padding: 3px`: 22px at the figure's top, the img's top + 6 to top + 28, the box
+ *  file-figure-open-browser.test.ts measures in Chromium on the real page over a top-level html-block figure and drives the
+ *  Raw switch across, so the stand-in here is the real layout's), so it ends above the edge while the figure it stands beside
+ *  ends below it. */
 function figureOpenControl(img: FakeElement): FakeElement {
   const doc = img.ownerDocument, parent = img.parentNode as FakeElement;
   const b = doc.createElement("button"); b.setAttribute("class", "fileview-btn fileview-icon fv-figopen"); b.setAttribute("data-fv-figopen", ""); b.setAttribute("type", "button"); b.setAttribute("title", "Open the picture");

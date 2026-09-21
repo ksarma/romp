@@ -353,6 +353,59 @@ test("in a browser, the Comments panel open on a coarse pointer: the layer's ove
   });
 });
 
+// ── the reader's place on a top-level figure wearing the control, in the real layout ──────────────────────────────────
+const PLOT_TOP = ROOT + "/docs/figs/plot-top.svg";
+const TOP_FIG = '<img src="figs/plot-top.svg" alt="fig" width="500" height="400">';
+/** A report whose figure is a top-level html block (a bare `<img>` line, not a markdown image inside a paragraph): the control
+ *  file-view.ts places after it is then a top-level element of the Rendered box, the shape the structural read had counted as
+ *  a block's box. Thirty paragraphs after it, so the reader can stand partway into the figure with prose below. */
+const TOP_TEXT = "# Report\n\n" + PARA(1) + "\n\n" + TOP_FIG + "\n\n" + Array.from({ length: 30 }, (_, i) => PARA(i + 2)).join("\n\n") + "\n";
+const TOP_DOCS: Record<string, string> = { [REPORT]: TOP_TEXT, [PLOT_TOP]: '<svg xmlns="http://www.w3.org/2000/svg" width="500" height="400"><rect width="500" height="400" fill="#456"/></svg>' };
+/** The bar's view button by its label (Raw, Rendered). */
+const viewBtn = async (page: any, label: string): Promise<void> => { await page.locator("#romp-fileview .fileview-btn", { hasText: new RegExp("^" + label + "$") }).click(); await frames(page, 3); };
+/** The Raw view's row at the body's top edge: the first line row whose bottom is below the edge. */
+const rowAtTop = (page: any): Promise<{ text: string; top: number } | null> => page.evaluate(() => {
+  const body = document.querySelector(".fileview-body")!; const br = body.getBoundingClientRect();
+  for (const r of Array.from(body.querySelectorAll("code.hljs .fv-cl"))) { const rr = r.getBoundingClientRect(); if (rr.bottom > br.top + 0.5) return { text: (r.textContent || "").trim().slice(0, 48), top: Math.round((rr.top - br.top) * 10) / 10 }; }
+  return null;
+});
+/** The Rendered box's top-level element at the body's top edge: the first child whose bottom is below the edge, with its box. */
+const blockAtTop = (page: any): Promise<{ tag: string; top: number; bottom: number } | null> => page.evaluate(() => {
+  const body = document.querySelector(".fileview-body")!; const br = body.getBoundingClientRect();
+  for (const e of Array.from(document.querySelectorAll(".fileview-md > *"))) { const r = e.getBoundingClientRect(); if (r.bottom > br.top + 0.5) return { tag: e.tagName, top: Math.round((r.top - br.top) * 10) / 10, bottom: Math.round((r.bottom - br.top) * 10) / 10 }; }
+  return null;
+});
+
+test("in a browser: a top-level html-block figure wearing the production control (the control a top-level element of the Rendered box, the img's next sibling, 22px tall at the figure's top), the reader 300px into the figure: the Raw switch lands on the img's own row and Rendered puts the figure back at the edge (the structural read passes the control over; before the file review's landing round's second read, correctness-1, the control's box ended above the edge, the level's search took it for a block and read the paragraph after the figure, and the switch landed there; the node scene's control box in file-view-place-blocks.test.ts is a fixture, this is the layout it stands in for)", async (t) => {
+  await inBrowser(t, async (browser) => {
+    const { page, errors } = await openViewer(browser, "chat", 900, 600, {
+      docs: TOP_DOCS,
+      serve: (u) => { const p = u.pathname === "/file" ? u.searchParams.get("path") || "" : ""; return p === PLOT_TOP ? { status: 200, type: "image/svg+xml", body: TOP_DOCS[PLOT_TOP] } : null; },
+    });
+    await page.waitForFunction(() => !!document.querySelector(".fileview-md > button.fv-figopen"), null, { timeout: 10000 });
+    await frames(page, 2);
+    const shape = await page.evaluate(() => {
+      const body = document.querySelector(".fileview-body") as HTMLElement; const br = body.getBoundingClientRect();
+      const img = document.querySelector(".fileview-md > img") as HTMLElement; const ctrl = document.querySelector(".fileview-md > button.fv-figopen") as HTMLElement;
+      body.scrollTop += img.getBoundingClientRect().top - br.top + 300;   // the reader 300px into the figure
+      const rel = (e: Element) => { const q = e.getBoundingClientRect(); return { top: Math.round((q.top - br.top) * 10) / 10, bottom: Math.round((q.bottom - br.top) * 10) / 10 }; };
+      return { img: rel(img), ctrl: rel(ctrl), next: ctrl.previousElementSibling === img && ctrl.parentElement === img.parentElement, text: ctrl.textContent };
+    });
+    assert.equal(shape.next, true, "the control is the img's next sibling in the img's own parent, a top-level element of the box");
+    assert.equal(shape.text, "", "a glyph with no text of its own");
+    near(shape.ctrl.top, shape.img.top + 6, 1, "the control's top is 6px below the figure's"); near(shape.ctrl.bottom, shape.img.top + 28, 1, "and its bottom 28px below the figure's top: 22px tall, the box the node scene's fixture gives it");
+    assert.ok(shape.ctrl.bottom < 0 && shape.img.bottom > 0, "the control's box ends above the edge while the figure's ends below it: " + JSON.stringify(shape));
+    await viewBtn(page, "Raw");
+    const row = await rowAtTop(page);
+    assert.ok(row && row.text.startsWith('<img src="figs/plot-top.svg"'), "the Raw switch lands on the img's own row (the place read was the figure, not the paragraph after it): " + JSON.stringify(row));
+    await viewBtn(page, "Rendered");
+    const back = await blockAtTop(page);
+    assert.equal(back && back.tag, "IMG", "Rendered puts the figure back at the edge: " + JSON.stringify(back));
+    assert.deepEqual(errors, [], "no page errors");
+    await page.close();
+  });
+});
+
 // ── the stand-down under CI's switch: node-only, so it runs in the Test step where the legs above skip ─────────────────
 test("the legs' stand-down (real-viewer-leg.ts inBrowser, the one helper every leg here launches through): without the switch a leg that cannot run SKIPS on either road, no playwright module or a launch that throws, saying where the legs do run and no longer that CI installs no browser; with " + BROWSER_REQUIRE + " set it FAILS on either road naming the reason, so CI's step after the Chromium install turns red rather than green when the browser is gone; the body runs on neither", async () => {
   const skips: string[] = [];
