@@ -4437,8 +4437,10 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   // section names them). The fence pass (above) is the one pass
   // that re-parses markup, so it runs before this block and this block judges what its re-parse creates (its comment says
   // what that is). The passes after the adoption write a video's style, a list item's class, anchors' attributes (class,
-  // title, data-*, target, rel, tabindex, role, an href set, resolved or removed) and new anchors and spans in place of the
-  // prose's and the code blocks' text nodes, and none re-parses under `box`: after the adoption line this function, and every
+  // title, data-*, target, rel, tabindex, role, an href set, resolved or removed), new anchors and spans in place of the
+  // prose's and the code blocks' text nodes, and the figure controls, each a clone of a glyph parsed once onto a holder that
+  // enters no document (the one such line a reached local holds, file-view.ts's figureControlGlyph), and none re-parses under
+  // `box`: after the adoption line this function, and every
   // module a pass after it reaches (the callees' modules, the reached locals' imported callees' modules and their imports under
   // every import form, transitively, derived from the code), holds no use of innerHTML or outerHTML and no insertAdjacentHTML,
   // insertAdjacentElement, createContextualFragment, DOMParser, document.write, setHTML, setHTMLUnsafe, parseHTMLUnsafe or
