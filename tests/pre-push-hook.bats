@@ -1816,3 +1816,129 @@ attributes() {   # <line>: a committed .gitattributes
     [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
     [[ "$output" != *"is text that its diff attribute"* ]]  # unread, so not called text either
 }
+
+
+# ── the chosen-addresses read: its failure is the strict side ─────────────
+# The address rule (each new commit's author and committer address is checked
+# unless the clone CHOSE it: user.email in any scope, or the environment's
+# GIT_AUTHOR_EMAIL, GIT_COMMITTER_EMAIL or EMAIL) has its own file,
+# pre-push-identity.bats; the two cases here are about the READ behind it.
+# chosen_emails reads user.email once per push (git config --get-all
+# user.email) and swallows a failure of that read: unlike the reads above it is
+# neither reported nor refused as unscanned; it contributes no address, the way
+# an unset key does, and every stamped address is then checked against the
+# environment's addresses alone. That is the strict side (a failed read can
+# refuse an address the clone did configure; it can never excuse one), so the
+# cases record that shape as the hook's, not a refusal as unscanned. Both push
+# for REAL through the hook so the remote's state is asserted too, which takes
+# a wrapper: git prepends its own exec path to the PATH a hook sees, so a shim
+# first on the test's PATH reaches a hook run by hand (run_hook) but not one a
+# real push runs (verified by execution, git 2.43.0: through
+# push_main_through_hook the hook's git resolved to git's exec path).
+
+# The hook installed for one real push of main, behind a wrapper that puts the
+# test's shim directory first on the hook's own PATH (the shim a git_refusing
+# call made before this), so the fault reaches the hook's reads the way it does
+# under run_hook. The remote is the case's (add_remote), so a case can push
+# more than once.
+push_main_through_hook_with_shim() {
+    mkdir -p "$TEST_DIR/hooks"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'export PATH=%q:"$PATH"\n' "$TEST_DIR/shim"
+        printf 'exec %q "$@"\n' "$HOOK"
+    } > "$TEST_DIR/hooks/pre-push"
+    chmod 755 "$TEST_DIR/hooks/pre-push"
+    git -C "$REPO" config core.hooksPath "$TEST_DIR/hooks"
+    run git -C "$REPO" push origin main
+    git -C "$REPO" config core.hooksPath "$TEST_DIR/no-hooks"
+}
+fail_config_user_email() { git_refusing '[ "${1:-}" = config ] && [ "${2:-}" = --get-all ] && [ "${3:-}" = user.email ]' 128 "fatal: shim: config --get-all user.email refused"; }   # the chosen-addresses read alone
+commit_stamped_as() {   # <address> <path> <message>: one clean file, author and committer both the address (the environment identity outranks config, so this is exactly the commit's identity)
+    printf '%s\n' "the web session's work on $2" > "$REPO/$2"
+    git -C "$REPO" add "$2"
+    GIT_AUTHOR_EMAIL="$1" GIT_COMMITTER_EMAIL="$1" git -C "$REPO" commit -qm "$3"
+}
+
+@test "a chosen-addresses read that FAILS (git config --get-all user.email exiting 128) is swallowed as no chosen address, the strict side: a commit stamped under a banned domain is refused with the address line through a real push and the remote holds nothing, and configuring the clone to use that address changes nothing while the read fails" {
+    add_remote
+    commit_stamped_as dev@zzsynthuser.example web.txt "stamped under a banned domain the clone did not choose"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    fail_config_user_email
+    # the read as chosen_emails makes it fails under the shim; the hook's other config read (log.showRoot, at its top) is untouched
+    run _hook_in "$REPO" -c 'git config --get-all user.email'
+    [ "$status" -eq 128 ]
+    [[ "$output" == *"shim: config --get-all user.email refused"* ]]
+    run _hook_in "$REPO" -c 'git config --type=bool log.showRoot; echo "status $?"'
+    [ "$output" = "status 1" ]                          # the key unset: git's own status, no shim line
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: commit ${sha:0:10} is authored as <dev@zzsynthuser.example>, an address this clone is not configured to use, whose domain carries a personal identifier"* ]]
+    [[ "$output" == *"commit ${sha:0:10} is committed as <dev@zzsynthuser.example>"* ]]
+    [[ "$output" == *"if it is yours, say so (git config --global user.email <address>)"* ]]
+    [[ "$output" == *"BLOCKED"* ]]
+    [[ "$output" != *"the scan is incomplete"* ]]       # the failed read is swallowed, not reported: the refusal is the address's alone
+    [[ "$output" != *"shim:"* ]]                        # the shim's own line went to the redirection chosen_emails puts on the read
+    ! remote_holds_main
+    # the clone now chooses the address: with the read intact that excuses it, whatever its domain says
+    # (pre-push-identity.bats, the configured-address case); behind the failed read the choice is not
+    # seen, the push stays refused and the line still calls the address unconfigured. Stricter, not looser.
+    git -C "$REPO" config user.email dev@zzsynthuser.example
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"commit ${sha:0:10} is authored as <dev@zzsynthuser.example>, an address this clone is not configured to use"* ]]
+    ! remote_holds_main
+}
+
+@test "the same failed read beside a commit stamped under a clean domain the clone did not choose passes through a real push and the remote holds main: the failure itself refuses nothing" {
+    add_remote
+    commit_stamped_as dev@example.invalid web.txt "stamped under a clean domain the clone did not choose"
+    fail_config_user_email
+    run _hook_in "$REPO" -c 'git config --get-all user.email'
+    [ "$status" -eq 128 ]
+    push_main_through_hook_with_shim
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"romp pre-push"* ]]
+    remote_holds_main
+}
+
+
+# The arm's own read failing. The hook reads the clone's value of log.showRoot
+# once, at its top (showroot_configured: git config --type=bool log.showRoot,
+# a failure swallowed into an empty value), and the arm in scan_credentials
+# reads that variable beside the short count. A shim that fails that one read
+# leaves the arm silent, and the refusal is then the generic coverage line's
+# alone: the count is derived from the objects, so no failure of the key's
+# read can turn the refusal into a pass; what the failure costs is the key
+# line, and the case records the refusal as it then reads (recorded, not
+# chosen: the header's own rule is that a refusal a contributor cannot act on
+# is a defect). The positive half, --root making the root scanned with the
+# read intact and no wrapper, is the first two cases of this section (the
+# root's credential FOUND; a clean root passes), not repeated here.
+fail_config_showroot() { git_refusing '[ "${1:-}" = config ] && [ "${2:-}" = --type=bool ] && [ "${3:-}" = log.showRoot ]' 128 "fatal: shim: config --type=bool log.showRoot refused"; }   # the hook's one read of the key
+
+@test "a failed read of log.showRoot (the hook's own config read exiting 128) beside a scanner that does not honour --root is still refused on the count: the coverage line stands on its own, the key line is absent since the read that names the key failed, and the push never passes" {
+    real_gitleaks
+    commit_file probe.py "token = \"$(probe_token)\"" "a credential in the root commit"
+    commit_file clean.txt "nothing to see" "a clean tip"
+    git -C "$REPO" config log.showRoot false
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    gitleaks_without_root_option "$TEST_DIR/scanner-args"
+    run_hook                                            # the read intact: the arm fires beside the coverage line (the wrapper case above pins the whole line)
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"covered 1 of the 2 commits with content to scan"* ]]
+    [[ "$output" == *"romp pre-push: log.showRoot is false in this clone's configuration"* ]]
+    fail_config_showroot
+    run _hook_in "$REPO" -c 'git config --type=bool log.showRoot'    # the read as the hook makes it fails under the shim
+    [ "$status" -eq 128 ]
+    [[ "$output" == *"shim: config --type=bool log.showRoot refused"* ]]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the CREDENTIAL scan of refs/heads/main (${sha:0:10}) covered 1 of the 2 commits with content to scan"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" == *"gitleaks could not scan"* ]]
+    [[ "$output" == *"git push --no-verify"* ]]
+    [[ "$output" != *"log.showRoot"* ]]                 # the arm read an empty value: no key line
+    [[ "$output" != *"gitleaks found a credential"* ]]
+    [[ "$output" != *"shim:"* ]]
+}
