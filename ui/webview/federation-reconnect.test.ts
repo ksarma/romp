@@ -11,7 +11,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { FederationManager, mergeHostTimelines, socketVerdict,
+import { FederationManager, PANE_CHANNELS, mergeHostTimelines, socketVerdict,
          REMOTE_STALE_MS, REMOTE_CONNECT_MS, REMOTE_REDIAL_MS, REMOTE_PROVISIONAL_MS } from "./federation";
 
 const U = "11111111-2222-3333-4444-555555555555";
@@ -777,29 +777,66 @@ test("the WAITING pane renders the feed payload too, so it pends its attached ho
   });
 });
 
-test("every app in the kernel's feed push audience is a pushed-channel pane here: the roster is read from kernel.py, so a pane the kernel adds to that audience and this set misses reads red (review round 1, 2026-09-21)", async () => {
+test("every app the kernel's _push addresses is a pushed-channel pane here, on the channel its audience names: the roster is read from kernel.py (every tuple and singleton in _push's body), so a pane the kernel adds to any audience and this set misses reads red, and a member pendingFor would fall to the per-host feed reads red (review rounds 1 and 2, 2026-09-21)", async () => {
   // Keyed on the PRODUCER, not on the compliant sites: a set that names the panes it knows cannot see the one it misses,
-  // and the project's four-name set missed this fork's fifth. The kernel's _push feed branch is the roster of panes
-  // that ride the feed payload; each of them must pend on the feed channel and retire on the host's feed frame, or the
-  // shell never hears which hosts that pane still waits on.
+  // and the project's four-name set missed this fork's fifth. Round 1 read the first `if c["app"] in (...):` alone, the
+  // feed branch, so a pane added to the timeline's or the chat's audience (a `==` widened to a tuple) took no verdict.
+  // Every `c["app"] in (...)` tuple and `c["app"] == "..."` singleton in _push's body is read now, with no trailing colon
+  // on the pattern (the except arm's twin and the warm gate's pair count too). A tuple's channel is the one of feed, chat,
+  // timeline it names, a singleton's its own name, and each member is driven through the manager on that channel with the
+  // other two channels' frames refused, so a non-feed member cannot fall silently to perHostFeed in pendingFor's selector
+  // (federation.ts), where every app that is not the timeline or the chat reads the feed.
   const kernel = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
   const at = kernel.indexOf("\ndef _push(targets");
   assert.ok(at > 0, "kernel.py's _push(targets, ...) is the pusher's send loop");
   const body = kernel.slice(at + 1, kernel.indexOf("\ndef ", at + 1));   // _push's own body, up to the next top-level def
-  const hit = body.match(/if c\["app"\] in \(("[a-z]+"(?:, "[a-z]+")*)\):/);
-  assert.ok(hit, "the send loop's first `if c[\"app\"] in (...)` is the feed audience");
-  const audience = hit![1].split(",").map((s) => s.trim().replace(/^"|"$/g, ""));
-  assert.ok(audience.includes("feed"), "the audience is the feed payload's (" + audience.join(", ") + ")");
-  assert.ok(audience.includes("waiting"), "the fork's Waiting-on-you pane rides the feed payload (kernel.py, the feed branch of _push)");
-  for (const app of audience) {
+  const tuples = [...body.matchAll(/c(?:\["app"\]|\.get\("app"\)) in \(("[a-z]+"(?:, "[a-z]+")*),?\)/g)]
+    .map((m) => m[1].split(",").map((s) => s.trim().replace(/^"|"$/g, "")));
+  const singles = [...body.matchAll(/c(?:\["app"\]|\.get\("app"\)) == "([a-z]+)"/g)].map((m) => m[1]);
+  assert.ok(tuples.length >= 1, "the send loop's `c[\"app\"] in (...)` feed branch is an audience");
+  const union = new Set<string>([...tuples.flat(), ...singles]);
+  assert.ok(union.has("feed") && union.has("waiting"), "the feed audience carries the feed pane and this fork's Waiting-on-you pane (" + [...union].sort().join(", ") + ")");
+  assert.deepEqual([...union].filter((a) => !PANE_CHANNELS.has(a)), [],
+    "an app _push addresses that PANE_CHANNELS misses: add it there, or, if it renders no pushed view, name it here as excluded with the reason");
+  assert.deepEqual([...PANE_CHANNELS].filter((a) => !union.has(a)), [],
+    "a PANE_CHANNELS member _push never addresses would pend every attached host forever: drop it, or push to it");
+  // each member's channel, from the audience that names it
+  const CH = ["feed", "chat", "timeline"];
+  const channelOf = new Map<string, string>();
+  for (const t of tuples) {
+    const named = CH.filter((c) => t.includes(c));
+    if (named.length !== 1) continue;   // a tuple naming none or two of the channel apps places nothing: its members are placed by another
+    for (const a of t) {
+      assert.ok(!channelOf.has(a) || channelOf.get(a) === named[0], a + ": named in the audiences of two channels (" + channelOf.get(a) + ", " + named[0] + ")");
+      channelOf.set(a, named[0]);
+    }
+  }
+  for (const a of singles) if (!channelOf.has(a) && CH.includes(a)) channelOf.set(a, a);
+  for (const a of union) assert.ok(channelOf.has(a), a + ": no audience names its channel (feed, chat or timeline); place it");
+  const frames: Record<string, any> = {
+    feed: { type: "feed", asks: [], items: [], working: [], order: [], sessions: [], now: 1000 },
+    chat: { type: "tabOrder", order: [], tabs: [] },
+    timeline: { type: "data", data: { sessions: [], turns: {}, messages: [], judging: [], now: 1000 } },
+  };
+  for (const app of [...union].sort()) {
+    const ch = channelOf.get(app)!;
     await withManager((fm, _e, _d, posted) => {
       const hp = () => posted.filter((m) => m && m.romp === "hostsPending");
       fm.app = app;
       fm.openRemote("TESTHOST", true);
-      fm.inbound("", localFeed);
-      assert.deepEqual(hp().pop(), { romp: "hostsPending", app, hosts: ["TESTHOST"] }, app + ": pends its attached host on the feed channel");
-      fm.inbound("TESTHOST", { type: "feed", asks: [], items: [], working: [], order: [], sessions: [], now: 1000 });
-      assert.deepEqual(hp().pop(), { romp: "hostsPending", app, hosts: [] }, app + ": retired by that host's feed payload");
+      assert.deepEqual(fm.pendingFor(), ["TESTHOST"], app + ": pends its attached host");
+      if (ch === "feed") {
+        fm.inbound("", localFeed);
+        assert.deepEqual(hp().pop(), { romp: "hostsPending", app, hosts: ["TESTHOST"] }, app + ": pends its attached host on the feed channel, and says so to the shell");
+      }
+      for (const other of CH) {
+        if (other === ch) continue;
+        fm.inbound("TESTHOST", frames[other]);
+        assert.deepEqual(fm.pendingFor(), ["TESTHOST"], app + ": the host's " + other + " frame is not its channel and retires nothing");
+      }
+      fm.inbound("TESTHOST", frames[ch]);
+      assert.deepEqual(fm.pendingFor(), [], app + ": retired by the host's " + ch + " frame, its channel");
+      if (ch === "feed") assert.deepEqual(hp().pop(), { romp: "hostsPending", app, hosts: [] }, app + ": retired by that host's feed payload, in the shell too");
       fm.closeRemote("TESTHOST");
     });
   }

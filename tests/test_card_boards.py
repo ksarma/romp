@@ -44,7 +44,11 @@ def _card_literals(src=None):
     kernel builds by hand has. Both keys, because either alone sweeps in a non-card: the _notify_prev snapshot entries carry
     a column and no itemId (the notification diary's rows, legitimately without a board), and the app messages (a
     dropCitation, a detailFailed) and the log rows carry an itemId and no column. Returns [(line, the enclosing function's
-    name, the literal's constant keys)] in source order; `src` is the kernel's text (KSRC unless a probe hands another)."""
+    name, the literal's constant keys)] in source order; `src` is the kernel's text (KSRC unless a probe hands another).
+    What this census reads is exactly that: a card assembled as ONE dict literal with constant string keys. A card built
+    any other way (a dict() call, a spread supplying a key, a subscript assignment, a non-constant key, an .update(), the
+    column spread into a literal) is invisible to it; _other_card_forms enumerates those six, and the premise that the
+    kernel builds no card that way is asserted by CardsCarryTheirBoard, not assumed (review round 2, 2026-09-21)."""
     out, stack = [], [(ast.parse(KSRC if src is None else src), None)]
     while stack:
         node, fn = stack.pop()
@@ -56,6 +60,53 @@ def _card_literals(src=None):
                 out.append((node.lineno, fn, keys))
         stack.extend((child, fn) for child in ast.iter_child_nodes(node))
     return sorted(out)
+
+
+_OTHER_FORMS = ("a dict() call with an itemId or column keyword",
+                "a literal with itemId constant and a spread (the column spread in)",
+                "a literal with column constant and a spread (the itemId spread in)",
+                "a subscript assignment of itemId or column",
+                "a non-constant key in a literal carrying itemId or column",
+                "an .update() with itemId or column")
+
+
+def _other_card_forms(src=None):
+    """The six ways a card could be assembled that _card_literals cannot see, counted over the kernel's source:
+    {form: [(line, the enclosing function's name)]}. A spread is caught when the literal names one of the two keys and
+    spreads the other in (a literal naming neither is not a card literal by any static read). All six read zero at this
+    head; that they stay zero is the premise the census stands on, asserted by CardsCarryTheirBoard (review round 2,
+    2026-09-21), so the first producer written another way names its form, function and line there."""
+    keys = {"itemId", "column"}
+    out = {form: [] for form in _OTHER_FORMS}
+    stack = [(ast.parse(KSRC if src is None else src), None)]
+    while stack:
+        node, fn = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            fn = node.name
+        if isinstance(node, ast.Call):
+            kw = {k.arg for k in node.keywords if k.arg}
+            if isinstance(node.func, ast.Name) and node.func.id == "dict" and kw & keys:
+                out[_OTHER_FORMS[0]].append((node.lineno, fn))
+            if isinstance(node.func, ast.Attribute) and node.func.attr == "update":
+                lit = {k.value for a in node.args if isinstance(a, ast.Dict) for k in a.keys if isinstance(k, ast.Constant)}
+                if (kw | lit) & keys:
+                    out[_OTHER_FORMS[5]].append((node.lineno, fn))
+        elif isinstance(node, ast.Dict):
+            const = {k.value for k in node.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+            spread = any(k is None for k in node.keys)
+            if spread and "itemId" in const and "column" not in const:
+                out[_OTHER_FORMS[1]].append((node.lineno, fn))
+            if spread and "column" in const and "itemId" not in const:
+                out[_OTHER_FORMS[2]].append((node.lineno, fn))
+            if const & keys and any(k is not None and not isinstance(k, ast.Constant) for k in node.keys):
+                out[_OTHER_FORMS[4]].append((node.lineno, fn))
+        elif isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
+            for target in (node.targets if isinstance(node, ast.Assign) else [node.target]):
+                for sub in ast.walk(target):
+                    if isinstance(sub, ast.Subscript) and isinstance(sub.slice, ast.Constant) and sub.slice.value in keys:
+                        out[_OTHER_FORMS[3]].append((node.lineno, fn))
+        stack.extend((child, fn) for child in ast.iter_child_nodes(node))
+    return out
 
 
 class BoardTable(unittest.TestCase):
@@ -141,20 +192,48 @@ class CardsCarryTheirBoard(unittest.TestCase):
         # the census over the PRODUCERS, not over the compliant stamps (a count of what complies cannot see what is missing):
         # a card literal without its board and category fails here by function and line, and the producers the source holds
         # must be the families the table names, one literal each, so a new producer enters the table and a table entry has
-        # its producer
+        # its producer. What the census reads is every card built as ONE dict literal with constant keys, the way the kernel
+        # builds every card today; that no card is built another way is the premise the next test asserts
         cards = _card_literals()
         unstamped = [(fn, line) for line, fn, keys in cards if not {"board", "category"} <= keys]
         self.assertEqual(unstamped, [], "a card built by hand without its board and category (kernel.py function, line): %r" % unstamped)
         self.assertEqual(sorted(fn for _line, fn, _keys in cards), sorted(self.FAMS),
                          "the card producers in the source and the families the table names differ: %r" % sorted(fn for _l, fn, _k in cards))
         # the shape is known to be able to fail: the same census over a copy of the source with the user-todo placeholder's
-        # stamp removed names that function, and over a copy with the stamp on a snapshot entry counts no new producer
-        src = KSRC.replace('"what": _USER_TODO_BLOCK_WHAT},\n            "column": "needs_input", "board": "feed", "category": "needs_input",',
-                           '"what": _USER_TODO_BLOCK_WHAT},\n            "column": "needs_input",', 1)   # the todo placeholder's own stamp: its `what` precedes it
-        self.assertNotEqual(src, KSRC)
+        # stamp removed names that function, and over a copy with the stamp on a snapshot entry counts no new producer.
+        # Each mutation is bound before the census is asserted on (review round 2, 2026-09-21: a .replace whose target has
+        # drifted is a no-op, and the check then compares the census with itself): the target occurs exactly once, asserted
+        # by count rather than by comparing the two copies of the source (a failure would dump both otherwise)
+        todo = '"what": _USER_TODO_BLOCK_WHAT},\n            "column": "needs_input", "board": "feed", "category": "needs_input",'   # the todo placeholder's own stamp: its `what` precedes it
+        self.assertEqual(KSRC.count(todo), 1, "the todo placeholder's stamp is the probe's target and must occur once")
+        src = KSRC.replace(todo, '"what": _USER_TODO_BLOCK_WHAT},\n            "column": "needs_input",', 1)
         self.assertEqual([fn for _l, fn, keys in _card_literals(src) if not {"board", "category"} <= keys], ["_user_todo_placeholder"])
-        self.assertEqual(len(_card_literals(KSRC.replace('"sid": ent["sid"], "column": col,', '"sid": ent["sid"], "column": col, "board": "feed",', 1))), len(cards),
-                         "a snapshot entry (no itemId) is not a card, stamped or not")
+        entry = '"column": col, "announced": ann'   # the snapshot entry's tail (keyed past its sid, so a key added before the column moves nothing here)
+        self.assertEqual(KSRC.count(entry), 1, "the snapshot entry's tail is the probe's target and must occur once")
+        snap = KSRC.replace(entry, '"column": col, "board": "feed", "announced": ann', 1)
+        self.assertEqual(len(_card_literals(snap)), len(cards), "a snapshot entry (no itemId) is not a card, stamped or not")
+
+    def test_the_kernel_builds_no_card_in_a_form_the_census_cannot_see(self):
+        # the census's premise, asserted (review round 2, 2026-09-21): _card_literals sees a card only as ONE dict literal
+        # with constant keys, so the roster check above holds only while the kernel builds every card that way. The six
+        # other construction forms are enumerated and counted over the source; all six read zero at this head, so this is
+        # green on arrival and names the form, function and line of the first producer written another way
+        forms = _other_card_forms()
+        self.assertEqual(sorted(forms), sorted(_OTHER_FORMS))
+        self.assertEqual({form: hits for form, hits in forms.items() if hits}, {},
+                         "a card assembled in a form the census cannot see: {form: [(kernel.py line, function)]}")
+        # each detector is known to fire: a synthetic source with the six forms, one function each, names them all, and the
+        # census counts none of them
+        planted = ("def a():\n    return dict(itemId=1, column=2)\n"
+                   "def b():\n    return {'itemId': 1, **cols}\n"
+                   "def c():\n    return {**base, 'column': 2}\n"
+                   "def d():\n    card['column'] = 2\n"
+                   "def e():\n    return {'itemId': 1, key: 2}\n"
+                   "def f():\n    card.update(column=2)\n"
+                   "def g():\n    card.update({'itemId': 1})\n")
+        self.assertEqual({form: sorted(fn for _l, fn in hits) for form, hits in _other_card_forms(planted).items()},
+                         dict(zip(_OTHER_FORMS, (["a"], ["b"], ["c"], ["d"], ["e"], ["f", "g"]))))
+        self.assertEqual(_card_literals(planted), [], "none of the six is a literal the census counts")
 
     def test_the_two_goal_less_placeholders_carry_the_feed_board_executed(self):
         # built, not read: this fork's user-todo placeholder, the family the fold 3 review found unstamped, and its permission

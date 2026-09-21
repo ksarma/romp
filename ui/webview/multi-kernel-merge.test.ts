@@ -480,15 +480,19 @@ test("stitchMessages: the sender's row ends at the recipient's lane, named with 
 
 test("stitchMessages: the survivor keeps the FIRST row's ids, and the merges put the LOCAL kernel's rows first: mail this kernel sent keeps its mid and dmid, mail it received keeps the delivery mid, and the timeline's join hits either way", () => {
   // mergeHostTimelines and mergeHostBars concatenate messages in hostSeq order, the local kernel's first, and the fold keeps
-  // the first row's id and dmid (the upgrade branch reassigns them over the copy). So which kernel's mid survives depends
-  // on which side of the mail this kernel is: for mail it SENT its row is first and the survivor carries its mid plus the
+  // the FIRST row: the duplicate is dropped, so the survivor carries the first row's own id and dmid. This case is that
+  // first-wins path alone (both rows here know the exec, so the upgrade branch, federation.ts `if (c.hasExec && !prev.hasExec)`,
+  // is entered in neither order); the case above, its `up` and `early` scenarios, is the pin on that branch keeping the
+  // first row's ids, and this case does not stand in for it (review round 2, 2026-09-21). So which kernel's mid survives
+  // depends on which side of the mail this kernel is: for mail it SENT its row is first and the survivor carries its mid plus the
   // receipt's dmid; for mail it RECEIVED the delivered copy is first and the survivor carries the delivery mid alone.
   // Deliberate, and pinned as it is: ui/romp-timeline-view.js joins mm.id and mm.dmid against the RECIPIENT lane's bar
   // mids (the receipt-time join) and the chat matches mm.id to a card's data-mid (msgNav), and for incoming mail both are
   // the local, recipient-side mid. Re-keying the survivor onto the sender's mid would miss both (review round 1, 2026-09-21).
   const sessions = [{ id: U, name: "web" }, { id: "TESTHOST:" + V, name: "TESTHOST:web" }];
   // TESTHOST's web mailed the local web. The sender's row (TESTHOST's kernel, its foreign end prefixed on the way in)
-  // carries the receipt's dmid; the local kernel's delivered copy carries originMid. Both know the exec.
+  // carries the receipt's dmid; the local kernel's delivered copy carries originMid. Both know the exec (the dmid rides the
+  // read receipt that binds the sender's exec), so nothing here upgrades: the first row stands as it came.
   const senderRow = { id: "s8", dmid: "s8-landed", fromId: "TESTHOST:" + V, toId: "TESTHOST:" + U, from: "web", to: "web", sent: 100, exec: 140, hasExec: true, pending: false };
   const copy = { id: "s8-landed", originMid: "s8", fromId: V, toId: U, from: "", to: "web", sent: 100, exec: 140, hasExec: true, pending: false };
   const senderFirst = stitchMessages([senderRow, copy], sessions);   // the order for mail the LOCAL kernel sent (its own row is the sender's)
@@ -502,13 +506,16 @@ test("stitchMessages: the survivor keeps the FIRST row's ids, and the merges put
       order + ": endpoints, display names and timing agree whichever row survives");
   }
   // the timeline's receipt-time join, modelled here as romp-timeline-view.js spells it: the recipient lane's bar carries the
-  // DELIVERY mid, and the message joins through mm.id or mm.dmid. Both orders hit; a survivor re-keyed onto the sender's mid
-  // alone (the fix this case exists to refuse) would not.
+  // DELIVERY mid, and the message joins through mm.id or mm.dmid. Both orders hit; the copy-first survivor re-keyed onto the
+  // sender's mid (the canonicalisation this case exists to refuse, applied to the row stitchMessages returned rather than
+  // to a hand-built one) would not.
   const midStart: Record<string, number> = { [U + "|s8-landed"]: 130 };
   const joined = (m: any) => { const s1 = midStart[m.toId + "|" + (m.id || "")], s2 = midStart[m.toId + "|" + (m.dmid || "")]; return s1 != null || s2 != null; };
   assert.equal(joined(senderFirst[0]), true, "sender first joins through dmid");
   assert.equal(joined(copyFirst[0]), true, "copy first joins through id");
-  assert.equal(joined({ toId: U, id: "s8" }), false, "a survivor carrying the sender's mid and no dmid would miss the lane's bar");
+  const rekeyed = { ...copyFirst[0], id: senderRow.id };
+  assert.deepEqual([rekeyed.toId, rekeyed.id, rekeyed.dmid], [U, "s8", undefined], "the refused shape, from the survivor itself: the sender's mid, no dmid, the recipient's lane");
+  assert.equal(joined(rekeyed), false, "a survivor carrying the sender's mid and no dmid would miss the lane's bar");
 });
 
 test("stitchMessages: a remote kernel's own connector names its lanes as the board labels them; a thread-anchored end keeps the thread's name", () => {

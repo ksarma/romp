@@ -1002,12 +1002,18 @@ const UNKNOWN_SLOT_CUT = 32;
 // FORK DIVERGENCE (review round 1, 2026-09-21): the project's set names its four panes; this fork has a fifth pushed-channel
 // pane, "waiting", in the kernel's feed push audience beside the feed pane and the Outline (kernel.py _push, the
 // `if c["app"] in (...)` feed branch; waiting.ts reads feed.userTodoRows). A roster taken from the project is a roster over
-// the project's panes: at a fold, derive this set from the kernel's push audiences again (the feed branch, plus the chat's
-// tab list and the timeline's lanes) rather than taking the project's line, and keep "waiting" in it. Kept an ALLOWLIST on
-// purpose: a denylist of settings and files would pend every host forever again for the next app added to the fan-out with
-// no pushed view (the class the project's change closed). federation-reconnect.test.ts reads the kernel's audience and
-// drives every member through the manager, so a member this set misses reads red there.
-const PANE_CHANNELS = new Set(["chat", "feed", "fleet", "timeline", "waiting"]);
+// the project's panes: at a fold, take this set from the kernel's push audiences (the feed branch, plus the chat's tab list
+// and the timeline's lanes) rather than from the project's line, and keep "waiting" in it. That derivation is a test, not
+// a reading (review round 2, 2026-09-21): federation-reconnect.test.ts's census case matches every `c["app"] in (...)`
+// tuple and every `c["app"] == "..."` singleton in kernel.py _push's body (the feed branch, its twin in the except arm and
+// the warm gate's pair; the chat and the timeline by their singletons), asserts the union of those apps IS this set, and
+// drives each member through the manager on the channel its audience names (a tuple naming feed is the feed payload's,
+// one naming chat the tab list's, one naming timeline the lanes'), with the other two channels' frames leaving it pending.
+// So a pane the kernel adds to any audience and this set misses reads red there, a member here the kernel never pushes to
+// reads red, and a non-feed member that pendingFor's selector below would fall to the per-host feed reads red. Exported for
+// that census. Kept an ALLOWLIST on purpose: a denylist of settings and files would pend every host forever again for the
+// next app added to the fan-out with no pushed view (the class the project's change closed).
+export const PANE_CHANNELS = new Set(["chat", "feed", "fleet", "timeline", "waiting"]);
 
 export class FederationManager {
   app = "chat";
