@@ -771,6 +771,7 @@ export function stitchMessages(messages: any[], sessions: readonly any[]): any[]
   // back to the sender's row as `dmid`. The sender's row and the recipient's are ONE message: key both under the
   // sender's id so the board draws one connector, never a pair, now that the sender's kernel ends its row at the
   // recipient's lane (the user 2026-09-18). Either link alone joins them, so the pair never shows in the receipt's lag.
+  // That is the dedupe KEY only: the surviving row keeps the first row's own ids (the upgrade below).
   const canon = new Map<string, string>();
   for (const m of messages) {
     if (!m || typeof m.id !== "string") continue;
@@ -798,7 +799,12 @@ export function stitchMessages(messages: any[], sessions: readonly any[]): any[]
     if (!key) { out.push(c); continue; }
     const prev = best.get(key);
     if (!prev) { best.set(key, c); out.push(c); continue; }
-    if (c.hasExec && !prev.hasExec) {   // upgrade in place: keeps sent-order and the sender's ids (the join keys)
+    // upgrade in place: keeps sent-order and the FIRST row's ids (the join keys). The merges concatenate the local kernel's
+    // rows first (mergeHostTimelines, mergeHostBars), so the survivor's ids are the local side's on purpose: for mail this
+    // kernel sent, its own mid and the receipt's dmid; for mail it received, the delivery mid. The local lane's bar mids and
+    // the chat's card mids are those ids (ui/romp-timeline-view.js: the receipt-time join over mm.id and mm.dmid, msgNav's
+    // card match on mm.id), so the survivor is never re-keyed onto the sender's mid (review round 1, 2026-09-21).
+    if (c.hasExec && !prev.hasExec) {
       const id = prev.id, dmid = prev.dmid;
       Object.assign(prev, c, { id, ...(dmid ? { dmid } : {}), pending: false });   // an exec IS the landing: nothing is pending
     }
@@ -990,10 +996,18 @@ function pendingTypes(c: Conn): string[] {
 const UNKNOWN_SLOT_KEY = "?";
 const UNKNOWN_SLOT_CUT = 32;
 
-// The apps that RENDER a pushed channel a remote host can be heard on (pendingFor): the chat its tab list, the feed and the
-// Outline pane the feed payload, the timeline its lanes. settings and files load this module too, for the fan-out and the routing,
-// and receive no pushed view, so they are not here.
-const PANE_CHANNELS = new Set(["chat", "feed", "fleet", "timeline"]);
+// The apps that RENDER a pushed channel a remote host can be heard on (pendingFor): the chat its tab list, the feed, the
+// Outline pane and the Waiting-on-you pane the feed payload, the timeline its lanes. settings and files load this module
+// too, for the fan-out and the routing, and receive no pushed view, so they are not here.
+// FORK DIVERGENCE (review round 1, 2026-09-21): the project's set names its four panes; this fork has a fifth pushed-channel
+// pane, "waiting", in the kernel's feed push audience beside the feed pane and the Outline (kernel.py _push, the
+// `if c["app"] in (...)` feed branch; waiting.ts reads feed.userTodoRows). A roster taken from the project is a roster over
+// the project's panes: at a fold, derive this set from the kernel's push audiences again (the feed branch, plus the chat's
+// tab list and the timeline's lanes) rather than taking the project's line, and keep "waiting" in it. Kept an ALLOWLIST on
+// purpose: a denylist of settings and files would pend every host forever again for the next app added to the fan-out with
+// no pushed view (the class the project's change closed). federation-reconnect.test.ts reads the kernel's audience and
+// drives every member through the manager, so a member this set misses reads red there.
+const PANE_CHANNELS = new Set(["chat", "feed", "fleet", "timeline", "waiting"]);
 
 export class FederationManager {
   app = "chat";
@@ -1525,7 +1539,8 @@ export class FederationManager {
   private lastPendingSig: string | null = null;
 
   /** Which attached hosts THIS pane is still waiting on, by the channel it renders: the chat reads the
-   *  tab list, the feed and the Outline pane the feed payload, the timeline the lanes skeleton. A page that renders no
+   *  tab list, the feed, the Outline pane and the Waiting-on-you pane (this fork's, app "waiting": PANE_CHANNELS) the
+   *  feed payload, the timeline the lanes skeleton. A page that renders no
    *  pushed channel pends nothing: the settings page and the file browser load this module (the gear's
    *  kernel-side settings fan out to every host; the browser routes by host) but sit outside every build
    *  audience (kernel.py _settings_page, app=settings), so no frame of theirs could ever retire a host, and

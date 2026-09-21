@@ -754,6 +754,57 @@ test("a page that renders no pushed channel pends nothing and tells the shell no
   }
 });
 
+test("the WAITING pane renders the feed payload too, so it pends its attached host, tells the shell, and is retired by that host's feed payload (fork pin, review round 1, 2026-09-21)", async () => {
+  // the fork's fifth pushed-channel pane: the kernel pushes the feed payload to the feed pane, the Outline AND the
+  // Waiting-on-you pane (kernel.py _push's feed branch; waiting.ts reads feed.userTodoRows). The project's
+  // PANE_CHANNELS named its own four panes, and this pane dropped out of the shell's pending signal: its merged feed still
+  // carried pendingHosts (the pane's own loading line) while the network panel heard nothing from it.
+  await withManager((fm, _e, _d, posted) => {
+    const hp = () => posted.filter((m) => m && m.romp === "hostsPending");
+    fm.app = "waiting";
+    fm.openRemote("TESTHOST", true);
+    assert.deepEqual(fm.pendingFor(), ["TESTHOST"], "attached and dialed, no feed payload from it yet");
+    fm.inbound("", localFeed);
+    assert.deepEqual(hp().pop(), { romp: "hostsPending", app: "waiting", hosts: ["TESTHOST"] },
+      "the waiting pane pends TESTHOST until its feed payload lands, and says so to the shell");
+    fm.inbound("", { ...localFeed, buildId: 2 });
+    assert.equal(hp().length, 1, "unchanged set: nothing re-posted");
+    fm.inbound("TESTHOST", { type: "feed", asks: [], items: [], working: [], order: [], sessions: [], now: 1000 });
+    assert.deepEqual(fm.pendingFor(), [], "its first feed payload retires it");
+    assert.deepEqual(hp().pop(), { romp: "hostsPending", app: "waiting", hosts: [] }, "and the follow-up post clears the host in the shell");
+    assert.equal(hp().length, 2, "exactly the pend and the retire");
+    fm.closeRemote("TESTHOST");
+  });
+});
+
+test("every app in the kernel's feed push audience is a pushed-channel pane here: the roster is read from kernel.py, so a pane the kernel adds to that audience and this set misses reads red (review round 1, 2026-09-21)", async () => {
+  // Keyed on the PRODUCER, not on the compliant sites: a set that names the panes it knows cannot see the one it misses,
+  // and the project's four-name set missed this fork's fifth. The kernel's _push feed branch is the roster of panes
+  // that ride the feed payload; each of them must pend on the feed channel and retire on the host's feed frame, or the
+  // shell never hears which hosts that pane still waits on.
+  const kernel = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
+  const at = kernel.indexOf("\ndef _push(targets");
+  assert.ok(at > 0, "kernel.py's _push(targets, ...) is the pusher's send loop");
+  const body = kernel.slice(at + 1, kernel.indexOf("\ndef ", at + 1));   // _push's own body, up to the next top-level def
+  const hit = body.match(/if c\["app"\] in \(("[a-z]+"(?:, "[a-z]+")*)\):/);
+  assert.ok(hit, "the send loop's first `if c[\"app\"] in (...)` is the feed audience");
+  const audience = hit![1].split(",").map((s) => s.trim().replace(/^"|"$/g, ""));
+  assert.ok(audience.includes("feed"), "the audience is the feed payload's (" + audience.join(", ") + ")");
+  assert.ok(audience.includes("waiting"), "the fork's Waiting-on-you pane rides the feed payload (kernel.py, the feed branch of _push)");
+  for (const app of audience) {
+    await withManager((fm, _e, _d, posted) => {
+      const hp = () => posted.filter((m) => m && m.romp === "hostsPending");
+      fm.app = app;
+      fm.openRemote("TESTHOST", true);
+      fm.inbound("", localFeed);
+      assert.deepEqual(hp().pop(), { romp: "hostsPending", app, hosts: ["TESTHOST"] }, app + ": pends its attached host on the feed channel");
+      fm.inbound("TESTHOST", { type: "feed", asks: [], items: [], working: [], order: [], sessions: [], now: 1000 });
+      assert.deepEqual(hp().pop(), { romp: "hostsPending", app, hosts: [] }, app + ": retired by that host's feed payload");
+      fm.closeRemote("TESTHOST");
+    });
+  }
+});
+
 test("a pane's FIRST publish posts even an empty list, so a reloaded pane replaces the list its predecessor left (2026-09-18)", async () => {
   await withManager((fm, _e, _d, posted) => {
     fm.app = "feed";

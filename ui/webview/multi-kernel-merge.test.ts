@@ -478,6 +478,39 @@ test("stitchMessages: the sender's row ends at the recipient's lane, named with 
   assert.deepEqual([early[0].id, early[0].exec, early[0].hasExec, early[0].pending], ["m6", 150, true, false]);
 });
 
+test("stitchMessages: the survivor keeps the FIRST row's ids, and the merges put the LOCAL kernel's rows first: mail this kernel sent keeps its mid and dmid, mail it received keeps the delivery mid, and the timeline's join hits either way", () => {
+  // mergeHostTimelines and mergeHostBars concatenate messages in hostSeq order, the local kernel's first, and the fold keeps
+  // the first row's id and dmid (the upgrade branch reassigns them over the copy). So which kernel's mid survives depends
+  // on which side of the mail this kernel is: for mail it SENT its row is first and the survivor carries its mid plus the
+  // receipt's dmid; for mail it RECEIVED the delivered copy is first and the survivor carries the delivery mid alone.
+  // Deliberate, and pinned as it is: ui/romp-timeline-view.js joins mm.id and mm.dmid against the RECIPIENT lane's bar
+  // mids (the receipt-time join) and the chat matches mm.id to a card's data-mid (msgNav), and for incoming mail both are
+  // the local, recipient-side mid. Re-keying the survivor onto the sender's mid would miss both (review round 1, 2026-09-21).
+  const sessions = [{ id: U, name: "web" }, { id: "TESTHOST:" + V, name: "TESTHOST:web" }];
+  // TESTHOST's web mailed the local web. The sender's row (TESTHOST's kernel, its foreign end prefixed on the way in)
+  // carries the receipt's dmid; the local kernel's delivered copy carries originMid. Both know the exec.
+  const senderRow = { id: "s8", dmid: "s8-landed", fromId: "TESTHOST:" + V, toId: "TESTHOST:" + U, from: "web", to: "web", sent: 100, exec: 140, hasExec: true, pending: false };
+  const copy = { id: "s8-landed", originMid: "s8", fromId: V, toId: U, from: "", to: "web", sent: 100, exec: 140, hasExec: true, pending: false };
+  const senderFirst = stitchMessages([senderRow, copy], sessions);   // the order for mail the LOCAL kernel sent (its own row is the sender's)
+  const copyFirst = stitchMessages([copy, senderRow], sessions);     // the order the merges build for mail the LOCAL kernel received
+  assert.equal(senderFirst.length, 1, "one message either way");
+  assert.equal(copyFirst.length, 1, "one message either way");
+  assert.deepEqual([senderFirst[0].id, senderFirst[0].dmid], ["s8", "s8-landed"], "sender first: the sender's mid survives, the delivery mid rides as dmid");
+  assert.deepEqual([copyFirst[0].id, copyFirst[0].dmid], ["s8-landed", undefined], "copy first: the delivery mid survives, and there is no dmid");
+  for (const [m, order] of [[senderFirst[0], "sender first"], [copyFirst[0], "copy first"]]) {
+    assert.deepEqual([m.fromId, m.toId, m.from, m.to, m.exec, m.hasExec, m.pending], ["TESTHOST:" + V, U, "TESTHOST:web", "web", 140, true, false],
+      order + ": endpoints, display names and timing agree whichever row survives");
+  }
+  // the timeline's receipt-time join, modelled here as romp-timeline-view.js spells it: the recipient lane's bar carries the
+  // DELIVERY mid, and the message joins through mm.id or mm.dmid. Both orders hit; a survivor re-keyed onto the sender's mid
+  // alone (the fix this case exists to refuse) would not.
+  const midStart: Record<string, number> = { [U + "|s8-landed"]: 130 };
+  const joined = (m: any) => { const s1 = midStart[m.toId + "|" + (m.id || "")], s2 = midStart[m.toId + "|" + (m.dmid || "")]; return s1 != null || s2 != null; };
+  assert.equal(joined(senderFirst[0]), true, "sender first joins through dmid");
+  assert.equal(joined(copyFirst[0]), true, "copy first joins through id");
+  assert.equal(joined({ toId: U, id: "s8" }), false, "a survivor carrying the sender's mid and no dmid would miss the lane's bar");
+});
+
 test("stitchMessages: a remote kernel's own connector names its lanes as the board labels them; a thread-anchored end keeps the thread's name", () => {
   const sessions = [{ id: "TESTHOST:" + U, name: "TESTHOST:web" }, { id: "TESTHOST:" + V, name: "TESTHOST:api" }];
   const [m] = stitchMessages([{ id: "m2", fromId: "TESTHOST:" + U, toId: "TESTHOST:" + V, from: "web", to: "api", sent: 1, exec: 1, hasExec: false }], sessions);
