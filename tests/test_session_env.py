@@ -271,7 +271,8 @@ ROWS = [
 # (round 8 of the review, 2026-09-21; derived at the round-8 merge of main and pasted: that merge, of fork PR #814, grew
 # the population over round 8's commit, doors 436 to 442, self calls 198 to 202, door-value sites 20 to 21, problem_row
 # sites 13 to 14, content rows 11 to 12, functions 3233 to 3241, and this equality fired on the growth before the tables
-# were re-derived there). Until round 8 these were FLOORS, and a floor
+# were re-derived there; re-derived again at the round's SECOND merge of main, which brought fork PR #884: functions
+# 3241 to 3245, its two `skipped` lambdas, _row_owner and refused_in_replay, and no other entry moved). Until round 8 these were FLOORS, and a floor
 # is silent slack: twice a merge of main grew the population under floors that stayed green (38 doors of slack at round
 # 6's head; three doors, a call, a door-value site, a problem_row site and a function at round 7's head), and at that
 # head a walk blinded to one param-kind door call passed every floor. The rule as enforced now: any growth or shrinkage
@@ -302,14 +303,14 @@ COUNTS = {
     "merge_reads": 3,              # _sdk_problem_rows reads the two lists and be.problems()
     "content_rows": 12,            # the ENV ROWS line's rows; content_identities() == ROWS holds them exactly, so this entry
     #                                carries no tension of its own and is here so the block is truthful
-    "functions": 3241,             # every def and lambda of the three files, nested ones included
+    "functions": 3245,             # every def and lambda of the three files, nested ones included
 }
 CALLS_BY_KIND = {"self": 202, "typed": 109, "bound-self": 7, "param": 35, "alias": 5}   # the 358's derivation, an equality each
 EXISTENCE_ROWS = 20      # the existence rows (tag "pick" alone, a fixed vocabulary plus names): derived at round 8's commit and
-#                          re-derived unchanged at the round-8 merge of main; the vocabulary test holds the count exactly (a
+#                          re-derived unchanged at both round-8 merges of main; the vocabulary test holds the count exactly (a
 #                          floor of 20 stood here until round 8)
 CREDENTIALS_FNS = 28     # every def and lambda of kernel/credentials.py, the census's proof that it read a file with no door:
-#                          derived at round 8's commit and unchanged at the round-8 merge of main (a floor of 20 stood here
+#                          derived at round 8's commit and unchanged at both round-8 merges of main (a floor of 20 stood here
 #                          until round 8)
 
 
