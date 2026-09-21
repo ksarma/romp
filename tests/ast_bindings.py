@@ -28,7 +28,9 @@ in one scope are both returned, in source order: the caller decides whether they
 loudly when they disagree; the ratchet's text maps take the union). A `global` statement redirects the function's
 bindings and reads of that name to the module scope; `nonlocal` to the nearest enclosing function that binds it.
 A walrus in a comprehension binds in the enclosing scope, as the language does. An import binds its alias with
-`origin` naming the module or the imported name (`subprocess`, `subprocess.run`) and no value.
+`origin` naming what the bound name denotes, and no value: the module (`subprocess`; `os` for `import os.path`,
+which binds the name os), the dotted module of an `as` alias (`os.path` for `import os.path as osp`), or the
+imported name (`subprocess.run`).
 
 Imported by tests/test_hermetic_kernel_postal.py and tests/test_sdk_singleton_ratchet.py after
 `sys.path.insert(0, HERE)`, so a direct script run and a pytest run resolve the same file; registering the
@@ -253,7 +255,12 @@ class Bindings:
                 for a in s.names:
                     if a.name == "*":
                         continue
-                    origin = a.name if isinstance(s, ast.Import) else "%s.%s" % (s.module or "", a.name)
+                    if isinstance(s, ast.Import):
+                        # `import os.path` binds os, the package, and that is what the bound name denotes; `import os.path
+                        # as osp` binds osp to the dotted module
+                        origin = a.name if a.asname else a.name.split(".")[0]
+                    else:
+                        origin = "%s.%s" % (s.module or "", a.name)
                     self._bind_name((a.asname or a.name).split(".")[0], "import", a, None, scope, origin)
         elif isinstance(s, ast.Global):
             scope.globals.update(s.names)

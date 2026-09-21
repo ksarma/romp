@@ -15,17 +15,27 @@ revive path runs `ensure` from inside the test process, with the test's environm
 afternoon: tests/test_federation_missing_served.py (a lab kernel started as a process, its environment built by hand),
 tests/test_kernel_tunnels.py (an in-process kernel, an attach whose bus call was refused) and tests/test_kernel.py's
 PostalPeerTunnels.test_notify_bus_peer_is_guarded (an in-process kernel, a peer notify forced to fail). So the rule
-here reads every process spawn (Popen, run, check_output, check_call, call, on the subprocess module under whatever
-name the module imports it, or imported from it by name) whose argv HOLDS the kernel's path as an element: a string
-that is the path, a path joined onto it (os.path.join, Path, /, +, an f-string, a % or .format template), a
-path-preserving wrapper of one (str, os.fspath, .resolve(), joinpath), or a name or self.X target bound to any of
-those in the scope the call reads, the name resolved to its declaration by tests/ast_bindings.py (the function the
-call is in, its enclosing functions, then the module; a class body encloses no method; self.X through the class and
-the bases it defines in the module; any other dotted target by the target's spelling, the one spelling-keyed road,
-which ast_bindings.Bindings.resolve_target says). The CLI counts only with the kernel verb as the next element. A
-name bound twice in the scope the call reads, once to the path and once to something else, is refused loudly
-(UnreadableSpawn, naming the call's line and both declarations), never read either way; a declaration with no
-readable value beside one bound to the path leaves the path standing. A string that MENTIONS the path without
+here reads every process spawn (a call whose callee resolves by binding to Popen, run, check_output, check_call or
+call of the subprocess module: through the name the module imports the library under, a from-import of the function
+under any name, or an assignment that binds a name to either) whose argv HOLDS the kernel's path as an element: a
+string that is the path, or whose first word is (a shell command), a path joined onto it (os.path.join, Path, /, +,
+an f-string, a % or .format template read the same way, the callee of the join resolved by binding as well, so
+`from os.path import join`, `import os.path as osp` and `j = os.path.join` reach it), a path-preserving wrapper of
+one (str, os.fspath, .resolve(), joinpath), the element a subscript takes from a literal dict by key or from a
+literal list or tuple by index, or a name or self.X target bound to any of those in the scope the call reads, the
+name resolved to its declaration by tests/ast_bindings.py (the function the call is in, its enclosing functions,
+then the module; a class body encloses no method; self.X through the class and the bases it defines in the module).
+The reads that key on a SPELLING, each because the binding cannot reach it: any other dotted target (`cfg.kernel`,
+`Lab.KERNEL`) by the target's text, which ast_bindings.Bindings.resolve_target says; a name no scope binds (a
+snippet's `subprocess`, a star import's `join`) by its own spelling; a method (.resolve(), .format(), .strip()) by
+the method's name, its receiver a value and not a module; the bin directory of a CLI join (`os.path.join(BIN,
+"romp")`) by the directory name's shape; and the trio by its text (_hermetic). The CLI counts only with the kernel
+verb as the next element. The element's INDEX is not read: a wrapper launch (`["timeout", "30", KERNEL]`) is a
+kernel process, and so, an accepted false red, is a grep or a git over the kernel's file, the side that requires
+the trio; a subscript whose slice the scan cannot read (`SCRIPTS[i]`) is read as any element of its container, the
+same side. A name bound twice in the scope the call reads, once to the path and once to something else, is refused
+loudly (UnreadableSpawn, naming the call's line and both declarations), never read either way; a declaration with
+no readable value beside one bound to the path leaves the path standing. A string that MENTIONS the path without
 being it (a -c program that load_sources the kernel, a comment, a docstring) is not a kernel process: that is the
 in-process shape in a child, met by the bus belt below like the in-process shape itself (the ruling point below).
 The scan replaced a regex pair on 2026-09-21 (the ninth review round of PR #850, on the ruling of its eighth): the
@@ -36,7 +46,7 @@ half), while a path bound across two lines, through a constant holding the scrip
 to self.kernel never entered the pattern and a spawn through it passed this rule vacuously (the silent half); at
 that head the pattern bound 680 such names in 555 test modules, 515 of them the `km` of an in-process load, a
 module object and no path (the round's prep measured it; PR #850's body carries the table). PLANT_TABLE below
-runs both halves: 43 rows, each labelled with what the scan must do.
+runs both halves, every row labelled with what the scan must do; the guard test's report carries the row count.
 
 Roads and residual, derived by one command (`python tests/test_hermetic_kernel_postal.py --roads [directory]`, one
 line per module the trio test reads, then the unresolved names, then a summary line with every count): a module's
@@ -48,12 +58,15 @@ modules, the one difference tests/test_chat_pages.py, whose only match was a -c 
 the two lab modules on the argv road and no module refused, and reports the counts at whatever size the tree has.
 The residual, a stated limit: a name or target in an argv that resolves to a declaration with no readable value (a
 parameter, an import, a loop or with target, an unpacking the scan cannot split) or to none at all (an attribute of
-an imported module, sys.executable most of all) is read as no path, so a launch handed through one is missed here,
-as it was by the regex; the arm lists each under `# unresolved:` with its kind. On 2026-09-21: 135 such names in 115
-of the tree's subprocess calls across 67 modules (attribute of an import 55, sys.executable in 49 of them; parameter
-44; attribute of a with target 18, every one f.name; loop 5; unpack 5; attribute of a call's value 3; attribute of an
-assigned name 3; attribute of an attribute 1; with 1), none of them in a call whose argv holds the path by another
-element.
+an imported module, sys.executable most of all), a call of a function defined in the module or of a name no scope
+binds (a helper's return; a star import's), and a template whose path is itself a placeholder (`"%s/%s" % (BIN,
+NAME)`) are read as no path, so a launch handed through one is missed here, as it was by the regex; the arm lists
+each name, target and call under `# unresolved:` with its kind (the template is the one shape it does not list), and
+a function imported from any module is read as a consumer and not listed, a helper of another test module included.
+On 2026-09-21: 140 such names, targets and calls in 119 of the tree's subprocess calls across 68 modules (attribute
+of an import 55, sys.executable in 49 of them; parameter 45; attribute of a with target 18, every one f.name; loop 5;
+unpack 5; attribute of an assigned name 4; attribute of a call's value 3; call of a function defined in the module 3;
+attribute of an attribute 1; with 1), none of them in a call whose argv holds the path by another element.
 
 Ruling point, the maintainers' to decide (2026-09-21): a child interpreter that load_sources the kernel
 (`[sys.executable, "-c", <program>]`) is read here as NOT a kernel process. It is the in-process shape one process
@@ -94,6 +107,7 @@ The fixture rule below is static, so it holds for tests that skip here (no brows
 the spawn site, naming the file.
 """
 import ast
+import builtins
 import glob
 import json
 import os
@@ -115,6 +129,10 @@ TRIO = ("ROMP_POSTAL_PORT", "ROMP_POSTAL_PEERS", "ROMP_POSTAL_CLIENT_ONLY")
 # -- the spawn scan: a subprocess call whose argv holds the kernel's path, read from the module's ast with every name
 # -- resolved to its binding (ast_bindings, 2026-09-21; a regex pair before) -------------------------------------------
 SPAWN = ("Popen", "run", "check_output", "check_call", "call")
+# the spawn functions by the canonical dotted name a callee resolves to (_SpawnScan._callee_names: its import, or the
+# import an assignment such as `run = subprocess.run` follows to), plus the one bare spelling the unbound fallback reads,
+# a snippet's `Popen(...)` with no import (an unbound `subprocess` is its own spelling, so `subprocess.run` resolves too)
+SPAWN_FUNCTIONS = {"subprocess.%s" % s for s in SPAWN} | {"Popen"}
 # a string constant that IS the kernel's path: the script by name or under a directory (an argv element, or the first
 # word of a shell command string)
 KERNEL_PATH = re.compile(r"(?:^|/)romp-kernel$")
@@ -122,12 +140,18 @@ KERNEL_PATH = re.compile(r"(?:^|/)romp-kernel$")
 # another verb (`romp --help`, tests/test_headless_verbs_help.py)
 CLI_PATH = re.compile(r"(?:^|/)bin/romp$")
 KERNEL_VERBS = {"kernel"}
-PLACEHOLDER = re.compile(r"^%[sr]$|^\{\}$|^\{0\}$")   # a template that is nothing but its argument: "%s" % KERNEL
-# callables whose value is the path built from, or preserved from, their LAST positional argument
+PLACEHOLDER = re.compile(r"^%[sr]$|^\{\}$|^\{0\}$")   # a template, or its first word, that is nothing but its argument: "%s" % KERNEL
+# callables whose value is the path built from, or preserved from, their LAST positional argument, by the canonical
+# dotted name the callee resolves to (_SpawnScan._callee_names: `from os.path import join`, `import os.path as osp;
+# osp.join` and `j = os.path.join; j(...)` all resolve to os.path.join, `from pathlib import Path as P` to pathlib.Path)
 PATH_FUNCTIONS = {"os.path.join", "posixpath.join", "ntpath.join", "os.path.realpath", "os.path.abspath", "os.path.normpath",
-                  "os.path.expanduser", "os.fspath", "os.fsdecode", "str", "Path", "pathlib.Path", "PurePath", "PurePosixPath",
-                  "PosixPath", "pathlib.PurePath", "shlex.quote", "realpath", "abspath", "normpath", "expanduser", "fspath"}
-# methods whose value is the receiver's path, preserved (joined onto, for joinpath)
+                  "os.path.expanduser", "os.fspath", "os.fsdecode", "str", "pathlib.Path", "pathlib.PurePath", "pathlib.PurePosixPath",
+                  "pathlib.PosixPath", "shlex.quote"}
+# ...and the bare spellings an UNBOUND callee is read by (a snippet's `Path(...)` with no import, a star import's `join`):
+# the spelling fallback, which the module docstring states
+PATH_FUNCTIONS |= {"Path", "PurePath", "PurePosixPath", "PosixPath", "join", "realpath", "abspath", "normpath", "expanduser", "fspath"}
+# methods whose value is the receiver's path, preserved (joined onto, for joinpath); a method is read by its NAME, the
+# receiver being a value and not a module (the module docstring states the spelling read)
 PATH_METHODS = {"resolve", "absolute", "expanduser", "as_posix", "strip", "rstrip", "lstrip", "decode", "encode", "joinpath"}
 BIN_NAME = re.compile(r"(?i)^(?:.*_)?bin(?:_?dir)?$")   # BIN, bin_dir, LAB_BIN: the directory the CLI is joined from
 
@@ -142,18 +166,23 @@ class UnreadableSpawn(AssertionError):
 
 
 class _SpawnScan:
-    """One module's spawn calls and the reading of each argv. A spawn is a call of Popen, run, check_output, check_call
-    or call on the subprocess module under whatever name the module imports it, or of a bare Popen, run and the rest
-    imported from it, the library resolved to its import by binding (an unbound `subprocess` or `Popen`, a snippet's,
-    is the library by its spelling). Its argv (the first positional or `args=`) holds the kernel's path when an
-    ELEMENT evaluates to it: a string constant whose tail is romp-kernel; a path joined onto it (os.path.join, Path,
-    /, +, an f-string, a % or .format template); a path-preserving wrapper (str, os.fspath, .resolve(), joinpath); or
-    a name or a self.X target bound to one of those, resolved by ast_bindings in the scope the call reads. A splat
-    element, an argv held in a name and one built by + are followed. The CLI's path counts only with the kernel verb
-    as the next element. A constant that MENTIONS the path without being it (a -c program, a comment) is not the
-    path; a value derived by a consumer (open(...).read(), load_source(...), Popen(...), a helper's return) is not the
-    path. A name or target the scan reads no value for (`unresolved`: a parameter, an import, a loop target, an
-    attribute of an imported module) is no path, and the site is listed under that residual."""
+    """One module's spawn calls and the reading of each argv. A spawn is a call whose callee resolves by binding
+    (_callee_names) to Popen, run, check_output, check_call or call of the subprocess module: through the name the
+    module imports the library under, a from-import of the function under any name, or an assignment that binds a
+    name to either (`run = subprocess.run`); an unbound `subprocess` or `Popen`, a snippet's, is the library by its
+    spelling. Its argv (the first positional or `args=`) holds the kernel's path when an ELEMENT evaluates to it: a
+    string constant whose text, or whose first word, ends in romp-kernel; a path joined onto it (os.path.join, Path,
+    /, +, an f-string, a % or .format template, the template read the same way, the callee of a path-building call
+    resolved by binding too); a path-preserving wrapper (str, os.fspath, .resolve(), joinpath); the element a
+    subscript takes from a literal dict by key or from a literal list or tuple by index (_element); or a name or a
+    self.X target bound to one of those, resolved by ast_bindings in the scope the call reads. A splat element, an
+    argv held in a name and one built by + are followed. The CLI's path counts only with the kernel verb as the next
+    element. A constant that MENTIONS the path without being it (a -c program, a comment) is not the path; a value
+    derived by a consumer (open(...).read(), load_source(...), Popen(...), a function imported from any module) is
+    not the path. What the scan reads no value or no function for is no path and is LISTED under `unresolved`, never
+    passed over silently: a name or target with no readable declaration (a parameter, an import, a loop target, an
+    attribute of an imported module), a call of a function defined in the module or of a name no scope binds (a
+    helper's return, a star import's), and the argv of a passthrough (`run(*a)`)."""
 
     def __init__(self, tree, filename="<src>"):
         self.filename = filename
@@ -165,18 +194,47 @@ class _SpawnScan:
         self._line = 0
 
     def _is_spawn(self, call):
-        f, scope = call.func, self.bindings.scope_of(call)
-        if isinstance(f, ast.Attribute) and f.attr in SPAWN and isinstance(f.value, ast.Name):
-            decls, _ = scope.resolve(f.value.id)
+        """Keyed on the callee's binding: any of the canonical names it resolves to is a spawn function (SPAWN_FUNCTIONS;
+        `import subprocess32 as subprocess` beside `import subprocess` under a guard resolves to both, and either side
+        being the library makes the call a spawn, as before the resolver)."""
+        return bool(self._callee_names(call.func, self.bindings.scope_of(call)) & SPAWN_FUNCTIONS)
+
+    def _callee_names(self, node, scope, seen=frozenset()):
+        """The canonical dotted names a callee, or the receiver of a dotted one, may denote, resolved by binding: a Name
+        resolves in the scope it is read in to its declarations, an import declaration giving what the bound name
+        denotes (`from os.path import join` gives os.path.join, `import os.path as osp` gives os.path, `import os.path`
+        gives os for the name os, `import subprocess as sp` gives subprocess), an assignment to a name or a dotted name
+        being followed (`run = subprocess.run`, `j = os.path.join`); a name no scope binds is its own spelling (a
+        builtin such as str; a snippet's or a star import's unbound library: the spelling fallback the module docstring
+        states); an Attribute is its receiver's names with the attribute appended, so `osp.join` is os.path.join. A
+        declaration of any other kind (a def, a parameter, a loop target, an assignment to a call's value) denotes no
+        function the scan can name, so the set is EMPTY for a callee bound that way alone, and _call_is_kernel_path
+        lists it under the residual; a name whose read is already under way (a cycle) adds nothing."""
+        if isinstance(node, ast.Name):
+            decls, where = scope.resolve(node.id)
             if not decls:
-                return f.value.id == "subprocess"
-            return any(d.kind == "import" and d.origin == "subprocess" for d in decls)
-        if isinstance(f, ast.Name):
-            decls, _ = scope.resolve(f.id)
-            if not decls:
-                return f.id == "Popen"
-            return any(d.kind == "import" and d.origin in {"subprocess.%s" % s for s in SPAWN} for d in decls)
-        return False
+                return {node.id}
+            key = (id(where), node.id)
+            if key in seen:
+                return set()
+            names = set()
+            for d in decls:
+                if d.kind == "import":
+                    names.add(d.origin)
+                elif d.kind == "assign" and isinstance(d.value, (ast.Name, ast.Attribute)):
+                    names |= self._callee_names(d.value, self.bindings.scope_of(d.value), seen | {key})
+            return names
+        if isinstance(node, ast.Attribute):
+            return {"%s.%s" % (n, node.attr) for n in self._callee_names(node.value, scope, seen)}
+        return set()
+
+    def _callee_kind(self, node, scope):
+        """The residual's label for a bare-name callee the scan reads no function for: "call of def" for a helper
+        defined in the module, "call of parameter", "call of assign" (a name bound to a call's value), "call of an
+        unbound name" for a name no scope binds that is no builtin (a star import's); kinds joined by + when the
+        declarations differ."""
+        decls, _ = scope.resolve(node.id)
+        return "call of " + ("+".join(sorted({d.kind for d in decls})) if decls else "an unbound name")
 
     def sites(self):
         """(line, argv text, road) for every spawn whose argv holds the kernel's path: road "argv" when an element is
@@ -260,13 +318,14 @@ class _SpawnScan:
         """Does `node`, read in `scope`, evaluate to the kernel script's path (with `cli`, to the CLI's)?"""
         pattern = CLI_PATH if cli else KERNEL_PATH
         if isinstance(node, ast.Constant):
-            return isinstance(node.value, str) and bool(pattern.search(node.value) or (node.value.split() and pattern.search(node.value.split()[0])))
+            return isinstance(node.value, str) and _text_is_path(node.value, pattern)
+        read = lambda v, s, seen: self.is_kernel_path(v, s, seen, cli)   # noqa: E731  the same question of a bound value
         if isinstance(node, ast.Name):
-            return self._resolve(node, scope, seen, lambda v, s, seen: self.is_kernel_path(v, s, seen, cli))
-        if isinstance(node, (ast.Attribute, ast.Subscript)):   # km.X is not km: read through the target's own binding
-            if self._resolve(node, scope, seen, lambda v, s, seen: self.is_kernel_path(v, s, seen, cli)):
-                return True
-            return isinstance(node, ast.Subscript) and self.holds_kernel_path(node.value, scope, seen | {("container", id(node))})
+            return self._resolve(node, scope, seen, read)
+        if isinstance(node, ast.Attribute):   # km.X is not km: read through the target's own binding
+            return self._resolve(node, scope, seen, read)
+        if isinstance(node, ast.Subscript):   # PATHS["kernel"], SCRIPTS[1]: the target's own binding, else the element taken
+            return self._resolve(node, scope, seen, read) or self._element(node, scope, seen | {("container", id(node))}, read)
         if isinstance(node, ast.Starred):
             return self.holds_kernel_path(node.value, scope, seen)
         if isinstance(node, ast.JoinedStr):   # f"{BIN}/romp-kernel", f"{KERNEL}": the tail
@@ -275,12 +334,14 @@ class _SpawnScan:
                 return self.is_kernel_path(last.value, scope, seen, cli)
             return last is not None and self.is_kernel_path(last, scope, seen, cli)
         if isinstance(node, ast.BinOp):
-            if isinstance(node.op, ast.Mod):   # "%s/romp-kernel" % BIN, "%s" % KERNEL: the template decides
-                if isinstance(node.left, ast.Constant) and isinstance(node.left.value, str):
-                    if pattern.search(node.left.value):
+            if isinstance(node.op, ast.Mod):   # "%s/romp-kernel --serve" % BIN, "%s --serve" % KERNEL: the template's text or
+                if isinstance(node.left, ast.Constant) and isinstance(node.left.value, str):   # its first word decides
+                    if _text_is_path(node.left.value, pattern):
                         return True
-                    return bool(PLACEHOLDER.match(node.left.value)) and self.is_kernel_path(node.right, scope, seen, cli)
-                return False
+                    if _head_is_placeholder(node.left.value):   # the argument is the program: the tuple's first, or the value
+                        first = node.right.elts[0] if isinstance(node.right, ast.Tuple) and node.right.elts else node.right
+                        return self.is_kernel_path(first, scope, seen, cli)
+                return False   # a template whose path is itself a placeholder ("%s/%s" % (BIN, NAME)) is not read
             return self.is_kernel_path(node.right, scope, seen, cli)   # BIN / "romp-kernel", BIN + "/romp-kernel": the tail
         if isinstance(node, ast.IfExp):
             return self.is_kernel_path(node.body, scope, seen, cli) or self.is_kernel_path(node.orelse, scope, seen, cli)
@@ -289,9 +350,14 @@ class _SpawnScan:
         return False
 
     def _call_is_kernel_path(self, call, scope, seen, cli):
+        """A call's value is the path when its callee resolves by binding to a path-building function (PATH_FUNCTIONS)
+        whose last positional argument is the path, or is a path-preserving method (by the method's NAME) on the path,
+        or a template's .format. A bare-name callee the scan reads no function for (a helper defined in the module, a
+        parameter, a name bound to a call's value, an unbound name that is no builtin) is listed under the residual
+        with its kind; a builtin or an imported function other than the path builders is a consumer, and is not."""
         f = call.func
-        pattern = CLI_PATH if cli else KERNEL_PATH
-        if ast.unparse(f) in PATH_FUNCTIONS:
+        names = self._callee_names(f, scope)
+        if names & PATH_FUNCTIONS:
             if not call.args:
                 return False
             if self.is_kernel_path(call.args[-1], scope, seen, cli):
@@ -300,15 +366,21 @@ class _SpawnScan:
             return (cli and len(call.args) > 1 and isinstance(last, ast.Constant) and last.value == "romp"
                     and any(self._is_bin_dir(a) for a in call.args[:-1]))
         if isinstance(f, ast.Attribute):   # a method on a value: template.format(...), path.resolve(), base.joinpath(...)
+            pattern = CLI_PATH if cli else KERNEL_PATH
             if f.attr == "format":
                 return isinstance(f.value, ast.Constant) and isinstance(f.value.value, str) and (
-                    bool(pattern.search(f.value.value))
-                    or (bool(PLACEHOLDER.match(f.value.value)) and bool(call.args) and self.is_kernel_path(call.args[-1], scope, seen, cli)))
+                    _text_is_path(f.value.value, pattern)
+                    or (_head_is_placeholder(f.value.value) and bool(call.args) and self.is_kernel_path(call.args[0], scope, seen, cli)))
             if f.attr == "joinpath":
                 return bool(call.args) and self.is_kernel_path(call.args[-1], scope, seen, cli)
             if f.attr in PATH_METHODS:
                 return self.is_kernel_path(f.value, scope, seen, cli)
-        return False   # a consumer (open, load_source, read_text, Popen, repr, a helper): its value is not the path
+            return False   # a consumer's method (open(...).read(), a helper's): its value is not the path
+        if isinstance(f, ast.Name):
+            declared = bool(scope.resolve(f.id)[0])
+            if (not names) if declared else (f.id not in vars(builtins)):
+                self._note_unresolved(f, self._callee_kind(f, scope))   # a def, a parameter, a name bound to a call's value; a star import's name
+        return False   # a builtin (open, repr, list) or an imported function (load_source, a helper of another module): a consumer
 
     @staticmethod
     def _is_bin_dir(node):
@@ -318,9 +390,15 @@ class _SpawnScan:
 
     def holds_kernel_path(self, node, scope, seen=frozenset()):
         """Does `node`, an argv expression (or a container a subscript reads), hold the kernel's path as an element, or
-        as the whole (a command string, a path handed as the program)?"""
-        if isinstance(node, (ast.Name, ast.Attribute, ast.Subscript)):
+        as the whole (a command string, a path handed as the program)? An argv that is a splat (`run(*a)`) is read
+        through what is splatted, so a passthrough's parameter is listed under the residual."""
+        if isinstance(node, (ast.Name, ast.Attribute)):
             return self._resolve(node, scope, seen, self.holds_kernel_path)
+        if isinstance(node, ast.Subscript):   # CMDS["kernel"]: the target's own binding, else the element taken from the container
+            return (self._resolve(node, scope, seen, self.holds_kernel_path)
+                    or self._element(node, scope, seen | {("container", id(node))}, self.holds_kernel_path))
+        if isinstance(node, ast.Starred):
+            return self.holds_kernel_path(node.value, scope, seen)
         if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
             elts = node.elts
             for i, e in enumerate(elts):
@@ -345,6 +423,62 @@ class _SpawnScan:
             return self.is_kernel_path(node, scope, seen) or any(
                 self.holds_kernel_path(a, scope, seen) or self.is_kernel_path(a, scope, seen) for a in _call_args(node))
         return False
+
+    def _element(self, node, scope, seen, read):
+        """`read` (is_kernel_path or holds_kernel_path) over the element a Subscript takes from its container, the
+        container read through its binding (_resolve, so a container bound to the path and to something else is
+        refused like a name): a str constant slice picks a literal dict's value by key, an int constant slice (negative
+        too) a literal list's or tuple's element by index, and a key or an index the literal has not is no path. A slice
+        the scan cannot read (a name, a range) or a container that is no literal list, tuple or dict falls back to
+        EVERY element read as if taken (_any_element), the over-approximating side, which the module docstring states
+        as an accepted false red."""
+        index = _constant_slice(node.slice)
+
+        def evaluate(container, s, seen):
+            if isinstance(container, ast.Dict) and isinstance(index, str) and all(isinstance(k, ast.Constant) for k in container.keys):
+                return any(k.value == index and read(v, s, seen) for k, v in zip(container.keys, container.values))
+            if isinstance(container, (ast.List, ast.Tuple)) and isinstance(index, int) and not any(isinstance(e, ast.Starred) for e in container.elts):
+                return -len(container.elts) <= index < len(container.elts) and read(container.elts[index], s, seen)
+            return self._any_element(container, s, seen, read)
+
+        container = node.value
+        if isinstance(container, (ast.Name, ast.Attribute, ast.Subscript)):
+            return self._resolve(container, scope, seen, evaluate)
+        return evaluate(container, scope, seen)
+
+    def _any_element(self, container, scope, seen, read):
+        """`read` over every element of a literal container (a dict's values), true when any is; a container of another
+        shape is read whole."""
+        if isinstance(container, (ast.List, ast.Tuple, ast.Set)):
+            return any(read(e.value if isinstance(e, ast.Starred) else e, scope, seen) for e in container.elts)
+        if isinstance(container, ast.Dict):
+            return any(v is not None and read(v, scope, seen) for v in container.values)
+        return read(container, scope, seen)
+
+
+def _constant_slice(node):
+    """A subscript's slice as the key or index it reads: a str, an int (a negative one written as -1 too); None for a
+    slice the scan cannot read (a name, a range, a bool)."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, (str, int)) and not isinstance(node.value, bool):
+        return node.value
+    if (isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub) and isinstance(node.operand, ast.Constant)
+            and isinstance(node.operand.value, int) and not isinstance(node.operand.value, bool)):
+        return -node.operand.value
+    return None
+
+
+def _text_is_path(text, pattern):
+    """A string constant, or a template's text, IS the path when `pattern` matches it whole or matches its first word
+    (a shell command string's program: "bin/romp-kernel --serve", "%s/romp-kernel --serve")."""
+    words = text.split()
+    return bool(pattern.search(text) or (words and pattern.search(words[0])))
+
+
+def _head_is_placeholder(text):
+    """A template that is nothing but its argument, whole ("%s" % KERNEL) or in its first word ("%s --serve" % KERNEL,
+    "{} --serve".format(KERNEL)): the argument is then the program, and is read for the path."""
+    words = text.split()
+    return bool(PLACEHOLDER.match(text) or (words and PLACEHOLDER.match(words[0])))
 
 
 def _call_args(call):
@@ -399,8 +533,9 @@ def _kernel_spawn_offenders(directory, skip=()):
 def spawn_roads(directory, skip=()):
     """Per module of `directory`: (road, sites, unresolved). The road is "neither" for a module with no kernel spawn,
     "binding" when any of its spawn sites needed a name or target resolved to a declaration bound to the path, else
-    "argv" (every site an element that is the path as written). `sites` is _SpawnScan.sites; `unresolved` the names
-    and targets met in ANY subprocess argv of the module that the scan reads no value for, (line, text, kind). A module
+    "argv" (every site an element that is the path as written). `sites` is _SpawnScan.sites; `unresolved` the names,
+    targets and calls met in ANY subprocess argv of the module that the scan reads no value or no function for, (line,
+    text, kind). A module
     the scan can read neither way is reported with the road "refused" and the message as its one site."""
     roads = {}
     for name, src in _census_modules(directory, skip):
@@ -416,13 +551,13 @@ def spawn_roads(directory, skip=()):
 
 
 def _print_roads(directory, skip=()):
-    """The --roads arm: one line per module (`<module> <road> [<line>:<road>:<argv> ...]`), the unresolved names and
-    targets under `# unresolved:`, and a summary line with every count, so the census's population is derived by one
-    command rather than stated."""
+    """The --roads arm: one line per module (`<module> <road> [<line>:<road>:<argv> ...]`), the unresolved names,
+    targets and calls under `# unresolved:`, and a summary line with every count, so the census's population is derived
+    by one command rather than stated."""
     roads = spawn_roads(directory, skip)
     for name, (road, sites, _) in roads.items():
         print("%s %s%s" % (name, road, "".join(" %d:%s:%s" % (line, r, argv.replace("\n", " ")) for line, argv, r in sites)))
-    print("# unresolved: names and targets met in a subprocess argv that the scan reads no value for (line, text, kind)")
+    print("# unresolved: names, targets and calls met in a subprocess argv that the scan reads no value or no function for (line, text, kind)")
     kinds, calls, modules = {}, set(), set()
     for name, (_, _, unresolved) in roads.items():
         for line, text, kind in unresolved:
@@ -844,6 +979,28 @@ PLANT_TABLE = (
      'KERNEL = None\ndef setUpModule():\n    global KERNEL\n    KERNEL = os.path.join(BIN, "romp-kernel")\ndef test_a():\n    subprocess.Popen([KERNEL])'),
     ("B16 a base class's setUp sets the attribute", 'caught-by-binding', 6,
      'class Base:\n    def setUp(self):\n        self.kernel = os.path.join(BIN, "romp-kernel")\nclass T(Base):\n    def test_a(self):\n        subprocess.Popen([self.kernel])'),
+    ('B17 the join imported by name', 'caught-by-binding', 3,
+     'from os.path import join\nK = join(BIN, "romp-kernel")\nsubprocess.Popen([K])'),
+    ('B18 os.path under an import alias', 'caught-by-binding', 3,
+     'import os.path as osp\nK = osp.join(BIN, "romp-kernel")\nsubprocess.Popen([K])'),
+    ('B19 Path under an import alias, through str', 'caught-by-binding', 3,
+     'from pathlib import Path as P\nK = str(P(BIN, "romp-kernel"))\nsubprocess.Popen([K])'),
+    ('B20 import os.path, which binds the name os', 'caught-by-binding', 3,
+     'import os.path\nK = os.path.join(BIN, "romp-kernel")\nsubprocess.run([K])'),
+    ('B21 os.path.join under a name bound by assignment', 'caught-by-binding', 3,
+     'j = os.path.join\nK = j(BIN, "romp-kernel")\nsubprocess.run([K])'),
+    ("B22 a star import's bare join (unbound: read by its spelling)", 'caught-by-binding', 3,
+     'from os.path import *\nK = join(BIN, "romp-kernel")\nsubprocess.run([K])'),
+    ("B23 a tuple's kernel element by index, the judge's beside it", 'caught-by-binding', 2,
+     'SCRIPTS = (os.path.join(BIN, "romp-judge"), os.path.join(BIN, "romp-kernel"))\nsubprocess.run([SCRIPTS[-1]])'),
+    ("B24 a dict's kernel entry by key, the judge's beside it", 'caught-by-binding', 2,
+     'PATHS = {"judge": os.path.join(BIN, "romp-judge"), "kernel": os.path.join(BIN, "romp-kernel")}\nsubprocess.run([PATHS["kernel"]])'),
+    ('B25 a slice the scan cannot read: any element of the tuple (the over-approximating side)', 'caught-by-binding', 3,
+     'SCRIPTS = (os.path.join(BIN, "romp-judge"), os.path.join(BIN, "romp-kernel"))\ndef t(i):\n    subprocess.run([SCRIPTS[i]])'),
+    ('B26 a shell command by % template with arguments, held in a name', 'caught-by-binding', 2,
+     'cmd = "%s/romp-kernel --serve" % BIN\nsubprocess.Popen(cmd, shell=True)'),
+    ('B27 a placeholder head with arguments, the program a name', 'caught-by-binding', 3,
+     'K = os.path.join(BIN, "romp-kernel")\ncmd = "%s --serve" % K\nsubprocess.Popen(cmd, shell=True)'),
     ('A1 the library under an alias', 'caught-by-argv', 2,
      'import subprocess as sp\nsp.Popen([os.path.join(BIN, "romp-kernel")])'),
     ('A2 a from-import of run', 'caught-by-argv', 2,
@@ -856,6 +1013,16 @@ PLANT_TABLE = (
      'subprocess.Popen([f"{BIN}/romp-kernel"])'),
     ('A6 a call split across lines with Path division', 'caught-by-argv', 1,
      'subprocess.run(\n    [sys.executable, str(BIN / "romp-kernel")],\n    capture_output=True)'),
+    ('A7 the spawn function bound by assignment', 'caught-by-argv', 2,
+     'run = subprocess.run\nrun([os.path.join(BIN, "romp-kernel")])'),
+    ('A8 a shell command by % template with arguments', 'caught-by-argv', 1,
+     'subprocess.Popen("%s/romp-kernel --serve" % BIN, shell=True)'),
+    ('A9 a shell command by .format with arguments', 'caught-by-argv', 1,
+     'subprocess.Popen("{}/romp-kernel --serve".format(BIN), shell=True)'),
+    ('A10 a wrapper launch, the path at index 2 (the index is not read)', 'caught-by-argv', 1,
+     'subprocess.run(["timeout", "30", os.path.join(BIN, "romp-kernel")])'),
+    ("A11 grep for the kernel's name (an accepted false red: the argv holds the path)", 'caught-by-argv', 1,
+     'subprocess.run(["grep", "-l", "romp-kernel", "docs"])'),
     ('N1 a same-named local in another function', 'no-spawn', None,
      'def a():\n    k = os.path.join(BIN, "romp-kernel")\ndef b():\n    k = [sys.executable, "-m", "pytest"]\n    subprocess.run(k)'),
     ('N2 p beside -p', 'no-spawn', None,
@@ -894,6 +1061,18 @@ PLANT_TABLE = (
      'KERNEL = os.path.join(BIN, "romp-kernel")\ndef b():\n    KERNEL = [sys.executable, "-m", "pytest"]\n    subprocess.run(KERNEL)'),
     ('N19 a build and the postal service', 'no-spawn', None,
      'subprocess.run(["node", "esbuild.js"], cwd=EXT)\nsubprocess.run(["bin/romp-postal-service", "ensure"])'),
+    ("N20 the judge's element of a tuple by index, the kernel's beside it", 'no-spawn', None,
+     'SCRIPTS = (os.path.join(BIN, "romp-kernel"), os.path.join(BIN, "romp-judge"))\nsubprocess.run([SCRIPTS[1], "--once"])'),
+    ("N21 the judge's entry of a dict by key, the kernel's beside it", 'no-spawn', None,
+     'PATHS = {"kernel": os.path.join(BIN, "romp-kernel"), "judge": os.path.join(BIN, "romp-judge")}\nsubprocess.run([PATHS["judge"], "--once"])'),
+    ('N22 a key the dict has not', 'no-spawn', None,
+     'PATHS = {"kernel": os.path.join(BIN, "romp-kernel")}\nsubprocess.run([PATHS["judge"]])'),
+    ('N23 a name bound by assignment to a builtin, no spawn function', 'no-spawn', None,
+     'run = print\nrun(os.path.join(BIN, "romp-kernel"))'),
+    ('N24 a template whose path is itself a placeholder (the stated residual)', 'no-spawn', None,
+     'K = "%s/%s" % (BIN, "romp-kernel")\nsubprocess.run([K])'),
+    ("N25 a helper's return (the stated residual, listed)", 'no-spawn', None,
+     'def kpath():\n    return os.path.join(BIN, "romp-kernel")\nsubprocess.run([kpath()])'),
     ('R1 a rebinding in one function', 'refused-loud', (4, 2, 3),
      'def t():\n    k = os.path.join(BIN, "romp-kernel")\n    k = [sys.executable, "-m", "pytest", "-k", "boot"]\n    subprocess.run(k)'),
     ('R2 two module-level bindings that disagree', 'refused-loud', (3, 1, 2),
@@ -938,11 +1117,15 @@ class HermeticKernelPostal(unittest.TestCase):
         nothing by itself. (2) The head's five positives and four negatives, snippets with no import of subprocess,
         so the library is read by its spelling as an unbound name (the stated fallback). (3) PLANT_TABLE: every row
         run and held to its label, the site's LINE held to the planted call's, the road held to the label's, the
-        refusal's message held to name the call's line and both declarations."""
+        refusal's message held to name the call's line and both declarations. (4) The residual is listed, never
+        silent: a helper's call, a passthrough's splatted parameter, a star import's name and a class attribute read
+        through the class name are no site and each is under `unresolved` with its line, text and kind, while a
+        builtin's call is a consumer and is not."""
         roads = spawn_roads(HERE, skip=(os.path.basename(__file__),))
         counts = {r: sum(1 for road, _, _ in roads.values() if road == r) for r in ("argv", "binding", "neither", "refused")}
         report = ("the roads table over %d modules under tests/ (python tests/test_hermetic_kernel_postal.py --roads): argv %d, "
-                  "binding %d, neither %d, refused %d" % (len(roads), counts["argv"], counts["binding"], counts["neither"], counts["refused"]))
+                  "binding %d, neither %d, refused %d; PLANT_TABLE %d rows"
+                  % (len(roads), counts["argv"], counts["binding"], counts["neither"], counts["refused"], len(PLANT_TABLE)))
         for lab in ("test_federation_missing_served.py", "test_notification_tap_resume_browser.py"):
             self.assertEqual(roads.get(lab, ("absent from the table",))[0], "argv",
                              "%s starts a lab kernel by an argv element that is the path as written; %s" % (lab, report))
@@ -975,9 +1158,22 @@ class HermeticKernelPostal(unittest.TestCase):
             else:
                 sites = _kernel_spawn_sites(src, "planted.py")
                 self.assertEqual([(line, road) for line, _, road in sites], [(site, roads_by_label[kind])],
-                                 "%s: one site, at the planted call's line %d, by the %s road: %r" % (label, site, roads_by_label[kind], sites))
+                                 "%s: one site, at the planted call's line %d, by the %s road: %r (%s)" % (label, site, roads_by_label[kind], sites, report))
         self.assertEqual(sorted({kind for _, kind, _, _ in PLANT_TABLE}), ["caught-by-argv", "caught-by-binding", "no-spawn", "refused-loud"],
                          "the table carries every label at least once")
+        # the residual, listed (keyed on the callee's or the name's declarations: none readable, or none at all and no builtin)
+        for src, listed in (('def kpath():\n    return os.path.join(BIN, "romp-kernel")\nsubprocess.run([kpath()])', (3, "kpath", "call of def")),
+                            ('def fake_run(*a, **kw):\n    return subprocess.run(*a, **kw)', (2, "a", "parameter")),
+                            ('from helpers import *\nsubprocess.run([kernel_argv()])', (2, "kernel_argv", "call of an unbound name")),
+                            ('class Lab:\n    K = os.path.join(BIN, "romp-kernel")\nsubprocess.run([Lab.K])', (3, "Lab.K", "attribute of class"))):
+            scan = _SpawnScan(ast.parse(src), "planted.py")
+            self.assertEqual(scan.sites(), [], "no site, the value unread (keyed on the declarations the scan resolves to): " + src)
+            self.assertIn(listed, scan.unresolved, "the unread value is listed under the residual as (line, text, kind), never passed "
+                          "over silently (keyed on the declarations' kinds): %r for %s" % (scan.unresolved, src))
+        scan = _SpawnScan(ast.parse('subprocess.run([repr(BIN), open(BIN).read()])'), "planted.py")
+        self.assertEqual((scan.sites(), scan.unresolved), ([], []),
+                         "a builtin's call and a consumer's method are read as no path and not listed (keyed on the callee being a "
+                         "builtin, or an attribute): %r" % ((scan.sites(), scan.unresolved),))
 
     def test_the_offender_census_names_a_planted_launch_by_its_line_and_not_a_planted_word_collision(self):
         """The composition the trio test runs (_kernel_spawn_offenders: the spawn scan and the trio read together, over a
