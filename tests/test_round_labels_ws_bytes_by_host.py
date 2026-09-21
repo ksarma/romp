@@ -71,13 +71,16 @@ MENTION = re.compile(r"\bround[- ](\d+)\b|\b(?:the|this|that) round\b(?![- ]?tri
 QUALIFIER = re.compile(r"\bmaintainer's\s+$", re.I)   # what must stand immediately before a numbered mention: on its line, or ending the line above when the mention opens its line (THE RULE, the docstring)
 MARKER = re.compile(r"^\s*(?:#|//|/\*|\*|<!--)?\s*")               # a comment marker and the whitespace around it, which a wrapped line begins with
 
-# a doubled attribution in one run of prose (the maintainer's round 6, H): the same possessive's "pass after" twice in a row (the
-# sweep's artefact, a qualifier inlined on a line whose line above already ended with it), the same attribution twice adjacent, or
-# the bare possessive itself twice in a row (the same artefact under a line that ended with the possessive alone, the shape the
-# wrapped-qualifier rule accepts on the mention's line: the author's fixer pass after the maintainer's round 6, guard-1)
-DOUBLED = re.compile(r"\b(the (?:author's|maintainer's))\s+(?:fixer\s+)?pass after\s+\1\s+(?:fixer\s+)?pass after\b"
-                     r"|\b(the (?:author's|maintainer's) (?:fixer pass|pass|round)(?:[- ]\d+)?)\s+\2\b"
-                     r"|\b(the (?:author's|maintainer's))\s+\3\b", re.I)
+# a doubled attribution in one run of prose (the maintainer's round 6, H), tested as the property and not as a list of shapes (the
+# closing fixer pass after the maintainer's round 6, close-1: three listed shapes had caught three of the eight prefix shapes the
+# artefact makes). The sweep inlined the qualifier Q on a line whose line above already ended with a word-prefix P of Q, and since
+# Q opens with P the joined prose reads P P and the rest of Q. So: a word run opening with "the", immediately repeated (the run up
+# to ten words, longer than the qualifier's eight; the repeat's case free, as re.I reads a backreference; a hyphenated number is a
+# word of the run), in prose that names the author's or the maintainer's from the repeat on (the lookahead: the attribution's
+# possessive, inside the run or in the rest of Q after it; a doubled "the" run naming neither is not an attribution and is not this
+# pin's). A list of distinct forms has no adjacent equal runs and is not a repeat. Two copies that differ by a word (the author's
+# pass after, then the author's fixer pass after) are not equal runs either: that shape is the read-back's to find, not this pin's.
+DOUBLED = re.compile(r"(?=.*?\b(?:author's|maintainer's)\b)\b(the\b(?:\s+[\w'-]+){0,9}?)\s+\1\b", re.I)
 
 # a hunk header of a unified diff: the new side's first line number (and its count, absent for one line)
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
@@ -222,9 +225,10 @@ class RoundLabels(unittest.TestCase):
         """A mechanical rewrite over prose owes a read-back (the maintainer's round 6, H): the sweep that reworded the mentions
         inlined the full qualifier on a continuation line whose line above already ended with it, and a per-line census cannot see
         a doubling that spans the break. So the added lines are read as prose, joined_runs, and a doubled attribution in one run is refused
-        (DOUBLED: the same possessive's "pass after" twice, the same attribution twice, or the bare possessive twice in a row, the
-        shape a swept continuation line makes under a line that ended with the possessive alone). A list of distinct forms is not a
-        repeat, and the probes below say so."""
+        (DOUBLED, the property: a word run opening with "the" immediately repeated, in prose that names the author's or the maintainer's
+        from the repeat on). The probes below derive every shape the sweep's artefact makes from the qualifier it inlined: under a line
+        that ended with a word-prefix of the qualifier, the joined prose repeats that prefix, whatever its length. A list of distinct
+        forms is not a repeat, and the probes say so too."""
         added, how = branch_population()
         bad = []
         for rel, lines in sorted(added.items()):
@@ -239,10 +243,19 @@ class RoundLabels(unittest.TestCase):
         for bare in ("%s %s %s 5, tests-1" % (M, M, R), "%s %s pass 4" % (A, A), "(%s %s fixer pass after %s %s 5)" % (A, A, M, R)):
             self.assertEqual(len(DOUBLED.findall(bare)), 1, "the bare possessive twice in a row, a qualifier inlined under a line that "
                                                             "ended with it: %r" % bare)
+        Q = "%s fixer pass after %s %s 5" % (A, M, R)   # the qualifier the sweep inlined; the shapes below are derived from it, not listed
+        prefixes = [" ".join(Q.split()[:k]) for k in range(1, len(Q.split()))]
+        self.assertEqual(len(prefixes), 8, "the rig: the qualifier's word-prefixes, each a line ending the sweep could have inlined under")
+        for P in prefixes:
+            self.assertEqual(DOUBLED.findall("(%s %s, refusal-1: the census read)" % (P, Q)), [P],
+                             "the artefact under a line that ended with %r: the prefix repeated, caught once as the repeated run" % P)
+        self.assertEqual(DOUBLED.findall("%s The Maintainer's %s 5" % (M, R)), [M], "the repeat's case is free")
+        self.assertEqual(len(DOUBLED.findall("%s %s-4 ruling %s %s-4 ruling" % (M, R, M, R))), 1, "a hyphenated number is a word of the run")
         for clean in ("the pass after %s %s 4, the pass after %s %s 5" % (M, R, M, R), "%s pass 4 and %s pass 5" % (A, A),
                       "(%s fixer pass after %s %s 5, refusal-1: the census read)" % (A, M, R), "%s %s 5 and %s %s-4 ruling" % (M, R, M, R),
                       "%s %s 5 and %s %s 6" % (M, R, M, R), "%s pass after %s %s 5" % (A, M, R)):
             self.assertEqual(DOUBLED.findall(clean), [], "a list of distinct forms is not a repeat: %r" % clean)
+        self.assertEqual(DOUBLED.findall("the the same word twice, no attribution named"), [], "a doubled run naming no attribution is not this pin's")
         self.assertEqual(joined_runs([(3, "# a"), (4, "#  b"), (7, "// c"), (8, " * d")]), [(3, 4, "a b"), (7, 8, "c d")], "runs by consecutive numbers, markers stripped")
 
     def test_the_diff_reader_numbers_added_lines_in_the_new_side(self):
