@@ -741,12 +741,14 @@ Review round 8 (2026-09-21; the reviewer's verdict on round 7: three code defect
 rewrite and two assertions that could not fail, and a body of sentence findings, all low, under a changed standard: a figure in prose
 beside its derivation is a copy and is deleted, not pinned; where an instrument and its sentence must exist as a pair, the pair's
 existence is pinned mechanically from the module's own AST and roster; a Bounds sentence is owed only where an instrument bounds
-something a reader would not expect, and no new Derives sentence is written). Eight fixes landed, one commit each but the finder
+something a reader would not expect, and no new Derives sentence is written). Nine fixes landed, one commit each but the finder
 case's two; the states of the seven fixes before the axis pin were each taken at the tree of their own commit, the module over its
 39 cases there, so a state's failed and passed figures sum to the count of that head; the axis pin, the eighth, adds a case, and its
 states, the bypass plants, the alias control and the clean line at the end of this paragraph were taken at this head, the head of
-the round-8 fixes, over its 40 cases (the round adds one, the axis pin); each plant landed on kernel/kernel.py, kernel/judge.py or
-this module and reverted, the three files hashed before the plant and after the revert and found equal, the module run
+the round-8 fixes, over its 40 cases (the round adds one, the axis pin); the ninth, the boundary wrappers, adds no case, and its
+states were taken at the tree of its own commit, the module over its 40 cases there, so its figures sum to the count of that head;
+each plant landed on kernel/kernel.py, kernel/judge.py or this module and reverted, the three files hashed before the plant and
+after the revert and found equal, the module run
 single-process on 3.12 through the clean runner; where a plant left the module green on the tree before its fix the paragraph says
 so in words and gives no figure. The cleanup's order (correctness-1): _restore checked the TICK_REBOUND allowance rows before its
 two restore loops, so a stale row aborted the cleanup with the case's stubs live for every later test; it restores both containers
@@ -810,7 +812,18 @@ and, with that sentence written, naming _traversal_references and _TRAVERSAL, th
 case added and the docstring's count not yet moved; since, the 'Bounds:' label removed from _census_floor's docstring reds the
 case at the existence line naming _census_floor and _TREE_READERS (1 failed, 39 passed), and _TREE_READERS respelled in that
 Bounds text as the three reader spellings reds it at the naming line (1 failed, 39 passed); both left the module green before the
-case existed. The bypass plants and the alias control, re-taken at this head: the kernel opening
+case existed. The boundary wrappers (the round's census of the module's instruments; this pass): setUp's boundary triple and the
+birth pin's expected hand-offs spelled the judge's outer wrappers by hand twice, copies pinned to each other by nothing, while
+_loader_births derives the judge's hand-offs from its AST; both are derived from _DOOR_SPELLINGS by the _or_fault suffix, one copy,
+and the birth pin holds the derivation against the judge's AST both ways. The states: load_goals_or_fault dropped from setUp's triple
+left the module green before the fix, the copy diverging unseen, and the edit has no site since; its pair dropped from the birth
+pin's expected list red the birth pin alone before the fix, the triple silent, and has no site since; load_goals_or_fault removed
+from the constant reds the birth pin at its kernel-doors line, where the case stops (1 failed, 39 passed); the judge's
+load_goals_or_fault calling its door without _or_fault reds setUp's one-line guard on every harness case and on the two
+agreement-span pins that drive a throwaway setUp, and the birth pin at its hand-offs line, the derived pair missing on the judge's
+side (22 failed, 18 passed); a wrapper spelled outside the constant handing load_goals to _or_fault reds the birth pin alone at its
+hand-offs line, naming the pair the constant lacks (1 failed, 39 passed).
+The bypass plants and the alias control, re-taken at this head: the kernel opening
 and parsing the store file itself and the kernel calling jd._read_store_json, per session in the pass loop, leave every case green
 with no file changed across a run (40 passed each); a second judge module loaded under another name reds the birth pin alone, naming
 `_PJ.load_goals_shared` (1 failed, 39 passed); the alias control, the shared door bound at kernel import and called per session,
@@ -1164,7 +1177,7 @@ def _traversal_references(tree):
 
 def _pass_through_lines(fn, callee):
     """(lines, calls): the line numbers, in `fn`'s file, of its calls to `callee`, and how many such calls there are. The calls
-    are the boundary wrapper's hand-off of the read (`loader(fsid)` in _or_fault, `_or_fault(...)` in the two outer wrappers),
+    are the boundary wrapper's hand-off of the read (`loader(fsid)` in _or_fault, `_or_fault(...)` in the outer wrappers),
     read from the source by the AST so a docstring or a comment naming the callee is not one. The lines are absolute (inspect
     gives the source with its first line's number) and are what _caller steps over at; the count is the guard's (review round
     2, extra5-2: two hand-off calls written on one line are one line and were passed by a guard whose message said one call).
@@ -1990,9 +2003,9 @@ def _caller(frame, boundary):
     _or_fault was named for the wrapper's kernel caller, the misnaming that costs more than silence). The file is the basename of the frame's REAL
     path: the kernel is loaded from bin/romp-kernel, a symlink to kernel/kernel.py, so the bare basename would read
     romp-kernel. Derives: the asker from the frame chain, the boundary frames stepped over by code identity while at a hand-off
-    line. Bounds: `boundary`, the wrappers and lines setUp derives from the judge's source, three wrappers hand-picked as the
-    judge's boundary set (held against the judge's AST by the birth pin's hand-offs line), so a fourth wrapper is a caller named
-    for itself."""
+    line. Bounds: `boundary`, the wrappers derived from _DOOR_SPELLINGS by the _or_fault suffix, with _or_fault itself, and their
+    hand-off lines setUp reads from the judge's source (the birth pin holds the same derivation against the judge's AST both ways),
+    so a wrapper spelled otherwise is a caller named for itself."""
     f = frame.f_back
     while True:
         lines = next((ls for c, ls in boundary if f.f_code is c), None)
@@ -2056,8 +2069,9 @@ class _WalkHarness(unittest.TestCase):
     names on the saved lists, since any other is named as leaked); the containers the cleanup's check reads, the globals and the class dicts of both
     modules (the contents of a module-level dict, list or set, an instance's attributes and an imported module's attributes are
     outside it); the window, one tick; the doors recorded, the judge's two; WALK, GATE and SWEEP,
-    the callers the condition names; the boundary set, three wrappers hand-picked as the judge's, held against the judge's AST by
-    the birth pin's hand-offs line; KEYS, the walk counters the cases pin exactly (a tuple derived from km._NUDGE_WALK_STATS would
+    the callers the condition names; the boundary set, _or_fault and the doors _DOOR_SPELLINGS spells with the _or_fault suffix, the
+    derivation the birth pin holds against the judge's AST both ways; KEYS, the walk counters the cases pin exactly (a tuple derived
+    from km._NUDGE_WALK_STATS would
     report more with nothing asserting it); and the fixture constants, SIDS, NOW and the seeded stores."""
 
     def setUp(self):
@@ -2166,9 +2180,16 @@ class _WalkHarness(unittest.TestCase):
         # The boundary frames and the shared door's body, by CODE identity, taken from the real functions NOW, before this setUp
         # replaces a door. Not at import: the judge module is shared by every kernel a worker loads and re-executed into the same
         # module object by each load (romp_load), so a code object captured when this module was imported is a previous
-        # execution's once a sibling module imports its kernel (the first run beside six siblings failed on exactly that).
+        # execution's once a sibling module imports its kernel (the first run beside six siblings failed on exactly that). The
+        # wrappers are _or_fault and the doors _DOOR_SPELLINGS spells with the _or_fault suffix, each handing its door to _or_fault;
+        # the birth pin holds the same derivation against the judge's AST both ways (until the round-8 fixes the wrappers were
+        # spelled by hand here and again in the birth pin's expected hand-offs, copies pinned to each other by nothing, so a wrapper
+        # dropped from this tuple left the module green).
+        wrappers = tuple(s for s in _DOOR_SPELLINGS if s.endswith("_or_fault"))
+        self.assertTrue(wrappers, "_DOOR_SPELLINGS spells at least one door with the _or_fault suffix, the wrappers the recorder steps over at "
+                                  "their hand-off lines (a derived expectation fails on empty)")
         boundary = []
-        for fn, callee in ((jd._or_fault, "loader"), (jd.load_goals_shared_or_fault, "_or_fault"), (jd.load_goals_or_fault, "_or_fault")):
+        for fn, callee in ((jd._or_fault, "loader"),) + tuple((getattr(jd, w), "_or_fault") for w in wrappers):
             lines, calls = _pass_through_lines(fn, callee)
             self.assertEqual(len(lines), 1, "%s's hand-off calls sit on one line, the granularity the recorder steps over at: the "
                                             "wrapper's frame is stepped over only while it sits at that line" % fn.__name__)
@@ -3276,7 +3297,7 @@ class TheRecorderNamesTheAsker(unittest.TestCase):
     the real boundary set, which setUp's guard holds."""
 
     def test_a_load_inside_a_stand_in_wrapper_is_named_for_the_wrapper_and_its_hand_off_for_the_caller(self):
-        """_caller's contract over a stand-in, not the composition of the real boundary set (setUp's guard over the judge's three
+        """_caller's contract over a stand-in, not the composition of the real boundary set (setUp's guard over the judge's
         wrappers holds that): a boundary frame is stepped over only while it sits at its pass-through call. `wrapper` is the
         stand-in, two body lines: a call to `other`, off the hand-off line, and the hand-off `return loader()`; both callees
         record their asker through _caller with `wrapper` as the one boundary. The load written in the wrapper's own body is
@@ -3574,8 +3595,8 @@ class TheCountersOneSite(unittest.TestCase):
         load_goals_shared_or_fault; review round 4, tests-3: the figure was prose and the case asserted the set of spellings, which a
         kernel that kept one call site per spelling passed; the dict is pinned rather than the sum, since a swap between doors moves
         two counts and the sum not at all, so an upstream fold that adds, removes or re-doors a kernel call site reds here by design
-        and the number moves with a re-read of the reference's other-readers clause or of a bound), and the two hand-offs are the two
-        outer wrappers'. The limit that stays: a name completed at run time from constants that spell no door whole (with an ASCII
+        and the number moves with a re-read of the reference's other-readers clause or of a bound), and the hand-offs are the outer
+        wrappers'. The limit that stays: a name completed at run time from constants that spell no door whole (with an ASCII
         bytes literal decoded, surrounding whitespace stripped and str.lower applied; another codec, a strip of other characters and
         another case fold are not undone) and either carry the name in one piece to no listed lookup, dict read or subscript key or
         reach one in a text those three transforms do not restore is spelled as a door in no constant the pin reads (the `assembled`
@@ -3589,8 +3610,9 @@ class TheCountersOneSite(unittest.TestCase):
         judge, copies pinned to each other by nothing, so a fifth spelling added to the constant left the module green; the defs line
         reads the constant and the stub judge is built from it since). Bounds: the kernel's call sites per spelling, 27, 9, 7 and 15,
         a tripwire on the population read whose keys spell the doors with the kernel's base and whose key set the kernel-side line
-        holds against the constant, so an upstream fold that moves one reds here by design; and the two hand-offs, the judge's two
-        outer wrappers, a pinned pair that also holds the recorder's hand-picked boundary set against the judge's AST."""
+        holds against the constant, so an upstream fold that moves one reds here by design; and the hand-offs derived from
+        _DOOR_SPELLINGS by the _or_fault suffix, held against the judge's AST both ways, the derivation setUp builds the recorder's
+        boundary from."""
         born, called, defs, handoffs = _loader_births(Path(os.path.realpath(km.__file__)), judge=False)
         self.assertEqual(born, [], "%s: a loader bound to another name, or reached through a string, is a body the census cannot read; every "
                                    "reference to a loader in the kernel is the callee of a call spelled jd.<door>(...), so no other name is born, "
@@ -3624,10 +3646,18 @@ class TheCountersOneSite(unittest.TestCase):
                          "a name the value rule refuses for no door). Defined %r; spelled in the constant and not defined %r; defined and not "
                          "spelled %r" % (JUDGE_FILE, defs, sorted(set(_DOOR_SPELLINGS) - set(defs)), sorted(set(defs) - set(_DOOR_SPELLINGS))))
         self.assertEqual(set(called), set(defs), "%s: the judge calls its four doors and no other loader spelling: %r" % (JUDGE_FILE, sorted(called)))
-        self.assertEqual(handoffs, [("load_goals_or_fault", "load_goals"), ("load_goals_shared_or_fault", "load_goals_shared")],
-                         "%s: the two outer boundary wrappers hand their loader to _or_fault and no other function does (the recorder steps over "
-                         "exactly those frames at their hand-off lines; a third wrapper would be a caller the recorder names for itself): %r"
-                         % (JUDGE_FILE, handoffs))
+        expected = sorted((s, s[:-len("_or_fault")]) for s in _DOOR_SPELLINGS if s.endswith("_or_fault"))
+        self.assertTrue(expected, "_DOOR_SPELLINGS spells at least one door with the _or_fault suffix, a boundary wrapper (a derived expectation "
+                                  "fails on empty)")
+        self.assertEqual(handoffs, expected,
+                         "%s: the boundary wrappers hand their loader to _or_fault and no other function does. The pairs are derived from "
+                         "_DOOR_SPELLINGS by the _or_fault suffix, a wrapper spelled <door>_or_fault handing off <door>, and held against the "
+                         "judge's AST both ways: a suffixed spelling whose def hands off nothing, or another loader, is a pair the judge lacks; "
+                         "a def that hands a loader to _or_fault under a name the constant does not spell with the suffix is a pair the "
+                         "constant lacks. setUp builds the recorder's boundary from the same derivation, so the recorder steps over exactly "
+                         "these wrappers' frames at their hand-off lines and a wrapper spelled otherwise is a caller it names for itself. "
+                         "Derived and not in the judge %r; in the judge and not derived %r; the judge's hand-offs %r"
+                         % (JUDGE_FILE, sorted(set(expected) - set(handoffs)), sorted(set(handoffs) - set(expected)), handoffs))
 
     def test_the_census_reads_code_not_prose_and_sees_a_call_inside_an_f_string_on_every_interpreter(self):
         """The rule the censuses share, exercised (review round 2, tests-3: no scanned source carried a mention of a loader, so
