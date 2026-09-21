@@ -276,10 +276,13 @@ test("a spacer row whose view was switched away before the frame carries no geom
   w.setActive("B");   // the reader switched tabs before the frame ran
   w.rafs.shift()!();
   assert.deepEqual(w.reads, { offsetHeight: 0, scrollHeight: 0, clientHeight: 0 }, "no queued row is the active view's: the scroller is not read at all");
-  assert.deepEqual(w.diag.map((d) => [d.kind, d.data.sid, d.data.sh, d.data.ch, d.data.view]), [["spacer", "A", null, null, "inactive"]], "A's row: no geometry and the marker, never B's 9114 / 902");
-  // the marker is spread only when set: the shown view's row carries none (scroll-movers.test.ts and scroll-journal-audit.test.ts read that shape)
+  assert.deepEqual(w.diag.map((d) => [d.kind, d.data.sid, d.data.sh, d.data.ch, "view" in d.data]), [["spacer", "A", null, null, false]], "A's row: no geometry, never B's 9114 / 902, and no `view` marker: the field is withdrawn pending the owner's approval (its would-be shape one fixed word, inactive), so the nulls alone say the view was switched away");
+  // no row carries a `view` key while the field awaits the owner's approval: not the shown view's, not the switched-away view's, and the
+  // builder mints none whatever it is handed (scroll-movers.test.ts and scroll-journal-audit.test.ts read the unmarked shape; reverting the
+  // commit that withdrew the marker restores it, the builder's argument and these pins' former shape)
   assert.ok(!("view" in spacerRow("A", 1, 2, 0, 0, 9114, 902)), "no marker on the active view's row");
-  assert.deepEqual(spacerRow("A", 1, 2, 0, 0, null, null, "inactive"), { sid: "A", top: [1, 2], bot: [0, 0], dTop: 1, dBot: 0, sh: null, ch: null, view: "inactive" });
+  assert.deepEqual(spacerRow("A", 1, 2, 0, 0, null, null), { sid: "A", top: [1, 2], bot: [0, 0], dTop: 1, dBot: 0, sh: null, ch: null }, "the switched-away view's row: nulls and no `view` key, the field withdrawn pending the owner's approval");
+  assert.ok(!("view" in (spacerRow as any)("A", 1, 2, 0, 0, null, null, "inactive")), "a marker handed to the builder is not minted: the field is withdrawn at the builder too");
 });
 
 test("an inactive view's spacer write files no row, and a write that changes nothing files none", () => {
@@ -545,7 +548,8 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   // the frame's read is per row, not per batch (the maintainer's round 1 addendum): once, only when a queued row is the shown view's, and a row of a view switched
   // away since it was queued is filed with no geometry and the inactive marker, never another view's figures
   assert.match(inFrame, /requestAnimationFrame\(\(\) => \{[\s\S]*?const live = activeId;\s*\n\s*let sh: number \| null = null, ch: number \| null = null;\s*\n\s*if \(live && content && rows\.some\(\(\[rsid\]\) => rsid === live\)\) \{ sh = content\.scrollHeight; ch = content\.clientHeight; \}/, "the diag row's scroller read rides a frame, once, for the active view's rows alone");
-  assert.match(inFrame, /rsid === live \? spacerRow\(rsid, a, b, c, d, sh, ch\) : spacerRow\(rsid, a, b, c, d, null, null, "inactive"\)/, "a switched-away view's row: no geometry, marked");
+  assert.match(inFrame, /rsid === live \? spacerRow\(rsid, a, b, c, d, sh, ch\) : spacerRow\(rsid, a, b, c, d, null, null\)\)/, "a switched-away view's row: no geometry, and no `view` marker while the field awaits the owner's approval (the reviewer's ruling of 2026-09-21)");
+  assert.doesNotMatch(code(inFrame), /inactive/, "the withdrawn marker's word is in no code of the frame (the comment names it as withdrawn; the code posts it nowhere)");
   assert.doesNotMatch(inFrame, /const sh = content \? content\.scrollHeight : 0/, "the batch read is gone");
   const uo = RENDER.slice(RENDER.indexOf("v.uo = new ResizeObserver((entries) => {"), RENDER.indexOf("v.mo = new MutationObserver("));
   assert.match(uo, /unitHeights\.set\(e\.target, entryBoxHeight\(e\)\); view3\.measureDue = true; measureUnits\(view3\); takeMeasureAtBottom\(view3\); return; \}/, "a reflow records border boxes, re-measures and asks for a bottom reader's paint");

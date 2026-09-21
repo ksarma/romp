@@ -74,10 +74,14 @@ export function tailMutRow(sid: string, m: { removedTail: string[]; addedTail: s
  *  a bottom one leaves scrollHeight unchanged yet moves everything under the top spacer, and Chrome's scroll
  *  anchoring then moves the reader by the same amount with no pane write. `top`/`bot` = [before, after] heights.
  *  `sh`/`ch` are the scroller's heights read a frame later for the view shown in that frame; a row whose view was
- *  switched away before the frame has none (null, never another view's figures) and carries `view: "inactive"` (PR E
- *  the maintainer's round 1 addendum). A row with no marker and numbers is the shown view's. */
-export function spacerRow(sid: string, topBefore: number, topAfter: number, botBefore: number, botAfter: number, sh: number | null = 0, ch: number | null = 0, view?: "inactive") {
-  return { sid, top: [topBefore, topAfter], bot: [botBefore, botAfter], dTop: topAfter - topBefore, dBot: botAfter - botBefore, sh, ch, ...(view ? { view } : {}) };
+ *  switched away before the frame has none (null, never another view's figures; PR E, the maintainer's round 1 addendum).
+ *  The marker that named that shape, a `view` key holding one fixed word, "inactive", and no host name, is WITHDRAWN
+ *  pending the owner's approval of the field (the reviewer's ruling of 2026-09-21: a new field a page posts to the
+ *  kernel is the owner's, field by field): this builder takes no marker and mints no `view`, and the key returns on the
+ *  owner's word (reverting the commit that withdrew it restores it here, at render.ts's post and in the kernel's chat
+ *  allowlist). Until then a row with nulls is the switched-away view's and a row with numbers the shown view's. */
+export function spacerRow(sid: string, topBefore: number, topAfter: number, botBefore: number, botAfter: number, sh: number | null = 0, ch: number | null = 0) {
+  return { sid, top: [topBefore, topAfter], bot: [botBefore, botAfter], dTop: topAfter - topBefore, dBot: botAfter - botBefore, sh, ch };
 }
 
 /** The breadcrumb for one height change of the transcript's TAIL outside the append path (T262f, the user
