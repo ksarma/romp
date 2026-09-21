@@ -1899,8 +1899,7 @@ class LandingRevealPins(unittest.TestCase):
         # pinned absent from the script's code lines and the served shell: any store or replay, any build comparison, any
         # element the script would own, any word for /reveal but the four roads, any timer
         import re
-        code = lambda src: "\n".join(l for l in src.splitlines() if not l.lstrip().startswith("//"))   # the prose may name what went; the code may not
-        js = code(km._LANDING_REVEAL_JS)
+        js = served_css.js_code(km._LANDING_REVEAL_JS)   # the code with its comments blanked: the prose may name what went; the code may not (round 9's fixer pass: a lambda had stripped // lines by hand)
         for word in ("caches", "/__romp/", "tapReplay", "tapLanded", "registration.update", "r.update()", "PAGEV", "__ROMP_SWV__",
                      "'store'", "'offer'", "'closed'", "tap-resume", "sw-stale", "sw-update", "tap-offer", "/push/dismissed", "setTimeout",
                      "fingerprint(", "resume(", "pushReveal"):

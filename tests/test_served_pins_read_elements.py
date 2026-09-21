@@ -163,6 +163,7 @@ _URL = re.compile(r"^https?://127\.0\.0\.1:%d(?P<route>/[^?\s\"']*)(?:\?(?P<quer
 _URLOPEN_DEF = re.compile(r"^\s*with\s+(?:[A-Za-z_]\w*\.)*urlopen\(\s*(?P<url>" + _LIT1 + r")\s*%.*\)\s+as\s+(?P<target>[A-Za-z_]\w*)\s*:\s*(?:#.*)?$")
 _FETCH_DEF = re.compile(r"^\s*(?P<targets>[A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s*=\s*(?:self\.)?[A-Za-z_]\w*\(\s*(?P<route>\"/[^\"\\\n]*\"|'/[^'\\\n]*')")
 _DECODE_DEF = re.compile(r"^\s*(?P<target>[A-Za-z_]\w*)\s*=\s*(?P<src>[A-Za-z_]\w*)(?:\.read\([^)]*\))?\.decode\([^)]*\)\s*(?:#.*)?$")
+_ALIAS_DEF = re.compile(r"^\s*(?P<target>[A-Za-z_]\w*)\s*=\s*(?P<src>(?:self\.)?[A-Za-z_]\w*)\s*(?:#.*)?$")   # `js = html`, `js = self.html` (the fixer pass of round 9)
 _DEF_LINE = re.compile(r"^(?P<indent>\s*)(?:async\s+)?def\s")
 _CLASS_LINE = re.compile(r"^class\s")
 
@@ -348,6 +349,11 @@ def _bind(targets, value, names, attrs, getters, constants, sliced=None, routes=
         if not g and isinstance(v, ast.Subscript):   # `fn = html[a:b]`, a slice of a bound text, judged over the whole text
             g = _resolve(v.value, names, attrs, getters, constants)
             via_slice = True
+        if not g and (isinstance(v, ast.Name) or isinstance(v, ast.Attribute) and isinstance(v.value, ast.Name) and v.value.id == "self"):
+            # `js = html` or `js = self.html`, an ALIAS of a bound name (the fixer pass of round 9: two suite modules alias the page so
+            # and neither census had followed it, so their position pins and a regex over the alias were outside both populations)
+            g = _resolve(v, names, attrs, getters, constants)
+            via_slice = isinstance(v, ast.Name) and sliced is not None and v.id in sliced
         if not g and routes:
             g = _fetched(v, names, routes)
             fetched = bool(g)
@@ -433,6 +439,7 @@ def rows_of(path, getters, constants, routes=None):
     functions = (ast.FunctionDef, ast.AsyncFunctionDef)
     groups = [[n for n in cls.body if isinstance(n, functions)] for cls in ast.walk(tree) if isinstance(cls, ast.ClassDef)]
     groups.append([n for n in tree.body if isinstance(n, functions)])   # module-level test functions (round 6, 2026-09-20)
+    modnames = _module_bindings(tree, getters, constants, routes)   # a served text bound at module level is read in every function (the fixer pass of round 9)
     def bindings(fn):   # in walk order, so a with-item's `as` target is bound before the assignments in its body read it
         for st in ast.walk(fn):
             if isinstance(st, ast.Assign):
@@ -447,7 +454,7 @@ def rows_of(path, getters, constants, routes=None):
             for targets, value in bindings(fn):
                 _bind(targets, value, {}, attrs, getters, constants, None, routes)
         for fn in fns:
-            names, sliced = {}, set()
+            names, sliced = dict(modnames), set()
             for targets, value in bindings(fn):   # an assignment, or a with-item's `as` target (`with urlopen(...) as r`; the fixer pass of round 8)
                 _bind(targets, value, names, attrs, getters, constants, sliced, routes)
             text_of = lambda x: _resolve(x, names, attrs, getters, constants)
@@ -556,7 +563,7 @@ def textual_census(path, getters, constants, routes=None):
     8). A binding a later line rebinds keeps the served text, as the derivation reads it. containers is the set of
     (name, called) for every `<alias>.<name>` the module uses as a container in one of those forms, whatever the name, the
     NAMES the tests pin, read on their own for the check against the kernel-derived getters and constants (round 7)."""
-    sites, containers, names, attrs, loops = [], set(), {}, {}, []
+    sites, containers, names, attrs, loops, modnames = [], set(), {}, {}, [], {}
     with open(path, encoding="utf-8") as f:
         source = f.read()
     served = lambda name, call: (name in getters) if call else (name in constants)
@@ -568,7 +575,8 @@ def textual_census(path, getters, constants, routes=None):
             names = {}
         m = _BOUND_DEF.match(line)
         if m:
-            (attrs if m.group("target").startswith("self.") else names)[m.group("target")] = [(m.group("name"), bool(m.group("call")))]
+            # a binding at column 0 is the module's, read in every function (the fixer pass of round 9)
+            (attrs if m.group("target").startswith("self.") else modnames if indent == 0 else names)[m.group("target")] = [(m.group("name"), bool(m.group("call")))]
         m = _TUPLE_DEF.match(line)
         if m:
             targets = [t.strip() for t in m.group("targets").split(",")]
@@ -594,7 +602,14 @@ def textual_census(path, getters, constants, routes=None):
         m = _DECODE_DEF.match(line)
         if m and m.group("src") in names:
             names[m.group("target")] = names[m.group("src")]
-        bound = dict(names)
+        m = _ALIAS_DEF.match(line)
+        if m:   # an alias of a bound name: the module's, the function's, or a self.<attr> (the fixer pass of round 9)
+            src = m.group("src")
+            items = attrs.get(src) if src.startswith("self.") else names.get(src, modnames.get(src))
+            if items:
+                names[m.group("target")] = items
+        bound = dict(modnames)
+        bound.update(names)
         bound.update(attrs)
         for lindent, target, items in loops:
             bound[target] = items
@@ -632,28 +647,66 @@ _RE_FUNCS = {"search", "match", "fullmatch", "findall", "finditer", "split", "su
 _ASSERTS = {"assertIn", "assertNotIn", "assertEqual", "assertNotEqual", "assertTrue", "assertFalse", "assertIs", "assertIsNot", "assertIsNone", "assertIsNotNone",
             "assertMultiLineEqual", "assertRegex", "assertNotRegex", "assertCountEqual", "assertLess", "assertGreater", "assertLessEqual", "assertGreaterEqual"}
 # the forms a read of a served text can take (readers_of); the census test states which are the parser road or a stated read and reds on the rest
-READER_FORMS = ("parser", "assert", "position", "position-unpinned", "membership-unpinned", "regex", "slice", "span-slice", "method", "conversion", "value-use",
-                "compare", "unclassified")
+READER_FORMS = ("parser", "assert", "position", "view-pin", "position-unpinned", "membership-unpinned", "regex", "slice", "span-slice", "method", "conversion",
+                "value-use", "compare", "unclassified")
+# served_css functions returning a TEXT derived from the one they are given, its comments blanked with offsets kept: a VIEW of the text,
+# the round-6 re-point form (a literal membership or position pin over one is not comment-satisfiable by construction: `view-pin`)
+_VIEWS = {"code", "markup", "js_code", "css_code"}
+# str methods whose result is the text transformed or cut into pieces: a COPY of the text, which the pins census does not bind, so a
+# literal membership or position pin over one is unjudged (`membership-unpinned`, `position-unpinned`)
+_COPIES = {"lower", "upper", "casefold", "strip", "lstrip", "rstrip", "replace", "translate", "expandtabs", "removeprefix", "removesuffix", "swapcase",
+           "title", "capitalize", "zfill", "center", "ljust", "rjust", "split", "rsplit", "splitlines", "partition", "rpartition", "format"}
+# callables that take a served text WHOLE and read nothing of it, the stated allowlist behind `value-use`; any other callee handed the
+# text is `unclassified` and reds the census (a parser of its own, an imported helper, a compiled pattern from another module)
+_VALUE_USES = {"dumps", "len", "print", "isinstance", "write", "repr", "str", "type", "bool"}
+
+
+def _module_bindings(tree, getters, constants, routes):
+    """{Name: served text} for the module-level assignments that bind a served text (`JS = km._LANDING_APIH_JS`; the fixer pass of
+    round 9: three suite modules bind one at import time and read it in every test, and neither census had seen the binding)."""
+    names = {}
+    for st in tree.body:
+        if isinstance(st, ast.Assign):
+            _bind(st.targets, st.value, names, {}, getters, constants, None, routes)
+    return names
+
+
+def _imports_parser(path):
+    """Whether a test module IMPORTS served_css (`import served_css` or `from served_css import ...`, anywhere in it): the parser
+    road's membership test (the fixer pass of round 9: the census had tested text containment, the string anywhere in the file, a
+    comment included, while every surface stated the import; the two agree at this head, 15 modules)."""
+    with open(path, encoding="utf-8") as f:
+        tree = ast.parse(f.read(), path)
+    return any(isinstance(n, ast.Import) and any(a.name == "served_css" for a in n.names) or isinstance(n, ast.ImportFrom) and n.module == "served_css"
+               for n in ast.walk(tree))
 
 
 def readers_of(path, getters, constants, routes=None):
     """[(line, form, text, source)] for every READ of a served text in one test module: the population the maintainer's round 5
     ruling asked to be derived once, of every road (round 9, 2026-09-20), after the one HTML regex this change had added beside
     the parser it introduced. A served text is what rows_of resolves (a getter call, a constant, a Name or self.<attr> bound to
-    one or to a fetched body, the variable of a `for` over texts), and a read is X in any of these forms, each named in
-    READER_FORMS: `served_css.<fn>(X, ...)` or a name imported from served_css called on X (`parser`, the one road for an
-    element, an attribute or a rule); `X.<index|find|rindex|rfind|count>(needle)` with a literal or loop-literal needle
-    (`position`: a pins-census row, judged there) or any other needle (`position-unpinned`, a read the pins census does not
-    see); `<needle> in X` with a non-literal needle (`membership-unpinned`); `re.<fn>(..., X)` or `<pattern>.<fn>(X)` with the
-    pattern a Name bound by re.compile in the module (`regex`); `X[a:b]` with both bounds Names a `for` over a `served_css.<fn>(...)`
-    iterable binds (`span-slice`: offsets the parser derived) and any other subscript of X (`slice`); any other str method on X
-    (`method`, the method's name in the source column); X.encode/decode/read (`conversion`: bytes to text and back, no content
-    read); X handed whole to a `self.assert*` (`assert`: a membership the pins census reads, or a whole-text compare); X handed
-    whole to any other callable, len, print, json.dumps, a file's write, another string's replace (`value-use`: the text is not
-    read at that site); X as the operand of a comparison other than a membership (`compare`); anything else (`unclassified`).
-    A module-level function of the same module called with X is FOLLOWED one level, its parameter bound to the text, so a
-    membership or a read inside a helper (`_has(self, lit, body)`) is a row at the helper's own line; a callable outside the
-    module is a value-use."""
+    one or to a fetched body, the variable of a `for` over texts, a Name bound at module level), and since the fixer pass of round 9
+    also a VIEW of one (`served_css.code(X)`, markup, js_code, css_code: the text with its comments blanked, inline or bound to a
+    Name) and a COPY of one (a str method of _COPIES on it, a slice of it, a line of its splitlines, the variable of a `for` over it
+    or over its pieces, inline or bound), each read over a view or a copy being a row over the text it derives from. A read is X in
+    any of these forms, each named in READER_FORMS: `served_css.<fn>(X, ...)` or a name imported from served_css called on X
+    (`parser`, the one road for an element, an attribute or a rule); `X.<index|find|rindex|rfind|count>(needle)` with a literal or
+    loop-literal needle over the text itself (`position`: a pins-census row, judged there), over a view (`view-pin`: an order or
+    count over comment-blanked text, the round-6 re-point form) or over a copy (`position-unpinned`: a read the pins census does
+    not see), and with any other needle (`position-unpinned`); a literal membership `<lit> in X` under assertIn, assertNotIn,
+    assertTrue or a bare assert over the text (`assert`: the pins census's row), over a view (`view-pin`) or over a copy
+    (`membership-unpinned`), and `<needle> in X` with a non-literal needle (`membership-unpinned`); `re.<fn>(..., X)` or
+    `<pattern>.<fn>(X)` with the pattern a Name bound by re.compile in the module (`regex`); `X[a:b]` with both bounds Names a
+    `for` over a `served_css.<fn>(...)` iterable binds (`span-slice`: offsets the parser derived) and any other subscript of X
+    (`slice`); any other str method on X (`method`, the method's name in the source column); X.encode/decode/read (`conversion`:
+    bytes to text and back, no content read); X handed whole to any other `self.assert*` (`assert`: a whole-text compare); X handed
+    whole to a callable of the stated allowlist _VALUE_USES (json.dumps, len, print, isinstance, a file's write, repr, str, type,
+    bool) or as the ARGUMENT of another string's str method (`other.replace("__X__", X)`: spliced or compared, not read) (`value-use`:
+    the text is not read at that site); X as the operand of a comparison other than a membership (`compare`); X handed whole to any
+    other callable (`unclassified`: a compiled pattern imported from another module, an inline `re.compile(...).search`, an imported
+    helper, a parser of its own, a lambda; red in the census). A module-level function of the same module called with X is
+    FOLLOWED one level, its parameter bound to the text, so a membership or a read inside a helper (`_has(self, lit, body)`) is a
+    row at the helper's own line."""
     with open(path, encoding="utf-8") as f:
         src = f.read()
     tree = ast.parse(src, path)
@@ -676,29 +729,88 @@ def readers_of(path, getters, constants, routes=None):
                     if item.optional_vars is not None:
                         yield [item.optional_vars], item.context_expr
 
-    def walk(fn, names, attrs, depth):
+    def is_view(x):   # `served_css.<view>(X, ...)`, or the view imported by name
+        f = x.func
+        return bool(x.args) and (isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "served_css" and f.attr in _VIEWS
+                                 or isinstance(f, ast.Name) and f.id in parser_names and f.id in _VIEWS)
+
+    def text_of(x, names, attrs, derived):
+        """The served text a node reads: the text itself, or the text a view or a copy of it derives from."""
+        t = _resolve(x, names, attrs, getters, constants)
+        if t:
+            return t
+        if isinstance(x, ast.Subscript):
+            return text_of(x.value, names, attrs, derived)
+        if isinstance(x, ast.Call):
+            if is_view(x):
+                return text_of(x.args[0], names, attrs, derived)
+            f = x.func
+            if isinstance(f, ast.Attribute) and f.attr in _COPIES:
+                return text_of(f.value, names, attrs, derived)
+        return None
+
+    def basis_of(x, names, attrs, derived):
+        """None for the text itself, "view" for a served_css view of it, "copy" for a str-method copy, a slice or a piece of it."""
+        if isinstance(x, ast.Name):
+            return derived.get(x.id)
+        if isinstance(x, ast.Subscript):
+            return "copy"
+        if isinstance(x, ast.Call):
+            if is_view(x):
+                return "view"
+            if isinstance(x.func, ast.Attribute) and x.func.attr in _COPIES:
+                return "copy"
+        return None
+
+    def derive(targets, value, names, attrs, derived):
+        """Bind a Name to the text a view, a copy, a slice or an alias derives from (after _bind has bound the plain forms)."""
+        if len(targets) == 1 and isinstance(targets[0], ast.Name) and not _text(value, getters, constants):
+            base = text_of(value, names, attrs, derived)
+            if base and not (routes and _fetched(value, names, routes)):
+                names[targets[0].id] = base
+                basis = basis_of(value, names, attrs, derived)
+                if basis:
+                    derived[targets[0].id] = basis
+                else:
+                    derived.pop(targets[0].id, None)
+
+    modnames, modderived = _module_bindings(tree, getters, constants, routes), {}
+    for st in tree.body:
+        if isinstance(st, ast.Assign):
+            derive(st.targets, st.value, modnames, {}, modderived)
+
+    def walk(fn, names, attrs, depth, derived, methods):
         for targets, value in bindings(fn):
             _bind(targets, value, names, attrs, getters, constants, None, routes)
+            derive(targets, value, names, attrs, derived)
         for var, it, _ in _loops(fn):   # a for over served texts binds its variable (to the first text: one form per variable)
             texts = [_text(e, getters, constants) for e in it.elts] if isinstance(it, (ast.Tuple, ast.List)) and it.elts else []
             if texts and all(texts):
                 names[var] = texts[0]
+            elif text_of(it, names, attrs, derived):   # a for over a text or over its pieces (`for line in page.splitlines()`): a copy
+                names[var] = text_of(it, names, attrs, derived)
+                derived[var] = "copy"
         span_names = set()
         for node in ast.walk(fn):   # the Names a `for a, b in served_css.<fn>(...)` binds: parser-derived offsets
             if isinstance(node, (ast.For, ast.comprehension)) and isinstance(node.iter, ast.Call) and isinstance(node.iter.func, ast.Attribute) \
                     and isinstance(node.iter.func.value, ast.Name) and node.iter.func.value.id == "served_css" and isinstance(node.target, ast.Tuple):
                 span_names |= {e.id for e in node.target.elts if isinstance(e, ast.Name)}
-        text_of = lambda x: _resolve(x, names, attrs, getters, constants)
+        text = lambda x: text_of(x, names, attrs, derived)
+        basis = lambda x: basis_of(x, names, attrs, derived)
         lits = {var for var, it, _ in _loops(fn) if _literals(it)}
         literal = lambda a: bool(_literals(a)) or (isinstance(a, ast.Name) and a.id in lits)
+
+        def pin(form, x):   # a literal membership or position pin, by what it reads: the text (the pins census's row), a view, a copy
+            b = basis(x)
+            return form if b is None else "view-pin" if b == "view" else "position-unpinned" if form == "position" else "membership-unpinned"
         rows = []
         for node in ast.walk(fn):
             if isinstance(node, ast.Call):
                 f = node.func
-                if isinstance(f, ast.Attribute) and text_of(f.value):   # X.<method>(...)
-                    t = text_of(f.value)
+                if isinstance(f, ast.Attribute) and text(f.value):   # X.<method>(...)
+                    t = text(f.value)
                     if f.attr in _POSITION:
-                        rows.append((node.lineno, "position" if node.args and literal(node.args[0]) else "position-unpinned", t, seg(node)))
+                        rows.append((node.lineno, pin("position", f.value) if node.args and literal(node.args[0]) else "position-unpinned", t, seg(node)))
                     elif f.attr in _CONVERSIONS:
                         rows.append((node.lineno, "conversion", t, seg(node)))
                     elif f.attr in _STR_READS:
@@ -706,48 +818,56 @@ def readers_of(path, getters, constants, routes=None):
                     else:
                         rows.append((node.lineno, "unclassified", t, seg(node)))
                     continue
-                served = [(i, a) for i, a in enumerate(node.args) if text_of(a)]
+                served = [(i, a) for i, a in enumerate(node.args) if text(a)]
                 if not served:
                     continue
-                t = text_of(served[0][1])
+                arg = served[0][1]
+                t = text(arg)
                 callee = f.attr if isinstance(f, ast.Attribute) else f.id if isinstance(f, ast.Name) else None
                 if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "served_css" or isinstance(f, ast.Name) and f.id in parser_names:
                     rows.append((node.lineno, "parser", t, seg(node)))
                 elif isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and (f.value.id == "re" and f.attr in _RE_FUNCS or f.value.id in patterns):
                     rows.append((node.lineno, "regex", t, seg(node)))
                 elif isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "self" and f.attr in _ASSERTS:
-                    rows.append((node.lineno, "assert", t, seg(node)))
-                elif isinstance(f, ast.Name) and f.id in helpers and depth == 0:   # a helper of this module: followed once
-                    h = helpers[f.id]
+                    rows.append((node.lineno, pin("assert", arg) if f.attr in ("assertIn", "assertNotIn") else "assert", t, seg(node)))
+                elif depth == 0 and (isinstance(f, ast.Name) and f.id in helpers or isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name)
+                                     and f.value.id == "self" and f.attr in methods and f.attr not in _ASSERTS):
+                    # a helper of this module, or a method of the same class (`self._code(js)`; the fixer pass of round 9): followed once
+                    h = helpers[f.id] if isinstance(f, ast.Name) else methods[f.attr]
                     params = [a.arg for a in h.args.args]
-                    bound = {params[i]: text_of(a) for i, a in served if i < len(params)}
-                    rows.append((node.lineno, "value-use", t, "helper %s: " % f.id + seg(node)))
-                    rows += walk(h, dict(bound), {}, depth + 1)
-                else:
+                    if isinstance(f, ast.Attribute) and params and params[0] == "self":
+                        params = params[1:]
+                    bound = {params[i]: text(a) for i, a in served if i < len(params)}
+                    rows.append((node.lineno, "value-use", t, "helper %s: " % callee + seg(node)))
+                    rows += walk(h, dict(bound), dict(attrs), depth + 1, {}, methods)
+                elif callee in _VALUE_USES:
                     rows.append((node.lineno, "value-use", t, "%s: " % callee + seg(node)))
-            elif isinstance(node, ast.Subscript) and text_of(node.value):
+                elif isinstance(f, ast.Attribute) and f.attr in _STR_READS and not text(f.value):   # another string's method: the text is its argument
+                    rows.append((node.lineno, "value-use", t, "%s: " % callee + seg(node)))
+                else:
+                    rows.append((node.lineno, "unclassified", t, "%s: " % callee + seg(node)))
+            elif isinstance(node, ast.Subscript) and text(node.value):
                 sl = node.slice
                 spans = isinstance(sl, ast.Slice) and (sl.lower is not None or sl.upper is not None) \
                     and all(isinstance(bd, ast.Name) and bd.id in span_names for bd in (sl.lower, sl.upper) if bd is not None)
-                rows.append((node.lineno, "span-slice" if spans else "slice", text_of(node.value), seg(node)))
+                rows.append((node.lineno, "span-slice" if spans else "slice", text(node.value), seg(node)))
             elif isinstance(node, ast.Compare):
                 for i, (op, right) in enumerate(zip(node.ops, node.comparators)):
                     left = node.left if i == 0 else node.comparators[i - 1]
-                    if isinstance(op, (ast.In, ast.NotIn)) and text_of(right):
-                        if not literal(left):
-                            rows.append((node.lineno, "membership-unpinned", text_of(right), seg(node)))
-                    elif text_of(left) or text_of(right):
-                        rows.append((node.lineno, "compare", text_of(left) or text_of(right), seg(node)))
+                    if isinstance(op, (ast.In, ast.NotIn)) and text(right):
+                        rows.append((node.lineno, pin("assert", right) if literal(left) else "membership-unpinned", text(right), seg(node)))
+                    elif text(left) or text(right):
+                        rows.append((node.lineno, "compare", text(left) or text(right), seg(node)))
         return rows
 
     out = []
     for fns in groups:
-        attrs = {}
+        attrs, methods = {}, {n.name: n for n in fns}
         for fn in fns:
             for targets, value in bindings(fn):
                 _bind(targets, value, {}, attrs, getters, constants, None, routes)
         for fn in fns:
-            out += walk(fn, {}, attrs, 0)
+            out += walk(fn, dict(modnames), attrs, 0, dict(modderived), methods)
     return sorted(set(out))
 
 
@@ -859,7 +979,8 @@ class ServedPinsReadElements(unittest.TestCase):
         # constants of every kind the rule derives (a style constant, an HTML constant, a bare script constant and a markup
         # constant outside the round-6 roster), each name derived here, not written. Round 8: a body fetched by a literal path,
         # and (the fixer pass) by a formatted url with the token in its query, bound by the with-item's `as` target; a token-less
-        # url and an unmapped path bind nothing. The module is built over EVERY derived
+        # url and an unmapped path bind nothing. Round 9's fixer pass: a binding at module level (MOD) and an alias of a bound Name
+        # or self.<attr> (alias, al2), each a row and a site. The module is built over EVERY derived
         # getter, so a new getter is pinned by construction, and every expectation fails on an empty derivation
         getters, constants, routes = page_getters(), served_constants(), route_getters()
         css = sorted(c for c in constants if c.endswith("_CSS"))[0]   # one constant of each kind, derived
@@ -867,7 +988,7 @@ class ServedPinsReadElements(unittest.TestCase):
         script = max((c for c in constants if not _suffix_kind(c) and constants[c] == {"script"}), key=lambda c: len(getattr(km, c)))
         mark = max((c for c in constants if not _suffix_kind(c) and constants[c] == {"markup"}), key=lambda c: len(getattr(km, c)))
         self.assertTrue(css and html and script and mark and len(getters) >= 2, (css, html, script, mark, getters))
-        head = '''
+        head = '''MOD = km._feed_page()
 class T(unittest.TestCase):
     def setUp(self):
         self.html = km._landing()
@@ -924,6 +1045,11 @@ class T(unittest.TestCase):
         with urllib.request.urlopen("http://127.0.0.1:%d/healthz?token=x" % self.port, timeout=5) as r3:
             health = r3.read().decode()
         self.assertIn("f9", health)
+        self.assertIn("m1", MOD)
+        alias = page
+        self.assertIn("m2", alias)
+        al2 = self.html
+        self.assertIn("m3", al2)
 '''
         loop = "        for pg in (%s):\n" % ", ".join("km.%s()" % g for g in getters)
         tail = '''            self.assertIn("a1", pg, "one row per text")
@@ -963,7 +1089,8 @@ def test_module_level():
                     (31, "d", "_feed_page", "find"), (31, "c", "_feed_page", "rindex"), (31, "b", "_feed_page", "rfind"),
                     (34, "y\tz", "_feed_page", "in"), (35, "tq", "_feed_page", "in"),
                     (38, "f1", "_sw_js", "in"), (40, "f2", "_chat_page", "in"), (42, "f3", "_landing", "in"),   # the fetched forms (round 8)
-                    (51, "f7", "_chat_page", "in")]   # a formatted url with the token, bound by the with-item's `as` (the fixer pass of round 8)
+                    (51, "f7", "_chat_page", "in"),   # a formatted url with the token, bound by the with-item's `as` (the fixer pass of round 8)
+                    (58, "m1", "_feed_page", "in"), (60, "m2", "_feed_page", "in"), (62, "m3", "_landing", "in")]   # a module-level binding and two aliases (round 9's fixer pass)
         expected += [(L + 1, "a1", g, "in") for g in getters] + [(L + 2, "a2", g, "index") for g in getters]
         expected += [(L + 5, "a4", "_feed_page", "index"), (L + 5, "a5", "_feed_page", "index"), (L + 6, "a6", "_feed_page", "index"), (L + 6, "a7", "_feed_page", "index"),
                      (L + 7, "a8", css, "in"), (L + 8, "a9", html, "in"), (L + 10, "b1", script, "in"), (L + 11, "b2", mark, "in"), (L + 12, "b4b5", "_feed_page", "in"),
@@ -988,7 +1115,8 @@ def test_module_level():
                           (18, "s", "_landing", "in"), (19, "t", "_feed_page", "in"), (23, "m", "_LANDING_MOBILE_JS", "in"), (25, "l", "_LANDING_MOBILE_JS", "in"),
                           (26, "k", "_feed_page", "in"), (26, "j", "_LANDING_MOBILE_JS", "in"), (29, "g", "_feed_page", "index"), (29, "f", "_feed_page", "index"),
                           (30, "e", "_LANDING_MOBILE_JS", "count"), (31, "d", "_feed_page", "find"), (31, "c", "_feed_page", "rindex"), (31, "b", "_feed_page", "rfind"),
-                          (38, "f1", "_sw_js", "in"), (40, "f2", "_chat_page", "in"), (42, "f3", "_landing", "in"), (51, "f7", "_chat_page", "in")]
+                          (38, "f1", "_sw_js", "in"), (40, "f2", "_chat_page", "in"), (42, "f3", "_landing", "in"), (51, "f7", "_chat_page", "in"),
+                          (58, "m1", "_feed_page", "in"), (60, "m2", "_feed_page", "in"), (62, "m3", "_landing", "in")]
         expected_sites += [(L + 1, "a1", g, "in") for g in getters] + [(L + 2, "a2", g, "index") for g in getters]
         expected_sites += [(L + 7, "a8", css, "in"), (L + 8, "a9", html, "in"), (L + 10, "b1", script, "in"), (L + 11, "b2", mark, "in"), (L + 12, "b4b5", "_feed_page", "in"),
                            (L + 19, "x1", "_landing", "in"), (L + 19, "x2", "_landing", "in"), (L + 20, "x3", "_landing", "in")]
@@ -1005,12 +1133,20 @@ def test_module_level():
         # READER_FORMS and pinned below), and each form has a status: the parser road (`parser`); a stated read that is not a read of
         # markup by another road (`assert`: a literal membership the pins census judges or a whole-text compare; `position` with a
         # literal needle: a pins-census row, an order or count over text the census judges against every comment span, not an
-        # element's extent or attributes; `span-slice`: parser-derived offsets; `conversion` and `value-use`: the text handed whole,
-        # not read here; `compare`); a raw read of markup (`regex`, `slice`, `method`, `position-unpinned`, `membership-unpinned`):
-        # a road beside the parser, which a module that has adopted the parser road (it imports served_css) may not keep, and
-        # which a module that has not is reported with (the sweep left, a figure, not a red here); a read over a text that is
-        # JS or CSS source and not markup (a script or style constant, a script getter) is `source`: the element layer has no
-        # element to offer for it, and its literal pins are the pins census's. A form the walk cannot name reds everywhere.
+        # element's extent or attributes; `view-pin`: a literal membership or position pin over the parser's comment-blanked VIEW of
+        # the text, served_css.code, markup, js_code or css_code, the round-6 re-point form, not comment-satisfiable by construction;
+        # `span-slice`: parser-derived offsets; `conversion` and `value-use`: the text handed whole to a callable of the stated
+        # allowlist, not read here; `compare`); a raw read of markup (`regex`, `slice`, `method`, `position-unpinned`,
+        # `membership-unpinned`, the last two also a literal pin over a COPY of the text, a str-method result, a slice or a line of
+        # it, which the pins census does not judge): a road beside the parser, which a module that has adopted the parser road (it
+        # IMPORTS served_css, _imports_parser) may not keep, and which a module that has not is reported with (the sweep left, a
+        # figure, not a red here); a read over a text that is JS or CSS source and not markup (a script or style constant, a script
+        # getter) is `source`: the element layer has no element to offer for it, and its literal pins are the pins census's. A form
+        # the walk cannot name reds everywhere, and so does `unclassified`, the text handed whole to a callable outside the
+        # allowlist (the fixer pass of round 9: an unknown callee had defaulted to value-use, so a parser of its own, an imported
+        # helper or a compiled pattern from another module read the page unseen; and a read over a view, a copy, an alias or a
+        # module-level binding of the text had produced no row at all: the round-6 order pins over served_css.code were outside the
+        # population the record called every read).
         getters, constants, routes = page_getters(), served_constants(), route_getters()
         kinds = {g: frozenset([getter_kind(g)]) for g in getters}
         kinds.update(constants)
@@ -1019,8 +1155,7 @@ def test_module_level():
             fname = os.path.basename(path)
             if os.path.realpath(path) == os.path.realpath(__file__):
                 continue
-            with open(path, encoding="utf-8") as f:
-                road[fname] = "served_css" in f.read()
+            road[fname] = _imports_parser(path)
             rows += [(fname, line, form, text, source) for line, form, text, source in readers_of(path, getters, constants, routes)]
             pins |= {(fname, line, text) for line, lit, text, form, readable in rows_of(path, getters, constants, routes) if form in _POSITION}
         self.assertGreater(len(rows), 1000, "the population read: %d rows" % len(rows))
@@ -1029,7 +1164,7 @@ def test_module_level():
         def status(fname, line, form, text, source):
             if form == "position" and (fname, line, text) not in pins:
                 form = "position-unpinned"   # a position pin the pins census does not see (inside a followed helper): raw
-            if form in ("parser", "assert", "position", "span-slice", "conversion", "value-use", "compare"):
+            if form in ("parser", "assert", "position", "view-pin", "span-slice", "conversion", "value-use", "compare"):
                 return form
             if form == "unclassified":
                 return "unclassified"
@@ -1037,7 +1172,10 @@ def test_module_level():
         by = {}
         for r in rows:
             by.setdefault(status(*r), []).append(r)
-        self.assertEqual(by.get("unclassified", []), [], "a read of a served text the walk cannot classify")
+        self.assertEqual(by.get("unclassified", []), [], "a read of a served text the walk cannot classify (a callee outside the stated allowlist):\n"
+                         + "\n".join("%s:%d %s %s: %s" % r for r in by.get("unclassified", [])))
+        self.assertTrue(by.get("view-pin"), "literal pins over the parser's comment-blanked view (the round-6 re-point form) are rows")
+        self.assertTrue(sum(road.values()) >= 15 and all(road[f] for f in ("test_kernel_mobile.py", "test_shell_viewport_fit.py", "test_spend_detail.py")), road)
         raw_on_road = [r for r in by.get("raw", []) if road[r[0]]]
         self.assertEqual(raw_on_road, [], "a module on the parser road reads the page by another road; route it through served_css or state it:\n"
                          + "\n".join("%s:%d %s %s: %s" % (f, l, form, t, src) for f, l, form, t, src in raw_on_road))
@@ -1093,17 +1231,28 @@ def test_module_level():
         # assert, a literal position pin and one with a Name needle, a non-literal membership, a regex through re and through a
         # compiled pattern, a slice by index and a slice by parser-derived spans, a str method, a conversion, a value-use (json.dumps)
         # and a helper followed one level (its membership a row at its own line), a whole-text compare, and a read over a script
-        # constant (its form is the read's; the census test gives it the `source` status by the text's kind)
+        # constant (its form is the read's; the census test gives it the `source` status by the text's kind). The fixer pass of round
+        # 9 adds the gaps it found: a VIEW bound to a Name and inline (a position pin and a membership over it: view-pin; a regex
+        # over it: regex), a COPY by a str method, a slice, a line of splitlines and a for over the pieces (a literal pin over one:
+        # position-unpinned or membership-unpinned; the method itself a row), a module-level binding and an alias (a pins-census
+        # row: position), a bare assert's literal membership (assert), another string's method taking the text (value-use), a
+        # method of the class followed one level, and three callees outside the allowlist (unclassified: an imported compiled
+        # pattern, an imported helper, a parser of its own), so the catch-all is met too
         getters, constants, routes = page_getters(), served_constants(), route_getters()
         src = '''
 import re
+import served_css
 from served_css import code
+from other import PAT2, parse_it
 PAT = re.compile("x")
+HTML = km._landing()
 def _has(self, lit, body):
     self.assertIn(lit, body)
 def _win(page):
     return page[page.index("<a>"):page.index("</a>")]
 class T(unittest.TestCase):
+    def _lines(self, js):
+        return js.splitlines()
     def test_a(self):
         page = km._landing()
         served_css.rules(page)
@@ -1126,6 +1275,26 @@ class T(unittest.TestCase):
         page == "q"
         re.search("v", km._LANDING_MOBILE_JS)
         f.write(page)
+        c = served_css.code(page)
+        c.index("u")
+        self.assertIn("t", served_css.markup(page))
+        re.findall("s", c)
+        s = page.lower()
+        s.index("r")
+        assert "q2" in s
+        lines = page.splitlines()
+        lines[0].index("p")
+        for line in page.splitlines():
+            line.index("o")
+        HTML.index("n")
+        assert "m" in page
+        other.replace("__X__", page)
+        alias = page
+        alias.index("l")
+        self._lines(page)
+        PAT2.search(page)
+        parse_it(page)
+        etree.fromstring(page)
 '''
         with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
             f.write(src)
@@ -1134,16 +1303,34 @@ class T(unittest.TestCase):
         finally:
             os.unlink(f.name)
         self.assertEqual([(line, form, text) for line, form, text, _ in rows],
-                         [(6, "assert", "_landing"), (8, "position", "_landing"), (8, "position", "_landing"), (8, "slice", "_landing"),
-                          (12, "parser", "_landing"), (13, "parser", "_landing"), (14, "assert", "_landing"), (15, "position", "_landing"),
-                          (17, "position-unpinned", "_landing"), (18, "membership-unpinned", "_landing"), (19, "regex", "_landing"), (20, "regex", "_landing"),
-                          (21, "slice", "_landing"), (22, "parser", "_landing"), (23, "span-slice", "_landing"), (24, "method", "_landing"), (25, "conversion", "_landing"),
-                          (26, "value-use", "_landing"), (27, "value-use", "_landing"), (28, "value-use", "_landing"), (29, "compare", "_landing"),
-                          (30, "regex", "_LANDING_MOBILE_JS"), (31, "value-use", "_landing")])
-        self.assertEqual([r[3] for r in rows if r[1] == "method"], ["split: page.split(\"<\")"])
-        self.assertTrue([r for r in rows if r[1] == "value-use" and r[3].startswith("helper _has")] and [r for r in rows if r[1] == "value-use" and r[3].startswith("helper _win")])
+                         [(9, "assert", "_landing"), (11, "position", "_landing"), (11, "position", "_landing"), (11, "slice", "_landing"), (14, "method", "_landing"),
+                          (17, "parser", "_landing"), (18, "parser", "_landing"), (19, "assert", "_landing"), (20, "position", "_landing"),
+                          (22, "position-unpinned", "_landing"), (23, "membership-unpinned", "_landing"), (24, "regex", "_landing"), (25, "regex", "_landing"),
+                          (26, "slice", "_landing"), (27, "parser", "_landing"), (28, "span-slice", "_landing"), (29, "method", "_landing"), (30, "conversion", "_landing"),
+                          (31, "value-use", "_landing"), (32, "value-use", "_landing"), (33, "value-use", "_landing"), (34, "compare", "_landing"),
+                          (35, "regex", "_LANDING_MOBILE_JS"), (36, "value-use", "_landing"),
+                          (37, "parser", "_landing"), (38, "view-pin", "_landing"), (39, "parser", "_landing"), (39, "view-pin", "_landing"), (40, "regex", "_landing"),
+                          (41, "method", "_landing"), (42, "position-unpinned", "_landing"), (43, "membership-unpinned", "_landing"),
+                          (44, "method", "_landing"), (45, "position-unpinned", "_landing"), (45, "slice", "_landing"), (46, "method", "_landing"), (47, "position-unpinned", "_landing"),
+                          (48, "position", "_landing"), (49, "assert", "_landing"), (50, "value-use", "_landing"), (52, "position", "_landing"), (53, "value-use", "_landing"),
+                          (54, "unclassified", "_landing"), (55, "unclassified", "_landing"), (56, "unclassified", "_landing")])
+        self.assertEqual([r[3] for r in rows if r[1] == "method"], ["splitlines: js.splitlines()", "split: page.split(\"<\")", "lower: page.lower()",
+                                                                    "splitlines: page.splitlines()", "splitlines: page.splitlines()"])
+        self.assertTrue([r for r in rows if r[1] == "value-use" and r[3].startswith("helper _has")] and [r for r in rows if r[1] == "value-use" and r[3].startswith("helper _win")]
+                        and [r for r in rows if r[1] == "value-use" and r[3].startswith("helper _lines")], "helpers and a method of the class followed one level")
+        self.assertEqual([r[3].split(":")[0] for r in rows if r[1] == "unclassified"], ["search", "parse_it", "fromstring"])
+        self.assertEqual([r[3].split(":")[0] for r in rows if r[1] == "value-use" and not r[3].startswith("helper")], ["dumps", "write", "replace"])
         self.assertEqual(sorted({r[1] for r in rows} - set(READER_FORMS)), [])
-        self.assertEqual(sorted(set(READER_FORMS) - {r[1] for r in rows}), ["unclassified"], "every named form but the catch-all is met by the synthetic module")
+        self.assertEqual(sorted(set(READER_FORMS) - {r[1] for r in rows}), [], "every named form, the catch-all included, is met by the synthetic module")
+        # the parser road's membership test is the IMPORT (round 9's fixer pass: it had been the string anywhere in the file): a module
+        # naming served_css in a comment alone is not on the road, one importing it under either form is
+        for text, on_road in (("# served_css is not imported here\n", False), ("import served_css\n", True), ("from served_css import code\n", True), ("import os\n", False)):
+            with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
+                f.write(text)
+            try:
+                self.assertEqual(_imports_parser(f.name), on_road, text)
+            finally:
+                os.unlink(f.name)
 
     def test_the_route_walk_reads_equality_and_membership(self):
         # round 8 (2026-09-20): the (route, getter) pairs are derived from the handler by a shape-sensitive walk, never restated. A
