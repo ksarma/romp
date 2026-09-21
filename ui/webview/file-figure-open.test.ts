@@ -102,7 +102,7 @@ test("the click: a listener of its own on the body beside the links'; the contro
  *  (tools/markdown-viewer-plan-linknav.test.mjs NUMBER_WORDS) is an .mjs module a .ts test does not import. */
 const NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"];
 
-test("SOURCE-TEXT pins of the two text-read control lists (anchor-map.ts's CONTROL_CLASSES entry and isFigureCompanion in holdsContent; reader-place.ts's CONTROL_CLASSES entry, its docstring's count word derived from the list): each entry is defensive, inert while the control has no text node of its own, so no glyph-only scene reds on it; the executed subjects are isFigureCompanion (anchor-map.test.ts: the control at the box's top level is no block's node) and the entries under a labelled control (anchor-map.test.ts's caption case, md-config-figure-gate-place.test.ts's labelled scene), while md-config's glyph-only scenes hold the pairing and the place beside the control; the structural read's exclusion of both companions (reader-place.ts blockElementsOf, at the root's level and a wrapper's) is pinned by execution alone, in file-view-place-blocks.test.ts, since a source pin on where it stands satisfied nothing a driven case does not", () => {
+test("SOURCE-TEXT pins of the two text-read control lists (anchor-map.ts's CONTROL_CLASSES entry and isFigureCompanion in holdsContent; reader-place.ts's CONTROL_CLASSES entry, its docstring's count word and the partition's two addends derived from the lists): each entry is defensive, inert while the control has no text node of its own, so no glyph-only scene reds on it; the executed subjects are isFigureCompanion (anchor-map.test.ts: the control at the box's top level is no block's node) and the entries under a labelled control (anchor-map.test.ts's caption case, md-config-figure-gate-place.test.ts's labelled scene), while md-config's glyph-only scenes hold the pairing and the place beside the control; the structural read's exclusion of both companions (reader-place.ts blockElementsOf, at the root's level and a wrapper's) is pinned by execution alone, in file-view-place-blocks.test.ts, since a source pin on where it stands satisfied nothing a driven case does not", () => {
   const classes = between(ANCHOR, "const CONTROL_CLASSES = [", "];");
   assert.match(classes, /"fv-figerr",[^\n]*\n\s*"fv-figopen",/, "anchor-map.ts: after the label, the last entry");
   assert.match(ANCHOR, /const isFigureCompanion = \(n: DNode\): boolean => hasClass\(n, "fv-figerr"\) \|\| hasClass\(n, "fv-figopen"\);/, "the two companions of a figure");
@@ -118,6 +118,19 @@ test("SOURCE-TEXT pins of the two text-read control lists (anchor-map.ts's CONTR
   const word = NUMBER_WORDS[entries.length];
   assert.ok(word, "a number word for " + entries.length + " entries");
   assert.match(READER, new RegExp("These " + word + " are in anchor-map\\.ts's CONTROL_CLASSES"), "the count in the comment follows the list: " + entries.length + " entries, so \"These " + word + "\"");
+  // the partition's two addends, derived as the sum is (the file review's round 10, regression-2: "the other five" and "The last
+  // two" had stayed typed beside the derived "These seven", the shape round 8's ruling named, a derived sum over typed addends):
+  // the companions' list is read off its own line, its length is one addend, the difference the other, and each is held to
+  // the docstring's word, the comment's wraps joined first so a wrap between "The last" and its word is read through
+  const companionList = /^const FIGURE_COMPANION_CLASSES = \[([^\]]*)\];$/m.exec(READER);
+  assert.ok(companionList, "reader-place.ts declares FIGURE_COMPANION_CLASSES on one line at column 0");
+  const companions: string[] = companionList![1].match(/"[a-z-]+"/g) || [];
+  assert.ok(companions.length > 0 && companions.every((c) => entries.includes(c)), "the companions are a subset of CONTROL_CLASSES, so the docstring's partition is of that list: " + companions.join(", "));
+  const last = NUMBER_WORDS[companions.length], other = NUMBER_WORDS[entries.length - companions.length];
+  assert.ok(last && other, "number words for " + companions.length + " companions and " + (entries.length - companions.length) + " others");
+  const doc = READER.replace(/\n \*  /g, " ");
+  assert.match(doc, new RegExp("The last " + last + ", a figure's companions, stand at a level BESIDE a block's element"), "the companions' addend follows FIGURE_COMPANION_CLASSES: " + companions.length + ", so \"The last " + last + "\"");
+  assert.match(doc, new RegExp("the other " + other + " are a block's element"), "the rest's addend is the difference: " + (entries.length - companions.length) + ", so \"the other " + other + "\"");
   assert.ok(entries.includes('"fv-figopen"'), "the control's class is in reader-place.ts's text-read list, beside the label's (the list's contents; the labelled scene in md-config-figure-gate-place.test.ts is what executes it)");
 });
 
