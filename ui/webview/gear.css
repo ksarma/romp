@@ -83,9 +83,13 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
    selected by its child's hover, the pair below), while the plain stand-down that hides the box's description under a
    hovered row survives, so on such an engine a hover on the box shows the ROW's description in the box's place and the box's
    own text (what fast mode is and costs, why a greyed box is greyed, a refusal) is reachable by no road there, the pointer's
-   included. gear-sub-focus-browser.test.ts parses the sheet and holds both (no rule mixes a :has() arm with a :has()-free
-   arm; every :has() rule's loss is classified, the box's road by name) and drives the model, the sheet with every :has() rule
-   removed, in a browser, reading a row and the box. Not :is() to make the list forgiving: two rules say it. The same
+   included: the box's keyboard road is the pointer road's focus twin, and a twin whose pointer rule the engine drops stands
+   for nothing (the maintainer's round 6, regression-4: the test's model had counted it a keyboard twin standing). So the
+   model shows such an engine losing the keyboard road on every row (three keyboard twins), seven stand-downs (an extra
+   tooltip each) and the box's two roads. gear-sub-focus-browser.test.ts parses the sheet and holds both (no rule mixes a
+   :has() arm with a :has()-free arm; every :has() rule's loss is classified, the box's two roads by name, a keyboard twin
+   only when its pointer twin is :has()-free) and drives the model, the sheet with every :has() rule removed, in a browser,
+   reading a row and the box. Not :is() to make the list forgiving: two rules say it. The same
    unforgiving list applies to :focus-visible (Chromium before 86, Firefox before 85, WebKit before Safari 15.4, the WebKit
    generation that also lacks :has()): this sheet's :focus-visible arms all ride :has() rules but one, the grip's
    `.rs-grip:hover, .rs-grip:focus-visible` rule below, the sheet's ONE selector list mixing a plain arm with a modern one; on

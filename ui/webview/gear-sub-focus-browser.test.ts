@@ -140,23 +140,49 @@ test("the sheet shows a description while its row holds a KEYBOARD focus: the sh
     "the sheet's one selector list mixing a plain arm with a modern pseudo-class arm is the grip's (upstream's rule; its loss on an engine without :focus-visible is stated in the sheet); a second such list reds here until its degradation is stated");
   assert.match(GEAR_CSS, /the grip's\s+`\.rs-grip:hover, \.rs-grip:focus-visible` rule below, the sheet's ONE selector list mixing a plain arm with a modern one/, "the sheet states the exception by name");
   // and every :has() rule's loss on such an engine is named by its shape, never by a list: a STAND-DOWN (display: none: its loss
-  // costs an extra tooltip, never a missing one), a KEYBOARD TWIN (every arm keyed on :focus-visible and a :focus-visible-free rule
-  // with the same declarations standing: its loss costs the keyboard road alone), or the BOX's own pointer road (a :hover inside
-  // the :has() argument selecting the box's description: the row is selected by its child's hover for the (1,5,0) that beats the
+  // costs an extra tooltip, never a missing one); a KEYBOARD TWIN (every arm keyed on :focus-visible, and the rule's POINTER TWIN
+  // standing: the same arms with the focus keyed as a hover, the same declarations, and itself free of :has(), since a twin the
+  // engine drops too stands for nothing: its loss costs the keyboard road alone); the BOX's own pointer road (a :hover inside the
+  // :has() argument selecting the box's description: the row is selected by its child's hover for the (1,5,0) that beats the
   // row-hover stand-down, the one pointer road this sheet cannot write without :has(), from before this branch; its loss shows
-  // the row's description over a hovered box instead of the box's); any other :has() rule is unclassified and reds here until
-  // its degradation is stated
+  // the row's description over a hovered box instead of the box's); or the BOX's own keyboard road (the pointer road's focus twin,
+  // whose pointer twin is that :has() rule and goes with it: its loss, with the pointer road's, leaves the box's own text reachable
+  // by no road). Any other :has() rule is unclassified and reds here until its degradation is stated. The twin is keyed on the
+  // rule it twins, arms and block, never on the block alone (the maintainer's round 6, regression-4 and ui-2: a block-only
+  // search found three unrelated `svg { display: block; }` rules for the box's focus twin and called its loss the keyboard
+  // road's, while the twin it rests on is a :has() rule the same engine drops, so the model understated what such an engine loses).
   const hasRules = GEAR_RULES.filter((r) => /:has\(/.test(r.selector));
-  const classOf = (r: CssRule) => /(^|; )display: none;?$/.test(r.block) || /(^|; )display: none;/.test(r.block) ? "stand-down"
-    : r.arms.every((a) => /:focus-visible/.test(a)) && GEAR_RULES.some((o) => !/:focus-visible/.test(o.selector) && o.block === r.block) ? "keyboard twin"
-    : r.arms.every((a) => /:has\([^)]*:hover\)/.test(a) && / \.rs-fastin \.rs-sub$/.test(a)) ? "the box's own pointer road"
-    : "unclassified";
+  // the pointer form of a keyboard arm: `X:has(:focus-visible)` is `X:hover`; `X:has(Y :focus-visible)` (a focus inside Y) is
+  // `X:has(Y:hover)`, a :has() rule itself
+  const pointerForm = (a: string) => a.replace(/:has\(([^()]*?)\s*:focus-visible\)/g, (_m, inner: string) => inner.trim() ? ":has(" + inner.trim() + ":hover)" : ":hover");
+  const pointerTwinOf = (r: CssRule) => GEAR_RULES.find((o) => o !== r && o.block === r.block && o.arms.length === r.arms.length && o.arms.every((oa, i) => oa === pointerForm(r.arms[i])));
+  const boxDescription = (a: string) => / \.rs-fastin \.rs-sub$/.test(a);
+  const classOf = (r: CssRule): string => {
+    if (/(^|; )display: none;?$/.test(r.block) || /(^|; )display: none;/.test(r.block)) return "stand-down";
+    if (r.arms.every((a) => /:focus-visible/.test(a))) {
+      const twin = pointerTwinOf(r);
+      if (twin && !/:has\(/.test(twin.selector)) return "keyboard twin";
+      if (twin && r.arms.every(boxDescription)) return "the box's own keyboard road";
+      return "unclassified";
+    }
+    if (r.arms.every((a) => /:has\([^)]*:hover\)/.test(a) && boxDescription(a))) return "the box's own pointer road";
+    return "unclassified";
+  };
   const classes = hasRules.map((r) => ({ selector: r.selector, degradation: classOf(r) }));
   assert.ok(hasRules.length >= 12, "the rig: the sheet's :has() rules, twelve when this was written (" + hasRules.length + ")");
-  assert.deepEqual(classes.filter((c) => c.degradation === "unclassified"), [], "every :has() rule's loss on an engine without :has() is a stand-down, a keyboard twin or the box's own pointer road");
+  assert.deepEqual(classes.filter((c) => c.degradation === "unclassified"), [], "every :has() rule's loss on an engine without :has() is a stand-down, a keyboard twin (its pointer twin standing, :has()-free), the box's own pointer road or the box's own keyboard road");
   assert.ok(classes.some((c) => c.degradation === "keyboard twin") && classes.some((c) => c.degradation === "stand-down"), "the rig: both named shapes occur");
-  t.diagnostic("the :has() rules by degradation: " + JSON.stringify(classes.reduce((m: Record<string, number>, c) => { m[c.degradation] = (m[c.degradation] || 0) + 1; return m; }, {})));
   const showTwin = "#rsettings .rs-row:has(.rs-fastin :focus-visible) .rs-fastin .rs-sub { display: block; }";
+  const boxPointer = "#rsettings .rs-row:has(.rs-fastin:hover) .rs-fastin .rs-sub";
+  assert.equal(classes.find((c) => c.selector === boxPointer)?.degradation, "the box's own pointer road", "the box's show rule is the box's own pointer road");
+  assert.equal(classes.find((c) => c.selector === showTwin.replace(/ \{.*$/, ""))?.degradation, "the box's own keyboard road",
+    "the box's focus twin is the box's own keyboard road, not a keyboard twin: its pointer twin is the :has() rule above, dropped by the same engine, so both roads to the box's text go together (the maintainer's round 6, regression-4)");
+  assert.equal(pointerTwinOf(GEAR_RULES.find((r) => r.selector === showTwin.replace(/ \{.*$/, ""))!)?.selector, boxPointer, "the rig: the focus twin's pointer twin is the box's show rule, by arms and block");
+  for (const c of classes.filter((x) => x.degradation === "keyboard twin")) {
+    const twin = pointerTwinOf(GEAR_RULES.find((r) => r.selector === c.selector)!)!;
+    assert.ok(twin && !/:has\(|:focus-visible/.test(twin.selector), "a keyboard twin's pointer twin stands in the model, free of :has() and of :focus-visible: " + c.selector + " twins " + twin?.selector);
+  }
+  t.diagnostic("the :has() rules by degradation: " + JSON.stringify(classes.reduce((m: Record<string, number>, c) => { m[c.degradation] = (m[c.degradation] || 0) + 1; return m; }, {})));
   const markStand = "#rsettings .rs-row:has(.rs-mixed:hover) .rs-fastin .rs-sub { display: none; }";
   assert.ok(GEAR_CSS.includes(markStand),
     "one tooltip on the keyboard too: the box's description stands down while a mark in its row is hovered, or a focus in the box and a pointer on the row's mark stack it with the mark's title");
