@@ -21,7 +21,7 @@
 // no detail and a fourteen-line answer, and at 900.
 //
 // The browser legs (Chromium, Firefox, and WebKit when the box has them) load the kernel's /waiting page as it is
-// served — styles.css, then the pane's sheet — with the worktree's waiting.ts bundle in a 390px-wide frame, the
+// served (styles.css, then the pane's sheet) with the worktree's waiting.ts bundle in a 390px-wide frame, the
 // phone's width, and drive the frame's HEIGHT as the keyboard would: inside the shell the pane iframe is sized to the
 // visible height (--app-h), so the frame's innerHeight IS the keyboard's signal and a shorter frame is the keyboard up.
 // Three todos are fed: one with a short ask and a forty-line detail (the configuration that pins the detail's cap), one
@@ -306,10 +306,10 @@ function assertFits(m: Sheet, what: string) {
 
 for (const name of ["chromium", "firefox", "webkit"]) {
   test(`in ${name}: with the keyboard up the answer box holds three rows, the detail scrolls within its cap, and Cancel and Send stay in the frame; the fold follows the frame's height; a tap where Send is painted sends`, async (t) => {
-    if (!pw) { t.skip("playwright is not installed under vscode-extension — the browser legs need it; the served leg tests/test_reply_sheet_served.py runs this composition in CI's browser step"); return; }
+    if (!pw) { t.skip("playwright is not installed under vscode-extension, and the browser legs need it; the served leg tests/test_reply_sheet_served.py runs this composition in CI's browser step"); return; }
     let browser: any;
     try { browser = await pw[name].launch(); }
-    catch (e) { t.skip("no playwright " + name + " on this box — this leg needs it; the served leg tests/test_reply_sheet_served.py is the guard where this skips (CI's browser step runs it in chromium): " + String((e as Error).message).split("\n")[0]); return; }
+    catch (e) { t.skip("no playwright " + name + " on this box, and this leg needs it; the served leg tests/test_reply_sheet_served.py is the guard where this skips (CI's browser step runs it in chromium): " + String((e as Error).message).split("\n")[0]); return; }
     try {
       const { page, W, setHeight, settle, measure, probeShort, openReply, cancelReply, fill, tapSend, dragTaller, waitTight, errors } = await boot(browser);
       await openReply("t1");
@@ -319,7 +319,7 @@ for (const name of ["chromium", "firefox", "webkit"]) {
       assert.equal(m.frameH, KEYBOARD_UP, "the frame is the phone's visible height with the keyboard up");
       assert.equal(m.tight, false, "508px is not a short window: no fold, so what follows is the squeeze fix on its own");
       assert.ok(m.floorH > 30, `the probe laid out three rows (${m.floorH}px; line-height ${m.lineHeight})`);
-      assert.ok(m.inputH >= m.floorH - 1, `the answer box holds three rows: ${m.inputH}px against the ${m.floorH}px three-row probe (on the base tree it was a 14px sliver in Chromium and WebKit, the textarea taking the whole deficit; Firefox kept the rows there and the detail's overflow-y assertion below is the base tree's red in all three engines — the textarea took the whole deficit)`);
+      assert.ok(m.inputH >= m.floorH - 1, `the answer box holds three rows: ${m.inputH}px against the ${m.floorH}px three-row probe (on the base tree it was a 14px sliver in Chromium and WebKit, the textarea taking the whole deficit; Firefox kept the rows there and the detail's overflow-y assertion below is the base tree's red in all three engines)`);
       assert.equal(m.detailOverflowY, "auto", "the detail scrolls within itself (the base tree computes visible in Chromium, Firefox and WebKit alike: the red common to the three engines, reached first in Firefox, where the textarea kept its rows and the buttons were clipped instead)");
       assert.ok(m.detailScrolls, "the overflow declaration is LIVE: the detail's scrollTop moves (with overflow visible it stays at 0, and the detail's text paints over the answer box); the rule pin reads the sheet with comments stripped, this reads the engine");
       assert.ok(m.detailScrollH > m.detailClientH + 8, `the forty-line detail overflows its cap and is a scroll away, not clipped (${m.detailClientH} of ${m.detailScrollH}px)`);
@@ -398,7 +398,7 @@ for (const name of ["chromium", "firefox", "webkit"]) {
       await waitTight(false);
       await cancelReply();
       // ── THE COMPOSITION, at 390 by 508 with the keyboard up: the ask wrapped to several lines, both chips, the forty-line
-      // detail, the answer grown to the cap — the state in which the round-1 tree laid Send out below the box's clip
+      // detail, the answer grown to the cap: the state in which the round-1 tree laid Send out below the box's clip
       await openReply("t2");
       m = (await measure())!;
       assert.deepEqual(m.kinds, ["confirm-title", "confirm-detail", "wt-file", "wt-link", "ut-detail", "ut-reply-input", "confirm-actions"], "the pane's sheet with both chips as flex children of the box (waiting.ts showReply; the chat's builder puts them inside the quoted line)");

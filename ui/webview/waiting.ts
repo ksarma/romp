@@ -322,8 +322,8 @@ function showReply(sid: string, todoId: string, todoText: string, todoDetail = "
   send.addEventListener("click", go);
   input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); go(); } });
   input.addEventListener("input", () => input.classList.remove("bad"));
-  // the box grows with the answer (render.ts growComposer's auto-then-measure idiom): height auto measures the floor —
-  // three rows (rows=3; styles.css min-height) — then the content's scroll height plus the border a border-box height
+  // the box grows with the answer (render.ts growComposer's auto-then-measure idiom): height auto measures the floor,
+  // three rows (rows=3; styles.css min-height), then the content's scroll height plus the border a border-box height
   // carries. The cap is the ROOM the box has left, read from the box itself, never a share of the window (the
   // maintainer's round 1 ruling: a window-share cap laid Cancel and Send out below the box's clip at 390x508 with the
   // keyboard up, and a tap there fell on the backdrop): the wanted height is written, the box's overflow past its own

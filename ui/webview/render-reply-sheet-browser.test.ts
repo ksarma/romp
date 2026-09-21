@@ -281,10 +281,10 @@ function assertFits(m: Sheet, what: string) {
 
 for (const name of ["chromium", "firefox", "webkit"]) {
   test(`in ${name}: the chat's Reply sheet holds three rows with the keyboard up, the detail scrolls within its cap, the buttons stay in view; the fold follows the window's height; a tap where Send is painted sends`, async (t) => {
-    if (!pw) { t.skip("playwright is not installed under vscode-extension — the browser legs need it; the served leg tests/test_reply_sheet_served.py runs this composition in CI's browser step"); return; }
+    if (!pw) { t.skip("playwright is not installed under vscode-extension, and the browser legs need it; the served leg tests/test_reply_sheet_served.py runs this composition in CI's browser step"); return; }
     let browser: any;
     try { browser = await pw[name].launch(); }
-    catch (e) { t.skip("no playwright " + name + " on this box — this leg needs it; the served leg tests/test_reply_sheet_served.py is the guard where this skips (CI's browser step runs it in chromium): " + String((e as Error).message).split("\n")[0]); return; }
+    catch (e) { t.skip("no playwright " + name + " on this box, and this leg needs it; the served leg tests/test_reply_sheet_served.py is the guard where this skips (CI's browser step runs it in chromium): " + String((e as Error).message).split("\n")[0]); return; }
     try {
       const { page, setHeight, settle, measure, probeShort, openReply, cancelReply, fill, tapSend, dragTaller, waitTight, errors } = await boot(browser);
       await openReply(TODOS[0]);
@@ -372,7 +372,7 @@ for (const name of ["chromium", "firefox", "webkit"]) {
       await waitTight(false);
       await cancelReply();
       // ── THE COMPOSITION, at 390 by 508 with the keyboard up: the ask wrapped to several lines with both chips inside it, the
-      // forty-line detail, the answer grown to the cap — the state in which the round-1 tree laid Send out below the box's clip
+      // forty-line detail, the answer grown to the cap: the state in which the round-1 tree laid Send out below the box's clip
       await openReply(TODOS[1]);
       m = (await measure())!;
       assert.deepEqual(m.kinds, ["confirm-title", "confirm-detail", "ut-detail", "ut-reply-input", "confirm-actions"], "the chat's sheet: the chips are inside the quoted line, not children of the box (render.ts showUserTodoReply; the pane's builder appends them as flex children)");
