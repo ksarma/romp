@@ -18502,7 +18502,7 @@ class SdkBackend:
         _tp = Path(transcript_path(reg.get("cwd") or "", _ls)) if _ls else None
         _has_history = bool(_tp) and _tp.exists() and _tp.stat().st_size > 0
         note = {"renameNote": new_name} if _has_history else {}
-        fields = {"name": new_name, **note}          # the keys this write moves: what the rollback below puts back
+        fields = {"name": new_name, **note}          # the keys this write moves: what a failed publish puts back, per field
         self._update_reg(sid, name=new_name, **note)   # locked RMW — see set_effort's race note
         # keep the shared names/ identity file in sync (preserve colours). Durable registry FIRST; a
         # names write that RAISES (ENOSPC, EROFS, a permission fault) used to leave the registry holding
@@ -18511,9 +18511,15 @@ class SdkBackend:
         # removes its own temp, so a raise leaves names/<sid> exactly as it was, by construction — there
         # is NO restore write here (an in-place rewrite would be the one non-atomic write on this path,
         # an mtime bump for no content change, and under the very ENOSPC it would exist for it truncates
-        # a good file). Only the registry can disagree: re-run it with the old fields (dropping a
-        # renameNote this rename stamped) and re-raise so the caller stays loud. The in-memory name
-        # moves last, so a failure never touches it — the shape CodexBackend.rename has.
+        # a good file). Only the registry can disagree: put the old fields back (dropping a renameNote
+        # this rename stamped) and re-raise so the caller stays loud. The in-memory name moves last, so
+        # a failure never touches it, the shape CodexBackend.rename has. The put-back is PER FIELD and
+        # conditional (_revert_rename_record; fork PR #813, round 8 of the review, 2026-09-21): a field
+        # goes back only while it still holds what this rename wrote, so a rename another caller landed
+        # inside this one's window, and was told applied, stands on the record instead of being written
+        # over by the door-time read; the compensation logs what stood. Before round 8 the put-back was
+        # a blanket rewrite of the door-time values, the lost write with a false success the ruling on
+        # round 6 named, here on a name rather than a billing pick.
         try:
             parts = (Path(self.state_dir) / "names" / sid).read_text().rstrip("\n").split("\t")
         except (OSError, UnicodeDecodeError):
@@ -18523,14 +18529,22 @@ class SdkBackend:
             write_name(self.state_dir, sid, new_name, parts[1], parts[2], parts[3])
         except BaseException:
             try:
-                self._update_reg_dropping(sid, drop=[k for k in fields if k not in reg],
-                                          **{k: reg[k] for k in fields if k in reg})
+                stands = self._revert_rename_record(sid, new_name, reg, fields)
             except Exception as e2:
                 # a silent pass here hides the ONE moment the code knows the stores disagree: the
                 # registry alone holds the NEW name and will apply the rename the caller was told
                 # failed at the next restart
                 self._log("sdk rename compensation failed for %s: the registry alone holds the new "
                           "name and will apply it at the next restart (%s)" % (sid, e2))
+            else:
+                if stands is None:
+                    self._log("sdk rename compensation for %s: the record would not read, so nothing was put back; "
+                              "if it holds the new name (%s) it will apply it at the next restart" % (sid, new_name))
+                elif stands:
+                    self._log("sdk rename compensation for %s: the record no longer holds the failed pick (%s); "
+                              "another writer's %s stands and is not put back"
+                              % (sid, new_name, ", ".join("%s %r" % kv for kv in sorted(stands.items()))),
+                              problem=False)
             raise
         s = self.sessions.get(sid)
         if s:
@@ -18936,6 +18950,53 @@ class SdkBackend:
             reg["mode"] = prev
             write_reg(self.state_dir, sid, reg)
             return True
+
+    def _revert_rename_record(self, sid: str, new_name: str, before: dict, fields: dict):
+        """rename()'s compensation after its names write raised (fork PR #813, round 8 of the review, 2026-09-21;
+        _revert_mode_record's shape, on the two keys rename writes): each key in `fields` (`name`, and `renameNote`
+        when the rename stamped one, both written as `new_name`) goes back to what the door-time read `before` held,
+        or is dropped when `before` had no such key, ONLY while the record still holds `new_name` there, compared and
+        written under _reg_lock in one read-modify-write. A key holding anything else was written by another caller
+        after this rename's record write landed (a later rename's name and note, the settle's None over a spent note)
+        and stands. Returns the standing keys with their values ({} when every key went back), or None when the record
+        did not read (unreadable: the writers' one rule, a stderr line and no write, rather than gutting the row) or is
+        absent (a compensation never builds a record; before round 8 the blanket put-back wrote a row of the door-time
+        name over an absent one). Until round 8 the put-back was unconditional, so a rename another caller landed
+        inside this one's window, whose caller was told it applied, was written over on the record alone, the one
+        store a restart applies, while the names file and the live object kept it.
+
+        WRITERS of the record's `name`: spawn and fork (the row's creation), resume (its full rewrite keeps the name it
+        read), promote_thread (the breakout's name, under _reg_lock), rename (the step's RMW) and this compensation.
+        WRITERS of `renameNote`: rename (stamped beside the name when prior turns exist), _deliver_rename_ping (spent
+        to None once the ping is provably queued) and this compensation (dropped while it still holds the failed
+        pick). READERS of `name`: SdkSession.__init__ (the live name at connect), resume (`kept`), fork_children,
+        sid_for_name, _finish_move's names rewrite, and the log and row texts of _boot_reconcile, _settled_now,
+        _queue_behind_stand_down, move, read_picks, follow_default_auth, set_auth_guarded, ensure_scheduled and
+        deliver_lost_wakeups; kernel.py reads the row for its listings. READER of `renameNote`: _deliver_rename_ping.
+        The names file (write_name: spawn, fork, promote_thread, rename, _finish_move) and the live `name`
+        (SdkSession.__init__, promote_thread, rename) are the other two stores; rename writes them after the record
+        and a raise from write_name leaves both as they were, so neither is a restore site."""
+        with self._reg_lock:
+            reg = read_reg(self.state_dir, sid)
+            if reg is None:
+                if _reg_absent_for_write(_reg_path(self.state_dir, sid)):
+                    return None
+                sys.stderr.write("update_reg: %s unreadable; skipping a %s write rather than gutting the reg\n"
+                                 % (sid[:8], "/".join(sorted(fields))))
+                return None
+            stands, moved = {}, False
+            for k in fields:
+                if reg.get(k) != new_name:
+                    stands[k] = reg.get(k)
+                    continue
+                if k in before:
+                    reg[k] = before[k]
+                else:
+                    reg.pop(k, None)
+                moved = True
+            if moved:
+                write_reg(self.state_dir, sid, reg)
+            return stands
 
     # ---- the shared defaults' `model`, ruled per WRITE ----
     # sdk-defaults.json seeds every NEW session, and every session's set_model writes it BEFORE the CLI has

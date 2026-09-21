@@ -13,6 +13,7 @@ test_injected_voice.py. Deterministic: reg-level + a stub session, no real claud
 import contextlib
 import os
 import tempfile
+import threading
 import unittest
 from datetime import datetime, timezone
 from romp_load import load_source
@@ -247,6 +248,83 @@ class NamesWriteFailure(unittest.TestCase):
         self.assertEqual(sb.read_reg(self.root, SID).get("name"), "tests")
         self.assertEqual(self.nf.read_text(), "tests\t%s\t#112233\t#ffffff\n" % self.cwd, "colours preserved")
         self.assertEqual(self.live.name, "tests")
+
+
+class ConcurrentRenameInsideAFailingWindow(unittest.TestCase):
+    """rename()'s compensation is a RESTORE SITE (fork PR #813, round 8 of the review, 2026-09-21): after the
+    names write raises it puts the record's `name`, and the `renameNote` it stamped, back from the read it
+    took at its door. The round-7 rule for every such site holds here too: a field goes back ONLY while it
+    still holds what the step put there; a value another writer put there meanwhile stands. Driven with a
+    real second thread: rename A (alpha) has written its record and is inside write_name when rename B (beta)
+    lands whole (record, names file, live name) and answers True; A's names write then faults. Before this
+    round A's compensation wrote the door-time name (web) over B's and dropped B's note, so B's caller was
+    told applied while the record, which a restart applies, said web and the names file and the live object
+    said beta: a write lost under a false success. Now the record keeps beta and B's note, A's caller still
+    hears the raise, and the log names the newer name that stands. The control (nobody wrote meanwhile: the
+    record goes back and the note is dropped) is NamesWriteFailure above. Synthetic: placeholder sid, demo
+    names, a one-line transcript."""
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.root = Path(self.td.name)
+        self.logs = []
+        self.be = sb.SdkBackend(self.td.name, "/bin/true", lambda *a, **k: None, log=self.logs.append)
+        self.cwd = str(self.root / "proj")
+        Path(self.cwd).mkdir()
+        (self.root / "names").mkdir()
+        self.nf = self.root / "names" / SID
+        self.nf.write_text("web\t%s\t#112233\t#ffffff\n" % self.cwd)
+        sb.write_reg(self.root, SID, {"sid": SID, "name": "web", "cwd": self.cwd, "lastSid": SID})
+        tp = Path(sb.transcript_path(self.cwd, SID))          # prior turns: both renames stamp a note
+        tp.parent.mkdir(parents=True, exist_ok=True)
+        tp.write_text('{"type": "user", "uuid": "u1"}\n')
+        self.live = NamesWriteFailure._Live()
+        self.be.sessions[SID] = self.live
+
+    def tearDown(self):
+        self.td.cleanup()
+
+    def test_a_rename_landing_inside_a_failing_renames_window_stands_on_the_record(self):
+        # before this round: ('web', None, 'beta', 'beta') for the record's name and note, the names
+        # file and the live name, with no log line naming the loss
+        real = sb.write_name
+        a_in_names, b_done = threading.Event(), threading.Event()
+
+        def write_name(state_dir, sid, name, *a, **k):
+            if name == "alpha":                                # rename A's write: hold until B has landed, then fault
+                a_in_names.set()
+                b_done.wait(10)
+                raise OSError(28, "No space left on device")
+            return real(state_dir, sid, name, *a, **k)        # rename B's write lands for real
+
+        outcome = {}
+
+        def first():
+            try:
+                outcome["a"] = self.be.rename(SID, "alpha")
+            except BaseException as e:                         # noqa: BLE001 (the drive records whatever escapes)
+                outcome["a"] = (type(e).__name__, getattr(e, "errno", None))
+
+        t = threading.Thread(target=first, name="rename-a")
+        with mock.patch.object(sb, "write_name", write_name):
+            t.start()
+            self.assertTrue(a_in_names.wait(10), "rename A reached its names write with its record written")
+            self.assertEqual(sb.read_reg(self.root, SID).get("name"), "alpha", "the step's record write is on disk")
+            answered = self.be.rename(SID, "beta")            # the concurrent rename, told applied
+            b_done.set()
+            t.join(10)
+        self.assertFalse(t.is_alive(), "rename A returned")
+        reg = sb.read_reg(self.root, SID)
+        self.assertEqual((answered, outcome.get("a")), (True, ("OSError", 28)),
+                         "B was told applied; A still hears its raise")
+        self.assertEqual((reg.get("name"), reg.get("renameNote"), self.nf.read_text().split("\t")[0], self.live.name),
+                         ("beta", "beta", "beta", "beta"),
+                         "the record keeps the name and note B wrote: A's compensation put back nothing B holds")
+        stands = [m for m in self.logs if "rename" in m and "stands" in m]
+        self.assertEqual(len(stands), 1, "one log line names what stands: %r" % (self.logs,))
+        self.assertIn("beta", stands[0])
+        self.assertIn("alpha", stands[0])
+        self.assertNotIn("compensation failed", stands[0], "a stand-down is not a failed compensation")
 
 
 if __name__ == "__main__":
