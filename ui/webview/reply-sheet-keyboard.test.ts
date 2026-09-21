@@ -20,19 +20,21 @@
 // container, whose automatic flex minimum is zero; #pinned-notes is the precedent) down to a floor of two of its lines
 // (the picker's list keeps one row under the fold for the same reason: a region that gives way never gives way to
 // nothing); a short window pins the sheet to the top under the picker's 12px frame; and the box scrolls at every
-// height, the backstop for a window the floors alone overflow. In each builder one closure, kbFit, toggles kb-tight on THIS window's own resize (the shell sizes the
-// pane iframe to the visible height, so the keyboard opening or closing IS a resize here; render.ts's picker keys on
-// the same event, at the same 480px), and close() removes the listener, which also removes itself when the overlay
-// was replaced by a second Reply; and a grow handler lets the box follow the answer, as the composer's growComposer
-// does, never under the three-row floor.
+// height, the backstop for a window the floors alone overflow. In each builder one closure, kbFit, toggles kb-tight
+// on THIS window's own resize (the shell sizes the pane iframe to the visible height, so the keyboard opening or
+// closing IS a resize here; render.ts's picker keys on the same event, at the same 480px) and re-runs grow, and
+// close() removes the listener, which also removes itself when the overlay was replaced by a second Reply; grow lets
+// the box follow the answer up to the room the box has left, never under the three-row floor, and stands down for a
+// height the person dragged (file-comments.ts autosize's guard).
 //
 // Two kinds of leg, no browser (the browser legs are waiting-reply-sheet-browser.test.ts and
 // render-reply-sheet-browser.test.ts). The executed legs slice the fold's lines and the grow handler out of EACH
 // builder's source (the waiting-reply-focus.test.ts idiom) and run them against stand-ins: the overlay is the shared
 // shim's node (ui/test-dom-shim.ts nodeFactory; its isConnected is its tree's own answer), the window a
-// listener-recording EventTarget stand-in with an innerHeight and no DOM edge. The source legs pin the three rules'
-// declared properties and that no rule of the fix adds a font-size (ui/CLAUDE.md), and that the picker's own fold
-// strings stand as picker-keyboard.test.ts pins them. Synthetic only: no fixture text.
+// listener-recording EventTarget stand-in with an innerHeight and no DOM edge, the answer box and the sheet's box
+// shim nodes whose geometry is the test's input. The source legs pin the four rules' declared properties (read with
+// the sheet's comments stripped) and that no rule of the fix adds a font-size (ui/CLAUDE.md), and that the picker's
+// own fold strings stand as picker-keyboard.test.ts pins them. Synthetic only: no fixture text.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -330,6 +332,7 @@ test("the detail is the part that gives way: it shrinks (a scroll container's fl
   assert.doesNotMatch(r, /dvh/, "no viewport arm presented as the keyboard's mechanism: the keyboard case is the shrink and the floor, measured by execution");
   assert.match(r, /overflow-y: auto;/, "the rest of the detail is a scroll away, never clipped; live by execution in the browser legs (the detail's scrollTop moves) and here read with comments stripped, so commenting it out reds both");
   assert.match(r, /overscroll-behavior: contain;/, "a swipe past its end does not scroll the box or the page under it (#pinned-notes's rule)");
+  assert.match(r, /overflow-y: auto; overflow-x: hidden; overflow-wrap: anywhere;/, "no sideways scroller: a scroll container's overflow-x computes to auto, and an unbreakable token made the detail scroll sideways (measured in WebKit at 390x508); overflow-wrap: anywhere breaks the token as .pn-detail and .ut-reply-quote do, overflow-x: hidden is #pinned-notes's companion (the browser legs pin the widest line of such a token inside the detail's own right edge, in three engines)");
   assert.match(rule("#pinned-notes"), /max-height: min\(11em, 30vh\); overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain;/, "the precedent this follows");
   assert.match(rule(".ut-detail.open"), /^\.ut-detail\.open \{ display: block; \}$/, "the base rule stays: display block, no flex or cap of its own — the fix is scoped to this dialog");
 });

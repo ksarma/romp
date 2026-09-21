@@ -401,7 +401,7 @@ function rowEl(w: Waiting, now: number): HTMLElement {
   const reply = el("button", "ut-btn ut-reply");
   reply.dataset.act = "utreply"; reply.dataset.tid = w.todo.id; reply.dataset.sid = w.sid;
   (reply as any)._uttext = w.todo.text;          // the modal quotes the need it answers…
-  (reply as any)._utdetail = w.todo.detail || "";   // …and its detail, so the whole need is in view
+  (reply as any)._utdetail = w.todo.detail || "";   // …and its detail, quoted beneath the line, capped and scrolling within itself
   (reply as any)._utfile = w.todo.file || "";       // …and the file it names, as the row's chip
   (reply as any)._utlink = w.todo.link || "";       // …and the address it carries, as the row's other chip
   reply.textContent = "Reply";

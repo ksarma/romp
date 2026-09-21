@@ -2975,7 +2975,11 @@ a.ut-link:hover { filter: brightness(1.12); text-decoration: none; }
    at rest on any window; it is NOT what governs with the keyboard up, where the flex shrink takes the detail down
    toward its floor (a 35dvh arm once stood beside it as the keyboard-up cap and never bound: at 508px it resolved to
    177.8px against 12em's 134px at the default font, and under about 383px, where it would be the smaller, the shrink
-   has already taken the detail below both; the maintainer's round 1 ruling). And a short window (the
+   has already taken the detail below both; the maintainer's round 1 ruling). A scroll container's overflow-x
+   computes to auto once overflow-y is set, so an unbreakable token (a long identifier, a bare path with no link) made
+   the detail a sideways scroller; overflow-wrap: anywhere breaks the token as .pn-detail and .ut-reply-quote already
+   do, and overflow-x: hidden is #pinned-notes's companion declaration, inert once every token breaks and kept so a
+   token the wrap cannot break is clipped rather than scrolled sideways. And a short window (the
    keyboard up; both builders toggle kb-tight on this window's own resize, as the picker does) pins the sheet to the
    top under the picker's 12px frame so the buttons sit above the keyboard. The picker's kb-tight rules on
    .picker-overlay reach this overlay through the class it shares (the dvh cap, overflow-y auto on the box).
@@ -2987,7 +2991,7 @@ a.ut-link:hover { filter: brightness(1.12); text-decoration: none; }
    the grow handlers in both builders cap the answer at the room the box has left (read from the box, never from the
    window), so the scroll is the backstop for the state the floors alone overflow, never the everyday path. */
 #ut-reply-prompt .ut-reply-input { flex: 0 0 auto; min-height: calc(3lh + 16px); }
-#ut-reply-prompt .ut-detail.open { flex: 1 1 auto; min-height: 32px; min-height: 2lh; max-height: 12em; overflow-y: auto; overscroll-behavior: contain; }
+#ut-reply-prompt .ut-detail.open { flex: 1 1 auto; min-height: 32px; min-height: 2lh; max-height: 12em; overflow-y: auto; overflow-x: hidden; overflow-wrap: anywhere; overscroll-behavior: contain; }
 #ut-reply-prompt.kb-tight { align-items: flex-start; padding: 12px 16px; }
 #ut-reply-prompt .picker-box { overflow-y: auto; }
 

@@ -4544,7 +4544,7 @@ function renderTodo(ev: Extract<ChatEvent, { kind: "todo" }>): HTMLElement {
       const reply = el("button", "ut-btn ut-reply");
       reply.dataset.act = "utreply"; reply.dataset.tid = t.id; reply.dataset.sid = renderingSid || "";
       (reply as any)._uttext = t.text;   // rides the node like qx's _qmd: the modal quotes the need it answers
-      (reply as any)._utdetail = t.detail || "";   // …and its detail, so the whole need is in view while answering
+      (reply as any)._utdetail = t.detail || "";   // …and its detail, quoted beneath the line, capped and scrolling within itself
       (reply as any)._utfile = t.file || "";   // …and the file it names, as the row's chip
       (reply as any)._utlink = t.link || "";   // …and the address it carries, as the row's other chip
       reply.textContent = "Reply";
@@ -10833,9 +10833,10 @@ function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDe
   linkifyPrRefs(d, prRepoFor(sid));
   if (todoFile) d.append(" ", todoFileChip(todoFile, sid));   // the file the todo names, as on the row: the body delegate opens it from here too
   if (todoLink) d.append(" ", todoLinkChip(todoLink));   // the address it carries, as on the row: the document's anchor delegate opens it
-  // the ask's detail, when it has one, quoted beneath the line in the row fold's own dress — the
-  // whole need stays in view while the answer is typed, without opening the fold first; a bare
-  // ask adds nothing here
+  // the ask's detail, when it has one, quoted beneath the line in the row fold's own dress, without opening
+  // the fold first: capped (12em) and scrolling within itself, never under two of its lines, so the answer
+  // box keeps its rows and the buttons stay in reach with the keyboard up (styles.css #ut-reply-prompt
+  // .ut-detail.open); a bare ask adds nothing here
   const dd = todoDetail.trim() ? el("div", "ut-detail open") : null;
   if (dd) { dd.textContent = todoDetail; linkTodoDetailPaths(dd, sid); linkifyPrRefs(dd, prRepoFor(sid)); }
   const input = document.createElement("textarea");

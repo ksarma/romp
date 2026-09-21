@@ -21,9 +21,11 @@
 //
 // The browser legs (Chromium, Firefox, and WebKit when the box has them) open the page at the phone's width and drive
 // the viewport's HEIGHT as the keyboard would (inside the shell the chat iframe is sized to the visible height, so its
-// innerHeight is the keyboard's signal). Where they skip, the served leg tests/test_reply_sheet_served.py runs the same
-// composition against the served chat page in CI's browser step. Synthetic fixtures only: a placeholder sid, an
-// invented path.
+// innerHeight is the keyboard's signal). On the base tree the first red differs by engine (Chromium and WebKit: the
+// answer box a 14px sliver; Firefox: the rows kept and the buttons clipped), and the detail's computed overflow-y,
+// visible there, is the red common to all three. Where they skip, the served leg tests/test_reply_sheet_served.py runs
+// the same composition against the served chat page in CI's browser step. Synthetic fixtures only: a placeholder sid,
+// an invented path.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -72,7 +74,8 @@ function sheetBundle(): string {
 // address, its detail's first line carrying an address; a todo with no detail
 const SID = "11111111-2222-3333-4444-555555555555";
 const TEXT = "Which layout should the quarterly report use?";
-const DETAIL = Array.from({ length: 40 }, (_, i) => `Option ${i + 1}: the summary section leads and the tables follow, with the notes folded under each table.`).join("\n");
+const DETAIL = Array.from({ length: 40 }, (_, i) => `Option ${i + 1}: the summary section leads and the tables follow, with the notes folded under each table.`).join("\n")
+  + "\nreport-layout-" + "x".repeat(90);   // an unbreakable token wider than the sheet: without overflow-wrap it made the detail a sideways scroller
 const LONG_TEXT = "Which layout should the quarterly report use for the regional tables, the summary section and the appendix, given that the notes under each table now run to several lines and the reviewers asked for the totals to lead every page rather than close it?";
 const FILE = "/srv/notes-api/docs/quarterly-report-layout.md";
 const LINK = "https://github.com/example-org/notes-api/pull/398";
@@ -102,6 +105,7 @@ type Sheet = {
   frameH: number; tight: boolean; alignItems: string; paddingTop: string;
   inputH: number; floorH: number; lineHeight: string; inputStyleH: string;
   detailScrollH: number; detailClientH: number; detailOverflowY: string; detailLineH: number; detailFontPx: number; detailScrolls: boolean;
+  detailTextRight: number; detailRight: number; detailOverflowX: string;
   actionsBottom: number; boxTop: number; boxBottom: number; boxScrollH: number; boxClientH: number; boxOverflowY: string;
   sendRect: Rect; cancelRect: Rect; hitAtSend: string; hitAtCancel: string; kinds: string[]; quoteChips: string[];
 };
@@ -163,6 +167,11 @@ async function boot(browser: any) {
       inputH: input.clientHeight, floorH, lineHeight: cs(input).lineHeight, inputStyleH: input.style.height,
       detailScrollH: detail ? detail.scrollHeight : 0, detailClientH: detail ? detail.clientHeight : 0, detailOverflowY: detail ? cs(detail).overflowY : "",
       detailLineH: detail ? parseFloat(cs(detail).lineHeight) : 0, detailFontPx: detail ? parseFloat(cs(detail).fontSize) : 0,
+      // the widest line of the detail's text against the detail's own right edge: an unbreakable token that does not wrap
+      // runs far past it (a sideways scroller); scrollWidth is not the measure, since a classic vertical scrollbar (WebKit
+      // headless) sits inside the padding box and reports as sideways overflow whatever the text does
+      detailTextRight: detail ? ((): number => { const rg = document.createRange(); rg.selectNodeContents(detail); return Array.from(rg.getClientRects()).reduce((w, x) => Math.max(w, x.right), 0); })() : 0,
+      detailRight: detail ? detail.getBoundingClientRect().right : 0, detailOverflowX: detail ? cs(detail).overflowX : "",
       // the overflow declaration, live: a scroll container's scrollTop moves; with overflow visible it stays at 0
       detailScrolls: detail ? ((): boolean => { detail.scrollTop = 30; const moved = detail.scrollTop > 0; detail.scrollTop = 0; return moved; })() : false,
       actionsBottom: actions.getBoundingClientRect().bottom, boxTop: box.getBoundingClientRect().top, boxBottom: box.getBoundingClientRect().bottom,
@@ -286,10 +295,12 @@ for (const name of ["chromium", "firefox", "webkit"]) {
       assert.equal(m.tight, false, "508px is not a short window: no fold, so what follows is the squeeze fix on its own");
       assert.deepEqual(m.kinds, ["confirm-title", "confirm-detail", "ut-detail", "ut-reply-input", "confirm-actions"], "the builder's tree: title, the quoted line, the detail, the answer box, the buttons");
       assert.ok(m.floorH > 30, `the probe laid out three rows (${m.floorH}px; line-height ${m.lineHeight})`);
-      assert.ok(m.inputH >= m.floorH - 1, `the answer box holds three rows: ${m.inputH}px against the ${m.floorH}px three-row probe (on the base tree it was a sliver)`);
-      assert.equal(m.detailOverflowY, "auto", "the detail scrolls within itself");
+      assert.ok(m.inputH >= m.floorH - 1, `the answer box holds three rows: ${m.inputH}px against the ${m.floorH}px three-row probe (on the base tree it was a 14px sliver in Chromium and WebKit, the textarea taking the whole deficit; Firefox kept the rows there and the detail's overflow-y assertion below is the base tree's red in all three engines)`);
+      assert.equal(m.detailOverflowY, "auto", "the detail scrolls within itself (the base tree computes visible in Chromium, Firefox and WebKit alike: the red common to the three engines, reached first in Firefox, where the textarea kept its rows and the buttons were clipped instead)");
       assert.ok(m.detailScrolls, "the overflow declaration is LIVE: the detail's scrollTop moves (with overflow visible it stays at 0, and the detail's text paints over the answer box); the rule pin reads the sheet with comments stripped, this reads the engine");
       assert.ok(m.detailScrollH > m.detailClientH + 8, `the forty-line detail overflows its cap and is a scroll away (${m.detailClientH} of ${m.detailScrollH}px)`);
+      assert.ok(m.detailTextRight <= m.detailRight + 0.5, `no sideways scroller: the unbreakable token in the detail wraps inside the box (overflow-wrap: anywhere; the widest line ends at ${m.detailTextRight.toFixed(1)}, the detail at ${m.detailRight.toFixed(1)}px); without the wrap the token ran hundreds of pixels past it and a scroll container's overflow-x, computing to auto, scrolled sideways`);
+      assert.equal(m.detailOverflowX, "hidden", "overflow-x: hidden, #pinned-notes's companion declaration, so a token the wrap cannot break is clipped, never a sideways scroll");
       assert.ok(m.detailClientH > 20, `the detail still shows some lines (${m.detailClientH}px)`);
       assert.ok(m.actionsBottom > 0 && m.actionsBottom <= m.frameH + 0.5, `Cancel and Send are inside the viewport (bottom edge ${m.actionsBottom.toFixed(1)} of ${m.frameH}px)`);
       assert.ok(m.boxBottom <= m.frameH + 0.5, `the whole box is inside the viewport (${m.boxBottom.toFixed(1)} of ${m.frameH}px)`);
