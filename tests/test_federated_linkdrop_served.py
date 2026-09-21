@@ -707,11 +707,11 @@ class _LinkDrop(unittest.TestCase):
     # the table below states each span's bounds as of the drive it names and nothing before or after it; drives after an
     # earlier paste of this comment moved bounds that paste carried (the repo's history holds those pastes), so a later
     # drive may move one again and the caps are floors far above every bound, not fits.
-    # The spans by mark pair over every unmutated recorded drive as of the drive at `r8/lab-ci6.log` (2026-09-20; 71
-    # drives, 44 new-bundle and 27 old-hub): closed, drop -> closed, 0.008 to 0.267 s; rowDown, closed -> rowDown,
+    # The spans by mark pair over every unmutated recorded drive as of the drive at `r10/lab-ci9.log` (2026-09-21; 80
+    # drives, 50 new-bundle and 30 old-hub): closed, drop -> closed, 0.008 to 0.267 s; rowDown, closed -> rowDown,
     # 4.31 to 14.5 s; rowUp, resume -> rowUp, 0.762 to 13.2 s; redialed, rowUp -> redialed, 0.786 to 4.6 s; localUp,
     # restarted -> localUp, 0.013 to 0.302 s; redialed2, localUp -> redialed2, 0.011 to 1.04 s; held, A1 -> drop, 9 to
-    # 35 ms over the 71 drives that carry the held wait.
+    # 36 ms over the 80 drives that carry the held wait.
     # rowDown is the supervisor's silent-poll window, longest under the old bundle's churn; rowUp a quarter-second pass inside
     # the supervisor's fast window and its steady 15 s pass outside it; localUp the reopen alone (the restart itself, SIGTERM and
     # the 3 s held down, is the control door's and not this wait's). held, A1 -> drop (every page holding one open relay socket
@@ -740,9 +740,9 @@ class _LinkDrop(unittest.TestCase):
     # drive whose link-up waits all resolved and showed, the reads inside the room, and reds only for a window shorter than that
     # (tests/test_federated_linkdrop_driver_bound.py pins the relation). The old bundle's frozen feed page shows a change only at
     # the next churned socket's whole frame, and a change whose three notices straddle a churn waits for the frame after that, so
-    # the slowest delivery recorded is the old bundle's, 19,013 ms over the 27 unmutated old-hub records as of the
-    # drive at `r8/lab-ci6.log` (2026-09-20), the maximum of the phases' seen.waitedMs; the new bundle's is 1,367 ms
-    # over the 44 new-bundle records as of that drive (one derivation with the waits paragraph above,
+    # the slowest delivery recorded is the old bundle's, 19,013 ms over the 30 unmutated old-hub records as of the
+    # drive at `r10/lab-ci9.log` (2026-09-21), the maximum of the phases' seen.waitedMs; the new bundle's is 1,367 ms
+    # over the 50 new-bundle records as of that drive (one derivation with the waits paragraph above,
     # `population_drive.py`, which prints this sentence whole and checks it here).
     # A dwell of 30 s, sized at twice the 12.9 s
     # then recorded, redded on the very next drive (19.0 s): a threshold fitted to the data at hand is no threshold, which is
@@ -1204,12 +1204,12 @@ class _LinkDrop(unittest.TestCase):
         distinguishing datum an empty window needs (the maintainer's round 2's ruling on correctness-1: the allowance is keyed on this EVENT,
         read from the hook's frames, never a dropped requirement). Pass 8 added the gap (the maintainer's round 3, extra6-1) because the frame alone was no key:
         on the old bundle a routine redial produces a whole frame after the phase's notices were already delivered as
-        patches, so the frame-only excuse was available in 49 of the 81 phase windows (A, B, C) over the 27 unmutated
-        old-hub records in the builder's cache as of the drive at `r8/lab-ci6.log` (2026-09-20), load-bearing (a window with
-        no patch) in 5 of the 49, and a planted gating miss (a phase's patches and rows removed from the record) stayed green
-        at both floors; keyed on the gap it is available in 5 of those 81 and load-bearing in 5, the phase-A windows
-        of 5 of those records, and the planted miss reds. Over all 81 windows the planted
-        miss (the phase's feed patches and rows removed, every frame kept) reds the floor in 76 and stays excused in 5: a
+        patches, so the frame-only excuse was available in 55 of the 90 phase windows (A, B, C) over the 30 unmutated
+        old-hub records in the builder's cache as of the drive at `r10/lab-ci9.log` (2026-09-21), load-bearing (a
+        window with no patch) in 6 of the 55, and a planted gating miss (a phase's patches and rows removed from the record) stayed green
+        at both floors; keyed on the gap it is available in 6 of those 90 and load-bearing in 6, the phase-A windows
+        of 6 of those records, and the planted miss reds. Over all 90 windows the planted miss (the phase's feed
+        patches and rows removed, every frame kept) reds the floor in 84 and stays excused in 6: a
         real gating miss during a churn is indistinguishable from the churn in the record, the excuse's remaining hole and
         the price of excusing the churn at all. Every figure in this paragraph, the population, its drive and the counts, is
         ONE derivation (the maintainer's round 4: a hand-kept pair of a count and a drive drifted apart twice, one drive behind each time):
@@ -1475,9 +1475,9 @@ class _LinkDrop(unittest.TestCase):
         the ATTACH, not a set of revs (pass 8): the Outline's feed patch revs
         restart at 1 on every relay socket, so a rev is no identity over a drive, and a set of revs let every row of a
         colliding rev through where the assertions' messages promise one row per attach. The exemption fires on no recorded
-        drive: over the 71 unmutated records of both classes in the builder's cache as of the drive at `r8/lab-ci6.log`
-        (2026-09-20) the down windows hold 0 rows and 0 attaches and the return window holds 0 rows, so 0 rows are exempted
-        at the storm site, 0 at the gate leg's read and 0 in the return window, by the set before pass 8 and by this match
+        drive: over the 80 unmutated records of both classes in the builder's cache as of the drive at
+        `r10/lab-ci9.log` (2026-09-21) the down windows hold 0 rows and 0 attaches and the return window holds 0 rows,
+        so 0 rows are exempted at the storm site, 0 at the gate leg's read and 0 in the return window, by the set before pass 8 and by this match
         after it; the pin over a synthetic record in tests/test_federated_linkdrop_driver_bound.py is where the match is
         exercised. The count and its drive are one derivation, `population_drive.py --check` in the builder's cache outside
         the repo, whose population, dating rule and refusals are stated once in _outline_caught_up_whole's docstring (the maintainer's round 5, extra7-4:
