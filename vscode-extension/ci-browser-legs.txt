@@ -11,4 +11,8 @@
 # the step's measured seconds in its body. A leg the job does not run is listed in ci-browser-legs-excluded.txt
 # with a reason; every browser leg in the tree is in exactly one of the two files, never neither
 # (tools/ci-browser-legs.test.mjs and scripts/ci-browser-legs.sh hold that; a line whose source moved or was
-# deleted turns both red).
+# deleted turns both red). A leg listed here launches through real-viewer-leg.ts's inBrowser or
+# browser-legs-require.ts's launchBrowser: those are the roads the switch reaches, and a leg with a launch and a
+# skip of its own would skip under the step as it does without it, so both checkers refuse its line until it
+# launches through one of them. A leg already in ci-browser-legs-excluded.txt is moved, not copied: its line there
+# goes when its line here arrives.

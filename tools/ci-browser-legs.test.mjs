@@ -12,10 +12,17 @@
 //     browser leg, every exclusions line carries a reason, and a reason that names Firefox or WebKit is true of the
 //     source (and a source that launches one of them says so), so a leg added later takes a verdict: roster or exclusions,
 //     never neither;
+//   - a rostered leg reads the switch: its source launches through real-viewer-leg.ts's inBrowser or
+//     browser-legs-require.ts's launchBrowser (or skipOrFail) on a code line. The switch turns a launch skip into a
+//     failure only on those roads; a leg with a launch and a t.skip of its own skips under the switch as without it, so
+//     rostering it would make the step green with the leg unexecuted. A rostered leg names no engine but Chromium;
 //   - the script the step calls (vscode-extension/scripts/ci-browser-legs.sh) derives the same census (`--list-legs`,
 //     run here and compared), and, run on synthetic trees with a stub node on PATH, refuses a stale line, a leg in
-//     neither file, a leg in both, a line without a reason, a duplicate, a line naming no leg and a missing bundle,
-//     naming the line and the remedy, and prints "no legs in the roster" on an empty roster without starting node.
+//     neither file, a leg in both, a line without a reason, a duplicate, a line naming no leg, a missing bundle, a
+//     malformed line (shown with its whitespace visible, the leg it names attributed to it), a leg that never reads the
+//     switch and a leg naming Firefox, naming the line and the remedy; prints "no legs in the roster" on an empty roster
+//     without starting node; and after node --test turns a skipped test into a red naming the test and the rostered
+//     sources that hold its name, and passes node's own failure status through.
 // THE CENSUS RULE (the script states the same one): a browser leg is a test module esbuild's test build bundles (a
 // .test.ts directly in vscode-extension/src, ui or ui/webview; esbuild.js testBuild reads those three directories) that,
 // on a line that is not a // comment, requires or imports the "playwright" package (`("playwright")` or `from
@@ -137,6 +144,12 @@ function reachesBrowser(src) {
   const c = code(src);
   return /\(\s*"playwright"\s*\)|from\s+"playwright"/.test(c) || (c.includes('"./real-viewer-leg"') && c.includes('inBrowser('));
 }
+/** The module reads the switch: it launches through inBrowser (real-viewer-leg.ts) or launchBrowser / skipOrFail
+ *  (browser-legs-require.ts) on a code line; the script's reaches_switch states the same rule. */
+function reachesSwitch(src) {
+  const c = code(src);
+  return (c.includes('"./real-viewer-leg"') && c.includes('inBrowser(')) || (c.includes('"./browser-legs-require"') && /launchBrowser\(|skipOrFail\(/.test(c));
+}
 /** The engines other than Chromium a leg names outside comments: as the string "firefox"/"webkit" or as pw.firefox / pw.webkit. */
 function otherEngines(src) {
   const c = code(src);
@@ -177,13 +190,16 @@ test('the roster plus the exclusions equals the tree\'s browser legs, each line 
   for (const [file, entries] of [[ROSTER, roster], [EXCLUDED, excluded]]) {
     const seen = new Map();
     for (const e of entries) {
-      assert.match(e.bundle, WELL_FORMED, where(file, e) + ': a line is a bundle path, out-tests/<dir>/<name>.test.js');
+      assert.match(e.bundle, WELL_FORMED, file + ' line ' + e.n + ' (' + JSON.stringify(e.bundle) + '): a line is a bundle path, out-tests/<dir>/<name>.test.js (a trailing space, tab or carriage return counts; the quoting shows it)');
       assert.ok(!seen.has(e.bundle), where(file, e) + ' duplicates line ' + seen.get(e.bundle) + ': remove one');
       seen.set(e.bundle, e.n);
       const src = sourceOf(e.bundle);
       assert.ok(fs.existsSync(src), where(file, e) + ' names ' + path.relative(REPO, src) + ', which is not in the tree (the source moved or was deleted): fix the line');
       assert.ok(reachesBrowser(read(src)), where(file, e) + ' names no browser leg (' + path.relative(REPO, src) + ' reaches no browser by the census rule): remove the line');
     }
+  }
+  for (const e of roster) {
+    assert.ok(reachesSwitch(read(sourceOf(e.bundle))), where(ROSTER, e) + ' launches on its own and never reads ' + SWITCH + ', so under the step its launch skip stays a skip: launch through inBrowser (ui/webview/real-viewer-leg.ts) or launchBrowser (ui/webview/browser-legs-require.ts) before rostering it');
   }
   for (const e of excluded) {
     assert.ok(e.reason !== null && e.reason.trim() !== '', where(EXCLUDED, e) + ' has no reason: write the bundle path, a tab, and why the gating job does not run it');
@@ -229,49 +245,74 @@ test('the script\'s census (--list-legs) is the same set of legs this module der
   assert.deepEqual(listed, census(), 'the script and this test derive the same browser legs');
   const src = read(SCRIPT);
   assert.ok(src.includes('echo "no legs in the roster"; exit 0'), 'the empty-roster guard is spelled in the script (executed below)');
-  assert.ok(/\| xargs -r node --test$/m.test(src), 'the roster is read into xargs node --test (executed below)');
+  assert.ok(/\| xargs -r node --test /m.test(src), 'the roster is read into xargs node --test (executed below)');
 });
 
-/** A synthetic tree: the script under vscode-extension/scripts, two browser legs and one plain test module under ui/webview,
- *  a bundle for leg a only, and a stub node on PATH that records its arguments. Returns a runner over roster/exclusions text. */
+/** A synthetic tree: the script under vscode-extension/scripts; under ui/webview four browser legs and one plain test module:
+ *  a and b launch through launchBrowser (a has a bundle, b none), p launches through its own playwright copy with a bundle,
+ *  f launches through launchBrowser but names Firefox, with a bundle; and a stub node on PATH that records its arguments,
+ *  writes CBL_STUB_TAP (when set) to the tap reporter's destination and exits CBL_STUB_EXIT (0 unless set). Returns a
+ *  runner over roster/exclusions text; `node` in its result is the argument list without the reporter flags. */
 function syntheticTree(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cbl-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const ext = path.join(root, 'vscode-extension');
   for (const d of ['vscode-extension/scripts', 'vscode-extension/src', 'vscode-extension/out-tests/ui/webview', 'ui/webview', 'bin']) fs.mkdirSync(path.join(root, d), { recursive: true });
   fs.copyFileSync(SCRIPT, path.join(ext, 'scripts', 'ci-browser-legs.sh'));
-  const leg = 'import { createRequire } from "node:module";\nconst pw = createRequire(__filename)("playwright");\n';
-  fs.writeFileSync(path.join(root, 'ui', 'webview', 'a-browser.test.ts'), leg);
-  fs.writeFileSync(path.join(root, 'ui', 'webview', 'b-browser.test.ts'), leg);
-  fs.writeFileSync(path.join(root, 'ui', 'webview', 'plain.test.ts'), '// a comment that names requireCjs("playwright") is not a launch\nconst x = 1;\n');
-  fs.writeFileSync(path.join(ext, 'out-tests', 'ui', 'webview', 'a-browser.test.js'), '');
+  const priv = 'import { createRequire } from "node:module";\nconst pw = createRequire(__filename)("playwright");\n';
+  const shared = priv + 'import { launchBrowser } from "./browser-legs-require";\n';
+  const web = (name, text) => fs.writeFileSync(path.join(root, 'ui', 'webview', name), text);
+  web('a-browser.test.ts', shared + 'test("leg a opens the page", async (t) => { const browser = await launchBrowser(t, pw, "chromium"); });\n');
+  web('b-browser.test.ts', shared + 'test("leg b opens the page", async (t) => { const browser = await launchBrowser(t, pw, "chromium"); });\n');
+  web('p-browser.test.ts', priv + 'test("leg p opens the page", async (t) => { let browser; try { browser = await pw.chromium.launch(); } catch (e) { t.skip("no browser"); return; } });\n');
+  web('f-browser.test.ts', shared + 'test("leg f opens the page", async (t) => { const browser = await launchBrowser(t, pw, "firefox"); });\n');
+  web('plain.test.ts', '// a comment that names requireCjs("playwright") is not a launch\nconst x = 1;\n');
+  for (const b of ['a-browser', 'p-browser', 'f-browser']) fs.writeFileSync(path.join(ext, 'out-tests', 'ui', 'webview', b + '.test.js'), '');
   const log = path.join(root, 'node-args.txt');
-  fs.writeFileSync(path.join(root, 'bin', 'node'), '#!/bin/sh\nprintf \'%s\\n\' "$@" > "' + log + '"\nexit 0\n', { mode: 0o755 });
-  const A = 'out-tests/ui/webview/a-browser.test.js', B = 'out-tests/ui/webview/b-browser.test.js', PLAIN = 'out-tests/ui/webview/plain.test.js';
-  const run = (roster, excluded) => {
+  fs.writeFileSync(path.join(root, 'bin', 'node'), [
+    '#!/bin/sh',
+    'printf \'%s\\n\' "$@" > "' + log + '"',
+    'prev=""',
+    'for a in "$@"; do',
+    '  case "$a" in --test-reporter-destination=*) if [ "$prev" = "--test-reporter=tap" ] && [ -n "${CBL_STUB_TAP:-}" ]; then printf \'%s\\n\' "$CBL_STUB_TAP" > "${a#--test-reporter-destination=}"; fi;; esac',
+    '  prev="$a"',
+    'done',
+    'exit "${CBL_STUB_EXIT:-0}"',
+    '',
+  ].join('\n'), { mode: 0o755 });
+  const A = 'out-tests/ui/webview/a-browser.test.js', B = 'out-tests/ui/webview/b-browser.test.js', P = 'out-tests/ui/webview/p-browser.test.js', F = 'out-tests/ui/webview/f-browser.test.js', PLAIN = 'out-tests/ui/webview/plain.test.js';
+  const run = (roster, excluded, stub = {}) => {
     if (roster === null) fs.rmSync(path.join(ext, ROSTER), { force: true }); else fs.writeFileSync(path.join(ext, ROSTER), roster);
     if (excluded === null) fs.rmSync(path.join(ext, EXCLUDED), { force: true }); else fs.writeFileSync(path.join(ext, EXCLUDED), excluded);
     fs.rmSync(log, { force: true });
-    const r = bash([path.join(ext, 'scripts', 'ci-browser-legs.sh')], { cwd: root, env: { ...process.env, PATH: path.join(root, 'bin') + path.delimiter + process.env.PATH } });
-    return { status: r.status, out: r.stdout, err: r.stderr, node: fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean) : null };
+    const env = { ...process.env, PATH: path.join(root, 'bin') + path.delimiter + process.env.PATH };
+    delete env.CBL_STUB_TAP; delete env.CBL_STUB_EXIT;
+    if (stub.tap !== undefined) env.CBL_STUB_TAP = stub.tap;
+    if (stub.exit !== undefined) env.CBL_STUB_EXIT = String(stub.exit);
+    const r = bash([path.join(ext, 'scripts', 'ci-browser-legs.sh')], { cwd: root, env });
+    const args = fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean) : null;
+    return { status: r.status, out: r.stdout, err: r.stderr, node: args && args.filter((a) => !a.startsWith('--test-reporter')), reporters: args && args.filter((a) => a.startsWith('--test-reporter')) };
   };
-  return { run, A, B, PLAIN };
+  return { run, A, B, P, F, PLAIN };
 }
 
+const EXCLUDE_REST = (...keep) => ['a', 'b', 'p', 'f'].filter((n) => !keep.includes(n)).map((n) => 'out-tests/ui/webview/' + n + '-browser.test.js\treason ' + n + '\n').join('');
+
 test('the script runs the rostered legs through node --test when the roster and the tree agree, and prints "no legs in the roster" and starts no node on an empty roster', (t) => {
-  const { run, A, B } = syntheticTree(t);
-  const ok = run('# header\n\n' + A + '\n', '# header\n' + B + '\ta reason\n');
+  const { run, A } = syntheticTree(t);
+  const ok = run('# header\n\n' + A + '\n', '# header\n' + EXCLUDE_REST('a'));
   assert.equal(ok.status, 0, ok.err);
   assert.deepEqual(ok.node, ['--test', A], 'node --test received the roster\'s one bundle');
+  assert.deepEqual(ok.reporters.filter((a) => !a.startsWith('--test-reporter-destination=')), ['--test-reporter=spec', '--test-reporter=tap'], 'the spec reporter for the log and the tap reporter for the skip check');
   assert.ok(!ok.out.includes('no legs in the roster'));
-  const empty = run('# only a comment\n\n   \n', A + '\treason one\n' + B + '\treason two\n');
+  const empty = run('# only a comment\n\n   \n', EXCLUDE_REST());
   assert.equal(empty.status, 0, empty.err);
   assert.ok(empty.out.includes('no legs in the roster'), 'the guard says so: ' + JSON.stringify(empty.out));
   assert.equal(empty.node, null, 'node was not started: with no file arguments node --test would run its default glob');
 });
 
-test('the script refuses, naming the line and the remedy, on: a missing file, a stale line, a leg in neither file, a leg in both, a line without a reason, a duplicate, a line naming no leg, a missing bundle, a malformed line', (t) => {
-  const { run, A, B, PLAIN } = syntheticTree(t);
+test('the script refuses, naming the line and the remedy, on: a missing file, a stale line, a leg in neither file, a leg in both, a line without a reason, a duplicate, a line naming no leg, a missing bundle, a malformed line, a leg that never reads the switch, a leg naming Firefox', (t) => {
+  const { run, A, B, P, F, PLAIN } = syntheticTree(t);
   const C = 'out-tests/ui/webview/c-browser.test.js';
   const refused = (r, ...needles) => {
     assert.equal(r.status, 1, 'exit 1; stderr: ' + r.err);
@@ -279,18 +320,54 @@ test('the script refuses, naming the line and the remedy, on: a missing file, a 
     assert.equal(r.node, null, 'no leg ran');
     assert.ok(r.err.includes('no leg ran'));
   };
-  const missing = run(null, B + '\treason\n');
+  const rest = EXCLUDE_REST('a', 'b');
+  const missing = run(null, B + '\treason\n' + rest);
   assert.equal(missing.status, 1); assert.ok(missing.err.includes(ROSTER) && missing.err.includes('restore it'), missing.err); assert.equal(missing.node, null);
-  refused(run('# header\n' + A + '\n' + C + '\n', B + '\treason\n'), ROSTER + ' line 3: \'' + C + '\' names ui/webview/c-browser.test.ts, which is not in the tree (the source moved or was deleted): fix the roster line');
-  refused(run(A + '\n', '# nothing excluded\n'), 'browser leg \'' + B + '\' is in neither ' + ROSTER + ' nor ' + EXCLUDED, 'add it to the roster', 'or to the exclusions with a tab and a reason');
-  refused(run(A + '\n', A + '\treason\n' + B + '\treason\n'), EXCLUDED + ' line 1: \'' + A + '\' is also ' + ROSTER + ' line 1: a leg is in one file or the other, keep one');
-  refused(run(A + '\n', B + '\n'), EXCLUDED + ' line 1: \'' + B + '\' has no reason: write the bundle path, a tab, and why the gating job does not run it');
-  refused(run(A + '\n', B + '\t  \n'), EXCLUDED + ' line 1', 'has no reason');
-  refused(run(A + '\n' + A + '\n', B + '\treason\n'), ROSTER + ' line 2: \'' + A + '\' duplicates line 1: remove one');
-  refused(run(A + '\n', B + '\treason\n' + B + '\tagain\n'), EXCLUDED + ' line 2: \'' + B + '\' duplicates line 1: remove one');
-  refused(run(A + '\n' + PLAIN + '\n', B + '\treason\n'), ROSTER + ' line 2: \'' + PLAIN + '\' names no browser leg (ui/webview/plain.test.ts reaches no browser): remove the line');
-  refused(run(B + '\n', A + '\treason\n'), ROSTER + ' line 1: \'' + B + '\' is not under out-tests/ (the Test step\'s npm test builds it', 'build the bundles before this step');
-  refused(run('ui/webview/a-browser.test.ts\n', A + '\treason\n' + B + '\treason\n'), ROSTER + ' line 1: \'ui/webview/a-browser.test.ts\' is not a bundle path (out-tests/<dir>/<name>.test.js): fix the roster line');
-  const stale = run(A + '\n', B + '\treason\n' + C + '\treason\n');
+  refused(run('# header\n' + A + '\n' + C + '\n', B + '\treason\n' + rest), ROSTER + ' line 3: \'' + C + '\' names ui/webview/c-browser.test.ts, which is not in the tree (the source moved or was deleted): fix the roster line');
+  refused(run(A + '\n', '# nothing excluded but the rest\n' + rest), 'browser leg \'' + B + '\' is in neither ' + ROSTER + ' nor ' + EXCLUDED, 'add it to the roster', 'or to the exclusions with a tab and a reason');
+  refused(run(A + '\n', A + '\treason\n' + B + '\treason\n' + rest), EXCLUDED + ' line 1: \'' + A + '\' is also ' + ROSTER + ' line 1: a leg is in one file or the other, keep one');
+  refused(run(A + '\n', B + '\n' + rest), EXCLUDED + ' line 1: \'' + B + '\' has no reason: write the bundle path, a tab, and why the gating job does not run it');
+  refused(run(A + '\n', B + '\t  \n' + rest), EXCLUDED + ' line 1', 'has no reason');
+  refused(run(A + '\n' + A + '\n', B + '\treason\n' + rest), ROSTER + ' line 2: \'' + A + '\' duplicates line 1: remove one');
+  refused(run(A + '\n', B + '\treason\n' + B + '\tagain\n' + rest), EXCLUDED + ' line 2: \'' + B + '\' duplicates line 1: remove one');
+  refused(run(A + '\n' + PLAIN + '\n', B + '\treason\n' + rest), ROSTER + ' line 2: \'' + PLAIN + '\' names no browser leg (ui/webview/plain.test.ts reaches no browser): remove the line');
+  refused(run(B + '\n', A + '\treason\n' + rest), ROSTER + ' line 1: \'' + B + '\' is not under out-tests/ (the Test step\'s npm test builds it', 'build the bundles before this step');
+  refused(run('ui/webview/a-browser.test.ts\n', A + '\treason\n' + B + '\treason\n' + rest), ROSTER + ' line 1: ui/webview/a-browser.test.ts is not a bundle path (out-tests/<dir>/<name>.test.js; a trailing space, tab or carriage return counts', 'fix the line');
+  // a carriage return at the end of the line: the line is shown as bash's %q spells it, so the invisible cause is visible,
+  // and the leg it names is attributed to that line, not called missing from both files
+  const crlf = run(A + '\r\n', B + '\treason\n' + rest);
+  refused(crlf, ROSTER + ' line 1: $\'' + A + '\\r\' is not a bundle path', 'browser leg \'' + A + '\' is named by a malformed line (' + ROSTER + ' line 1, above): fix that line');
+  assert.ok(!crlf.err.includes('is in neither'), 'the leg the malformed line names is not reported as missing from both files:\n' + crlf.err);
+  refused(run(A + '\n', B + '\treason\n' + P + '  \treason\n' + EXCLUDE_REST('a', 'b', 'p')), EXCLUDED + ' line 2: ' + P + '\\ \\  is not a bundle path', 'browser leg \'' + P + '\' is named by a malformed line (' + EXCLUDED + ' line 2, above): fix that line');
+  // a leg with a launch and a skip of its own never reads the switch: rostered, it would skip under the step and leave it green
+  refused(run(A + '\n' + P + '\n', B + '\treason\n' + EXCLUDE_REST('a', 'b', 'p')), ROSTER + ' line 2: \'' + P + '\' launches on its own and never reads ' + SWITCH + ', so under the step its launch skip stays a skip: launch through inBrowser (ui/webview/real-viewer-leg.ts) or launchBrowser (ui/webview/browser-legs-require.ts) before rostering it');
+  // a leg that reads the switch but launches Firefox: the gating job installs Chromium only
+  refused(run(A + '\n' + F + '\n', B + '\treason\n' + EXCLUDE_REST('a', 'b', 'f')), ROSTER + ' line 2: \'' + F + '\' names Firefox outside a comment; the gating job installs Chromium only, so under the switch that launch is red: keep the leg in ' + EXCLUDED + ' with that reason');
+  const stale = run(A + '\n', B + '\treason\n' + C + '\treason\n' + rest);
   refused(stale, EXCLUDED + ' line 2: \'' + C + '\' names ui/webview/c-browser.test.ts, which is not in the tree (the source moved or was deleted): fix the line');
+});
+
+test('after node --test the script turns a skipped test into a red naming the test, the rostered sources holding its name and the remedy, and passes node\'s own failure status through', (t) => {
+  const { run, A } = syntheticTree(t);
+  const excluded = EXCLUDE_REST('a');
+  const tapSkip = 'TAP version 13\n# Subtest: leg a opens the page\nok 1 - leg a opens the page # SKIP no playwright chromium on this box\n# Subtest: some other test\nok 2 - some other test\n1..2\n# tests 2\n# pass 1\n# skipped 1\n';
+  const skipped = run(A + '\n', excluded, { tap: tapSkip });
+  assert.equal(skipped.status, 1, 'a skip under the switch is red; stderr: ' + skipped.err);
+  assert.deepEqual(skipped.node, ['--test', A], 'the leg ran (the skip is read from the run, not refused before it)');
+  assert.ok(skipped.err.includes('skipped under ' + SWITCH + '=1: ok 1 - leg a opens the page # SKIP no playwright chromium on this box (rostered sources holding that test name verbatim: ' + A + ')'), skipped.err);
+  assert.ok(skipped.err.includes('a rostered leg skipped a test under ' + SWITCH + '=1, so the step claims coverage it did not run'), skipped.err);
+  assert.ok(skipped.err.includes('launch through inBrowser in ui/webview/real-viewer-leg.ts or launchBrowser in ui/webview/browser-legs-require.ts') && skipped.err.includes('move it to ' + EXCLUDED + ' with that reason'), skipped.err);
+  const unknown = run(A + '\n', excluded, { tap: 'TAP version 13\nok 1 - a name no source spells # SKIP why\n1..1\n' });
+  assert.equal(unknown.status, 1);
+  assert.ok(unknown.err.includes('(rostered sources holding that test name verbatim: none)'), 'a name found in no rostered source says so:\n' + unknown.err);
+  const clean = run(A + '\n', excluded, { tap: 'TAP version 13\nok 1 - leg a opens the page\n1..1\n# tests 1\n# pass 1\n# skipped 0\n' });
+  assert.equal(clean.status, 0, 'no skip, no red: ' + clean.err);
+  assert.equal(clean.err, '', 'nothing on stderr when every rostered test ran');
+  // xargs answers a command's exit of 1 to 125 with 123, so that is the status a failed leg gives the step
+  const failed = run(A + '\n', excluded, { tap: 'TAP version 13\nnot ok 1 - leg a opens the page\n1..1\n# fail 1\n', exit: 1 });
+  assert.equal(failed.status, 123, 'node\'s failure is the step\'s (through xargs, which answers 123)');
+  assert.ok(!failed.err.includes('skipped under'), 'a failure is not called a skip:\n' + failed.err);
+  const both = run(A + '\n', excluded, { tap: 'TAP version 13\nok 1 - leg a opens the page # SKIP why\n1..1\n', exit: 7 });
+  assert.equal(both.status, 123, 'with a failure and a skip node\'s status stands and the skip is still named');
+  assert.ok(both.err.includes('skipped under ' + SWITCH + '=1'), both.err);
 });
