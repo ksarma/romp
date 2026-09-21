@@ -11,17 +11,26 @@ engine run and no on-device read under a pinch backs the model, and whether a pi
 the page's user-scalable=no meta is unconfirmed. The swap is a no-op wherever innerHeight was right (standards mode,
 the root overflow:hidden: clientHeight equals innerHeight there), which is why it is made without the device read.
 
-So the tests drive the shell's OWN functions under node against two window MODELS, both a 390 by 844 layout viewport
-under a standing pinch at scale 2 (the visual viewport 422 CSS px tall at rest; the keyboard, 336 px on that
-descriptor, takes it to 254 and pans it): WebKit, whose innerHeight is the visual viewport's height (422; with the
-keyboard up the unobscured rect is modelled unchanged, and the other reading, 254, gives every verdict below the same
-way, both being under the layout height), and Chromium, whose innerHeight stays the layout height (844). One test per
-read: what the read publishes under each model. Under the Chromium model every expected value is what the unfixed
-script published (the no-op half, asserted: the same literals were green at the head before the fix); under the WebKit
-model the same values are what the fix publishes and the unfixed script did not. The census test then classifies every
-innerHeight the shell serves: the helper's own fallback, the pane shim's zero test (a display:none frame reads 0 in
-both engines, not a layout-viewport stand-in), and nothing else. tests/test_layout_height_served.py reads the premise
-(standards mode, the root's overflow, clientHeight equal to innerHeight at rest) in real engines at scale 1.
+The scope, second: the HEIGHT, in kernel.py's text. The shell reads window.innerWidth for the layout viewport's
+width at five sites, three in functions driven here (spTipPlace, place, clampXY) and two in tooltip placers that read
+no height (showTip in _LANDING_USAGE_JS, anchor in _LANDING_APIH_JS, a script with no height read); WebKit takes the
+width from the same rect (LocalDOMWindow::innerWidth); those reads are not changed and not driven here. The dist
+bundles the landing loads by src are TypeScript under ui/webview, outside this module.
+
+So the tests drive the shell's OWN functions under node against window MODELS of a 390 by 844 layout viewport under a
+standing pinch at scale 2 (the visual viewport 422 CSS px tall at rest and 254 with the keyboard up: the keyboard is
+336 px on that descriptor). WebKit: innerHeight is the visual viewport's height, 422. With the keyboard up the primary
+reading keeps innerHeight at 422 (the unobscured rect unchanged: the shell's own viewport-meta comment records that
+the soft keyboard pans the visual viewport while innerHeight stands still); a second WebKit model has innerHeight
+follow the rect to 254, and the keyboard test drives both, since the two readings differ only in how far under the
+layout height the read falls. Chromium: innerHeight stays the layout height, 844. No model pans the visual viewport
+(visualViewport.offsetTop): no read in the shell consumes it at this head. One test per read: what the read publishes
+under each model. Under the Chromium model every expected value is what the unfixed script published (the no-op half,
+asserted: the same literals were green at the head before the fix); under the WebKit models the same values are what
+the fix publishes and the unfixed script did not. The census then classifies every innerHeight in kernel.py's text and
+in every script the shell serves: the helper's own fallback, the pane shim's zero test (a display:none frame reads 0
+in both engines, not a layout-viewport stand-in), and nothing else. tests/test_layout_height_served.py reads the
+premise (standards mode, the root's overflow, clientHeight equal to innerHeight at rest) in real engines at scale 1.
 
 Synthetic stand-ins only: no real session data."""
 import json
@@ -46,11 +55,13 @@ import test_kernel_mobile as _tm   # noqa: E402  the phone stand-ins (the fit ha
 
 NODE = shutil.which("node")
 
-# The two engine models (the module docstring says what each rests on).
+# The engine models (the module docstring says what each rests on). kbInnerHeight, where a model has one, is what
+# innerHeight reads with the keyboard up; the others keep their rest value.
 WEBKIT = {"name": "webkit", "innerHeight": 422, "clientHeight": 844}
+WEBKIT_RECT_FOLLOWS = {"name": "webkit-rect-follows-keyboard", "innerHeight": 422, "clientHeight": 844, "kbInnerHeight": 254}
 CHROMIUM = {"name": "chromium", "innerHeight": 844, "clientHeight": 844}
-VV_REST = {"height": 422, "scale": 2, "offsetTop": 0}
-VV_KB = {"height": 254, "scale": 2, "offsetTop": 168}    # the keyboard's pan: the visual viewport slides to the focused input
+VV_REST = {"height": 422, "scale": 2}
+VV_KB = {"height": 254, "scale": 2}    # the keyboard up: the visual viewport loses the keyboard's 336 px over the scale
 
 
 def _node(src):
@@ -97,15 +108,14 @@ def _model_prelude(model, vv, coarse=True):
     """Set the window stand-in to a model, after the harness has built it and before the shell script runs."""
     return ("global.innerHeight = %d; global.innerWidth = 390;\n"
             "document.documentElement.clientHeight = %d;\n"
-            "visualViewport.height = %d; visualViewport.scale = %d; visualViewport.offsetTop = %d;\n"
+            "visualViewport.height = %d; visualViewport.scale = %d;\n"
             "global.matchMedia = () => ({ matches: %s });\n"
-            % (model["innerHeight"], model["clientHeight"], vv["height"], vv["scale"], vv["offsetTop"],
-               "true" if coarse else "false"))
+            % (model["innerHeight"], model["clientHeight"], vv["height"], vv["scale"], "true" if coarse else "false"))
 
 
 @unittest.skipUnless(NODE, "node not installed on this machine")
 class LayoutHeightUnderAPinch(unittest.TestCase):
-    """One test per shell read of the layout viewport's height, driven under both models."""
+    """One test per shell read of the layout viewport's height, driven under the models."""
 
     # ── the mobile script: the keyboard-open test and the fine-pointer fit, through the fit harness ──
     _FIT_DRIVER = r"""
@@ -113,27 +123,30 @@ const fire = (book, k) => (book[k] || []).forEach((f) => f({}));
 const flush = () => { RAF.splice(0).forEach((f) => f(0)); };
 const read = () => ({ appH: PROPS['--app-h'], barH: PROPS['--mtabs-h'] });
 const out = { boot: read() };
-// the keyboard slides up under the standing pinch: the visual viewport shrinks by the keyboard's height over the scale and pans
-visualViewport.height = KB.height; visualViewport.offsetTop = KB.offsetTop; fire(VV, 'resize'); flush();
+// the keyboard slides up under the standing pinch: the visual viewport loses the keyboard's height over the scale; a model
+// whose innerHeight follows the rect (KB_IH a number) moves with it, the others stand still
+visualViewport.height = KB.height; if (typeof KB_IH === 'number') global.innerHeight = KB_IH; fire(VV, 'resize'); flush();
 out.kbUp = read();
-visualViewport.height = REST.height; visualViewport.offsetTop = REST.offsetTop; fire(VV, 'resize'); flush();
+visualViewport.height = REST.height; global.innerHeight = REST_IH; fire(VV, 'resize'); flush();
 out.kbDown = read();
 console.log(JSON.stringify(out));
 """
 
     def _fit(self, model, coarse=True):
         src = (_tm._FIT_HARNESS + _model_prelude(model, VV_REST, coarse)
-               + "const KB = %s, REST = %s;\n" % (json.dumps(VV_KB), json.dumps(VV_REST))
+               + "const KB = %s, REST = %s, KB_IH = %s, REST_IH = %d;\n"
+               % (json.dumps(VV_KB), json.dumps(VV_REST), json.dumps(model.get("kbInnerHeight")), model["innerHeight"])
                + km._LANDING_MOBILE_JS + self._FIT_DRIVER)
         return _node(src)
 
     def test_the_keyboard_open_test_reads_the_layout_height(self):
         # kbOpen: the layout height less the visual viewport's layout-scaled height, over 120 px. Under the WebKit
-        # model innerHeight is the visual viewport's own height, so the difference was at most 0 with the keyboard up
-        # (422 less 508 under the pinch; or 254 less 508 on the other reading of the rect) and the bar's reserved strip
-        # (--mtabs-h) stayed at the bar's height while the keyboard covered the bar: a dead band above the keyboard,
-        # the very defect the test exists to prevent. The layout height reads 844 in both models: 844 less 508 is 336.
-        for model in (WEBKIT, CHROMIUM):
+        # models innerHeight is the visual viewport's own height, so the difference was at most 0 with the keyboard up
+        # (422 less 508 under the pinch; 254 less 508 on the other reading of the rect, driven as its own model) and the
+        # bar's reserved strip (--mtabs-h) stayed at the bar's height while the keyboard covered the bar: a dead band
+        # above the keyboard, the very defect the test exists to prevent. The layout height reads 844 in every model:
+        # 844 less 508 is 336.
+        for model in (WEBKIT, WEBKIT_RECT_FOLLOWS, CHROMIUM):
             with self.subTest(model=model["name"]):
                 o = self._fit(model)
                 self.assertEqual(o["boot"], {"appH": "844px", "barH": "44px"}, "at rest under the pinch: the keyboard is closed, the bar reserved")
@@ -231,10 +244,35 @@ console.log(JSON.stringify(out));
 
 
 class InnerHeightCensus(unittest.TestCase):
-    """Every innerHeight the shell serves is classified: the helper's fallback, the pane shim's zero test, nothing else."""
+    """Every innerHeight in kernel.py's text and in every script the shell serves is classified: the helper's fallback,
+    the pane shim's zero test, nothing else."""
 
     ZERO_TEST = "window.parent!==window&&(window.innerWidth===0||window.innerHeight===0)"
     READERS = {"_LANDING_JS", "_LANDING_USAGE_JS", "_LANDING_MOBILE_JS", "_LANDING_PUSH_JS", "_STALE_JS"}
+
+    @staticmethod
+    def _known():
+        # the two classified spellings: the helper's own fallback (absent at a head without the fix, where the census
+        # then lists every read it was written for) and the pane shim's zero test
+        return [s for s in (getattr(km, "_LAYOUT_H_JS", "").strip(), InnerHeightCensus.ZERO_TEST) if s]
+
+    @staticmethod
+    def _unclassified(name, text, known):
+        """Every line of `text` that reads innerHeight and is neither a classified spelling nor prose, with its line."""
+        out = []
+        for i, line in enumerate(text.split("\n"), 1):
+            if "innerHeight" not in line:
+                continue
+            if line.strip().startswith(("//", "#")):
+                continue                                   # prose: a JavaScript or a Python comment line
+            rest = line
+            for spelling in known:
+                rest = rest.replace(spelling, "")
+            if "innerHeight" not in rest:
+                continue                                   # the helper's fallback, or the shim's zero test
+            col = rest.index("innerHeight")
+            out.append("%s line %d: ...%s..." % (name, i, rest[max(0, col - 70):col + 40].strip()))
+        return out
 
     def _served(self):
         blobs = {n: v for n, v in vars(km).items() if n.endswith("_JS") and isinstance(v, str)}
@@ -246,36 +284,36 @@ class InnerHeightCensus(unittest.TestCase):
     def test_every_innerheight_read_the_shell_serves_is_classified(self):
         # The rule over writers: a read of window.innerHeight that means the layout viewport's height is layoutH();
         # a read that means something else is named here with its reason. A new read that is neither reds with its
-        # line, so the author classifies it rather than the reviewer.
-        helper = km._LAYOUT_H_JS.strip()
+        # line, so the author classifies it rather than the reviewer. The served text is what reaches a browser,
+        # whatever file it came from (the landing's axis formatter is lifted from a file under ui/).
+        known = self._known()
         unclassified = []
         for name, js in sorted(self._served().items()):
-            for i, line in enumerate(js.split("\n"), 1):
-                if "innerHeight" not in line:
-                    continue
-                if line.strip().startswith("//"):
-                    continue                                   # prose
-                rest = line
-                for known in (helper, self.ZERO_TEST):
-                    rest = rest.replace(known, "")
-                if "innerHeight" not in rest:
-                    continue                                   # the helper's fallback, or the shim's zero test
-                col = rest.index("innerHeight")
-                unclassified.append("%s line %d: ...%s..." % (name, i, rest[max(0, col - 70):col + 40]))
+            unclassified += self._unclassified(name, js, known)
         self.assertEqual(unclassified, [], "an innerHeight read the census does not know: a layout-viewport read is layoutH(); "
                          "another meaning is named in this test with its reason:\n" + "\n".join(unclassified))
+
+    def test_every_innerheight_in_the_kernels_text_is_classified(self):
+        # kernel.py's whole text, line by line, so the form space is the file and not a naming convention: a served
+        # JavaScript literal not suffixed _JS (the timeline page's boot blob) or a <script> written inside a page
+        # builder is a line of this file like any other. Python and JavaScript comment lines are prose.
+        src = open(os.path.join(BIN, "romp-kernel")).read()
+        unclassified = self._unclassified("kernel.py", src, self._known())
+        self.assertEqual(unclassified, [], "an innerHeight read in kernel.py the census does not know: a layout-viewport read is "
+                         "layoutH(); another meaning is named in this test with its reason:\n" + "\n".join(unclassified))
 
     def test_the_helper_lives_in_every_script_that_reads_the_layout_height(self):
         # the composition: a script that calls layoutH() declares it (each is its own IIFE, and the node harnesses run
         # one at a time), the declaration appears once per script, and the served landing carries no unreplaced marker
+        helper = getattr(km, "_LAYOUT_H_JS", "")           # '' at a head without the fix: no script is a home
         blobs = {n: v for n, v in vars(km).items() if n.endswith("_JS") and isinstance(v, str) and n != "_LAYOUT_H_JS"}
-        homes = {n for n, v in blobs.items() if km._LAYOUT_H_JS in v}
-        callers = {n for n, v in blobs.items() if v.replace(km._LAYOUT_H_JS, "").count("layoutH()")}
+        homes = {n for n, v in blobs.items() if helper and helper in v}
+        callers = {n for n, v in blobs.items() if "layoutH()" in v.replace(helper, "")}
         self.assertEqual(homes, self.READERS, "the scripts that read the layout height (a new reader adds itself here)")
         self.assertEqual(callers, homes, "every script that calls layoutH() declares it, and none declares it idle")
         for n in homes:
-            self.assertEqual(blobs[n].count(km._LAYOUT_H_JS), 1, n + ": the helper once, at the IIFE's top")
-            self.assertTrue(blobs[n].lstrip().startswith("(function(){" + km._LAYOUT_H_JS.rstrip("\n")), n + ": declared first")
+            self.assertEqual(blobs[n].count(helper), 1, n + ": the helper once, at the IIFE's top")
+            self.assertTrue(blobs[n].lstrip().startswith("(function(){" + helper.rstrip("\n")), n + ": declared first")
         self.assertNotIn("__ROMP_LAYOUT_H__", km._landing(), "the marker is replaced at definition, never served")
 
     def test_the_pane_shims_hidden_probe_stays_a_zero_test_on_innerheight(self):

@@ -60991,19 +60991,29 @@ def _chat_body():
 
 # The LAYOUT viewport's height, for every shell read that means it: a fixed box's bottom edge, a cap taken from
 # the viewport, the keyboard-open test (the layout height less the visual viewport's). window.innerHeight is that
-# height in Chromium and Firefox; WebKit's LocalDOMWindow::innerHeight is the unobscured content rect's height,
-# which on iOS WebPage::updateVisibleContentRects sets from the VISUAL viewport, so under a standing pinch at
-# scale 2 it reads about half the layout height (WebKit source, read 2026-09-20; Chromium measured at page scale
-# 2 on an iPhone 14 descriptor: innerHeight 844, documentElement.clientHeight 844, visualViewport.height 422).
+# height in Chromium (measured at page scale 2 on an iPhone 14 descriptor: innerHeight 844,
+# documentElement.clientHeight 844, visualViewport.height 422); WebKit's LocalDOMWindow::innerHeight is the
+# unobscured content rect's height, which on iOS WebPage::updateVisibleContentRects sets from the VISUAL viewport,
+# so under a standing pinch at scale 2 it reads about half the layout height (WebKit source, read 2026-09-20).
 # The root element's clientHeight is the layout viewport's height in both engines while the page is in
-# standards mode (the landing's doctype) and its root is overflow:hidden (the html,body rules, desktop and
-# phone), so no scrollbar parts it from innerHeight where innerHeight is right: the swap is a no-op there and a
-# correction under the pinch. The fallback keeps a window stand-in without a root element (the node harnesses)
-# on innerHeight. Spliced at the top of each shell IIFE that reads the layout height, at definition, so the
-# attribute a node harness runs alone carries it (the landing's script count is pinned: no element of its own).
-# tests/test_layout_viewport_height.py drives every reader under a WebKit-under-pinch model and a Chromium model
-# and classifies every innerHeight read the shell serves; tests/test_layout_height_served.py reads the premise
-# (standards mode, the root's overflow, clientHeight equal to innerHeight at rest) in real engines.
+# standards mode (the landing's doctype; WebKit's Element::clientHeight returns the frame view's layoutHeight for
+# the root there, read 2026-09-21) and its root is overflow:hidden (two html,body rules in _landing(): the base
+# rule, at every width, and the phone breakpoint's override, which declares overflow:hidden again, so each shell's
+# overflow comes from its own rule; tests/test_layout_height_served.py reads it on both shells), so no scrollbar
+# parts it from innerHeight where innerHeight is right: the swap is a no-op there and a correction under the
+# pinch. In quirks mode the root's clientHeight is the html box instead, which both rules size from --app-h, the
+# shell's own fit() output, so the helper would read its last value back (the keyboard-open test then reads
+# closed with the keyboard up); tests/test_layout_height_served.py pins standards mode for that reason. The
+# fallback keeps a window stand-in without a root element (the node harnesses) on innerHeight. The height only:
+# the shell reads window.innerWidth for the layout viewport's width at five sites, three in functions that read
+# layoutH (spTipPlace, place, clampXY) and two in tooltip placers that read no height (showTip in
+# _LANDING_USAGE_JS, anchor in _LANDING_APIH_JS, a script with no height read); WebKit takes the width from the
+# same rect (LocalDOMWindow::innerWidth); that is a separate change. Spliced at the top of
+# each shell IIFE that reads the layout height, at definition, so the attribute a node harness runs alone carries
+# it (the landing's script count is pinned: no element of its own). tests/test_layout_viewport_height.py drives
+# every reader under WebKit-under-pinch models and a Chromium model and classifies every innerHeight in this
+# file's text; tests/test_layout_height_served.py reads the premise (standards mode, the root's overflow,
+# clientHeight equal to innerHeight at rest) in real engines.
 _LAYOUT_H_JS = "function layoutH(){var d=document.documentElement;return (d&&d.clientHeight)||window.innerHeight;}\n"
 
 
