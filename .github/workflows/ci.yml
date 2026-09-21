@@ -150,7 +150,9 @@ jobs:
         # a cell runs loads a plugin the box's default run does not: the flag is on both of this file's pytest
         # lines and on every pytest child the suite spawns in the cell's interpreter (tests/test_ci_sdk_pin.py
         # holds both populations, this file's by its population check and the children's by its launcher
-        # census). The two plugin sets are not equal, and this comment does not say they are: the box's
+        # census, which reads argv literals under tests/: a pytest command in a string is red until spelled as
+        # an argv, and an argv assembled one element at a time is outside its read). The two plugin sets are
+        # not equal, and this comment does not say they are: the box's
         # default run loads pytest-xdist's two plugins, which no cell installs. Nothing under tests/ is marked
         # anyio or imports the one thing the plugin serves, the SDK's own pytest-marked conformance suite
         # claude_agent_sdk.testing, so the plugin does no work here; and blocked in every pytest process a
