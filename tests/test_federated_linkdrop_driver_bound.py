@@ -79,6 +79,10 @@ from unittest import mock
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
+# The ledger pin loads scripts/upstream-ledger.py through importlib (_ledger), and every test module that loads code through a
+# loader isolates the state root first (tests/test_state_isolation_order.py enforces the order; the script reads no state root).
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
+os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 sys.path.insert(0, HERE)
 import test_federated_linkdrop_served as L   # noqa: E402  the lab module: the constants, BUDGET_JS, _drive
 
