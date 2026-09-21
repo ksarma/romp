@@ -1879,7 +1879,8 @@ commit_stamped_as() {   # <address> <path> <message>: one clean file, author and
     [[ "$output" == *"BLOCKED"* ]]
     [[ "$output" != *"the scan is incomplete"* ]]       # the failed read is swallowed, not reported: the refusal is the address's alone
     [[ "$output" != *"shim:"* ]]                        # the shim's own line went to the redirection chosen_emails puts on the read
-    ! remote_holds_main
+    run remote_holds_main                             # the checked form (tests/test_bats_bare_negation.py): a bare ! mid-test checks nothing under bats
+    [ "$status" -ne 0 ]
     # the clone now chooses the address: with the read intact that excuses it, whatever its domain says
     # (pre-push-identity.bats, the configured-address case); behind the failed read the choice is not
     # seen, the push stays refused and the line still calls the address unconfigured. Stricter, not looser.
