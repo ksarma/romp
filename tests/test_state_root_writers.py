@@ -13,8 +13,12 @@ child processes).
 
 WHAT IT DOES. The same AST census as the readers': the eleven modules (test_state_root_readers.MODULES), the same seeds,
 the same derivation of every expression that is a path under the root (module_facts, reused from the readers module's
-per-process cache, so the derivation of kernel/kernel.py's 79k lines runs once for both censuses in one process). Over
-those expressions it lists every CREATION: Path.mkdir, os.mkdir, os.makedirs; Path.write_text, Path.write_bytes,
+per-process cache, so the derivation of kernel/kernel.py's 79k lines runs once for both censuses in one process). Which
+census PAYS that derivation is a property of collection order, not of the design: under pytest's alphabetical collection
+the readers census runs first and this one finds a warm cache (about 0.4 s for this module on a box, against about 7.8 s
+cold); under a -k that deselects the readers' census, under an xdist distribution that puts the two files on different
+workers or this one first, or after a rename, this census derives cold, and test_the_census_reuses_the_readers_derivation
+asserts the SHARING, not the warmth (it holds whichever census ran first). Over those expressions it lists every CREATION: Path.mkdir, os.mkdir, os.makedirs; Path.write_text, Path.write_bytes,
 Path.touch; open, Path.open, io.open and gzip.open in a write or append mode (a mode the census cannot read is listed
 as "open:?"); os.open with O_CREAT; tempfile.* with its directory under the root; shutil.copy, copy2, copyfile, copytree
 and move onto a path under the root; os.rename, os.replace, os.link, os.symlink, Path.rename, Path.replace,
@@ -55,8 +59,38 @@ manager (bin/romp-manager: restart-audit.jsonl) and the shell the kernel runs on
 three command strings: restart-audit.jsonl, kernel.log and update.log on the far root) each write a few entries a kernel
 reads back through its guarded readers; no derivation runs over bash or JavaScript, so each site is held to set its mode
 by code where it writes (`umask 077` on the writing command or a subshell around it; appendFileSync's `mode: 0o600`) by
-test_the_writers_outside_the_eleven_modules_set_their_mode_at_the_site, a text pin with its own red checks. The root's
-own creation (mkdirSync, mkdir -p) is a creation default the gates exempt and tighten.
+test_the_writers_outside_the_eleven_modules_set_their_mode_at_the_site, a text pin with its own red checks. Two Python
+tools the CLI delegates to write under the root as well, stdlib-only and outside the eleven modules (cli/spend_rebuild.py: spend.json and a temp;
+cli/spend_repair.py: spend.json, turns.jsonl, spend-repair.jsonl and temps; the .bak copies each makes carry their
+source's mode), and the kernel reads spend.json back through a guarded reader: each sets `os.umask(0o077)` as the FIRST statement
+of main, so everything it makes is born owner-only, and the same test holds that by AST (the review of round 4f's
+preparation for round 3, 2026-09-21). THE REACH of the bin/romp rule is narrower than the census's over Python, and is
+stated rather than assumed: ONE LEVEL of binding by assignment (an underscore-led name assigned from `$(_romp_state_dir)`
+or the XDG expression), REDIRECTS ONLY for the umask judgment, underscore-led names only (ROMP_NAMES_DIR is the one root
+binding the rule does not match; its one use is a read). What the rule does not judge is pinned BY EQUALITY instead, by
+test_the_clis_non_redirect_creations_are_the_roots_own_mkdirs_and_the_markers_move, in the shapes its regexes read (a
+command word at a command position: a line start, `;`, `&&`, `|`, `(`, `)`, `{`, `!`, then/do/else/if/elif/while/until,
+exec/command/env/nohup/time/nice, with assignment prefixes scanned; its arguments to the next unquoted separator, a
+backslash-continued command read as one line; a root
+spelling in `$name`, `${name}` or expression form, by argument or by environment prefix): no name is bound from a
+root-bound name by assignment; the functions handed a root path are exactly two (_romp_down_release removes the marker,
+_romp_split_record reads a names record) and their bodies carry no redirect or creating verb on a positional parameter;
+the creations under a root-bound name that are not redirects (mkdir, cp, mv, tee, touch, install, ln, truncate, dd,
+rsync) are exactly five `mkdir -p` of the root itself, each inside a `( umask 077; ...)` group so the root is BORN 0700
+under any umask (the gate's creation exemption is for a root EMPTY at its read, and each of these commands fills the root
+in the same breath: judge-engine, debug-mode.json, the marker, the audit row; until this review the five made the root at
+the umask's mode, so a first `romp engine codex` under a permissive umask before any boot would have met the import
+refusal at that boot), and the down-by-romp marker's `mv` of a temp born under umask 077 (the inode carries its mode);
+the programs handed a root path (CLI_PROGRAMS) are exactly three, two readers by argument (the client-diag histogram,
+the down-marker time) and the down-refusal helper, handed the token path by environment and formatting it into its
+remedy sentence, never opening it (that a program handed a path only reads is what no text census can decide, so the
+three were read by hand on 2026-09-21 and the LIST is what the pin holds); the four inline uses of the root expression
+outside a binding carry no redirect and no creating verb; and every logical line that carries both a root spelling and a
+creating verb, program or extra word (chmod among them), whatever its position, is one of a listed sixteen (the coarse
+backstop for a shape the finer regexes do not read). A new site of any of those kinds reds. Beyond these regexes: a
+parameter re-bound to a local before a write inside a function, a creating program outside the word lists, and a helper
+called at module level in the Python tools. The root's own creation elsewhere (the manager's
+mkdirSync, a harness's makedirs) is a creation default the gates exempt and tighten.
 """
 import ast
 import collections
@@ -89,19 +123,71 @@ CREATE_FLAG = "O_CREAT"
 # runs over bash or JavaScript; the helpers below hold each site to set its mode by code where it writes.
 CLI_ROOT_BINDING = re.compile(r'^\s*(?:local\s+)?(_[A-Za-z_]+)="?(?:\$\(_romp_state_dir\)|\$\{ROMP_STATE_DIR:-\$\{XDG_STATE_HOME:-\$HOME/\.local/state\}/romp\})')
 REMOTE_APPEND = re.compile(r'>>?"\$LOGDIR/([^"]+)"')
+# THE CLI'S NON-REDIRECT CREATIONS (romp-manager's round-3 preparation, 2026-09-21, widened by its adversarial review the same
+# day): what cli_redirects does not judge, pinned by equality. A binding of ANY name to the root expression (CLI_ROOT_BINDING
+# takes the underscore-led ones), the root expression itself, the verbs that create an entry by a path argument, the programs
+# a path may be handed to, a command position and its arguments, and the lists as of 2026-09-21.
+CLI_ANY_ROOT_BINDING = re.compile(r'^\s*(?:local\s+)?([A-Za-z_][A-Za-z0-9_]*)="?(?:\$\(_romp_state_dir\)|\$\{ROMP_STATE_DIR:-\$\{XDG_STATE_HOME:-\$HOME/\.local/state\}/romp\})(.*)$')
+CLI_ROOT_EXPR = r'\$\(_romp_state_dir\)|\$\{ROMP_STATE_DIR:-\$\{XDG_STATE_HOME:-\$HOME/\.local/state\}/romp\}'
+CLI_CREATING_VERBS = ("mkdir", "cp", "mv", "tee", "touch", "install", "ln", "truncate", "dd", "rsync")
+CLI_PROGRAMS = ("python3", "python", "node", "jq", "bash", "sh")
+CLI_POSITION = r'(?:^|[;&|(){]|!|\b(?:then|do|else|if|elif|while|until|exec|command|env|nohup|time|nice)\b)'
+CLI_ASSIGNS = r'((?:[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|\'[^\']*\'|[^\s;&|]*)\s+)*)'   # an environment prefix, kept: a path may travel in it
+CLI_ARGS = r'((?:\$\([^)]*\)|\'[^\']*\'|"[^"]*"|[^;&|()\'"#])*)'                      # to the next unquoted separator, group end or comment
+CLI_FUNC_DEF = re.compile(r'^(\s*)(?:function\s+)?(_[a-z0-9_]+)\s*(?:\(\))?\s*\{', re.M)   # at any indentation, either form
+CLI_BACKSTOP_EXTRAS = ("chmod", "mktemp", "tar", "unzip", "git", "sed", "curl", "wget", "sqlite3")   # words the backstop reads beyond the
+                                                                                                     # verbs and programs: a mode change or an
+                                                                                                     # archive/tool that can create by a path
+CLI_NON_REDIRECT_CREATIONS = [                       # sorted; each admitted by cli_admitted
+    'mkdir -p "$(dirname "$_dbg_conf")"',             # romp debug on: debug-mode.json's parent, the root itself, born 0700
+    'mkdir -p "$_dn_state"',                          # romp down: the root itself, born 0700
+    'mkdir -p "$_eng_state"',                         # romp engine claude: the root itself, born 0700
+    'mkdir -p "$_eng_state"',                         # romp engine codex: the root itself, born 0700
+    'mkdir -p "$_ra_dir"',                            # the restart audit: the root itself, born 0700
+    'mv -f "$_dn_state/down-by-romp.tmp" "$_dn_state/down-by-romp"',   # the marker's publish: the temp was born under umask 077
+]
+CLI_PROGRAMS_HANDED_A_ROOT_PATH = [                  # sorted; what each does with the path was read by hand on 2026-09-21
+    '_dn_mref="$(DN_OUT="$_dn_mout" DN_TOK="$(_romp_state_dir)/serve-token" DN_ENV="${ROMP_SERVE_TOKEN:+1}" python3 -',
+                                                     # romp down's refusal remedy: the token PATH as a string in a sentence, never opened
+    'python3 - "$_cfile" "$_cmin" "$_cjson"',         # romp perf client: reads client-diag.jsonl and its .1
+    'python3 - "$_st_marker" 2>/dev/null',            # romp status: reads the marker's time
+]
+CLI_FUNCTIONS_HANDED_A_ROOT_PATH = ["_romp_down_release", "_romp_split_record"]   # rm -f of the marker; a read of a names record
+CLI_INLINE_ROOT_USES = 4                             # the root expression outside a binding: two `cat` reads, a hint string, the token path
+                                                     # in the down-refusal helper's environment (a string in its remedy); none a redirect
+                                                     # onto it or a creating verb
+CLI_COOCCURRENCES = [                                # every line carrying a root spelling AND a creating verb or program word, sorted
+    '( umask 077; DN_CMD="$_dn_cmd" python3 -c \'import json,os,time; print(json.dumps({"t": int(time.time()), "cmd": os.environ["DN_CMD"]}))\' > "$_dn_state/down-by-romp.tmp" ) && mv -f "$_dn_state/down-by-romp.tmp" "$_dn_state/down-by-romp"',
+    '( umask 077; mkdir -p "$(dirname "$_dbg_conf")" )',
+    '( umask 077; mkdir -p "$_dn_state" )',
+    '( umask 077; mkdir -p "$_eng_state" )',
+    '( umask 077; mkdir -p "$_eng_state" )',
+    '( umask 077; mkdir -p "$_ra_dir" )',
+    '( umask 077; printf \'claude\\n\' > "$_eng_state/judge-engine" && chmod 600 "$_eng_state/judge-engine" )',
+    '( umask 077; printf \'codex\\n\' > "$_eng_state/default-backend" && chmod 600 "$_eng_state/default-backend" )',
+    '( umask 077; printf \'codex\\n\' > "$_eng_state/judge-engine" && chmod 600 "$_eng_state/judge-engine" )',
+    '( umask 077; printf \'sdk\\n\' > "$_eng_state/default-backend" && chmod 600 "$_eng_state/default-backend" )',
+    '( umask 077; printf \'{"on": true}\\n\' > "$_dbg_conf" && chmod 600 "$_dbg_conf" )',
+    '[ -z "$_cx" ] && _cx="$(ls -d "$_eng_state"/codexvenv/lib/python3.*/site-packages/codex_cli_bin/bin/codex 2>/dev/null | head -n1 || true)"',
+    '_dn_mref="$(DN_OUT="$_dn_mout" DN_TOK="$(_romp_state_dir)/serve-token" DN_ENV="${ROMP_SERVE_TOKEN:+1}" python3 - <<\'PYEOF\'',
+    '_st_when="$(python3 - "$_st_marker" 2>/dev/null <<\'PYEOF\' || true',
+    'python3 - "$_cfile" "$_cmin" "$_cjson" <<\'PY\'',
+    'umask 077; RA_ACTION="${1:-}" RA_WHEN="${2:-}" RA_REASON="${3:-}" RA_SHA="$_ra_sha" RA_PPID="$PPID" RA_PARENT="$(ps -o command= -p "$PPID" 2>/dev/null | head -1)" RA_TTY="$(tty 2>/dev/null || true)" RA_SID="$_ra_sid" RA_NAME="$_ra_name" python3 - >> "$_ra_dir/restart-audit.jsonl" <<\'PYEOF\'',
+]
+CLI_UMASK_TOOLS = ("cli/spend_rebuild.py", "cli/spend_repair.py")   # os.umask(0o077) is the first statement of each main()
 MANAGER_WRITE = re.compile(r"(?:appendFileSync|writeFileSync)\((?:[^;]|\n)*?\);")
 
 
 def cli_redirects(text):
     """Every `>` or `>>` redirect in a bash text onto a path under a name the text binds to the state root (a name assigned
-    from `$(_romp_state_dir)` or the XDG expression, a directory or a file under it): (line number, name, the redirect's
-    command as one text: its line and the backslash-continued lines above it)."""
+    from `$(_romp_state_dir)` or the XDG expression, a directory or a file under it), in the `"$name`, `${name}` and unquoted
+    forms: (line number, name, the redirect's command as one text: its line and the backslash-continued lines above it)."""
     lines = text.splitlines()
     names = {m.group(1) for m in (CLI_ROOT_BINDING.match(line) for line in lines) if m}
     out = []
     for i, line in enumerate(lines):
         for name in sorted(names):
-            if re.search(r'>>?\s*"\$%s(?:/|")' % re.escape(name), line):
+            if re.search(r'>>?\s*"?\$\{?%s\}?(?:/|"|\s|$)' % re.escape(name), line):
                 j = i
                 while j > 0 and lines[j - 1].rstrip().endswith("\\"):
                     j -= 1
@@ -202,6 +288,174 @@ ALLOWLIST = {
     ("kernel/codex_backend.py", "CodexBackend._save_registry", "os.open", "str(self._reg_lock_path())"):
         "the Codex registry's lock, O_RDWR|O_CREAT at 0600 with an fchmod on the descriptor",
 }
+
+
+def cli_root_names(text):
+    """Every name a bash text binds to the state root expression, underscore-led or not: name -> what follows the expression
+    on its binding line ('' or '"' for the bare root, '/x"' for one level below it)."""
+    out = {}
+    for line in text.splitlines():
+        m = CLI_ANY_ROOT_BINDING.match(line)
+        if m:
+            out[m.group(1)] = m.group(2).strip()
+    return out
+
+
+def _root_spellings(names):
+    """The regexes that spell the root in a bash text: `$name`, `${name}` for each bound name, and the expression itself."""
+    return [re.compile(r'\$\{?%s\b' % re.escape(n)) for n in sorted(names)] + [re.compile(CLI_ROOT_EXPR)]
+
+
+def _handed(text, names):
+    """Whether `text` (a command's prefix and arguments) carries a root spelling that is NOT a redirect's target."""
+    for rx in _root_spellings(names):
+        for m in rx.finditer(text):
+            if not re.search(r'>>?\s*"?$', text[:m.start()]):
+                return True
+    return False
+
+
+def cli_second_level_bindings(text):
+    """Names bound by assignment from a root-bound name (`_x="$_root/..."`, `_x="${_root}/..."`): the level cli_redirects does
+    not follow, held empty. An environment prefix at a line start (`X="$_root/f" cmd`) reads as one too, and is caught."""
+    names = cli_root_names(text)
+    out = []
+    for line in text.splitlines():
+        for n in sorted(names):
+            m = re.match(r'^\s*(?:local\s+)?([A-Za-z_][A-Za-z0-9_]*)="?\$\{?%s\}?(?:/|"|$)' % re.escape(n), line)
+            if m and m.group(1) not in names:
+                out.append(m.group(1))
+    return out
+
+
+def _logical_lines(text):
+    """(first line number, the line with its backslash continuations joined by one space): a command that continues over
+    lines is read as one."""
+    out, cur, start = [], None, 0
+    for i, line in enumerate(text.splitlines(), 1):
+        if cur is None:
+            cur, start = "", i
+        if line.rstrip().endswith("\\"):
+            cur += line.rstrip()[:-1].rstrip() + " "
+            continue
+        out.append((start, cur + line.lstrip() if cur else line))
+        cur = None
+    if cur:
+        out.append((start, cur.rstrip()))
+    return out
+
+
+def _cli_commands(text, words):
+    """(line number, command text, the word, the logical line, the word's offset in it) for every command word in `words` at a
+    command position whose environment prefix or arguments carry a root spelling not behind a redirect operator (a redirect
+    is cli_redirects's); the text is prefix, word and arguments to the next unquoted separator or here-document, whitespace
+    collapsed. The logical line is the command's own line with its backslash continuations; in_umask_group over it says
+    whether the word sits inside a `( umask 077; ...)` group on that line."""
+    if not words:
+        return []
+    rx = re.compile(CLI_POSITION + r'\s*' + CLI_ASSIGNS + r'(' + "|".join(re.escape(w) for w in sorted(words, key=len, reverse=True)) + r')\b' + CLI_ARGS)
+    names = cli_root_names(text)
+    out = []
+    for i, logical in _logical_lines(text):
+        for m in rx.finditer(logical):
+            pre, word, args = m.group(1), m.group(2), m.group(3).split("<<")[0]
+            if _handed(pre + " " + args, names):
+                out.append((i, re.sub(r"\s+", " ", pre + word + args).strip(), word, logical, m.start(2)))
+    return out
+
+
+def cli_non_redirect_creations(text):
+    return _cli_commands(text, set(CLI_CREATING_VERBS))
+
+
+def cli_programs_handed_a_root_path(text):
+    return _cli_commands(text, set(CLI_PROGRAMS))
+
+
+def cli_functions_handed_a_root_path(text):
+    """The bash functions of the text called with a root spelling among their arguments (the parameter road, which no
+    assignment scan sees)."""
+    return sorted({w for _l, _c, w, _g, _o in _cli_commands(text, {m.group(2) for m in CLI_FUNC_DEF.finditer(text)})})
+
+
+def cli_function_parameter_misuse(text, name):
+    """In the body of function `name` (closed by a brace at the definition's own indentation): a redirect onto a positional
+    parameter, or a creating verb or program with one. A parameter re-bound to a local before the write is beyond this scan."""
+    m = re.search(r'^(\s*)(?:function\s+)?%s\s*(?:\(\))?\s*\{(.*?)^\1\}' % re.escape(name), text, re.M | re.S)
+    body = m.group(2) if m else ""
+    return ([x for x in re.findall(r'>>?\s*"?\$\{?[0-9@*]', body)]
+            + [x for x in re.findall(r'\b(?:%s)\b[^\n;&|]*\$\{?[0-9@*]' % "|".join(CLI_CREATING_VERBS + CLI_PROGRAMS), body)])
+
+
+def cli_admitted(cmd, names, in_group):
+    """Why a non-redirect creation is owner-only by construction, or None: a `mkdir -p` of the root itself (a name bound to the
+    bare root, or the dirname of a name bound one level below) INSIDE a `( umask 077; ...)` group, so the root is born 0700;
+    or a `mv` whose source is under the root (the inode carries the mode its creator gave it)."""
+    bare = {n for n, rest in names.items() if rest.strip('"') == ""}
+    below = {n for n, rest in names.items() if re.fullmatch(r'/[^/"]+"?', rest)}
+    m = re.fullmatch(r'mkdir -p "\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?"', cmd)
+    if m and m.group(1) in bare and in_group:
+        return "the root born 0700"
+    m = re.fullmatch(r'mkdir -p "\$\(dirname "\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?"\)"', cmd)
+    if m and m.group(1) in below and in_group:
+        return "the root born 0700 (the parent of an entry one level below it)"
+    m = re.fullmatch(r'mv -f "\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?/[^" ]+" "\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?/[^" ]+"', cmd)
+    if m and m.group(1) in names and m.group(2) in names:
+        return "a rename from under the root: the inode carries its mode"
+    return None
+
+
+def cli_names_dir_misuse(text):
+    """Lines using $ROMP_NAMES_DIR outside its binding that redirect onto it or hand it to a creating verb or program."""
+    return [l.strip() for l in text.splitlines() if "$ROMP_NAMES_DIR" in l and not CLI_ANY_ROOT_BINDING.match(l)
+            and (re.search(r'>>?\s*"?\$\{?ROMP_NAMES_DIR', l)
+                 or re.search(r'\b(?:%s)\b' % "|".join(CLI_CREATING_VERBS + CLI_PROGRAMS), l))]
+
+
+def cli_inline_root_uses(text):
+    """Lines that spell the root expression outside a binding of it (and outside the function that defines it)."""
+    return [(i, l.strip()) for i, l in enumerate(text.splitlines(), 1)
+            if re.search(CLI_ROOT_EXPR, l) and not CLI_ANY_ROOT_BINDING.match(l) and not l.startswith("_romp_state_dir()")]
+
+
+def cli_inline_misuse(text):
+    """Inline uses of the root expression that redirect onto it or carry a creating verb anywhere on the line."""
+    return [l for _i, l in cli_inline_root_uses(text)
+            if re.search(r'>>?\s*"?(?:%s)' % CLI_ROOT_EXPR, l) or re.search(r'\b(?:%s)\b' % "|".join(CLI_CREATING_VERBS), l)]
+
+
+def cli_cooccurrences(text):
+    """The coarse backstop: every logical line carrying a root spelling (bound name, brace form or the expression) AND a
+    creating verb, program or extra word (CLI_BACKSTOP_EXTRAS), whatever its position; whitespace collapsed, a trailing
+    unquoted comment dropped, sorted."""
+    names = cli_root_names(text)
+    words = re.compile(r'\b(?:%s)\b' % "|".join(CLI_CREATING_VERBS + CLI_PROGRAMS + CLI_BACKSTOP_EXTRAS))
+    return sorted(re.sub(r"\s+#[^\"']*$", "", re.sub(r"\s+", " ", l).strip()) for _i, l in _logical_lines(text)
+                  if words.search(l) and any(rx.search(l) for rx in _root_spellings(names)))
+
+
+def tool_sets_umask_first(source):
+    """Whether a Python tool's main() opens with `os.umask(0o077)` and nothing at module level creates a file (write_text,
+    write_bytes, open, replace, rename, copy*, mkdir, makedirs; module-level if/try bodies included). A helper called at module
+    level that creates inside its own body is beyond this scan; the two tools have none."""
+    tree = ast.parse(source)
+    mains = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main"]
+    if len(mains) != 1 or not mains[0].body:
+        return False
+    first = mains[0].body[0]
+    ok = (isinstance(first, ast.Expr) and isinstance(first.value, ast.Call) and isinstance(first.value.func, ast.Attribute)
+          and isinstance(first.value.func.value, ast.Name) and first.value.func.value.id == "os" and first.value.func.attr == "umask"
+          and len(first.value.args) == 1 and isinstance(first.value.args[0], ast.Constant) and first.value.args[0].value == 0o077)
+    creators = {"write_text", "write_bytes", "open", "replace", "rename", "copy", "copy2", "copyfile", "copytree", "mkdir", "makedirs"}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        for c in ast.walk(node):
+            if isinstance(c, ast.Call):
+                f = c.func
+                if (isinstance(f, ast.Attribute) and f.attr in creators) or (isinstance(f, ast.Name) and f.id in creators):
+                    return False
+    return ok
 
 
 def _mode_arg(call, idx):
@@ -458,9 +712,10 @@ class TheWritersCensus(unittest.TestCase):
         for ln, name, cmd in found:
             self.assertIn("umask 077", cmd, "bin/romp:%d writes under the root through $%s without umask 077 on its command:\n%s"
                           % (ln, name, cmd))
-        planted = text + '\n_pl="$(_romp_state_dir)"\nprintf x > "$_pl/planted"\n'
-        self.assertEqual([c for _l, _n, c in cli_redirects(planted) if "umask 077" not in c], ['printf x > "$_pl/planted"'],
-                         "the CLI check reds on a planted bare redirect and on nothing else")
+        planted = text + '\n_pl="$(_romp_state_dir)"\nprintf x > "$_pl/planted"\nprintf x > "${_pl}/planted"\nprintf x >$_pl/planted\n'
+        self.assertEqual([c for _l, _n, c in cli_redirects(planted) if "umask 077" not in c],
+                         ['printf x > "$_pl/planted"', 'printf x > "${_pl}/planted"', 'printf x >$_pl/planted'],
+                         "the CLI check reds on a planted bare redirect in each spelling and on nothing else")
         mtext = open(os.path.join(ROOT, "bin", "romp-manager"), encoding="utf-8").read()
         sites = [m.group(0) for m in MANAGER_WRITE.finditer(mtext)]
         self.assertTrue(sites, "the manager appends its audit rows")
@@ -481,9 +736,92 @@ class TheWritersCensus(unittest.TestCase):
         self.assertEqual(remote_appends_unguarded('A="$(cmd)"; ( umask 077; echo x >>"$LOGDIR/planted.log" ); '), [])
         self.assertEqual(remote_appends_unguarded('( umask 077; : >>"$LOGDIR/planted.log" ); nohup x >>"$LOGDIR/planted.log" & '), [])
 
+    def test_the_clis_non_redirect_creations_are_the_roots_own_mkdirs_and_the_markers_move(self):
+        """THE REACH OF THE CLI RULE, PINNED BY EQUALITY (romp-manager's round-3 preparation and its adversarial review,
+        2026-09-21). cli_redirects judges redirects onto one level of underscore-led root binding; this test holds what it does
+        not judge to the lists found on 2026-09-21, in the shapes its regexes read, so a new site of any kind reds: (1) no name
+        is bound from a root-bound name by assignment; (2) the functions handed a root path are exactly
+        CLI_FUNCTIONS_HANDED_A_ROOT_PATH and their bodies carry no redirect or creating verb on a positional parameter; (3) the
+        non-redirect creations under a root spelling are exactly CLI_NON_REDIRECT_CREATIONS, five `mkdir -p` of the root itself
+        inside a `( umask 077; ...)` group and the marker's `mv`, each admitted by cli_admitted; (4) the programs handed a root
+        path, by argument or by environment prefix, are exactly CLI_PROGRAMS_HANDED_A_ROOT_PATH; (5) ROMP_NAMES_DIR is the only
+        root binding CLI_ROOT_BINDING does not match, and its one use is a read; (6) the root expression appears outside a
+        binding on CLI_INLINE_ROOT_USES lines, none a redirect onto it and none carrying a creating verb; (7) the coarse
+        backstop: every line carrying both a root spelling and a creating verb or program word, whatever its position, is one
+        of CLI_COOCCURRENCES; (8) the two Python tools the CLI delegates to (CLI_UMASK_TOOLS) open main() with os.umask(0o077)
+        and create nothing at module level. Each check reds on a plant."""
+        text = open(os.path.join(ROOT, "bin", "romp"), encoding="utf-8").read()
+        names = cli_root_names(text)
+        self.assertEqual(cli_second_level_bindings(text), [], "a name bound from a root-bound name: widen cli_redirects to follow it")
+        self.assertEqual(cli_functions_handed_a_root_path(text), CLI_FUNCTIONS_HANDED_A_ROOT_PATH, "a function is handed a root path")
+        for fn in CLI_FUNCTIONS_HANDED_A_ROOT_PATH:
+            self.assertEqual(cli_function_parameter_misuse(text, fn), [], "%s writes through its parameter" % fn)
+        found = cli_non_redirect_creations(text)
+        self.assertEqual(sorted(c for _l, c, _w, _g, _o in found), CLI_NON_REDIRECT_CREATIONS,
+                         "the CLI's non-redirect creations under the root changed: %r" % [(l, c) for l, c, _w, _g, _o in found])
+        for ln, cmd, _w, logical, off in found:
+            self.assertIsNotNone(cli_admitted(cmd, names, in_umask_group(logical, off)),
+                                 "bin/romp:%d creates under the root by a path and is neither the root's own mkdir inside a "
+                                 "`( umask 077; ...)` group on its line nor a rename from under the root: %s" % (ln, cmd))
+        progs = cli_programs_handed_a_root_path(text)
+        self.assertEqual(sorted(c for _l, c, _w, _g, _o in progs), CLI_PROGRAMS_HANDED_A_ROOT_PATH,
+                         "a program is handed a path under the root: read what it does with it, then list it: %r" % [(l, c) for l, c, _w, _g, _o in progs])
+        others = sorted(n for n in names if not CLI_ROOT_BINDING.match('%s="$(_romp_state_dir)"' % n))
+        self.assertEqual(others, ["ROMP_NAMES_DIR"], "a root binding cli_redirects does not match: %r" % others)
+        uses = [l.strip() for l in text.splitlines() if "$ROMP_NAMES_DIR" in l and not CLI_ANY_ROOT_BINDING.match(l)]
+        self.assertEqual(len(uses), 1, "ROMP_NAMES_DIR's uses: %r" % uses)
+        self.assertEqual(cli_names_dir_misuse(text), [])
+        inline = cli_inline_root_uses(text)
+        self.assertEqual(len(inline), CLI_INLINE_ROOT_USES, "the root expression outside a binding: %r" % inline)
+        self.assertEqual(cli_inline_misuse(text), [])
+        self.assertEqual(cli_cooccurrences(text), CLI_COOCCURRENCES, "a line with a root spelling and a creating verb or program changed")
+        for rel in CLI_UMASK_TOOLS:
+            self.assertTrue(tool_sets_umask_first(open(os.path.join(ROOT, rel), encoding="utf-8").read()),
+                            "%s: os.umask(0o077) is not main()'s first statement, or the module creates a file at import" % rel)
+        # THE RED SHAPES, one per check and per admitted branch, planted at the end of a copy of the CLI
+        planted = text + "\n".join(["", '_pl="$(_romp_state_dir)"', '_pl3="$(_romp_state_dir)/one.json"', '_pl2="${_pl}/deeper"',
+                                    'mkdir -p "$_pl/sub"', 'cp x "$_pl/y"', 'echo x | tee "${_pl}/z"', 'if mkdir "$_pl/lock"; then :; fi',
+                                    'mv -f /elsewhere/x "$_pl/y"', 'mkdir -p "$_pl"', '( umask 077; mkdir -p "$_pl" )',
+                                    '( umask 077; mkdir -p "$(dirname "$_pl3")" )', 'mv -f "$_pl/a.tmp" "$_pl/a"',
+                                    'mkdir -p \\', '    "$_pl/cont"', "node - \"$_pl/r.json\" <<'JS'", 'X="$_pl/f" python3 -',
+                                    "_pl_fn() {", '    : > "$1/x"', "}", '_pl_fn "$_pl"',
+                                    "    function _pl_fn2 {", '        cp y "$1/z"', "    }", '    _pl_fn2 "$_pl"',
+                                    'echo x > "$ROMP_NAMES_DIR/planted"', 'echo x | tee "$(_romp_state_dir)/y"',
+                                    'printf x > "$(_romp_state_dir)/planted"', 'chmod 666 "$_pl/loose"', ""])
+        pnames = cli_root_names(planted)
+        self.assertEqual(cli_second_level_bindings(planted), ["_pl2", "X"], "an assignment and an environment prefix at a line start")
+        self.assertEqual(cli_functions_handed_a_root_path(planted), sorted(CLI_FUNCTIONS_HANDED_A_ROOT_PATH + ["_pl_fn", "_pl_fn2"]),
+                         "a function at column 0 and an indented one in the `function` form")
+        self.assertEqual(cli_function_parameter_misuse(planted, "_pl_fn"), ['> "$1'])
+        self.assertEqual(cli_function_parameter_misuse(planted, "_pl_fn2"), ['cp y "$1'])
+        new = cli_non_redirect_creations(planted)[len(found):]
+        self.assertEqual([c for _l, c, _w, _g, _o in new],
+                         ['mkdir -p "$_pl/sub"', 'cp x "$_pl/y"', 'tee "${_pl}/z"', 'mkdir "$_pl/lock"', 'mv -f /elsewhere/x "$_pl/y"',
+                          'mkdir -p "$_pl"', 'mkdir -p "$_pl"', 'mkdir -p "$(dirname "$_pl3")"', 'mv -f "$_pl/a.tmp" "$_pl/a"',
+                          'mkdir -p "$_pl/cont"', 'tee "$(_romp_state_dir)/y"'], "the planted creations are found in order, the continued one joined")
+        self.assertEqual([cli_admitted(c, pnames, in_umask_group(g, o)) for _l, c, _w, g, o in new],
+                         [None, None, None, None, None, None, "the root born 0700", "the root born 0700 (the parent of an entry one level below it)",
+                          "a rename from under the root: the inode carries its mode", None, None],
+                         "the grouped mkdirs of the root and the rename from under it are admitted, nothing else")
+        self.assertEqual([c for _l, c, _w, _g, _o in cli_programs_handed_a_root_path(planted)][len(progs):],
+                         ['node - "$_pl/r.json"', 'X="$_pl/f" python3 -'], "a program handed a path by argument and by environment")
+        self.assertEqual(cli_names_dir_misuse(planted), ['echo x > "$ROMP_NAMES_DIR/planted"'])
+        self.assertEqual(len(cli_inline_root_uses(planted)), CLI_INLINE_ROOT_USES + 2, "the tee and the printf; the bindings are not uses")
+        self.assertEqual(cli_inline_misuse(planted), ['echo x | tee "$(_romp_state_dir)/y"', 'printf x > "$(_romp_state_dir)/planted"'])
+        self.assertEqual(sorted(set(cli_cooccurrences(planted)) - set(CLI_COOCCURRENCES)),
+                         sorted(['mkdir -p "$_pl/sub"', 'cp x "$_pl/y"', 'echo x | tee "${_pl}/z"', 'if mkdir "$_pl/lock"; then :; fi',
+                                 'mv -f /elsewhere/x "$_pl/y"', 'mkdir -p "$_pl"', '( umask 077; mkdir -p "$_pl" )',
+                                 '( umask 077; mkdir -p "$(dirname "$_pl3")" )', 'mv -f "$_pl/a.tmp" "$_pl/a"', 'mkdir -p "$_pl/cont"',
+                                 'node - "$_pl/r.json" <<\'JS\'', 'X="$_pl/f" python3 -', 'echo x | tee "$(_romp_state_dir)/y"',
+                                 'chmod 666 "$_pl/loose"']), "the backstop lists every planted line with a root spelling and a word, the continued one joined")
+        self.assertFalse(tool_sets_umask_first("import os\ndef main():\n    x = 1\n    os.umask(0o077)\n"), "umask not first")
+        self.assertFalse(tool_sets_umask_first("import os\nopen('x', 'w')\ndef main():\n    os.umask(0o077)\n"), "a module-level creator")
+        self.assertTrue(tool_sets_umask_first("import os\ndef main():\n    os.umask(0o077)\n    return 0\n"))
+
     def test_the_census_reuses_the_readers_derivation(self):
         """One derivation per module per process: the facts the readers census cached (module_facts, _FACTS) are the ones
-        this census read, so the two censuses cost one parse and one derivation of each module between them."""
+        this census read, so the two censuses cost one parse and one derivation of each module between them. This asserts
+        SHARING, not warmth: it holds whichever census ran first (see the module docstring on collection order)."""
         for rel in MODULES:
             path = os.path.join(ROOT, rel)
             st = os.stat(path)

@@ -231,7 +231,11 @@ _romp_restart_audit() {   # [action] [flag] [reason]   (flag --quiet: a PARKED r
     (   # a subshell: the umask below is this function's alone
         local _ra_dir _ra_sid _ra_name="" _ra_sha=""
         _ra_dir="$(_romp_state_dir)"
-        mkdir -p "$_ra_dir"
+        # the root is BORN 0700 under any umask, and so is any missing parent of it (the state-root review, 2026-09-21): the
+        # gate's creation exemption is for a
+        # root EMPTY at its read, and this command fills the root in the same breath (the audit row below), so a root
+        # made here at a permissive umask's mode would meet the import refusal at the next boot
+        ( umask 077; mkdir -p "$_ra_dir" )
         _ra_sid="${CLAUDE_CODE_SESSION_ID:-}"
         [[ -n "$_ra_sid" && -f "$_ra_dir/names/$_ra_sid" ]] \
             && _ra_name="$(cut -f1 "$_ra_dir/names/$_ra_sid" 2>/dev/null | head -1)"
@@ -2252,7 +2256,7 @@ if [[ "${1:-}" == "engine" ]]; then
     _eng_state="${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}"
     case "${1:-status}" in
         claude)
-            mkdir -p "$_eng_state"
+            ( umask 077; mkdir -p "$_eng_state" )   # the root born 0700 under any umask (see _romp_restart_audit)
             # born 0600 under any umask, an older file tightened (round 4f of the state-root review): the kernel reads both
             # names through its guarded readers, which quarantine an entry at a permissive umask's mode and fall back to the
             # defaults, so the engine choice would be silently lost
@@ -2264,7 +2268,7 @@ if [[ "${1:-}" == "engine" ]]; then
             echo "[romp] engine CLAUDE — judges run on Claude; new sessions default to the Claude Agent SDK"
             echo "[romp] running sessions are unaffected; judges pick this up on their next call" ;;
         codex)
-            mkdir -p "$_eng_state"
+            ( umask 077; mkdir -p "$_eng_state" )   # the root born 0700 under any umask (see _romp_restart_audit)
             ( umask 077; printf 'codex\n' > "$_eng_state/judge-engine" && chmod 600 "$_eng_state/judge-engine" )
             ( umask 077; printf 'codex\n' > "$_eng_state/default-backend" && chmod 600 "$_eng_state/default-backend" )
             _cx="$(command -v codex 2>/dev/null || true)"
@@ -2302,7 +2306,7 @@ if [[ "${1:-}" == "debug" ]]; then
     _dbg_conf="${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}/debug-mode.json"
     case "${1:-status}" in
         on)
-            mkdir -p "$(dirname "$_dbg_conf")"
+            ( umask 077; mkdir -p "$(dirname "$_dbg_conf")" )   # the root born 0700 under any umask (see _romp_restart_audit)
             # born 0600 under any umask (round 4f of the state-root review): the judge reads it through the guarded reader
             ( umask 077; printf '{"on": true}\n' > "$_dbg_conf" && chmod 600 "$_dbg_conf" )
             echo "[romp] debug mode ON — judge rejections carry input+reply; card modals show a Warnings section" ;;
@@ -2467,7 +2471,7 @@ PYEOF
         # 2. the marker (atomic: temp + mv), then the audit row, AFTER the wait, so the kernel's
         #    SIGTERM path finds it inside its join window and the cut ledger names the cause. The
         #    marker's cmd carries the flags; the row names the action alone.
-        mkdir -p "$_dn_state"
+        ( umask 077; mkdir -p "$_dn_state" )   # the root born 0700 under any umask (see _romp_restart_audit)
         _dn_cmd="romp down${_dn_now:+ --now}"
         [[ -z "$_dn_now" && "$_dn_wait" != "5" ]] && _dn_cmd="$_dn_cmd --wait $_dn_wait"
         # the marker's temp is born 0600 under any umask and the mv carries the inode's mode (round 4f of the state-root review)
