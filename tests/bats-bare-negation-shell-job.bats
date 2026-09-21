@@ -32,10 +32,11 @@
 # (exit 124) and passed in 0.07 s without it. A nested bats must also not read the outer run's BATS_ROOT, BATS_RUN_TMPDIR and the
 # rest. Since fork PR #871's round 2, tenth commit, the module builds the environment of every bats run it starts from a rule
 # (BATS_ENV_KEYS: PATH, a fresh HOME and TMPDIR, LANG) and from nothing else of its process, so no BATS_* variable and no
-# import-time write of a test module reaches a run a verdict is read from, by construction (since the twelfth commit a candidate
-# failing under both rewrites on one line runs the test as written once more under the process environment less BATS_*, a
-# CONTROL whose outcome is never the verdict and whose sentence names the rule and where a key is added); the scrub here keeps
-# the python process itself clean, so nothing else it starts (its bash probes run under its own environment) inherits them either. The module also drops the outer's
+# import-time write of a test module reaches a run a verdict is read from, by construction (since the thirteenth commit every
+# candidate whose verdict is not `read` runs both rewrites once more under the process environment less BATS_*, a CONTROL whose
+# verdict is never the candidate's and whose sentence names the rule and where a key is added when the verdict or an outcome
+# differs; the twelfth ran it on one shape, both sides failing on one line); the scrub here keeps the python process itself
+# clean, so nothing else it starts (its bash probes run under its own environment) inherits them either. The module also drops the outer's
 # libexec directory from the inner run's PATH (bats puts it first there, and the `bats` in it expects the BATS_ROOT this scrub
 # removes: left on PATH, the inner bats ran with BATS_ROOT empty and did not load at all under CI's /usr/local layout, measured
 # with 1.11.1 from a scratch prefix as the outer and the inner bats).

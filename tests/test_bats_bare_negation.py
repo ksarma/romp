@@ -250,26 +250,41 @@ fallback, gitleaks-config.bats's `${ROMP_GITLEAKS:-$(command -v gitleaks || true
 `${ROMP_SERVE_TOKEN:-$(cat "$XDG_STATE_HOME/romp/serve-token")}` in two tests, the token route itself; the shell job's runner sets
 CI, GITHUB_* and RUNNER_*, GitHub's documented default environment, and the job adds BATS_TEST_TIMEOUT, and what else the runner's
 shell carries, LANG, USER, SHELL, a TERM or none, is not measured here). What the rule does NOT cover, each by design: a suite
-that reads another variable, which fails under the rule in both rewrites the same way, blamed on the same line of its own, and
-whose key is then added twice, deliberately, to BATS_ENV_KEYS with its reason and to the equality pin's literal; the module's own
-bash -n and declare -f probes (_bash_n, _declared), which run under the process environment plus LC_ALL=C and execute nothing;
-and the inner bats's own variables (BATS_*), which bats sets itself. That failure was not legible before the twelfth commit:
-decide reported the planted suite undecided, `the test fails under both rewrites (blamed on line 2 and line 2): its failure does
-not turn on this negation`, and named the shape and not the cause (measured at the eleventh commit with such a suite planted, its
-setup asserting NEEDED_BY_SUITE non-empty and the variable set in the pytest process: `47 files: 13 candidates, 12 read, 0 inert,
-1 undecided, in 72.79 s`, the report saying nothing of the environment). Since the twelfth commit that shape, `not ok` under both
-rewrites on one known line, the candidate's own included (`! cmd && [ -n "$FOO" ]` fails there under both), runs a CONTROL ARM
-(decide_under_bats, _control_shape, _control_env): the test as written, once, under the process environment less every BATS_*
-variable with the rule's own four values laid over it, the pass-through every bats run saw before the tenth commit, used as a
-diagnostic and never as the verdict. The report then carries one of two sentences after decide's: the suite fails under the rule
-and passes under the process environment, so it reads a variable the rule excludes or the process carries a write that satisfies
-it, with the keys the process holds and the rule does not, sorted, names and never values, and where a key bats legitimately needs
-is added (CONTROL_ENVIRONMENT_DIFFERS); or the suite fails under both environments and its failure is its own
-(CONTROL_OWN_FAILURE); a control run bats gave no verdict on says so and nothing of the environment (CONTROL_NO_VERDICT). The
-candidate stays undecided and the corpus test still fails: only the report became legible. The control runs on no other shape
-(BatsRoad's synthetic-suite pin counts them, one of its eleven candidates, the later-failure test; BatsRoad's fifth-key pin
-reaches both sentences with the planted suite, the variable set in the process and then absent; and the corpus's summary line
-prints the count, 0 at this head).
+that reads another variable, whose key is then added twice, deliberately, to BATS_ENV_KEYS with its reason and to the equality
+pin's literal; the module's own bash -n and declare -f probes (_bash_n, _declared), which run under the process environment plus
+LC_ALL=C and execute nothing; and the inner bats's own variables (BATS_*), which bats sets itself. A suite reading a variable the
+rule excludes takes more than one shape under the rule, and no shape names the cause by itself: a setup asserting it fails under
+both rewrites on its own line (undecided); a gate before the negation, `[ -n "$FOO" ] || return 0`, returns before the negation
+runs, and the negation reads INERT, a wrong-cause verdict and the one a negation gated on CI would get; a skip on it, `[ -n "$FOO"
+] || skip`, is no verdict under either rewrite (the corpus holds the tool-gated form of that idiom, gitleaks-config.bats's setup
+skip); a read of it after the negation fails on one line under `! true` and on the variable's line under `! false`, two lines.
+None of that was legible before the twelfth commit, which ran a control on the first shape alone: decide had reported the planted
+setup suite undecided, `the test fails under both rewrites (blamed on line 2 and line 2): its failure does not turn on this
+negation`, the shape named and not the cause (measured at the eleventh commit with such a suite planted, its setup asserting
+NEEDED_BY_SUITE non-empty and the variable set in the pytest process: `47 files: 13 candidates, 12 read, 0 inert, 1 undecided, in
+72.79 s`, the report saying nothing of the environment), and at the twelfth the three other shapes, each planted with its variable
+set in the pytest process, were reported INERT (the gate: `this negation asserts nothing`), `skipped` under both (the skip) and
+`not ok @2` and `not ok @4` (the later read), no control on any: `50 files: 16 candidates, 12 read, 1 inert, 3 undecided (1 with a
+control run), in 76.89 s`. Since the thirteenth commit every candidate whose verdict is not `read` runs a CONTROL ARM
+(decide_under_bats, _control_withheld, _control_env, _control_verdict): the two rewrites again, `repeats` runs each in fresh
+copies of the tree, under the process environment less every BATS_* variable with the rule's own four values laid over it, the
+pass-through every bats run saw before the tenth commit, decided by the same decide, and used as a diagnostic and never as the
+verdict. The message and the report then carry one of three sentences after decide's: the verdict under the process environment,
+with its message, where the rule's verdict or an outcome on either side differs, so the suite reads a variable the rule excludes
+or the process carries a write that satisfies it, with the keys the process holds and the rule does not, sorted, names and never
+values, and where a key bats legitimately needs is added (CONTROL_ENVIRONMENT_DIFFERS); or the outcomes and the verdict are the
+rule's, so the verdict is the suite's own, or turns on a variable this process does not carry either, since the control compares
+the rule against this process's environment and no other (CONTROL_SAME: a negation gated on CI is told apart in CI's shell job,
+whose runner sets CI, and not under a pytest here, where it is not set); or the control's own runs disagree and nothing is said of
+the environment (CONTROL_NOISE). The control is withheld, and the message says why (CONTROL_WITHHELD), where a side under the rule
+was ended at the bound (a control would pay RUN_TIMEOUT again for each run, and the wrapper test's bound holds the whole corpus),
+where a rewrite did not run (the file does not parse, or the pipeline runs off the text: no environment changes that) and where a
+side's runs disagree (a pair under another environment is read from the same noise). The candidate's verdict stands and the corpus
+test still fails: only the report is legible. The control costs nothing on a green corpus (0 candidates not read at this head, the
+count the corpus's summary line prints) and `repeats` runs per rewrite on a red one (BatsRoad's fifth-key pin reaches the
+differing sentence on all four shapes with each variable set in the process, the control's verdict `read` on each, and the
+same-verdict sentence with each absent; its synthetic-suite pin counts the controls, five of its eleven candidates, and the poll's
+withheld sentence; the withheld reasons and the three sentences are pinned on synthetic runs without bats).
 
 The gate on the corpus validation in CI is the shell job: its Linux cell installs bats 1.11.1 and its `bats tests/*.bats` runs
 tests/bats-bare-negation-shell-job.bats, which runs the corpus test under python3 with this module ALONE, no conftest and no
@@ -279,9 +294,10 @@ bats-backed tests of this module skip there, and since the tenth commit the firs
 (WITHOUT_BATS_NOTICE, listed in pytest's warnings summary and counted in the summary line under -q, the cells' flags): a green
 Python cell says the corpus validation did not run in it. Installing bats in those cells was measured and refused: at the head
 before the tenth commit the module alone cost `45 passed in 199.86s` with bats against `34 passed, 11 skipped in 17.56s` without,
-182 s more per cell (the register and the corpus most of it; at this head `48 passed in 263.03s (0:04:23)` with bats 1.10.0, the
-two new bats-backed pins among them and the child pytest 70 s of it, against `35 passed, 13 skipped, 1 warning in 17.13s`
-without), on cells whose margin under their 25-minute cap was 4 to 8 minutes in fork PR #871's own CI run at the ninth commit
+182 s more per cell (the register and the corpus most of it; at this head `50 passed, 4 subtests passed in 265.90s (0:04:25)`
+with bats 1.10.0, the bats-backed pins since the tenth commit among them and the child pytest 72 s of it, against `36 passed,
+14 skipped, 1 warning in 16.82s` without), on cells whose margin under their 25-minute cap was 4 to 8 minutes in fork PR #871's
+own CI run at the ninth commit
 (3.10 in 20m42s, 3.11 in 20m13s, 3.12 in 17m07s, 3.13 in 18m20s, 3.14t in 20m45s, read off that run's job times), for a bats
 install of 4 s; the shell job carries the validation inside its 35 minutes (11m02s in that run). The polluted shape, pytest over
 the whole tests/ with bats on PATH, exists in local sweeps only, where both pins above run; since the eleventh commit the wrapper
@@ -1071,10 +1087,12 @@ def _ere_literal(text):
 # under the process's own environment with LC_ALL=C and execute nothing (a parse under -n, a function printed by declare -f), so
 # no suite is reached through them. The rule's scope is the environment bats needs to run the corpus suites as the shell job
 # runs them, derived in the module docstring (bats-core reads TMPDIR, CI, PATH and PWD; no suite reads TERM, an LC_* variable,
-# USER, SHELL, CI or a GITHUB_* variable). A suite that needs a fifth key fails under the rule in both rewrites the same way, and
-# decide_under_bats then runs the test as written under the process environment as a CONTROL (_control_env: a diagnostic, never
-# the verdict) and reports the difference, naming this tuple and the equality pin (CONTROL_ENVIRONMENT_DIFFERS): the key is
-# added here with its reason AND to the pin's literal
+# USER, SHELL, CI or a GITHUB_* variable). A suite that needs a fifth key takes more than one shape under the rule (a setup
+# asserting it, both rewrites failing on its line; a gate before the negation, the negation reading inert; a skip on it, no
+# verdict; a read of it after the negation, two lines), so decide_under_bats runs every candidate not read again, both rewrites,
+# under the process environment as a CONTROL (_control_env: a diagnostic, never the verdict) and, where the verdict or an outcome
+# differs, reports the difference naming this tuple and the equality pin (CONTROL_ENVIRONMENT_DIFFERS): the key is added here with
+# its reason AND to the pin's literal
 # (BatsCorpus.test_the_environment_handed_to_bats_holds_exactly_the_allowed_keys_and_nothing_else_of_the_process)
 BATS_ENV_KEYS = ("PATH", "HOME", "TMPDIR", "LANG")
 
@@ -1086,7 +1104,7 @@ def _path_without_libexec(path):
 
 
 def _bats_env(scratch):
-    """The environment for a bats run of this module's (every run a verdict is read from; the control arm's one run is the
+    """The environment for a bats run of this module's (every run a verdict is read from; the control arm's runs are the
     exception, _control_env), built from BATS_ENV_KEYS (the rule and its reasons are at the tuple) and
     nothing else: PATH from the process with every directory holding bats's libexec entry point dropped (an outer bats prepends
     its libexec directory to PATH, and the `bats` there, beside bats-exec-test, is the entry point that expects the BATS_ROOT its
@@ -1113,47 +1131,69 @@ def _bats_env(scratch):
 
 
 def _control_env(rule):
-    """The CONTROL arm's environment (decide_under_bats, on a candidate `not ok` under both rewrites on one line): the process
-    environment less every BATS_* variable, with the rule's own values laid over it (`rule`, a _bats_env: PATH less the libexec
-    directories, the fresh HOME and TMPDIR, LANG), the pass-through every bats run of this module's saw before fork PR #871's
-    round 2, tenth commit. A diagnostic and never a verdict's environment: the test as written runs under it once, and whether it
-    passes there says whether the failure under the rule is the environment's (a variable the rule excludes, or a write of the
-    process that satisfies the suite) or the test's own; the keys it holds beyond the rule's are what the report names
-    (_control_verdict: names, never values, since a credential-shaped name may stand among them)."""
+    """The CONTROL arm's environment (decide_under_bats, on a candidate whose verdict is not `read`): the process environment less
+    every BATS_* variable, with the rule's own values laid over it (`rule`, a _bats_env: PATH less the libexec directories, the
+    fresh HOME and TMPDIR, LANG), the pass-through every bats run of this module's saw before fork PR #871's round 2, tenth
+    commit. A diagnostic and never a verdict's environment: the two rewrites run under it again, and whether decide's verdict and
+    the sides' outcomes there are the rule's says whether the verdict is the suite's own or the environment's (a variable the
+    rule excludes, or a write of the process that satisfies the suite); the keys it holds beyond the rule's are what the report
+    names (_control_verdict: names, never values, since a credential-shaped name may stand among them)."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("BATS_")}
     env.update(rule)
     return env
 
 
-def _control_shape(runs):
-    """Whether a candidate's two sides (BatsRun under each rewrite, _agreed) are the shape the control arm answers: `not ok`
-    under both, blamed on one known line of one file. The candidate's own line is included (`! cmd && [ -n "$FOO" ]` fails there
-    under both rewrites when FOO is absent); a side with no verdict, a pair blamed on two lines (the status reached somewhere
-    the failure moved) and a `not ok` bats printed no frame under are not the shape, and no control runs for them."""
-    return all(r.outcome == "not ok" for r in runs) and runs[0].line is not None and len({(r.file, r.line) for r in runs}) == 1
+def _control_withheld(runs):
+    """Why no control runs for a candidate whose verdict is not `read` (decide_under_bats), or None where one does: a side ended
+    at the bound under the rule (`timed out`: a control would pay RUN_TIMEOUT again for each run, and the wrapper test's bound
+    holds the whole corpus), a rewrite that did not run (`no run`: the file does not parse, or the pipeline runs off the text, and
+    no environment changes that), a side whose runs disagree (`disagree`: the test is nondeterministic under the rule, and a pair
+    under another environment is read from the same noise). Every other candidate not read runs one, the inert included: a gate
+    on a variable the rule excludes (`[ -n "$FOO" ] || return 0` before the negation) returns before the negation runs, and the
+    negation reads inert under the rule and read under the process environment."""
+    for (what, _), run in zip(REWRITES, runs):
+        if run.outcome == "timed out":
+            return ("a side's run under `%s` was ended at the bound, which a control would pay again (RUN_TIMEOUT, %d s a run), and the "
+                    "wrapper test's bound holds the whole corpus" % (what, RUN_TIMEOUT))
+        if run.outcome == "no run":
+            return "the rewrite `%s` did not run (%s), and no environment changes that" % (what, run.detail.splitlines()[0])
+        if run.outcome == "disagree":
+            return "the test's runs disagree under `%s`: a pair under another environment is read from the same noise" % what
+    return None
 
 
 # what the control arm says in a candidate's message and report (decide_under_bats), after decide's own sentence
-CONTROL_ENVIRONMENT_DIFFERS = ("the suite fails under the %d-key rule (BATS_ENV_KEYS: %s) and passes under the process environment: it reads a "
-                               "variable the rule excludes, or the process environment carries a write that satisfies it (the pollution class); "
-                               "the environment difference is %s; a variable bats legitimately needs is added to BATS_ENV_KEYS with its reason "
-                               "and to the equality pin's literal "
+CONTROL_ENVIRONMENT_DIFFERS = ("under the process environment the verdict is %s (%s), where under the %d-key rule (BATS_ENV_KEYS: %s) it is %s: the "
+                               "suite reads a variable the rule excludes, or the process environment carries a write that satisfies it (the "
+                               "pollution class); the environment difference is %s; a variable bats legitimately needs is added to BATS_ENV_KEYS "
+                               "with its reason and to the equality pin's literal "
                                "(BatsCorpus.test_the_environment_handed_to_bats_holds_exactly_the_allowed_keys_and_nothing_else_of_the_process)")
-CONTROL_OWN_FAILURE = "the suite fails under both environments: its failure is its own, not this negation"
-CONTROL_NO_VERDICT = "the control run under the process environment gave no verdict (`%s`): nothing is said of the environment"
+CONTROL_SAME = ("under the process environment the two rewrites give the outcomes they gave under the rule and the same verdict: the verdict is "
+                "the suite's own, or turns on a variable this process does not carry either (the control compares the rule against this "
+                "process's environment and no other: a variable another runner sets and this process does not, CI in CI's shell job for one, "
+                "is not told apart here)")
+CONTROL_NOISE = "under the process environment the test's runs disagree under %s: nothing is said of the environment"
+CONTROL_WITHHELD = "no control ran under the process environment: %s"
+
+# the control arm's result for a candidate (decide_under_bats): the run standing for each rewrite's side under the process
+# environment (BatsRun, _agreed), decide's verdict and message over them, and the seconds every run took together
+Control = collections.namedtuple("Control", "runs verdict message secs")
 
 
-def _control_verdict(control, env):
-    """The control arm's sentence for a candidate, from the control run (BatsRun, the test as written under `env`, a _control_env)
-    and that environment: `ok` there is CONTROL_ENVIRONMENT_DIFFERS with the rule's size and keys and the sorted keys the process
-    holds and the rule does not; `not ok` is CONTROL_OWN_FAILURE; anything else (a run the bound ended, a skip, a file that did
-    not load) is CONTROL_NO_VERDICT with the outcome."""
-    if control.outcome == "ok":
-        keys = sorted(k for k in env if k not in BATS_ENV_KEYS)
-        return CONTROL_ENVIRONMENT_DIFFERS % (len(BATS_ENV_KEYS), ", ".join(BATS_ENV_KEYS), ", ".join(keys) or "none")
-    if control.outcome == "not ok":
-        return CONTROL_OWN_FAILURE
-    return CONTROL_NO_VERDICT % control.outcome
+def _control_verdict(verdict, runs, control):
+    """The control arm's sentence for a candidate, from the rule's verdict and sides (decide's verdict and the BatsRun per rewrite)
+    and the control (Control, the same rewrites under the process environment): CONTROL_NOISE naming the rewrites when a control
+    side's runs disagree (noise, not the environment); CONTROL_SAME when the control's verdict and every side's (outcome, line,
+    file) are the rule's; else CONTROL_ENVIRONMENT_DIFFERS with the control's verdict and message, the rule's size, keys and
+    verdict, and the sorted keys the process holds and the rule does not (_control_env's keys less the rule's: names only)."""
+    noisy = [what for (what, _), r in zip(REWRITES, control.runs) if r.outcome == "disagree"]
+    if noisy:
+        return CONTROL_NOISE % ", ".join("`%s`" % what for what in noisy)
+    if control.verdict == verdict and [(r.outcome, r.line, r.file) for r in control.runs] == [(r.outcome, r.line, r.file) for r in runs]:
+        return CONTROL_SAME
+    keys = sorted(k for k in _control_env({}) if k not in BATS_ENV_KEYS)
+    return CONTROL_ENVIRONMENT_DIFFERS % (control.verdict.upper(), control.message, len(BATS_ENV_KEYS), ", ".join(BATS_ENV_KEYS),
+                                          verdict.upper(), ", ".join(keys) or "none")
 
 
 # one bats run of a test alone: the outcome (`ok`, `not ok`, or why bats gave no verdict: `skipped`, `did not load`, `no such
@@ -1367,9 +1407,10 @@ def decide(relpath, cand, extent, runs):
 
 
 # what became of one candidate of the corpus: the suite's path (tests/<name>), the candidate, its enclosing test's name, the
-# verdict and message (decide), the candidate's line under each rewrite, the run standing for each rewrite's side (_agreed, its
-# seconds the side's and its runs their count), the seconds every run took together, and the control run (BatsRun: the test as
-# written under the process environment, _control_env) where the sides were the control's shape (_control_shape), None elsewhere
+# verdict and message (decide, the control's sentence after it where the verdict is not `read`), the candidate's line under each
+# rewrite, the run standing for each rewrite's side (_agreed, its seconds the side's and its runs their count), the seconds every
+# run took together, and the control (Control: both rewrites again under the process environment, _control_env) where one ran,
+# None for a read candidate and where the control was withheld (_control_withheld; the message says why)
 Decision = collections.namedtuple("Decision", "relpath cand test verdict message rewritten runs secs control", defaults=(None,))
 # how many times each rewrite of a corpus candidate runs (decide_under_bats). The two outcomes decide reads come from separate bats
 # processes, so a differing pair proves a read only when each side's outcome is the test's own and not one run's noise: a side's
@@ -1398,21 +1439,14 @@ def _agreed(repl, side):
     return BatsRun("disagree", None, None, "\n".join([named] + ["run %d, %s:\n%s" % (n + 1, _shown(r), r.detail) for n, r in enumerate(side)]), secs, len(side))
 
 
-def decide_under_bats(root, relpath, lines, extents, cand, scratch, bats="bats", timeout=RUN_TIMEOUT, repeats=REPEATS):
-    """One candidate decided by bats: for each rewrite of REWRITES, `repeats` times over, the tree at root is copied whole into a
-    fresh directory under scratch (without `.git`, `node_modules` and python caches, none of which a suite reads; the shell job's
-    checkout has no node_modules when bats runs), the suite in the copy is replaced by the rewritten file (rewrite), and the
-    enclosing test runs alone there (run_test_alone, bounded at timeout seconds); each copy is removed after its run. The runs of
-    a side must agree for its outcome to count (_agreed): the two files differ in one word, so a differing pair proves a read
-    only when each side's outcome is the test's own, and a side whose runs disagree is undecided, reported as such. A rewritten
-    file bash does not parse, or a pipeline running off the text, is decided without a run: undecided. A candidate `not ok`
-    under both rewrites on one line (_control_shape) is undecided too, and then the test as written runs ONCE more in a fresh
-    copy of the tree under the process environment (_control_env), the CONTROL arm: a diagnostic whose outcome is never the
-    verdict and whose sentence (_control_verdict) follows decide's in the message, so a suite that needs a variable the rule
-    excludes fails naming the rule and where the key is added, and one failing on its own is told apart from it (fork PR #871's
-    round 2, twelfth commit; before it the message named the shape and not the cause)."""
-    o, _ = extents[cand.test]
-    test = _test_name(lines[o])
+def _sides(root, relpath, lines, cand, test, scratch, bats, timeout, repeats, control=False):
+    """(runs, shown, secs) for a candidate: for each rewrite of REWRITES, `repeats` times over, the tree at root is copied whole
+    into a fresh directory under scratch (without `.git`, `node_modules` and python caches, none of which a suite reads; the
+    shell job's checkout has no node_modules when bats runs), the suite in the copy is replaced by the rewritten file (rewrite),
+    and the test named `test` runs alone there (run_test_alone, bounded at timeout seconds) under the rule's environment
+    (_bats_env), or under the control's (_control_env) when `control` is set; each copy is removed after its run. `runs` holds
+    the run standing for each side (_agreed), `shown` the candidate's line under each rewrite, `secs` every run's time summed. A
+    rewritten file bash does not parse, or a pipeline running off the text, is a `no run` side, decided without a run."""
     runs, shown, secs = [], [], 0.0
     for k, (repl, _) in enumerate(REWRITES):
         new = rewrite(lines, cand, repl)
@@ -1426,30 +1460,49 @@ def decide_under_bats(root, relpath, lines, extents, cand, scratch, bats="bats",
             continue
         side = []
         for r in range(repeats):
-            d = os.path.join(scratch, "%s.%d.%d.%d" % (os.path.basename(relpath), cand.line + 1, k, r))
+            d = os.path.join(scratch, "%s.%d.%d.%d%s" % (os.path.basename(relpath), cand.line + 1, k, r, ".control" if control else ""))
             tree = os.path.join(d, "tree")
             shutil.copytree(root, tree, symlinks=True, ignore=shutil.ignore_patterns(".git", "node_modules", "__pycache__", ".pytest_cache"))
             with open(os.path.join(tree, relpath), "w", encoding="utf-8") as f:
                 f.write("\n".join(new))
             try:
-                side.append(run_test_alone(tree, relpath, test, d, bats, timeout))
+                side.append(run_test_alone(tree, relpath, test, d, bats, timeout, env=_control_env(_bats_env(d)) if control else None))
             finally:
                 shutil.rmtree(d, ignore_errors=True)
         secs += sum(r.secs for r in side)
         runs.append(_agreed(repl, side))
+    return runs, shown, secs
+
+
+def decide_under_bats(root, relpath, lines, extents, cand, scratch, bats="bats", timeout=RUN_TIMEOUT, repeats=REPEATS):
+    """One candidate decided by bats: both rewrites of REWRITES run `repeats` times each in fresh copies of the tree under the
+    rule's environment (_sides), and decide reads the verdict off the sides. The runs of a side must agree for its outcome to
+    count (_agreed): the two files differ in one word, so a differing pair proves a read only when each side's outcome is the
+    test's own, and a side whose runs disagree is undecided, reported as such. A rewritten file bash does not parse, or a
+    pipeline running off the text, is decided without a run: undecided. Every candidate whose verdict is not `read` then runs the
+    CONTROL arm (fork PR #871's round 2, thirteenth commit; the twelfth ran it on one shape, both sides `not ok` on one line, as
+    the test as written, and a gate on the variable before the negation was reported inert, a skip on it no verdict, a read of it
+    after the negation two lines, none naming the cause): the same rewrites again under the process environment (_sides with
+    control set, _control_env), decided by the same decide, a diagnostic whose verdict is never the candidate's; its sentence
+    (_control_verdict) follows decide's in the message, so a suite that needs a variable the rule excludes fails naming the rule
+    and where the key is added, and one whose verdict is its own is told apart from it. The control is withheld, and the message
+    says why, where a side was ended at the bound, a rewrite did not run, or a side's runs disagree (_control_withheld)."""
+    o, _ = extents[cand.test]
+    test = _test_name(lines[o])
+    runs, shown, secs = _sides(root, relpath, lines, cand, test, scratch, bats, timeout, repeats)
     verdict, message = decide(relpath, cand, extents[cand.test], runs)
     control = None
-    if _control_shape(runs):
-        d = os.path.join(scratch, "%s.%d.control" % (os.path.basename(relpath), cand.line + 1))
-        tree = os.path.join(d, "tree")
-        shutil.copytree(root, tree, symlinks=True, ignore=shutil.ignore_patterns(".git", "node_modules", "__pycache__", ".pytest_cache"))
-        try:
-            env = _control_env(_bats_env(d))
-            control = run_test_alone(tree, relpath, test, d, bats, timeout, env=env)
-        finally:
-            shutil.rmtree(d, ignore_errors=True)
-        secs += control.secs
-        message = "%s; the control, the test as written under the process environment, is %s: %s" % (message, _shown(control), _control_verdict(control, env))
+    if verdict != "read":
+        withheld = _control_withheld(runs)
+        if withheld is not None:
+            message = "%s; %s" % (message, CONTROL_WITHHELD % withheld)
+        else:
+            c_runs, _, c_secs = _sides(root, relpath, lines, cand, test, scratch, bats, timeout, repeats, control=True)
+            c_verdict, c_message = decide(relpath, cand, extents[cand.test], c_runs)
+            control = Control(c_runs, c_verdict, c_message, c_secs)
+            secs += c_secs
+            message = "%s; the control, both rewrites under the process environment, %s: %s" % (
+                message, _control_sides(control), _control_verdict(verdict, runs, control))
     return Decision(relpath, cand, test, verdict, message, shown, runs, secs, control)
 
 
@@ -1458,24 +1511,33 @@ def _shown(run):
     return "not ok @%s" % run.line if run.outcome == "not ok" else run.outcome
 
 
+def _control_sides(control):
+    """A control's two outcomes for the message and the row, each after its rewrite: `! true` ok, `! false` not ok @3."""
+    return ", ".join("`%s` %s" % (what, _shown(run)) for (what, _), run in zip(REWRITES, control.runs))
+
+
 def _row(d):
     """A decision's row in the corpus table, after its head (`<path>:<line> `): the verdict, both outcomes, each side's seconds and
-    the candidate's line under `! true`; then, where a control ran, its outcome (`control ok`, `control not ok @<line>`)."""
+    the candidate's line under `! true`; then, where a control ran, its two outcomes and its verdict, `control` and then
+    `! true` not ok @3, `! false` ok, read."""
     row = "%-9s `! true` %s, `! false` %s  (%.2f + %.2f s)  %s" % (d.verdict, _shown(d.runs[0]), _shown(d.runs[1]), d.runs[0].secs, d.runs[1].secs,
                                                                   d.rewritten[0].strip())
-    return row if d.control is None else "%s  control %s" % (row, _shown(d.control))
+    return row if d.control is None else "%s  control %s, %s" % (row, _control_sides(d.control), d.control.verdict)
 
 
 def report(d):
-    """A decision's report in full: the verdict and its message (the control's sentence in it where one ran), the line as written
-    and under each rewrite with bats's outcome, the control's outcome where it ran, and what bats said under each."""
+    """A decision's report in full: the verdict and its message (the control's sentence in it where one ran, or why none did), the
+    line as written and under each rewrite with bats's outcome, the control's outcome under each rewrite and its verdict where it
+    ran, and what bats said under each run."""
     head = ["%s:%d in test %r: %s: %s" % (d.relpath, d.cand.line + 1, d.test, d.verdict.upper(), d.message)]
     body = ["    under `%s`: %s  ->  %s" % (repl, shown.strip(), _shown(run)) for (repl, _), shown, run in zip(REWRITES, d.rewritten, d.runs)]
     said = ["    bats under `%s` said:\n%s" % (repl, "\n".join("        " + l for l in run.detail.splitlines()) or "        (nothing)")
             for (repl, _), run in zip(REWRITES, d.runs)]
     if d.control is not None:
-        body.append("    control, the test as written under the process environment  ->  %s" % _shown(d.control))
-        said.append("    bats under the control said:\n%s" % ("\n".join("        " + l for l in d.control.detail.splitlines()) or "        (nothing)"))
+        body.append("    control, both rewrites under the process environment: %s, %s" % (
+            ", ".join("`%s`  ->  %s" % (repl, _shown(run)) for (repl, _), run in zip(REWRITES, d.control.runs)), d.control.verdict))
+        said.extend("    bats under the control's `%s` said:\n%s" % (repl, "\n".join("        " + l for l in run.detail.splitlines()) or "        (nothing)")
+                    for (repl, _), run in zip(REWRITES, d.control.runs))
     return "\n".join(head + body + said)
 
 
@@ -3766,9 +3828,11 @@ class BatsCorpus(unittest.TestCase):
     environment every bats run sees is built from BATS_ENV_KEYS and nothing else of this process, pinned here three ways: by
     equality on its keys, by the three routes the import-time writes took planted in this process and closed, and by the shape
     the finding was found in, a child pytest with a module that writes the environment at import collected and deselected. A
-    suite that needs a variable the rule excludes fails under both rewrites on one line, and the road then runs it as written
-    under the process environment as a control, so its report names the rule and where the key is added (decide_under_bats;
-    the pin is BatsRoad's, on a synthetic suite); the summary line counts those control runs, 0 over this tree."""
+    suite that needs a variable the rule excludes takes one of several shapes under the rule (a setup failing on its line under
+    both rewrites, a gate before the negation reading inert, a skip, a failure moving between lines), so the road runs every
+    candidate not read again, both rewrites, under the process environment as a control, and its report names the rule and
+    where the key is added when the verdict or an outcome differs (decide_under_bats; the pins are BatsRoad's, on synthetic
+    suites); the summary line counts those control runs, 0 over this tree."""
 
     SKIP = CORPUS_SKIP
 
@@ -4002,6 +4066,49 @@ class BatsCorpus(unittest.TestCase):
             self.assertEqual((run.outcome, run.line, run.file), ("disagree", None, None))
             self.assertIn("run 1, %s:" % _shown(side[0]), run.detail)
             self.assertIn("run 2, %s:" % _shown(side[1]), run.detail)
+
+    def test_the_control_is_withheld_for_a_bound_a_no_run_and_a_disagreement_and_its_sentence_is_one_of_three(self):
+        # the control arm's rules on synthetic runs, no bats: withheld, with the reason, where a side under the rule was ended at
+        # the bound (a control would pay RUN_TIMEOUT again), a rewrite did not run (no environment changes a parse) or a side's
+        # runs disagree (noise); run for every other pair, both `ok` (inert: the gate shape), both `skipped`, a failure moving
+        # between lines, a file that did not load. Its sentence: CONTROL_SAME when the control's verdict and every side's outcome,
+        # line and file are the rule's; CONTROL_ENVIRONMENT_DIFFERS, naming the control's verdict and message, the rule's size,
+        # keys and verdict and the process's keys beyond the rule's (a planted name among them, its value nowhere), when the
+        # verdict differs or an outcome does, a differing line included; CONTROL_NOISE naming the rewrite when a control side's
+        # runs disagree, whatever the other side says
+        ok, skipped = BatsRun("ok", None, None, "", 0.0), BatsRun("skipped", None, None, "", 0.0)
+        bad = lambda line, file="tests/x.bats": BatsRun("not ok", line, file, "", 0.0)
+        timed = BatsRun("timed out", None, None, "1..1", 61.0)
+        self.assertIn("a side's run under `! false` was ended at the bound, which a control would pay again (RUN_TIMEOUT, %d s a run)" % RUN_TIMEOUT,
+                      _control_withheld([ok, timed]))
+        self.assertIn("a side's run under `! true` was ended at the bound", _control_withheld([timed, timed]))
+        self.assertEqual(_control_withheld([BatsRun("no run", None, None, "the rewritten file does not parse under bash -n: x\nmore", 0.0), ok]),
+                         "the rewrite `! true` did not run (the rewritten file does not parse under bash -n: x), and no environment changes that")
+        self.assertEqual(_control_withheld([ok, _agreed("! false", [ok, bad(3)])]),
+                         "the test's runs disagree under `! false`: a pair under another environment is read from the same noise")
+        for runs in ([ok, ok], [skipped, skipped], [bad(2), bad(4)], [bad(2), bad(2)], [BatsRun("did not load", None, None, "", 0.0)] * 2, [ok, bad(30)]):
+            self.assertIsNone(_control_withheld(runs), runs)
+        cand, extent = Candidate(0, 2, 4, False), (0, 3)   # 1-based line 3 of a test spanning lines 1 to 4
+        rule = lambda runs: decide("tests/x.bats", cand, extent, runs)
+        control = lambda runs: Control(runs, *decide("tests/x.bats", cand, extent, runs), 0.4)
+        for rule_runs in ([ok, ok], [skipped, skipped], [bad(2), bad(4)], [bad(2), bad(2)]):
+            verdict, _ = rule(rule_runs)
+            self.assertEqual(_control_verdict(verdict, rule_runs, control(list(rule_runs))), CONTROL_SAME, rule_runs)
+        value = "a-value-the-sentence-never-carries"
+        with unittest.mock.patch.dict(os.environ, {"PLANTED_FOR_THE_SENTENCE": value, "BATS_TEST_TIMEOUT": "180"}):
+            beyond = sorted(k for k in os.environ if not k.startswith("BATS_") and k not in BATS_ENV_KEYS)
+            differs = _control_verdict("inert", [ok, ok], control([bad(3), ok]))
+            moved = _control_verdict("undecided", [bad(2), bad(2)], control([bad(5), bad(5)]))
+        self.assertEqual(differs, CONTROL_ENVIRONMENT_DIFFERS % ("READ", "the test's outcome turns on this negation", len(BATS_ENV_KEYS),
+                                                                 ", ".join(BATS_ENV_KEYS), "INERT", ", ".join(beyond)))
+        self.assertIn("PLANTED_FOR_THE_SENTENCE", beyond)
+        self.assertNotIn("BATS_TEST_TIMEOUT", beyond)
+        self.assertNotIn(value, differs)
+        self.assertIn("the verdict is UNDECIDED (the test fails under both rewrites (blamed on line 5 and line 5): its failure does not turn on this "
+                      "negation), where under the 4-key rule (BATS_ENV_KEYS: PATH, HOME, TMPDIR, LANG) it is UNDECIDED:", moved)
+        self.assertEqual(_control_verdict("inert", [ok, ok], control([_agreed("! true", [ok, bad(3)]), ok])), CONTROL_NOISE % "`! true`")
+        self.assertEqual(_control_verdict("inert", [ok, ok], control([_agreed("! true", [ok, bad(3)]), _agreed("! false", [ok, bad(3)])])),
+                         CONTROL_NOISE % "`! true`, `! false`")
 
 
 class Invocations(unittest.TestCase):
@@ -4275,60 +4382,84 @@ class BatsRoad(unittest.TestCase):
                       "pair holding it is read as evidence; a failure nondeterministic for a reason unrelated to this negation is the usual "
                       "cause; nothing was decided", decision.message)
         self.assertIn("UNDECIDED", report(decision))
+        # no control under the process environment for a nondeterministic test: a pair there is read from the same noise
+        self.assertIsNone(decision.control)
+        self.assertTrue(decision.message.endswith("; " + CONTROL_WITHHELD % "the test's runs disagree under `! true`: a pair under another "
+                                                  "environment is read from the same noise"), decision.message)
+        self.assertNotIn("control", _row(decision))
 
-    # a suite whose setup needs a variable the four keys do not carry, around a negation bats would read: the shape a fifth key
-    # takes, and the question the rule leaves open
-    NEEDS = 'setup() {\n    [ -n "$NEEDED_BY_SUITE" ]\n}\n\n@test "needs a variable the four keys do not carry" {\n    true\n    ! false\n}\n'
+    # a suite that needs a variable the four keys do not carry, in each shape the read takes around a negation bats would read:
+    # asserted in the setup; a gate before the negation returning without it; a skip without it; a read of it after the negation.
+    # Per shape: the text, the candidate's 1-based line, the variable, the sides and verdict under the rule (the variable never
+    # reaches bats there), and the control's sides with the variable set in the process (the control's verdict is `read` on each)
+    FIFTH_KEY_SHAPES = {
+        "setup": ('setup() {\n    [ -n "$NEEDED_BY_SUITE" ]\n}\n\n@test "needs a variable the four keys do not carry" {\n    true\n    ! false\n}\n',
+                  7, "NEEDED_BY_SUITE", [("not ok", 2), ("not ok", 2)], "undecided", [("not ok", 7), ("ok", None)]),
+        "gate": ('@test "gated on a variable the four keys do not carry" {\n    [ -n "$GATE_OF_SUITE" ] || return 0\n    ! false\n}\n',
+                 3, "GATE_OF_SUITE", [("ok", None), ("ok", None)], "inert", [("not ok", 3), ("ok", None)]),
+        "skip": ('@test "skips without a variable the four keys do not carry" {\n    [ -n "$SKIP_OF_SUITE" ] || skip "needs it"\n    ! false\n}\n',
+                 3, "SKIP_OF_SUITE", [("skipped", None), ("skipped", None)], "undecided", [("not ok", 3), ("ok", None)]),
+        "later": ('@test "reads a variable the four keys do not carry after the negation" {\n    true\n    ( ! true )\n    [ -n "$READ_BY_SUITE" ]\n}\n',
+                  3, "READ_BY_SUITE", [("not ok", 2), ("not ok", 4)], "undecided", [("not ok", 2), ("ok", None)]),
+    }
 
     def test_a_suite_that_needs_a_variable_the_rule_excludes_fails_naming_the_rule_and_where_the_key_is_added(self):
-        # the fifth-key question of fork PR #871's round 2, twelfth commit: BATS_ENV_KEYS is four keys, so a suite that
-        # legitimately needs another fails under both rewrites the same way, blamed on its own setup line, and before this commit
-        # decide's message named that shape and not the cause (`its failure does not turn on this negation`, nothing of the
-        # environment: measured with this suite planted in the tree at the eleventh commit, `13 candidates, 12 read, 0 inert,
-        # 1 undecided`). Now the shape runs the test as written under the process environment as a control. Two legs on one
-        # suite: with NEEDED_BY_SUITE set in this process the control passes, the candidate stays undecided, and the message says
-        # the suite fails under the rule and passes under the process environment, names the rule's size and keys, lists the
-        # keys the process holds and the rule does not (NEEDED_BY_SUITE among them, no BATS_* and none of the four, names only:
-        # the planted value appears nowhere) and says where a key is added, the tuple and the equality pin; with the variable
-        # absent from this process the control fails too, and the message says the failure is the suite's own. The verdict is
-        # undecided on both legs: the control is a diagnostic, never the verdict, and the corpus test would still fail on it
+        # the fifth-key question of fork PR #871's round 2: BATS_ENV_KEYS is four keys, so what happens to a suite that
+        # legitimately needs another, and does it fail legibly. Under the rule the four shapes (FIFTH_KEY_SHAPES) are four
+        # verdicts, none naming the cause: the setup shape fails on its line under both rewrites, the gate returns before the
+        # negation and reads INERT (the wrong-cause verdict a negation gated on CI would get), the skip is no verdict, the later
+        # read fails on two lines. The twelfth commit ran a control on the setup shape alone, as the test as written; the
+        # thirteenth runs both rewrites under the process environment for every candidate not read (measured at the twelfth with
+        # the other three planted in the tree and each variable set: INERT, `skipped` under both, `not ok @2` and `not ok @4`,
+        # `(1 with a control run)`). Two legs per shape: with the variable set in this process the control's verdict is read, the
+        # candidate's verdict stays the rule's, and the message names the control's verdict and message, the rule's size and
+        # keys, the rule's verdict, the keys the process holds and the rule does not (the variable among them, no BATS_* and none
+        # of the four, names only: the planted value appears nowhere in the report) and where a key is added, the tuple and the
+        # equality pin; with the variable absent the control gives the rule's outcomes and verdict, and the message says the
+        # verdict is the suite's own. The control is a diagnostic, never the verdict: the corpus test would fail on every leg
         skip_unless_bats_serves(self)
         value = "a-value-the-report-never-prints"
-        with tempfile.TemporaryDirectory() as d:
-            tree = os.path.join(d, "tree")
-            os.makedirs(os.path.join(tree, "tests"))
-            with open(os.path.join(tree, "tests", "needs.bats"), "w", encoding="utf-8") as f:
-                f.write(self.NEEDS)
-            lines = self.NEEDS.split("\n")
-            extents = bash_test_extents(lines)
-            found = candidates(lines, extents)
-            self.assertEqual([c.line + 1 for c in found], [7])
-            with unittest.mock.patch.dict(os.environ, {"NEEDED_BY_SUITE": value}):
-                beyond = sorted(k for k in os.environ if not k.startswith("BATS_") and k not in BATS_ENV_KEYS)
-                differs = decide_under_bats(tree, "tests/needs.bats", lines, extents, found[0], d, timeout=20, repeats=1)
-            with unittest.mock.patch.dict(os.environ, {}, clear=False):
-                os.environ.pop("NEEDED_BY_SUITE", None)
-                own = decide_under_bats(tree, "tests/needs.bats", lines, extents, found[0], d, timeout=20, repeats=1)
-        for decision in (differs, own):
-            self.assertEqual(decision.verdict, "undecided", decision.message)
-            self.assertEqual([(r.outcome, r.line, r.file) for r in decision.runs], [("not ok", 2, "tests/needs.bats")] * 2, decision.message)
-            self.assertIn("the test fails under both rewrites (blamed on line 2 and line 2): its failure does not turn on this negation; "
-                          "the control, the test as written under the process environment, is ", decision.message)
-        self.assertEqual((differs.control.outcome, differs.control.line), ("ok", None), differs.control.detail)
-        self.assertIn("NEEDED_BY_SUITE", beyond)
-        expected = CONTROL_ENVIRONMENT_DIFFERS % (len(BATS_ENV_KEYS), ", ".join(BATS_ENV_KEYS), ", ".join(beyond))
-        self.assertIn("is ok: " + expected, differs.message)
-        self.assertIn("fails under the 4-key rule (BATS_ENV_KEYS: PATH, HOME, TMPDIR, LANG) and passes under the process environment", differs.message)
-        self.assertIn("added to BATS_ENV_KEYS with its reason and to the equality pin's literal "
-                      "(BatsCorpus.test_the_environment_handed_to_bats_holds_exactly_the_allowed_keys_and_nothing_else_of_the_process)", differs.message)
-        self.assertNotIn(value, report(differs))
-        self.assertIn("undecided `! true` not ok @2, `! false` not ok @2  (", _row(differs))
-        self.assertTrue(_row(differs).endswith("  control ok"), _row(differs))
-        self.assertIn("    control, the test as written under the process environment  ->  ok", report(differs))
-        self.assertEqual((own.control.outcome, own.control.line, own.control.file), ("not ok", 2, "tests/needs.bats"), own.control.detail)
-        self.assertIn("is not ok @2: " + CONTROL_OWN_FAILURE, own.message)
-        self.assertNotIn("passes under the process environment", own.message)
-        self.assertTrue(_row(own).endswith("  control not ok @2"), _row(own))
+        for shape, (text, line, var, rule_sides, rule_verdict, read_sides) in sorted(self.FIFTH_KEY_SHAPES.items()):
+            with self.subTest(shape=shape), tempfile.TemporaryDirectory() as d:
+                tree, relpath = os.path.join(d, "tree"), "tests/%s.bats" % shape
+                os.makedirs(os.path.join(tree, "tests"))
+                with open(os.path.join(tree, relpath), "w", encoding="utf-8") as f:
+                    f.write(text)
+                lines = text.split("\n")
+                extents = bash_test_extents(lines)
+                found = candidates(lines, extents)
+                self.assertEqual([c.line + 1 for c in found], [line])
+                with unittest.mock.patch.dict(os.environ, {var: value}):
+                    beyond = sorted(k for k in os.environ if not k.startswith("BATS_") and k not in BATS_ENV_KEYS)
+                    differs = decide_under_bats(tree, relpath, lines, extents, found[0], d, timeout=20, repeats=1)
+                with unittest.mock.patch.dict(os.environ, {}, clear=False):
+                    os.environ.pop(var, None)
+                    same = decide_under_bats(tree, relpath, lines, extents, found[0], d, timeout=20, repeats=1)
+                for decision in (differs, same):
+                    self.assertEqual(decision.verdict, rule_verdict, decision.message)
+                    self.assertEqual([(r.outcome, r.line) for r in decision.runs], rule_sides, decision.message)
+                    self.assertIsNotNone(decision.control, decision.message)
+                    self.assertIn("; the control, both rewrites under the process environment, `! true` %s, `! false` %s: " % (
+                        _shown(decision.control.runs[0]), _shown(decision.control.runs[1])), decision.message)
+                self.assertEqual((differs.control.verdict, [(r.outcome, r.line) for r in differs.control.runs]), ("read", read_sides), differs.control.message)
+                self.assertIn(var, beyond)
+                expected = CONTROL_ENVIRONMENT_DIFFERS % ("READ", differs.control.message, len(BATS_ENV_KEYS), ", ".join(BATS_ENV_KEYS),
+                                                         rule_verdict.upper(), ", ".join(beyond))
+                self.assertTrue(differs.message.endswith(": " + expected), differs.message)
+                self.assertIn("under the process environment the verdict is READ (the test's outcome turns on this negation), where under the 4-key "
+                              "rule (BATS_ENV_KEYS: PATH, HOME, TMPDIR, LANG) it is %s: the suite reads a variable the rule excludes" % rule_verdict.upper(),
+                              differs.message)
+                self.assertIn("added to BATS_ENV_KEYS with its reason and to the equality pin's literal "
+                              "(BatsCorpus.test_the_environment_handed_to_bats_holds_exactly_the_allowed_keys_and_nothing_else_of_the_process)", differs.message)
+                self.assertNotIn(value, report(differs))
+                self.assertTrue(_row(differs).endswith("  control `! true` %s, `! false` ok, read" % _shown(differs.control.runs[0])), _row(differs))
+                self.assertIn("    control, both rewrites under the process environment: `! true`  ->  %s, `! false`  ->  ok, read" % _shown(differs.control.runs[0]),
+                              report(differs))
+                self.assertIn("    bats under the control's `! false` said:", report(differs))
+                self.assertEqual((same.control.verdict, [(r.outcome, r.line) for r in same.control.runs]), (rule_verdict, rule_sides), same.control.message)
+                self.assertTrue(same.message.endswith(": " + CONTROL_SAME), same.message)
+                self.assertNotIn("reads a variable the rule excludes", same.message)
+                self.assertTrue(_row(same).endswith(", %s" % rule_verdict), _row(same))
 
     def test_decide_under_bats_on_a_synthetic_suite_reads_a_last_negation_a_head_and_a_subshell_and_reports_the_rest(self):
         # the per-candidate road end to end on a tree of one suite: a mid-test `! true` is inert (ok under both) and its report
@@ -4369,15 +4500,26 @@ class BatsRoad(unittest.TestCase):
                          [("mid", "inert"), ("last", "read"), ("head", "read"), ("later failure", "undecided"), ("subshell", "read"),
                           ("read in teardown", "undecided"), ("poll", "undecided"), ("comment_form", "inert"), ("bang helper", "read"),
                           ("bang helper", "read"), ("group", "inert")])
-        # the control arm runs on the one candidate `not ok` under both rewrites on one line, the later failure, and on no other:
-        # not on a read or an inert one, not on the teardown-read whose failure is outside the test, not on the poll whose second
-        # side has no verdict; there it finds the test failing as written too, and says so after decide's sentence
-        self.assertEqual([x.control is not None for x in decisions], [x.test == "later failure" for x in decisions],
-                         "the control arm ran on a candidate whose sides are not both `not ok` on one line, or not on the one whose sides are")
-        self.assertEqual((decisions[3].control.outcome, decisions[3].control.line), ("not ok", 15))
-        self.assertIn("; the control, the test as written under the process environment, is not ok @15: " + CONTROL_OWN_FAILURE, decisions[3].message)
-        self.assertIn("    control, the test as written under the process environment  ->  not ok @15", report(decisions[3]))
-        self.assertIn("bats under the control said:", report(decisions[3]))
+        # the control arm runs on every candidate not read whose sides ran to an outcome: the three inert (mid, comment_form and
+        # group), the later failure and the teardown-read, and not on the five read nor on the poll, whose `! false` side was
+        # ended at the bound (its message says the control was withheld and why); under the process environment each of the five
+        # gives the outcomes and the verdict the rule gave, and the message says the verdict is the suite's own
+        self.assertEqual([x.control is not None for x in decisions], [x.test in ("mid", "later failure", "read in teardown", "comment_form", "group") for x in decisions],
+                         "the control arm ran on a read candidate or on the poll, or not on a candidate not read whose sides ran to an outcome")
+        for x in decisions:
+            if x.control is not None:
+                self.assertEqual((x.control.verdict, [(r.outcome, r.line, r.file) for r in x.control.runs]),
+                                 (x.verdict, [(r.outcome, r.line, r.file) for r in x.runs]), x.message)
+                self.assertTrue(x.message.endswith(": " + CONTROL_SAME), x.message)
+                self.assertEqual(x.control.runs[0].runs + x.control.runs[1].runs, 2 * REPEATS, x.message)   # the control's runs, repeated as the rule's
+        self.assertIn("; the control, both rewrites under the process environment, `! true` not ok @15, `! false` not ok @15: " + CONTROL_SAME, decisions[3].message)
+        self.assertIn("    control, both rewrites under the process environment: `! true`  ->  not ok @15, `! false`  ->  not ok @15, undecided", report(decisions[3]))
+        self.assertIn("    bats under the control's `! true` said:", report(decisions[3]))
+        self.assertTrue(_row(decisions[0]).endswith("  ! true  control `! true` ok, `! false` ok, inert"), _row(decisions[0]))
+        self.assertIsNone(decisions[6].control)
+        self.assertIn("; no control ran under the process environment: a side's run under `! false` was ended at the bound, which a control would pay "
+                      "again (RUN_TIMEOUT, %d s a run), and the wrapper test's bound holds the whole corpus" % RUN_TIMEOUT, decisions[6].message)
+        self.assertNotIn("control", _row(decisions[6]))
         self.assertEqual([(r.outcome, r.line) for r in decisions[8].runs], [("ok", None), ("not ok", 40)])   # bats blames the helper's line, the last it ran
         self.assertEqual([(r.outcome, r.line) for r in decisions[9].runs], [("not ok", 42), ("ok", None)])
         self.assertEqual([s.strip() for s in decisions[10].rewritten], ["! true", "! false"])   # the whole group replaced
