@@ -27,11 +27,12 @@ read them skip in CI: at 300px (the fold on) the sheet is pinned to the top unde
 finger once the box is scrolled to it, the box scrolls, Send is inside the clip and under a finger at the box's bottom;
 at 420px with the same todo the pane's two chip rows put the floors alone past the fold's cap, so its box scrolls a few
 pixels and Send's centre stays under a finger (the backstop state, measured as it is), while the chat's column fits (the
-fitted state); the unbreakable token's widest line ends inside the detail's right edge (overflow-wrap: anywhere); the
-answer typed at 900px and the window then shrunk to 508 re-fits the answer box (kbFit re-runs grow on the resize); and
-on the other todo's sheet an inline height written as the resize grip writes it stands through a keystroke (the drag
-guard). And the tree each builder emits, read from the real pages: the pane's chips are flex children of the box, the
-chat's sit inside the quoted line, and the elements the fix's four rules key on match their selectors in both.
+fitted state); the unbreakable token wraps, so the detail's scrollWidth is no wider than its offsetWidth, the border box
+(overflow-wrap: anywhere); the answer typed at 900px and the window then shrunk to 508 re-fits the answer box (kbFit
+re-runs grow on the resize); and on the other todo's sheet an inline height written as the resize grip writes it stands
+through a keystroke (the drag guard). And the tree each builder emits, read from the real pages: the pane's chips are
+flex children of the box, the chat's sit inside the quoted line, and the elements the fix's four rules key on match
+their selectors in both.
 
 The lab: one kernel from test_ship_reship_served.kernel_env (a private XDG root, `session-hosts` floored off,
 ROMP_MANAGER_PORT=1, no catalog or update fetch, a hermetic postal bus), a private dist (lab_dist.copy_dist), the three
@@ -204,7 +205,9 @@ class ReplySheetServed(unittest.TestCase):
         rec = json.dumps({"opened": o, "typed": t, "tapAt": r["tapAt"], "after": r["after"]})
         # THE COMPOSITION FIRST, its outcome before its geometry: at 508 with the answer at the room, the tap put ONE
         # userTodoAnswer frame for the todo on the page's socket, and the sheet closed by that send. On the round-1 tree
-        # the tap fell on the backdrop (the chat, every engine) or outside the frame (the pane) and nothing was sent
+        # the tap point lay outside the frame in both panes and nothing was sent: this driver fills at 900 and returns to
+        # 508, and with no re-fit the box kept its 900 height, so Send laid out below the 508 frame; the node legs, which
+        # type at 508, are where the chat's tap found the backdrop
         self.assertEqual(r["sentBefore"], 0, where + "nothing was sent before the tap: " + rec)
         self.assertEqual(len(r["after"]["sent"]), 1, where + "the tap SENT the answer (one userTodoAnswer frame for the todo on the socket); on the round-1 tree the tap fell on the backdrop or outside the frame and sent nothing: " + rec)
         self.assertIn('"type": "userTodoAnswer"', r["after"]["sent"][0].replace('"type":"', '"type": "'), where + "the frame's type: " + rec)
@@ -243,7 +246,7 @@ class ReplySheetServed(unittest.TestCase):
                          where + "the skeleton the CSS keys on is the same in both panes")
         self.assertTrue(o["inputSel"] and o["detailSel"] and o["boxSel"], where + "the three scoped selectors each reach their element: %r" % (o,))
         # opened at 508: no fold, three rows, the detail a scroll container over its cap, the box scrolling at this height
-        # too, the unbreakable token wrapped inside the detail's right edge
+        # too, the unbreakable token wrapped so the detail's scrollWidth is no wider than its border box
         self.assertEqual(o["frameH"], 508, where + "the pane's window is the phone's visible height with the keyboard up")
         self.assertFalse(o["tight"], where + "508px is above the fold's threshold")
         self.assertGreater(o["floorH"], 30, where + "the three-row probe laid out: %r" % (o,))

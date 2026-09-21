@@ -171,9 +171,6 @@ async function boot(browser: any) {
       inputH: input.clientHeight, floorH, lineHeight: cs(input).lineHeight, inputStyleH: input.style.height,
       detailScrollH: detail ? detail.scrollHeight : 0, detailClientH: detail ? detail.clientHeight : 0, detailOverflowY: detail ? cs(detail).overflowY : "",
       detailLineH: detail ? parseFloat(cs(detail).lineHeight) : 0, detailFontPx: detail ? parseFloat(cs(detail).fontSize) : 0,
-      // the widest line of the detail's text against the detail's own right edge: an unbreakable token that does not wrap
-      // runs far past it (a sideways scroller); scrollWidth is not the measure, since a classic vertical scrollbar (WebKit
-      // headless) sits inside the padding box and reports as sideways overflow whatever the text does
       // the detail's sideways overflow: scrollWidth against offsetWidth (the border box; clientWidth is narrowed by a classic
       // scrollbar in WebKit headless while the text lays out to the border box); the widest text rect beside it for the
       // record only, since a trailing space hanging at a soft wrap ends a few pixels past the line box

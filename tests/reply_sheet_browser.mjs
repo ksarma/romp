@@ -14,10 +14,10 @@
 // pinned to the top under the picker's 12px frame, the detail at its floor and scrolling, its first line's address under
 // a finger once the box is scrolled to it, Send inside the clip and under a finger at the box's bottom); at 420px with
 // the same todo (the pane's two chip rows put the floors past the fold's cap, so its box scrolls a few pixels and Send's
-// centre is under a finger; the chat's column fits); the unbreakable token's widest line against the detail's right
-// edge (overflow-wrap: anywhere); the answer typed at 900px and the window then shrunk to 508 (kbFit re-runs grow on
-// the resize: the answer box re-fits to the room). After the tap, on the other todo: an inline height written as the
-// resize grip writes it, then one keystroke (the drag guard: the height stands).
+// centre is under a finger; the chat's column fits); the detail's scrollWidth against its offsetWidth, the border box,
+// with the unbreakable token wrapped (overflow-wrap: anywhere); the answer typed at 900px and the window then shrunk to
+// 508 (kbFit re-runs grow on the resize: the answer box re-fits to the room). After the tap, on the other todo: an
+// inline height written as the resize grip writes it, then one keystroke (the drag guard: the height stands).
 //
 // Prints one `RESULT:` JSON line; exits 3 when the browser does not launch (the Python side turns that into a skip), 4
 // when the LAB kernel is not healthy (cfg.healthz names the lab port, asserted before any request; never a live kernel).
