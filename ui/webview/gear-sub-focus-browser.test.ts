@@ -451,9 +451,15 @@ test("the share switch's description opens on a keyboard focus and is placed: at
   });
 });
 
-test("ROMP_GEAR_BROWSER_REQUIRE turns the browser legs' skip into a failure that names the reason, and without it the skip stands: CI's step after the Chromium install sets it", { timeout: 120000 }, () => {
+test("ROMP_GEAR_BROWSER_REQUIRE turns the browser legs' skip into a failure that names the reason, and without it the skip stands: CI's step after the Chromium install sets it", { timeout: 120000 }, (t) => {
   // a child run of this file's share-switch leg with playwright pointed at an empty browsers directory (the pane bench's probe):
-  // under the switch the leg fails naming the switch and the reason; without it the leg skips, as the Test step's run does
+  // under the switch the leg fails naming the switch and the reason; without it the leg skips, as the Test step's run does.
+  // The reason the child names is this machine's: with the module installed and its browsers hidden, no browser; with the module
+  // absent, no module (the maintainer's round 6, tests-6: the regex demanded the browser reason alone, so a runner without the
+  // module reported a FAILURE here where the file's contract says every browser leg skips with a stated reason); derived from
+  // the same `pw` read the legs guard on, never a two-way alternation
+  const why = pw ? "no playwright browser" : "playwright is not installed under vscode-extension";
+  t.diagnostic("the reason a browser leg names on this machine: " + why);
   const empty = fs.mkdtempSync(path.join(EXT, "out-tests", "no-browsers-"));
   try {
     // the child's environment is built, not inherited: under `node --test` this process carries the runner's NODE_TEST_CONTEXT,
@@ -463,7 +469,7 @@ test("ROMP_GEAR_BROWSER_REQUIRE turns the browser legs' skip into a failure that
     const run = (env: Record<string, string>) => spawnSync(process.execPath, ["--test", "--test-name-pattern=share switch", __filename],
       { cwd: EXT, encoding: "utf8", timeout: 100000, env: { ...base, ...env, PLAYWRIGHT_BROWSERS_PATH: empty } });
     const req = run({ ROMP_GEAR_BROWSER_REQUIRE: "1" });
-    assert.match(req.stdout, /ROMP_GEAR_BROWSER_REQUIRE is set and this leg cannot run: no playwright browser/, "the switch: a failure naming it and the reason\n" + req.stdout.slice(-1500));
+    assert.match(req.stdout, new RegExp("ROMP_GEAR_BROWSER_REQUIRE is set and this leg cannot run: " + why.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), "the switch: a failure naming it and the reason (" + why + ")\n" + req.stdout.slice(-1500));
     assert.match(req.stdout, /^# fail 1$/m, "the leg failed under the switch");
     const plain = run({});
     assert.match(plain.stdout, /^# skipped 1$/m, "without the switch the leg skips\n" + plain.stdout.slice(-1500));
