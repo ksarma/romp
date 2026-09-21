@@ -22,11 +22,17 @@ const read = (...parts) => fs.readFileSync(path.join(REPO, ...parts), 'utf8');
 const plan = read('plans', 'markdown-viewer.md');
 const context = read('CONTEXT.md');
 
-// The section, hard wraps collapsed so an assertion survives a rewrap, and its prose alone: code spans are names.
+// The section, from its head to the next `## ` heading or the plan's end (the round-6 review's cluster F of the print PR; the
+// round-7 review's extra5-2 found the slice running to the plan's end in the three modules that read the section, this one
+// among them), hard wraps collapsed so an assertion survives a rewrap, and its prose alone: code spans are names.
 const HEAD = '## Follow-on: Print (2026-09-19)';
-const headAt = plan.indexOf('\n' + HEAD + '\n');
-assert.ok(headAt >= 0, 'the follow-on section is in the plan');
-const section = plan.slice(headAt).replace(/\s+/g, ' ');
+function printSectionOf(text) {
+  const at = text.indexOf('\n' + HEAD + '\n');
+  assert.ok(at >= 0, 'the follow-on section is in the plan');
+  const next = text.indexOf('\n## ', at + 1);
+  return text.slice(at, next >= 0 ? next : text.length).replace(/\s+/g, ' ');
+}
+const section = printSectionOf(plan);
 const prose = section.replace(/`[^`]*`/g, '');
 
 // The words CONTEXT.md's `**term**:` entry lists under _Avoid_, parentheticals dropped; the Avoid line wraps, so it is
@@ -49,6 +55,13 @@ test('P4 calls the pdf.js pages the canvases with their comments, and no form of
     'P4 names the canvases by the comments on them');
   const hits = [...prose.matchAll(/\S*annotat\S*/gi)].map((m) => m[0]);
   assert.deepEqual(hits, [], 'no form of "annotation" in the section\'s prose');
+});
+
+test('the section read here ends at the next `## ` heading: a decoy section appended after the Print head, naming the avoided word, is outside the prose read (FAILS BEFORE: the slice ran to the plan\'s end, so a later section\'s word would have red this module as the Print section\'s)', () => {
+  const decoy = '\n## Decoy follow-on (this case\'s own synthetic section)\n\nA decoy sentence after the next heading naming an annotation.\n';
+  assert.equal(printSectionOf(plan + decoy), section, 'the section is the same text with a section appended after it');
+  assert.ok(!printSectionOf(plan + decoy).includes('naming an annotation'), 'the decoy\'s sentence is outside it (the section itself names the word once, as a word in a code span)');
+  assert.ok((plan + decoy).replace(/\s+/g, ' ').includes('naming an annotation'), '...where an unbounded read holds it');
 });
 
 test('the section names this module and what it holds', () => {

@@ -8968,9 +8968,12 @@ sizes counted over the census file's array literals, the retired sentence's popu
 entries, and the two fails-before records by their exact text, each message naming the census module as where the
 equality with the built table or the walked syntax is checked. Two pins the round-6 pre-answers proposed
 were dropped on the maintainer's word: a scan of P1 through this list for the shape count, and a guard refusing a heading
-of any level after the Print head. Fork PR #862 appends a section of its own to this plan, so either pin would collide
-with it and be re-cut around it; both are revisited after that PR lands, and the whole-section scan above covers the count
-meanwhile.
+of any level after the Print head. The heading guard would collide with a section that lands after the Print head (fork PR
+#862 appends one), so it is re-cut then; the P1-through-Tests scan reaches no appended section under either landing order
+and was superseded by the whole-section scan the round-6 ruling asked for (cluster F), which is bounded to the next `## `
+heading or the plan's end since the round-8 fixes (2026-09-21; the round-7 review's extra5-2 and extra9-3: the scan had run
+to the plan's end, the one read that would have absorbed an appended section, and the recorded reason named the wrong pin)
+and so needs no re-cut when a section lands after this one.
 tools/markdown-viewer-plan-print-vocabulary.test.mjs holds this section's words to CONTEXT.md's File comment entry: what
 the Comments panel draws over a PDF page is called comments here, never `annotation`, which that entry lists under
 _Avoid_ (a review finding, 2026-09-19).

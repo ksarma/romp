@@ -90,11 +90,23 @@ const flowRaw0 = () => read('ui', 'webview', 'file-print.ts');
 const viewer = code(read('ui', 'webview', 'file-view.ts'));
 const guide = read('docs', 'guide.md');
 
-// The section, hard wraps collapsed so an assertion survives a rewrap.
+// The section, from its head to the next `## ` heading or the plan's end, hard wraps collapsed so an assertion survives a
+// rewrap. The bound is the round-6 review's cluster F, which the round-7 review's extra5-2 found undone: the slice ran to the
+// plan's end, so a section appended after this one would have been read as this one's (a decoy appended in the round-8 build
+// red two cases here, the count scan reading its gated-shape count as this section's and the vocabulary pin its "verb axis"; the case below
+// keeps the decoy). tools/markdown-viewer-plan-print.test.mjs holds, as its own statement, that no `## ` follows this section today.
 const HEAD = '## Follow-on: Print (2026-09-19)';
+/** The section's raw text in `text`: its head through the character before the next `## ` heading, or to the end when none
+ *  follows; a missing head fails, which is the failure wanted. */
+function printSectionRaw(text) {
+  const at = text.indexOf('\n' + HEAD + '\n');
+  assert.ok(at >= 0, 'the follow-on section is in the plan');
+  const next = text.indexOf('\n## ', at + 1);
+  return text.slice(at, next >= 0 ? next : text.length);
+}
 const headAt = plan.indexOf('\n' + HEAD + '\n');
-assert.ok(headAt >= 0, 'the follow-on section is in the plan');
-const section = plan.slice(headAt).replace(/\s+/g, ' ');
+const sectionRaw = printSectionRaw(plan);
+const section = sectionRaw.replace(/\s+/g, ' ');
 const part = (from, to) => {
   const a = section.indexOf(from);
   assert.ok(a >= 0, JSON.stringify(from) + ' heads a part of the section');
@@ -965,9 +977,11 @@ test('Derivations and their unknown cases: the paragraph stands between P7 and t
   assert.ok(unit.includes('test("figureHidden under node, where no browser computes a style:'), 'the figureHidden case under node');
   assert.ok(exists('ui', 'webview', 'file-print-figure-browser.test.ts') && read('ui', 'webview', 'file-print-figure-browser.test.ts').includes('for every shape the flow\'s answer equals the INK the shape\'s ungated twin puts on the page'), 'the figure leg in the three engines, the computed half held to the ink (round 7)');
   // the shape count, ONE pin (the round-5 review's correctness-4 and regression-3: the number stood in five places and a
-  // delta updated two): the count is of the rows the leg builds, read here by running its table; one regex over the WHOLE
-  // Print section (the heading to the plan's end: tools/markdown-viewer-plan-print.test.mjs holds that no `## ` follows
-  // it) finds every copy, read slice by slice (P2, Derivations, the Tests list, and everything else in the section), and
+  // delta updated two): the count is of the rows the leg builds, read here from P2's and the Tests list's sentences and held
+  // to one number (its equality with the rows the leg builds is file-print.test.ts's, under npm test; the round-7 review's
+  // extra7-3: this clause said the table was run here after the round-7 head moved that run out); one regex over the WHOLE
+  // Print section (the heading to the next `## ` heading, or the plan's end, the bound above; tools/markdown-viewer-plan-print.test.mjs
+  // holds that no `## ` follows it today) finds every copy, read slice by slice (P2, Derivations, the Tests list, and everything else in the section), and
   // each must be that count: P2 and the Tests list carry one each, Derivations none (it says "every gated shape") and the
   // rest of the section none. The round-6 review's cluster F (2026-09-20): the scan read P2, Derivations and the Tests
   // list alone, under two thirds of the section, so a stale count planted in P1, P5, the open points or the ledger
@@ -975,8 +989,8 @@ test('Derivations and their unknown cases: the paragraph stands between P7 and t
   // carries none, since it points here. This module carries none either (the branch's verification pass finding
   // copies-1, 2026-09-20: two of its pins spelled the count and the history clause by hand; they now match the sentence
   // with the count inside it, and the assertion below holds this module to no literal copy), so the copies are P2's and
-  // the Tests list's, and a row added to the leg reds both at once: the text read here holds every copy to one number, and
-  // file-print.test.ts holds that number to the rows the leg builds.
+  // the Tests list's, and a row added to the leg reds file-print.test.ts's pin, which then names the two copies to change:
+  // the text read here holds every copy to one number, and file-print.test.ts holds that number to the rows the leg builds.
   const count = shapeCount();
   assert.ok(!/\b\d+ gated shapes?\b/.test(read('tools', 'markdown-viewer-plan-print-record.test.mjs')), 'this module carries no literal copy of the shape count');
   // round 7: the Tests list says what this module derives since the round-6 review, and records the two pins the round-6
@@ -999,7 +1013,7 @@ test('Derivations and their unknown cases: the paragraph stands between P7 and t
   assert.deepEqual([...self.matchAll(/^import .* from ['"]([^'"]+)['"];$/gm)].map((m) => m[1]).sort(), ['node:assert/strict', 'node:fs', 'node:path', 'node:test', 'node:url'], 'DIAGNOSTIC (a spelling read of the static import lines): they name node\'s own five modules and nothing else; the load property is the isolation module\'s');
   const selfCode = self.replace(/'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"/g, '""');   // string literals blanked, so this pin's own probes are not read as a road
   for (const road of ['create' + 'Require', 're' + 'quire(', 'im' + 'port(']) assert.ok(!selfCode.includes(road), 'DIAGNOSTIC (a spelling read): this module spells no ' + road + ' road to vscode-extension/node_modules (a require of the compiler failed the shell job at load, 2026-09-21; the property is the isolation module\'s, and CI\'s shell job, `node --test tools/*.test.mjs` from a tree with no node_modules, is the backstop that caught the regression)');
-  assert.ok(TESTS.includes('Two pins the round-6 pre-answers proposed were dropped on the maintainer\'s word: a scan of P1 through this list for the shape count, and a guard refusing a heading of any level after the Print head. Fork PR #862 appends a section of its own to this plan, so either pin would collide with it and be re-cut around it; both are revisited after that PR lands, and the whole-section scan above covers the count meanwhile.'), 'the two dropped pins are recorded with the collision that dropped them');
+  assert.ok(TESTS.includes('Two pins the round-6 pre-answers proposed were dropped on the maintainer\'s word: a scan of P1 through this list for the shape count, and a guard refusing a heading of any level after the Print head. The heading guard would collide with a section that lands after the Print head (fork PR #862 appends one), so it is re-cut then; the P1-through-Tests scan reaches no appended section under either landing order and was superseded by the whole-section scan the round-6 ruling asked for (cluster F), which is bounded to the next `## ` heading or the plan\'s end since the round-8 fixes (2026-09-21; the round-7 review\'s extra5-2 and extra9-3: the scan had run to the plan\'s end, the one read that would have absorbed an appended section, and the recorded reason named the wrong pin) and so needs no re-cut when a section lands after this one.'), 'the two dropped pins are recorded with the reason that holds for each: the heading guard collides with a later section, the P1-through-Tests scan never did and was superseded by the bounded whole-section scan');
   assert.ok(read('tools', 'markdown-viewer-plan-print.test.mjs').includes("assert.equal(plan.indexOf('\\n## ', headAt + 1), -1, 'the follow-on is the last section of the plan');"), 'the plan module\'s guard refuses a later `## ` alone, as the Tests list says of the dropped heading-of-any-level guard');
   const counts = (slice) => [...slice.matchAll(/\b(\d+) gated shapes?\b/g)].map((m) => Number(m[1]));
   const elsewhere = section.replace(P2, '').replace(D, '').replace(TESTS, '');   // the rest of the section: P1, P3 to P4, P5 to P7, the ask, the open points
@@ -1172,7 +1186,7 @@ test('P2, P6, open point 8 and the guide carry the figure-level grant sentence: 
   assert.ok(headerText.includes('WHERE THIS MODULE LIVES') && headerText.includes('permanently a vscode-extension-leg module; no part of it moves under tools/') && headerText.includes('its isolation guard (tools/markdown-viewer-plan-print-record-isolation.test.mjs, a child run from a mirror without node_modules) refuses any road to one'), 'and the rider on where the census lives, naming the isolation guard, so the two modules\' claims read as one split');
   assert.ok(headerText.includes('each seated argument that is a bare name is held to ITS declaration too (`seatedBy`') && headerText.includes('a listed name declared twice in the entry\'s function fails at every seat'), 'and the seated binding and the shadow rule (the verifiers\' census-2)');
   const body8 = read('ui', 'webview', 'file-print.ts');
-  assert.ok(!/verb axis|reflection axes|verb, assignment/.test(body8) && !/verb axis|reflection axes|verb, assignment/.test(plan.slice(headAt)), 'no other vocabulary for the axes in the flow or the section');
+  assert.ok(!/verb axis|reflection axes|verb, assignment/.test(body8) && !/verb axis|reflection axes|verb, assignment/.test(sectionRaw), 'no other vocabulary for the axes in the flow or the section');
   assert.ok(P6.replace(/\n/g, ' ').includes('The restore is the whole figure\'s, so a placeholder whose figure paints may have any URL the figure names fetched, a remote URL inside a non-painting element among them, for something never on the paper; which the browser fetches is its own, measured per shape in file-print-figure-browser.test.ts (P2; the round-4 review\'s HIGH 2, 2026-09-20; open point 8)'), 'P6 (read with its wraps collapsed)');
   assert.ok(!P6.includes('every URL the figure names fetched'), 'the round-5 over-promise is gone from P6');
   assert.ok(OPEN.includes('And the answer is the FIGURE\'s: when one painting element shows, `loadGatedFigure` restores every moved attribute of the root and of its descendants, so a remote URL inside a non-painting element of a painting figure'));
@@ -1302,4 +1316,16 @@ test('the retired sentence (the round-5 review\'s tests-4, regression-6, extra5-
   assert.ok(driver.includes('after Keep waiting the line reads " + JSON.stringify(waitingWords(1)) + " beside the loader with Print anyway alone (FAILS BEFORE: the line read \\"Preparing 1 picture…\\" with no button'), 'case (15)\'s title, its FAILS BEFORE clause standing');
   assert.equal([...egress.matchAll(/"the parked picture prints still loading and left off the paper"/g)].length, 2, 'the two Print anyway roads\' messages');
   assert.ok(egress.includes('"the open picture prints still loading and left off the paper (incomplete), the three placeholders standing"'), 'the four-host road\'s message');
+});
+
+// ── the section's bound: the next `## ` heading, executed with a decoy ──────────────────────────────
+
+test('the section read here ends at the next `## ` heading (the round-6 review\'s cluster F, undone until the round-7 review\'s extra5-2): a decoy section appended after the Print head, naming a gated-shape count and "the verb axis", is outside the section, which reads byte-identical with and without it (FAILS BEFORE: the slice ran to the plan\'s end, so the count scan read the decoy\'s 7 as this section\'s and the vocabulary pin read its verb axis)', () => {
+  const decoyCount = String(3 + 4) + ' gated ' + 'shapes';   // composed, so this module still carries no literal copy of the shape count (the pin above)
+  const decoy = '\n## Decoy follow-on (this case\'s own synthetic section)\n\nA decoy sentence after the next heading: this text names the verb axis, and ' + decoyCount + ' stand here.\n';
+  const planWithDecoy = plan + decoy;
+  assert.ok(planWithDecoy.indexOf('\n## ', headAt + 1) > headAt, 'the decoy is a `## ` heading after the Print head, the shape the bound is for');
+  assert.equal(printSectionRaw(planWithDecoy), sectionRaw, 'the section is the same text with a section appended after it');
+  assert.ok(!printSectionRaw(planWithDecoy).includes(decoyCount) && !/verb axis/.test(printSectionRaw(planWithDecoy)), 'the decoy\'s count and vocabulary are outside the section');
+  assert.ok(planWithDecoy.slice(headAt).includes(decoyCount), '...where the unbounded slice would have read them: the bound is load-bearing');
 });

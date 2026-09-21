@@ -2950,19 +2950,30 @@ test("disabled until the body is in: the driver's start, where a press (the butt
 
 const REPO_ROOT = path.resolve(process.cwd(), "..");
 const readRepo = (...parts: string[]): string => fs.readFileSync(path.join(REPO_ROOT, ...parts), "utf8");
-/** The print follow-on section of the plan, its hard wraps collapsed so a pin survives a rewrap; read on first use so a
- *  missing section fails the pin that needs it and not the module's load. */
+/** The print follow-on section of `plan`, from its head to the next `## ` heading or the plan's end (the round-6 review's
+ *  cluster F, which the round-7 review's extra5-2 found undone here: the slice ran to the plan's end, and every consumer
+ *  below ends at an in-section mark, so nothing shipped reached the tail, but a section appended after this one would have
+ *  been in the text every mark was sought in), its hard wraps collapsed so a pin survives a rewrap. */
+function printSectionOf(plan: string): string {
+  const head = "## Follow-on: Print (2026-09-19)";
+  const at = plan.indexOf("\n" + head + "\n");
+  assert.ok(at >= 0, "the follow-on section is in the plan");
+  const next = plan.indexOf("\n## ", at + 1);
+  return plan.slice(at, next >= 0 ? next : plan.length).replace(/\s+/g, " ");
+}
+/** The plan's section, read on first use so a missing section fails the pin that needs it and not the module's load. */
 let printSectionText: string | null = null;
 function printSection(): string {
-  if (printSectionText === null) {
-    const plan = readRepo("plans", "markdown-viewer.md");
-    const head = "## Follow-on: Print (2026-09-19)";
-    const at = plan.indexOf("\n" + head + "\n");
-    assert.ok(at >= 0, "the follow-on section is in the plan");
-    printSectionText = plan.slice(at).replace(/\s+/g, " ");
-  }
+  if (printSectionText === null) printSectionText = printSectionOf(readRepo("plans", "markdown-viewer.md"));
   return printSectionText;
 }
+test("the plan section this module reads ends at the next `## ` heading (the round-6 review's cluster F; the round-7 review's extra5-2): a decoy section appended after the Print head is outside the text every mark below is sought in, which reads the same with and without it (FAILS BEFORE: the slice ran to the plan's end and held the decoy)", () => {
+  const plan = readRepo("plans", "markdown-viewer.md");
+  const decoy = "\n## Decoy follow-on (this case's own synthetic section)\n\nA decoy sentence after the next heading: this text names the verb axis, and 7 gated shapes stand here.\n";
+  assert.equal(printSectionOf(plan + decoy), printSectionOf(plan), "the section is the same text with a section appended after it");
+  assert.ok(!printSectionOf(plan + decoy).includes("decoy sentence after the next heading"), "the decoy is outside it");
+  assert.ok((plan + decoy).replace(/\s+/g, " ").includes("decoy sentence after the next heading"), "...where an unbounded read holds it: the bound is load-bearing");
+});
 /** `text` from `start` up to the `end` that follows it; a missing mark fails, which is the failure wanted. */
 function sectionBetween(text: string, start: string, end: string): string {
   const a = text.indexOf(start);
