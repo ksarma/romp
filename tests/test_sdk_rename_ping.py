@@ -27,6 +27,15 @@ BIN = os.path.join(os.path.dirname(HERE), "bin")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 sb = load_source("romp_sdk_backend_renameping", os.path.join(BIN, "romp_sdk_backend.py"))
+# the kernel, loaded as tests/test_session_emoji.py loads it (the event model and the judge first, no browser open, a
+# serve token set), under a name private to this module: the pins that drive the kernel's rename door against this
+# module's backend (fork PR #813, round 6 of the review, eighteenth commit) need Sessions.backend_for, _rename_claimed,
+# _UNOWNED and _NAMES_LOCK, the kernel's own, and its singleton slot for the backend
+load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
+load_source("romp_judge", os.path.join(BIN, "romp-judge"))
+os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
+os.environ.setdefault("ROMP_SERVE_TOKEN", "test-token-DO-NOT-USE")
+km = load_source("romp_kernel_renameping", os.path.join(BIN, "romp-kernel"))
 
 SID = "aaaaaaaa-1111-2222-3333-444444444444"
 SRC = open(os.path.join(BIN, "romp_sdk_backend.py")).read()
@@ -915,7 +924,14 @@ class NamesFilePublicationsUnderTheLocks(unittest.TestCase):
     undone on the roster under a True) and pins the source-of-truth rule as stated: the record's name and cwd where it
     holds them, else the file's (a rename over a cwd-less record cleared the file's cwd; a move over a nameless record
     published the sid), and the record's cwd over a names file that disagrees, the pin the non-red mutation (a rename
-    carrying the file's cwd) needed."""
+    carrying the file's cwd) needed.
+    THE EIGHTEENTH COMMIT (the round's own verifiers' seventh pass) brings spawn under the same hold with the record
+    FIRST: its names entry preceded its record, and the kernel's rename door, which owns a sid by its record's existence
+    and routes a record-less sid to the dead-tab road, rewrote that entry in the window under a True while the record
+    then landed with the spawn's name (the F17-1 drive); the dead-tab road itself re-checks ownership under the names
+    lock before it writes, so a door that resolved the sid as nobody's before the record landed hands the rename to the
+    backend instead of writing over its publish. Two non-red mutants are pinned: promote's cwd over a record with none
+    (the file's, never a clear) and spawn's names write under the names lock, in its order after the record."""
 
     CHILD = "dddddddd-1111-2222-3333-444444444444"   # the sid a fork mints; a rename of it inside the fork's window
 
@@ -1337,6 +1353,181 @@ class NamesFilePublicationsUnderTheLocks(unittest.TestCase):
         self.assertEqual(self._names(), ["promoted", self.cwd, "#445566", "#000000"],
                          "the record's cwd on the breakout's row (a promote passing no cwd leaves it empty)")
         self.assertEqual([m for m in self.logs if "rename" in m], [], "nothing lost, nothing to log: %r" % (self.logs,))
+
+    def _spawn_held_and_the_kernels_door_renames(self, be, hold):
+        """spawn CHILD on a thread named "writer", held by thread identity at `hold`: "record write" (inside write_reg,
+        before the record lands: the verifiers' hold point), "publish entry" (at _publish_name's entry) or "door resolved
+        first" (inside write_reg too, but the door resolves the sid's backend while the spawn is held and writes only
+        after the spawn has returned: the gap between the kernel door's two reads). The kernel's rename door
+        (Sessions.backend_for, then _rename_claimed: the WS op's and the route's shape) renames CHILD to alpha on a
+        thread named "rename-b", given 0.3 s where the spawn is still held. Every write_reg and write_name is recorded as
+        (thread, sid, name, _reg_lock held); the kernel's stderr is captured. Returns a dict of what was read."""
+        real_wn, real_wr, real_pub = sb.write_name, sb.write_reg, be._publish_name
+        w_in, go, routed, spawn_done = threading.Event(), threading.Event(), threading.Event(), threading.Event()
+        holder, reg_writes, names_writes, out = {}, [], [], {}
+
+        def publish(sid, *a, **k):
+            if hold == "publish entry" and threading.current_thread() is holder.get("w"):
+                w_in.set()
+                go.wait(10)
+            return real_pub(sid, *a, **k)
+
+        def write_name(state_dir, sid, nm, *a, **k):
+            names_writes.append((threading.current_thread().name, sid[:4], nm, be._reg_lock.locked()))
+            return real_wn(state_dir, sid, nm, *a, **k)
+
+        def write_reg(state_dir, sid, reg):
+            reg_writes.append((threading.current_thread().name, sid[:4], reg.get("name"), be._reg_lock.locked()))
+            if hold != "publish entry" and threading.current_thread() is holder.get("w"):
+                w_in.set()
+                go.wait(10)
+            return real_wr(state_dir, sid, reg)
+
+        def door():
+            be_for = km.Sessions.backend_for(self.CHILD)
+            out["unowned"] = be_for is km._UNOWNED
+            routed.set()
+            if hold == "door resolved first":
+                spawn_done.wait(10)
+            return km._rename_claimed(be_for, self.CHILD, "alpha")
+
+        def run(key, fn):
+            try:
+                out[key] = fn()
+            except BaseException as e:                            # noqa: BLE001 (the drive records whatever escapes)
+                out[key] = (type(e).__name__, str(e))
+        tw = holder["w"] = threading.Thread(target=run, name="writer",
+                                            args=("w", lambda: be.spawn("child", self.cwd, "#112233", "#ffffff", sid=self.CHILD)))
+        tb = threading.Thread(target=run, args=("b", door), name="rename-b")
+        child_nf, err = self.root / "names" / self.CHILD, io.StringIO()
+        with mock.patch.object(sb, "write_name", write_name), mock.patch.object(sb, "write_reg", write_reg), \
+                mock.patch.object(be, "_publish_name", publish), contextlib.redirect_stderr(err):
+            tw.start()
+            self.assertTrue(w_in.wait(10), "the spawn reached its hold point")
+            out["at_hold"] = (sb._reg_path(self.root, self.CHILD).exists(), child_nf.exists())
+            tb.start()
+            if hold == "door resolved first":
+                self.assertTrue(routed.wait(10), "the door resolved the sid's backend while the spawn was held")
+                go.set()
+                tw.join(10)
+                spawn_done.set()
+            else:
+                tb.join(0.3)
+                out["b_waiting"] = tb.is_alive()
+                go.set()
+                tw.join(10)
+            tb.join(10)
+        self.assertFalse(tw.is_alive() or tb.is_alive(), "both returned")
+        out["reg"] = sb.read_reg(self.root, self.CHILD) or {}
+        out["names"] = child_nf.read_text().rstrip("\n").split("\t") if child_nf.exists() else None
+        out["reg_writes"], out["names_writes"], out["stderr"] = reg_writes, names_writes, err.getvalue()
+        return out
+
+    def test_a_spawns_record_lands_before_its_names_entry_so_the_kernels_rename_door_waits_or_refuses(self):
+        # THE VERIFIERS' DRIVE (SPAWN_RECORD_WRITE_KERNEL_DOOR_RENAME, the seventh pass; F17-1, pre-existing at the pushed
+        # head and at upstream main). spawn published names/<sid> at its top and wrote its record last; a rename of the new
+        # sid arriving between the two through the KERNEL's door found no backend owning the sid (ownership is the
+        # record's existence) and took the unowned route, whose rename is the dead-tab road: _set_name rewrote the entry
+        # under the kernel's names lock alone and the door answered (True, ''); the record then landed with the spawn's
+        # name. At the seventeenth commit: at the hold the record None and the entry 'child'; the door (True, ''); finally
+        # the record 'child' and the entry 'alpha', the two stores disagreeing under the door's True, nothing logged. Now
+        # the record lands first and the entry follows inside the same hold of _reg_lock, and the dead-tab road re-checks
+        # ownership under the names lock before it writes. Held inside the record write, a rename finds neither store and
+        # the door declines visibly ((False, ''), a stderr line naming the sid; the WS op says the rename did not take).
+        # Held at the publish's entry, the door routes to this backend's rename, which waits on the hold and lands after
+        # the publish on both stores. A door that resolved the sid as nobody's before the record landed and reaches its
+        # write after the spawn returned finds the sid owned under the names lock and hands the rename to the backend,
+        # which lands it on both stores (without the re-check the dead-tab write went over the spawn's publish under a
+        # True). In every shape the record and the entry agree and the door's answer matches what stands. The kernel is
+        # loaded as tests/test_session_emoji.py loads it; the backend is built with the kernel's names lock, as the kernel
+        # builds it, and installed as its SDK singleton; the names registry is this test's.
+        be = sb.SdkBackend(self.td.name, "/bin/true", lambda *a, **k: None, log=self.logs.append, names_lock=km._NAMES_LOCK)
+        saved = (km.NAMES, km._sdk_backend, km._codex_backend)
+        km.NAMES, km._sdk_backend, km._codex_backend = self.root / "names", be, False
+        self.addCleanup(lambda: [setattr(km, k, v) for k, v in zip(("NAMES", "_sdk_backend", "_codex_backend"), saved)])
+        for hold in ("record write", "publish entry", "door resolved first"):
+            with self.subTest(held_at=hold):
+                sb._reg_path(self.root, self.CHILD).unlink(missing_ok=True)
+                (self.root / "names" / self.CHILD).unlink(missing_ok=True)
+                del self.logs[:]
+                out = self._spawn_held_and_the_kernels_door_renames(be, hold)
+                reg, names = out["reg"], out["names"]
+                self.assertEqual(out.get("w"), self.CHILD, "the spawn returned its sid: %r" % (out.get("w"),))
+                self.assertIsNotNone(names, "the spawn published its entry")
+                self.assertEqual(reg.get("name"), names[0],
+                                 "the record and the names entry agree (red before the eighteenth commit, held inside the record "
+                                 "write: the record 'child', the roster 'alpha' under the door's True)")
+                self.assertEqual(out.get("b"), (names[0] == "alpha", ""), "the door's answer matches what stands: %r" % (out.get("b"),))
+                self.assertEqual(names[1:], [self.cwd, "#112233", "#ffffff"], "the spawn's cwd and colours ride: %r" % (names,))
+                self.assertEqual(out["reg_writes"][0], ("writer", "dddd", "child", True), "the spawn's record write first, under the lock: %r" % (out["reg_writes"],))
+                self.assertEqual(out["names_writes"][0], ("writer", "dddd", "child", True),
+                                 "the spawn's names write under the record lock, before any other (red before the eighteenth commit: "
+                                 "the lock was free at the spawn's publish): %r" % (out["names_writes"],))
+                if hold == "record write":
+                    self.assertEqual(out["at_hold"], (False, False), "neither store exists while the record write is held (red before "
+                                     "the eighteenth commit: the names entry was published first)")
+                    self.assertTrue(out["unowned"], "no backend owns a sid with no record")
+                    self.assertEqual((out.get("b"), reg.get("name")), ((False, ""), "child"), "the door declined and the spawn's name stands on both stores")
+                    self.assertIn("no names/%s entry to rewrite" % self.CHILD, out["stderr"], "the refusal is said, naming the sid: %r" % (out["stderr"],))
+                    self.assertEqual(len(out["names_writes"]), 1, "one names write, the spawn's: %r" % (out["names_writes"],))
+                elif hold == "publish entry":
+                    self.assertEqual(out["at_hold"], (True, False), "the record is on disk and the entry is not while the publish is held")
+                    self.assertFalse(out["unowned"], "the record makes the sid this backend's, so the door routes to its rename")
+                    self.assertTrue(out["b_waiting"], "the rename had not returned while the spawn held the lock")
+                    self.assertEqual((out.get("b"), reg.get("name"), reg.get("renameNote")), ((True, ""), "alpha", None),
+                                     "the rename landed after the publish, on the record too; no note: a fresh session has no history")
+                    self.assertEqual([(t, n, r) for t, _s, n, r in out["names_writes"]], [("writer", "child", True), ("rename-b", "alpha", True)],
+                                     "the spawn's names write landed before the rename's began, each under the record lock: %r" % (out["names_writes"],))
+                    self.assertEqual(out["stderr"], "", "nothing refused, nothing said: %r" % (out["stderr"],))
+                else:
+                    self.assertTrue(out["unowned"], "the door resolved the sid as nobody's before the record landed")
+                    self.assertEqual((out.get("b"), reg.get("name"), names[0]), ((True, ""), "alpha", "alpha"),
+                                     "the dead-tab road found the sid owned under the names lock and handed the rename to the backend, "
+                                     "which landed it on both stores (red without the re-check: the entry 'alpha' over the record 'child')")
+                    self.assertEqual([(t, n, r) for t, _s, n, r in out["names_writes"]], [("writer", "child", True), ("rename-b", "alpha", True)],
+                                     "the backend's names write, under its lock, not the dead-tab road's: %r" % (out["names_writes"],))
+                    self.assertIn("the SDK backend owns %s now" % self.CHILD, out["stderr"], "the hand-over is said: %r" % (out["stderr"],))
+                self.assertEqual([m for m in self.logs if "rename" in m], [], "nothing lost, nothing to log: %r" % (self.logs,))
+
+    def test_a_promote_over_a_record_without_a_cwd_carries_the_files_cwd(self):
+        # F17-2 (the seventh pass), a non-red mutant of the seventeenth commit: promote_thread's `reg.get("cwd") or None`
+        # mutated to `or ""` (write_name's explicit clear) left this module green, because every promote pin had a record
+        # with a cwd or a thread with no names file (where "" and None publish the same empty cwd). The distinguishing
+        # shape: a thread record with no `cwd` key (the absent-record recreations' shape) and a names entry present with
+        # one. The rule as stated: the record's cwd where it holds one, else the file's, never a clear.
+        sb.write_reg(self.root, SID, {"sid": SID, "name": "web", "lastSid": SID, "threadOf": self.live.thread_of})
+        self.assertTrue(self.be.promote_thread(SID, "promoted", "#445566", "#000000"))
+        self.assertEqual(self._names(), ["promoted", self.cwd, "#445566", "#000000"],
+                         "the file's cwd carried onto the breakout's row (a promote passing an empty string clears it)")
+        reg = sb.read_reg(self.root, SID) or {}
+        self.assertEqual((reg.get("name"), "cwd" in reg, "threadOf" in reg, self.live.name), ("promoted", False, False, "promoted"),
+                         "the record carries the breakout and still no cwd: %r" % (reg,))
+        self.assertEqual([m for m in self.logs if "rename" in m], [], "nothing lost, nothing to log: %r" % (self.logs,))
+
+    def test_a_spawns_record_write_and_names_publish_are_one_hold_of_the_lock_the_record_first(self):
+        # the property by execution, the shape the one-hold pin above holds for promote and move (F17-3, the seventh pass:
+        # spawn's `self._publish_name(...)` mutated to a bare write_name, no names lock, left this module green, its
+        # publish unpinned). With no other writer, the record moves first with _reg_lock held and the names lock free,
+        # then the names entry with both held; both locks are free when spawn returns; the two stores agree. Red before
+        # the eighteenth commit: the names write first, with _reg_lock free.
+        events, real_wr, real_wn, be = [], sb.write_reg, sb.write_name, self.be
+
+        def write_reg(state_dir, sid, reg):
+            events.append(("record", reg.get("name"), be._reg_lock.locked(), self._names_locked(be)))
+            return real_wr(state_dir, sid, reg)
+
+        def write_name(state_dir, sid, nm, *a, **k):
+            events.append(("names", nm, be._reg_lock.locked(), self._names_locked(be)))
+            return real_wn(state_dir, sid, nm, *a, **k)
+        with mock.patch.object(sb, "write_reg", write_reg), mock.patch.object(sb, "write_name", write_name):
+            self.assertEqual(self.be.spawn("child", self.cwd, "#112233", "#ffffff", sid=self.CHILD), self.CHILD)
+        self.assertEqual(events, [("record", "child", True, False), ("names", "child", True, True)],
+                         "the spawn's record write, then its names write, under the locks: %r" % (events,))
+        self.assertEqual((self.be._reg_lock.locked(), self._names_locked(self.be)), (False, False), "both locks released when the spawn returns")
+        reg = sb.read_reg(self.root, self.CHILD) or {}
+        names = (self.root / "names" / self.CHILD).read_text().rstrip("\n").split("\t")
+        self.assertEqual((reg.get("name"), reg.get("cwd"), names), ("child", self.cwd, ["child", self.cwd, "#112233", "#ffffff"]),
+                         "the two stores agree on the name and the cwd, the colours riding")
 
     def test_the_constructor_wires_the_names_lock_the_kernel_hands_it(self):
         # the wiring, by execution: a backend built with names_lock=<lock> holds THAT lock at its names write

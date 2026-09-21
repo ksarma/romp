@@ -24909,11 +24909,33 @@ def _rename_session(sid, name):
             sys.stderr.write("codex rename '%s': the Codex backend no longer knows %s — nothing renamed\n"
                              % (name, sid))
             return None
-    try:
-        _set_name(sid, name)                       # dead tab → names file directly; a FAULT raises through
-    except FileNotFoundError:
-        sys.stderr.write("rename '%s': no names/%s entry to rewrite — nothing renamed\n" % (name, sid))
-        return None                                # nothing known to rename: the doors ask if the session is known
+    # THE DEAD-TAB WRITE RUNS ONLY WHILE NO BACKEND OWNS THE SID, CHECKED UNDER THE NAMES LOCK (fork PR #813, round 6 of
+    # the review, eighteenth commit, 2026-09-21; the round's own verifiers' seventh pass). The door resolved the sid as
+    # nobody's at Sessions.backend_for (the SDK backend owns a sid by its record's existence) and reaches this write
+    # later, after a name claim and two snapshots. A spawn landing in that gap (its record, then its names entry, one
+    # hold of its record lock and of this lock since the eighteenth commit) makes the sid the SDK backend's, and
+    # _set_name would rewrite the entry that spawn just published and answer True while the record keeps the spawn's
+    # name: the two stores disagreeing under the door's success, nothing logged. The verifiers' drive at the seventeenth
+    # commit had the spawn publish its entry BEFORE its record, so the door needed no gap to write over it; the backend's
+    # order is that commit's fix, and this re-check closes the gap the door leaves on its own. Under this lock the
+    # spawn's record either exists (its record write precedes its publish, and the publish holds this lock) or the
+    # entry is absent (the raise below). The backend is read from its singleton slot and never built here: a backend
+    # not yet built has no spawn in flight, and _sdk_lock is never taken under this lock. A sid the SDK backend owns is
+    # handed to that backend's rename OUTSIDE this lock (its order is the record lock, then this one): the rename lands
+    # on both stores or is refused at its compare-and-swap, and the caller is told what stands either way.
+    sdk = _sdk_backend or None
+    with _NAMES_LOCK:
+        owned = bool(sdk is not None and getattr(sdk, "owns", None) is not None and sdk.owns(sid))
+        if not owned:
+            try:
+                _set_name(sid, name)                   # dead tab → names file directly; a FAULT raises through
+            except FileNotFoundError:
+                sys.stderr.write("rename '%s': no names/%s entry to rewrite; nothing renamed\n" % (name, sid))
+                return None                            # nothing known to rename: the doors ask if the session is known
+    if owned:
+        sys.stderr.write("rename '%s': the SDK backend owns %s now (its record landed after the door found no owner); "
+                         "handing the rename to it\n" % (name, sid))
+        return name if sdk.rename(sid, name) else None
     return name
 
 

@@ -16863,7 +16863,9 @@ class SdkBackend:
         cwd = os.path.realpath(cwd) if os.path.exists(cwd) else cwd
         if not bg:                                   # give the session a stable identity colour like tmux sessions get
             bg, fg = pick_identity_color(sid, self.state_dir)
-        self._publish_name(sid, name, cwd, bg, fg)
+        # names/<sid> is published below, inside the record write's hold and after the record (fork PR #813, round 6 of
+        # the review, eighteenth commit, 2026-09-21); until then it was published here, before any record existed, the
+        # window the note at the record write describes
         # Seed model + effort from the REMEMBERED defaults (the user's last pick on any session), falling back
         # to the hardcoded ones (the user 2026-06-27). effort always has a value (the connect flag). A model is
         # recorded ONLY when a real choice was remembered: an unset / 'default' model stays the account default
@@ -16924,7 +16926,35 @@ class SdkBackend:
         # the common env-less session carries no key and _options writes no settings file for it.
         if env:
             reg["env"] = dict(env)
-        self._write_reg_locked(sid, reg)
+        # THE RECORD WRITE AND THE NAMES PUBLISH ARE ONE HOLD OF _reg_lock, THE RECORD FIRST (fork PR #813, round 6 of the
+        # review, eighteenth commit, 2026-09-21; the round's own verifiers' seventh pass). Until this commit the names
+        # entry was published at the top of this method, before any record existed, and the record landed here under a
+        # hold of its own. The seventeenth commit's note at fork called that order safe: a rename inside the window finds
+        # no record and refuses. True of this backend's own rename door (read_reg, then False) and false of the kernel's:
+        # Sessions.backend_for owns a sid by its record's existence (owns() stats the record path) and routes a sid no
+        # backend owns to the unowned route, whose rename is the dead-tab road (_rename_session, then _set_name), which
+        # rewrote names/<sid> under the kernel's names lock alone and answered True, reading no record and taking no
+        # lock of this backend's. So a rename of the new sid arriving between the two publications (the verifiers'
+        # drive: at the hold the names entry read the spawn's name and no record existed; the door answered applied; the
+        # record then landed with the spawn's name) left the record and the roster every listing reads disagreeing, the
+        # door's caller told the rename applied, this spawn's caller told nothing, no log line. The class: a road that
+        # publishes a name to one store before the other store exists lets a sibling door write the first store in the
+        # window. The fix is the order fork and promote_thread have: the record lands first, under _reg_lock, and the
+        # names entry follows inside the same hold, under the names lock as well (_publish_name), so a rename arriving
+        # before the record finds neither store and is refused at the kernel's door with a line naming the sid (nothing
+        # known to rename: a visible refusal), and one arriving after the record write routes to this backend's rename,
+        # which waits on this hold and lands on both stores after the publish, or is refused at its compare-and-swap.
+        # The gap the door itself leaves between resolving the sid as nobody's and its dead-tab write is closed on the
+        # kernel's side (_rename_session re-checks ownership under the names lock this publish holds). The other shape
+        # weighed, a mark the door could read for a spawn in flight, has no carrier: _host_spawning is the per-session
+        # HOST launch's set, written by the connect road and never by this method, so the door would need a new mark
+        # and a new query, a second mechanism where the order needs none. The names entry stays the discoverability
+        # trigger (discover() iterates names/) and now follows a record that carries every field the connect reads, the
+        # contract fork states. write_reg directly: the lock is not re-entrant, and _write_reg_locked would take it
+        # again.
+        with self._reg_lock:
+            write_reg(self.state_dir, sid, reg)
+            self._publish_name(sid, name, cwd, bg, fg)
         if unseeded:
             self._note_pick_not_seeded(sid, name, *unseeded)
         append_state(self.state_dir, sid, "waiting")
@@ -17043,8 +17073,10 @@ class SdkBackend:
         # creation, on the names file's absence; the record precedes the names write, and the record is what makes the sid
         # a rename's target. Under one hold a rename whose door read this record waits until the names entry has been
         # published and lands after it: promote_thread's shape, with write_reg called directly (the lock is not
-        # re-entrant). spawn stays as it is: its names entry precedes its record, so a rename inside its window finds no
-        # record and refuses, and one after its record write finds the names entry already published.
+        # re-entrant). spawn has the same order since the eighteenth commit: until then its names entry preceded its
+        # record, and the claim this note made for that order (a rename inside the window finds no record and refuses)
+        # held for this backend's rename door alone, not for the kernel's dead-tab road, which rewrote the entry in the
+        # window under a True (the note at spawn's record write).
         with self._reg_lock:
             write_reg(self.state_dir, sid, reg)
             # the names/ entry LAST: it is the discoverability trigger (discover() iterates names/), and
@@ -19243,9 +19275,10 @@ class SdkBackend:
         process (promote_thread, resume, spawn and fork) writes the record under this lock too, and promote_thread's and
         fork's names writes sit inside that hold (fork's since the seventeenth commit: until then its names publish
         followed the hold, and a rename of the new sid landing between the two was undone on the roster under a True;
-        spawn publishes its names entry before its record, so a rename inside its window finds no record and refuses;
-        resume writes no names entry), so no writer is between its record write and its names write while this
-        compensation reads.
+        spawn's since the eighteenth commit, the record first: until then its names entry preceded its record, and the
+        kernel's dead-tab rename road, which takes any sid no backend owns, rewrote that entry in the window under a
+        True while this backend's own rename door found no record and refused; resume writes no names entry), so no
+        writer is between its record write and its names write while this compensation reads.
         (2) CLOSED. Two faulting renames to DIFFERENT names (the round's own verifiers' third pass): the second's door-time
         `before` was the first's record write, not yet landed and later put back, and the order of the two compensations
         decided which name, told to no caller as applied, stayed on the record. The second's compare now runs after the
@@ -19291,6 +19324,27 @@ class SdkBackend:
         moved verdict; here the rename was put back, not landed). The ping's read cannot move under this lock without
         taking the session's lock inside it, an order no other path takes; a repair is named and unruled: deliver the
         ping from the record as it reads under _reg_lock and hand the text to the session after the hold.
+        (8) OPEN, not a lost write: what (3) leaves, the F-B disagreement shape. A rename to the name the file already
+        reads while the record reads another, alone and faulting at its names write, puts the record back and leaves the
+        file reading a name the record does not, until the next names write from the record (a move's or a promote's
+        publishes the record's name).
+        (9) OPEN, not a lost write. promote_thread, fork and spawn (the eighteenth commit: its record lands first, then
+        its entry) have no compensation for a names write that raises inside their hold: the record is written (the
+        popped threadOf and the new name; a new row), the entry is not (write_name raised before its os.replace), the
+        caller hears the raise (the kernel's promote door reverts the thread's status), nobody's write is undone, and
+        the session is undiscoverable until a later names write. A repair would be rename's put-back shape on the fields
+        each wrote; named, unruled.
+        (10) OPEN, not a lost write. _finish_move over a record that will not read skips its record write and says so,
+        the file carrying its own name and the new cwd; over an ABSENT or NAMELESS record it recreates the record with
+        no name, silently, as every RMW's absent-record recreation does, the file keeping its own name with the new cwd.
+        A repair, a log line at the recreation, is named and unruled.
+        (11) OUTSIDE these two files: kernel/codex_backend.py's names writer, under its own class lock and none of these;
+        another backend's road, for its own commit.
+        (12) OPEN, not a lost write. A record with no name or no cwd is not repaired from the file (the file is the copy,
+        never the source); it stays so until the next full record write (resume's). Named, unruled.
+        (8) to (12) were named in the sixteenth and seventeenth commits' messages and in the enumeration file outside the
+        repo before this docstring carried them (the eighteenth commit); each commit's message since the sixteenth
+        re-derives the list.
         REACHABILITY: SdkBackend.rename has one caller in the tree, kernel.py's _rename_claimed (the rename door,
         shared by the HTTP route and the WS op), which claims the target name across be.rename, refuses a concurrent
         claim of a held name, and answers a rename to the name names/<sid> already reads as a no-op with nothing
@@ -22911,7 +22965,9 @@ class SdkBackend:
         value at the write) and its publish are one hold of _names_lock, the lock the kernel's four writers of the file
         (_set_session_color, _set_session_emoji, _set_palette, _set_name) hold across their own read-edit-publish when the
         kernel built this backend with its _NAMES_LOCK. The backend's five writers call this: spawn with the new row's
-        name and cwd and the colour picked for it, before its record exists; fork with the same, inside the hold of
+        name and cwd and the colour picked for it, inside the hold of _reg_lock its record write takes and after the
+        record (the eighteenth commit; until then before its record existed, the window the kernel's dead-tab rename
+        road rewrote the entry in under a True); fork with the same, inside the hold of
         _reg_lock its record write takes (the seventeenth commit; until then after that hold, the window the verifiers'
         drive renamed the new sid in); promote_thread with the breakout's name and colour and the record's cwd, inside
         the hold of _reg_lock its record write takes; rename with its name and the cwd the record holds at its
