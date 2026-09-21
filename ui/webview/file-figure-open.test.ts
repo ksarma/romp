@@ -115,8 +115,18 @@ test("the sheets: the control rests transparent over the figure's corner with a 
     assert.match(css, /\n@media screen and \(hover: none\) \{ \.fileview-md \.fv-figopen \{ opacity: 0\.8; \} \}/, name + ": no hover keeps it visible, screen only");
     const print = css.slice(css.indexOf("\n@media print {"), css.indexOf("\n}", css.indexOf("\n@media print {")));
     assert.doesNotMatch(print, /fv-figopen/, name + ": the print block names it nowhere");
-    // one rest rule, revealed by nothing outside screen
-    const heads = css.split("\n").filter((l) => /fv-figopen/.test(l) && /\{/.test(l) && !l.startsWith("   ") && !l.startsWith("/*"));
-    for (const h of heads) if (/opacity: (1|0\.8)/.test(h)) assert.match(h, /^@media screen/, name + ": a reveal outside screen: " + h);
+    // the closed set: outside `@media screen` exactly the rest, the hover background and the float twins, and every other rule
+    // line under screen (the file review's landing round, fresh-4: the guard before it matched two opacity spellings, so a
+    // reveal spelled any other way outside screen passed it); a trailing comment is stripped (the no-hover line carries one)
+    const heads = css.split("\n").filter((l) => /fv-figopen/.test(l) && /\{/.test(l) && !/^\s/.test(l) && !l.startsWith("/*")).map((l) => l.replace(/\s*\/\*.*\*\/\s*$/, ""));
+    assert.deepEqual(heads.filter((l) => !l.startsWith("@media screen")), [
+      ".fileview-md .fv-figopen { position: relative; z-index: 1; vertical-align: top; margin: 0 6px 0 -28px; top: 6px; padding: 3px; background: var(--bg); opacity: 0; }",
+      ".fileview-md .fv-figopen:hover { background: var(--bg) linear-gradient(var(--accent-wash), var(--accent-wash)); }",
+      ".fileview-md .fv-figopen-left { float: left; }", ".fileview-md .fv-figopen-right { float: right; margin: 0 -28px 0 6px; }",
+    ], name + ": the rule lines outside `@media screen` are exactly the rest, the hover background and the float twins; any other line there is a reveal outside screen");
+    assert.deepEqual(heads.filter((l) => l.startsWith("@media screen")), [
+      "@media screen { .fileview-md :hover + .fv-figopen, .fileview-md .fv-figopen:hover, .fileview-md .fv-figopen:focus-visible { opacity: 1; } }",
+      "@media screen and (hover: none) { .fileview-md .fv-figopen { opacity: 0.8; } }",
+    ], name + ": the rule lines under screen are the reveal and the no-hover rule");
   }
 });

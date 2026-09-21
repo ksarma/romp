@@ -8366,7 +8366,10 @@ picture opened from a figure should take a row instead is the owner's (open poin
 follow-on adds (the file review's HIGH 1; L6): a plain click on a LOADED remote picture, its control, and a
 Cmd/Ctrl-click on it, three gestures through one arm, all call `openUrlTab` (`window.open(href, "_blank",
 "noopener,noreferrer")` in the web dashboard; the function's other arm, the host's openExternal, is the VS Code
-webview's, and the clause below holds in either arm), a top-level navigation to the picture's address: a second,
+webview's, and the clause below holds in either arm; the control at any time, and the two clicks on the picture where
+the press reaches it, the Comments panel closed or the pointer coarse, since with the panel open on a fine pointer the
+layer's overlay takes a click on the picture, modified or not, and offers a comment), a top-level navigation to the
+picture's address: a second,
 differently kinded, credentialed request to a host the page had requested the image from, since a figure opens a tab
 only once LOADED, and the page's image request to that host preceded its load (answered by the host, or by the
 browser's cache from an earlier answer). "Requested", not "fetched": before the round-2 fix `figureTarget` refused the
@@ -8483,8 +8486,11 @@ a button inside a link is the link's click too (one click opened the link's targ
 on the trail the reader never asked for); a figure alone in a link keeps its control, after the link. The clicks (the
 body's second click listener, beside the links', since file-view-links.test.ts pins the first listener's text and
 order and the two act on disjoint targets): a plain click on the control or on the bare figure opens it as above; a
-Cmd/Ctrl-click on a LOCAL picture opens the kernel's /file URL in a tab, as a PDF's modified click does (`openFileTab`;
-a blocked popup falls through to the viewer), and stops before the row as a link's modified click does; the figure's own click
+Cmd/Ctrl-click on a LOCAL picture, where the press reaches the picture (the Comments panel closed, or the pointer
+coarse: with the panel open on a fine pointer the layer's overlay below takes the press, modified or not, and offers a
+comment, while the control opens at any time; the file review's landing round, fresh-1), opens the kernel's /file URL
+in a tab, as a PDF's modified click does (`openFileTab`; a blocked popup falls through to the viewer), and stops
+before the row as a link's modified click does; the figure's own click
 yields to a figure inside a link (the author's link, through the links listener; and an anchor with an href that listener
 leaves to the browser, a web address of the markdown, which carries no class: the browser's own open of the address,
 never the picture beside it, the review's round 1; a captioned picture inside a dead link or a named target, an anchor

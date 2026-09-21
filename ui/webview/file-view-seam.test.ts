@@ -23,6 +23,8 @@ import type { Status, Hunk } from "./file-comments-model";
 import { setMdSanitizer, sanitizeMd, MD_PURIFY } from "./md-sanitize";   // the sanitizer seam the node suites install a stand-in through (Slice 7 of plans/markdown-viewer.md); sanitizeMd and the profile for the inertness pins
 import { marked } from "marked";                   // the singleton the viewer parses with: one case makes its lexer throw (the Slice 7 review's round 2)
 
+/** A module's source by its path under ui/webview, or a path relative to it (the re-parse census reaches one module outside it,
+ *  the vendored engine anchor-map.ts reads from `../../vendor/`); the one reader of a module here. */
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const VIEW = web("file-view.ts");
 
@@ -1605,7 +1607,6 @@ test("no re-parse after the adoption: mdBlock's post-adoption region and every m
   for (const [bad, form] of [["export function f() { return import(`./x`); }", "import()"], ["const s = './x'; export function f() { return import(s); }", "import()"], ["const q = import('./' + name);", "import()"], ["const p = require(`./x`);", "require()"], ["const p = require(`./${name}`);", "require()"], ["const p = require(spec);", "require()"]] as const) {
     assert.throws(() => importTargets(bad, "x.ts"), new RegExp("^Error: x\\.ts:1: " + form.replace(/[()]/g, "\\$&") + " whose specifier is not a string literal \\(refused, on the safe side\\): "), "a non-literal specifier is refused with its line, never dropped: " + bad);
   }
-  const source = (m: string): string => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", m), "utf8");
   const viewImports = importsOf(VIEW);
   const localFns = new Set([...codeOnly(VIEW).matchAll(/^(?:export )?function (\w+)\(/gm)].map((m) => m[1]));
   const modules = new Set<string>(); const locals: string[] = [];
@@ -1646,14 +1647,14 @@ test("no re-parse after the adoption: mdBlock's post-adoption region and every m
   for (const m of Object.values(importedCallees)) modules.add(m);
   const packages = new Set<string>();
   const queue = [...modules];
-  while (queue.length) { const m = queue.shift() as string; const t = importTargets(source(m), m); for (const p of t.packages) packages.add(p); for (const dep of t.local) if (!modules.has(dep)) { modules.add(dep); queue.push(dep); } }
+  while (queue.length) { const m = queue.shift() as string; const t = importTargets(web(m), m); for (const p of t.packages) packages.add(p); for (const dep of t.local) if (!modules.has(dep)) { modules.add(dep); queue.push(dep); } }
   assert.deepEqual([...modules].sort(), REACHED_MODULES, "the modules a post-adoption pass reaches, transitively over every import form (a new import widens this list first)");
   assert.ok(modules.has("file-view.ts"), "file-view.ts itself re-enters the set (file-comments.ts's type import of the viewer's action type), and is judged by its whole-file count above, not in the loop below");
   assert.deepEqual([...packages].sort(), PACKAGE_IMPORTS, "the npm packages the reached modules import, which the walk does not read (the header says why; a new one is judged here first)");
   // every reached module other than file-view.ts holds exactly the sites judged for it, in order, or none
   for (const m of modules) {
     if (m === "file-view.ts") continue;
-    const found = codeOnly(source(m), m.endsWith(".js") ? "js" : "ts").split("\n").filter((l) => RE_PARSE.test(l)).map((l) => l.trim());
+    const found = codeOnly(web(m), m.endsWith(".js") ? "js" : "ts").split("\n").filter((l) => RE_PARSE.test(l)).map((l) => l.trim());
     const judged = JUDGED_SITES[m] ?? [];
     assert.deepEqual(found, judged.map(([line]) => line), m + ": every re-parsing or re-serializing site in a module a post-adoption pass reaches is judged in JUDGED_SITES with its reason, and none is missing" + (judged.length ? " (judged: " + judged.map(([, why]) => why).join("; ") + ")" : ""));
   }
@@ -1664,7 +1665,7 @@ test("no re-parse after the adoption: mdBlock's post-adoption region and every m
   assert.equal(Object.keys(JUDGED_SITES).length + 1, 7, "the modules holding a matching line, file-view.ts among them");
   // the judgements that rest on a claim about the code, pinned: anchor-map.ts's decoder is a textarea inserted nowhere (every line
   // naming it is the decoder's own), and code-block.ts's wrapCodeLines is called by the fence pass before the chain, never after
-  const decoderLines = codeOnly(source("anchor-map.ts")).split("\n").filter((l) => /\brefDecoder\b/.test(l));
+  const decoderLines = codeOnly(web("anchor-map.ts")).split("\n").filter((l) => /\brefDecoder\b/.test(l));
   assert.equal(decoderLines.length, 7, "anchor-map.ts names refDecoder on its declaration, the probe's four lines and the decoder's two, and nowhere else");
   assert.ok(decoderLines.every((l) => !/append|insertBefore|replaceChild|prepend|after\(|before\(/.test(l)), "and no line inserts it anywhere: the textarea enters no document");
   assert.equal(after.includes("wrapCodeLines("), false, "nothing after the adoption calls wrapCodeLines");

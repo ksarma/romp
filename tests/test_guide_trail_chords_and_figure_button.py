@@ -95,18 +95,20 @@ PICTURE = ("A picture in a rendered file that comes from a file or a web address
                 "ton at its top-right corner (top-left for a picture floated to the right), shown while the pointer i"
                 "s over the picture or the button holds the keyboard focus, that opens the picture on its own in the "
                 "viewer, with Back returning you to the file at that place; a plain click on the picture does the sam"
-                "e while the Comments panel is closed (with the panel open, a click offers a comment as before, and a"
-                " drag draws a rectangle unless it starts on the button, which takes the press), a Cmd-click (Ctrl on"
-                " Windows and Linux) opens the picture in a browser tab, and a picture from the web opens its address"
-                " in a new tab, as a link to that site does; a figure waiting behind its host's box gets its button o"
-                "nce it has loaded, as does one still on its way (a click on it before then opens nothing), and once "
-                "the browser has answered for a picture, four kinds have none: a picture that failed to load, which o"
-                "pens nothing either; a `data:` picture, whose bytes are written into the file itself and which does "
-                "not open; a picture smaller than 48 pixels on either side (a badge, an inline icon), which the butto"
-                "n would cover, and which a plain click still opens when no link holds it; and a picture inside a lin"
-                "k that holds more than the picture (a caption beside it), where a click follows the link (a link wit"
-                "h no address left, or an anchor that only marks a place, leaves the click to the picture, which open"
-                "s), while a picture that is all its link holds keeps its button beside the link.")
+                "e while the Comments panel is closed (with the panel open, a click offers a comment as before, and s"
+                "o does a Cmd-click on the picture on a mouse or trackpad, and a drag draws a rectangle unless it sta"
+                "rts on the button, which takes the press), a Cmd-click (Ctrl on Windows and Linux) on the picture wh"
+                "ile the panel is closed, or on the button at any time, opens the picture in a browser tab, and a pic"
+                "ture from the web opens its address in a new tab, as a link to that site does; a figure waiting behi"
+                "nd its host's box gets its button once it has loaded, as does one still on its way (a click on it be"
+                "fore then opens nothing), and once the browser has answered for a picture, four kinds have none: a p"
+                "icture that failed to load, which opens nothing either; a `data:` picture, whose bytes are written i"
+                "nto the file itself and which does not open; a picture smaller than 48 pixels on either side (a badg"
+                "e, an inline icon), which the button would cover, and which a plain click still opens when no link h"
+                "olds it; and a picture inside a link that holds more than the picture (a caption beside it), where a"
+                " click follows the link (a link with no address left, or an anchor that only marks a place, leaves t"
+                "he click to the picture, which opens), while a picture that is all its link holds keeps its button b"
+                "eside the link.")
 PICTURE_HEAD = PICTURE[:PICTURE.index("; a plain click")]
 PICTURE_NONE = PICTURE[PICTURE.index("a figure waiting behind"):]
 # the guide's condition clause for the Back and Forward pair, the browser plan's matching clause, and the one line of openFileView both claim

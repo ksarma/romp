@@ -10,7 +10,8 @@
 // nothing; a figure inside an author's link keeps the link on its plain click and still has its own control; a remote picture
 // on an unlisted host is a gated placeholder with no control until its click loads it, and then opens a tab, never the viewer;
 // an inline `data:` picture has no control; with the panel OPEN a plain click on the figure is the panel's comment offer
-// (the float), a drag on the overlay draws a region, and the control's click is not swallowed by the overlay; with the panel
+// (the float), a Ctrl-click on the figure is the offer too and opens no tab (the overlay reads no modifier), a drag on the
+// overlay draws a region, and the control's click is not swallowed by the overlay; with the panel
 // open on a COARSE pointer the layer's overlay is off, so the plain tap reaches the figure listener itself, which stands down
 // to the comment offer (the guard's own execution: nothing opens, the trail does not move) while a Ctrl-click and the control
 // keep their opens; print media shows no control even when it holds the focus; a device with no hover keeps it visible. Red
@@ -261,7 +262,7 @@ test("in a browser: a figure inside an author's link keeps the link on its plain
   });
 });
 
-test("in a browser, the Comments panel open: the regions layer wraps the figure and the control stands after the wrap; a plain click on the figure is the panel's comment offer, a drag on the overlay draws a region, and the control's click opens the picture with Back to the report", async (t) => {
+test("in a browser, the Comments panel open on a fine pointer: the regions layer wraps the figure and the control stands after the wrap; a plain click on the figure is the panel's comment offer, a Ctrl-click on the figure is the offer too and opens no tab, a drag on the overlay draws a region, and the control's click opens the picture with Back to the report", async (t) => {
   await inBrowser(t, async (browser) => {
     const { page, errors } = await openReport(browser);
     await openPanel(page);
@@ -281,6 +282,14 @@ test("in a browser, the Comments panel open: the regions layer wraps the figure 
     await page.mouse.click(img.left + img.width * 0.3, img.top + img.height * 0.6);
     await page.waitForFunction(() => { const f = document.querySelector(".fc-float") as HTMLElement | null; return !!f && !f.hidden && f.getBoundingClientRect().width > 0; }, null, { timeout: 5000 });
     assert.equal(await base(page), "report.md", "the plain click offered a comment and opened nothing");
+    // a Ctrl-click on the picture, on this fine pointer under the open panel: the overlay takes the press whatever the modifier
+    // (file-comments-regions.ts reads none), so no tab opens and the offer stands; the /file tab is the closed panel's and the
+    // coarse pointer's (the leg below), and the guide's clause says so (the file review's landing round, fresh-1)
+    await page.keyboard.down("Control"); await page.mouse.click(img.left + img.width * 0.3, img.top + img.height * 0.6); await page.keyboard.up("Control");   // mouse.click takes no modifiers option: the key is held around it
+    await frames(page, 2);
+    assert.deepEqual(await opened(page), [], "the Ctrl-click on the picture under the open panel on a fine pointer opens no tab");
+    assert.equal(await base(page), "report.md", "and opens nothing in the viewer");
+    assert.equal(await page.evaluate(() => { const f = document.querySelector(".fc-float") as HTMLElement | null; return !!f && !f.hidden && f.getBoundingClientRect().width > 0; }), true, "the panel's offer stands after it");
     // a drag on the overlay draws a region: the pending rectangle stands on the overlay
     await page.mouse.move(img.left + img.width * 0.2, img.top + img.height * 0.3);
     await page.mouse.down();

@@ -2745,11 +2745,15 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // its own beside the links': the two act on disjoint targets (a link and what it holds; a bare figure and its control), so
   // neither reads the other's verdict. The gesture is the links' (wantsOwnTab): a plain click opens the picture in this
   // viewer through openFigureInViewer, so the shown file goes onto the trail and Back returns to it at the figure's place (the
-  // replace's runLeave writes the reader's place as for any link) and the picture enters no Recent list; a Cmd/Ctrl-click opens the kernel's /file URL in a tab, as
-  // a PDF's modified click does (openFileTab; a blocked popup falls through to the viewer), and stops before the row, as a
-  // link's modified click does. A remote picture (an http source) opens in a tab whatever the gesture, never in the viewer:
-  // the plain click, the control and the Cmd/Ctrl-click all hand its own address to openUrlTab (the file review's round 2,
-  // extra5-3: the record had named the first two gestures alone). A failed figure opens nothing on any gesture (figureTarget).
+  // replace's runLeave writes the reader's place as for any link) and the picture enters no Recent list; a Cmd/Ctrl-click, where
+  // the press reaches the picture (the Comments panel closed, or the pointer coarse: with the panel open on a fine pointer the
+  // regions layer's overlay takes the press, modified or not, and offers a comment, while the control opens at any time), opens
+  // the kernel's /file URL in a tab, as a PDF's modified click does (openFileTab; a blocked popup falls through to the viewer),
+  // and stops before the row, as a link's modified click does. A remote picture (an http source) opens in a tab and never in
+  // the viewer: the control, and the plain click and the Cmd/Ctrl-click where the press reaches the picture, all hand its own
+  // address to openUrlTab (the file review's round 2, extra5-3: the record had named the first two gestures alone; its landing
+  // round, fresh-1: the two clicks had stood with no condition while the open panel's overlay takes them on a fine pointer).
+  // A failed figure opens nothing on any gesture (figureTarget).
   // The control's click is the figure's own wherever it stands (and it never stands inside a link: decideFigureControl puts it
   // after a link holding the figure alone and adds none inside any link holding more, linkAbove). The figure's own click yields
   // where another gesture owns it: a figure inside a link (linkOf: the links listener follows the author's link; an anchor
