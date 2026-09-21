@@ -25,34 +25,36 @@ repository (the maintainer's round 6 found the earlier module reading the review
 committed tree got two verdicts). AUTHOR_FORM is how the PR body spells the author's own work ("pass P", "pass P's fixer pass",
 "the pass-P head"), named in the helper's refusal so the writer knows what to write.
 
-THE POPULATION is the family's files, each read WHOLE at HEAD: the modules the glob FAMILY_GLOB names under this directory (the
-sibling pin's own spelling, tests/test_federated_linkdrop_driver_bound.py's ledger pin; a family module named otherwise escapes
-both, so the population is spelling-keyed and says so) plus the ledger entry ENTRY. Their TEXT is the COMMITTED one (_show:
-`git show HEAD:<path>` through _git), the same commit the premise below is checked against, so the verdict is a function of
-the commit and the same committed tree gets one verdict on every machine whatever its checkout holds (pass 11's closing fixer
-pass: the earlier module read the checkout's text against HEAD's premise, so a mislabel committed at HEAD and removed in the
-working tree read clean); an uncommitted edit is judged once committed, and a plant that reds this module is committed in a
-scratch repository. Every line of them is the branch's own because
-every file of them is ADDED over the branch's merge base with origin/main, and setUpModule verifies that premise by git before
-any cell runs (scope(): `git diff --name-status <merge base> HEAD` over the population, every file `A`). Where git cannot answer
-(no repository under the root, GIT_DIR pointed elsewhere, origin/main not fetched or no merge base, as in CI's shallow
-checkout) the derivation of "this branch's own lines" is unavailable and the module SKIPS with a reason naming what was
-unreachable, never substituting another population (the maintainer's rule of 2026-09-21, from PR 860's guard: a wider
-population reds work the guard was never about); where git answers and NO file of the population is added over the merge base
-while every one is already in the tree there, the family has landed (on the target branch itself after the merge the merge base
-is HEAD, and a branch cut from it inherits the family), nothing here is this branch's own to vet, this guard's job is done, and
-the module SKIPS saying so (pass 11's closing fixer pass: the earlier module refused on that shape, and CI's checkout of a push
-to the target branch is that shape until the follow-up that deletes this module lands, since the checkout action writes
-origin/<branch> at the pushed commit; its checkout of a pull request writes refs/remotes/pull/N/merge and no origin/main, which
-is the first skip); where git answers and a file of the population is not added while another is, or a file is neither added
-nor at the merge base (an uncommitted one), the module REFUSES, naming the files, since a whole-file read would then judge
-other work's lines or uncommitted text. family() REFUSES, with the derivation named, a glob that reads no module, a file of
-the population that is not in the tree, and this module outside its own population (its path the parameter `me`, this
-module's own by default), and every cell reads the population through it, so a selected run of any one cell gets the one
-stated refusal; _read refuses a file that is not in the tree the same way, _show one git does not answer for at HEAD, and
-sibling_glob returns the reason when the
-pin's file or function is not found. A cell reads the sibling pin's glob from that pin's source and runs it, holding the two
-populations equal, so a family module the sibling sees and this census does not is a red.
+THE POPULATION is the family's files, each read WHOLE at HEAD: the modules the glob FAMILY_GLOB names under this directory
+(the sibling pin's own spelling, tests/test_federated_linkdrop_driver_bound.py's ledger pin; a family module named otherwise
+escapes both, so the population is spelling-keyed and says so) plus the ledger entry ENTRY. The two other files this branch
+adds, the helper and its test, are outside the glob and so outside this population, and are held clean another way: the
+helper's own test pins by execution that neither text spells a numbered-round form (the rule credits no PR's round), which
+is all this guard would ask of them. Their TEXT is the COMMITTED one (_show: `git show HEAD:<path>` through _git), the same
+commit the premise below is checked against, so the verdict is a function of the commit and the same committed tree gets one
+verdict on every machine whatever its checkout holds (pass 11's closing fixer pass: the earlier module read the checkout's
+text against HEAD's premise, so a mislabel committed at HEAD and removed in the working tree read clean); an uncommitted
+edit is judged once committed, and a plant that reds this module is committed in a scratch repository. Every line of them is
+the branch's own because every file of them is ADDED over the branch's merge base with origin/main, and setUpModule verifies
+that premise by git before any cell runs (scope(): `git diff --name-status <merge base> HEAD` over the population, every
+file `A`). Where git cannot answer (no repository under the root, GIT_DIR pointed elsewhere, origin/main not fetched or no
+merge base, as in CI's shallow checkout) the derivation of "this branch's own lines" is unavailable and the module SKIPS
+with a reason naming what was unreachable, never substituting another population (the maintainer's rule of 2026-09-21, from
+PR 860's guard: a wider population reds work the guard was never about); where git answers and NO file of the population is
+added over the merge base while every one is already in the tree there, the family has landed (on the target branch itself
+after the merge the merge base is HEAD, and a branch cut from it inherits the family), nothing here is this branch's own to
+vet, this guard's job is done, and the module SKIPS saying so (pass 11's closing fixer pass: the earlier module refused on
+that shape, and CI's checkout of a push to the target branch is that shape until the follow-up that deletes this module
+lands, since the checkout action writes origin/<branch> at the pushed commit; its checkout of a pull request writes
+refs/remotes/pull/N/merge and no origin/main, which is the first skip); where git answers and a file of the population is
+not added while another is, or a file is neither added nor at the merge base (an uncommitted one), the module REFUSES,
+naming the files, since a whole-file read would then judge other work's lines or uncommitted text. family() REFUSES, with
+the derivation named, a glob that reads no module, a file of the population that is not in the tree, and this module outside
+its own population (its path the parameter `me`, this module's own by default), and every cell reads the population through
+it, so a selected run of any one cell gets the one stated refusal; _read refuses a file that is not in the tree the same
+way, _show one git does not answer for at HEAD, and sibling_glob returns the reason when the pin's file or function is not
+found. A cell reads the sibling pin's glob from that pin's source and runs it, holding the two populations equal, so a
+family module the sibling sees and this census does not is a red.
 
 THE TREE-ONLY PIN, kept from the maintainer's round 6 and adapted to the call: test_the_module_reads_nothing_outside_the_tree
 pins over this module's own source by RESOLUTION and not by a list of spellings (pass 11's fixer pass: the first pin refused

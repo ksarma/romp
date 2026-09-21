@@ -12,8 +12,9 @@ range expanded so a caller's set need not be contiguous), the forms refused as u
 the two refusals told apart, the caller's author form named in the refusal, and the tree-only pin carried over from the 857
 guard and adapted: the helper imports re alone and reads no file, no environment and no path, pinned by resolution over its
 source and by the absence of any file or reflective primitive. A probe's set is synthetic (no PR's rounds live here or in the
-helper: a cell holds that no integer constant is bound at the helper's module level and that the same text gets opposite
-verdicts under two caller sets)."""
+helper: a cell holds that no integer constant is bound at the helper's module level, that the same text gets opposite
+verdicts under two caller sets, and that neither the helper's text nor this module's spells a numbered-round form, so a
+caller that censuses either reads it clean and no credit to any PR's round lives in the rule's text)."""
 import ast
 import os
 import re
@@ -90,11 +91,19 @@ class RoundLabelRule(unittest.TestCase):
 
     def test_no_round_set_lives_in_the_helper(self):
         """The rounds are the caller's: no integer constant is bound at the helper's module level (a set of a PR's rounds would
-        be one), and the same text gets opposite verdicts under two caller sets, so the verdict is the caller's set's and nothing
-        of the helper's."""
+        be one); the same text gets opposite verdicts under two caller sets, so the verdict is the caller's set's and nothing
+        of the helper's; and neither the helper's text nor this module's spells a numbered-round form (the docstrings write N,
+        and every probe is assembled at run time), so no credit to any PR's round lives in the rule's text and a caller that
+        censuses either file reads it clean (pass 11's closing fixer pass: the two files are added by the branch that carries
+        the rule and sit outside its guard's population, so this is what holds them)."""
         ints = [(ast.unparse(n.targets[0]), n.lineno) for n in _helper_tree().body if isinstance(n, ast.Assign)
                 for c in ast.walk(n.value) if isinstance(c, ast.Constant) and isinstance(c.value, int) and not isinstance(c.value, bool)]
         self.assertEqual(ints, [], "an integer constant bound at the helper's module level: a round set is the caller's, never the helper's: %r" % (ints,))
+        for path in (HELPER, os.path.realpath(__file__)):
+            with open(path, encoding="utf-8") as f:
+                spelled = [(line, s, kind) for line, s, kind, _ in rule.forms(f.read()) if kind != "unnumbered"]
+            self.assertEqual(spelled, [], "%s spells a numbered-round form: the rule credits no PR's round, so no credit and no probe written with a digit belongs in its text "
+                                          "(a probe is assembled at run time; the docstrings write N): %r" % (os.path.basename(path), spelled))
         text = "%s %s %d" % (M, R, 6)
         self.assertEqual(rule.offences(text, frozenset({6})), [], "a credit to a round of the caller's set is clean")
         self.assertEqual(len(rule.offences(text, frozenset({5}))), 1, "the same credit under a set lacking the round is refused")
