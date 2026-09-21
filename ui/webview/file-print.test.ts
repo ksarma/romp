@@ -786,9 +786,10 @@ test("bodyReady reads the element children through `children`, else through `chi
 // WHERE THIS MODULE LIVES (the maintainer's round-8 ruling on cluster C, 2026-09-21): the census builds a TypeScript PROGRAM
 // over the viewer (ts.createProgram, programOver) and runs under npm test in vscode-extension, where node_modules stands, so it
 // is permanently a vscode-extension-leg module; no part of it moves under tools/. The record module there
-// (tools/markdown-viewer-plan-print-record.test.mjs) runs in CI's shell job with NO node_modules and reaches no compiler, so
-// the two modules' claims are one split, this module executing what needs the compiler and that one holding the same
-// sentences by text, never a contradiction.
+// (tools/markdown-viewer-plan-print-record.test.mjs) runs in CI's shell job with NO node_modules and reaches no compiler, and
+// its isolation guard (tools/markdown-viewer-plan-print-record-isolation.test.mjs, a child run from a mirror without
+// node_modules) refuses any road to one, so the two modules' claims are one split, this module executing what needs the
+// compiler and that one holding the same sentences by text, never a contradiction.
 /** file-view.ts with its comments blanked: every comment range the TypeScript parser reports (leading and trailing trivia of
  *  every token, a doc comment, a `//` at the start of a line or after a `;`, a `//` after a space or a tab, a block comment
  *  anywhere), each replaced by spaces of its own length with its newlines kept, so an index still maps to its line and no

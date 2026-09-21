@@ -8954,8 +8954,16 @@ inside it, and the post-filter census reads its shape space, saying what it does
 shell job with no node_modules (`node --test tools/*.test.mjs` from the repo root), so it reaches no compiler, and the
 derivations that need one are the census module's, ui/webview/file-print.test.ts under npm test: it builds the figure
 leg's table from `shapes()` and holds the shape count, the two-URL count and the per-engine list to it, holds P7's table
-sizes to the tables it runs, and reads the post-filter census's shape space by syntax; the record test holds the same
-sentences by text, the two count sentences as compositions with every copy in the section held to one number, the table
+sizes to the tables it runs, and reads the post-filter census's shape space by syntax.
+tools/markdown-viewer-plan-print-record-isolation.test.mjs holds that condition as a property: it runs each of the two plan
+modules as a child from a mirror of the repo without vscode-extension/node_modules and holds the child's exit to 0, reading
+no text of them (the round-8 fixes, 2026-09-21, on the round-7 review's cluster F: the guard added on 2026-09-21 keyed on two
+road spellings and a single-quoted import line, and a path-built dynamic import, a double-quoted, a two-line and a
+side-effect import each passed it while red in the job; the five roads stand in the guard as executed plants, each red from
+the mirror without node_modules naming the missing module and green with them linked); the record module's static-specifier
+and road pins stay beside it as diagnostics that name what they find, and it holds by text that the census module carries
+the three derivations moved into it, each by its case's title and a key assertion read through its comment stripper. The
+record test holds the same sentences by text, the two count sentences as compositions with every copy in the section held to one number, the table
 sizes counted over the census file's array literals, the retired sentence's population, the per-engine list's frame and
 entries, and the two fails-before records by their exact text, each message naming the census module as where the
 equality with the built table or the walked syntax is checked. Two pins the round-6 pre-answers proposed
