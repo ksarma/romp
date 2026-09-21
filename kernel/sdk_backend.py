@@ -18486,6 +18486,19 @@ class SdkBackend:
         return {}
 
     def rename(self, sid: str, new_name: str) -> bool:
+        # The names/<sid> read is the door's FIRST read, before the record read (fork PR #813, round 6 of the review,
+        # thirteenth commit, 2026-09-21; the round's own verifiers' third pass): `door_names` is the name the shared
+        # identity file held at this rename's door (None when the file did not read), the compensation's
+        # distinguisher below; the rest of the line (cwd, colours) is what the names write below preserves. The
+        # twelfth commit read the file after the record read and before the record write, and a rename to the SAME
+        # name landing whole between those two reads left `door_names` already reading new_name, no evidence, so the
+        # compensation put the door-time name back over that landed rename with no log line. Read before anything
+        # else, the file reads new_name at the door only when it held that name before this rename began.
+        try:
+            parts = (Path(self.state_dir) / "names" / sid).read_text().rstrip("\n").split("\t")
+            door_names = parts[0]
+        except (OSError, UnicodeDecodeError):
+            parts, door_names = None, None
         reg = read_reg(self.state_dir, sid)
         if not reg:
             return False
@@ -18503,15 +18516,8 @@ class SdkBackend:
         _has_history = bool(_tp) and _tp.exists() and _tp.stat().st_size > 0
         note = {"renameNote": new_name} if _has_history else {}
         fields = {"name": new_name, **note}          # the keys this write moves: what a failed publish puts back, per field
-        # The names/<sid> read comes BEFORE the record write (fork PR #813, round 6 of the review, twelfth commit,
-        # 2026-09-21): `door_names` is the name the shared identity file held at this rename's door (None when the
-        # file did not read), the compensation's distinguisher below; the rest of the line (cwd, colours) is what the
-        # names write below preserves.
-        try:
-            parts = (Path(self.state_dir) / "names" / sid).read_text().rstrip("\n").split("\t")
-            door_names = parts[0]
-        except (OSError, UnicodeDecodeError):
-            parts, door_names = [new_name, reg.get("cwd", "")], None
+        if parts is None:                                # no names file read at the door: the names write below creates one
+            parts = [new_name, reg.get("cwd", "")]
         parts += ["", "", ""]
         self._update_reg(sid, name=new_name, **note)   # locked RMW — see set_effort's race note
         # keep the shared names/ identity file in sync (preserve colours). Durable registry FIRST; a
@@ -18532,9 +18538,11 @@ class SdkBackend:
         # round 6 named, here on a name rather than a billing pick. A compare by value cannot tell another
         # caller's write of the SAME name from this rename's own, so the compensation also reads names/<sid>
         # (the twelfth commit): this rename never wrote that file (write_name raised before its os.replace),
-        # so a names file that reads new_name now, and did not at the door (`door_names`), was written by
-        # another caller who landed the same name whole; the compensation stands down and logs that, instead
-        # of putting the door-time name back over that caller's rename under a false success.
+        # so a names file that reads new_name now, and did not at the door (`door_names`, the door's first
+        # read since the thirteenth commit), was written by another caller: one who landed the same name
+        # whole, or a move's names rewrite that found no names file and carried this rename's record write
+        # (_finish_move's fallback, residual 4 in the helper's docstring); the compensation stands down and
+        # logs that, instead of putting the door-time name back over a landed rename under a false success.
         try:
             write_name(self.state_dir, sid, new_name, parts[1], parts[2], parts[3])
         except BaseException:
@@ -18552,7 +18560,8 @@ class SdkBackend:
                     # rename stands on every store; this one hears its raise
                     self._log("sdk rename compensation for %s stood down: names/<sid> reads %s, which this rename "
                               "never wrote (its names write raised), so another caller landed the same name inside "
-                              "its window; the record keeps that caller's %s"
+                              "its window (or a move's names rewrite, finding no names file, carried this rename's "
+                              "record write); the record keeps the %s it holds"
                               % (sid, new_name, ", ".join("%s %r" % kv for kv in sorted(stands.items()))),
                               problem=False)
                 elif verdict == "absent":
@@ -18994,16 +19003,46 @@ class SdkBackend:
         name on the record, the one store a restart applies, under a false success and with no log line. This rename
         provably never wrote names/<sid>: write_name is tmp + os.replace and raised, so the file is exactly what it was
         before the write. A names file that reads `new_name` now, and did not at this rename's door (`door_names`:
-        rename's read of the file before its record write; None when the file did not read), was written by another
-        caller who landed the same name, and the compensation STANDS DOWN: nothing is written and the verdict says why.
-        The names read sits under _reg_lock beside the record read, so no record write (each an RMW under this lock)
-        lands between the two reads. A names file that read `new_name` at the door too is no evidence (a rename to the
-        name the file already held) and the compare runs. THE RESIDUAL, narrowed and named: another caller whose record
-        write of the same name has landed and whose names write has not yet landed at the instant of this read is
-        indistinguishable from this rename's own record write and is put back over; no record field carries a writer
-        tag or a generation and none is added (the sibling sites' residual, _restore_step_writes). The kernel's
-        names-file writers for a live SDK session (_set_session_color, _set_session_emoji, _set_palette) rewrite the
-        line with the name it holds, so none makes the file read `new_name` on its own.
+        rename's read of the file, the FIRST read at its door, before its record read; None when the file did not
+        read), was written by another caller, and the compensation STANDS DOWN: nothing is written and the verdict says
+        why. The names read sits under _reg_lock beside the record read, so no record write (each an RMW under this
+        lock) lands between the two reads. The door read's position is the thirteenth commit's (the round's own
+        verifiers' third pass): the twelfth commit read the file after the record read, and a rename to the same name
+        landing whole between those two reads left `door_names` already reading `new_name`, no evidence, so the
+        compare put the door-time name back over that landed rename with no log line; read before anything else, the
+        file reads `new_name` at the door only when it held that name before this rename began. A names file that read
+        `new_name` at the door is no evidence and the compare runs.
+
+        THE RESIDUALS, derived (four, each named so a later fix is fitted to it; none is closed here; the root of the
+        first two is that no record field carries a writer tag or a generation and none is added, the sibling sites'
+        residual, _restore_step_writes):
+        (1) Another caller whose record write of the same name has landed and whose names write has not yet landed at
+        the instant of this locked read is indistinguishable from this rename's own record write and is put back over.
+        (2) Two faulting renames to DIFFERENT names (the round's own verifiers' third pass; reachable through the
+        kernel's rename door, which claims each name apart): the second's door-time `before` is the first's record
+        write, not yet landed and later put back. When the first's compensation runs first, it yields to the second's
+        name and logs that it stands; the second's compensation then puts the FIRST's name and note back, a name no
+        caller was told applied, into the record, while the names file and the live name hold the last name that
+        landed whole and the standing log line names the second's. A repair is proposed and unruled: put `name` back
+        to the name the names file holds at compensation time, the last name that landed whole (write_name lands only
+        on a whole rename), rather than to the door-time value; what `renameNote` goes back to under it is open.
+        (3) A names file that already reads `new_name` at the door while the record reads another name (the tenth
+        commit's opposite-order residual, a disagreement that predates this rename): `door_names == new_name` is no
+        evidence, so a rename to the same name landing whole inside the window is put back over with no log line.
+        (4) _finish_move's fallback: a move landing inside the window while names/<sid> does not read at the move's
+        finish writes the RECORD's name into the file, this rename's own record write, so the file reads `new_name`
+        with no other caller having renamed; the stand-down fires and its log line names a move as the other cause,
+        the record keeps this rename's name and note, the caller was told failure, the live name stays, and the name
+        applies at a restart. The same-sid names writers that rewrite the file with the name IT holds are kernel.py's
+        _set_session_color, _set_session_emoji and _set_palette (and _set_name, a dead tab's file only); _finish_move
+        carries the file's name when the file reads and the record's when it does not.
+        REACHABILITY: SdkBackend.rename has one caller in the tree, kernel.py's _rename_claimed (the rename door,
+        shared by the HTTP route and the WS op), which claims the target name across be.rename, refuses a concurrent
+        claim of a held name, and answers a rename to the name names/<sid> already reads as a no-op with nothing
+        written. The same-name concurrent shapes (the twelfth commit's, the thirteenth's and residual 3) are therefore
+        reachable today only by a direct caller of be.rename, a public backend method with its own contract; the
+        different-name shapes (the tenth commit's and residual 2) and a move inside the window (residual 4) are
+        reachable through the doors.
 
         Returns (verdict, stands). "landed": stood down, `stands` the keys with the values the record holds.
         "compared": the compare-and-swap ran, `stands` the keys another writer holds with their values ({} when every
@@ -19023,9 +19062,9 @@ class SdkBackend:
         sid_for_name, _finish_move's names rewrite, and the log and row texts of _boot_reconcile, _settled_now,
         _queue_behind_stand_down, move, read_picks, follow_default_auth, set_auth_guarded, ensure_scheduled and
         deliver_lost_wakeups; kernel.py reads the row for its listings. READER of `renameNote`: _deliver_rename_ping.
-        The names file (write_name: spawn, fork, promote_thread, rename, _finish_move; kernel.py's _set_session_color,
-        _set_session_emoji and _set_palette rewrite it with the name it holds, and its _set_name only for a dead tab no
-        backend runs) and the live `name` (SdkSession.__init__, promote_thread, rename) are the other two stores; rename
+        The names file (write_name: spawn, fork, promote_thread, rename, _finish_move, which carries the file's name
+        when the file reads and the record's when it does not; kernel.py's _set_session_color, _set_session_emoji and
+        _set_palette rewrite it with the name it holds, and its _set_name only for a dead tab no backend runs) and the live `name` (SdkSession.__init__, promote_thread, rename) are the other two stores; rename
         writes them after the record and a raise from write_name leaves both as they were, so neither is a restore
         site. READERS of the names file's name: rename (the door read) and this compensation (the distinguisher);
         _finish_move and write_name (their rewrites carry the fields they read); kernel.py's _names_snapshot and

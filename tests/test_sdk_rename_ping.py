@@ -267,7 +267,11 @@ class ConcurrentRenameInsideAFailingWindow(unittest.TestCase):
     alpha from A's, and the tenth commit's compensation put web back over B's landed rename with no log line.
     A never wrote names/<sid> (write_name is tmp + os.replace and raised), so a names file reading alpha at
     compensation time, which read web at A's door, was written by another caller: the compensation stands down
-    and says so. Synthetic: placeholder sid, demo names, a one-line transcript."""
+    and says so. THE DOOR'S READ ORDER (the thirteenth commit, the round's own verifiers' third pass): the twelfth
+    commit read names/<sid> after the door's record read, so a same-name B landing whole between those two reads
+    left the door's names read already saying alpha, no evidence, and the compare put web back over B's landed
+    rename with no log line; the names read is the door's first read now. Synthetic: placeholder sid, demo names,
+    a one-line transcript."""
 
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
@@ -361,6 +365,64 @@ class ConcurrentRenameInsideAFailingWindow(unittest.TestCase):
             self.assertTrue(a_in_names.wait(10), "rename A reached its names write with its record written")
             self.assertEqual(sb.read_reg(self.root, SID).get("name"), "alpha", "the step's record write is on disk")
             answered = self.be.rename(SID, "alpha")               # the concurrent rename to the SAME name, told applied
+            b_done.set()
+            t.join(10)
+        self.assertFalse(t.is_alive(), "rename A returned")
+        reg = sb.read_reg(self.root, SID)
+        self.assertEqual((answered, outcome.get("a")), (True, ("OSError", 28)),
+                         "B was told applied; A still hears its raise")
+        self.assertEqual((reg.get("name"), reg.get("renameNote"), self.nf.read_text().split("\t")[0], self.live.name),
+                         ("alpha", "alpha", "alpha", "alpha"),
+                         "the record keeps the name and note B landed: A's compensation stood down")
+        stood = [m for m in self.logs if "rename" in m and "stood down" in m]
+        self.assertEqual(len(stood), 1, "one log line says the compensation stood down: %r" % (self.logs,))
+        self.assertIn("another caller landed the same name", stood[0])
+        self.assertIn("alpha", stood[0])
+        self.assertEqual([m for m in self.logs if "compensation failed" in m or "would not read" in m
+                          or "is absent" in m or "is not put back" in m], [],
+                         "no other verdict is logged for a stand-down: %r" % (self.logs,))
+
+    def test_a_same_name_rename_landing_between_the_doors_reads_stands_on_the_record(self):
+        # the thirteenth commit's drive (the round's own verifiers' third pass): rename A is held right after its door's
+        # RECORD read returns (read_reg patched by thread identity, on A's first call), rename B to the SAME name alpha
+        # lands whole and answers True, then A resumes and its names write faults. At the twelfth commit A read
+        # names/<sid> AFTER its record read, so the door's names read already said alpha, the distinguisher saw no
+        # evidence and the compare put web back over B's landed rename: ('web', None, 'alpha', 'alpha') for the record's
+        # name and note, the names file and the live name, with no log line. The names read is the door's first read now,
+        # so it says web and the compensation stands down. A mutation that moves the read back behind the record read (or
+        # behind the record write) reds this pin and no other: the same-name pin above holds A inside its names write,
+        # after every door read.
+        real_read, real_write = sb.read_reg, sb.write_name
+        a_read_done, b_done, holder, a_reads = threading.Event(), threading.Event(), {}, []
+
+        def read_reg(state_dir, sid):
+            reg = real_read(state_dir, sid)
+            if threading.current_thread() is holder.get("a"):
+                a_reads.append(sid)
+                if len(a_reads) == 1:                              # A's door read: hold here until B has landed whole
+                    a_read_done.set()
+                    b_done.wait(10)
+            return reg
+
+        def write_name(state_dir, sid, name, *a, **k):
+            if threading.current_thread() is holder.get("a"):    # rename A's names write faults
+                raise OSError(28, "No space left on device")
+            return real_write(state_dir, sid, name, *a, **k)     # rename B's write lands for real
+
+        outcome = {}
+
+        def first():
+            try:
+                outcome["a"] = self.be.rename(SID, "alpha")
+            except BaseException as e:                            # noqa: BLE001 (the drive records whatever escapes)
+                outcome["a"] = (type(e).__name__, getattr(e, "errno", None))
+
+        t = holder["a"] = threading.Thread(target=first, name="rename-a")
+        with mock.patch.object(sb, "read_reg", read_reg), mock.patch.object(sb, "write_name", write_name):
+            t.start()
+            self.assertTrue(a_read_done.wait(10), "rename A returned from its door's record read")
+            self.assertEqual(sb.read_reg(self.root, SID).get("name"), "web", "A has written nothing yet")
+            answered = self.be.rename(SID, "alpha")               # B, the same name, lands whole inside A's door
             b_done.set()
             t.join(10)
         self.assertFalse(t.is_alive(), "rename A returned")
