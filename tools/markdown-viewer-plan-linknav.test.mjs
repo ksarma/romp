@@ -283,7 +283,11 @@ test('L3: the control\'s words are the viewer\'s literal, quoted by the section 
   assert.ok(viewer.includes('const n = (figureControlAfter(anchor) || anchor).nextSibling;'), 'the label lookup steps past the control');
   // the sheets: the same fv-figopen rules in both, read as RULES through ./css-rules.mjs (the reader this home shares with
   // ui/webview/file-figure-open.test.ts: brace-matched over the comment-stripped sheet, each rule with the at-rules enclosing
-  // it), every reveal under screen, none in the print block
+  // it), every rule naming the control's class that reveals it under screen, none in the print block; the population is the
+  // rules whose SELECTOR names the class, so a rule whose selector would match the control's element without naming the class
+  // (`.fileview-md img + button`, an attribute selector, a universal) is outside what the set closes, a bound stated here, in
+  // the messages, in L3 and in the reader's header rather than read (the author's closing pass after the file review's round 10,
+  // mechanism-2)
   const REST = '.fileview-md .fv-figopen { position: relative; z-index: 1; vertical-align: top; margin: 0 6px 0 -28px; top: 6px; padding: 3px; background: var(--bg); opacity: 0; }';
   const REVEAL = '@media screen { .fileview-md :hover + .fv-figopen, .fileview-md .fv-figopen:hover, .fileview-md .fv-figopen:focus-visible { opacity: 1; } }';
   const NOHOVER = '@media screen and (hover: none) { .fileview-md .fv-figopen { opacity: 0.8; } }';
@@ -304,14 +308,14 @@ test('L3: the control\'s words are the viewer\'s literal, quoted by the section 
     // brace, so a reveal indented under an at-rule or on a grouped selector's continuation line stood outside it with every pin
     // green; the file review's round 8, fresh-4: the guard before the set matched two opacity spellings, so a reveal spelled any
     // other way outside screen passed it)
-    assert.deepEqual(rules[name].filter((r) => !r.screen).map((r) => r.text), [REST, HOVER_BG, LEFT, RIGHT], name + ': the rules naming the control outside a screen-only at-rule, however the sheet writes them, are exactly the rest, the hover background and the float twins; any other rule there is one a print would apply');
+    assert.deepEqual(rules[name].filter((r) => !r.screen).map((r) => r.text), [REST, HOVER_BG, LEFT, RIGHT], name + ': the rules naming the control outside a screen-only at-rule, however the sheet writes them, are exactly the rest, the hover background and the float twins; any other rule naming the class there is one a print would apply (the population is the rules whose selector names the control\'s class; a rule whose selector would match the control\'s element without naming the class is outside what this set closes, a bound stated here and in the plan\'s L3, not read)');
     assert.deepEqual(rules[name].filter((r) => r.screen).map((r) => r.text), [REVEAL, NOHOVER], name + ': the rules under a screen-only at-rule are the reveal and the no-hover rule');
     const printAt = css.indexOf('\n@media print {');
     assert.ok(printAt >= 0, name + ': the print block');
     assert.ok(!css.slice(printAt, css.indexOf('\n}', printAt)).includes('fv-figopen'), name + ': the print block names the control nowhere');
     assert.ok(css.includes('.fileview-btn.fileview-icon { display: inline-flex;'), name + ': the family\'s inline-flex box the section names');
   }
-  assert.ok(section.includes('every reveal under `screen`, so a print shows none of it and the print block carries no line for it'));
+  assert.ok(section.includes('every rule naming its class that reveals it under `screen`, so a print shows none of it and the print block carries no line for it (the set the two homes close is over the rules whose selector names the class'), 'L3 states the guard and the bound of the set that holds it');
   assert.ok(section.includes('a right float\'s at the top-LEFT corner (`fv-figopen-left`, `fv-figopen-right`'));
 });
 

@@ -8324,8 +8324,11 @@ corner from that place with no measuring (`.fileview-md .fv-figopen`: the family
 line's top, a zero-width margin box of a 28px negative left margin and a 6px right margin around the 22px glyph, and a
 6px relative offset down), positioned so it paints and is hit above the layer's overlay while the panel is open;
 transparent at rest, revealed by the pointer over the figure or over itself and by a keyboard focus, kept visible on a
-device with no hover, every reveal under `screen`, so a print shows none of it and the print block carries no line for
-it (the print block is pinned whole, and the in-flight print follow-on adds lines inside it). A figure the author
+device with no hover, every rule naming its class that reveals it under `screen`, so a print shows none of it and the
+print block carries no line for it (the set the two homes close is over the rules whose selector names the class, read
+as parsed rules with their enclosing at-rules; a rule whose selector would match the element without naming the class
+is outside it, a bound the homes state and do not read; the print block is pinned whole, and the in-flight print
+follow-on adds lines inside it). A figure the author
 floated with `align` stacks sideways: the control floats with it, a left float's at the top-right corner as before, a
 right float's at the top-LEFT corner (`fv-figopen-left`, `fv-figopen-right`: a later right float sits left of the
 earlier one, and the far edge cannot be reached without the figure's width). The text walks skip it as a control

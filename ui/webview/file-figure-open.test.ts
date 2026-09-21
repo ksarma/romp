@@ -134,7 +134,11 @@ test("SOURCE-TEXT pins of the two text-read control lists (anchor-map.ts's CONTR
   assert.ok(entries.includes('"fv-figopen"'), "the control's class is in reader-place.ts's text-read list, beside the label's (the list's contents; the labelled scene in md-config-figure-gate-place.test.ts is what executes it)");
 });
 
-test("the sheets: the control rests transparent over the figure's corner with a zero-width margin box, positioned above the layer's overlay; every reveal (the pointer over the figure or the control, a keyboard focus, a device with no hover) is under screen, so print shows none of it and the print block carries no line for it", () => {
+/** The bound of the closed set over the control's sheet rules, stated in its assertion messages (the author's closing pass after the
+ *  file review's round 10, mechanism-2). */
+const BOUND = " (the population is the rules whose selector names the control's class; a rule whose selector would match the control's element without naming the class is outside what this set closes, a bound stated here and in the plan's L3, not read";
+
+test("the sheets: the control rests transparent over the figure's corner with a zero-width margin box, positioned above the layer's overlay; every rule naming the control's class that reveals it (the pointer over the figure or the control, a keyboard focus, a device with no hover) is under screen, so print shows none of it and the print block carries no line for it; the population the set closes is the rules whose selector names the class, a bound stated, not read", () => {
   for (const [name, css] of SHEETS) {
     assert.match(css, /\n\.fileview-md \.fv-figopen \{ position: relative; z-index: 1; vertical-align: top; margin: 0 6px 0 -28px; top: 6px; padding: 3px; background: var\(--bg\); opacity: 0; \}\n/, name + ": the rest");
     assert.match(css, /\n\.fileview-md \.fv-figopen-left \{ float: left; \}\n\.fileview-md \.fv-figopen-right \{ float: right; margin: 0 -28px 0 6px; \}\n/, name + ": the float twins");
@@ -149,13 +153,17 @@ test("the sheets: the control rests transparent over the figure's corner with a 
     // keyed on lines at column zero carrying the class and a brace, and a reveal in either shape stood outside it with every
     // pin green). Outside a screen-only at-rule exactly the rest, the hover background and the float twins; under one the
     // reveal and the no-hover rule (the file review's round 8, fresh-4: the guard before the set matched two opacity spellings,
-    // so a reveal spelled any other way outside screen passed it).
+    // so a reveal spelled any other way outside screen passed it). The population is the rules whose SELECTOR names the
+    // control's class: a rule whose selector would match the control's element without naming the class (`.fileview-md img +
+    // button`, an attribute selector, a universal) is outside what the set closes, in both homes; the bound is stated here, in
+    // the plan's L3 and in the reader's header rather than read, since reading it means matching selectors against the
+    // element (the author's closing pass after the file review's round 10, mechanism-2).
     const control = cssRules(css).filter((r) => /fv-figopen/.test(r.selector));
     assert.deepEqual(control.filter((r) => !underScreen(r.chain)).map(renderRule), [
       ".fileview-md .fv-figopen { position: relative; z-index: 1; vertical-align: top; margin: 0 6px 0 -28px; top: 6px; padding: 3px; background: var(--bg); opacity: 0; }",
       ".fileview-md .fv-figopen:hover { background: var(--bg) linear-gradient(var(--accent-wash), var(--accent-wash)); }",
       ".fileview-md .fv-figopen-left { float: left; }", ".fileview-md .fv-figopen-right { float: right; margin: 0 -28px 0 6px; }",
-    ], name + ": the rules naming the control outside a screen-only at-rule, however the sheet writes them, are exactly the rest, the hover background and the float twins; any other rule there is one a print would apply");
+    ], name + ": the rules naming the control outside a screen-only at-rule, however the sheet writes them, are exactly the rest, the hover background and the float twins; any other rule naming the class there is one a print would apply" + BOUND + ")");
     assert.deepEqual(control.filter((r) => underScreen(r.chain)).map(renderRule), [
       "@media screen { .fileview-md :hover + .fv-figopen, .fileview-md .fv-figopen:hover, .fileview-md .fv-figopen:focus-visible { opacity: 1; } }",
       "@media screen and (hover: none) { .fileview-md .fv-figopen { opacity: 0.8; } }",
