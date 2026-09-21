@@ -1,0 +1,202 @@
+# The browser legs the gating CI job does NOT run, each with its reason. The step "Browser legs (node --test over
+# ci-browser-legs.txt)" in .github/workflows/ci.yml runs the legs in ci-browser-legs.txt with a browser; every other
+# browser leg in the tree (a test module that launches a Playwright browser: it requires or imports "playwright", or
+# imports ./real-viewer-leg and calls inBrowser) is listed here, so a leg added later takes a verdict: it is in the
+# roster or in this file, never neither (tools/ci-browser-legs.test.mjs and scripts/ci-browser-legs.sh hold that, and
+# a line whose source moved or was deleted turns both red).
+#
+# Format: one compiled bundle path per line, relative to vscode-extension/, as the Test step's npm test builds it
+# (ui/webview/<name>.test.ts builds to out-tests/ui/webview/<name>.test.js), then a TAB, then the reason. Blank
+# lines and lines starting with # are ignored. The reasons at the roster's creation are derived from the sources: a
+# leg that launches Firefox or WebKit cannot run green in a job that installs Chromium only (and the switch would
+# make its launch skip a failure); every other leg predates the roster and has not been measured in the gating job,
+# so its owner moves it to the roster with the step's measured numbers. To move a leg, delete its line here and add
+# the bundle path to ci-browser-legs.txt.
+out-tests/ui/timeline-tags-scale-browser.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/anchor-map-cells-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/anchor-map-code-lines-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/anchor-map-code-table-paint-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/anchor-map-dom-rules-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/anchor-map-html-text-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/anchor-map-literal-tags-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/anchor-map-whitespace-point-browser.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/anchor-map-wrapped-code-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/anchor-map-wrappers-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/browse-route.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/chat-visibility.test.js	launches Firefox and WebKit; the gating job installs Chromium only
+out-tests/ui/webview/composer-mention-pane.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/dense-chrome-layout.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/feed-css-kept-embed.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/feed-css-margin-fit.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/feed-css-margin-footer-rule.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/feed-css-margin-footers.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/feed-css-margin-leader.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/feed-css-saved-line-head-dress.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/feed-viewer-focus-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-comments-about-browser.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/file-comments-arrivals-browser.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/file-comments-arrivals-fixes-browser.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/file-comments-arrivals-review2-browser.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/file-comments-block-paint-seen-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-comments-composer-browser.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/file-comments-composer-chat-nav-chord.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/file-comments-composer-fixes-browser.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/file-comments-composer-shell-chord.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/file-comments-copy-fallback-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-comments-float-scroll-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-comments-focus-browser.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/file-comments-keyboard-offer-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-comments-margin-browser.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/file-comments-margin-fixes-browser.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/file-comments-margin-image-browser.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/file-comments-margin-review-browser.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/file-comments-mark-first-glyph-drag-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-comments-markclick-browser.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/file-comments-markclick-controls-browser.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/file-comments-overlap-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-comments-paint-gap-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-comments-paint-offer-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-comments-regions-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-comments-regions-layout-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-comments-regions-sizer-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-comments-regions-stacking-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-comments-rendered-point-browser.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/file-comments-reply-keep-browser.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/file-comments-reply-review2-browser.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/file-comments-resolve-answered-browser.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/file-comments-seen-review2-browser.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/file-comments-seen-review3-browser.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/file-comments-send-seen-browser.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/file-comments-tiebreak-browser.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/file-view-body-width-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-boxless-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-copy-ack-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-copy-held-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-copy-map-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-copy-source-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-copy-space-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-failures-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-fell-wrap-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-fence-blank-rows-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-fence-rows-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-figure-error-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-figures-gate-adopt-browser.test.js	launches Firefox and WebKit; the gating job installs Chromium only; plans/markdown-viewer.md's Tests paragraph records that in CI this leg skips and the node scene file-view-figures-gate-adopt.test.ts runs, pinned by tools/markdown-viewer-plan-gate-adopt.test.mjs
+out-tests/ui/webview/file-view-figures-gate-adopt-svg-browser.test.js	launches Firefox and WebKit; the gating job installs Chromium only; plans/markdown-viewer.md's Tests paragraph records that in CI this leg skips and the node scene file-view-figures-gate-adopt.test.ts runs, pinned by tools/markdown-viewer-plan-gate-adopt.test.mjs
+out-tests/ui/webview/file-view-figures-gate-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-float-anchoring-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-focus-body-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-focus-ring-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-focus-ring-openers-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-focus-seat-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-fold-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-keyboard-frames-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-landing-order-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-landing-throw-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-leg-page-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-links-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-notebar-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-outline-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-place-blocks-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-place-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-place-closed-details-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-place-edits-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-place-float-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-place-html-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-place-last-fold-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-place-memory-fold-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-place-picture-line-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-place-reveal-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-place-svg-source-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-place-wrapper-end-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-print-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-print-inks-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-print-marks-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-prose-leading-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-raw-rows-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-reflow-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-scrollbar-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-text-size.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-typescale-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/file-view-url-place-bottom-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/files-recent-place-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/files-recent-place-shared-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/gear-judge-fast-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-config-callout-title-ink-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-config-chat-styles-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-config-feed-callout-tints-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-config-figure-gate-authored-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-config-figure-gate-place-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-config-fold-paint-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-config-fold-state-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-config-footnote-paint-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-config-fragment-landing-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-config-gate-author-span-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-config-goto-closed-details-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-config-mark-classes-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-config-math-block-paint-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-config-math-inks-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-config-math-map-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-config-merged-paragraph-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-config-obsidian-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-config-paint-collapsed-blank-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-config-paint-presel-kinds-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-config-paint-presel-refile-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-config-paint-presel-retrim-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-config-paint-presel-scope-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-config-paint-rendered-space-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-config-paint-retrim-events-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-config-paint-trim-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-config-paint-trim-fixpoint-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-config-paint-trim-panel-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-config-paint-whitespace-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-config-print-constructs-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-config-print-wide-formula-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-config-svg-paint-gate-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-config-url-figure-refs-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-config-url-gate-keys-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-sanitize-anchor-map-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-sanitize-background-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-sanitize-body-title-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-sanitize-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-sanitize-chat-fragment-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-sanitize-chat-links-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-sanitize-chat-modified-click-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-sanitize-chat-schemeless-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-sanitize-comments-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-sanitize-katex-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-sanitize-postpass-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-sanitize-viewer-links-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-sanitize-viewer-math-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/md-sanitize-wide-media-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/meta-held-mark-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/pdf-chunk-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/pdf-chunk-dropped-images.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/pdf-chunk-page-cue.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/pdf-chunk-refused-open.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/pdf-chunk-resize.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/pdf-chunk-staged-draw.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/pdf-chunk-worker.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/pdf-lazy-render.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/pinned-notes-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/queued-romp-layout.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/render-todo-file-chip-sheet.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/sessions-menu.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/shell-gutter-drag-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/staged-list-layout.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/styles-fc-arrivals-line-fit.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/styles-fc-chip.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/styles-fc-hl-code-row-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/styles-fc-inline-chip.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/styles-fc-margin-fit.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/styles-fc-margin-footer.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/styles-fc-region-layer.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/styles-kept-embed.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/styles-pdffall-height.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/tab-hide-browser.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/tab-row-keep-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/todo-link-target-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/track-decorations-firefox.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/track-decorations.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
+out-tests/ui/webview/waiting-file-chip-unframed.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/waiting-pane-browser.test.js	launches Firefox; the gating job installs Chromium only
+out-tests/ui/webview/waiting-pane-chip-ellipsis-browser.test.js	launches Firefox; the gating job installs Chromium only

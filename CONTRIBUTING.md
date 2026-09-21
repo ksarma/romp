@@ -42,6 +42,15 @@ worker count, build the tests and start the runner yourself, from `vscode-extens
 `node esbuild.js --tests && node --max-old-space-size=2048 --test --test-concurrency=N
 'out-tests/**/*.test.js'`.
 
+CI's vscode-extension job runs `npm test` before it installs a browser, so every browser leg
+(a test module that launches a Playwright browser) skips at launch there. The legs named in
+`vscode-extension/ci-browser-legs.txt`, one compiled bundle path per line, run again after the
+job's Chromium install with `ROMP_BROWSER_LEGS_REQUIRE=1`, which turns a launch skip into a
+failure; every other browser leg is listed in `vscode-extension/ci-browser-legs-excluded.txt`
+with a reason. A PR that wants its legs run appends them to the roster, and
+`tools/ci-browser-legs.test.mjs` holds every browser leg in the tree to one file or the other
+and fails on a line whose source is gone.
+
 `tests/gitleaks-config.bats` checks the secret-scanning rules in `.gitleaks.toml`
 against the real scanner and skips itself when `gitleaks` is not installed
 (`brew install gitleaks`, or a release binary; `ROMP_GITLEAKS` names one that is

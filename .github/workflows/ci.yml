@@ -311,6 +311,25 @@ jobs:
         # which one ran ("browser: playwright chromium").
         timeout-minutes: 5
         run: npx playwright install chromium
+      - name: Browser legs (node --test over ci-browser-legs.txt)
+        # The browser legs named in vscode-extension/ci-browser-legs.txt run here with the Chromium installed above.
+        # The Test step runs every leg too, but before any browser is installed, so there each one skips at launch
+        # (649 launch skips in one green run), and this step is the job's only run of a rostered leg with a browser.
+        # ROMP_BROWSER_LEGS_REQUIRE=1 (ui/webview/browser-legs-require.ts) turns a launch skip into a failure that
+        # names the reason, so a runner that lost its browser turns this step red rather than green with the coverage
+        # gone (the ROMP_UI_BENCH_REQUIRE stance below). The roster is the file each PR appends its legs to, one
+        # compiled bundle path per line; a leg the job does not run is in ci-browser-legs-excluded.txt with a reason,
+        # and tools/ci-browser-legs.test.mjs holds every browser leg in the tree to one file or the other. The step
+        # sits directly after the Chromium install with nothing before the Test step moved, so plans/markdown-viewer.md's
+        # CI sentence and the pin that reads it (tools/markdown-viewer-plan-gate-adopt.test.mjs) stay true. The
+        # script checks before node --test that every roster line's bundle is under out-tests/ (the Test step's npm
+        # test built it; the Build step writes dist/ only) and that the roster and the tree agree, and a red names the
+        # line and the fix; an empty roster prints "no legs in the roster" and exits 0 without starting node --test,
+        # whose default glob would rerun the whole suite. Step seconds, job minutes and the job's 40-minute cap:
+        # (measured on the runner at the pushed head: TO FILL).
+        env:
+          ROMP_BROWSER_LEGS_REQUIRE: "1"
+        run: bash scripts/ci-browser-legs.sh
       - name: Dashboard pane bench (node --test)
         # tools/ui-bench.mjs replays a synthetic frame stream into the real feed and timeline pages in the
         # headless Chromium installed above, served by the kernel's own page route from the dist the Build
