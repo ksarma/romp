@@ -1,8 +1,15 @@
 // The todo Reply sheet on a phone with the keyboard up (the user 2026-09-19, screenshot): a todo's long detail filled
-// the sheet and the answer box was ONE squeezed line above Cancel and Send. The two hand-maintained twin builders,
-// ui/webview/waiting.ts showReply and ui/webview/render.ts showUserTodoReply, emit the same tree: #ut-reply-prompt
-// (.picker-overlay.confirm-overlay) > .picker-box.confirm-box, a column flex box capped at the window with overflow
-// hidden, holding the title, the quoted line, the chips, .ut-detail.open, textarea.ut-reply-input and .confirm-actions.
+// the sheet and the answer box was ONE squeezed line above Cancel and Send. Two hand-maintained builders emit it,
+// ui/webview/waiting.ts showReply (the Waiting pane) and ui/webview/render.ts showUserTodoReply (the chat), and what
+// they SHARE is what the CSS keys on: the overlay #ut-reply-prompt (.picker-overlay.confirm-overlay) > the box
+// .picker-box.confirm-box, a column flex box capped at the window, and inside it, in this order, .confirm-title, the
+// quoted line .confirm-detail.ut-reply-quote, .ut-detail.open, textarea.ut-reply-input and .confirm-actions. The two
+// trees are NOT the same (the maintainer's round 1 ruling): the pane appends the file and link chips as flex children
+// of the box between the quoted line and the detail (.wt-file, .wt-link; waiting-pane.css says why), the chat puts
+// them inside the quoted line (.ut-file, .ut-link; styles.css's #ut-reply-prompt .ut-link rule says why), so the two
+// columns have different headroom under the same rules, and every browser leg measures both with the chips present
+// (waiting-reply-sheet-browser.test.ts, render-reply-sheet-browser.test.ts; tests/test_reply_sheet_served.py reads
+// both real trees in CI). The skeleton pin below keeps the shared part shared and the divergence exactly the chips.
 // Every child is a shrinkable flex item; a wrapped text block's automatic minimum (min-height: auto) refuses to shrink
 // and the textarea's (overflow auto) resolves to zero, so the box took the whole deficit and the cap clipped rather
 // than scrolled.
@@ -238,6 +245,32 @@ test("the two builders stay twins for this fix: the same kbFit line, the same gr
     const armAt = src.search(KB_ARM), appendAt = src.indexOf("document.body.appendChild(overlay);");
     assert.ok(appendAt >= 0 && armAt > appendAt, name + ": armed after the overlay is in the document, so the first kbFit() reads a connected overlay");
     assert.doesNotMatch(src, /style\.height = .*\b(76|78|60)px/, name + ": no hard-coded row height; the floor is measured");
+  }
+});
+
+// ── the skeleton the CSS keys on, and the one divergence ─────────────────────────────────────────
+// Read from each builder's append statements (the tree is built by hand twice, so the order lives in these lines): the
+// box holds the title, the quoted line, [the pane's chips], the detail, the answer box, the actions. This is a pin on
+// WHERE the order is spelled; the trees themselves are measured by execution in the two browser legs (each pane's
+// `kinds`) and in tests/test_reply_sheet_served.py, which reads both real trees in CI. A builder that reorders its
+// column, or moves its chips to the other pane's placement, goes red here first and in the legs after.
+test("the two builders share the skeleton the four rules key on, in one order, and differ exactly in where the chips go", () => {
+  const [[, w], [, r]] = BUILDERS;
+  assert.match(w, /\n  box\.append\(h, d\); if \(chip\) box\.appendChild\(chip\); if \(lchip\) box\.appendChild\(lchip\); if \(dd\) box\.appendChild\(dd\); box\.append\(input, actions\);\n/,
+    "waiting.ts: title, quoted line, the file chip, the link chip, the detail, the answer box, the actions: the chips are flex children of the box (waiting-pane.css #ut-reply-prompt .wt-file: alone on their line, the cap is the line)");
+  assert.match(r, /\n  box\.append\(h, d\); if \(dd\) box\.appendChild\(dd\); box\.append\(input, actions\);\n/,
+    "render.ts: title, quoted line, the detail, the answer box, the actions: no chip is a child of the box");
+  assert.match(r, /if \(todoFile\) d\.append\(" ", todoFileChip\(todoFile, sid\)\);[^\n]*\n\s*if \(todoLink\) d\.append\(" ", todoLinkChip\(todoLink\)\);/,
+    "render.ts: the chips trail the quoted line INSIDE it, the file's first (styles.css #ut-reply-prompt .ut-link, .ut-file: the cap is the line)");
+  assert.doesNotMatch(w, /d\.append\(" ", (fileChip|linkChip)/, "waiting.ts puts no chip inside the quoted line");
+  assert.doesNotMatch(r, /box\.appendChild\((chip|lchip)\)/, "render.ts appends no chip to the box");
+  for (const [name, src] of BUILDERS) {
+    // the classes the rules key on, each minted once per builder, on the element the rule means
+    assert.match(src, /el\("div", "picker-overlay confirm-overlay"\); overlay\.id = "ut-reply-prompt";/, name + ": the overlay id the four rules are scoped to");
+    assert.match(src, /const box = el\("div", "picker-box confirm-box"\);/, name + ": the box (#ut-reply-prompt .picker-box)");
+    assert.match(src, /el\("div", "ut-detail open"\)/, name + ": the detail (#ut-reply-prompt .ut-detail.open)");
+    assert.match(src, /input\.className = "ut-reply-input"; input\.rows = 3;/, name + ": the answer box (#ut-reply-prompt .ut-reply-input), three rows");
+    assert.match(src, /const actions = el\("div", "confirm-actions"\);/, name + ": the actions row");
   }
 });
 
