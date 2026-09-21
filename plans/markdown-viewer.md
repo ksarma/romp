@@ -8712,8 +8712,21 @@ ui/webview/file-trail.test.ts, whose Reload case launches through the shared hel
 ui/webview/file-view-text-size.test.ts, whose bar case launches through a harness of its own; the file review's round
 10, extra6-1 and extra6-2: the disclosure had said the legs were derived from the tree as the browser modules naming
 the follow-on, which was the name's set and not the property's), holds each to a launch through real-viewer-leg.ts's
-inBrowser, the shared helper a roster's switch reaches, and to no stand-down of its own (a skip or a todo, as a call or
-as node:test's option, which defeats that switch as a private launch does; the file review's round 10, tests-2), and reads
+inBrowser, the shared helper a roster's switch reaches, and to no stand-down of its own (a skip or a todo, which defeats
+that switch as a private launch does; the file review's round 10, tests-2), the stand-down read as seven spellings of the
+leg's own comment-stripped source and not as the property of standing itself down (a skip or todo call on the test
+context, on test or on it, through a property, an optional chain or a bracketed literal, the option with its value written
+out, the shorthand option between braces, the destructured method taken off the context and the bare call of it), so its
+green says that no leg carries one of the seven and not that no leg stands itself down: a conditional call is within that
+read, since the spelling stands whatever the condition, and three forms are outside it, the method bound to a name of its
+own and called by that name, a computed member with a name that is not a literal, and a skip inside a helper module the
+leg calls, each planted in a scratch copy of a leg and passed by the pin while the conditional was refused; the
+definition to come is PR 887's census named above, which reads a leg's skip or todo from the compiler's tree and not from
+a spelling, and at its branch's head when this was written its read, a call by member with a literal name or one its
+closed forms fold and the option property, passed the same three plants, so a leg standing itself down by one of the
+three is outside both reads until that census widens, the interim here being this stated scope and not a wider regex (the
+maintainer's reading of the author's closing pass after the file review's round 10: both halves of the guard were keyed
+on spellings, and a reader who saw its green took no leg to stand down privately), and reads
 the tree for the roster, its exclusions file (vscode-extension/ci-browser-legs-excluded.txt),
 that step in the vscode-extension job and the switch (ROMP_BROWSER_LEGS_REQUIRE, reached by inBrowser through
 ui/webview/browser-legs-require.ts): where the tree carries none of the four it holds this sentence, where it carries all
