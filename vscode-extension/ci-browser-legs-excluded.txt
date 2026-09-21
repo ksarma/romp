@@ -12,8 +12,8 @@
 # make its launch skip a failure); every other leg predates the roster and has not been measured in the gating job,
 # so its owner moves it to the roster with the step's measured numbers. To move a leg, delete its line here and add
 # the bundle path to ci-browser-legs.txt (a leg in both files turns both checkers red); a leg that launches through
-# its own playwright copy first switches its launch to real-viewer-leg.ts's inBrowser or browser-legs-require.ts's
-# launchBrowser, the roads ROMP_BROWSER_LEGS_REQUIRE reaches, or the roster refuses it.
+# its own playwright copy first switches its launch to inBrowser in ui/webview/real-viewer-leg.ts, the one shared
+# launcher and the one read of ROMP_BROWSER_LEGS_REQUIRE, and drops its own launch and skip, or the roster refuses it.
 out-tests/ui/timeline-tags-scale-browser.test.js	launches Firefox; the gating job installs Chromium only
 out-tests/ui/webview/anchor-map-cells-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
 out-tests/ui/webview/anchor-map-code-lines-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers

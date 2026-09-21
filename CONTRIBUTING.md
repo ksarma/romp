@@ -45,14 +45,17 @@ worker count, build the tests and start the runner yourself, from `vscode-extens
 CI's vscode-extension job runs `npm test` before it installs a browser, so every browser leg
 (a test module that launches a Playwright browser) skips at launch there. The legs named in
 `vscode-extension/ci-browser-legs.txt`, one compiled bundle path per line, run again after the
-job's Chromium install with `ROMP_BROWSER_LEGS_REQUIRE=1`, which turns a launch skip into a
-failure for a leg that launches through `inBrowser` (`ui/webview/real-viewer-leg.ts`) or
-`launchBrowser` (`ui/webview/browser-legs-require.ts`); a leg with a launch and a skip of its
-own is refused from the roster until it launches through one of them. Every other browser leg
-is listed in `vscode-extension/ci-browser-legs-excluded.txt` with a reason. A PR that wants
-its legs run moves them to the roster (a leg already in the exclusions loses its line there),
-and `tools/ci-browser-legs.test.mjs` holds every browser leg in the tree to one file or the
-other and fails on a line whose source is gone.
+job's Chromium install with `ROMP_BROWSER_LEGS_REQUIRE=1`. The one shared launcher, `inBrowser`
+in `ui/webview/real-viewer-leg.ts`, reads the switch (any non-empty value arms it): under it a
+leg that cannot launch fails naming the switch and the reason instead of skipping. A rostered
+leg launches through `inBrowser` with no launch or skip of its own, and in the gating job that
+is Chromium; a leg's Firefox and WebKit runs live elsewhere (a served pytest step, a local run),
+and a leg that launches on its own is refused from the roster until it takes the shared
+launcher. Every other browser leg is listed in `vscode-extension/ci-browser-legs-excluded.txt`
+with a reason. A PR that wants its legs run moves them to the roster (a leg already in the
+exclusions loses its line there in the same commit), and `tools/ci-browser-legs.test.mjs`
+holds every browser leg in the tree to one file or the other and fails on a line whose source
+is gone.
 
 `tests/gitleaks-config.bats` checks the secret-scanning rules in `.gitleaks.toml`
 against the real scanner and skips itself when `gitleaks` is not installed

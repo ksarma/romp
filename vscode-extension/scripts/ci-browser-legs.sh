@@ -1,24 +1,29 @@
 #!/usr/bin/env bash
 # Runs the browser legs named in ci-browser-legs.txt under node --test. The step "Browser legs (node --test over
 # ci-browser-legs.txt)" of .github/workflows/ci.yml calls this from vscode-extension/ after the job installs Chromium,
-# with ROMP_BROWSER_LEGS_REQUIRE=1 (ui/webview/browser-legs-require.ts) so a leg whose launch fails is red, not a skip.
-# Before node --test it checks that the roster and the tree agree, and every red names the line and what to do:
+# with ROMP_BROWSER_LEGS_REQUIRE=1. The one shared launcher, inBrowser in ui/webview/real-viewer-leg.ts, reads the
+# switch (any non-empty value arms it) and under it a leg that cannot launch fails naming the switch and the reason
+# instead of skipping. Before node --test this script checks that the roster and the tree agree, and every red names
+# the line and what to do:
 #   - a roster or exclusions line whose source is not in the tree (the source moved or was deleted): fix the line;
 #   - a browser leg in neither file: add it to the roster, or to ci-browser-legs-excluded.txt with a tab and a reason;
 #   - a line in both files, a duplicate line, an exclusions line with no reason, a line naming no browser leg: fix it;
 #   - a malformed line (trailing whitespace or a carriage return counts): printed with the whitespace visible, and the leg
 #     it names is reported as named by that line, not as missing from both files;
-#   - a roster line whose source never reads the switch: only a leg that launches through real-viewer-leg.ts's inBrowser
-#     or browser-legs-require.ts's launchBrowser (or skipOrFail) turns its launch skip into a failure here; a leg with a
-#     launch and a t.skip of its own skips under the switch as it does without it, so it cannot be rostered as it is;
+#   - a roster line whose source does not launch through the one shared launcher: a rostered leg imports
+#     ./real-viewer-leg and calls inBrowser(, and holds no .launch( and no .skip( of its own on a code line. Only
+#     inBrowser reads the switch, so a leg with a launch or a skip of its own would skip under the step as it does
+#     without it, and cannot be rostered as it is;
 #   - a roster line whose source names Firefox or WebKit outside a comment: the gating job installs Chromium only;
 #   - a roster line whose bundle is not under out-tests/: the Test step's npm test builds it (node esbuild.js --tests).
 # After node --test it reads the run's TAP record: a test skipped under the switch is red too, with the skipped tests
 # named as node names them and the rostered sources that hold each name, since a skip here is coverage the step claims
-# and does not have. The census rule is the one tools/ci-browser-legs.test.mjs states; that test runs `--list-legs`
-# here and holds the two to the same set, and runs the checks above on synthetic trees. An empty roster prints "no legs
-# in the roster" and exits 0 without starting node --test: with no file arguments node --test runs its default glob,
-# the whole suite again.
+# and does not have; and a failed test whose error names the switch (inBrowser could not launch) is printed beside its
+# leg, read from the record's location line, with the remedy: the runner lost its browser, check the Chromium install
+# step. The census rule is the one tools/ci-browser-legs.test.mjs states; that test runs `--list-legs` here and holds
+# the two to the same set, and runs the checks above on synthetic trees. An empty roster prints "no legs in the roster"
+# and exits 0 without starting node --test: with no file arguments node --test runs its default glob, the whole suite
+# again.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 ROOT=$(cd .. && pwd)
@@ -37,13 +42,16 @@ is_leg() {
   if grep -qE '\([[:space:]]*"playwright"[[:space:]]*\)|from[[:space:]]+"playwright"' <<<"$code"; then return 0; fi
   grep -q '"\./real-viewer-leg"' <<<"$code" && grep -q 'inBrowser(' <<<"$code"
 }
-# The leg reads the switch: it launches through real-viewer-leg.ts's inBrowser, or through browser-legs-require.ts's
-# launchBrowser or skipOrFail, on a line that is not a // comment.
-reaches_switch() {
+# The gap between the leg and the one shared launcher, printed; nothing when the leg launches through it. A rostered leg
+# imports ./real-viewer-leg and calls inBrowser( on a line that is not a // comment, and holds no .launch( and no .skip(
+# of its own on such a line: inBrowser is the one launch that reads the switch, and a private launch or skip stands
+# outside it. tools/ci-browser-legs.test.mjs's launchesShared states the same rule.
+shared_launch_gap() {
   local code
   code=$(code_of "$1")
-  if grep -q '"\./real-viewer-leg"' <<<"$code" && grep -q 'inBrowser(' <<<"$code"; then return 0; fi
-  grep -q '"\./browser-legs-require"' <<<"$code" && grep -qE 'launchBrowser\(|skipOrFail\(' <<<"$code"
+  if ! grep -q '"\./real-viewer-leg"' <<<"$code" || ! grep -q 'inBrowser(' <<<"$code"; then printf '%s' "never calls inBrowser from ./real-viewer-leg"; return 0; fi
+  if grep -q '\.launch(' <<<"$code"; then printf '%s' "holds a launch of its own (.launch( on a code line)"; return 0; fi
+  if grep -q '\.skip(' <<<"$code"; then printf '%s' "holds a skip of its own (.skip( on a code line)"; return 0; fi
 }
 # The engines other than Chromium the leg names outside comments ("firefox"/"webkit", pw.firefox/pw.webkit), joined by " and ".
 other_engines() {
@@ -99,7 +107,8 @@ while IFS= read -r line || [ -n "$line" ]; do
   src=$(source_of "$line")
   if [ ! -f "$src" ]; then red "$ROSTER line $n: '$line' names ${src#"$ROOT/"}, which is not in the tree (the source moved or was deleted): fix the roster line"; continue; fi
   if ! is_leg "$src"; then red "$ROSTER line $n: '$line' names no browser leg (${src#"$ROOT/"} reaches no browser): remove the line"; continue; fi
-  if ! reaches_switch "$src"; then red "$ROSTER line $n: '$line' launches on its own and never reads $SWITCH, so under the step its launch skip stays a skip: launch through inBrowser (ui/webview/real-viewer-leg.ts) or launchBrowser (ui/webview/browser-legs-require.ts) before rostering it"; continue; fi
+  gap=$(shared_launch_gap "$src")
+  if [ -n "$gap" ]; then red "$ROSTER line $n: '$line' does not launch through the one shared launcher ($gap), so under the step a launch it cannot make stays a skip and never reads $SWITCH: launch through inBrowser (ui/webview/real-viewer-leg.ts), with no launch or skip of the leg's own, before rostering it"; continue; fi
   engines=$(other_engines "$src")
   if [ -n "$engines" ]; then red "$ROSTER line $n: '$line' names $engines outside a comment; the gating job installs Chromium only, so under the switch that launch is red: keep the leg in $EXCLUDED with that reason"; continue; fi
   if [ ! -f "$line" ]; then red "$ROSTER line $n: '$line' is not under out-tests/ (the Test step's npm test builds it; locally, node esbuild.js --tests): build the bundles before this step"; continue; fi
@@ -157,7 +166,26 @@ if [ -n "$skipped" ]; then
     done
     echo "ci-browser-legs: skipped under $SWITCH=1: ${s#"${s%%[![:space:]]*}"} (rostered sources holding that test name verbatim: ${holders:-none})" >&2
   done <<<"$skipped"
-  echo "ci-browser-legs: a rostered leg skipped a test under $SWITCH=1, so the step claims coverage it did not run: the leg's launch or skip never reads the switch (launch through inBrowser in ui/webview/real-viewer-leg.ts or launchBrowser in ui/webview/browser-legs-require.ts), or the test skips for another reason; until every test of the leg runs here, move it to $EXCLUDED with that reason" >&2
+  echo "ci-browser-legs: a rostered leg skipped a test under $SWITCH=1, so the step claims coverage it did not run: the test skips for a reason of its own (only inBrowser in ui/webview/real-viewer-leg.ts turns a launch it cannot make into a failure here); until every test of the leg runs here, move it to $EXCLUDED with that reason" >&2
+  [ "$status" -ne 0 ] || status=1
+fi
+
+# A failed test whose error names the switch: inBrowser could not launch under $SWITCH, and the step's Chromium install
+# is what it launches, so the runner lost its browser. The record's failure block carries the test's location (the
+# bundle's path with a line and column) and its error; each such failure is printed beside its leg with the remedy.
+lost=$(awk -v msg="$SWITCH is set and this leg cannot run" '
+  /^[[:space:]]*not ok [0-9]+ - / { name=$0; sub(/^[[:space:]]*not ok [0-9]+ - /, "", name); loc=""; err=""; infail=1; next }
+  infail && /^[[:space:]]*location: / { loc=$0; sub(/^[[:space:]]*location: /, "", loc) }
+  infail && /^[[:space:]]*error: / { err=$0; sub(/^[[:space:]]*error: /, "", err) }
+  infail && /^[[:space:]]*\.\.\.[[:space:]]*$/ { if (index(err, msg)) print loc "\t" name "\t" err; infail=0 }
+' "$tap")
+if [ -n "$lost" ]; then
+  while IFS=$'\t' read -r loc name err; do
+    # the location as node quotes it: '<absolute bundle path>:<line>:<column>'; the leg is that path relative to here
+    file=${loc#\'}; file=${file%\'}; file=${file%:*}; file=${file%:*}
+    leg=${file#"$PWD/"}
+    echo "ci-browser-legs: $leg: '$name' failed under $SWITCH=1 because inBrowser could not launch ($err): the runner lost its browser: check the Chromium install step" >&2
+  done <<<"$lost"
   [ "$status" -ne 0 ] || status=1
 fi
 exit "$status"

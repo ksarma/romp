@@ -1,8 +1,10 @@
 // The shared browser-legs CI step, held to the tree. The gating vscode-extension job runs npm test before it installs a
 // browser, so every browser leg skips at launch there; the step "Browser legs (node --test over ci-browser-legs.txt)"
 // runs the legs named in vscode-extension/ci-browser-legs.txt after the job's Chromium install with
-// ROMP_BROWSER_LEGS_REQUIRE=1, which makes a launch skip a failure (ui/webview/browser-legs-require.ts). This module
-// holds, from the repo root and with no dependency installed (CI's shell job runs tools/*.test.mjs with no npm ci):
+// ROMP_BROWSER_LEGS_REQUIRE=1: the one shared launcher, inBrowser in ui/webview/real-viewer-leg.ts, reads the switch (any
+// non-empty value arms it) and under it a leg that cannot launch fails naming the switch and the reason instead of
+// skipping. This module holds, from the repo root and with no dependency installed (CI's shell job runs tools/*.test.mjs
+// with no npm ci):
 //   - the step exists once in that job, directly after the Chromium install step (by step NAMES), with the switch and
 //     the run line, in the job's default working directory, and no step before the Test step installs or caches
 //     Playwright (the property plans/markdown-viewer.md's CI sentence states and tools/markdown-viewer-plan-gate-adopt.test.mjs
@@ -12,17 +14,19 @@
 //     browser leg, every exclusions line carries a reason, and a reason that names Firefox or WebKit is true of the
 //     source (and a source that launches one of them says so), so a leg added later takes a verdict: roster or exclusions,
 //     never neither;
-//   - a rostered leg reads the switch: its source launches through real-viewer-leg.ts's inBrowser or
-//     browser-legs-require.ts's launchBrowser (or skipOrFail) on a code line. The switch turns a launch skip into a
-//     failure only on those roads; a leg with a launch and a t.skip of its own skips under the switch as without it, so
-//     rostering it would make the step green with the leg unexecuted. A rostered leg names no engine but Chromium;
+//   - a rostered leg launches through the one shared launcher: its source imports ./real-viewer-leg and calls inBrowser(
+//     on a code line, and holds no .launch( and no .skip( of its own on a code line. Only inBrowser reads the switch; a
+//     leg with a launch or a skip of its own skips under the switch as without it, so rostering it would make the step
+//     green with the leg unexecuted. A rostered leg names no engine but Chromium: the gating job runs a rostered leg in
+//     the Chromium it installs, and a leg's Firefox and WebKit runs live elsewhere (a served pytest step, a local run);
 //   - the script the step calls (vscode-extension/scripts/ci-browser-legs.sh) derives the same census (`--list-legs`,
 //     run here and compared), and, run on synthetic trees with a stub node on PATH, refuses a stale line, a leg in
 //     neither file, a leg in both, a line without a reason, a duplicate, a line naming no leg, a missing bundle, a
-//     malformed line (shown with its whitespace visible, the leg it names attributed to it), a leg that never reads the
-//     switch and a leg naming Firefox, naming the line and the remedy; prints "no legs in the roster" on an empty roster
-//     without starting node; and after node --test turns a skipped test into a red naming the test and the rostered
-//     sources that hold its name, and passes node's own failure status through.
+//     malformed line (shown with its whitespace visible, the leg it names attributed to it), a leg that never calls
+//     inBrowser, a leg with a launch or a skip of its own beside inBrowser, and a leg naming Firefox, naming the line and the
+//     remedy; prints "no legs in the roster" on an empty roster without starting node; and after node --test turns a
+//     skipped test into a red naming the test and the rostered sources that hold its name, prints the lost-browser remedy
+//     beside a leg whose failure names the switch, and passes node's own failure status through.
 // THE CENSUS RULE (the script states the same one): a browser leg is a test module esbuild's test build bundles (a
 // .test.ts directly in vscode-extension/src, ui or ui/webview; esbuild.js testBuild reads those three directories) that,
 // on a line that is not a // comment, requires or imports the "playwright" package (`("playwright")` or `from
@@ -144,11 +148,16 @@ function reachesBrowser(src) {
   const c = code(src);
   return /\(\s*"playwright"\s*\)|from\s+"playwright"/.test(c) || (c.includes('"./real-viewer-leg"') && c.includes('inBrowser('));
 }
-/** The module reads the switch: it launches through inBrowser (real-viewer-leg.ts) or launchBrowser / skipOrFail
- *  (browser-legs-require.ts) on a code line; the script's reaches_switch states the same rule. */
-function reachesSwitch(src) {
+/** The gap between the module and the one shared launcher, or null when it launches through it: the module imports
+ *  ./real-viewer-leg and calls inBrowser( on a code line, and holds no .launch( and no .skip( of its own on a code line
+ *  (inBrowser is the one launch that reads the switch; a private launch or skip stands outside it). The script's
+ *  shared_launch_gap states the same rule. */
+function launchesShared(src) {
   const c = code(src);
-  return (c.includes('"./real-viewer-leg"') && c.includes('inBrowser(')) || (c.includes('"./browser-legs-require"') && /launchBrowser\(|skipOrFail\(/.test(c));
+  if (!(c.includes('"./real-viewer-leg"') && c.includes('inBrowser('))) return 'never calls inBrowser from ./real-viewer-leg';
+  if (c.includes('.launch(')) return 'holds a launch of its own (.launch( on a code line)';
+  if (c.includes('.skip(')) return 'holds a skip of its own (.skip( on a code line)';
+  return null;
 }
 /** The engines other than Chromium a leg names outside comments: as the string "firefox"/"webkit" or as pw.firefox / pw.webkit. */
 function otherEngines(src) {
@@ -199,7 +208,8 @@ test('the roster plus the exclusions equals the tree\'s browser legs, each line 
     }
   }
   for (const e of roster) {
-    assert.ok(reachesSwitch(read(sourceOf(e.bundle))), where(ROSTER, e) + ' launches on its own and never reads ' + SWITCH + ', so under the step its launch skip stays a skip: launch through inBrowser (ui/webview/real-viewer-leg.ts) or launchBrowser (ui/webview/browser-legs-require.ts) before rostering it');
+    const gap = launchesShared(read(sourceOf(e.bundle)));
+    assert.equal(gap, null, where(ROSTER, e) + ' does not launch through the one shared launcher (' + gap + '), so under the step a launch it cannot make stays a skip and never reads ' + SWITCH + ': launch through inBrowser (ui/webview/real-viewer-leg.ts), with no launch or skip of the leg\'s own, before rostering it');
   }
   for (const e of excluded) {
     assert.ok(e.reason !== null && e.reason.trim() !== '', where(EXCLUDED, e) + ' has no reason: write the bundle path, a tab, and why the gating job does not run it');
@@ -224,7 +234,7 @@ test('an exclusions reason that names Firefox or WebKit is true of the source, a
   }
   for (const e of parseRoster(read(path.join(EXT, ROSTER)))) {
     const engines = otherEngines(read(sourceOf(e.bundle)));
-    assert.deepEqual(engines, [], ROSTER + ' line ' + e.n + ' (' + e.bundle + ') names ' + engines.join(' and ') + ' outside a comment; the gating job installs Chromium only, so under the switch that launch is red: keep the leg in ' + EXCLUDED + ' with that reason');
+    assert.deepEqual(engines, [], ROSTER + ' line ' + e.n + ' (' + e.bundle + ') names ' + engines.join(' and ') + ' outside a comment; the gating job installs Chromium only, so under the switch that launch is red: keep the leg in ' + EXCLUDED + ' with that reason (a leg\'s Firefox and WebKit runs live in a served pytest step or a local run, not in the roster)');
   }
 });
 
@@ -248,9 +258,10 @@ test('the script\'s census (--list-legs) is the same set of legs this module der
   assert.ok(/\| xargs -r node --test /m.test(src), 'the roster is read into xargs node --test (executed below)');
 });
 
-/** A synthetic tree: the script under vscode-extension/scripts; under ui/webview four browser legs and one plain test module:
- *  a and b launch through launchBrowser (a has a bundle, b none), p launches through its own playwright copy with a bundle,
- *  f launches through launchBrowser but names Firefox, with a bundle; and a stub node on PATH that records its arguments,
+/** A synthetic tree: the script under vscode-extension/scripts; under ui/webview five browser legs and one plain test module:
+ *  a and b launch through inBrowser (a has a bundle, b none), p launches through its own playwright copy with a bundle, m
+ *  calls inBrowser but keeps a launch of its own beside it, k calls inBrowser but keeps a skip of its own before it, f
+ *  launches through inBrowser but names Firefox, each with a bundle; and a stub node on PATH that records its arguments,
  *  writes CBL_STUB_TAP (when set) to the tap reporter's destination and exits CBL_STUB_EXIT (0 unless set). Returns a
  *  runner over roster/exclusions text; `node` in its result is the argument list without the reporter flags. */
 function syntheticTree(t) {
@@ -260,14 +271,16 @@ function syntheticTree(t) {
   for (const d of ['vscode-extension/scripts', 'vscode-extension/src', 'vscode-extension/out-tests/ui/webview', 'ui/webview', 'bin']) fs.mkdirSync(path.join(root, d), { recursive: true });
   fs.copyFileSync(SCRIPT, path.join(ext, 'scripts', 'ci-browser-legs.sh'));
   const priv = 'import { createRequire } from "node:module";\nconst pw = createRequire(__filename)("playwright");\n';
-  const shared = priv + 'import { launchBrowser } from "./browser-legs-require";\n';
+  const shared = 'import { inBrowser } from "./real-viewer-leg";\n';
   const web = (name, text) => fs.writeFileSync(path.join(root, 'ui', 'webview', name), text);
-  web('a-browser.test.ts', shared + 'test("leg a opens the page", async (t) => { const browser = await launchBrowser(t, pw, "chromium"); });\n');
-  web('b-browser.test.ts', shared + 'test("leg b opens the page", async (t) => { const browser = await launchBrowser(t, pw, "chromium"); });\n');
+  web('a-browser.test.ts', shared + 'test("leg a opens the page", async (t) => { await inBrowser(t, async (browser) => {}); });\n');
+  web('b-browser.test.ts', shared + 'test("leg b opens the page", async (t) => { await inBrowser(t, async (browser) => {}); });\n');
   web('p-browser.test.ts', priv + 'test("leg p opens the page", async (t) => { let browser; try { browser = await pw.chromium.launch(); } catch (e) { t.skip("no browser"); return; } });\n');
-  web('f-browser.test.ts', shared + 'test("leg f opens the page", async (t) => { const browser = await launchBrowser(t, pw, "firefox"); });\n');
+  web('m-browser.test.ts', priv + shared + 'test("leg m opens the page", async (t) => { await inBrowser(t, async (browser) => {}); const own = await pw.chromium.launch(); });\n');
+  web('k-browser.test.ts', shared + 'test("leg k opens the page", async (t) => { if (!process.env.SYNTHETIC_FIXTURE) { t.skip("no fixture"); return; } await inBrowser(t, async (browser) => {}); });\n');
+  web('f-browser.test.ts', shared + 'test("leg f opens the page", async (t) => { await inBrowser(t, async (browser) => { if (browser.browserType().name() !== "firefox") return; }); });\n');
   web('plain.test.ts', '// a comment that names requireCjs("playwright") is not a launch\nconst x = 1;\n');
-  for (const b of ['a-browser', 'p-browser', 'f-browser']) fs.writeFileSync(path.join(ext, 'out-tests', 'ui', 'webview', b + '.test.js'), '');
+  for (const b of ['a-browser', 'p-browser', 'm-browser', 'k-browser', 'f-browser']) fs.writeFileSync(path.join(ext, 'out-tests', 'ui', 'webview', b + '.test.js'), '');
   const log = path.join(root, 'node-args.txt');
   fs.writeFileSync(path.join(root, 'bin', 'node'), [
     '#!/bin/sh',
@@ -280,7 +293,7 @@ function syntheticTree(t) {
     'exit "${CBL_STUB_EXIT:-0}"',
     '',
   ].join('\n'), { mode: 0o755 });
-  const A = 'out-tests/ui/webview/a-browser.test.js', B = 'out-tests/ui/webview/b-browser.test.js', P = 'out-tests/ui/webview/p-browser.test.js', F = 'out-tests/ui/webview/f-browser.test.js', PLAIN = 'out-tests/ui/webview/plain.test.js';
+  const A = 'out-tests/ui/webview/a-browser.test.js', B = 'out-tests/ui/webview/b-browser.test.js', P = 'out-tests/ui/webview/p-browser.test.js', M = 'out-tests/ui/webview/m-browser.test.js', K = 'out-tests/ui/webview/k-browser.test.js', F = 'out-tests/ui/webview/f-browser.test.js', PLAIN = 'out-tests/ui/webview/plain.test.js';
   const run = (roster, excluded, stub = {}) => {
     if (roster === null) fs.rmSync(path.join(ext, ROSTER), { force: true }); else fs.writeFileSync(path.join(ext, ROSTER), roster);
     if (excluded === null) fs.rmSync(path.join(ext, EXCLUDED), { force: true }); else fs.writeFileSync(path.join(ext, EXCLUDED), excluded);
@@ -293,10 +306,10 @@ function syntheticTree(t) {
     const args = fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean) : null;
     return { status: r.status, out: r.stdout, err: r.stderr, node: args && args.filter((a) => !a.startsWith('--test-reporter')), reporters: args && args.filter((a) => a.startsWith('--test-reporter')) };
   };
-  return { run, A, B, P, F, PLAIN };
+  return { run, root, A, B, P, M, K, F, PLAIN };
 }
 
-const EXCLUDE_REST = (...keep) => ['a', 'b', 'p', 'f'].filter((n) => !keep.includes(n)).map((n) => 'out-tests/ui/webview/' + n + '-browser.test.js\treason ' + n + '\n').join('');
+const EXCLUDE_REST = (...keep) => ['a', 'b', 'p', 'm', 'k', 'f'].filter((n) => !keep.includes(n)).map((n) => 'out-tests/ui/webview/' + n + '-browser.test.js\treason ' + n + '\n').join('');
 
 test('the script runs the rostered legs through node --test when the roster and the tree agree, and prints "no legs in the roster" and starts no node on an empty roster', (t) => {
   const { run, A } = syntheticTree(t);
@@ -311,8 +324,8 @@ test('the script runs the rostered legs through node --test when the roster and 
   assert.equal(empty.node, null, 'node was not started: with no file arguments node --test would run its default glob');
 });
 
-test('the script refuses, naming the line and the remedy, on: a missing file, a stale line, a leg in neither file, a leg in both, a line without a reason, a duplicate, a line naming no leg, a missing bundle, a malformed line, a leg that never reads the switch, a leg naming Firefox', (t) => {
-  const { run, A, B, P, F, PLAIN } = syntheticTree(t);
+test('the script refuses, naming the line and the remedy, on: a missing file, a stale line, a leg in neither file, a leg in both, a line without a reason, a duplicate, a line naming no leg, a missing bundle, a malformed line, a leg that never calls inBrowser, a leg with a launch of its own beside inBrowser, a leg with a skip of its own beside inBrowser, a leg naming Firefox', (t) => {
+  const { run, A, B, P, M, K, F, PLAIN } = syntheticTree(t);
   const C = 'out-tests/ui/webview/c-browser.test.js';
   const refused = (r, ...needles) => {
     assert.equal(r.status, 1, 'exit 1; stderr: ' + r.err);
@@ -339,16 +352,21 @@ test('the script refuses, naming the line and the remedy, on: a missing file, a 
   refused(crlf, ROSTER + ' line 1: $\'' + A + '\\r\' is not a bundle path', 'browser leg \'' + A + '\' is named by a malformed line (' + ROSTER + ' line 1, above): fix that line');
   assert.ok(!crlf.err.includes('is in neither'), 'the leg the malformed line names is not reported as missing from both files:\n' + crlf.err);
   refused(run(A + '\n', B + '\treason\n' + P + '  \treason\n' + EXCLUDE_REST('a', 'b', 'p')), EXCLUDED + ' line 2: ' + P + '\\ \\  is not a bundle path', 'browser leg \'' + P + '\' is named by a malformed line (' + EXCLUDED + ' line 2, above): fix that line');
-  // a leg with a launch and a skip of its own never reads the switch: rostered, it would skip under the step and leave it green
-  refused(run(A + '\n' + P + '\n', B + '\treason\n' + EXCLUDE_REST('a', 'b', 'p')), ROSTER + ' line 2: \'' + P + '\' launches on its own and never reads ' + SWITCH + ', so under the step its launch skip stays a skip: launch through inBrowser (ui/webview/real-viewer-leg.ts) or launchBrowser (ui/webview/browser-legs-require.ts) before rostering it');
-  // a leg that reads the switch but launches Firefox: the gating job installs Chromium only
+  // a leg with a launch and a skip of its own never calls inBrowser, the one launch that reads the switch: rostered, it
+  // would skip under the step and leave it green
+  refused(run(A + '\n' + P + '\n', B + '\treason\n' + EXCLUDE_REST('a', 'b', 'p')), ROSTER + ' line 2: \'' + P + '\' does not launch through the one shared launcher (never calls inBrowser from ./real-viewer-leg), so under the step a launch it cannot make stays a skip and never reads ' + SWITCH + ': launch through inBrowser (ui/webview/real-viewer-leg.ts), with no launch or skip of the leg\'s own, before rostering it');
+  // a leg that calls inBrowser but keeps a launch of its own beside it: the private launch stands outside the switch
+  refused(run(A + '\n' + M + '\n', B + '\treason\n' + EXCLUDE_REST('a', 'b', 'm')), ROSTER + ' line 2: \'' + M + '\' does not launch through the one shared launcher (holds a launch of its own (.launch( on a code line)), so under the step');
+  // a leg that calls inBrowser but skips on its own first: under the step that skip stays a skip
+  refused(run(A + '\n' + K + '\n', B + '\treason\n' + EXCLUDE_REST('a', 'b', 'k')), ROSTER + ' line 2: \'' + K + '\' does not launch through the one shared launcher (holds a skip of its own (.skip( on a code line)), so under the step');
+  // a leg that launches through inBrowser but names Firefox: the gating job installs Chromium only
   refused(run(A + '\n' + F + '\n', B + '\treason\n' + EXCLUDE_REST('a', 'b', 'f')), ROSTER + ' line 2: \'' + F + '\' names Firefox outside a comment; the gating job installs Chromium only, so under the switch that launch is red: keep the leg in ' + EXCLUDED + ' with that reason');
   const stale = run(A + '\n', B + '\treason\n' + C + '\treason\n' + rest);
   refused(stale, EXCLUDED + ' line 2: \'' + C + '\' names ui/webview/c-browser.test.ts, which is not in the tree (the source moved or was deleted): fix the line');
 });
 
-test('after node --test the script turns a skipped test into a red naming the test, the rostered sources holding its name and the remedy, and passes node\'s own failure status through', (t) => {
-  const { run, A } = syntheticTree(t);
+test('after node --test the script turns a skipped test into a red naming the test, the rostered sources holding its name and the remedy, prints the lost-browser remedy beside a leg whose failure names the switch, and passes node\'s own failure status through', (t) => {
+  const { run, root, A } = syntheticTree(t);
   const excluded = EXCLUDE_REST('a');
   const tapSkip = 'TAP version 13\n# Subtest: leg a opens the page\nok 1 - leg a opens the page # SKIP no playwright chromium on this box\n# Subtest: some other test\nok 2 - some other test\n1..2\n# tests 2\n# pass 1\n# skipped 1\n';
   const skipped = run(A + '\n', excluded, { tap: tapSkip });
@@ -356,7 +374,7 @@ test('after node --test the script turns a skipped test into a red naming the te
   assert.deepEqual(skipped.node, ['--test', A], 'the leg ran (the skip is read from the run, not refused before it)');
   assert.ok(skipped.err.includes('skipped under ' + SWITCH + '=1: ok 1 - leg a opens the page # SKIP no playwright chromium on this box (rostered sources holding that test name verbatim: ' + A + ')'), skipped.err);
   assert.ok(skipped.err.includes('a rostered leg skipped a test under ' + SWITCH + '=1, so the step claims coverage it did not run'), skipped.err);
-  assert.ok(skipped.err.includes('launch through inBrowser in ui/webview/real-viewer-leg.ts or launchBrowser in ui/webview/browser-legs-require.ts') && skipped.err.includes('move it to ' + EXCLUDED + ' with that reason'), skipped.err);
+  assert.ok(skipped.err.includes('only inBrowser in ui/webview/real-viewer-leg.ts turns a launch it cannot make into a failure here') && skipped.err.includes('move it to ' + EXCLUDED + ' with that reason'), skipped.err);
   const unknown = run(A + '\n', excluded, { tap: 'TAP version 13\nok 1 - a name no source spells # SKIP why\n1..1\n' });
   assert.equal(unknown.status, 1);
   assert.ok(unknown.err.includes('(rostered sources holding that test name verbatim: none)'), 'a name found in no rostered source says so:\n' + unknown.err);
@@ -364,9 +382,17 @@ test('after node --test the script turns a skipped test into a red naming the te
   assert.equal(clean.status, 0, 'no skip, no red: ' + clean.err);
   assert.equal(clean.err, '', 'nothing on stderr when every rostered test ran');
   // xargs answers a command's exit of 1 to 125 with 123, so that is the status a failed leg gives the step
-  const failed = run(A + '\n', excluded, { tap: 'TAP version 13\nnot ok 1 - leg a opens the page\n1..1\n# fail 1\n', exit: 1 });
+  const failed = run(A + '\n', excluded, { tap: 'TAP version 13\nnot ok 1 - leg a opens the page\n  ---\n  location: \'' + path.join(root, 'vscode-extension', A) + ':3:1\'\n  error: \'an assertion of the leg\\\'s own failed\'\n  ...\n1..1\n# fail 1\n', exit: 1 });
   assert.equal(failed.status, 123, 'node\'s failure is the step\'s (through xargs, which answers 123)');
   assert.ok(!failed.err.includes('skipped under'), 'a failure is not called a skip:\n' + failed.err);
+  assert.ok(!failed.err.includes('lost its browser'), 'a failure for a reason of the leg\'s own is not called a lost browser:\n' + failed.err);
+  // a failure whose error names the switch is inBrowser failing to launch under it: the remedy is printed beside the leg,
+  // named from the record's location line
+  const LOST = SWITCH + ' is set and this leg cannot run: no playwright browser on this box; the browser leg needs one: browserType.launch: Executable doesn\'t exist at /nowhere';
+  const lostTap = 'TAP version 13\n# Subtest: leg a opens the page\nnot ok 1 - leg a opens the page\n  ---\n  duration_ms: 1\n  type: \'test\'\n  location: \'' + path.join(root, 'vscode-extension', A) + ':3:1\'\n  failureType: \'testCodeFailure\'\n  error: "' + LOST + '"\n  code: \'ERR_ASSERTION\'\n  ...\n1..1\n# fail 1\n';
+  const lost = run(A + '\n', excluded, { tap: lostTap, exit: 1 });
+  assert.equal(lost.status, 123);
+  assert.ok(lost.err.includes('ci-browser-legs: ' + A + ': \'leg a opens the page\' failed under ' + SWITCH + '=1 because inBrowser could not launch ("' + LOST + '"): the runner lost its browser: check the Chromium install step'), lost.err);
   const both = run(A + '\n', excluded, { tap: 'TAP version 13\nok 1 - leg a opens the page # SKIP why\n1..1\n', exit: 7 });
   assert.equal(both.status, 123, 'with a failure and a skip node\'s status stands and the skip is still named');
   assert.ok(both.err.includes('skipped under ' + SWITCH + '=1'), both.err);

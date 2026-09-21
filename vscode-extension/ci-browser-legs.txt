@@ -1,8 +1,10 @@
 # The browser legs the gating CI job runs with a browser. The step "Browser legs (node --test over
 # ci-browser-legs.txt)" in .github/workflows/ci.yml reads this file into node --test (scripts/ci-browser-legs.sh)
-# after the job's Chromium install, with ROMP_BROWSER_LEGS_REQUIRE=1 so a launch skip is a failure
-# (ui/webview/browser-legs-require.ts). The Test step's npm test runs every leg too, before any browser is
-# installed, so each leg skips there at launch; this step is the job's only run of a rostered leg with a browser.
+# after the job's Chromium install, with ROMP_BROWSER_LEGS_REQUIRE=1: the one shared launcher, inBrowser in
+# ui/webview/real-viewer-leg.ts, reads the switch (any non-empty value arms it) and under it a leg that cannot launch
+# fails naming the switch and the reason instead of skipping. The Test step's npm test runs every leg too, before
+# any browser is installed, so each leg skips there at launch; this step is the job's only run of a rostered leg
+# with a browser.
 #
 # Format: one compiled bundle path per line, relative to vscode-extension/, as the Test step's npm test builds it
 # (ui/webview/<name>-browser.test.ts builds to out-tests/ui/webview/<name>-browser.test.js), for example
@@ -11,8 +13,9 @@
 # the step's measured seconds in its body. A leg the job does not run is listed in ci-browser-legs-excluded.txt
 # with a reason; every browser leg in the tree is in exactly one of the two files, never neither
 # (tools/ci-browser-legs.test.mjs and scripts/ci-browser-legs.sh hold that; a line whose source moved or was
-# deleted turns both red). A leg listed here launches through real-viewer-leg.ts's inBrowser or
-# browser-legs-require.ts's launchBrowser: those are the roads the switch reaches, and a leg with a launch and a
-# skip of its own would skip under the step as it does without it, so both checkers refuse its line until it
-# launches through one of them. A leg already in ci-browser-legs-excluded.txt is moved, not copied: its line there
-# goes when its line here arrives.
+# deleted turns both red). A leg listed here launches through inBrowser with no launch or skip of its own: only
+# inBrowser reads the switch, and a leg with a launch or a skip of its own would skip under the step as it does
+# without it, so both checkers refuse its line until it launches through inBrowser alone. The gating job runs a
+# rostered leg in the Chromium it installs; a leg's Firefox and WebKit runs live elsewhere (a served pytest step, a
+# local run), and a line whose source names another engine outside a comment is refused. A leg already in
+# ci-browser-legs-excluded.txt is moved, not copied: its line there goes in the same commit as its line here arrives.

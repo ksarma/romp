@@ -30,7 +30,6 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
-import { launchBrowser } from "./browser-legs-require";
 
 export const EXT = process.cwd();                                       // npm test runs in vscode-extension
 export const requireCjs = createRequire(path.join(EXT, "package.json"));
@@ -156,13 +155,26 @@ window.putAtTop = function (text) {
 
 let pw: any = null;
 try { pw = requireCjs("playwright"); } catch { pw = null; }
+/** Whether the playwright module resolved from the extension's package.json: the one read the launch below guards on, exported so
+ *  a leg's self-test derives the reason a skip names from the same read and never from a second one. */
+export const playwrightInstalled = (): boolean => pw !== null;
 
-/** Launch headless Chromium and run `body` with it, or skip LOUDLY, saying why, as the other legs do; under
- *  ROMP_BROWSER_LEGS_REQUIRE=1 (the CI step that runs the rostered legs with a browser) the skip is a failure instead
- *  (browser-legs-require.ts). */
+/** Launch headless Chromium and run `body` with it, or skip LOUDLY naming the reason, as the other legs do. Under
+ *  ROMP_BROWSER_LEGS_REQUIRE (CI's browser-legs step sets it to 1 after the job installs Chromium; any non-empty value counts, so
+ *  a misspelt value never turns the requirement off in silence) a leg that cannot launch FAILS naming the switch and the reason
+ *  instead: the one CI run of a browser leg must not read green on a runner that lost its browser. Without the switch a skip
+ *  stays a skip: CI's Test step runs before the install, so every browser leg skips there and that step reads the source pins
+ *  beside them. The switch is read here, in the one launch the legs share, so a leg that launches through this helper carries
+ *  no read of its own. */
 export async function inBrowser(t: any, body: (browser: any) => Promise<void>): Promise<void> {
-  const browser = await launchBrowser(t, pw, "chromium");
-  if (!browser) return;
+  const cannot = (why: string) => {
+    if (process.env.ROMP_BROWSER_LEGS_REQUIRE) assert.fail("ROMP_BROWSER_LEGS_REQUIRE is set and this leg cannot run: " + why);
+    t.skip(why);
+  };
+  if (!pw) { cannot("playwright is not installed under vscode-extension; the browser leg needs it"); return; }
+  let browser: any;
+  try { browser = await pw.chromium.launch(); }
+  catch (e) { cannot("no playwright browser on this box; the browser leg needs one: " + String((e as Error).message).split("\n")[0]); return; }
   try { await body(browser); } finally { await browser.close(); }
 }
 
