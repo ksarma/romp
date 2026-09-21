@@ -1745,37 +1745,66 @@ class TheDriverParsed(unittest.TestCase):
         cell and no row, each deletable with the module green, and four more fired under no pin of their own). The refusal
         sites are read from this module's own source by ast (every `self.refuse(` and `self.refuse_at(` call inside class
         Walk, by line), and every REFUSED_CELLS cell, every PLANTS row, the unplanted driver and the one-round convergence cell
-        are run with `Walk.refuse` and `Walk.refuse_at` spied to record the line each call came from; the two sets must be
-        EQUAL, so a refusal branch added with no cell or row that fires it is a red until one does, and a cell deleted from
-        under a branch is a red too. The convergence cell: under rounds=1 the walk refuses that it did not converge (a page
-        reaches a binding through a helper's return, typed in the fixpoint's second round), and under the default bound the same source is clean
-        and its one call allowed, so the pin cannot pass because the source was refused for another reason."""
+        are run with `Walk.refuse` and `Walk.refuse_at` spied to record the line each call came from, PER EXERCISER. What the
+        cell checks, and no more (the maintainer's round 6, correctness-3: the earlier docstring claimed a cell deleted from
+        under a branch was a red too, which held for 14 of 70 cells): (a) the union of the lines every exerciser fired equals
+        the sites read from the source, both ways, so a refusal branch added with no cell or row that fires it is a red until
+        one does, and a recorded line the source names no site at is a red; (b) every REFUSED_CELLS cell with a token fires at
+        least one refusal site of its own, recorded per cell, so a cell whose source stopped exercising the walk (edited to a
+        no-op, its shape now accepted) is a red naming the cell where the union alone stayed green because a PLANTS row fires
+        the same line; the two token-less cells (bare-wait, second-browser) fire no refusal by design and are held to their
+        verdict class instead (an unlisted wait form, an unlisted receiver call); (c) the number of sites with ONE exerciser
+        and the cells that are that sole exerciser are derived and printed, not claimed: a cell deleted from under a branch is
+        a red only when it was that branch's sole exerciser, and the printed figure says how many are. Per-cell uniqueness is
+        not asserted because it is false by construction: there are more cells than sites, and PLANTS rows fire most sites
+        too. The convergence cell: under rounds=1 the walk refuses that it did not converge (a page reaches a binding through
+        a helper's return, typed in the fixpoint's second round), and under the default bound the same source is clean and
+        its one call allowed, so the pin cannot pass because the source was refused for another reason."""
         with open(os.path.realpath(__file__), encoding="utf-8") as f:
             tree = ast.parse(f.read())
         walk = next(n for n in ast.walk(tree) if isinstance(n, ast.ClassDef) and n.name == "Walk")
         sites = {n.lineno for n in ast.walk(walk) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in ("refuse", "refuse_at")
                  and isinstance(n.func.value, ast.Name) and n.func.value.id == "self"}
         self.assertGreaterEqual(len(sites), 30, "the walk's refusal sites, read from the source: %r" % (sorted(sites),))
-        fired = set()
+        fired_by, current = {}, [None]
 
         def spy(fn):
             def wrapped(self, *a, **k):
-                fired.add(inspect.currentframe().f_back.f_lineno)
+                fired_by.setdefault(current[0], set()).add(inspect.currentframe().f_back.f_lineno)
                 return fn(self, *a, **k)
             return wrapped
         cells = parse_js([(name, ROOT_JS + src) for name, (src, _) in REFUSED_CELLS.items()] + [("convergence", CONVERGENCE_JS)])[1]
+        verdicts = {}
         with mock.patch.object(Walk, "refuse", spy(Walk.refuse)), mock.patch.object(Walk, "refuse_at", spy(Walk.refuse_at)):
             for name, (src, _) in REFUSED_CELLS.items():
-                census(ROOT_JS + src, cells[name][1])
+                current[0] = ("cell", name)
+                verdicts[name] = census(ROOT_JS + src, cells[name][1])
             for name, js, _ in PLANTS:
+                current[0] = ("row", name) if js else ("driver", "driver.mjs")
                 census(planted(js), self.trees[name if js else "driver.mjs"][1])
+            current[0] = ("convergence", "one round")
             one = Walk(CONVERGENCE_JS, cells["convergence"][1]).run(rounds=1)
         self.assertTrue(any("did not converge in 1 rounds" in why for _, _, why in one.refusals), "the one-round walk refuses that it did not converge: %r" % (sorted(one.refusals),))
         c = census(CONVERGENCE_JS, cells["convergence"][1])
         self.assertEqual((c["refusals"], c["unlisted"]), ([], []), "the same source under the default bound is clean, so the convergence pin is not another refusal: %r" % (c["refusals"],))
+        fired = set().union(*fired_by.values()) if fired_by else set()
         self.assertEqual(sorted(sites - fired), [], "refusal sites of the walk (by line) that no cell of REFUSED_CELLS, no PLANTS row, the driver and the convergence cell fire: "
                                                   "each needs a cell that exercises it, or it is a branch nothing pins")
         self.assertEqual(sorted(fired - sites), [], "refusals recorded from lines the source read names no site at (the derivation and the run disagree)")
+        # (b) per cell: every token cell fires a site of its own; the two token-less cells are held to their verdict class
+        silent = sorted(name for name, (_, token) in REFUSED_CELLS.items() if token is not None and not fired_by.get(("cell", name)))
+        self.assertEqual(silent, [], "a REFUSED_CELLS cell that fires no refusal site of the walk: its shape is accepted now, or its source is a no-op, and the union above "
+                                     "stayed green because a PLANTS row fires the same line: %r" % (silent,))
+        for name, (_, token) in REFUSED_CELLS.items():
+            if token is None:
+                got = verdicts[name]
+                self.assertTrue(got["unlisted_waits"] if name == "bare-wait" else got["unlisted"], "%s fires no refusal by design and is held to its verdict class: %r" % (name, got))
+        # (c) the sole exercisers, derived and printed, never claimed
+        exercisers = {site: sorted(who for who, lines in fired_by.items() if site in lines) for site in sites}
+        sole = {site: who[0] for site, who in exercisers.items() if len(who) == 1}
+        sole_cells = sorted({name for kind, name in sole.values() if kind == "cell"})
+        print("coverage: %d refusal sites, %d cells, %d rows; %d sites have one exerciser (%d of them a REFUSED_CELLS cell: %s); a cell deleted from under a branch is a red only when it is that branch's sole exerciser"
+              % (len(sites), len(REFUSED_CELLS), len(PLANTS), len(sole), len(sole_cells), ", ".join(sole_cells) or "none"))
 
     def test_the_driver_stores_each_read_under_the_key_the_driver_bound_module_names(self):
         """The record keys the driver-bound module's wiring pin reads (WAITED_READS, UNWAITED_READS), derived here from the
