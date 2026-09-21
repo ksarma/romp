@@ -317,8 +317,10 @@ class Settings(unittest.TestCase):
             self.skipTest("the runner's floor (tests/conftest.py) is not in play")
         self.assertEqual(Path(marker).read_text().strip(), "off")
         self.assertEqual(ht.session_hosts_read(root), (False, "off"), "a fresh floored root reads hosts off")
-        Path(marker).unlink()                                     # a test that removes it gets it back before the next test
-        self.assertTrue(ht.session_hosts_on(root), "…and a bare root is on, which is exactly what the belt prevents")
+        # The other half on a root of this test's own, not by removing the floored file (until 2026-09-21 this unlinked it and
+        # relied on the per-test re-floor): a removal reads as on, so tests/test_tempdir_hygiene.py's ledger counts it as a
+        # hosts-on turn in the floored root, whose shape (romp-tests-state-XXXXXXXX/romp) is no mkdtemp the reader can follow.
+        self.assertTrue(ht.session_hosts_on(tempfile.mkdtemp()), "…and a bare root is on, which is exactly what the belt prevents")
 
     def test_the_grace_default_and_its_file(self):
         d = tempfile.mkdtemp()

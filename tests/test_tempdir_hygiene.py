@@ -279,14 +279,15 @@ class _Bindings:
     site in the module passes for them (by position, `self`/`cls` skipped; by keyword) and to their defaults, so a value
     that reaches a write through a helper's argument is still read (2026-09-21). Two views of the same walk: `module`,
     everything; `local[f]`, what function `f` binds itself (its own parameters included; an inner function's bindings
-    are the inner function's); and `owner[node]`, the innermost function a node sits in. A reader resolves a name in
+    are the inner function's); and `owner[node]`, the innermost function a node sits in; `functions[name]` and `calls[name]`, the module's defs and
+    its calls by name, for a helper that builds or receives a path (2026-09-21). A reader resolves a name in
     its enclosing function first and the module second (_Scope), since a 13,000-line module binds `root` to a hundred
     things and only the enclosing function's binding is the write's. Lazy: a module whose tempfile calls all name a
     literal and no `dir=` never asks, and costs its parse alone. A `with open(...) as fh` handle is NOT recorded: it is
     scoped to its statement by _session_hosts_writes, since a module reuses `fh` for every file it writes."""
 
     def __init__(self, tree):
-        self.tree, self.module, self.local, self.owner = tree, None, None, None
+        self.tree, self.module, self.local, self.owner, self.functions, self.calls = tree, None, None, None, None, None
 
     def built(self):
         if self.module is None:
@@ -341,7 +342,10 @@ class _Bindings:
             for name, v in values:
                 _bind(module, ast.Name(name), v)
                 _bind(local[f], ast.Name(name), v)
-        self.module, self.local, self.owner = module, local, owner
+        functions = collections.defaultdict(list)
+        for f in funcs:
+            functions[f.name].append(f)
+        self.module, self.local, self.owner, self.functions, self.calls = module, local, owner, dict(functions), dict(calls)
 
 
 def _assignments(tree):
@@ -361,6 +365,10 @@ class _Scope:
         b = self.bindings.built()
         local = b.local.get(b.owner.get(self.node))
         return (local.get(key) if local else None) or b.module.get(key, default)
+
+    def functions(self, name):
+        """The module's defs named `name`, for a helper that returns a session-hosts path."""
+        return self.bindings.built().functions.get(name, ())
 
     @property
     def module(self):
@@ -938,7 +946,9 @@ class BareRunLeavesNothing(unittest.TestCase):
 # roots the harness mints (a controller-shaped and a worker-shaped process, by execution), the lab shapes
 # are read from the tests' own text (every write into a `session-hosts` file whose value is not the literal
 # off — a loop variable, a helper's argument and a with-open handle read through their bindings, a value
-# the reader cannot read listed by site and counted — its state-root expression followed through the
+# the reader cannot read listed by site and counted, a removal or a touch read as on; every OTHER occurrence of
+# the name in a module accounted for by shape or listed as unaccounted, the ledger below — its state-root
+# expression followed through the
 # enclosing function's assignments, then the module's, to the mkdtemp that made it), the socket tail
 # comes from the kernel's own host_sock and sock_names, and the budget is the kernel's constant. The
 # canonical TMPDIR is the box rule's input, `mktemp -d /tmp/sweep-XXXXXX`, 17 bytes, and stated as such.
@@ -1014,30 +1024,92 @@ def _lab_shapes(expr, assigned, depth=4):
     return []
 
 
+def _names_setting(node):
+    """Whether `node` spells the kernel's constant by name: `SESSION_HOSTS_SETTING`, `ht.SESSION_HOSTS_SETTING`, or a
+    module's own alias ending in it (kernel/host_transport.py binds it to the literal; no test spells it today, and one
+    that starts to is an occurrence the ledger accounts for like the literal)."""
+    return ((isinstance(node, ast.Name) and node.id.endswith("SESSION_HOSTS_SETTING"))
+            or (isinstance(node, ast.Attribute) and node.attr.endswith("SESSION_HOSTS_SETTING")))
+
+
+def _setting_leaves(expr, assigned, depth=2):
+    """The nodes through which `expr` names the session-hosts FILE NAME: the literal (str or bytes), the kernel's constant
+    by name, a name bound to either (the name itself, followed through the bindings), an arm of a conditional. [] when it
+    names something else. Every node listed is what the ledger marks as reached by the write that consumed it."""
+    if isinstance(expr, ast.Constant):
+        return [expr] if expr.value in ("session-hosts", b"session-hosts") else []
+    if _names_setting(expr):
+        return [expr]
+    if isinstance(expr, ast.IfExp):
+        return _setting_leaves(expr.body, assigned, depth) + _setting_leaves(expr.orelse, assigned, depth)
+    if isinstance(expr, (ast.Name, ast.Attribute)) and depth:
+        # The NAME is the consumed node, not the literal behind it: the literal's own site (the assignment, the loop) is
+        # accounted for only when EVERY use of the name is, so a second use in an unknown shape is never hidden by this one.
+        return [expr] if any(_setting_leaves(v, assigned, depth - 1) for v in assigned.get(ast.unparse(expr), ())) else []
+    return []
+
+
+def _returns(func):
+    """The values `func`'s own body returns (a nested def's or lambda's are its own)."""
+    out, todo = [], list(func.body)
+    while todo:                                                    # loop-ok: an explicit stack, one visit per node
+        n = todo.pop()
+        if isinstance(n, ast.Return) and n.value is not None:
+            out.append(n.value)
+        elif not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
+            todo.extend(ast.iter_child_nodes(n))
+    return out
+
+
+PATH_ARGS = ("Path", "PurePath", "PurePosixPath", "join", "str", "fspath", "realpath", "abspath", "normpath")
+
+
 def _session_hosts_path(expr, assigned, depth=3):
-    """[(state expression, trailing literal components)] for every `session-hosts` file `expr` can name:
-    Path(<state>, ..., "session-hosts") or os.path.join(...) with literal middle components, `<state> / "session-hosts"`,
-    open(<one of those>, ...), Path(<name>), and a name or attribute bound to one of those (followed through the module's
-    assignments: `toggle = os.path.join(root, "session-hosts")` then `open(toggle, "w")`). [] when `expr` names no such
-    file. The LAST component decides: this reads paths, not values."""
+    """[(state expression, trailing literal components, occurrence nodes consumed)] for every `session-hosts` file `expr`
+    can name: Path(<state>, ..., <name>) or os.path.join(...) with literal middle components, `<state> / <name>`,
+    Path(<state>).joinpath(..., <name>), open(<one of those>, ...), os.open(...), os.fdopen(<a descriptor bound to one>),
+    Path(<one of those>).open(...), Path(<name>), either arm of a conditional, a call to a module function
+    that returns one (`toggle(root)` with `def toggle(root): return Path(root, "session-hosts")`), and a name or attribute
+    bound to one of those (followed through the bindings: `toggle = os.path.join(root, "session-hosts")` then
+    `open(toggle, "w")`; `fd = os.open(...)` then `os.write(fd, ...)`). <name> is the literal, the kernel's constant by
+    name or a name bound to either (_setting_leaves). [] when `expr` names no such file. The LAST component decides:
+    this reads paths, not values. The consumed nodes are what the ledger marks as reached: the literal when the write's
+    own expression holds it, otherwise the indirection (the name, the helper call), so the literal's site is accounted
+    for only when every use of that indirection is."""
+    if isinstance(expr, ast.IfExp):
+        return _session_hosts_path(expr.body, assigned, depth) + _session_hosts_path(expr.orelse, assigned, depth)
     if isinstance(expr, ast.Call) and expr.args:
         name = _call_name(expr)
-        if name in ("Path", "join", "str", "fspath", "realpath", "abspath", "open"):
-            if len(expr.args) >= 2 and name != "open":
+        if name in ("open", "fdopen") and isinstance(expr.func, ast.Attribute) and ast.unparse(expr.func.value) not in MODULES:
+            return _session_hosts_path(expr.func.value, assigned, depth)   # Path(<path>).open(mode): the receiver is the path
+        if name == "joinpath" and isinstance(expr.func, ast.Attribute):    # Path(<root>).joinpath(..., <name>)
+            last, mid = expr.args[-1], expr.args[:-1]
+            leaves = _setting_leaves(last, assigned)
+            if leaves and all(isinstance(a, ast.Constant) and isinstance(a.value, str) for a in mid):
+                return [(expr.func.value, tuple(a.value for a in mid), leaves)]
+            return []
+        if name in PATH_ARGS + ("open", "fdopen"):
+            if len(expr.args) >= 2 and name not in ("open", "fdopen"):
                 last, mid = expr.args[-1], expr.args[1:-1]
-                if (isinstance(last, ast.Constant) and last.value == "session-hosts"
-                        and all(isinstance(a, ast.Constant) and isinstance(a.value, str) for a in mid)):
-                    return [(expr.args[0], tuple(a.value for a in mid))]
+                leaves = _setting_leaves(last, assigned)
+                if leaves and all(isinstance(a, ast.Constant) and isinstance(a.value, str) for a in mid):
+                    return [(expr.args[0], tuple(a.value for a in mid), leaves)]
                 return []
             return _session_hosts_path(expr.args[0], assigned, depth)
+        if depth:                                                  # a helper of the module that builds the path
+            out = []
+            for f in assigned.functions(name):
+                for r in _returns(f):
+                    out += [(s, c, [expr]) for s, c, _ in _session_hosts_path(r, assigned, depth - 1)]
+            return out
         return []
-    if (isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Div) and isinstance(expr.right, ast.Constant)
-            and expr.right.value == "session-hosts"):
-        return [(expr.left, ())]
+    if isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Div):
+        leaves = _setting_leaves(expr.right, assigned)
+        return [(expr.left, (), leaves)] if leaves else []
     if isinstance(expr, (ast.Name, ast.Attribute)) and depth:
         out = []
         for v in assigned.get(ast.unparse(expr), ()):
-            out += _session_hosts_path(v, assigned, depth - 1)
+            out += [(s, c, [expr]) for s, c, _ in _session_hosts_path(v, assigned, depth - 1)]
         return out
     return []
 
@@ -1071,64 +1143,484 @@ def _written_word(expr, assigned, seen=()):
 
 
 def _session_hosts_writes(tree, scope_of):
-    """(call, [(state expression, components)], value expression, scope) for every write into a `session-hosts` file the
-    module makes: `<path>.write_text(v)`, `<path>.write_bytes(v)`, `open(<path>, ...).write(v)`, `<name>.write(v)` for a
-    name assigned an open(<path>), and `fh.write(v)` inside a `with open(<path>, ...) as fh` (the handle scoped to that
-    statement's body, since a module reuses one handle name for every file it writes). `scope_of(node)` gives the
-    bindings a path or value at that node resolves through (its enclosing function's first)."""
+    """(call, [(state expression, components, consumed nodes)], value expression or None, scope) for every write into a
+    `session-hosts` file the module makes: `<path>.write_text(v)`, `<path>.write_bytes(v)`, `open(<path>, ...).write(v)`,
+    `<name>.write(v)` for a name or attribute bound to an open(<path>) anywhere in the module (a handle bound in setUp,
+    written in a test), `fh.write(v)` inside a `with open(<path>, ...) as fh` (the handle scoped to that statement's body,
+    since a module reuses one handle name for every file it writes), `os.write(fd, v)` for a descriptor bound to
+    os.open(<path>, ...); and, with value None, a REMOVAL or a TOUCH of the file — `<path>.unlink()`, `os.remove(<path>)`,
+    `os.unlink(<path>)`, `<path>.touch()`, a truncating open with no handle kept (`with open(<path>, "w"): ...`,
+    `open(<path>, "w").close()`) — which leaves no file or an empty one, both of which the kernel reads as on
+    (session_hosts_read: the default). The fifth element is the nodes the write consumed, for the ledger to mark: the
+    handle name at a `fh.write` (the path's own site is accounted through the handle's every use), else the path's leaves.
+    `scope_of(node)` gives the bindings a path or value at that node resolves through (its enclosing function's first)."""
     for node in ast.walk(tree):
         if isinstance(node, ast.With):
             for item in node.items:
                 if (isinstance(item.optional_vars, ast.Name) and isinstance(item.context_expr, ast.Call)
-                        and _call_name(item.context_expr) == "open" and item.context_expr.args):
+                        and _call_name(item.context_expr) in ("open", "fdopen") and item.context_expr.args):
                     assigned = scope_of(node)
-                    hits = _session_hosts_path(item.context_expr.args[0], assigned)
+                    hits = _session_hosts_path(item.context_expr, assigned)
                     if not hits:
                         continue
                     for sub in ast.walk(node):
                         if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute) and sub.func.attr == "write"
                                 and isinstance(sub.func.value, ast.Name) and sub.func.value.id == item.optional_vars.id
                                 and sub.args):
-                            yield sub, hits, sub.args[0], assigned
-        elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                and node.func.attr in ("write_text", "write_bytes", "write") and node.args):
+                            yield sub, hits, sub.args[0], assigned, [sub.func.value]
+                elif (item.optional_vars is None and isinstance(item.context_expr, ast.Call)
+                        and _call_name(item.context_expr) == "open" and item.context_expr.args
+                        and not _open_reads(item.context_expr)):
+                    assigned = scope_of(node)                                  # with open(<path>, "w"): a truncating open
+                    hits = _session_hosts_path(item.context_expr, assigned)
+                    if hits:
+                        yield item.context_expr, hits, None, assigned, [leaf for _, _, leaves in hits for leaf in leaves]
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            attr, recv = node.func.attr, node.func.value
+            on_os = isinstance(recv, ast.Name) and recv.id == "os"
+            if on_os and attr == "write" and len(node.args) >= 2:              # os.write(fd, v)
+                path, value = node.args[0], node.args[1]
+            elif on_os and attr in ("remove", "unlink") and node.args:         # a removal: no file reads as on
+                path, value = node.args[0], None
+            elif not on_os and attr in ("write_text", "write_bytes", "write") and node.args:
+                path, value = recv, node.args[0]
+            elif not on_os and attr in ("unlink", "touch"):                    # Path.unlink, Path.touch: none or empty, on
+                path, value = recv, None
+            elif (attr == "close" and isinstance(recv, ast.Call) and _call_name(recv) == "open" and recv.args
+                    and not _open_reads(recv)):                                # open(<path>, "w").close(): truncated, on
+                path, value = recv, None
+            else:
+                continue
             assigned = scope_of(node)
-            hits = _session_hosts_path(node.func.value, assigned)
+            hits = _session_hosts_path(path, assigned)
             if hits:
-                yield node, hits, node.args[0], assigned
+                yield node, hits, value, assigned, [leaf for _, _, leaves in hits for leaf in leaves]
 
 
-def hosts_on_labs(sources, tail):
-    """(labs, unresolved, opaque): one Lab per shape of state root a test turns hosts ON in, read from `sources`
-    ([(label, text)]): bytes below the process temp root = `/` + prefix + mkdtemp's tail + each `/component`. EVERY
-    write into a `session-hosts` file counts as hosts-on unless its value reads as the literal off (2026-09-21; until
-    then only a literal "on" counted, and a value the reader could not see — a loop variable, a helper's argument, a
-    handle — silently dropped its lab from the bound). `unresolved` lists the hosts-on sites whose state root the reader
-    could not follow to a mkdtemp; `opaque` lists the writes whose VALUE it could not read (their labs are counted all
-    the same, as hosts-on). Both are holes in the bound, for the caller to refuse by name."""
-    labs, unresolved, opaque = [], [], []
-    for label, text in sources:
-        if "session-hosts" not in text:
-            continue
-        tree = ast.parse(text)
-        for node, hits, value, assigned in _session_hosts_writes(tree, _scoper(tree)):
-            word = _written_word(value, assigned)
+# THE LEDGER (2026-09-21, the refuter's finding on the round-2 reader): the guarantee above is closed only over the write
+# idioms _session_hosts_writes knows, so a write in any other shape — a copy, a json.dump into a handle, a shell one-liner,
+# a Path built through a helper — dropped its lab in silence. Now EVERY occurrence of the session-hosts name in a scanned
+# module (every str or bytes constant containing it, every Name or Attribute ending in SESSION_HOSTS_SETTING) is walked
+# up to the expression that consumes it and must be REACHED by one of the shapes below, or it is listed in
+# `unaccounted` by file, line and source line for the pin to refuse. No per-file allowlist: the shapes are by construction,
+# each with the reason it reads or writes nothing the derivation would need to count.
+NON_WRITE_SHAPES = {
+    "read": "read_text / read_bytes / exists / is_file / is_dir / stat / lstat / samefile / resolve on the path, os.path.exists "
+            "/ isfile / isdir / getsize / getmtime / access / os.stat on it, open() or Path.open() in a read-only mode: the "
+            "file's content is read, never written",
+    "comparison": "an operand of ==, !=, in, not in (`last.value == <name>`, `<name> in os.listdir(d)`): a string compared, "
+                  "not a path opened",
+    "assertion": "an argument of a unittest assert* method (a compared value or its message): compared or printed, never opened",
+    "message": "the text of print / fail / skipTest / a log call / an exception being raised / a bare `assert`'s message, or "
+               "the VALUE written by .write / .write_text into some file (the word, not the file): displayed or stored as text",
+    "docstring": "a string statement (a docstring, a bare string): documentation",
+    "parent-dir": "os.path.dirname(<path>) or <path>.parent: the file's own name is dropped and the result names its "
+                  "directory (conftest's os.makedirs of it); nothing about the toggle is read or written, unless that "
+                  "directory is then removed or renamed (rmtree, rmdir, rename, move), which is unaccounted",
+    "inspection": "len / repr / hash / isinstance / type / any / all / sum / enumerate over the text, or a str method "
+                  "returning a bool or an int (startswith, endswith, count, find, index): the text is looked at, not used",
+    "reader input": "a (label, text) pair handed to this module's own readers (hosts_on_labs, session_hosts_ledger, "
+                    "harness_dirs, longest_prefix, _python_pins): planted source under test, read by the reader in that test",
+    "child source": "a Python source handed to a child interpreter (subprocess.run([sys.executable, \"-c\", <text>]), the "
+                    "text joined from literal lines) is parsed and read as a nested module: its writes are classified and "
+                    "its labs counted under `<file>:<line> (a child Python's source)`; a text that is not Python (a shell "
+                    "one-liner) is unaccounted",
+    "bound": "a name or attribute bound to the path or the text (`toggle = os.path.join(root, <name>)`, a loop target, a "
+             "parameter's default, a helper's return value or parameter): accounted when EVERY use of it, in the binding's "
+             "scope, is a classified write or one of the shapes here",
+    "handle": "open(<path>, a write mode) or os.open(<path>, flags) bound to a name or a with-target: the path is written "
+              "through the handle, so EVERY use of the handle must be a classified write (fh.write, os.write), a read "
+              "(os.read) or housekeeping; a handle nothing uses, or one handed to json.dump, is unaccounted",
+    "housekeeping": "close / flush / fileno / seek / tell on a handle, os.close / os.fsync on a descriptor: nothing written",
+}
+READ_METHODS = ("read_text", "read_bytes", "exists", "is_file", "is_dir", "is_symlink", "stat", "lstat", "samefile",
+                "resolve", "readlink", "owner", "group")
+READ_FUNCTIONS = ("exists", "lexists", "isfile", "isdir", "islink", "stat", "lstat", "fstat", "getsize", "getmtime",
+                  "getctime", "getatime", "access", "samefile", "readlink", "read", "pread")
+HOUSEKEEPING_METHODS = ("close", "flush", "fileno", "seek", "tell", "isatty", "readable", "writable", "seekable")
+HOUSEKEEPING_FUNCTIONS = ("close", "fsync", "fdatasync", "set_inheritable", "get_inheritable")
+MODULES = ("os", "os.path", "shutil", "subprocess", "pathlib", "json", "io", "tempfile", "sys")
+DIR_REMOVERS = ("rmtree", "rmdir", "removedirs", "rename", "replace", "move")   # of the toggle's directory: the toggle goes too
+STRING_TEXT_METHODS = ("replace", "strip", "lstrip", "rstrip", "lower", "upper", "format", "join", "split", "rsplit",
+                       "splitlines", "encode", "decode", "partition", "rpartition", "removeprefix", "removesuffix",
+                       "casefold", "title", "capitalize", "center", "ljust", "rjust", "expandtabs", "translate", "zfill",
+                       "items", "keys", "values", "get", "copy")           # a container's texts flow on to its consumer
+STRING_INSPECT_METHODS = ("startswith", "endswith", "count", "find", "rfind", "index", "rindex", "isdigit", "isalpha",
+                          "isalnum", "isspace", "islower", "isupper", "isidentifier")
+PASS_CALLS = PATH_ARGS + ("bytes", "expanduser", "basename", "dedent", "sorted", "list", "set", "tuple", "dict", "frozenset",
+                          "reversed", "iter", "next", "map", "filter", "zip", "min", "max")
+INSPECTORS = ("len", "repr", "hash", "isinstance", "type", "any", "all", "sum", "bool", "enumerate", "id")
+MESSAGE_SINKS = ("print", "fail", "skipTest", "skip", "log", "debug", "info", "warning", "warn", "error", "exception",
+                 "critical", "_log")
+WRITE_METHODS = ("write", "write_text", "write_bytes")
+EXECUTORS = ("run", "Popen", "call", "check_call", "check_output", "getoutput", "getstatusoutput", "system", "popen",
+             "exec", "eval", "execv", "execvp", "execve", "execvpe", "spawnv", "spawnvp", "spawnl", "spawnlp")
+READER_FUNCTIONS = ("hosts_on_labs", "session_hosts_ledger", "harness_dirs", "longest_prefix", "_python_pins", "_shell_pins")
+TEXT_PASS_NODES = (ast.JoinedStr, ast.FormattedValue, ast.Tuple, ast.List, ast.Set, ast.Dict, ast.IfExp, ast.keyword,
+                   ast.Starred, ast.Subscript, ast.BinOp, ast.BoolOp, ast.Await, ast.Yield, ast.ListComp, ast.SetComp,
+                   ast.GeneratorExp, ast.DictComp, ast.comprehension, ast.Slice)
+
+
+def _on_module(call):
+    """Whether `call` is a module's function (os.replace, shutil.copy) rather than a method on a value (a str's replace)."""
+    return isinstance(call.func, ast.Attribute) and ast.unparse(call.func.value) in MODULES
+
+
+def _open_reads(call):
+    """True when an open(...) call reads only: no mode, or a literal mode without w, a, x or +. The mode is the second
+    argument of the builtin open, os.open (whose flags the reader cannot read: False) and os.fdopen, the first of Path.open."""
+    method = isinstance(call.func, ast.Attribute) and ast.unparse(call.func.value) not in MODULES
+    return _read_mode(call, 0 if method else 1)
+
+
+def _read_mode(call, pos):
+    """True when an open(...) (pos 1) or Path.open(...) (pos 0) reads only: no mode, or a literal without w, a, x or +."""
+    mode = next((k.value for k in call.keywords if k.arg == "mode"), None)
+    if mode is None and len(call.args) > pos:
+        mode = call.args[pos]
+    if mode is None:
+        return True
+    return isinstance(mode, ast.Constant) and isinstance(mode.value, str) and not any(c in mode.value for c in "wax+")
+
+
+def _occurrences(tree):
+    """Every node that spells the session-hosts name: a str constant containing it (a path component, a message, a
+    docstring, a script), a bytes constant containing it, a Name or Attribute ending in SESSION_HOSTS_SETTING."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant):
+            v = node.value
+            if (isinstance(v, str) and "session-hosts" in v) or (isinstance(v, bytes) and b"session-hosts" in v):
+                yield node
+        elif _names_setting(node) and isinstance(node.ctx, ast.Load):    # a Store target is the binding, not a use
+            yield node
+
+
+def _child_source(chain):
+    """The Python text a child interpreter is handed, reconstructed from the constants on the way from an occurrence to
+    the executor: `<sep>.join([...])` of literal lines (a non-literal element becomes `pass`, so the line count holds),
+    else the occurrence's own string. None when neither is a string."""
+    for node in chain:
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "join"
+                and isinstance(node.func.value, ast.Constant) and isinstance(node.func.value.value, str)
+                and node.args and isinstance(node.args[0], (ast.List, ast.Tuple))):
+            return node.func.value.value.join(e.value if isinstance(e, ast.Constant) and isinstance(e.value, str) else "pass"
+                                              for e in node.args[0].elts)
+    leaf = chain[0]
+    return leaf.value if isinstance(leaf, ast.Constant) and isinstance(leaf.value, str) else None
+
+
+class _Ledger:
+    """One module's account of the session-hosts name (hosts_on_labs runs one per module, and one per child source it
+    finds): the writes _session_hosts_writes classifies mark the nodes they consumed as reached; every other occurrence is
+    walked up from its node to the expression that consumes it and given a NON_WRITE_SHAPES category, or None. Results:
+    `labs`, `unresolved`, `opaque` as hosts_on_labs documents them; `unaccounted`, the `label:line: source line` of every
+    occurrence with no category (a bound name's first unaccounted use named); `entries`, [(line, category, source line)]
+    for every occurrence of this module's own text."""
+
+    def __init__(self, label, text, tail, depth=2, tree=None):
+        self.label, self.text, self.tail, self.depth = label, text, tail, depth
+        self.tree = tree if tree is not None else ast.parse(text)
+        self.lines = text.splitlines()
+        self.bindings = _Bindings(self.tree)
+        self.parents = {c: p for p in ast.walk(self.tree) for c in ast.iter_child_nodes(p)}
+        self.reached, self.why = {}, {}
+        self.labs, self.unresolved, self.opaque, self.unaccounted, self.entries = [], [], [], [], []
+        self._run()
+
+    def _scope(self, node):
+        return _Scope(self.bindings, node)
+
+    def _site(self, node):
+        return "%s:%d: %s" % (self.label, node.lineno, self.lines[node.lineno - 1].strip())
+
+    def _run(self):
+        for node, hits, value, assigned, consumed in _session_hosts_writes(self.tree, self._scope):
+            word = "on" if value is None else _written_word(value, assigned)  # None value: a removal, a touch, a truncation
+            category = "write:" + (word or "opaque")
+            for leaf in consumed:
+                self.reached.setdefault(id(leaf), set()).add(category)
             if word == "off":
                 continue
             if word is None:
-                opaque.append("%s:%d: %s" % (label, node.lineno, ast.unparse(value)))
-            for expr, comps in hits:
+                self.opaque.append("%s:%d: %s" % (self.label, node.lineno, ast.unparse(value)))
+            for expr, comps, _ in hits:
                 shapes = _lab_shapes(expr, assigned)              # the enclosing function's bindings first...
                 if not shapes:
                     shapes = _lab_shapes(expr, assigned.module)   # ...then the module's, for a root a caller handed in
                 shapes = [(p, c + comps, n) for p, c, n in shapes]
                 if not shapes or any(p is None for p, _, _ in shapes):
-                    unresolved.append("%s:%d: %s" % (label, node.lineno, ast.unparse(expr)))
+                    self.unresolved.append("%s:%d: %s" % (self.label, node.lineno, ast.unparse(expr)))
                     continue
-                for prefix, cs, note in dict.fromkeys(shapes):
-                    below = 1 + len(os.fsencode(prefix)) + tail + sum(1 + len(os.fsencode(c)) for c in cs)
-                    labs.append(Lab(below, label, node.lineno, prefix, cs, note))
-    return labs, unresolved, opaque
+                note = "no file, or an empty one, reads as on (a removal, a touch, a truncating open)" if value is None else None
+                for prefix, cs, n in dict.fromkeys(shapes):
+                    below = 1 + len(os.fsencode(prefix)) + self.tail + sum(1 + len(os.fsencode(c)) for c in cs)
+                    self.labs.append(Lab(below, self.label, node.lineno, prefix, cs, n or note))
+        for leaf in _occurrences(self.tree):
+            cats = self.reached.get(id(leaf))
+            category = ", ".join(sorted(cats)) if cats else self._account(leaf, (), self.depth + 1)
+            self.entries.append((leaf.lineno, category, self.lines[leaf.lineno - 1].strip()))
+            if category is None:
+                why = self.why.get(id(leaf)) or next((w for w in self.why.values()), None) if self.why else None
+                self.unaccounted.append(self._site(leaf) + (" (%s)" % why if why else ""))
+            self.why.clear()
+
+    def _uses(self, key, at):
+        """Every load of `key` (a Name's or Attribute's source text) in scope at `at`: the enclosing function's body for a
+        plain local name, the whole module for an attribute or a module-level name."""
+        owner = self.bindings.built().owner.get(at)
+        scope = owner if owner is not None and "." not in key else self.tree
+        return [n for n in ast.walk(scope) if isinstance(n, (ast.Name, ast.Attribute))
+                and isinstance(n.ctx, ast.Load) and ast.unparse(n) == key]
+
+    def _all(self, nodes, seen, depth, origin):
+        """The atomic categories of every node in `nodes` (a bound name's uses, a helper's calls, a parameter's reads, a
+        handle's uses), or None when one is unaccounted, its site recorded against `origin`. No uses at all is None too: a
+        dead binding, a handle nothing writes through."""
+        if not nodes or not depth:
+            return None
+        cats = set()
+        for n in nodes:
+            if id(n) in self.reached:
+                cats |= self.reached[id(n)]
+                continue
+            c = self._account(n, seen, depth - 1)
+            if c is None:
+                self.why.setdefault(id(origin), "through " + self._site(n))
+                return None
+            for prefix in ("bound: ", "handle: "):
+                if c.startswith(prefix):
+                    c = c[len(prefix):]
+            cats |= set(c.split(", "))
+        return cats
+
+    def _account(self, leaf, seen, depth):
+        """The NON_WRITE_SHAPES category through which the occurrence `leaf` is accounted for, or None."""
+        if id(leaf) in seen:
+            return None
+        seen = seen + (id(leaf),)
+        node, chain = leaf, [leaf]
+        while True:                                                # loop-ok: one step up the tree per turn, ends at a stmt
+            parent = self.parents.get(node)
+            if parent is None:
+                return None
+            if isinstance(parent, ast.Expr):
+                return "docstring" if isinstance(node, (ast.Constant, ast.JoinedStr)) else None
+            if isinstance(parent, ast.Compare):
+                return "comparison"
+            if isinstance(parent, ast.Assert):
+                return "message"
+            if isinstance(parent, TEXT_PASS_NODES):
+                node = parent
+                chain.append(node)
+                continue
+            if isinstance(parent, ast.Attribute):
+                grand = self.parents.get(parent)
+                if isinstance(grand, ast.Call) and grand.func is parent:
+                    m = parent.attr
+                    if m in READ_METHODS:
+                        return "read"
+                    if m == "open":
+                        return "read" if _open_reads(grand) else self._handle(grand, seen, depth)
+                    if m in STRING_TEXT_METHODS:
+                        node = grand
+                        chain.append(node)
+                        continue
+                    if m in STRING_INSPECT_METHODS:
+                        return "inspection"
+                    if m in HOUSEKEEPING_METHODS:
+                        return "housekeeping"
+                    return None                                    # a write, a removal, a rename the reader did not classify
+                if parent.attr in ("parent", "parents"):
+                    return self._parent_dir(parent)
+                if parent.attr in ("name", "stem", "suffix", "suffixes", "parts", "anchor"):
+                    node = parent
+                    chain.append(node)
+                    continue
+                return None
+            if isinstance(parent, ast.Call):
+                name = _call_name(parent)
+                if parent.func is node:
+                    return None
+                if name in PASS_CALLS or (name in STRING_TEXT_METHODS and not _on_module(parent)):
+                    node = parent                                  # the result is a path or a text again: its consumer decides
+                    chain.append(node)
+                    continue
+                if name in STRING_INSPECT_METHODS and not _on_module(parent):
+                    return "inspection"
+                if name == "dirname":
+                    return self._parent_dir(parent)
+                if name in READ_FUNCTIONS:
+                    return "read"
+                if name in ("open", "fdopen"):
+                    return "read" if _open_reads(parent) else self._handle(parent, seen, depth)
+                if name in HOUSEKEEPING_FUNCTIONS:
+                    return "housekeeping"
+                if name and name.startswith("assert"):
+                    return "assertion"
+                if name in MESSAGE_SINKS or isinstance(self.parents.get(parent), ast.Raise):
+                    return "message"
+                if name in WRITE_METHODS and node in parent.args:
+                    return "message"
+                if name in INSPECTORS:
+                    return "inspection"
+                if name in READER_FUNCTIONS:
+                    return "reader input"
+                if name in EXECUTORS:
+                    return self._child(leaf, chain)
+                funcs = list(self.bindings.built().functions.get(name, ()))      # a def of the module, or a lambda bound
+                funcs += [v for v in self._scope(parent).get(name, ()) if isinstance(v, ast.Lambda)]   # to the name
+                if funcs:
+                    return self._joined("bound", self._all(self._param_uses(funcs, parent, node), seen, depth, leaf))
+                return None
+            if isinstance(parent, (ast.Assign, ast.AnnAssign)) and node is parent.value:
+                targets = parent.targets if isinstance(parent, ast.Assign) else [parent.target]
+                uses = []
+                for t in targets:
+                    if isinstance(t, (ast.Tuple, ast.List)) and isinstance(node, (ast.Tuple, ast.List)) and len(t.elts) == len(node.elts):
+                        j = next((i for i, e in enumerate(node.elts) if e in chain), None)     # `a, p = 1, <path>`: p
+                        t = t.elts[j] if j is not None else None
+                    if isinstance(t, (ast.Name, ast.Attribute)):
+                        uses += self._uses(ast.unparse(t), parent)
+                    else:
+                        return None                                # a target the reader cannot map
+                return self._joined("bound", self._all(uses, seen, depth, leaf))
+            if isinstance(parent, ast.For) and node is parent.iter:
+                target = parent.target
+                if isinstance(target, (ast.Tuple, ast.List)) and isinstance(node, (ast.Tuple, ast.List)):
+                    row = next((e for e in node.elts if isinstance(e, (ast.Tuple, ast.List)) and any(c in e.elts for c in chain)), None)
+                    j = next((i for i, c in enumerate(row.elts) if c in chain), None) if row is not None else None
+                    target = target.elts[j] if j is not None and j < len(target.elts) else None   # a loop over rows: the column
+                if not isinstance(target, ast.Name):
+                    return None
+                uses = [n for n in ast.walk(parent) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id == target.id]
+                return self._joined("bound", self._all(uses, seen, depth, leaf))
+            if isinstance(parent, ast.Return):
+                func = self.bindings.built().owner.get(parent)
+                calls = self.bindings.built().calls.get(func.name, ()) if func is not None else ()
+                return self._joined("bound", self._all(list(calls), seen, depth, leaf))
+            if isinstance(parent, ast.arguments):
+                func = self.parents.get(parent)
+                params = parent.posonlyargs + parent.args
+                named = dict(zip(params[len(params) - len(parent.defaults):], parent.defaults))
+                named.update((a, d) for a, d in zip(parent.kwonlyargs, parent.kw_defaults) if d is not None)
+                for arg, default in named.items():
+                    if default is node:
+                        uses = [n for n in ast.walk(func) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
+                                and n.id == arg.arg]
+                        return self._joined("bound", self._all(uses, seen, depth, leaf))
+                return None
+            return None
+
+    def _parent_dir(self, node):
+        """os.path.dirname(<path>) or <path>.parent: the file's own name is dropped, unless the directory is then removed or
+        renamed (shutil.rmtree, os.rmdir, .rmdir(), os.rename, shutil.move), which takes the toggle with it: a removal the
+        reader does not classify, so None."""
+        consumer = self.parents.get(node)
+        if isinstance(consumer, ast.Call) and node in consumer.args and _call_name(consumer) in DIR_REMOVERS:
+            return None
+        if isinstance(consumer, ast.Attribute) and consumer.attr in DIR_REMOVERS:
+            grand = self.parents.get(consumer)
+            if isinstance(grand, ast.Call) and grand.func is consumer:
+                return None
+        return "parent-dir"
+
+    def _handle(self, call, seen, depth):
+        """A write-mode (or unreadable-mode) open of the path: the handle is bound by an assignment or a with-target, and
+        every use of it decides (a classified `fh.write` / `os.write` is marked; os.read is a read; close is housekeeping;
+        anything else is unaccounted). An open whose handle nothing keeps is None: a truncating open the write reader did
+        not classify."""
+        parent = self.parents.get(call)
+        if isinstance(parent, (ast.Assign, ast.AnnAssign)) and call is parent.value:
+            uses = []
+            for t in (parent.targets if isinstance(parent, ast.Assign) else [parent.target]):
+                if not isinstance(t, (ast.Name, ast.Attribute)):
+                    return None
+                uses += self._uses(ast.unparse(t), parent)
+        elif isinstance(parent, ast.withitem) and isinstance(parent.optional_vars, ast.Name):
+            with_node = self.parents.get(parent)
+            uses = [n for n in ast.walk(with_node) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
+                    and n.id == parent.optional_vars.id]
+        else:
+            return None
+        atoms = self._all(uses, seen, depth, call)
+        if atoms is not None and not any(a.startswith("write:") or a == "read" for a in atoms):
+            # Opened for writing (or with flags the reader cannot read), never written through, never read: `open(p, "w")`
+            # truncates the file to empty, which reads as on — a write the reader has not classified, so the site is named.
+            self.why.setdefault(id(call), "a handle opened for writing that nothing writes through or reads: %s; the empty "
+                                          "file reads as on" % "; ".join(self._site(u) for u in uses))
+            return None
+        return self._joined("handle", atoms)
+
+    @staticmethod
+    def _joined(prefix, atoms):
+        return None if atoms is None else "%s: %s" % (prefix, ", ".join(sorted(atoms)))
+
+    def _param_uses(self, funcs, call, arg):
+        """The loads, inside each of `funcs` (defs or lambdas), of the parameter that `arg` (a positional or keyword
+        argument of `call`) binds — the path or text flows into the helper; its uses there are what must be accounted."""
+        uses = []
+        for f in funcs:
+            params = [a.arg for a in f.args.posonlyargs + f.args.args]
+            if params and params[0] in ("self", "cls"):
+                params = params[1:]
+            name = None
+            if arg in call.args and not any(isinstance(a, ast.Starred) for a in call.args):
+                i = call.args.index(arg)
+                name = params[i] if i < len(params) else None
+            else:
+                name = next((k.arg for k in call.keywords if k.value is arg), None)
+            if name:
+                uses += [n for n in ast.walk(f) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id == name]
+        return uses
+
+    def _child(self, leaf, chain):
+        """A text handed to an executor: Python is read as a nested module (its labs and holes merged here under a label
+        naming the site); anything else is unaccounted."""
+        text = _child_source(chain)
+        if text is None or not self.depth:
+            return None
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            return None
+        nested = _Ledger("%s:%d (a child Python's source)" % (self.label, leaf.lineno), text, self.tail, self.depth - 1, tree)
+        self.labs += nested.labs
+        self.unresolved += nested.unresolved
+        self.opaque += nested.opaque
+        self.unaccounted += nested.unaccounted
+        return "child source"
+
+
+def session_hosts_ledger(label, text, tail):
+    """(labs, unresolved, opaque, unaccounted, entries) for one module's text: hosts_on_labs's four lists for it, and
+    [(line, category, source line)] for EVERY occurrence of the session-hosts name in it, category None for one nothing
+    reached (the same occurrence is then in `unaccounted`). For the planted-source tests and a reader's probe."""
+    ledger = _Ledger(label, text, tail)
+    return ledger.labs, ledger.unresolved, ledger.opaque, ledger.unaccounted, ledger.entries
+
+
+def hosts_on_labs(sources, tail):
+    """(labs, unresolved, opaque, unaccounted): one Lab per shape of state root a test turns hosts ON in, read from
+    `sources` ([(label, text)]): bytes below the process temp root = `/` + prefix + mkdtemp's tail + each `/component`.
+    EVERY write into a `session-hosts` file counts as hosts-on unless its value reads as the literal off (2026-09-21; until
+    then only a literal "on" counted, and a value the reader could not see — a loop variable, a helper's argument, a
+    handle — silently dropped its lab from the bound); a removal or a touch of the file counts too (no file, or an empty
+    one, reads as on). `unresolved` lists the hosts-on sites whose state root the reader could not follow to a mkdtemp;
+    `opaque` lists the writes whose VALUE it could not read (their labs are counted all the same, as hosts-on);
+    `unaccounted` lists every occurrence of the session-hosts name (the literal in any string, the kernel's constant by
+    name) that no classified write, read, comparison, message, docstring, bound name or child source reached
+    (NON_WRITE_SHAPES; the refuter's finding of 2026-09-21: until then a write in an unknown shape was dropped in silence).
+    All three are holes in the bound, for the caller to refuse by name."""
+    labs, unresolved, opaque, unaccounted = [], [], [], []
+    for label, text in sources:
+        if "session-hosts" not in text and "SESSION_HOSTS_SETTING" not in text:
+            continue
+        ledger = _Ledger(label, text, tail)
+        labs += ledger.labs
+        unresolved += ledger.unresolved
+        opaque += ledger.opaque
+        unaccounted += ledger.unaccounted
+    return labs, unresolved, opaque, unaccounted
 
 
 def longest_prefix(sources):
@@ -1328,7 +1820,13 @@ class HarnessSocketBudget(unittest.TestCase):
     at most as deep. A maintainer who hits this arm has three honest moves: shorten the lab (its prefix or its
     state suffix), shrink the box rule's TMPDIR template (SWEEP_TMPDIR_TEMPLATE, and the rule it states), or relax
     the margin requirement (min_margin=level, which is what makes a re-nesting of a worker's root red here) —
-    never widen the budget, which is the kernel's sun_path."""
+    never widen the budget, which is the kernel's sun_path.
+
+    THE LEDGER (2026-09-21): every occurrence of the session-hosts name in a module is accounted for — a classified
+    write (on, off, opaque; a removal, a touch or a truncating open reads as on), a read, a comparison, a message, a
+    docstring, a bound name or handle whose every use is one of those, a child Python's source read the same way — or
+    named in `unaccounted` (NON_WRITE_SHAPES lists each shape with its reason), so a write in a shape the reader does not
+    know is red by name, never dropped."""
 
     def _child(self, env_overrides, hold_dir):
         """A Python process that imports the tests package under the environment given and reports its root, its
@@ -1512,7 +2010,15 @@ class HarnessSocketBudget(unittest.TestCase):
         self.assertEqual(own.bytes, harness.bytes)
         # The labs' share, read from the tests' text: every state root a test turns hosts on in, and the deepest wins.
         sources = tree_sources()
-        labs, unresolved, opaque = hosts_on_labs(sources, tail)
+        self.assertEqual(ht.SESSION_HOSTS_SETTING, "session-hosts", "the reader's literal is the kernel's setting name (kernel/host_transport.py)")
+        labs, unresolved, opaque, unaccounted = hosts_on_labs(sources, tail)
+        self.assertEqual(unaccounted, [], "an occurrence of the toggle's name that no classified write and none of the non-write "
+                         "shapes reached: a write in a shape the reader does not know is a hole in the bound. At each site, teach "
+                         "the reader the shape (_session_hosts_writes for a write, _Ledger._account for a non-write) or move the "
+                         "write to a recognised idiom: <path>.write_text(v), open(<path>, \"w\").write(v), `with open(<path>, "
+                         "\"w\") as fh: fh.write(v)`, with <path> as Path(<root>, \"session-hosts\") or os.path.join(<root>, "
+                         "\"session-hosts\"). The non-write shapes and their reasons:\n"
+                         + "\n".join("  %s: %s" % kv for kv in sorted(NON_WRITE_SHAPES.items())))
         self.assertEqual(opaque, [], "a session-hosts write whose VALUE the reader cannot read is counted as hosts-on but is "
                          "a hole in the reader: at each site write the literal (\"on\" or \"off\"), or bind the name to "
                          "literals it can follow (an assignment, a loop over a literal tuple, a call site passing a "
@@ -1521,9 +2027,10 @@ class HarnessSocketBudget(unittest.TestCase):
                          "bound: mint it with a literal prefix (or none) and a literal suffix, or extend _lab_shapes")
         self.assertTrue(labs, "no test turns hosts on? the reader found no session-hosts write other than the literal off")
         lab = max(labs, key=lambda l: l.bytes)
-        print("\nHarnessSocketBudget: deepest hosts-on lab %s:%d (%r + %r, %d bytes below the root); harness %d bytes x %d level; "
-              "socket tail %d; SOCK_PATH_MAX %d" % (lab.file, lab.line, lab.prefix, "/".join(lab.comps), lab.bytes, harness.bytes,
-                                                     harness.levels, sock, budget), file=sys.stderr)
+        print("\nHarnessSocketBudget: %d hosts-on labs in %d modules (unresolved, opaque and unaccounted all empty); the deepest "
+              "%s:%d (%r + %r, %d bytes below the root); harness %d bytes x %d level; socket tail %d; SOCK_PATH_MAX %d"
+              % (len(labs), len({l.file for l in labs}), lab.file, lab.line, lab.prefix, "/".join(lab.comps), lab.bytes,
+                 harness.bytes, harness.levels, sock, budget), file=sys.stderr)
         canonical = len(os.fsencode(SWEEP_TMPDIR_TEMPLATE))
         with self.subTest(arm="the sweep convention: TMPDIR = mktemp -d %s (%d bytes), margin of at least one root level"
                           % (SWEEP_TMPDIR_TEMPLATE, canonical)):
@@ -1576,7 +2083,7 @@ class HarnessSocketBudget(unittest.TestCase):
                          "and component bounds: name it with a literal (a unique marker comes from the minted basename, not "
                          "into the prefix), or extend _literal_str")
         self.assertTrue(dirs, "no mkdtemp in the tree? the reader found no directory")
-        labs, _, _ = hosts_on_labs(sources, tail)
+        labs = hosts_on_labs(sources, tail)[0]
         state_roots = [Dir(lab.bytes, lab.file, lab.line, "/" + lab.prefix + "X" * tail + "".join("/" + comp for comp in lab.comps))
                        for lab in labs]
         deepest = max(dirs + state_roots, key=lambda d: d.bytes)
@@ -1594,8 +2101,8 @@ class HarnessSocketBudget(unittest.TestCase):
                     names.setdefault(comp, "%s:%d" % (d.file, d.line))
         longest_name = max(names, key=lambda n: len(os.fsencode(n)))
         total = canonical + harness.bytes + deepest.bytes
-        print("\nHarnessSocketBudget (directory and component): %d mkdtemp/TemporaryDirectory shapes in %d modules; deepest below "
-              "a root %d bytes (%s, %s:%d); under xdist nesting at the %d-byte TMPDIR %d = %d + %d + %d, PC_PATH_MAX %d (%d "
+        print("\nHarnessSocketBudget (directory and component): %d mkdtemp/TemporaryDirectory shapes in %d modules; the deepest "
+              "mkdtemp/TemporaryDirectory path below a root %d bytes (%s, %s:%d); under xdist nesting at the %d-byte TMPDIR %d = %d + %d + %d, PC_PATH_MAX %d (%d "
               "usable), slack %d; longest component %d bytes (%r, %s), PC_NAME_MAX %d, slack %d"
               % (len(dirs), len({d.file for d in dirs}), deepest.bytes, deepest.chain, deepest.file, deepest.line, canonical, total,
                  canonical, harness.bytes, deepest.bytes, path_max, path_max - 1, path_max - 1 - total, len(os.fsencode(longest_name)),
@@ -1680,8 +2187,8 @@ class HarnessSocketBudget(unittest.TestCase):
                 def run(self):
                     Path(self.state, "session-hosts").write_text("on" if True else "off")
         ''')
-        labs, unresolved, opaque = hosts_on_labs([("t.py", planted)], tail)
-        self.assertEqual((unresolved, opaque), ([], []))
+        labs, unresolved, opaque, unaccounted = hosts_on_labs([("t.py", planted)], tail)
+        self.assertEqual((unresolved, opaque, unaccounted), ([], [], []))
         lab = max(labs, key=lambda l: l.bytes)
         self.assertEqual((lab.prefix, lab.comps, lab.bytes), ("host-served-", ("xdg", "romp"), 1 + 12 + tail + 9))
         total, margin = assert_socket_fits(self, "planted control", canonical, flat, lab, sock, budget, min_margin=level)
@@ -1693,7 +2200,7 @@ class HarnessSocketBudget(unittest.TestCase):
         self.assertIn("the margin is %d" % (budget - (total + level)), str(cm.exception))
         # A longer prefix, read by the same reader: over the budget outright.
         longer = planted.replace('prefix="host-served-"', 'prefix="host-served-%s-"' % ("x" * (margin + 1 - level)))
-        labs2, _, _ = hosts_on_labs([("t.py", longer)], tail)
+        labs2 = hosts_on_labs([("t.py", longer)], tail)[0]
         lab2 = max(labs2, key=lambda l: l.bytes)
         self.assertEqual(lab2.bytes, lab.bytes + margin + 1 - level + 1)
         with self.assertRaises(AssertionError) as cm:
@@ -1703,8 +2210,8 @@ class HarnessSocketBudget(unittest.TestCase):
             assert_socket_fits(self, "planted prefix, no margin asked", canonical + level, flat, lab2, sock, budget)
         # The reader itself: a hosts-on site whose root it cannot follow is reported, not dropped.
         unfollowable = planted.replace('self.lab = tempfile.mkdtemp(prefix="host-served-")', "self.lab = make_lab()")
-        labs3, unresolved3, opaque3 = hosts_on_labs([("t.py", unfollowable)], tail)
-        self.assertEqual((labs3, opaque3), ([], []))
+        labs3, unresolved3, opaque3, unaccounted3 = hosts_on_labs([("t.py", unfollowable)], tail)
+        self.assertEqual((labs3, opaque3, unaccounted3), ([], [], []))
         self.assertEqual(unresolved3, ["t.py:8: self.state"])
 
     def test_the_reader_counts_every_write_that_is_not_the_literal_off_and_names_a_value_it_cannot_read(self):
@@ -1763,8 +2270,8 @@ class HarnessSocketBudget(unittest.TestCase):
                     Path(lab, "session-hosts").write_text("on")                     # own_root_write
         ''')
         line = lambda marker: next(i for i, l in enumerate(src.splitlines(), 1) if marker in l)
-        labs, unresolved, opaque = hosts_on_labs([("t.py", src)], tail)
-        self.assertEqual(unresolved, [])
+        labs, unresolved, opaque, unaccounted = hosts_on_labs([("t.py", src)], tail)
+        self.assertEqual((unresolved, unaccounted), ([], []), "every occurrence here is a write the reader classifies")
         self.assertEqual(opaque, ["t.py:%d: os.environ['WORD']" % line("opaque, counted")],
                          "the unreadable value is named by site, with its expression")
         by_line = collections.defaultdict(set)
@@ -1783,8 +2290,8 @@ class HarnessSocketBudget(unittest.TestCase):
         self.assertEqual({lab.bytes for lab in labs if lab.line == line("opaque, counted")}, {1 + len("unread-") + tail})
         # A parameter no call site passes an on word to reads as off, and a root handed in is followed to the caller's mint.
         quiet = src.replace('helper(f, "on")', 'helper(f, "off")')
-        labs_q, unresolved_q, opaque_q = hosts_on_labs([("t.py", quiet)], tail)
-        self.assertEqual((unresolved_q, opaque_q), ([], opaque), "the same opaque site; nothing else changed")
+        labs_q, unresolved_q, opaque_q, unaccounted_q = hosts_on_labs([("t.py", quiet)], tail)
+        self.assertEqual((unresolved_q, opaque_q, unaccounted_q), ([], opaque, []), "the same opaque site; nothing else changed")
         self.assertNotIn(line("a parameter, from the call sites"), {lab.line for lab in labs_q})
         # A helper whose root comes from a caller's variable: the module's bindings of that name give the shape.
         handed = textwrap.dedent('''\
@@ -1796,9 +2303,133 @@ class HarnessSocketBudget(unittest.TestCase):
                 state = tempfile.mkdtemp(prefix="caller-")
                 turn_on(state)
         ''')
-        labs_h, unresolved_h, opaque_h = hosts_on_labs([("h.py", handed)], tail)
-        self.assertEqual((unresolved_h, opaque_h), ([], []))
+        labs_h, unresolved_h, opaque_h, unaccounted_h = hosts_on_labs([("h.py", handed)], tail)
+        self.assertEqual((unresolved_h, opaque_h, unaccounted_h), ([], [], []))
         self.assertEqual([(lab.prefix, lab.line) for lab in labs_h], [("caller-", 4)])
+
+    def test_every_occurrence_of_the_session_hosts_name_is_accounted_for_or_named(self):
+        """The ledger on planted sources (the refuter's finding, 2026-09-21: the round-2 reader was closed over its write
+        idioms, and of nine planted write shapes it reported one, dropping eight in silence). Ten shapes: the idiom it knew;
+        a handle bound in setUp and written in a test; os.write on a descriptor from os.open; a Path built through a helper;
+        a shutil.copy onto the file; a json.dump into a with-open handle; a shell one-liner; open(...).write chained; a
+        conditional receiver; a child Python's source. Six are classified as writes (their labs counted), the child source
+        is read as a nested module (its lab counted under the site's label), and the copy, the dump and the shell line are
+        listed in `unaccounted` with their source lines. Not one occurrence is without a ledger entry. Then the tree's own
+        non-write shapes on a second source — a bound name made a dir, read, written off and compared; a docstring; an
+        assertion's value and message; a parent dir; a print; a child Python writing off — each with their category and
+        none a lab."""
+        tail = _tmp_name_tail_bytes()
+        src = textwrap.dedent('''\
+            import json, os, shutil, subprocess, sys, tempfile
+            from pathlib import Path
+            def toggle(root):
+                return Path(root, "session-hosts")
+            class T:
+                def setUp(self):
+                    self.d = tempfile.mkdtemp(prefix="nine-")
+                    self.fh = open(os.path.join(self.d, "session-hosts"), "w")
+                def plain(self):
+                    Path(self.d, "session-hosts").write_text("on")
+                def handle_outside(self):
+                    self.fh.write("on")
+                def descriptor(self):
+                    fd = os.open(os.path.join(self.d, "session-hosts"), os.O_WRONLY | os.O_CREAT)
+                    os.write(fd, b"on")
+                def helper_path(self):
+                    toggle(self.d).write_text("on")
+                def copied(self):
+                    shutil.copy(self.src, os.path.join(self.d, "session-hosts"))
+                def dumped(self):
+                    with open(os.path.join(self.d, "session-hosts"), "w") as fh:
+                        json.dump("on", fh)
+                def shell(self):
+                    subprocess.run(["sh", "-c", "echo on > %s/session-hosts" % self.d])
+                def chained(self):
+                    open(os.path.join(self.d, "session-hosts"), "w").write("on")
+                def conditional(self):
+                    (Path(self.d, "session-hosts") if self.x else Path(self.d, "notes")).write_text("on")
+                def child(self):
+                    subprocess.run([sys.executable, "-c", "\\n".join([
+                        "import os, tempfile",
+                        "root = tempfile.mkdtemp(prefix='child-')",
+                        "open(os.path.join(root, 'session-hosts'), 'w').write('on')"])])
+        ''')
+        rows = src.splitlines()
+        line = lambda marker: next(i for i, l in enumerate(rows, 1) if marker in l)
+        labs, unresolved, opaque, unaccounted, entries = session_hosts_ledger("t.py", src, tail)
+        self.assertEqual(sorted(e[0] for e in entries), sorted(i for i, l in enumerate(rows, 1) if "session-hosts" in l),
+                         "one ledger entry per occurrence: nothing dropped")
+        expected = {"return Path(root": "bound: write:on", "self.fh = open(": "handle: write:on",
+                    'Path(self.d, "session-hosts").write_text': "write:on", "fd = os.open(": "handle: write:on", "shutil.copy(": None, 'with open(os.path.join(self.d, "session-hosts"), "w") as fh': None,
+                    "echo on >": None, 'open(os.path.join(self.d, "session-hosts"), "w").write("on")': "write:on",
+                    "if self.x else": "write:on", "'w').write('on')": "child source"}
+        self.assertEqual({e[0]: e[1] for e in entries}, {line(m): c for m, c in expected.items()})
+        writes = ['Path(self.d, "session-hosts").write_text', "self.fh.write(", "os.write(fd", "toggle(self.d).write_text",
+                  'open(os.path.join(self.d, "session-hosts"), "w").write("on")', "if self.x else"]
+        self.assertEqual(sorted((l.file, l.line, l.prefix) for l in labs),
+                         sorted([("t.py", line(m), "nine-") for m in writes]
+                                + [("t.py:%d (a child Python's source)" % line("'w').write('on')"), 3, "child-")]),
+                         "six writes classified on, the child's counted under the site's label")
+        self.assertEqual((unresolved, opaque), ([], []))
+        dump = line('with open(os.path.join(self.d, "session-hosts"), "w") as fh')
+        self.assertEqual(unaccounted, ["t.py:%d: %s" % (line("shutil.copy("), rows[line("shutil.copy(") - 1].strip()),
+                                       "t.py:%d: %s (through t.py:%d: %s)" % (dump, rows[dump - 1].strip(), dump + 1, rows[dump].strip()),
+                                       "t.py:%d: %s" % (line("echo on >"), rows[line("echo on >") - 1].strip())],
+                         "the copy, the dump (through the handle's one use) and the shell line are named with their source lines")
+        # The tree's non-write shapes, each with its category and none a lab.
+        shapes = textwrap.dedent('''\
+            """A module whose docstring speaks of the session-hosts file."""
+            import os, subprocess, sys, tempfile
+            from pathlib import Path
+            ROOT = tempfile.mkdtemp(prefix="floor-")
+            TOGGLE = os.path.join(ROOT, "romp", "session-hosts")
+            def floor():
+                os.makedirs(os.path.dirname(TOGGLE), exist_ok=True)
+                if not os.path.exists(TOGGLE) or open(TOGGLE).read().strip() != "off":
+                    with open(TOGGLE, "w") as f:
+                        f.write("off\\n")
+            def helper(state):
+                (state / "session-hosts").parent.mkdir(parents=True, exist_ok=True)
+                (state / "session-hosts").write_text("off\\n")
+            class T:
+                def test_it(self):
+                    self.assertEqual(sorted(os.listdir(ROOT)), ["session-hosts"], "the session-hosts file is the only entry")
+                    if os.path.basename(TOGGLE) == "session-hosts":
+                        print("session-hosts: read back")
+                    child = subprocess.run([sys.executable, "-c", "\\n".join(["import os, tempfile", "root = tempfile.mkdtemp()",
+                        "open(os.path.join(root, 'romp', 'session-hosts'), 'w').write('off')"])])
+        ''')
+        labs, unresolved, opaque, unaccounted, entries = session_hosts_ledger("s.py", shapes, tail)
+        self.assertEqual((labs, unresolved, opaque, unaccounted), ([], [], [], []), "every shape accounted, none a hosts-on lab")
+        self.assertEqual(sorted((l, c) for l, c, _ in entries),
+                         [(1, "docstring"), (5, "bound: comparison, parent-dir, read, write:off"), (12, "parent-dir"), (13, "write:off"),
+                          (16, "assertion"), (16, "assertion"), (17, "comparison"), (18, "message"), (20, "child source")])
+        # A bound name with one use the reader cannot account for names that use, and a shell line stays unaccounted whatever
+        # wraps it.
+        leaky = shapes.replace('print("session-hosts: read back")', "shutil.copy(TOGGLE, ROOT)")
+        labs, unresolved, opaque, unaccounted, entries = session_hosts_ledger("s.py", leaky, tail)
+        self.assertEqual(unaccounted, ["s.py:5: %s (through s.py:18: shutil.copy(TOGGLE, ROOT))" % leaky.splitlines()[4].strip()],
+                         "the binding is unaccounted through its one unaccounted use, both named")
+        self.assertEqual([c for l, c, _ in entries if l == 5], [None])
+        # The shapes that leave the file empty or absent, which the kernel reads as on: each a lab, each noted.
+        truncating = textwrap.dedent('''\
+            import os, tempfile
+            d = tempfile.mkdtemp(prefix="trunc-")
+            with open(os.path.join(d, "session-hosts"), "w"):
+                pass
+            open(os.path.join(d, "session-hosts"), "w").close()
+            os.remove(os.path.join(d, "session-hosts"))
+            fh = open(os.path.join(d, "session-hosts"), "w")
+            fh.close()
+        ''')
+        labs, unresolved, opaque, unaccounted, entries = session_hosts_ledger("u.py", truncating, tail)
+        note = "no file, or an empty one, reads as on (a removal, a touch, a truncating open)"
+        self.assertEqual(sorted((l.line, l.prefix, l.note) for l in labs), [(3, "trunc-", note), (5, "trunc-", note), (6, "trunc-", note)])
+        self.assertEqual((unresolved, opaque), ([], []))
+        self.assertEqual(unaccounted, ["u.py:7: %s (a handle opened for writing that nothing writes through or reads: u.py:8: "
+                                       "fh.close(); the empty file reads as on)" % truncating.splitlines()[6].strip()],
+                         "a handle opened for writing and only closed truncates the file to empty, which reads as on: no write "
+                         "through it is classified, so the site is named with the handle's uses")
 
 
 if __name__ == "__main__":
