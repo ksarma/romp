@@ -196,8 +196,9 @@ def _open_dir_nofollow(name, what: str, shown: Path, dir_fd=None, private: bool 
     on an install whose hosts/ was made at the umask, nor repair it, which is the spawn road's helpers' job; the order
     here is read, record, proceed, and this function changes no mode on any road). `modes`, a list: EVERY component
     admitted is recorded on it the same way, loose or not (the round-7 fifth addendum, 2026-09-20: the caller files a
-    loose row once per connect episode per mode it observed, and a mode that changes between two descents of one
-    episode is a transition it files, which takes the tight observations as well as the loose ones to tell apart)."""
+    loose row once per observed mode of the directory, whoever observes it, and a mode that changes between two
+    observations is a transition it files, which takes the tight observations as well as the loose ones to tell apart;
+    THE RULE is stated at sdk_backend._file_loose_directory_rows)."""
     try:
         fd = os.open(name, _DIR_FLAGS, dir_fd=dir_fd)
     except OSError as e:
@@ -318,7 +319,7 @@ def _descend(state_dir, sid: str, private: bool) -> HostDirs:
     name under it, each O_DIRECTORY|O_NOFOLLOW and fstat-verified by _open_dir_nofollow."""
     hosts_path = Path(state_dir) / "hosts"
     loose = []          # the read roads' record of a loose component (what, path, mode); the spawn road refuses one instead
-    modes = []          # every component admitted, the same tuples (the loose rows' once-per-episode-per-mode latch reads it)
+    modes = []          # every component admitted, the same tuples (the loose rows' once-per-observed-mode latch reads it)
     hfd = _open_dir_nofollow(str(hosts_path), "hosts directory", hosts_path, private=private, loose=loose, modes=modes)
     try:
         dfd = _open_dir_nofollow(str(sid), "host directory", hosts_path / str(sid), dir_fd=hfd, private=private, loose=loose, modes=modes)
@@ -368,9 +369,10 @@ def open_host_dirs_if_present(state_dir, sid: str):
     (2) The mode is READ, from the fstat the descent already makes, and a loose component is recorded on
     the returned HostDirs (`loose`: what, path, mode; `modes`: every component) for the caller to FILE
     (sdk_backend._file_loose_directory_rows, kind host.directory-loose, the mode in octal, the remedy naming the spawn
-    road's repair) once per connect episode per mode observed, so a stable loose directory is one row however many
-    descents the episode makes and a mode that changes between two of them is a row naming the new mode (the fifth
-    addendum, on the reviewer's ruling of 20:40Z; the fourth filed one row per descent), and then proceed. The read
+    road's repair) once per observed mode of the directory, whoever observes it, so a stable loose directory is one row
+    however many descents, sessions or roads observe it and a mode that changes between two observations is a row naming
+    the new mode (THE RULE at sdk_backend._file_loose_directory_rows, the reviewer's ruling of 2026-09-21 07:19Z; the
+    fifth addendum filed once per connect episode, the fourth once per descent), and then proceed. The read
     roads neither refuse on the mode (the denial of service above) nor repair
     it: a read road stays a read road, the chmod belongs to the spawn road's helpers (sh.hosts_dir, sh.owner_only_dir),
     and the order here is read, record, proceed, never repair-before-reading. Pinned in tests/test_host_transport.py

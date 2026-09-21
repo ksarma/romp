@@ -58,6 +58,8 @@ ht = sb._ht()
 sh = ht.sh
 SDK = importlib.util.find_spec("claude_agent_sdk") is not None
 SID = "11111111-2222-3333-4444-0000000000b1"
+SIDS = ("11111111-2222-3333-4444-0000000000c1", "11111111-2222-3333-4444-0000000000c2", "11111111-2222-3333-4444-0000000000c3")
+#   three sessions' synthetic sids for the shared-subject pins (fork PR #884's fifth commit): the rows' subject is one hosts/
 
 
 def foreign_uid(path, delta=1):
@@ -2660,22 +2662,27 @@ class BackendHostRules(unittest.TestCase):
                         self.assertEqual((elsewhere / name).read_text(), target, "nothing behind the link was touched")
 
     def test_a_loose_directory_is_one_row_per_connect_episode_per_mode_observed_however_many_descents(self):
-        """THE RULE FOR THE LOOSE ROW (the reviewer's ruling of 2026-09-20 20:40Z, the round-7 fifth addendum): one
-        host.directory-loose row per connect episode per distinct mode observed, not one per descent (the fourth
-        addendum) and not one per episode whatever the mode. Three arms, each on one backend (a fresh backend stands at
-        the start of its first episode; a later episode is opened the way the connect loop opens it,
-        _loose_rows_new_episode, whose loop-top placement the next case pins). (1) THREE DESCENTS, ONE EPISODE: hosts
+        """THE LOOSE ROW ACROSS THE DESCENTS OF ONE SESSION (the name is the round-7 fifth addendum's, the reviewer's
+        ruling of 2026-09-20 20:40Z, kept because fork PR #814's ledger entry cites it; THE RULE it pins is the 07:19Z
+        ruling's at _file_loose_directory_rows since fork PR #884's fifth commit: one row per observed state of the row's
+        subject, hosts/ shared by every session and hosts/<sid>/ one session's, so the per-episode footing this case was
+        written on holds for <sid>/ alone; the shared-subject cases follow this one). Three arms, each on one backend (a
+        fresh backend stands at the start of its first episode; a later episode is opened the way the connect loop opens
+        it, _loose_rows_new_episode, whose loop-top placement the next case pins). (1) THREE DESCENTS, ONE EPISODE: hosts
         off, both directories 0775, a leftover tail; the lease-applies read (descent one), then _host_transport_for, whose
         leftover trigger (two) hands the orphan road (three), the descents counted through open_host_dirs_if_present: the
         rows are one per component, `[(hosts, '0775'), (<sid>, '0775')]`. (2) A MODE CHANGE MID-EPISODE: the same, with
         <sid>/ chmod'd 0770 by the test between the lease-applies read and the connect: a third row naming 0770 and no
-        fourth for the orphan road's descent, which observes 0770 again. (3) A NEW EPISODE FILES AGAIN, AND A TRANSITION IS
-        NEW INFORMATION: the lease-applies read twice in one episode, two rows; a new episode and the read, four; <sid>/
-        tightened to 0700 and read, still four (a tight mode is observed and not filed); loosened back to 0775 and read,
-        five (the mode changed since it was last observed, so the same mode as before is a row again). Red before at the
-        fourth addendum's commit, one row per descent: (1) `Lists differ: [(hosts, '0775'), (<sid>, '0775'), (hosts,
-        '0775'), (<sid>, '0775'), (hosts, '0775'), (<sid>, '0775')] != [(hosts, '0775'), (<sid>, '0775')]`, six for two;
-        (2) six for three; (3) four for two at the first step."""
+        fourth for the orphan road's descent, which observes 0770 again. (3) A NEW EPISODE FILES THE SESSION'S OWN
+        DIRECTORY AGAIN AND NOT THE SHARED ONE, AND A TRANSITION IS NEW INFORMATION: the lease-applies read twice in one
+        episode, two rows; a new episode and the read, three (<sid>/ again; hosts/ stands, its mode last observed 0775);
+        <sid>/ tightened to 0700 and read, still three (a tight mode is observed and not filed); loosened back to 0775
+        and read, four (the mode changed since it was last observed, so the same mode as before is a row again). Red
+        before at the fourth addendum's commit, one row per descent: (1) `Lists differ: [(hosts, '0775'), (<sid>,
+        '0775'), (hosts, '0775'), (<sid>, '0775'), (hosts, '0775'), (<sid>, '0775')] != [(hosts, '0775'), (<sid>,
+        '0775')]`, six for two; (2) six for three; (3) four for two at the first step. Arm (3) red at #884's fourth
+        commit, hosts/ re-filed at the new episode: `[(hosts, '0775'), (<sid>, '0775'), (hosts, '0775'), (<sid>,
+        '0775')] != [(hosts, '0775'), (<sid>, '0775'), (<sid>, '0775')]`."""
         def session():
             return types.SimpleNamespace(sid=SID, name="web", _host_intent=True, _host=None, _host_is_attach=False,
                                          _seed_for_dead_cli=lambda cli: None, _options_login="", _host_end_grace=None,
@@ -2713,7 +2720,7 @@ class BackendHostRules(unittest.TestCase):
                     self.assertEqual(loose(d), [(hosts, "0775"), (str(sdir), "0775"), (str(sdir), "0770")],
                                      "the mode that changed between two descents is a row naming the new mode, once")
                 self.assertIn("host.tail-replayed", self._kinds(d), "the read roads proceeded: the tail was replayed")
-        with self.subTest(arm="a new episode files again, and a transition is new information"):
+        with self.subTest(arm="a new episode files the session's own directory again, and a transition is new information"):
             d, be = self._be()
             Path(d, "session-hosts").write_text("off")
             sdir = self._loose_sid(d, hosts_mode=0o775, sid_mode=0o775, identity={"pid": 7, "start": "p"})
@@ -2723,15 +2730,107 @@ class BackendHostRules(unittest.TestCase):
             self.assertEqual(loose(d), [(hosts, "0775"), (str(sdir), "0775")], "two reads in one episode: the rows once")
             be._loose_rows_new_episode(s)
             self.assertIs(be._host_lease_applies(s), True)
-            self.assertEqual(loose(d), [(hosts, "0775"), (str(sdir), "0775")] * 2, "a new episode: a still-loose directory is filed again")
+            self.assertEqual(loose(d), [(hosts, "0775"), (str(sdir), "0775"), (str(sdir), "0775")],
+                             "a new episode: the session's own still-loose directory is filed again; hosts/, shared, stands")
             os.chmod(sdir, 0o700)
             self.assertIs(be._host_lease_applies(s), True)
-            self.assertEqual(len(loose(d)), 4, "a tight mode is observed and files nothing")
+            self.assertEqual(len(loose(d)), 3, "a tight mode is observed and files nothing")
             os.chmod(sdir, 0o775)
             self.assertIs(be._host_lease_applies(s), True)
-            self.assertEqual(loose(d), [(hosts, "0775"), (str(sdir), "0775")] * 2 + [(str(sdir), "0775")],
+            self.assertEqual(loose(d), [(hosts, "0775"), (str(sdir), "0775")] + [(str(sdir), "0775")] * 2,
                              "loosened again within the episode: the transition is filed, though the mode was filed before")
             self.assertEqual(self._modes(d), (0o775, 0o775), "the read roads changed no mode")
+
+    def _sid_dir(self, d, sid, hosts_mode=0o775, sid_mode=0o700, identity=None):
+        """hosts/<sid>/ for one of SIDS (the shared-subject pins connect several sessions over one hosts/), hosts/ at
+        `hosts_mode`, the directory at `sid_mode`, identity.json of ours when given."""
+        sdir = Path(d) / "hosts" / sid
+        sdir.mkdir(parents=True, exist_ok=True)
+        os.chmod(Path(d) / "hosts", hosts_mode); os.chmod(sdir, sid_mode)
+        if identity is not None:
+            (sdir / "identity.json").write_text(json.dumps(identity))
+        return sdir
+
+    def _session_for(self, sid, name):
+        return types.SimpleNamespace(sid=sid, name=name, _host_intent=True, _host=None, _host_is_attach=False,
+                                     _seed_for_dead_cli=lambda cli: None, _options_login="", _host_end_grace=None,
+                                     _on_cli_stderr=lambda line: None)
+
+    def _loose(self, d):
+        return [(r["path"], r["mode"]) for r in self._rows(d, "host.directory-loose")]
+
+    def test_one_loose_hosts_directory_observed_by_three_sids_connects_is_one_row_for_it_and_none_for_their_tight_directories(self):
+        """THE SHARED SUBJECT (the reviewer's ruling of 2026-09-21 07:19Z; THE RULE at _file_loose_directory_rows): hosts/
+        at 0775 is ONE directory whoever descends through it, so three sessions' connect episodes over it (each opened the
+        way the connect loop opens one, _loose_rows_new_episode, then the lease-applies read with hosts off, each on its
+        own SdkSession-shaped object) file ONE host.directory-loose row for hosts/, the first observer's, and none for
+        their 0700 <sid>/ directories, which are tight. The reads change no mode. Red before at fork PR #884's fourth
+        commit, the latch keyed on the sid and its episode: one row per session, `Lists differ: [(hosts, '0775'),
+        (hosts, '0775'), (hosts, '0775')] != [(hosts, '0775')]`, the production shape (nine sessions at one restart,
+        nine rows for one directory). Mutation (a scratch copy, python -B): the owner put back to the observing sid
+        for every component reds here the same way."""
+        d, be = self._be()
+        Path(d, "session-hosts").write_text("off")
+        for sid in SIDS:
+            self._sid_dir(d, sid, hosts_mode=0o775, sid_mode=0o700, identity={"pid": 7, "start": "p"})
+        hosts = str(Path(d) / "hosts")
+        for i, sid in enumerate(SIDS):
+            s = self._session_for(sid, "web%d" % i)
+            be._loose_rows_new_episode(s)
+            self.assertIs(be._host_lease_applies(s), True, "%s: the read proceeds, its identity.json vouches" % s.name)
+        self.assertEqual(self._loose(d), [(hosts, "0775")],
+                         "one row for the one shared directory, whichever session observed it first; none for the tight <sid>/ directories")
+        self.assertEqual(self._rows(d, "host.directory-loose")[0]["sid"], SIDS[0], "the first observer's row")
+        self.assertEqual(stat.S_IMODE(os.lstat(hosts).st_mode), 0o775, "the reads changed no mode")
+
+    def test_each_sids_own_loose_directory_is_its_own_row_and_a_new_episode_of_one_sid_files_its_own_again_and_not_hosts(self):
+        """THE PER-SID SUBJECT beside the shared one: hosts/ 0775 and each of three <sid>/ at 0775; three sessions'
+        connects file one row for hosts/ and one per <sid>/, four; a new episode of the first session (the connect
+        loop's top, _loose_rows_new_episode) forgets ITS subjects and no other's, so its read files its own <sid>/ again,
+        five, and NOT hosts/, which stands for the kernel's life, and the other two sessions' directories are untouched.
+        The 20:40Z ruling's once per connect episode, unchanged where the subject and the episode coincide. Red before
+        at fork PR #884's fourth commit: hosts/ again at the new episode, six rows."""
+        d, be = self._be()
+        Path(d, "session-hosts").write_text("off")
+        dirs = {sid: self._sid_dir(d, sid, hosts_mode=0o775, sid_mode=0o775, identity={"pid": 7, "start": "p"}) for sid in SIDS}
+        hosts = str(Path(d) / "hosts")
+        sessions = [self._session_for(sid, "web%d" % i) for i, sid in enumerate(SIDS)]
+        for s in sessions:
+            be._loose_rows_new_episode(s)
+            self.assertIs(be._host_lease_applies(s), True)
+        expect = [(hosts, "0775")] + [(str(dirs[sid]), "0775") for sid in SIDS]
+        self.assertEqual(self._loose(d), expect, "hosts/ once, then each session's own directory once")
+        be._loose_rows_new_episode(sessions[0])
+        self.assertIs(be._host_lease_applies(sessions[0]), True)
+        self.assertEqual(self._loose(d), expect + [(str(dirs[SIDS[0]]), "0775")],
+                         "the new episode files the session's own directory again and not hosts/, nor another session's")
+        self.assertEqual([r["sid"] for r in self._rows(d, "host.directory-loose")], [SIDS[0]] + list(SIDS) + [SIDS[0]])
+
+    def test_hosts_observed_loose_then_tight_then_loose_by_three_sids_is_two_rows_the_second_at_the_third_observation(self):
+        """A TRANSITION of the shared subject is new information, whoever observes it: hosts/ 0775 read by the first
+        session (a row), chmod 0700 and read by the second (observed, nothing filed: tight), chmod 0775 and read by the
+        third (a row: the mode changed since the directory was last observed, though this mode was filed before), then
+        read by the second session again in its still-open episode (nothing: 0775 is the mode last observed, by the third
+        session). Two rows for hosts/, the second carrying the third session; the <sid>/ directories 0700 throughout, no
+        row of theirs. Red before at fork PR #884's fourth commit, the latch per sid: the second session's read at the
+        end is a change from the 0700 it observed, a third row. Mutation (a scratch copy, python -B): the latch holding
+        that the mode was FILED instead of the mode last observed (`was is not None`) reds here with one row, the third
+        session's observation latched by the second's tight one."""
+        d, be = self._be()
+        Path(d, "session-hosts").write_text("off")
+        for sid in SIDS:
+            self._sid_dir(d, sid, hosts_mode=0o775, sid_mode=0o700, identity={"pid": 7, "start": "p"})
+        hosts = Path(d) / "hosts"
+        sessions = [self._session_for(sid, "web%d" % i) for i, sid in enumerate(SIDS)]
+        for s, mode in zip(sessions, (0o775, 0o700, 0o775)):
+            os.chmod(hosts, mode)
+            be._loose_rows_new_episode(s)
+            self.assertIs(be._host_lease_applies(s), True)
+        self.assertIs(be._host_lease_applies(sessions[1]), True)
+        self.assertEqual(self._loose(d), [(str(hosts), "0775"), (str(hosts), "0775")],
+                         "the first observation and the transition back to 0775; the tight observation and the repeat file nothing")
+        self.assertEqual([r["sid"] for r in self._rows(d, "host.directory-loose")], [SIDS[0], SIDS[2]], "the first and the third observers")
+        self.assertEqual(stat.S_IMODE(os.lstat(hosts).st_mode), 0o775)
 
     def test_the_connect_loop_opens_the_loose_row_episode_at_its_top_before_the_first_descent(self):
         """WHERE the episode opens, pinned by the structure of the connect loop (kernel/sdk_backend.py, SdkSession._amain,
@@ -3129,6 +3228,70 @@ class BackendHostRules(unittest.TestCase):
             be._file_host_log_rows(types.SimpleNamespace(sid=SID, name="web", _host=None))     # the exit's read, same episode
         self.assertEqual(self._refused(d)[3:], [("host.directory-refused", "host.log", euid + 1)], "another file is a new state, filed once")
         self.assertEqual(len(self._refused(d)), 4)
+
+    def test_a_hosts_that_is_a_file_or_a_link_refused_for_two_sids_is_one_owner_row_and_the_second_refusal_still_answers(self):
+        """THE SHARED SUBJECT OF THE REFUSED ROW (the reviewer's ruling of 2026-09-21 07:19Z; THE RULE at
+        _file_loose_directory_rows, the subject decided by path at _refused_directory_row): hosts/ replaced by a regular
+        file, and separately by a symlink to a directory elsewhere, two sessions connecting with hosts off (the
+        lease-applies descent refuses its first component, `hosts directory <path> is not a directory` or `is a symlink,
+        not a directory`, a text with no sid in it): ONE host.directory-refused row, the first observer's, and the second
+        session's road still answers False (no host this kernel can vouch for) with no row. A third connect with hosts on
+        (the leftover trigger of _host_transport_for) is still the LAUNCH's refusal, `the session host was not started:
+        <the same reason>. <the directory remedy, with the spawn road's 0700 clause>`, and still no row: the latch keys on
+        the reason, which is the observation, and not on the remedy, whose 0700 clause is the road's (mode_checked). On
+        the link arm, THE TRANSITION AND THE RETURN: the
+        link replaced by a directory of ours and a session's descent admits it (observed healthy: the shared entry
+        forgotten), then the link planted again and observed by another: a second row, a refusal that returned after a
+        repair. Red before at fork PR #884's fourth commit, the latch per sid: two rows for the two sessions,
+        `Lists differ: [('host.directory-refused', None, None), ('host.directory-refused', None, None)] !=
+        [('host.directory-refused', None, None)]`. Mutation (a scratch copy, python -B): the owner put back to the
+        observing sid reds here the same way."""
+        elsewhere = Path(tempfile.mkdtemp()); self.addCleanup(shutil.rmtree, elsewhere, True)
+        remedy = ("A hosts/ or hosts/<sid>/ that is not a directory this user owns is refused; replace it with a directory, "
+                  "or point the state root elsewhere (ROMP_STATE_DIR or XDG_STATE_HOME)")
+        for arm in ("a regular file", "a symlink"):
+            with self.subTest(arm=arm):
+                d, be = self._be()
+                Path(d, "session-hosts").write_text("off")
+                hosts = Path(d) / "hosts"
+                if arm == "a regular file":
+                    hosts.write_text("not a directory")
+                    reason = "hosts directory %s is not a directory" % hosts
+                else:
+                    hosts.symlink_to(elsewhere)
+                    reason = "hosts directory %s is a symlink, not a directory" % hosts
+                sessions = [self._session_for(sid, "web%d" % i) for i, sid in enumerate(SIDS)]
+                for s in sessions[:2]:
+                    sb.write_reg(Path(d), s.sid, {"sid": s.sid, "name": s.name, "alive": True, "lastSid": s.sid})
+                    be._loose_rows_new_episode(s)
+                    self.assertIs(be._host_lease_applies(s), False, "%s: the refusal answers, no host this kernel can vouch for" % s.name)
+                self.assertEqual(self._refused(d), [("host.directory-refused", None, None)],
+                                 "%s: one row for the one shared directory, the second session's observation latched" % arm)
+                row = self._rows(d, "host.directory-refused")[0]
+                self.assertEqual(row["text"], "the session host for web0 may have left records this kernel does not read: %s. %s" % (reason, remedy))
+                self.assertEqual(row["sid"], SIDS[0], "the first observer's")
+                Path(d, "session-hosts").write_text("on")
+                sb.write_reg(Path(d), SIDS[2], {"sid": SIDS[2], "name": "web2", "alive": True, "lastSid": SIDS[2]})
+                be._loose_rows_new_episode(sessions[2])
+                with self.assertRaises(sb.CLIConnectionErrorLike) as cm:
+                    asyncio.run(be._host_transport_for(sessions[2], types.SimpleNamespace(), (None, None, None)))
+                self.assertEqual(str(cm.exception), "the session host was not started: %s. %s" % (reason, remedy.replace("owns is", "owns at 0700 is")),
+                                 "the launch's refusal still carries the reason and the spawn road's remedy")
+                self.assertEqual(len(self._refused(d)), 1, "the third observation, on the spawn road, files nothing: the same state")
+                if arm == "a symlink":
+                    hosts.unlink()
+                    self._sid_dir(d, SIDS[1], hosts_mode=0o700, sid_mode=0o700, identity={"pid": 7, "start": "p"})
+                    Path(d, "session-hosts").write_text("off")
+                    self.assertIs(be._host_lease_applies(sessions[1]), True, "repaired: the descent admits hosts/ and the identity of ours vouches")
+                    self.assertEqual(len(self._refused(d)), 1, "an admitted directory files no refusal row")
+                    shutil.rmtree(hosts)
+                    hosts.symlink_to(elsewhere)
+                    self.assertIs(be._host_lease_applies(sessions[0]), False)
+                    self.assertEqual(len(self._refused(d)), 2, "the link returned after the repair: a changed observation, filed again")
+                    self.assertEqual(self._rows(d, "host.directory-refused")[1]["sid"], SIDS[0])
+                    self.assertIs(be._host_lease_applies(sessions[1]), False)
+                    self.assertEqual(len(self._refused(d)), 2, "and latched again for the next observer")
+                self.assertEqual(sorted(os.listdir(elsewhere)), [], "nothing behind the link was written")
 
     def test_a_fifo_or_a_directory_of_ours_at_spawn_json_refuses_the_launch_naming_the_kind_and_nothing_blocks(self):
         """THE WRITE SIDE on the production road (the fork PR that follows #814, building the small-asks item on the two

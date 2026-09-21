@@ -9570,9 +9570,11 @@ class SdkSession:
             try:
                 transport = None
                 self._host_is_attach = False             # the transport's attach branch alone sets it True (every other road spawns)
-                self.backend._loose_rows_new_episode(self)   # this iteration is one episode for the host.directory-loose rows: its
-                #                                              first descent under hosts/ is the read on the next line, or the
-                #                                              leftover trigger inside _host_transport_for with hosts on
+                self.backend._loose_rows_new_episode(self)   # this iteration is one episode for this session's own subjects of the
+                #                                              host.directory-loose and -refused rows (hosts/<sid>/ and the files
+                #                                              under it; hosts/ is shared and outlives it): its first descent under
+                #                                              hosts/ is the read on the next line, or the leftover trigger inside
+                #                                              _host_transport_for with hosts on
                 if self.backend.session_hosts_on() or self.backend._host_lease_applies(self):
                     # T315: the CLI runs under a per-session host; this client speaks to it over the host's
                     # socket (attach to a live host, or spawn one), never to a child of its own. A LIVE host lease
@@ -13276,10 +13278,13 @@ class SdkBackend:
         self._boot_attach_sids: set = set()   # sids the boot reconcile attached to a live host (T315)
         self._host_spawning: set = set()   # sids with a host spawn in flight (one host per session, ever)
         self._host_recently_ended: dict = {}   # sid -> host identity this kernel asked to end (its lease removal races a reconnect)
-        self._loose_filed: dict = {}       # sid -> {path: mode} the read roads' descents observed this connect episode (the
-        #                                    host.directory-loose latch, _file_loose_directory_rows; cleared by _loose_rows_new_episode)
-        self._refused_filed: dict = {}     # sid -> {the refusal texts filed this connect episode} (the host.directory-refused
-        #                                    latch, _refused_directory_row: once per episode per observed state; cleared with the above)
+        self._loose_filed: dict = {}       # owner -> {directory path: the mode last observed}: the host.directory-loose latch
+        #                                    (_file_loose_directory_rows, THE RULE there). The owner is the sid for a subject at or
+        #                                    under hosts/<sid>/, None for a shared one (hosts/); a sid's entry goes at its new connect
+        #                                    episode (_loose_rows_new_episode), a shared subject's stands for the kernel's life
+        self._refused_filed: dict = {}     # owner -> {subject: the refusal text last observed}: the host.directory-refused latch
+        #                                    (_refused_directory_row), the same owners; the subject is the entry's name under
+        #                                    hosts/<sid>/ (the refusal's `file`), None for the directory the refusal names
         self._lease_thread = None          # the heartbeat, started at the first lease, ends when none are held
         self.thread_wake_model = None      # kernel-installed: model_id -> replacement or None, consulted
         #                                    ONLY when a comment THREAD is explicitly woken (T223 rider) —
@@ -13816,8 +13821,9 @@ class SdkBackend:
         # link, a non-directory, a foreign uid) is filed as a problem row with the remedy and answers False: no host this
         # kernel can vouch for held the session, and with hosts off the session runs as a kernel child; an absent
         # directory answers False with no row. Since the fourth addendum (2026-09-20, the reviewer's ruling of 19:12Z): a
-        # loose component of the two (group or other bits) is filed as a host.directory-loose row, once per connect
-        # episode per mode observed (the fifth addendum, on the ruling of 20:40Z; the fourth filed one per descent), and
+        # loose component of the two (group or other bits) is filed as a host.directory-loose row, once per observed
+        # mode of the directory, whoever observes it (THE RULE at _file_loose_directory_rows; the fifth addendum filed
+        # once per connect episode, the fourth once per descent), and
         # the read goes on, nothing refused and nothing chmod'd (_file_loose_directory_rows); a SYMLINK at identity.json
         # is the file-remedy row the orphan and served roads file for the same plant, and answers False (through the
         # third addendum it answered False here with no row); an entry ANOTHER UID owns at identity.json, of any kind
@@ -14203,29 +14209,55 @@ class SdkBackend:
         shape question, host_transport._open_host_file_for_write). `mode_checked` is False on the read roads, whose
         descent verifies a directory of this uid at each component and not its mode (open_host_dirs_if_present says
         why), so their remedy does not ask for 0700. Returns `said` for the caller's launch error, when it raises one.
-        THE RULE FOR HOW OFTEN (the reviewer's property of 2026-09-21 03:54Z, built by the fork PR that follows #814,
-        mirroring the loose row's latch): ONE ROW PER CONNECT EPISODE PER OBSERVED STATE, not one per road that observes
-        it. Through #814 the footing was one row per call, one per refusal met, on the argument that a refusal ends
-        its road; that argument holds for a refusal of the descent and fails for the answer-shaped ones, which the
-        road proceeds past: one hosts-off connect over a foreign identity.json with a journal beside it filed the
-        owner row twice, from the lease-applies read and again from the orphan road it handed to, one fact seen twice,
-        and the journal reads by descriptor would have filed a foreign segment from the listing, the tail check and
-        the replay. WHICH CASE APPLIES, derived from what the row carries: its text is three parts, the road's clause (`did`), the reason with its path (the
-        refusal's own text: the entry or component, its directory, its owner or its shape, composed by the descent and
-        the readers from the observation alone) and the remedy (worded per shape, the same on every road); the fields
-        are `file`, `uid` and `fileKind` (the entry's kind when a non-regular entry of ours was refused). The reason
-        and the remedy are functions of the observed state and carry no road; the clause differs per road but words the
-        same consequence of the same observation (the file is not read, the journal is not replayed, the launch is not
-        started), so the row's content does not DISTINGUISH the roads in the reviewer's sense, and the main case holds:
-        the first road to observe a state files it, with its clause, and every later observation of the same state in
-        the episode files nothing. The latch key is the reason text (`str(e)`, the observation: which entry or
-        component, in which directory, owned by whom or of what shape), per sid, held in self._refused_filed and cleared
-        with the loose latch at the connect loop's top (_loose_rows_new_episode), so a new episode files a standing
-        refusal again and a changed observation (another uid at the name, another file, another shape) is a new row in
-        the same episode. The spawn road's refusals pass through the same latch and lose nothing: `said` is still
-        returned for the launch error, and a refusal of the spawn road ends its iteration, so a second observation in
-        its episode does not arise. Pinned by execution in tests/test_host_transport.py (BackendHostRules: the hosts-off
-        episode files the owner row once; a new episode again; another uid or another file again)."""
+        HOW OFTEN: THE RULE at _file_loose_directory_rows, stated once there for this row and the loose row (the reviewer's
+        ruling of 2026-09-21 07:19Z, correcting the 03:54Z property this row was built on by the fork PR that follows
+        #814, which keyed this latch on the sid and the connect episode, so one fact N sessions observed was N rows when
+        its subject was shared). What the row carries decides that two observations are of one fact: its text is three
+        parts, the road's clause (`did`), the reason with its path (the refusal's own text: the entry or component, its
+        directory, its owner or its shape, composed by the descent and the readers from the observation alone) and the
+        remedy (worded per shape; the spawn road's directory remedy alone adds the 0700 clause, `mode_checked`); the
+        fields are `file`, `uid` and `fileKind` (the entry's kind when a non-regular entry of ours was refused). The
+        reason is a function of the observed state and carries no road and no session; the clause and the remedy's
+        0700 clause differ per road but word the same consequence of the same observation (the file is not read, the
+        journal is not replayed, the launch is not started), so the row's content does not DISTINGUISH the observers,
+        and the first to observe a state files it, with its clause and its remedy, and every later observation of the
+        same state files nothing, from this road or another, this session or another. Through #814
+        the footing was one row per call, on the argument that a refusal ends its road; that holds for a refusal of the
+        descent and fails for the answer-shaped ones, which the road proceeds past: one hosts-off connect over a foreign
+        identity.json with a journal beside it filed the owner row twice, from the lease-applies read and again from the
+        orphan road.
+        THE SUBJECT AND ITS OWNER, decided by path: a refusal of this class names its subject's path in its text
+        (HostDirRefused carries it there and on no attribute; HostFileForeign's docstring says why), so the subject is
+        THIS SID'S when the text names a path at or under host_dir(state_dir, sid), hosts/<sid>/: every file arm
+        (identity.json, spawn.json, host.stderr, host.log, a journal segment, gaps.json, each worded `<name> in host
+        directory <path>` by the readers and the write opener) and the <sid> component, refused by either descent
+        (`host directory <path>`) or by the spawn road's second helper (sh.owner_only_dir, the same noun; a shape errno
+        of its mkdir or chmod, worded by helper_shape_refusal with the same path); and SHARED otherwise: the hosts/
+        component of either descent (`hosts directory <path>`), and on the spawn road the first helper's hosts/ and the
+        state root it makes or reads (sh.hosts_dir: `hosts directory`, `state root`), and a shape errno's `state root`,
+        `directory above the state root` or any other `directory` a helper's mkdir named. The state root is never a
+        subject of the read roads (their descent opens hosts/ by path off it: a plain-file root is refused as hosts/, an
+        absent one answers None). A refusal's text names one path, and no path a descent or a helper names for this sid
+        has hosts/<sid>/ as a proper prefix without lying under it (the file arms take names under the descent's own
+        `dirs.path`; the helpers' mkdir names the component that failed on the road to hosts/<sid>/), so the containment
+        test is exact. The removal road's refusals (remove_host_dir, _rmtree_at) are logged, not filed, and are not this
+        row's.
+        THE LATCH: self._refused_filed[owner][subject] holds the refusal text LAST OBSERVED, `owner` the sid or None for
+        a shared subject, `subject` the entry's name (`file`) or None for the directory the refusal names (this sid's
+        hosts/<sid>/; the shared road above it, whose refusal names the first component that fails, one subject to this
+        latch since its components are observed as one chain). A text equal to the last observed files nothing; a
+        different one is a changed observation and files (another uid at the name, another shape, another component
+        failing first); a directory the descent later ADMITS forgets its entry (_file_loose_directory_rows, which sees
+        every component the descent admitted), so a refusal that returns after a repair is filed again, the new
+        information; a sid's entries go at its new connect episode (_loose_rows_new_episode), the shared subject's
+        stand for the kernel's life. A file subject read as ours forgets nothing (the readers return the answer, not an
+        observation), so within one episode a file that is foreign, then ours, then foreign under the same uid files
+        once, and its owner's next episode files it again. The spawn road's refusals pass through the same latch and
+        lose nothing: `said` is still returned for the launch error, and a refusal of that road ends its iteration.
+        Pinned by execution in tests/test_host_transport.py (BackendHostRules: two sids over a hosts/ that is a file,
+        then one that is a link, one row and the second refusal still answered; the link repaired, admitted and planted
+        again, a second row; the hosts-off episode over a foreign identity.json files the owner row once, a new episode
+        again, another uid or another file again)."""
         uid = getattr(e, "uid", None)
         kind = getattr(e, "kind", None)
         if uid is not None:
@@ -14242,61 +14274,88 @@ class SdkBackend:
                       "replace it with a directory, or point the state root elsewhere (ROMP_STATE_DIR or XDG_STATE_HOME)"
                       % (" at 0700" if mode_checked else ""))
         said = "%s: %s. %s" % (did, e, remedy)
-        seen = self._refused_filed.setdefault(sess.sid, set())
-        if str(e) in seen:                       # this state was filed this episode (from this road or another): no second row
-            return said
-        seen.add(str(e))
+        text = str(e)
+        # the subject's owner, by path (THE RULE at _file_loose_directory_rows): this sid's when the refusal names a path
+        # at or under hosts/<sid>/, shared otherwise; the subject the entry's name, or None for the directory named
+        owner = sess.sid if str(_ht().host_dir(self.state_dir, sess.sid)) in text else None
+        subject = getattr(e, "file", None)
+        seen = self._refused_filed.setdefault(owner, {})
+        if seen.get(subject) == text:            # the state last observed of this subject, from this road or another, this
+            return said                          #   session or another: no second row
+        seen[subject] = text
         problem_row(self.state_dir, "the session host for %s %s" % (sess.name, said), "host.directory-refused",
-                    sid=sess.sid, name=sess.name, log=self._log, file=getattr(e, "file", None), uid=uid, fileKind=kind)
+                    sid=sess.sid, name=sess.name, log=self._log, file=subject, uid=uid, fileKind=kind)
         return said
 
     def _loose_rows_new_episode(self, sess) -> None:
-        """A new connect episode for `sess`'s host.directory-loose rows AND its host.directory-refused rows: what
-        _file_loose_directory_rows and _refused_directory_row observed in the previous one is forgotten, so a directory
-        still loose, or a foreign file still standing, at the next connect is filed again (the refused latch since the
-        fork PR that follows #814, 2026-09-21; the loose latch since the round-7 fifth addendum). Called at the top of
+        """A new connect episode for `sess`: the entries of ITS OWN subjects in both latches (self._loose_filed and
+        self._refused_filed, the host.directory-loose and host.directory-refused rows, keyed by owner; THE RULE at
+        _file_loose_directory_rows says which subjects are a sid's and which are shared) are forgotten, so its
+        hosts/<sid>/ still loose, or a foreign file still standing under it, at the next connect is filed again. The
+        shared subjects' entries (hosts/, and the road above it) are not this episode's to forget and stand for the
+        kernel's life (the reviewer's ruling of 2026-09-21 07:19Z): through the fork PR that follows #814 this forgot
+        hosts/ too, and nine sessions connecting at one restart filed one loose hosts/ nine times. Called at the top of
         each iteration of the connect loop (SdkSession._amain, before the iteration's first descent under hosts/: the
         lease-applies read with hosts off, the leftover trigger inside _host_transport_for with hosts on) and nowhere
         else: the served road's reads at the host's hello and at its exit belong to the connect that spawned or attached
-        the host, and a lease pre-read opens no episode. The round-7 fifth addendum of the review (2026-09-20, the
-        reviewer's ruling of 20:40Z)."""
+        the host, and a lease pre-read opens no episode. Placed by the round-7 fifth addendum of the review (2026-09-20,
+        the reviewer's ruling of 20:40Z); the refused latch joined at the fork PR that follows #814 (2026-09-21)."""
         self._loose_filed.pop(sess.sid, None)
         self._refused_filed.pop(sess.sid, None)
 
     def _file_loose_directory_rows(self, sess, dirs) -> None:
-        """THE RULE: one host.directory-loose problem row PER CONNECT EPISODE PER DISTINCT MODE OBSERVED, for each
-        component of the read roads' descent whose mode has group or other bits (host_transport.HostDirs.loose: what,
-        path, mode, read from the fstat the descent already makes; HostDirs.modes: every component the descent admitted,
-        loose or not). The round-7 fifth addendum of the review (2026-09-20, the reviewer's ruling of 20:40Z), replacing
-        the fourth addendum's one row per descent (its ruling of 19:12Z decided that the mode is read, filed and left
-        alone; this one decides how often). The read roads (_host_lease_applies, the leftover trigger of
-        _host_transport_for, _host_orphan_recover, _file_host_log_rows) call this right after their descent admitted the
-        directory and before they read under it: the order is read the mode, file, proceed. What a row claims is that
-        the mode was OBSERVED, and the user's eye follows a row, so a stable loose directory is one row however many
-        descents one episode makes (one hosts-off connect with a leftover tail makes three: the lease-applies read, the
-        leftover trigger, the orphan road; with hosts on, two, before the spawn road tightens both directories), a mode
-        that CHANGES between two descents of one episode is a row naming the new mode (the transition is the new
-        information: the latch holds the mode last observed, not last filed, so a directory tightened and loosened again
-        within one episode is filed again), and the next connect episode files a still-loose directory again
-        (_loose_rows_new_episode, at the connect loop's top), so an install whose hosts/ stays loose with hosts off says
-        so once per connect. The refusal rows carry the same latch since the fork PR that follows #814 (2026-09-21,
-        _refused_directory_row: once per episode per observed state, keyed on the refusal's text); through #814 they
-        carried none on the argument that a refusal ends its road, which the answer-shaped refusals (a foreign file,
-        answered as absent) do not. This latch lives here (self._loose_filed, keyed on the sid, then the path, holding
-        the mode) because a loose component ends nothing. What the
-        roads do NOT do: refuse on the mode (a denial of service on every install whose hosts/ was made at the umask
-        before 2026-09-19, until the first spawn after the fix repairs it) or repair it (a read road stays a read road;
-        the chmod is the spawn road's helpers', sh.hosts_dir and sh.owner_only_dir, which the remedy names). A loose
-        hosts/ whose <sid> is absent files nothing: the descent returns None before any directory is handed back, and the
-        road reads nothing under it. The `path` and `mode` fields carry what the text says, the mode in octal. Pinned by
-        execution in tests/test_host_transport.py (BackendHostRules: three descents in one hosts-off episode over a
-        stable 0775 pair, one row per component; a mode planted between two descents, a row naming it; a new episode,
-        the rows again), and the loop-top placement by structure there, with the executed pins it points at."""
-        seen = self._loose_filed.setdefault(sess.sid, {})
+        """THE RULE, for this row and for the host.directory-refused row (_refused_directory_row), stated here once: A ROW
+        FILES ONCE PER OBSERVED STATE OF ITS SUBJECT, NOT ONCE PER ROAD OR SESSION THAT OBSERVES IT. The reviewer's ruling
+        of 2026-09-21 07:19Z, correcting the ruling of 2026-09-20 20:40Z this row was built on (the round-7 fifth addendum
+        of the review: once per connect episode per mode observed) and the 03:54Z property the refused row was built on
+        (once per connect episode per observed state): both are right where the subject is one session's and wrong where
+        it is shared, because N sessions are N episodes. Demonstrated in production at a restart (2026-09-21 05:18:51Z):
+        nine sessions connected over one hosts/ at 0775 and this row fired once per session, nine rows for ONE directory,
+        so a reader counting rows counted nine loose directories where there was one.
+        THE SUBJECTS, derived from the descent (host_transport._descend: the two components it admits into HostDirs.modes
+        or refuses by name, HostDirRefused carrying the path in its text): hosts/ (`<root>/hosts`, the first component,
+        SHARED by every session of this kernel) and hosts/<sid>/ (the second, ONE session's, descended for its own sid
+        only). The state root is never a subject of this row: the descent opens hosts/ by path off it, so a plain-file
+        root is refused as hosts/ and an absent one answers None. Which a component is, decided BY PATH and never by its
+        label: a path at or under host_dir(state_dir, sid), which is `dirs.path` as _descend built it, is this sid's; any
+        other is shared. The refused row has more subjects (its docstring lists them: every file arm under hosts/<sid>/,
+        and on the spawn road the helpers' state root and the directories above it) and decides them the same way.
+        THE LATCH (self._loose_filed[owner][path], `owner` the sid or None for a shared subject) holds the mode LAST
+        OBSERVED of each directory, tight modes included, because a row claims that the mode was observed and the user's
+        eye follows a row: the same mode observed again, by this session or another, on this road or another, files
+        nothing (one hosts-off connect with a leftover tail makes three descents, the lease-applies read, the leftover
+        trigger and the orphan road; with hosts on, two, before the spawn road tightens both directories; nine sessions
+        at a restart make nine or more); a mode that CHANGED since the last observation is a row naming the new mode,
+        the transition being the new information, so a directory tightened and loosened again is filed again though
+        that mode was filed before; a sid's own hosts/<sid>/ is forgotten at its new connect episode
+        (_loose_rows_new_episode, at the connect loop's top), so a per-sid directory still loose says so once per
+        connect, as the 20:40Z ruling had it where the subject and the episode coincide; the shared hosts/ stands for
+        the kernel's life, so an install whose hosts/ stays loose with hosts off says so once per kernel, whoever
+        observes it, and again only when its mode changes. This call also records for the refused latch that each
+        admitted directory was observed healthy (its directory entry forgotten, so a refusal of it that returns after a
+        repair is filed again; the refused row's latch is described at _refused_directory_row). The read roads
+        (_host_lease_applies, the leftover trigger of _host_transport_for, _host_orphan_recover, _file_host_log_rows)
+        call this right after their descent admitted the directory and before they read under it: the order is read the
+        mode, file, proceed. What the roads do NOT do: refuse on the mode (a denial of service on every install whose
+        hosts/ was made at the umask before 2026-09-19, until the first spawn after the fix repairs it) or repair it (a
+        read road stays a read road; the chmod is the spawn road's helpers', sh.hosts_dir and sh.owner_only_dir, which
+        the remedy names). A loose hosts/ whose <sid> is absent files nothing: the descent returns None before any
+        directory is handed back, and the road reads nothing under it. The `path` and `mode` fields carry what the text
+        says, the mode in octal. Pinned by execution in tests/test_host_transport.py (BackendHostRules: three sids'
+        connects over one loose hosts/ with tight <sid>/ directories, one row; each sid's own loose <sid>/, one row each,
+        and a new episode of one sid files its own again and not hosts/; hosts/ observed 0775, 0700, 0775 by three sids,
+        two rows; three descents in one hosts-off episode over a stable 0775 pair, one row per component; a mode planted
+        between two descents, a row naming it), and the loop-top placement by structure there, with the executed pins it
+        points at."""
         for what, path, mode in dirs.modes:         # every component the descent admitted, tight ones included
+            # the subject's owner, by path: at or under hosts/<sid>/ (dirs.path, host_dir(state_dir, sid) as _descend built
+            # it) is this sid's; hosts/ above it is shared
+            owner = sess.sid if (path == dirs.path or dirs.path in path.parents) else None
             key = str(path)
+            seen = self._loose_filed.setdefault(owner, {})
             was, seen[key] = seen.get(key), mode
-            if not mode & 0o077 or was == mode:     # tight: nothing to file (but observed); loose and already filed as this mode: latched
+            self._refused_filed.get(owner, {}).pop(None, None)   # admitted: a refusal of this directory, if one stood, is over
+            if not mode & 0o077 or was == mode:     # tight: nothing to file (but observed); loose and last observed as this mode: latched
                 continue
             problem_row(self.state_dir,
                         "the %s %s for %s is group/world-accessible (mode %04o); this read changed nothing, and the next "
@@ -14421,8 +14480,9 @@ class SdkBackend:
         # NOTHING from under that directory: the reads below run off the held <sid> descriptor (next comment), which the
         # refused road never obtained, and refuse a link by name before any open; the lease and the registry's ack still
         # go, and remove_host_dir refuses the same object on its own descent and logs it. Since the fourth addendum
-        # (2026-09-20): a loose component is a host.directory-loose row, once per connect episode per mode observed (the
-        # fifth addendum; the fourth filed one per descent), and the read goes on (_file_loose_directory_rows); an entry
+        # (2026-09-20): a loose component is a host.directory-loose row, once per observed mode of the directory, whoever
+        # observes it (THE RULE at _file_loose_directory_rows; the fifth addendum filed once per connect episode, the
+        # fourth once per descent), and the read goes on (_file_loose_directory_rows); an entry
         # ANOTHER UID owns at identity.json, of any kind (HostFileForeign: the fstatat of the name under the <sid>
         # descriptor before the open, then the fstat of the descriptor read_host_file opened; a peer's socket at the
         # name reached neither through the fourth addendum, open(2) answering ENXIO first, and the OSError arm below
@@ -14698,8 +14758,8 @@ class SdkBackend:
         any kind, or the file-shape refusal for a link of ours, is ONE host.directory-refused row (_refused_directory_row:
         the owner's or the file's remedy, `did` the arm's clause) and the absent file's answers for all three: no
         reason, no untested row, no position, none of the file read. The reads after the refused one are not made, so
-        the refusal is met once here; the row's own footing is _refused_directory_row's, once per connect episode per
-        observed state (the fork PR that follows #814). The
+        the refusal is met once here; the row's own footing is _refused_directory_row's, once per observed state of its
+        subject (THE RULE at _file_loose_directory_rows). The
         arms' handler is the design's, every read under hosts/<sid>/ asking, and not a road a peer has: the mark
         (host_log_mark, before the spawn) refuses the launch on a foreign host.log, and once the helpers have tightened
         <sid>/ to 0700 a create, a rename or an unlink in it is checked against the directory's own mode, a held
@@ -14796,8 +14856,9 @@ class SdkBackend:
         filed as this session's problem rows. A refusal (a link at either component or at the file, a non-directory, a
         foreign uid) is filed as one host.directory-refused row with the remedy and nothing under that directory is
         read; an absent directory or file is the no-log case it always was. Since the fourth addendum (2026-09-20): a
-        loose component is a host.directory-loose row, once per connect episode per mode observed (the fifth addendum;
-        the fourth filed one per descent), and the read goes on (_file_loose_directory_rows); an entry ANOTHER UID owns
+        loose component is a host.directory-loose row, once per observed mode of the directory, whoever observes it (THE
+        RULE at _file_loose_directory_rows; the fifth addendum filed once per connect episode, the fourth once per
+        descent), and the read goes on (_file_loose_directory_rows); an entry ANOTHER UID owns
         at host.log, of any kind (HostFileForeign: the fstatat of the name under the <sid> descriptor before the open,
         then the fstat of the descriptor read_host_file opened; through the fourth addendum a peer's socket at the name
         reached neither, open(2) answering ENXIO first, and the OSError arm below returned with no row) is one row
