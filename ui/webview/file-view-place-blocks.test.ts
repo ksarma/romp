@@ -884,7 +884,19 @@ function figureOpenControl(img: FakeElement): FakeElement {
   b.box = { top: img.box!.top + 6, bottom: img.box!.top + 28 };
   return b;
 }
+/** The label file-view.ts parks after a figure whose `error` fired (Slice 7): `span.fv-figerr[data-fv-figerr]`, the img's next sibling
+ *  in the img's own parent, its text the viewer's; beside a floated figure it stands at the figure's top, so its box too ends above
+ *  the edge while the figure's ends below it (the pair's other member, left out of the structural read by the same predicate). */
+function failedFigureLabel(img: FakeElement): FakeElement {
+  const doc = img.ownerDocument, parent = img.parentNode as FakeElement;
+  const label = doc.createElement("span"); label.setAttribute("class", "fv-figerr"); label.setAttribute("data-fv-figerr", "");
+  label.appendChild(doc.createTextNode("Image failed to load: figs/plot.png (fig)"));
+  parent.childNodes.splice(parent.childNodes.indexOf(img) + 1, 0, label); label.parentNode = parent;
+  label.box = { top: img.box!.top, bottom: img.box!.top + 20 };
+  return label;
+}
 const FIG = '<img src="figs/plot.png" alt="fig">';
+const FIG_RIGHT = '<img src="figs/plot.png" alt="fig" align="right">';
 
 test("readPlace, Rendered: a top-level html-block figure wearing the Open the picture control (the control's box ends above the edge while the figure's ends below it) reads as the figure, at the same box as without the control, at the root's level and nested in an html wrapper (the file review's landing round, correctness-1: the control was in the text read's list and not in the structural read's, so the level's search landed on the control, took its bottom for a box above the edge and read the paragraph after the figure)", () => {
   const placeIn = (body: FakeElement, doc: string) => { const p = readPlace(H(body), doc); assert.ok(p, "a place"); return [doc.slice(p!.start, p!.end), p!.top, p!.height]; };
@@ -917,4 +929,15 @@ test("readPlace, Rendered: a top-level html-block figure wearing the Open the pi
   const ctrlW = figureOpenControl(kids[0]);
   assert.equal(div.childNodes.indexOf(ctrlW), div.childNodes.indexOf(kids[0]) + 1, "the control is the img's next sibling inside the wrapper");
   assert.deepEqual(placeIn(rw.body, docW), [FIG, -100, 400], "with the control: the nested figure still (before the fix: the nested paragraph after it)");
+  // the pair's other member: a right-floated figure that failed to load wears the label at its top, beside the float, so the label's
+  // box ends above the edge while the figure's ends below it, the control's shape (a label under an unfloated figure sits at its
+  // bottom and never did this)
+  const docF = "# Report\n\n" + PARA(1) + "\n\n" + FIG_RIGHT + "\n\n" + PARA(2) + "\n\n" + PARA(3) + "\n";
+  const rf = rendered(docF, 0, stack(5, { 2: 400 }));
+  assert.deepEqual(rf.blocks.map((b) => b.tagName), ["H1", "P", "IMG", "P", "P"], "the fixture: the floated figure is a top-level element");
+  toEdge(rf.md, rf.blocks[2], 100);
+  assert.deepEqual(placeIn(rf.body, docF), [FIG_RIGHT, -100, 400], "without the label: the floated figure, 100px in");
+  const label = failedFigureLabel(rf.blocks[2]);
+  assert.equal(renderedBlockIndex(El(rf.md), docF, El(label)), -1, "the map pairs the label to no block (Slice 7)");
+  assert.deepEqual(placeIn(rf.body, docF), [FIG_RIGHT, -100, 400], "with the label: the floated figure still (before the fix: the paragraph after it)");
 });

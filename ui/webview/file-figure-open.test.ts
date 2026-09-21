@@ -11,7 +11,6 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { codeOnly } from "../test-code-only";
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const VIEW = web("file-view.ts");
@@ -102,30 +101,23 @@ test("the click: a listener of its own on the body beside the links'; the contro
  *  (tools/markdown-viewer-plan-linknav.test.mjs NUMBER_WORDS) is an .mjs module a .ts test does not import. */
 const NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"];
 
-test("SOURCE-TEXT pins of the two control lists and the pair predicate (anchor-map.ts's CONTROL_CLASSES entry and isFigureCompanion in holdsContent; reader-place.ts's CONTROL_CLASSES entry, its docstring's count word derived from the list, and isFigureCompanion in blockElementsOf at both sites of the structural read): each entry is defensive, inert while the control has no text node of its own, so no glyph-only scene reds on it; the executed subjects are isFigureCompanion (anchor-map.test.ts: the control at the box's top level is no block's node; file-view-place-blocks.test.ts: readPlace over a top-level figure wearing the control reads the figure, at the root and nested) and the entries under a labelled control (anchor-map.test.ts's caption case, md-config-figure-gate-place.test.ts's labelled scene), while md-config's glyph-only scenes hold the pairing and the place beside the control", () => {
+test("SOURCE-TEXT pins of the two text-read control lists (anchor-map.ts's CONTROL_CLASSES entry and isFigureCompanion in holdsContent; reader-place.ts's CONTROL_CLASSES entry, its docstring's count word derived from the list): each entry is defensive, inert while the control has no text node of its own, so no glyph-only scene reds on it; the executed subjects are isFigureCompanion (anchor-map.test.ts: the control at the box's top level is no block's node) and the entries under a labelled control (anchor-map.test.ts's caption case, md-config-figure-gate-place.test.ts's labelled scene), while md-config's glyph-only scenes hold the pairing and the place beside the control; the structural read's exclusion of both companions (reader-place.ts blockElementsOf, at the root's level and a wrapper's) is pinned by execution alone, in file-view-place-blocks.test.ts, since a source pin on where it stands satisfied nothing a driven case does not", () => {
   const classes = between(ANCHOR, "const CONTROL_CLASSES = [", "];");
   assert.match(classes, /"fv-figerr",[^\n]*\n\s*"fv-figopen",/, "anchor-map.ts: after the label, the last entry");
   assert.match(ANCHOR, /const isFigureCompanion = \(n: DNode\): boolean => hasClass\(n, "fv-figerr"\) \|\| hasClass\(n, "fv-figopen"\);/, "the two companions of a figure");
   assert.match(ANCHOR, /const holdsContent = \(n: DNode\): boolean => isElement\(n\) \? !blankMark\(n\) && !isFigureCompanion\(n\) : isText\(n\) && stripWs\(n\.data\) !== "";/, "left out of the top-level nodes, as the label is");
   assert.doesNotMatch(ANCHOR, /isFigureLabel/, "the label-only predicate is gone: one predicate for both");
   // reader-place.ts: the count word compared to the list's own length, never to a literal (the file review's landing round, extra6-3:
-  // a literal "seven" stayed green under an eighth entry)
-  const entries = between(READER, "const CONTROL_CLASSES = [", "];").match(/"[a-z-]+"/g) || [];
+  // a literal "seven" stayed green under an eighth entry). The list is read off its own line, a statement at column 0, so a comment
+  // quoting it elsewhere is not what is counted.
+  const list = /^const CONTROL_CLASSES = \[([^\]]*)\];$/m.exec(READER);
+  assert.ok(list, "reader-place.ts declares CONTROL_CLASSES on one line at column 0");
+  const entries: string[] = list![1].match(/"[a-z-]+"/g) || [];
   assert.ok(entries.length > 0, "reader-place.ts's CONTROL_CLASSES parses to its entries");
   const word = NUMBER_WORDS[entries.length];
   assert.ok(word, "a number word for " + entries.length + " entries");
   assert.match(READER, new RegExp("These " + word + " are in anchor-map\\.ts's CONTROL_CLASSES"), "the count in the comment follows the list: " + entries.length + " entries, so \"These " + word + "\"");
-  assert.ok(entries.includes('"fv-figopen"'), "the control's class is in reader-place.ts's text-read list, beside the label's");
-  // the structural read (the file review's landing round, correctness-1): the pair alone is left out of the element lists the read
-  // walks, by the predicate the map's pairing uses, not the wider isControl (a top-level gate placeholder IS its block's element);
-  // read comment-stripped, so a comment naming the function satisfies nothing here
-  const code = codeOnly(READER);
-  assert.match(code, /\nconst FIGURE_COMPANION_CLASSES = \["fv-figerr", "fv-figopen"\];\n/, "reader-place.ts: the pair, the same two anchor-map.ts's isFigureCompanion names");
-  assert.match(code, /\nconst blockElementsOf = \(n: Node\): Element\[\] => elementsOf\(n\)\.filter\(\(c\) => !isFigureCompanion\(c\)\);\n/, "the structural read's element list leaves the companions out");
-  assert.match(code, /readRendered\(md, source, spans, blockElementsOf\(md\), edge, atTop, carry\)/, "the root's level (readPlace)");
-  assert.match(code, /readRendered\(md, source, spans, blockElementsOf\(kids\[i\]\), edge, atTop, carry\)/, "a wrapper's level (readRendered's descent)");
-  assert.equal((code.match(/readRendered\(md, source, spans, /g) || []).length, 2, "the structural read has the two sites and no third");
-  assert.doesNotMatch(code, /readRendered\(md, source, spans, elementsOf\(/, "no site of the structural read walks the raw element list (file-view-place-blocks.test.ts drives both sites)");
+  assert.ok(entries.includes('"fv-figopen"'), "the control's class is in reader-place.ts's text-read list, beside the label's (the list's contents; the labelled scene in md-config-figure-gate-place.test.ts is what executes it)");
 });
 
 test("the sheets: the control rests transparent over the figure's corner with a zero-width margin box, positioned above the layer's overlay; every reveal (the pointer over the figure or the control, a keyboard focus, a device with no hover) is under screen, so print shows none of it and the print block carries no line for it", () => {
