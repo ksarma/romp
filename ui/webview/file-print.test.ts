@@ -707,10 +707,14 @@ test("bodyReady reads the element children through `children`, else through `chi
 // inward, the reported declaration text does not, and nothing refuses), passes under the listed text: the plants k4 and k4'
 // below pass, k4'' with another text inside refuses naming both. The text held is the WHOLE of it (the initializer, a loop's
 // head, an unnamed callback's call, and the argument axis's hand-off and callee texts; a text over 300 characters is held as
-// its first 80 characters beside the sha256 of the whole, openFileView's `ctx` initializer the one such text in the tables
-// today), since a third road, the hold on the initializer's first 80 characters, let two initializers alike to there pass
-// under one listed text; the maintainer's round-8 ruling of 2026-09-21 closed it, and the plants m1, m1' and m2 below
-// execute the refusal, the pass under each whole text, and the hash form; and a receiver bound
+// its first 80 characters beside the sha256 of the whole flattened text, the text as the census reads it with comments blanked
+// and whitespace collapsed to single spaces, so the digest is recomputed from that text and not from the file's raw bytes;
+// openFileView's `ctx` initializer the one such text in the tables today, both held by the mutants case, which recomputes the
+// digest from the flattened initializer and counts the hashed fields across the three tables), since a third road, the hold on
+// the initializer's first 80 characters, let two initializers alike to there pass under one listed text; the maintainer's
+// round-8 ruling of 2026-09-21 closed it, and the plants m1 to m7 below execute, at every held text, the refusal under a text
+// cut at 80 and the pass under each whole text (the initializer m1 and m1', the hash form m2 and m2', a loop's head m3, an
+// unnamed callback's call m4, a hand-off's argument m5 and m5b and callee m6, a hashed argument m7); and a receiver bound
 // by `let` or `var`, or a parameter written to, is REASSIGNABLE and its seat fails
 // unless the entry pins what the binding HOLDS (`holds`: the one expression every write to it in the file assigns), since
 // its declaration says nothing about what it holds at the seat (the round-6 review's correctness-5; the viewer's session
@@ -1222,7 +1226,7 @@ const NON_SEATING_WRITES: Array<{ name: string; why: string; url?: true }> = [
 type BindingKind = "const" | "let" | "var" | "parameter" | "function" | "import" | "class" | "other";
 type Write = { text: string; line: number };
 type Binding = { decl: string; bindingAt: number; kind: BindingKind; writes: Write[] };
-type SeatSite = { line: number; fn: string; on: string; via: string; seats: string; assign: boolean; text: string; body: boolean; seatedBy?: string; shadowed?: string } & Partial<Binding>;
+type SeatSite = { line: number; fn: string; on: string; via: string; seats: string; assign: boolean; text: string; whole: string; body: boolean; seatedBy?: string; shadowed?: string } & Partial<Binding>;   // `text` is the call's text cut at 100 for messages; `whole` the flattened call text uncut, what a compare reads
 /** A use of a member the census reads only by its site or refuses: its line and text. */
 type Use = { line: number; text: string };
 /** A member written on a receiver other than the `body` token: its function, receiver and the member's name; `through` names
@@ -1289,8 +1293,12 @@ function seatSites(src: string): SecondRead {
   /** A text an entry is HELD to (a declaration's initializer, a loop's head, an unnamed callback's call, a hand-off's argument or
    *  callee): the whole of it, so two texts that differ anywhere are two texts (the maintainer's round-8 ruling of 2026-09-21:
    *  the hold was the first 80 characters, and two initializers alike to there passed under one listed text); a text over 300
-   *  characters is held as its first 80 characters beside the sha256 of the whole, so a reader sees where it starts and the
-   *  compare still reads all of it. The site texts in refusal messages (`text`) stay cut, being messages, never keys. */
+   *  characters is held as its first 80 characters beside the sha256 of the whole FLATTENED text, the text as the census reads
+   *  it (comments blanked by the compiler, whitespace collapsed to single spaces), so a reader sees where it starts, the compare
+   *  still reads all of it, and the digest is recomputed from that text and not from the file's raw bytes. The site texts in
+   *  refusal messages (`text`) stay cut at 100 characters, being messages; the one compare over two live sites, the P7 case's
+   *  byte-identical read of an entry's two seats or hand-offs, reads `whole`, the flattened call text uncut (the fold's
+   *  verifiers' records-2: before this it read `text`, a hold on a 100-character prefix). */
   const held = (s: string): string => s.length > 300 ? s.slice(0, 80) + " ... sha256:" + crypto.createHash("sha256").update(s).digest("hex") : s;
   const nameOfFn = (f: ts.Node): string | null => {
     if (ts.isFunctionDeclaration(f) && f.name) return f.name.text;
@@ -1532,10 +1540,10 @@ function seatSites(src: string): SecondRead {
     if (ts.isArrayLiteralExpression(r)) { for (const e of r.elements) if (!ts.isOmittedExpression(e)) handedIn(n, e, (s) => spell("[ " + s + " ]"), foreign); return; }
     if (ts.isArrowFunction(r) && !ts.isBlock(r.body)) { handedIn(n, r.body, (s) => spell("() => " + s), foreign); return; }
     const h = nodeHanded(a);
-    if (h) { handedNodes.push({ line: lineOf(n), text: text(n), fn: fnOf(n), to: calleeText(n), arg: spell(held(flat(a.getText(sf)))), ...h }); return; }
+    if (h) { handedNodes.push({ line: lineOf(n), text: text(n), whole: flat(n.getText(sf)), fn: fnOf(n), to: calleeText(n), arg: spell(held(flat(a.getText(sf)))), ...h }); return; }
     if (!foreign) return;
     const shape = elementShape(a);
-    if (shape) { const e = peel(a); if (ts.isIdentifier(e) && isBodyToken(e)) return; const b = ts.isIdentifier(e) ? { ...bindingOf(e), ...(shadowOf(e) ? { shadowed: shadowOf(e)! } : {}) } : {}; elementsHanded.push({ line: lineOf(n), text: text(n), fn: fnOf(n), to: calleeText(n), arg: spell(held(flat(a.getText(sf)))), member: shape, ...b }); }
+    if (shape) { const e = peel(a); if (ts.isIdentifier(e) && isBodyToken(e)) return; const b = ts.isIdentifier(e) ? { ...bindingOf(e), ...(shadowOf(e) ? { shadowed: shadowOf(e)! } : {}) } : {}; elementsHanded.push({ line: lineOf(n), text: text(n), whole: flat(n.getText(sf)), fn: fnOf(n), to: calleeText(n), arg: spell(held(flat(a.getText(sf)))), member: shape, ...b }); }
   };
   let bodyWrites = 0;
   /** An argument as the seat key spells it: an object literal, an array literal or a function abbreviated, the rest as written. */
@@ -1579,7 +1587,7 @@ function seatSites(src: string): SecondRead {
   };
   const site = (n: ts.Node, recv: ts.Expression, via: string, seats: string, assign = false, seatedArgs: ts.Expression[] = []): void => {
     const r = strip(recv);
-    const s: SeatSite = { line: lineOf(n), fn: fnOf(n), on: flat(r.getText(sf)), via, seats, assign, text: text(n), body: ts.isIdentifier(r) && r.text === "body" };
+    const s: SeatSite = { line: lineOf(n), fn: fnOf(n), on: flat(r.getText(sf)), via, seats, assign, text: text(n), whole: flat(n.getText(sf)), body: ts.isIdentifier(r) && r.text === "body" };
     if (ts.isIdentifier(r) && !s.body) { Object.assign(s, bindingOf(r)); const sh = shadowOf(r); if (sh) s.shadowed = sh; }
     const by = seatedBy(seatedArgs);
     if (by !== undefined) s.seatedBy = by;
@@ -1832,7 +1840,7 @@ const INDEX_READS_BY_HAND: IndexRead[] = [
 /** A node of the tree handed to a callee (seatSites.nodeHanded): its line and text, the nearest named function (`fn`), the
  *  callee as spelled (`to`), the argument as spelled (`arg`), the NODE_MEMBERS member it reads through, and, for a name,
  *  its binding (the declaration, its kind and every write to it). */
-type HandedNode = Use & { fn: string; to: string; arg: string; member: string; shadowed?: string } & Partial<Binding>;
+type HandedNode = Use & { fn: string; to: string; arg: string; member: string; whole: string; shadowed?: string } & Partial<Binding>;   // `whole`: the flattened call text uncut, beside the message's `text` cut at 100
 /** A URL member written from a value that is not a literal (seatSites): its line and text, the function, the target as
  *  spelled (`on`), the value as spelled (`value`) and, for a bare name, its binding. */
 type UrlWrite = Use & { fn: string; on: string; value: string; shadowed?: string } & Partial<Binding>;
@@ -2344,6 +2352,19 @@ test("the census refuses its unknown and derives its population, executed over m
   const ctxRenamed = census(VIEWER_SRC.replace("\n  const ctx: FileViewActionCtx = {\n", "\n  const actions: FileViewActionCtx = {\n"));
   const ctxEntry = SEATS_READ_BY_HAND.find((e) => e.in === "openFileView" && e.on === "a" && e.via === "mount" && e.seats === "ctx")!;   // the mount's entry, its `seatedBy` the one home of the ctx declaration's held text (the round-8 fold: the initializer is over 300 characters, so the text is held as its first 80 characters beside the sha256 of the whole)
   assert.match(ctxEntry.seatedBy!, /^ctx = const ctx = .{80} \.\.\. sha256:[0-9a-f]{64}$/, "the ctx entry's `seatedBy` holds the hashed form, the one live text over 300 characters");
+  // the header's two clauses on the hash form, held by execution (the author's closing pass over round 8, the fold's verifiers'
+  // mechanism-2 and records-3): the digest is of the FLATTENED initializer, comments blanked and whitespace collapsed as the
+  // census reads it, recomputed here from that text and matched to the table's field; and the ctx initializer is the ONE hashed
+  // text across the three tables, by a count of every string field carrying the hash form
+  const sfCtx = ts.createSourceFile("file-view.ts", VIEWER_SRC, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const ctxInits: string[] = [];
+  const findCtx = (n: ts.Node): void => { if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === "ctx" && n.initializer && n.type && n.type.getText(sfCtx) === "FileViewActionCtx") ctxInits.push(n.initializer.getText(sfCtx).replace(/\s+/g, " ")); ts.forEachChild(n, findCtx); };
+  findCtx(sfCtx);
+  assert.equal(ctxInits.length, 1, "file-view.ts declares one `ctx: FileViewActionCtx`");
+  assert.ok(ctxInits[0].length > 300, "its initializer, flattened, is over 300 characters, the hash line (" + ctxInits[0].length + ")");
+  assert.equal(ctxEntry.seatedBy, "ctx = const ctx = " + ctxInits[0].slice(0, 80) + " ... sha256:" + crypto.createHash("sha256").update(ctxInits[0]).digest("hex"), "the table's hashed form is the first 80 characters and the sha256 of the flattened initializer (comments blanked, whitespace collapsed to single spaces), the text the header names, so a reader recomputes the digest from it");
+  const hashedFields = [...SEATS_READ_BY_HAND, ...ARGS_READ_BY_HAND, ...URL_WRITES_READ_BY_HAND].flatMap((e) => Object.entries(e).filter(([, v]) => typeof v === "string" && / \.\.\. sha256:[0-9a-f]{64}/.test(v)).map(([k, v]) => k + " = " + v));
+  assert.deepEqual(hashedFields, ["seatedBy = " + ctxEntry.seatedBy], "one hashed text across the three tables, the ctx entry's `seatedBy`: the header's clause that openFileView's `ctx` initializer is the one such text in the tables today");
   assert.deepEqual(ctxRenamed.refused.filter((r) => !ACCESSOR_ELSEWHERE.test(r)).map((r) => r.replace(/^line \d+: /, "")), ["the census passes the action-context accessor `body: () => body` inside the object literal declared `const ctx: FileViewActionCtx = {`, and the source declares no such literal: read the hand-out by hand again", "a.mount(ctx) seats `ctx` bound by `ctx = a global`, where SEATS_READ_BY_HAND read `" + ctxEntry.seatedBy + "`: what is seated is not the binding read by hand (the entry names each seated bare name's declaration in `seatedBy`)"], "the ctx declaration renamed: the census holds the source to it, and the mount seated `ctx` is bound to no declaration now (the seated name's binding, the author's closing pass over the round-7 build)");
   assert.equal(ctxRenamed.refused.filter((r) => ACCESSOR_ELSEWHERE.test(r)).length, 1, "...and the live accessor is refused with its line, since its literal is no longer the declared one");
   // the table is read, not decorative: a live site whose entry is removed reds with its line, and an entry with no site reds
@@ -2409,9 +2430,10 @@ test("the census refuses its unknown and derives its population, executed over m
 // name, receiver spelling, form, seated arguments) and the receiver is then resolved to its DECLARATION by the language's
 // scopes and held to the entry by the declaration's text and a per-function declaration count, so every name collision the
 // probe planted refused loud. The plants below keep all 13 of those failures loud, with two of the probe's passing plants
-// (b1', c2') and the k4 family, the inward-move road the header states; the m1 and m2 plants execute the round-8 ruling's
-// fix, the whole text held (the 80-character road, closed).
-test("the seat table's receiver hold is by binding, not name, executed over functions planted at the end of file-view.ts: a listed name declared in two blocks of the entry's function is refused at both seats, whatever each declaration spells and with its own entry per block; a callback parameter of the name is refused at every seat of the name in the function; a same-named local in ANOTHER function is an unlisted seat there, never read under the listed function's entry, with or without `times`; two functions' entries with their declarations swapped are refused at both seats naming both declarations; one entry over two function nodes sharing a name reds the count; the probe's six other loud plants refuse as it recorded (two blocks spelled alike under `times`, a second block that never seats, a nested named arrow's own declaration unlisted and then wearing the outer text, an unnamed callback's declaration, a nested named function's parameter, a property key); the text hold's stated residue passes (a same-text declaration added inside the nested named function an entry names); two declarations alike through the initializer's 80th character and differing after are refused under one listed text and pass under each whole text, and a text over 300 characters is held by its hash (the maintainer's round-8 ruling of 2026-09-21); and the header names the shared name the live tables use", () => {
+// (b1', c2') and the k4 family, the inward-move road the header states; the m1 to m7 plants execute the round-8 ruling's
+// fix, the whole text held at every held text (the 80-character road, closed): the initializer (m1, m1'), the hash form (m2,
+// m2'), a loop's head (m3), an unnamed callback's call (m4), a hand-off's argument (m5 an element by shape, m5b a node of the tree) and callee (m6), a hashed argument (m7).
+test("the seat table's receiver hold is by binding, not name, executed over functions planted at the end of file-view.ts: a listed name declared in two blocks of the entry's function is refused at both seats, whatever each declaration spells and with its own entry per block; a callback parameter of the name is refused at every seat of the name in the function; a same-named local in ANOTHER function is an unlisted seat there, never read under the listed function's entry, with or without `times`; two functions' entries with their declarations swapped are refused at both seats naming both declarations; one entry over two function nodes sharing a name reds the count; the probe's six other loud plants refuse as it recorded (two blocks spelled alike under `times`, a second block that never seats, a nested named arrow's own declaration unlisted and then wearing the outer text, an unnamed callback's declaration, a nested named function's parameter, a property key); the text hold's stated residue passes (a same-text declaration added inside the nested named function an entry names); two declarations alike through the initializer's 80th character and differing after are refused under one listed text and pass under each whole text, and a text over 300 characters is held by its hash (the maintainer's round-8 ruling of 2026-09-21), the same at every text the census holds an entry to (a loop's head, an unnamed callback's call, a hand-off's argument and callee, a hashed argument); and the header names the shared name the live tables use", () => {
   const plant = (code: string): string => VIEWER_SRC + "\n" + code + "\n";
   const lineIn = (src: string, needle: string): number => { const i = src.indexOf(needle); assert.ok(i >= 0 && src.indexOf(needle, i + 1) < 0, needle + " is planted once"); return src.slice(0, i).split("\n").length; };
   assert.deepEqual(census(VIEWER_SRC).refused, [], "the unplanted file passes, so every refusal below is the plant's");
@@ -2519,6 +2541,82 @@ test("the seat table's receiver hold is by binding, not name, executed over func
   const m2 = plant('function probeH1(): void {\n  ' + H1 + '; p.appendChild(' + S1 + ');\n}\nfunction probeH2(): void {\n  ' + H2 + '; p.appendChild(' + S2 + ');\n}');
   assert.deepEqual(census(m2, [...SEATS_READ_BY_HAND, P("probeH1", hashed(H1), S1), P("probeH2", hashed(H1), S2)]).refused, ["line " + (lineIn(m2, "function probeH2") + 1) + ": p.appendChild(" + S2 + ") seats on `p` in probeH2, bound to `" + hashed(H2) + "`, where SEATS_READ_BY_HAND read `" + hashed(H1) + "`: the receiver is not the one read by hand"], "m2: over 300 characters, the sibling listed under the other's hashed form is refused naming both hashed forms");
   assert.deepEqual(census(m2, [...SEATS_READ_BY_HAND, P("probeH1", hashed(H1), S1), P("probeH2", hashed(H2), S2)]).refused, [], "m2': each listed under its own hashed form, both seats pass");
+  // the other five held texts (the author's closing pass over round 8, the fold's verifiers' mechanism-1 and records-1: the
+  // fix reached all six sites and the plants above executed the initializer's alone, so cutting the other five back stayed
+  // green). Each plant below is two texts alike through the 80th character and differing after: listed under the text cut at
+  // 80, refused naming each whole text; listed under each whole text, passing.
+  const cut80 = (s: string): string => s.slice(0, 80);
+  const alike = (a: string, b: string): boolean => a !== b && a.length > 80 && cut80(a) === cut80(b);
+  const NOT_READ = (fn: string, S: string, whole: string, listed: string): string => "p.appendChild(" + S + ") seats on `p` in " + fn + ", bound to `" + whole + "`, where SEATS_READ_BY_HAND read `" + listed + "`: the receiver is not the one read by hand";
+  // m3: a loop's head, for-of and for-in
+  const O1 = '[el("div", "fileview-probe-' + "x".repeat(60) + '-1")]', O2 = '[el("div", "fileview-probe-' + "x".repeat(60) + '-2")]';
+  const I1 = '{ "fileview-probe-' + "x".repeat(70) + '-1": 0 }', I2 = '{ "fileview-probe-' + "x".repeat(70) + '-2": 0 }';
+  assert.ok(alike(O1, O2) && alike(I1, I2), "the for-of heads and the for-in heads are alike through the 80th character and differ after");
+  const m3 = plant('function probeO1(): void {\n  for (const p of ' + O1 + ') p.appendChild(' + S1 + ');\n}\nfunction probeO2(): void {\n  for (const p of ' + O2 + ') p.appendChild(' + S2 + ');\n}\nfunction probeI1(): void {\n  for (const p in ' + I1 + ') p.appendChild(' + S1 + ');\n}\nfunction probeI2(): void {\n  for (const p in ' + I2 + ') p.appendChild(' + S2 + ');\n}');
+  const m3Line = (fn: string): number => lineIn(m3, "function " + fn) + 1;
+  assert.deepEqual(census(m3, [...SEATS_READ_BY_HAND, P("probeO1", "const p of " + cut80(O1), S1), P("probeO2", "const p of " + cut80(O1), S2), P("probeI1", "const p in " + cut80(I1), S1), P("probeI2", "const p in " + cut80(I1), S2)]).refused, [
+    "line " + m3Line("probeO1") + ": " + NOT_READ("probeO1", S1, "const p of " + O1, "const p of " + cut80(O1)),
+    "line " + m3Line("probeO2") + ": " + NOT_READ("probeO2", S2, "const p of " + O2, "const p of " + cut80(O1)),
+    "line " + m3Line("probeI1") + ": " + NOT_READ("probeI1", S1, "const p in " + I1, "const p in " + cut80(I1)),
+    "line " + m3Line("probeI2") + ": " + NOT_READ("probeI2", S2, "const p in " + I2, "const p in " + cut80(I1)),
+  ], "m3: loop heads alike through the 80th character, listed under the head cut there, are refused at all four seats naming each whole head");
+  assert.deepEqual(census(m3, [...SEATS_READ_BY_HAND, P("probeO1", "const p of " + O1, S1), P("probeO2", "const p of " + O2, S2), P("probeI1", "const p in " + I1, S1), P("probeI2", "const p in " + I2, S2)]).refused, [], "m3': listed under their whole heads, all four seats pass");
+  // m4: an unnamed callback's call, the text its parameter is described by
+  const C1 = '[el("div", "fileview-probe-' + "x".repeat(60) + '-1")].forEach', C2 = '[el("div", "fileview-probe-' + "x".repeat(60) + '-2")].forEach';
+  assert.ok(alike(C1, C2), "the two calls are alike through the 80th character and differ after");
+  const m4 = plant('function probeU1(): void {\n  ' + C1 + '((p) => { p.appendChild(' + S1 + '); });\n}\nfunction probeU2(): void {\n  ' + C2 + '((p) => { p.appendChild(' + S2 + '); });\n}');
+  const cb = (call: string): string => "a parameter of the callback handed to " + call;
+  assert.deepEqual(census(m4, [...SEATS_READ_BY_HAND, P("probeU1", cb(cut80(C1)), S1), P("probeU2", cb(cut80(C1)), S2)]).refused, [
+    "line " + (lineIn(m4, "function probeU1") + 1) + ": " + NOT_READ("probeU1", S1, cb(C1), cb(cut80(C1))),
+    "line " + (lineIn(m4, "function probeU2") + 1) + ": " + NOT_READ("probeU2", S2, cb(C2), cb(cut80(C1))),
+  ], "m4: two unnamed callbacks' parameters, the calls alike through the 80th character, listed under the call cut there, are refused at both seats naming each whole call");
+  assert.deepEqual(census(m4, [...SEATS_READ_BY_HAND, P("probeU1", cb(C1), S1), P("probeU2", cb(C2), S2)]).refused, [], "m4': listed under the whole calls, both seats pass");
+  // m5: a hand-off's argument (the argument axis's `arg`), an element by shape handed to an import (flash), twice in one function
+  const A = (fn: string, to: string, arg: string, times?: number): ArgRead => ({ in: fn, to, arg, is: "a probe's entry for a planted hand-off", ...(times === undefined ? {} : { times }) });
+  const UNLISTED_HANDOFF = (line: number, call: string, arg: string, to: string, fn: string): string => "line " + line + ": " + call.slice(0, 100) + " hands `" + arg + "`, el(...), to " + to + "(...) in " + fn + ", a callee this file does not declare and the census has not read by hand for what it does with an element it is handed (it could seat the element in the body, or seat into it, where the census cannot follow): read it and list the site in ARGS_READ_BY_HAND";
+  const STALE_HANDOFF = (arg: string, to: string, fn: string): string => "ARGS_READ_BY_HAND lists `" + arg + "` handed to " + to + " in " + fn + ", and the source has no such hand-off: the entry is stale, remove it or read the site again";
+  const E1 = 'el("div", "fileview-probe-' + "x".repeat(70) + '-1")', E2 = 'el("div", "fileview-probe-' + "x".repeat(70) + '-2")';
+  assert.ok(alike(E1, E2) && E1.length <= 300, "the two arguments are alike through the 80th character, differ after, and stay under the hash line");
+  const m5 = plant('function probeM5(): void {\n  flash(' + E1 + ');\n  flash(' + E2 + ');\n}');
+  const m5Line = lineIn(m5, "function probeM5");
+  assert.deepEqual(census(m5, SEATS_READ_BY_HAND, INDEX_READS_BY_HAND, [...ARGS_READ_BY_HAND, A("probeM5", "flash", cut80(E1), 2)]).refused, [
+    STALE_HANDOFF(cut80(E1), "flash", "probeM5"),
+    UNLISTED_HANDOFF(m5Line + 1, "flash(" + E1 + ")", E1, "flash", "probeM5"),
+    UNLISTED_HANDOFF(m5Line + 2, "flash(" + E2 + ")", E2, "flash", "probeM5"),
+  ], "m5: two hand-offs alike through the argument's 80th character, listed as one entry under the argument cut there with `times: 2`, are three refusals: the cut entry stale, and each hand-off unlisted naming its whole argument");
+  assert.deepEqual(census(m5, SEATS_READ_BY_HAND, INDEX_READS_BY_HAND, [...ARGS_READ_BY_HAND, A("probeM5", "flash", E1), A("probeM5", "flash", E2)]).refused, [], "m5': listed under each whole argument, both hand-offs pass");
+  // m5b: the same over the argument axis's other push, a node of the tree (a NODE_MEMBERS chain) handed to a callee
+  const N1 = E1 + ".parentElement", N2 = E2 + ".parentElement";
+  const UNLISTED_NODE = (line: number, call: string, arg: string, to: string, fn: string): string => "line " + line + ": " + call.slice(0, 100) + " hands `" + arg + "`, a node of the tree read through parentElement, to " + to + "(...) in " + fn + ", a callee the census has not read by hand for what it does with a node it is handed (it could seat the node in the body, or seat into it, where the census cannot follow): read it and list the site in ARGS_READ_BY_HAND, or read the node inside a call the census reads";
+  const m5b = plant('function probeN5(): void {\n  flash(' + N1 + ');\n  flash(' + N2 + ');\n}');
+  const m5bLine = lineIn(m5b, "function probeN5");
+  assert.deepEqual(census(m5b, SEATS_READ_BY_HAND, INDEX_READS_BY_HAND, [...ARGS_READ_BY_HAND, A("probeN5", "flash", cut80(N1), 2)]).refused, [
+    UNLISTED_NODE(m5bLine + 1, "flash(" + N1 + ")", N1, "flash", "probeN5"),
+    UNLISTED_NODE(m5bLine + 2, "flash(" + N2 + ")", N2, "flash", "probeN5"),
+    STALE_HANDOFF(cut80(N1), "flash", "probeN5"),
+  ], "m5b: two nodes of the tree handed under one entry cut at the argument's 80th character are three refusals: each hand-off unlisted naming its whole argument, and the cut entry stale");
+  assert.deepEqual(census(m5b, SEATS_READ_BY_HAND, INDEX_READS_BY_HAND, [...ARGS_READ_BY_HAND, A("probeN5", "flash", N1), A("probeN5", "flash", N2)]).refused, [], "m5b': listed under each whole argument, both pass");
+  // m6: a hand-off's callee (`to`), two bare names this file does not declare, alike through the 80th character
+  const K1 = "probeCallee" + "x".repeat(70) + "1", K2 = "probeCallee" + "x".repeat(70) + "2";
+  assert.ok(alike(K1, K2), "the two callees are alike through the 80th character and differ after");
+  const m6 = plant('function probeM6(): void {\n  ' + K1 + '(' + S1 + ');\n  ' + K2 + '(' + S1 + ');\n}');
+  const m6Line = lineIn(m6, "function probeM6");
+  assert.deepEqual(census(m6, SEATS_READ_BY_HAND, INDEX_READS_BY_HAND, [...ARGS_READ_BY_HAND, A("probeM6", cut80(K1), S1, 2)]).refused, [
+    STALE_HANDOFF(S1, cut80(K1), "probeM6"),
+    UNLISTED_HANDOFF(m6Line + 1, K1 + "(" + S1 + ")", S1, K1, "probeM6"),
+    UNLISTED_HANDOFF(m6Line + 2, K2 + "(" + S1 + ")", S1, K2, "probeM6"),
+  ], "m6: two callees alike through the 80th character handed the same element, listed as one entry under the callee cut there, are three refusals: the cut entry stale, and each hand-off unlisted naming its whole callee");
+  assert.deepEqual(census(m6, SEATS_READ_BY_HAND, INDEX_READS_BY_HAND, [...ARGS_READ_BY_HAND, A("probeM6", K1, S1), A("probeM6", K2, S1)]).refused, [], "m6': listed under each whole callee, both hand-offs pass");
+  // m7: an argument over 300 characters, held as its first 80 characters beside the sha256 of the whole
+  const G1 = 'el("div", "fileview-probe-' + "x".repeat(300) + '-1")', G2 = 'el("div", "fileview-probe-' + "x".repeat(300) + '-2")';
+  const hashedArg = (a: string): string => cut80(a) + " ... sha256:" + crypto.createHash("sha256").update(a).digest("hex");
+  assert.ok(alike(G1, G2) && G1.length > 300 && hashedArg(G1) !== hashedArg(G2), "the two arguments are over 300 characters, alike through the 80th, and their hashed forms differ in the hash alone");
+  const m7 = plant('function probeM7(): void {\n  flash(' + G1 + ');\n}');
+  assert.deepEqual(census(m7, SEATS_READ_BY_HAND, INDEX_READS_BY_HAND, [...ARGS_READ_BY_HAND, A("probeM7", "flash", hashedArg(G1))]).refused, [], "m7: an argument over 300 characters passes under its own hashed form");
+  assert.deepEqual(census(m7, SEATS_READ_BY_HAND, INDEX_READS_BY_HAND, [...ARGS_READ_BY_HAND, A("probeM7", "flash", hashedArg(G2))]).refused, [
+    STALE_HANDOFF(hashedArg(G2), "flash", "probeM7"),
+    UNLISTED_HANDOFF(lineIn(m7, "function probeM7") + 1, "flash(" + G1 + ")", hashedArg(G1), "flash", "probeM7"),
+  ], "m7': listed under the sibling's hashed form, it is refused naming both hashed forms (the sibling's entry stale, its own hand-off unlisted)");
   // the live file: the names the three tables use that more than one function node bears, and the header's example among them
   const sf = ts.createSourceFile("file-view.ts", VIEWER_SRC, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const nodesNamed = new Map<string, number>();
@@ -2532,9 +2630,9 @@ test("the seat table's receiver hold is by binding, not name, executed over func
   const [h0, h1] = [whole.indexOf("// bodyReady classes a child it has never seen as UNKNOWN"), whole.indexOf("/** file-view.ts with its comments blanked")];   // the header block alone, as the record test reads it: a pin over the whole module is satisfied by its own literals (the round-8 fold's mutation found the old read so)
   assert.ok(h0 >= 0 && h1 > h0, "the census header block is found between its two markers");
   const header = whole.slice(h0, h1).replace(/\n\/\/ /g, " ");
-  assert.ok(header.includes("THE RECEIVER'S HOLD IS BY BINDING, NOT NAME") && header.includes("`apply` is such a name in file-view.ts, textSizeControl's inner arrow and githubLinkAction's method") && header.includes("the plants k4 and k4' below pass, k4'' with another text inside refuses naming both") && header.includes("a text over 300 characters is held as its first 80 characters beside the sha256 of the whole") && header.includes("the plants m1, m1' and m2 below execute the refusal, the pass under each whole text, and the hash form"), "the census header states the binding hold, its two text-keyed residues with the k4 plants by id, and the closed 80-character road with its plants");
+  assert.ok(header.includes("THE RECEIVER'S HOLD IS BY BINDING, NOT NAME") && header.includes("`apply` is such a name in file-view.ts, textSizeControl's inner arrow and githubLinkAction's method") && header.includes("the plants k4 and k4' below pass, k4'' with another text inside refuses naming both") && header.includes("a text over 300 characters is held as its first 80 characters beside the sha256 of the whole flattened text, the text as the census reads it with comments blanked and whitespace collapsed to single spaces") && header.includes("openFileView's `ctx` initializer the one such text in the tables today") && header.includes("the plants m1 to m7 below execute, at every held text, the refusal under a text cut at 80 and the pass under each whole text"), "the census header states the binding hold, its two text-keyed residues with the k4 plants by id, the hash form over the flattened text, and the closed 80-character road with its plants at every held text");
   const P7 = sectionPart("P7. **", "**Derivations and their unknown cases.**");
-  assert.ok(P7.includes("the receiver's hold is by binding, not name (the maintainer's round-8 question, 2026-09-21") && P7.includes("two things stay keyed on text and are stated in the census header, the entry's `in`, a bare function name two function nodes can share") && P7.includes("the census module's plants k4 and k4' pass, k4'' refuses") && P7.includes("holds the whole text (one over 300 characters as its first 80 characters beside the sha256 of the whole), the plants m1, m1' and m2 executing it"), "P7 states the answer, the two roads with the k4 plants by id, and the closed 80-character road with its fix");
+  assert.ok(P7.includes("the receiver's hold is by binding, not name (the maintainer's round-8 question, 2026-09-21") && P7.includes("two things stay keyed on text and are stated in the census header, the entry's `in`, a bare function name two function nodes can share") && P7.includes("the census module's plants k4 and k4' pass, k4'' refuses") && P7.includes("holds the whole text (one over 300 characters as its first 80 characters beside the sha256 of the whole flattened text, comments blanked and whitespace collapsed as the census reads it), the plants m1 to m7 executing it at every held text"), "P7 states the answer, the two roads with the k4 plants by id, and the closed 80-character road with its fix at every held text");
 });
 
 test("disabled until the body is in: the driver's start, where a press (the button's or the chord's), an Escape, a choice, a prepare, a ready and a printed change nothing; the body arriving rests; the body going out from rest, armed, the wait or the print disarms and disables; the body's arrival elsewhere changes nothing", () => {
@@ -2621,8 +2719,8 @@ test("P7's derived numbers are the tables this module runs: the seat-keyed table
   assert.equal(live.sites.filter((x) => !x.body).length, seats, "the site population the sentence names is the live non-body seats, which the entries' `times` sum to");
   for (const e of twice) {
     assert.ok(sNamed.includes(e.in + "'s") && sNamed.includes("`" + e.on + "." + e.via + "(" + e.seats + ")`"), "the sentence names the entry reading two seats, " + e.in + "'s `" + e.on + "." + e.via + "(" + e.seats + ")`: " + sNamed);
-    const texts = live.sites.filter((x) => !x.body && x.fn === e.in && x.on === e.on && x.via === e.via && x.seats === e.seats).map((x) => x.text);
-    assert.equal(texts.length, 2, "the entry reads two live seats: " + JSON.stringify(texts)); assert.equal(new Set(texts).size, 1, "and the two are byte-identical calls: " + JSON.stringify(texts));
+    const texts = live.sites.filter((x) => !x.body && x.fn === e.in && x.on === e.on && x.via === e.via && x.seats === e.seats).map((x) => x.whole);   // the whole flattened call text, never the message's 100-character cut (the fold's verifiers' records-2)
+    assert.equal(texts.length, 2, "the entry reads two live seats: " + JSON.stringify(texts)); assert.equal(new Set(texts).size, 1, "and the two are byte-identical calls, whole: " + JSON.stringify(texts));
   }
   const base = [...P7.matchAll(/gives (\d+) non-body sites, (\d+) triples and (\d+) seat-key entries under the same walk/g)];
   assert.equal(base.length, 1, "the merge-base cell stands in P7 once");
@@ -2642,8 +2740,8 @@ test("P7's derived numbers are the tables this module runs: the seat-keyed table
   assert.deepEqual([sizes[0][1], sizes[0][2], sizes[0][3], sizes[0][5]], [String(args), String(argSeats), COUNT_WORDS[argTwice.length], String(urls)], "P7's argument sites, hand-offs, entries reading two hand-offs and URL writes are the tables' (" + args + " over " + argSeats + ", " + argTwice.length + " reading two, " + urls + ")");
   assert.equal(sizes[0][4], argTwice.map((e) => e.in + "'s two `" + e.to + "`").join(", "), "the sentence names each entry reading two hand-offs, in table order");
   for (const e of argTwice) {
-    const texts = [...live.handedNodes, ...live.elementsHanded].filter((h) => h.fn === e.in && h.to === e.to && h.arg === e.arg).map((h) => h.text);
-    assert.equal(texts.length, 2, "the entry reads two live hand-offs: " + JSON.stringify(texts)); assert.equal(new Set(texts).size, 1, "and the two are byte-identical calls: " + JSON.stringify(texts));
+    const texts = [...live.handedNodes, ...live.elementsHanded].filter((h) => h.fn === e.in && h.to === e.to && h.arg === e.arg).map((h) => h.whole);   // the whole call text, as above
+    assert.equal(texts.length, 2, "the entry reads two live hand-offs: " + JSON.stringify(texts)); assert.equal(new Set(texts).size, 1, "and the two are byte-identical calls, whole: " + JSON.stringify(texts));
   }
   assert.equal(urlSeats, urls, "no URL write is spelled alike twice at this head (the sentence carries one number for the URL writes; a `times` on an entry would make it two)");
   assert.ok(P7.includes("the census module holds to the tables it runs and prints in its `second read:` diagnostic"), "P7 says this module holds the sentence to the tables it runs");

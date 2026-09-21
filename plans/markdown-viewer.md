@@ -8747,9 +8747,10 @@ same-spelled declaration whose meaning changed underneath the listed text, the b
 function an entry names while the enclosing function keeps the listed one (the census module's plants k4 and k4' pass, k4''
 refuses, naming both declarations); a third road, the hold on the initializer's first 80 characters, under which two
 initializers alike to there passed as one listed text, is closed by the maintainer's round-8 ruling of 2026-09-21: the
-census holds the whole text (one over 300 characters as its first 80 characters beside the sha256 of the whole), the plants
-m1, m1' and m2 executing it, and the three table fields the cut had shortened were rewritten from the census's own
-refusals));
+census holds the whole text (one over 300 characters as its first 80 characters beside the sha256 of the whole flattened
+text, comments blanked and whitespace collapsed as the census reads it), the plants m1 to m7 executing it at every held
+text (a declaration's initializer, a loop's head, an unnamed callback's call, a hand-off's argument and callee, a hashed
+argument), and the three table fields the cut had shortened were rewritten from the census's own refusals));
 and a receiver bound by `let` or `var`, or a parameter written to, is
 reassignable and fails unless the entry pins what every write to it assigns (`holds`; the round-6 review's correctness-5:
 the entry for the viewer's `let sess = null` pinned its declaration and nothing about what it held at the seat, and the
