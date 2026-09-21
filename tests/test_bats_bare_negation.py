@@ -80,14 +80,15 @@ than passing an empty corpus as clean: suite_files; BatsSuites lists a file's ca
 them): 232 `!` words file-wide, 191 of them `[ !`, 24 inside comments and strings (the word rule takes a `!` next to a backtick, a
 `)` or a `>`), 5 at file scope, and 12 candidates in test bodies (bootstrap-sh.bats 184; install-optional-deps.bats 505;
 install-sh.bats 329, 400, 411; pr-orphans.bats 125; romp-serve.bats 117, 309, 334, 382; romp-service.bats 683; romp-sessions.bats
-84), listed in 7.02 s with the extents (one `bash -n` per `}` word of a test's lines through its close since this commit, and one
-per `}` word of the close line for its column; the fifth commit asked every brace, 8.36 s, and the head before it 6.89 s). bats
+84), listed in 7.52 s with the extents (one `bash -n` per `}` word of a test's lines through its close since the sixth commit,
+7.02 s there, and one per `}` word of the close line for its column; the fifth commit asked every brace, 8.36 s, and the head
+before it 6.89 s). bats
 reads all 12 (BatsCorpus, under 1.10.0 and 1.11.1): the nine at line start are `not
 ok` on their own line under `! true` and `ok` under `! false`; the three condition heads of romp-serve.bats (309, 334 and 382, `if
 ! _dead "$pid"; then kill ...; return 1; fi`) the reverse, `ok` under `! true` and `not ok` on their own line under `! false`, so
 they are read only through the second rewrite; 0 inert, 0 undecided. Each rewrite runs twice (REPEATS) and four candidates are
-decided at a time (CORPUS_WORKERS): 166.89 s of runs in 78.33 s on this box under 1.10.0 (86.19 s under 1.11.1), 120.29 s of the
-runs the three heads' probe tests, whose slowest side is romp-serve.bats 334 under `! true`, 27.73 s for its two runs, against
+decided at a time (CORPUS_WORKERS): 164.27 s of runs in 77.86 s on this box under 1.10.0 (77.65 s under 1.11.1), 115.81 s of the
+runs the three heads' probe tests, whose slowest side is romp-serve.bats 334 under `! true`, 27.19 s for its two runs, against
 which RUN_TIMEOUT stands at 60 s a run. The 5 file-scope `!` words sit in helpers and a setup (bats-state-isolation.bats 125, 126
 and 129 twice; romp-postal.bats 47): outside the subject, since a `!` there has no enclosing test to run alone, and so is one in
 the text after a test's close, on its close line or on the lines a construct opened there runs on to: a helper defined there, a
@@ -148,7 +149,10 @@ the extent to the construct's close, rewrites the negation inside it, and the ne
 `)` or a `fi` with no `;` before the brace (I_close_after_*: no close to a line pattern, the file refused), a brace glued to a
 following character or continued by a `\` onto the next line's word, no close to bash (I_close_glued_*,
 I_close_backslash_newline_word: a walker asking every brace ends the test there, finds no candidate, and records the file as
-written under both rewrites), with the closes bash does read beside them, a `\` then an empty line, a comment after the close, and
+written under both rewrites), one glued before the real close on the close line and on a one-liner (I_close_glued_before_close,
+I_one_liner_glued_before_close: a walker asking every brace of the close line for the column cuts the text at the glued one,
+loses the candidate before the close, and records the file as written the same way), with the closes bash does read beside
+them, a `\` then an empty line, a comment after the close, and
 a parameter expansion's brace before the close (I_close_backslash_newline_then_test, I_close_then_comment,
 I_param_brace_then_close), so a split that stops short or runs past one changes a recorded verdict or loses one. Decision:
 decide, asked about every test of the register holding one candidate from the same run's outcomes and blamed lines, reads every
@@ -168,23 +172,23 @@ test of this module that derives from bash skips under such a bash wherever it r
 (bash_shortfall, skip_unless_bash_serves: BASH_4_SYNTAX and the warning; the Python cells run the module on macOS with no bats,
 where before round 2's second commit the two recall tests, the extents and the candidates were red, and the two tests that need no bash run
 there). The inner bats resolves through a PATH without the outer's libexec directory (_bats_env), since the entry point there
-expects the BATS_ROOT the scrub removes and did not load under CI's /usr/local layout. Measured at this head: 513 shapes, 538
-tests, in 72.61 s under 1.10.0 and 78.55 s under 1.11.1; under `! true` 307 ok and 231 not ok, under `! false` 523 ok and 15 not
+expects the BATS_ROOT the scrub removes and did not load under CI's /usr/local layout. Measured at this head: 515 shapes, 540
+tests, in 74.26 s under 1.10.0 and 76.76 s under 1.11.1; under `! true` 307 ok and 233 not ok, under `! false` 525 ok and 15 not
 ok (the four condition heads whose branch fails the test, `command _h` and `env _h`, which find no shell function, `run ! true`,
 which run itself fails, the doubled negation mid and last, whose inversions cancel, `! true && false` mid and last, the
 backgrounded negation whose job status `wait %%` reads, mid and last, the status saved with `rc=$?` and read by `[ ]`, and the
 brace glued to a `#`, `}# not a comment`, a command found nowhere, `}#: command not found`, failing under both); decide over the
-508 tests holding one candidate: 232 read, 272 inert, 4 undecided (`command _h`, `env _h`, `! true && false` last and `}# not a
+510 tests holding one candidate: 234 read, 272 inert, 4 undecided (`command _h`, `env _h`, `! true && false` last and `}# not a
 comment`, failing under both), the 7 holding two (the doubled and tripled negations, `if ! _h` and `! _h` mid and last with
 their helpers) and the 23 holding none not asked (among them the thirteen `y` tests of I_close_then_*,
 I_close_backslash_newline_then_test and I_one_liner_then_arming, which call or read what the file-scope text after a close
-defines, or run after it). The 506 shapes of the head before this commit keep their recorded verdicts under both bats, and their
-extents, close columns, candidates and rewrites are byte for byte that head's walker's (measured over every shape and the
-corpus's 24 rewrites: 0 differences; the `!` word rule's matches too, over every line of both), as each head of fork PR #871's
-review kept the one before it (497, 493, 481, 429 and 381 shapes); the 250 shapes of the earlier register keep their 260
-recorded `! true` verdicts and are 260 ok under `! false`; every negation of the register is a candidate (524, 291 of them in
-tests recorded ok, 480 at line start), the 139 recorded-inert line-start sites the earlier register counted and every one off line
-start among them.
+defines, or run after it). The 513 shapes of the head before this commit keep their recorded verdicts under both bats, and their
+extents, close columns, candidates and rewrites are byte for byte that head's walker's (measured over every shape, the two this
+commit adds included since the walker is the same, and the corpus's 24 rewrites: 0 differences; the `!` word rule's matches too,
+over every line of both), as each head of fork PR #871's review kept the one before it (506, 497, 493, 481, 429 and 381 shapes);
+the 250 shapes of the earlier register keep their 260 recorded `! true` verdicts and are 260 ok under `! false`; every negation of
+the register is a candidate (526, 291 of them in tests recorded ok, 480 at line start), the 139 recorded-inert line-start sites the
+earlier register counted and every one off line start among them.
 
 Deleted here, not fixed: the line scanner's frame model (the brace-depth walk, its block ends and the coverage pin over them), its
 heredoc classification (introducers, delimiter words, the skip) and its status-read grammar (`_plain_call`, `_helper_read`,
@@ -456,7 +460,10 @@ def _close_col(rewritten, o, c):
     `}` of the line that bash reads as the word `}` (_close_words), left to right, at which the opener through that brace parses
     as a complete function (_closes, which reads a here-document the line introduces on past the brace). Every brace before it is
     inside the test (a group's close, `{ ! true; } }`; one in a string, `echo "a; }"`; one glued to a following character,
-    `}x`, no word to bash), and whatever follows it bash runs at file scope: a helper defined after the close
+    `}x`, no word to bash: `    true; }x 2>/dev/null || true; ! true; }` closes at column 42, and the negation before that brace
+    is the test's candidate, where asking every `}` gave column 10, the text cut there and the candidate lost, a mutation the
+    sixth commit's pins did not red and fork PR #871's round 2, seventh commit, pins in Extents and in the register's
+    I_close_glued_before_close), and whatever follows it bash runs at file scope: a helper defined after the close
     (`    ! true; }; f() { ! false; }`), a list joined to the function definition (`} && { ...; }`), a one-liner's tail
     (`@test "x" { ! true; } ; ! echo hi`). None when no brace of the line closes the test, which bash_test_extents' close rules
     out. Before fork PR #871's round 2, fourth commit, the column was a close-line pattern's greedy match, the LAST brace after a
@@ -1541,6 +1548,54 @@ class Extents(unittest.TestCase):
         self.assertEqual(list(_close_words(["}`"], 0)), [])
         self.assertEqual(list(_close_words(['    [[ "${x}" = y ]]'], 0)), [])
 
+    def test_a_brace_glued_to_a_following_character_before_the_real_close_on_the_close_line_is_skipped_for_the_column_too(self):
+        # fork PR #871's round 2, seventh commit (the sixth's walker verifier): _close_col asks _closes of the close line's `}`
+        # words as bash_test_extents does, and no test held it to that: a mutant asking every `}` of the close line for the
+        # column (`for col in (mm.start() for mm in re.finditer(r"\}", rewritten[c]))` in _close_col) ran this module green with
+        # bats hidden, `29 passed, 11 skipped`, since the pin above reads the column only on close lines that are `}` alone and
+        # the register's recall gate reads the same _test_text. Not equivalent: on `@test "x" {` /
+        # `    true; }x 2>/dev/null || true; ! true; }` the module gives extents [(0, 1)], _close_col 42, the close line's text
+        # (1, 0, 42) and the one candidate Candidate(0, 1, 34, False); the mutant _close_col 10 (the glued brace: the prefix cut
+        # just past it, `_t() {` then `    true; }`, parses, exit 0, so the first brace at which the prefix parses is not the
+        # close), the text (1, 0, 10) and candidates []: the negation before the real close unseen, while bash reads the body
+        # through the glued word (`declare -f`: `true; }x 2> /dev/null || true; ! true`) and bats fails the test as written,
+        # `not ok 1 x`, under 1.10.0 and 1.11.1. The same for `    true; }# c; ! true; }` (24 and Candidate(0, 1, 16, False); the
+        # mutant 10 and []) and for a one-liner, `@test "x" { true; }x 2>/dev/null || true; ! true; }` (_close_col 45 on the
+        # rewritten line, the text (0, 11, 50), Candidate(0, 0, 42, False); the mutant 13, (0, 11, 18) and []). The silent
+        # direction; the tree holds no such line (the differential against the sixth commit: 0 candidate differences over the
+        # corpus's 858 tests). Here each glue form of the pin above stands before the real close on the close line, with y
+        # opening after it, and on a one-liner: the column is the line's last brace, the text runs to it, the candidate is the
+        # negation between the glued word and the close, and a rewrite touches that negation alone; the register's
+        # I_close_glued_before_close and I_one_liner_glued_before_close record the read, ('not ok', 'ok') under both bats, so the
+        # agreement gate reds the mutant where the recall gate cannot (with no candidate both files are the shape as written, and
+        # bats says (not ok, not ok))
+        for glue in ("x", "#", "}", "'x'", "$x", "`true`", "=1", "\\x", '"x"'):
+            line = "    true; }%s 2>/dev/null || true; ! true; }" % glue
+            lines = ['@test "x" {', line, '@test "y" {', '    ! false', '}']
+            rewritten, close, bang = _rewritten(lines), line.rindex("}"), line.index("!")
+            self.assertEqual(list(_close_words(rewritten, 1)), ([11] if glue == "}" else []) + [close], line)   # `}}`: its second brace, before a blank, is a word the parse refuses
+            self.assertTrue(_closes(rewritten, 0, 1, 10)[0], line)   # the prefix through the glued brace parses, and the brace is no close
+            extents = bash_test_extents(lines)
+            self.assertEqual(extents, [(0, 1), (2, 4)], line)
+            self.assertEqual(_close_col(rewritten, 0, 1), close, line)
+            self.assertEqual(list(_test_text(lines, 0, 1, rewritten)), [(0, 11, None), (1, 0, close)], line)
+            self.assertEqual(candidates(lines, extents), [Candidate(0, 1, bang, False), Candidate(1, 3, 4, False)], line)
+            for repl in ("! true", "! false"):
+                out = rewritten_shape(lines, extents, repl)
+                self.assertEqual(out, [lines[0], line[:bang] + repl + line[bang + len("! true"):], lines[2], "    " + repl, "}"], line)
+                self.assertTrue(_bash_parses(_rewritten(out)), line)
+        lines = ['@test "x" {', '    true; }x 2>/dev/null || true; ! true; }']
+        self.assertEqual((_close_col(_rewritten(lines), 0, 1), candidates(lines, [(0, 1)])), (42, [Candidate(0, 1, 34, False)]))
+        lines = ['@test "x" {', '    true; }# c; ! true; }']   # the glued word fails (`}#: command not found`); the column and the candidate read the same
+        self.assertEqual((_close_col(_rewritten(lines), 0, 1), candidates(lines, [(0, 1)])), (24, [Candidate(0, 1, 16, False)]))
+        for line, close, bang in (('@test "x" { true; }x 2>/dev/null || true; ! true; }', 50, 42), ('@test "x" { true; }# c; ! true; }', 32, 24)):
+            rewritten = _rewritten([line])
+            self.assertTrue(_closes(rewritten, 0, 0, len(_TEST_OPENER) + len(" true; }") - 1)[0], line)   # the glued brace, column 13 of the rewritten line
+            self.assertEqual(bash_test_extents([line]), [(0, 0)], line)
+            self.assertEqual(_close_col(rewritten, 0, 0), close - len('@test "x" {') + len(_TEST_OPENER), line)   # 45 and 27: the name dropped
+            self.assertEqual(list(_test_text([line], 0, 0, rewritten)), [(0, 11, close)], line)
+            self.assertEqual(candidates([line], [(0, 0)]), [Candidate(0, 0, bang, False)], line)
+
     def test_a_test_line_inside_a_construct_the_text_after_a_close_opened_is_not_opened_and_the_problem_names_that_cause(self):
         # fork PR #871's round 2, sixth commit (docs): since the fifth commit the text after a close is file scope through the
         # next opener, so an opener inside a construct that text opened (`    ! false; }; if true; then`, the opener, the test,
@@ -2260,6 +2315,13 @@ def ground_truth_shapes():
     S["I_close_backslash_newline_then_test"] = '@test "x" {\n    %s; }\\\n\n@test "y" {\n    true\n}\n' % N
     S["I_close_then_comment"] = '@test "x" {\n    %s; } # a comment after the close\n@test "y" {\n    true\n}\n' % N
     S["I_param_brace_then_close"] = '@test "x" {\n    echo ${x-} > /dev/null; %s; }\n' % N
+    # a brace glued to a following character BEFORE the real close on the close line, and on a one-liner (fork PR #871's round 2,
+    # seventh commit, the sixth's walker verifier): the close column is the line's last brace, and the negation between the glued
+    # word and the close is the test's last command, read. A walker asking every brace of the close line for the column
+    # (_close_col) cut the text at the glued one, found no candidate, and recorded the shape as written under both rewrites,
+    # (not ok, not ok) where the record says (not ok, ok); the recall gate reads the same text and could not see that, this record can
+    S["I_close_glued_before_close"] = '@test "x" {\n    true; }x 2>/dev/null || true; %s; }\n' % N
+    S["I_one_liner_glued_before_close"] = '@test "x" { true; }x 2>/dev/null || true; %s; }\n' % N
     # the comment form of a declaration, `name() { # @test` (bats-preprocess's BATS_TEST_PATTERN_COMMENT), which bats runs as it
     # runs a `@test` line: with and without the parentheses (`x { # @test` is no function to bash until rewritten), under the
     # `function` keyword (the name is the word before the brace, the pattern's leftmost match), indented with blanks inside the
@@ -2822,6 +2884,7 @@ class BatsGroundTruth(unittest.TestCase):
         'I_close_after_subshell_paren': ('not ok', 'ok'),
         'I_close_backslash_newline_then_test': ('not ok,ok', 'ok,ok'),
         'I_close_backslash_newline_word': ('not ok', 'ok'),
+        'I_close_glued_before_close': ('not ok', 'ok'),
         'I_close_glued_brace': ('not ok', 'ok'),
         'I_close_glued_hash': ('not ok', 'not ok'),
         'I_close_glued_word': ('not ok', 'ok'),
@@ -2848,6 +2911,7 @@ class BatsGroundTruth(unittest.TestCase):
         'I_comment_form_mid': ('ok', 'ok'),
         'I_comment_form_no_parens_mid': ('ok', 'ok'),
         'I_one_liner_between': ('ok,ok,not ok', 'ok,ok,ok'),
+        'I_one_liner_glued_before_close': ('not ok', 'ok'),
         'I_one_liner_heredoc': ('not ok', 'ok'),
         'I_one_liner_negation': ('not ok', 'ok'),
         'I_one_liner_subshell': ('not ok', 'ok'),
