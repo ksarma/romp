@@ -87,10 +87,10 @@
 # `/dev/stdin` operand, a `<(echo '..')` script, a closer's redirection or a `-c` script's inner shell reads what was piped or
 # redirected to it, a copying writer's one unquoted operand the shell may split refuses, and the residuals are named.
 diff --git a/skill/SKILL.md b/skill/SKILL.md
-index f7d8bc9..4b6cb5d 100644
+index f7d8bc982..89bccfebf 100644
 --- a/skill/SKILL.md
 +++ b/skill/SKILL.md
-@@ -59,6 +59,199 @@ heredoc included), no `sed -i` or `perl -i`, no python `open(..., 'w')` or node
+@@ -59,6 +59,184 @@ heredoc included), no `sed -i` or `perl -i`, no python `open(..., 'w')` or node
  the write: its status is 0 when tracking is ON, so `track-config ... && cp ...` runs
  the copy on exactly the file it must not touch.
  
@@ -180,7 +180,7 @@ index f7d8bc9..4b6cb5d 100644
 +backtick, a `<(...)`) is read as the command it runs in every position, and a
 +literal echo or printf piped into a shell reading stdin is that shell's script (a
 +producer the guard cannot see, `cat f | bash`, stays unread, as does a script
-+handed to a shell outside the set it reads, busybox sh or ash among them), and since its third fix-up the same day an unquoted here-document body's expansions are read as the commands they run and the expanded body is the consumer's script (a quoted delimiter keeps the body as written), a `$(echo '...')` or a backtick with literal operands is the text it prints where the shell puts it (so `bash -c "$(echo 'cp a b')"` and `$(echo cp) a b` copy), a `${x:-word}` alone is read as a script under its default word, zsh's `=(cmd)` runs its command, a shell fed through a subshell, a group, an if or loop body, a `/dev/stdin` operand, a `<(echo '...')` script, a redirection on the compound's closer or a `-c` script's inner shell reads what was piped or redirected to it, and a copying writer whose one unquoted operand the shell may split into two refuses while a project is in play (a `${...}` word the guard cannot read as a script, a producer behind a pipe it cannot read, a redirection on the closing brace of zsh's brace-body compound and a command whose name is an expansion stay unread and are named), and
++handed to a shell outside the set it reads, busybox sh or ash among them), and since its third fix-up the same day an unquoted here-document body's expansions are read as the commands they run and the expanded body is the consumer's script (a quoted delimiter keeps the body as written), a `$(echo '...')` or a backtick with literal operands is the text it prints where the shell puts it (so `bash -c "$(echo 'cp a b')"` and `$(echo cp) a b` copy), a `${x:-word}` alone is read as a script under its default word, zsh's `=(cmd)` runs its command, a shell fed through a subshell, a group, an if or loop body, a `/dev/stdin` operand, a `<(echo '...')` script, a redirection on the compound's closer or a `-c` script's inner shell reads what was piped or redirected to it, and a copying writer whose one unquoted operand the shell may split into two refuses while a project is in play (a `${...}` word the guard cannot read as a script, a producer outside its output model (since round 6's second commit, 2026-09-21, the model reads a subshell or a group of echo, printf and silent commands as what it prints), a redirection on the closing brace of zsh's brace-body compound and a command whose name is an expansion the resolver never reads stay unread and are named), and
 +`[[ $a > $b ]]` with `$b` the guard cannot read refuses from a tracked cwd, a
 +stated cost (compare from a directory outside the project, or with `expr`); a link the
 +command makes is followed into a numeric name's folder too, and one whose source
@@ -268,22 +268,7 @@ index f7d8bc9..4b6cb5d 100644
 +or not, leaves it unreadable, the doctrine a `read` and a loop variable already
 +had. HOME, PWD, OLDPWD, `~+` and `~-` are read the same way: HOME after a plain
 +top-level `HOME=<path>` assignment of its own, and none of the three once the
-+command names or may fill in the name in any other form. These write forms are
-+not modelled and still reach a tracked file: rsync; awk with a redirect inside
-+its program; ed; ex; make; find with -delete or -exec; a git subcommand that
-+writes the working tree (checkout, stash, apply, reset, rm, clean, mv); a
-+computed or escaped path inside an interpreter (a name, sys.argv, os.environ or
-+process.env, a concatenation that does not open with a string literal, or an
-+escape sequence in the string, in python3 -c or node -e); a script the shell
-+reads from elsewhere (eval, xargs, a sourced file, trap, a command whose name is
-+an expansion, a script held in a variable);
-+a command that runs another command and is outside the guard's wrapper set
-+(unshare, nsenter, script, setarch, setpriv, strace and their kin); a
-+link made by a writer outside the model (python, tar, rsync) that a later
-+modelled write follows; shuf -o; a cd through CDPATH; and an opaque expansion
-+from a cwd outside every project, leading or after a literal head outside every
-+project (a `..` inside the value could climb into a project; from a cwd in a
-+tracked project the same word is refused as not literal). Whichever way you
++command names or may fill in the name in any other form. THE RESIDUAL PROPERTY. The guard refuses a write only when it resolves the command to a writer it models (the writer cases of extract's switch, a write redirection, an interpreter's write call it scans) reached through a road it reads (the wrapper set, the shells' script roads, the readings of the resolver, the alias and hash roads), with a target it can place or cannot read. Every write that still reaches a tracked file is one the guard does not resolve to such a writer through such a road, whether or not its text stands in the command, and falls in one of these classes, each measured by execution in tools/romp-track-bash-guard.test.mjs (THE RESIDUAL TABLE, whose rows are the population this statement is over): a writer outside the model, a program that writes the file by its own nature and is not among the writers the hook models (rsync, patch, tar -x, ed, ex, vim, make, shuf -o, gawk -i inplace, curl -o, wget -O, find -exec, a git alias or a subcommand that writes the tree, sed's e command, busybox's applets); a reader outside the roads, a program that runs a command or a script the hook does not follow into it (xargs, an interpreter's system, exec or subprocess call, a wrapper outside the set, a shell outside SHELLS, a file the command writes and then runs or sources); a command name the resolver never reads, a command whose name is an expansion of a kind the resolver does not read ("$@", $1, $*, "${a[@]}", a loop variable, a name read, printf -v or a nameref filled, ${SHELL}); a script held in a variable, a plain-string name whose value holds whitespace (the readability rule stores no such value), run as a command or handed to a shell (`$c`, `bash -c "$c"`, `eval "$c"`); a producer outside the output model, a pipe into a shell from anything but a literal echo or printf, alone or in a subshell or group of such commands (a call of a function the command defines, a tee or a further pipe, a cat of a file); zsh's glob grouping, a `(..)` inside a word handed to zsh, read as a subshell by the lexer's zsh grammar while zsh globs it (a lexer gap, stated since the first commit of this round); an opaque expansion from a cwd outside every project, a leading opaque expansion, or one after a literal head outside every project, from a cwd in no project (B2 as ruled, with its boundary). A shape outside these classes that reaches a tracked file is a rule to state, not a residual. Whichever way you
 +write a tracked file, use `track-edit`, so your change comes back to be accepted
 +or rejected.
 +

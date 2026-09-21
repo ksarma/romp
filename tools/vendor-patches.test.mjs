@@ -264,7 +264,9 @@ test('P9 the skill says a shell write whose target is not a literal path is refu
   assert.ok(section.includes('`setsid`, `flock`, `taskset`, `chrt` and') && section.includes('`numactl`'), 'the wrapper set');
   assert.ok(section.includes('runs `env -C DIR` and `sudo -D DIR` in DIR') && section.includes('reassigns HOME'), 'env -C and the HOME reassignment');
   assert.ok(section.includes('best-effort against known write forms') && section.includes('allows anything it does not recognise'), 'the contract, stated');
-  assert.ok(section.includes('These write forms are not modelled and still reach a tracked file: rsync;'), 'the unmodelled-writer list');
+  // round 6's second commit (2026-09-21): the closing hand list is THE RESIDUAL PROPERTY, one paragraph whose classes are the ones the
+  // residual table in tools/romp-track-bash-guard.test.mjs measures, pinned identical on seven surfaces by tools/file-review-plan-bash-guard.test.mjs
+  assert.ok(section.includes('THE RESIDUAL PROPERTY. The guard refuses a write only when it resolves the command to a writer it models') && section.includes('a producer outside the output model'), 'the residual property, in place of the unmodelled-writer list');
   // the walk-around lens third pass (2026-09-19): the six rules re-keyed on what the guard can see, each named so a
   // session knows the refusal it meets, and the contract paragraph's two sentences the other surfaces carry
   const flat = section.replace(/\s+/g, ' ');   // the skill hard-wraps its paragraphs

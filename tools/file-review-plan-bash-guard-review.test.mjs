@@ -188,7 +188,9 @@ test('decision 47 and the Tests bullet name the shapes module, credit it to the 
   assert.ok(d47.includes('`' + SHAPES + '`, from the review\'s first round (2026-09-10), the shapes that round found misread'), 'decision 47 names and credits it');
   assert.ok(bullet.includes('from the review\'s first round (2026-09-10), `' + SHAPES + '` pins the shapes the round found misread'), 'the Tests bullet names and credits it');
   const shapes = read(...SHAPES.split('/'));
-  for (const title of [
+  // round 6's second commit (ruling G, tests-5): the titles are asserted as a SET, so one run names every stale title at once (a per-title
+  // assert stopped at the first missing one, which hid the second stale title behind the first in round 5's fourth fix-up)
+  const SHAPES_TITLES = [
     "test('a cd inside ( ... ) moves nothing after the ): the untracked write after it is allowed, the tracked one refused'",
     "test('a cd inside an if, loop or case body leaves the cwd unknown once the body closes: the body may not run'",
     "test('a python or node heredoc script followed by &&, |, ; or & on the opener line is read'",
@@ -222,7 +224,8 @@ test('decision 47 and the Tests bullet name the shapes module, credit it to the 
     "test('a symlink to a tracked file is the tracked file: a write through it, inside or outside the project, is refused; a tracked name that is itself a link stays refused'",
     "test('store-io\\'s isTrackedFile has the three steps trackedIn copies, in that order, so a vendored change to them fails here by name'",
     "test('the hook process rules the same way on a subshell cd, a chained heredoc and a heredoc-fed shell'",
-  ]) assert.ok(shapes.includes(title), `the shapes module holds ${title}`);
+  ];
+  assert.deepEqual(SHAPES_TITLES.filter((title) => !shapes.includes(title)), [], 'the shapes module holds every title the bullet credits it with (each missing one named here)');
   assert.ok(shapes.includes("'five literal targets, one walk'"), 'the one-closure pin covers the five redirect targets the bullet names');
   assert.ok(shapes.includes("assert.equal(t.length, 600, 'every file, not the first 500');"), 'the full walk the bullet names: past 500 entries');
   assert.ok(!shapes.includes("'the cap'") && !/\bcap\b.*assert\.equal\(t\.length, 500/.test(shapes), 'no cap pin survives: the walk is uncapped');

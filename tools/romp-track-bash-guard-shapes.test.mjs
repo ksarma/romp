@@ -928,7 +928,7 @@ test("round 5's fifth addendum, third fix-up: the lexer resolves a substitution 
   assert.deepEqual(hd('cat <<EOF\n${x:-$(cp a b)}\nEOF').viaSubs.map((v) => v.text), ['cp a b'], 'and one nested in a ${...} word of the body');
   assert.deepEqual(hd("cat <<EOF\n${x:-'$(cp a b)'}\nEOF").viaSubs.map((v) => v.text), ['cp a b'], 'a quote is a character in the body');
   assert.deepEqual(hd("bash <<EOF\n$(echo 'echo x > f')\nEOF").heredocs, ['echo x > f'], 'the body a shell consumer reads is the text after the expansions');
-  assert.deepEqual(hd("bash <<EOF\n${x:-$(echo 'cp a b')}\nEOF").heredocs, ["${x:-$(echo 'cp a b')}", 'cp a b'], "and the body's default word is a further text of it");
+  assert.deepEqual(hd("bash <<EOF\n${x:-$(echo 'cp a b')}\nEOF").heredocs, ['cp a b'], "and a body that is one default word hands the consumer its reading alone (round 6's second commit: the spelling is not a text the consumer sees, and read as a plain script it reached THE HEAD SPLICE with its quotes removed)");
   for (const c of ["cat <<'EOF'\n$(cp a b)\nEOF", 'cat <<"EOF"\n$(cp a b)\nEOF', 'cat <<\\EOF\n$(cp a b)\nEOF', 'cat <<E"O"F\n$(cp a b)\nEOF']) assert.deepEqual([hd(c).heredocs, hd(c).viaSubs], [['$(cp a b)'], []], `a quoted delimiter keeps the body as written: ${JSON.stringify(c)}`);
   assert.deepEqual([hd('cat <<EOF\n\\$(cp a b)\nEOF').heredocs, hd('cat <<EOF\n\\$(cp a b)\nEOF').viaSubs], [['$(cp a b)'], []], 'a backslash quotes the dollar');
   assert.deepEqual(hd('cat <<-EOF\n\t$(cp a b)\n\tEOF').viaSubs.map((v) => v.text), ['cp a b'], '<<- strips the tabs and expands alike');

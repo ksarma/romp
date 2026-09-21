@@ -4343,8 +4343,7 @@ document stands on its own, each with the reasoning it was given.
     missing` (the piped-script matrix), `existing rows: 2280 unchanged, 0 changed, 0 missing` (the construct matrix). THE RESIDUALS, named here and on the hook
     header beside the earlier ones: a script a `${...}` word stands for when the guard cannot read the word (`bash -c
     "${x:-$(cat f)}"`), one fed by a redirection on the closing brace of zsh's brace-body compound (`if [[ a ]] { bash } <<'EOF'`,
-    a `}` closer the frame counts and closerStdin does not match), a producer behind a pipe the guard cannot read (the second
-    fix-up's list, `yes '..' | head -1 | bash` and `| sed '' | bash` among them), and a command whose name is an expansion (named
+    a `}` closer the frame counts and closerStdin does not match), a producer behind a pipe the guard cannot read (the second fix-up's list, `yes '..' | head -1 | bash` and `| sed '' | bash` among them; relabelled by round 6's second commit as a producer outside THE OUTPUT MODEL, which reads a subshell or a group of echo, printf and silent commands), and a command whose name is an expansion (named
     among the writers since round 4: the verifiers' `${SHELL} -c '..'`, `$SHELL <<< '..'`, `echo '..' | ${x:-bash}`, 15 rows, while
     `env ${SHELL} -c '..'` is refused by the wrapper's unknown-option rule, an inconsistency stated, not a rule). Pinned: the rows
     test's third fix-up group (139 rows: the verifiers' spellings, the three classes found beside them, the quotings, the costs, the
@@ -4393,6 +4392,54 @@ document stands on its own, each with the reasoning it was given.
     three shells, the rows test's round-6 group, the shapes test's single-field rows and the catch-all's three stages from a cwd in
     no project. Stated, not closed: zsh's glob grouping (`cp ../base/(r)eport.md report.md` handed to zsh, literal or through a
     reading) is read as a subshell by the lexer's zsh grammar and allowed while zsh copies, a lexer gap outside the resolver.
+    ROUND 6, SECOND COMMIT (2026-09-21; round 5's rulings C, D, E, F and G). THE ALIAS ROAD (extra7-2): a writer behind a shell
+    alias the command defines was read as an unknown command and allowed while its text stood in the command; measured by the
+    shells' grammars (bash: the first unquoted word of a simple command, under `expand_aliases` when not interactive, never on the
+    line that defines it, a trailing blank chaining; dash: wherever a reserved word may occur, in the input stream, so through
+    `-c` on the next line; zsh: command position, `-g` in every position, `-s` a suffix, from a file or a pipe and never through
+    `zsh -c`), dash copied through `-c`, zsh and dash through a here-document or a pipe, bash under the option. THE HEAD SPLICE
+    reads a command name that stands for a text the shell runs in its place, the text spliced in and the segment re-lexed with its
+    tail as spelled: an alias body bound on an earlier line (`aliases`; a `-g` alias makes every later unquoted word spelled so a
+    target the hook cannot read; `unalias` is not read, the safe side), a hashed path (`hash -p PATH NAME`, `hash NAME=PATH`), a
+    path the command made by copying or linking another command (`bound`: `cp /usr/bin/cp ../scratch/c2; ../scratch/c2 a b`), and
+    the readings of an expansion the resolver established (`${x:-cp} a b` ran the copy in every shell while the reading `cp` went
+    unused in head position: the contract's head role yields the readings now); a binding the resolver cannot read makes the name
+    a target the hook cannot read, and an alias whose NAME it cannot read makes every later command name one. `eval` and `trap`
+    with text the resolver reads are scripts of this shell (`eval 'cp a b'`, `trap 'cp a b' EXIT` ran the copy while allowed);
+    `source` and `.` of the standard input read what the command reads. THE OUTPUT MODEL (tests-1): a subshell or a `{ }` group
+    before a pipe, and the list inside a `$(...)`, a backtick or a `<(...)`, prints what its echo, printf and silent commands
+    print (listOutput; a `cat` fed one here-document prints its body), the text placed on the closer that carries the pipe and
+    read as the consumer's script; a command the model does not read beside a printer makes the list UNRESOLVABLE, refused, its
+    commands still read; a list with no printer is outside the model, the residual relabelled honestly on every surface (a
+    producer outside the output model: a function call, a tee, a further pipe, a cat of a file), and the piped-script matrix's
+    residual set is keyed on the model, not on a hand list. THE RESIDUAL PROPERTY (C, extra7-3), below, replaces the closing hand
+    list: the classes it states are those THE RESIDUAL TABLE measures, and the reviewer's narrower sentence (the hook cannot read
+    a command whose text it cannot statically resolve) is withdrawn with the alias road, since the property must cover a command
+    the hook can read and still does not resolve to a writer. THE EVIDENCE A ROW NEEDS (E, regression-3): the matrices' NOT RUN
+    skip is keyed on the fixture's `needs`, the programs a row's evidence needs, derived by hiding each named program behind a
+    scratch PATH, so a row the running shell writes before the named consumer is reached is measured on a runner without that
+    consumer; a runner lacking zsh is reproduced in the test file itself. The construct matrix pins the key set of CONSTRUCT_HEADS
+    by kind (F), derives its population sentence from its tables (G), and the four constructs the param-word note named without a
+    row have rows. THE RESIDUAL PROPERTY. The guard refuses a write only when it resolves the command to a writer it models (the
+    writer cases of extract's switch, a write redirection, an interpreter's write call it scans) reached through a road it reads
+    (the wrapper set, the shells' script roads, the readings of the resolver, the alias and hash roads), with a target it can
+    place or cannot read. Every write that still reaches a tracked file is one the guard does not resolve to such a writer through
+    such a road, whether or not its text stands in the command, and falls in one of these classes, each measured by execution in
+    tools/romp-track-bash-guard.test.mjs (THE RESIDUAL TABLE, whose rows are the population this statement is over): a writer
+    outside the model, a program that writes the file by its own nature and is not among the writers the hook models (rsync,
+    patch, tar -x, ed, ex, vim, make, shuf -o, gawk -i inplace, curl -o, wget -O, find -exec, a git alias or a subcommand that
+    writes the tree, sed's e command, busybox's applets); a reader outside the roads, a program that runs a command or a script
+    the hook does not follow into it (xargs, an interpreter's system, exec or subprocess call, a wrapper outside the set, a shell
+    outside SHELLS, a file the command writes and then runs or sources); a command name the resolver never reads, a command whose
+    name is an expansion of a kind the resolver does not read ("$@", $1, $*, "${a[@]}", a loop variable, a name read, printf -v or
+    a nameref filled, ${SHELL}); a script held in a variable, a plain-string name whose value holds whitespace (the readability
+    rule stores no such value), run as a command or handed to a shell (`$c`, `bash -c "$c"`, `eval "$c"`); a producer outside the
+    output model, a pipe into a shell from anything but a literal echo or printf, alone or in a subshell or group of such commands
+    (a call of a function the command defines, a tee or a further pipe, a cat of a file); zsh's glob grouping, a `(..)` inside a
+    word handed to zsh, read as a subshell by the lexer's zsh grammar while zsh globs it (a lexer gap, stated since the first
+    commit of this round); an opaque expansion from a cwd outside every project, a leading opaque expansion, or one after a
+    literal head outside every project, from a cwd in no project (B2 as ruled, with its boundary). A shape outside these classes
+    that reaches a tracked file is a rule to state, not a residual.
 48. **Sessions commit the comments folder** (2026-09-10). The user found that their sessions never added
     `.trackchanges/` to git, so the user's comments on the sessions' files and the record of the tracked changes
     were not archived with the work. Decision 25 is unchanged: romp does no git operation, and a `.gitignore` line is the

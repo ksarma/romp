@@ -565,6 +565,35 @@
 // grouping (`cp ../base/(r)eport.md report.md` handed to zsh, literal or through a reading) is read as a subshell by the
 // lexer's zsh grammar and allowed while zsh copies, a lexer gap outside the resolver, named for the round.
 //
+// ROUND 6, SECOND COMMIT (2026-09-21; round 5's rulings C, D, E, F and G). THE ALIAS ROAD (extra7-2): a writer behind a shell
+// alias the command defines was read as an unknown command and allowed while its text stood in the command; measured by the
+// shells' grammars (bash: the first unquoted word of a simple command, under `expand_aliases` when not interactive, never on the
+// line that defines it, a trailing blank chaining; dash: wherever a reserved word may occur, in the input stream, so through `-c`
+// on the next line; zsh: command position, `-g` in every position, `-s` a suffix, from a file or a pipe and never through `zsh
+// -c`), dash copied through `-c`, zsh and dash through a here-document or a pipe, bash under the option. THE HEAD SPLICE reads a
+// command name that stands for a text the shell runs in its place, the text spliced in and the segment re-lexed with its tail as
+// spelled: an alias body bound on an earlier line (`aliases`; a `-g` alias makes every later unquoted word spelled so a target the
+// hook cannot read; `unalias` is not read, the safe side), a hashed path (`hash -p PATH NAME`, `hash NAME=PATH`), a path the
+// command made by copying or linking another command (`bound`: `cp /usr/bin/cp ../scratch/c2; ../scratch/c2 a b`), and the
+// readings of an expansion the resolver established (`${x:-cp} a b` ran the copy in every shell while the reading `cp` went unused
+// in head position: the contract's head role yields the readings now); a binding the resolver cannot read makes the name a target
+// the hook cannot read, and an alias whose NAME it cannot read makes every later command name one. `eval` and `trap` with text the
+// resolver reads are scripts of this shell (`eval 'cp a b'`, `trap 'cp a b' EXIT` ran the copy while allowed); `source` and `.` of
+// the standard input read what the command reads. THE OUTPUT MODEL (tests-1): a subshell or a `{ }` group before a pipe, and the
+// list inside a `$(...)`, a backtick or a `<(...)`, prints what its echo, printf and silent commands print (listOutput; a `cat`
+// fed one here-document prints its body), the text placed on the closer that carries the pipe and read as the consumer's script; a
+// command the model does not read beside a printer makes the list UNRESOLVABLE, refused, its commands still read; a list with no
+// printer is outside the model, the residual relabelled honestly on every surface (a producer outside the output model: a function
+// call, a tee, a further pipe, a cat of a file), and the piped-script matrix's residual set is keyed on the model, not on a hand
+// list. THE RESIDUAL PROPERTY (C, extra7-3), below, replaces the closing hand list: the classes it states are those THE RESIDUAL
+// TABLE measures, and the reviewer's narrower sentence (the hook cannot read a command whose text it cannot statically resolve) is
+// withdrawn with the alias road, since the property must cover a command the hook can read and still does not resolve to a writer.
+// THE EVIDENCE A ROW NEEDS (E, regression-3): the matrices' NOT RUN skip is keyed on the fixture's `needs`, the programs a row's
+// evidence needs, derived by hiding each named program behind a scratch PATH, so a row the running shell writes before the named
+// consumer is reached is measured on a runner without that consumer; a runner lacking zsh is reproduced in the test file itself.
+// The construct matrix pins the key set of CONSTRUCT_HEADS by kind (F), derives its population sentence from its tables (G), and
+// the four constructs the param-word note named without a row have rows.
+//
 // THE LISTS THAT REMAIN are not written here (round 5 of the review, 2026-09-20). The hand-written census that stood here
 // omitted the two lists whose gap falls on the WRITE side, the compound-head frame push and CLOSERS, and that omission is
 // how a `select` missing from both slipped through round 3: an instrument built to bound the hand-maintained lists that
@@ -603,19 +632,28 @@
 // call of a function the command defines in any spelling, no subscript; any other construct that can write the name,
 // listed here or not, leaves it unreadable, the doctrine a `read` and a loop variable already had. HOME, PWD, OLDPWD,
 // `~+` and `~-` are read the same way: HOME after a plain top-level `HOME=<path>` assignment of its own, and none of
-// the three once the command names or may fill in the name in any other form. These write forms are not modelled and
-// still
-// reach a tracked file: rsync; awk with a redirect inside its program; ed; ex; make; find with -delete or -exec; a
-// git subcommand that writes the working tree (checkout, stash, apply, reset, rm, clean, mv); a computed or escaped
-// path inside an interpreter (a name, sys.argv, os.environ or process.env, a concatenation that does not open with a string
-// literal, or an escape sequence in the string, in python3 -c or node -e); a script the shell reads from elsewhere (eval, xargs, a sourced file, trap,
-// a command whose name is an expansion, a script held in a variable); a command that runs another command and is
-// outside the guard's wrapper set (unshare, nsenter, script, setarch, setpriv, strace and their kin); a link
-// made by a writer outside the model (python, tar, rsync) that a later modelled write follows; shuf -o; a cd through
-// CDPATH; and an opaque expansion from a cwd outside every project, leading or after a literal head outside every
-// project (a `..` inside the value could climb into a project; from a cwd in a tracked project the same word is
-// refused as not literal). The same paragraph, and this writer list, are on the vendored SKILL.md, hooks/README.md
-// and docs/install.md, pinned identical by a test.
+// the three once the command names or may fill in the name in any other form. THE RESIDUAL PROPERTY. The guard refuses a write only when it resolves the command to a writer it models (the writer cases of
+// extract's switch, a write redirection, an interpreter's write call it scans) reached through a road it reads (the wrapper set,
+// the shells' script roads, the readings of the resolver, the alias and hash roads), with a target it can place or cannot read.
+// Every write that still reaches a tracked file is one the guard does not resolve to such a writer through such a road, whether or
+// not its text stands in the command, and falls in one of these classes, each measured by execution in
+// tools/romp-track-bash-guard.test.mjs (THE RESIDUAL TABLE, whose rows are the population this statement is over): a writer
+// outside the model, a program that writes the file by its own nature and is not among the writers the hook models (rsync, patch,
+// tar -x, ed, ex, vim, make, shuf -o, gawk -i inplace, curl -o, wget -O, find -exec, a git alias or a subcommand that writes the
+// tree, sed's e command, busybox's applets); a reader outside the roads, a program that runs a command or a script the hook does
+// not follow into it (xargs, an interpreter's system, exec or subprocess call, a wrapper outside the set, a shell outside SHELLS,
+// a file the command writes and then runs or sources); a command name the resolver never reads, a command whose name is an
+// expansion of a kind the resolver does not read ("$@", $1, $*, "${a[@]}", a loop variable, a name read, printf -v or a nameref
+// filled, ${SHELL}); a script held in a variable, a plain-string name whose value holds whitespace (the readability rule stores no
+// such value), run as a command or handed to a shell (`$c`, `bash -c "$c"`, `eval "$c"`); a producer outside the output model, a
+// pipe into a shell from anything but a literal echo or printf, alone or in a subshell or group of such commands (a call of a
+// function the command defines, a tee or a further pipe, a cat of a file); zsh's glob grouping, a `(..)` inside a word handed to
+// zsh, read as a subshell by the lexer's zsh grammar while zsh globs it (a lexer gap, stated since the first commit of this
+// round); an opaque expansion from a cwd outside every project, a leading opaque expansion, or one after a literal head outside
+// every project, from a cwd in no project (B2 as ruled, with its boundary). A shape outside these classes that reaches a tracked
+// file is a rule to state, not a residual. The same paragraph, and THE RESIDUAL PROPERTY, are on the vendored SKILL.md, hooks/README.md
+// and docs/install.md, pinned identical by a test; the property is on decision 47, docs/guide.md and the ledger entry too, pinned
+// identical there as well, and its classes are the ones tools/romp-track-bash-guard.test.mjs's RESIDUAL_TABLE measures.
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -726,8 +764,9 @@ const ANSI_C_SHELLS = new Set(['bash', 'zsh']);
 const TEST_ARITH_SHELLS = new Set(['bash', 'zsh', 'ksh']);
 // The constructs read in both grammars, with each reading's text for the refusal (the lexer reads the two command-position
 // heads and the expansion at their characters; this table carries what each shell makes of them, and the matrix generator
-// in tools/romp-track-bash-guard.test.mjs derives its head population from the command-position entries, so a head added
-// here without a matrix kind changes the fixture's row count and reds the pin). `via` is appended to a write's `how`
+// in tools/romp-track-bash-guard.test.mjs derives its head population from the command-position entries and pins the key set
+// of this table by kind, so a head added here without a matrix kind reds a pin: a command-position head changes the fixture's row
+// count, an `expansion: true` head the key set the fixture lists; round 6's second commit, ruling F). `via` is appended to a write's `how`
 // (`> redirection`, `cp`) when the write was found through the construct's dash reading, so the refusal names dash and the
 // construct; `expandVia` when it was found through a substitution inside the body, which every shell runs.
 export const CONSTRUCT_HEADS = {
@@ -921,7 +960,7 @@ function parenCloseAt(text) {
 // addendum, 2026-09-20): a `(( ))` body under dash's reading, a `$((` bash and zsh read as `$( (`, and every `$(...)` or backtick
 // inside an arithmetic body; `dashPieces` the further commands dash reads after a `&&` or `||` inside a `[[ ... ]]`, spliced into
 // extract's walk after the test's segment (withDashPieces), and `dashFirstOp` the operator that joins the first of them.
-const newSegment = () => ({ words: [], redirects: [], heredocs: [], stdin: [], subs: [], arith: [], arithAt: [], viaSubs: [], dashPieces: null, dashFirstOp: '', op: '' });   // stdin: the words a `<` redirects into the standard input (the third fix-up: `bash < <(echo '..')` reads the script the substitution prints)   // arithAt: the number of words before each `(( ))` (round 5's third addendum: compoundBody tells `if (( 0 )) {` from `if { cond } {` by it)
+const newSegment = () => ({ words: [], redirects: [], heredocs: [], stdin: [], subs: [], arith: [], arithAt: [], viaSubs: [], dashPieces: null, dashFirstOp: '', op: '', start: 0 });   // start: the source index the segment begins at (extract counts the lines before it: THE ALIAS ROAD applies to a later line)   // stdin: the words a `<` redirects into the standard input (the third fix-up: `bash < <(echo '..')` reads the script the substitution prints)   // arithAt: the number of words before each `(( ))` (round 5's third addendum: compoundBody tells `if (( 0 )) {` from `if { cond } {` by it)
 
 // `shell` is the name of the shell the command is a script of, when the call is a recursion into `sh -c '...'`,
 // `bash <<EOF` or a `$(...)` inside one (null for the Bash tool's own command): it decides whether `$'...'` is
@@ -1062,6 +1101,31 @@ export function lex(command, shell = null, opts = {}) {
     inTest = false;
     seg.op = op;
     if (op === '|' && seg.words.some((w) => w.literal && /^(echo|printf)$/.test(path.basename(w.text)))) placeReading(segmentOutput(seg), seg.words.map((w) => w.raw).join(' '), 'segment');   // THE PIPED SCRIPT: the producer's printed text, for extract's pipedScripts (THE RESOLVER'S CONTRACT)
+    else if (op === '|' && !seg.words.length && !seg.redirects.length && segments.length && segments[segments.length - 1].paren === ')') {
+      // THE OUTPUT MODEL (round 6's second commit, 2026-09-20; round 5's tests-1: `(echo 'cp ..') | bash` was pinned allowed under a label
+      // that called the producer one the guard cannot read, while bash, zsh and dash ran the copy): a subshell before the pipe prints
+      // what the list between its parentheses prints, so listOutput's reading of that list is placed on the `)` marker that carries
+      // the pipe (producerAt finds it as the segment before the consumer)
+      const close = segments.length - 1;
+      let depth = 0;
+      let open = -1;
+      for (let j = close; j >= 0 && open < 0; j--) { if (segments[j].paren === ')') depth++; else if (segments[j].paren === '(' && --depth === 0) open = j; }
+      if (open >= 0) placeReading(listOutput(segments.slice(open + 1, close)), spellingOf(segments.slice(open, close + 1)), 'segment', segments[close]);
+    } else if (op === '|' && seg.words.length === 1 && plainWord(seg.words[0]) && seg.words[0].text === '}' && !seg.redirects.length) {
+      // and a `{ }` group before the pipe (its closer heads this segment, splitAtClosers's cut): the list from the segment holding the
+      // matching `{` to here, placed on this closer segment
+      let depth = 1;
+      let open = -1;
+      for (let j = segments.length - 1; j >= 0 && open < 0; j--) {
+        for (let k = segments[j].words.length - 1; k >= 0; k--) {
+          const w = segments[j].words[k];
+          if (!plainWord(w)) continue;
+          if (w.text === '}') depth++;
+          else if (w.text === '{' && --depth === 0) { open = j; break; }
+        }
+      }
+      if (open >= 0) placeReading(listOutput(segments.slice(open)), spellingOf(segments.slice(open)) + ' }', 'segment');
+    }
     if (seg.words.length || seg.redirects.length || seg.heredocs.length || seg.subs.length || seg.arith.length || seg.viaSubs.length) segments.push(seg);
     else if (op && segments.length && segments[segments.length - 1].paren && !segments[segments.length - 1].op) {
       // the operator after a `)` (`(cd a) && cd b`): the segment it would end is empty, so it is kept on the paren
@@ -1069,7 +1133,10 @@ export function lex(command, shell = null, opts = {}) {
       segments[segments.length - 1].op = op;
     }
     seg = newSegment();
+    seg.start = i;
   };
+  // the spelling of a run of segments, for a compound producer's reading (the refusal names it)
+  const spellingOf = (segs) => segs.map((x) => (x.paren ? x.paren : x.words.map((w) => w.raw).join(' ') + (x.op && x.op !== '|' && x.op !== ')' ? x.op : ''))).join(' ').replace(/\s+/g, ' ').trim();
   // After a newline, the bodies of every heredoc opened on the line just ended, each on the
   // segment that opened it (already pushed by reference when an operator ended it on that line).
   const readHeredocBodies = () => {
@@ -1104,8 +1171,11 @@ export function lex(command, shell = null, opts = {}) {
       const x = lex(body, shell, { quotes: 'heredoc', comments: false, depth: nestDepth + 1, ifsNamed });
       if (x.opaque) opaque = true;
       const w = x.segments.length === 1 && x.segments[0].words.length === 1 ? x.segments[0].words[0] : null;
-      owner.heredocs.push(w ? w.text : body);
-      if (w && w.readings) for (const t of w.readings) if (t !== w.text) owner.heredocs.push(t);
+      // the consumer reads the body after the shell's expansions: a body that is one word with readings hands over the readings alone (the
+      // spelling is not a text the consumer sees; round 6's second commit, when THE HEAD SPLICE read the spelling `${x:-'cp a b'}` as a
+      // plain script and refused a body every shell runs as a quoted command name), any other body its text after quote removal
+      if (w && w.readings) for (const t of w.readings) owner.heredocs.push(t);
+      else owner.heredocs.push(w ? w.text : body);
       if (w && w.unresolvableReading) owner.stdin.push(Object.assign(word(w.text, false, w.raw, { marks: w.marks }), { fd: null, unresolvableReading: w.unresolvableReading, herestring: true }));   // the body's text is not known: scriptTexts refuses the consumer (THE RESOLVER'S CONTRACT)
       for (const sg of x.segments) {
         for (const t of sg.subs) owner.viaSubs.push({ text: t, via: HEREDOC_BODY_VIA });
@@ -1254,18 +1324,18 @@ export function lex(command, shell = null, opts = {}) {
   // carries the reason (`word.unresolvableReading`, attached at endWord), so a script consumer refuses it too (extract's scriptTexts). A
   // plain reading alone (one text produced by no interpretation) takes the text road; every other reading is the word's
   // `readings`, read on the script road while the word keeps the non-literal rule as a target.
-  const placeReading = (r, spelling, mode) => {
+  const placeReading = (r, spelling, mode, target = seg) => {
     if (r == null) return false;
-    const printed = (props) => Object.assign(word('\0', false, seg.words.map((w) => w.raw).join(' '), { marks: 'x' }), props);
+    const printed = (props) => Object.assign(word('\0', false, spelling, { marks: 'x' }), props);   // `target`: the segment the producer's printed text is placed on (the producer itself, or the closer of the subshell or group holding it: THE OUTPUT MODEL, round 6's second commit)
     if (r.unresolvableReading) {
-      if (mode === 'segment') { seg.printed = printed({ unresolvableReading: { raw: spelling, why: r.unresolvableReading } }); return true; }
-      if (!sawExpansion) opaqueExpansion();
+      if (mode === 'segment') { target.printed = printed({ unresolvableReading: { raw: spelling, why: r.unresolvableReading } }); return true; }
+      if (!sawExpansion) opaqueExpansion(hdInner && mode === 'text' ? spelling : undefined);   // in a here-document body the spelling stays in the text, as for a substitution with no reading
       inWord = true;
       wordUnresolvable = { raw: spelling, why: r.unresolvableReading };
-      return true;
+      return 'unresolvable';   // placed as a mark: a substitution's caller reads its commands as commands all the same (resolvedSub)
     }
     const trimmed = [...new Set(r.texts.map((t) => t.replace(/\n+$/, '')))];   // trailing newlines dropped as the shells drop them
-    if (mode === 'segment') { seg.printed = printed({ readings: trimmed }); return true; }
+    if (mode === 'segment') { target.printed = printed({ readings: trimmed }); return true; }
     inWord = true;
     if (mode === 'readings' || trimmed.length > 1 || !r.plain) {
       // the script road: the word is an expansion standing for each text; as a target it keeps the non-literal rule
@@ -1290,6 +1360,11 @@ export function lex(command, shell = null, opts = {}) {
   };
   const resolvedSub = (spelling, inner) => {
     if (expect && expect.kind === 'heredoc') return false;   // a here-document delimiter, which no shell expands
+    // placeReading's answer: true, a sound reading stands in the word and the substitution's commands print alone (echo, printf, a
+    // silent command, a cat of a here-document: nothing in it writes); 'unresolvable', the word is marked and the caller reads the
+    // substitution's commands as commands all the same (round 6's second commit: `$(echo x > f; echo 1)` printed a text the model
+    // cannot establish while its echo wrote f, and a mark alone lost the write from a cwd in no project); false, no reading or one lex
+    // declines to place (the command names IFS), the commands read as before
     return placeReading(literalOutput(inner, shell, nestDepth), spelling, 'text');
   };
   const substitution = () => {
@@ -1302,7 +1377,7 @@ export function lex(command, shell = null, opts = {}) {
     // scan; a `$( ... )` is a command in a subshell, as before
     if (inner.startsWith('(') && parenCloseAt(inner) === inner.length - 1) { opaqueExpansion(); const body = inner.slice(1, -1); seg.arith.push(body); expansionsOf(body, CONSTRUCT_HEADS['$(('].expandVia); }
     else if (inner.startsWith('(') && inner.endsWith(')')) { opaqueExpansion(); seg.arith.push(inner.slice(1, -1)); seg.viaSubs.push({ text: inner, via: CONSTRUCT_HEADS['$(('].via }); }
-    else if (!resolvedSub('$(' + inner + ')', inner)) { opaqueExpansion(hdInner ? '$(' + inner + ')' : undefined); seg.subs.push(inner); }   // in a here-document body the spelling stays in the text (the consumer's script reads it again where the shell runs it)
+    else { const r = resolvedSub('$(' + inner + ')', inner); if (r !== true) { if (!r) opaqueExpansion(hdInner ? '$(' + inner + ')' : undefined); seg.subs.push(inner); } }   // in a here-document body the spelling stays in the text (the consumer's script reads it again where the shell runs it)
   };
   // A `${...}` of unknown content: the spelling stays in the word, marked as an expansion, and the expansions nested in it are
   // read (nestedExpansions); `dq` says whether the word stands inside double quotes.
@@ -1366,7 +1441,7 @@ export function lex(command, shell = null, opts = {}) {
     if (e < 0) { opaqueExpansion(); opaque = true; raw += src.slice(i); i = src.length; return; }
     const inner = src.slice(i + 1, e);
     raw += src.slice(i, e + 1); i = e + 1;
-    if (!resolvedSub('`' + inner + '`', inner)) { opaqueExpansion(hdInner ? '`' + inner + '`' : undefined); seg.subs.push(inner); }   // resolved as a `$(...)` is (THE RESOLVED SUBSTITUTION)
+    { const r = resolvedSub('`' + inner + '`', inner); if (r !== true) { if (!r) opaqueExpansion(hdInner ? '`' + inner + '`' : undefined); seg.subs.push(inner); } }   // resolved as a `$(...)` is (THE RESOLVED SUBSTITUTION)
   };
 
   // zsh's third process substitution, `=(cmd)` (round 5's fifth addendum, third fix-up, 2026-09-20; the second fix-up's verifiers
@@ -1590,7 +1665,7 @@ export function lex(command, shell = null, opts = {}) {
       if (c === ';') { i += src[i + 1] === ';' ? 2 : 1; endSegment(';'); continue; }
       // ( or ): a segment break and a scope marker
       i++; endSegment(c);
-      segments.push({ ...newSegment(), paren: c });
+      segments.push({ ...newSegment(), paren: c, start: i - 1 });
       continue;
     }
     inWord = true; buf += c; marks += 'u'; raw += c; i++;
@@ -2986,10 +3061,66 @@ function segmentOutput(s) {
 // <(echo '..')` reads): segmentOutput's reading of the one segment, or null when the command is anything else. `depth` is the
 // lexer's nesting, capped as the `${` descent is.
 function literalOutput(inner, shell, depth = 0) {
-  if (depth >= NESTED_DEPTH_CAP || !/echo|printf/.test(inner)) return null;
+  if (depth >= NESTED_DEPTH_CAP || !/echo|printf|cat/.test(inner)) return null;
   const r = lex(inner, shell, { depth: depth + 1 });
-  if (r.opaque || r.segments.length !== 1) return null;
-  return segmentOutput(r.segments[0]);
+  if (r.opaque) return null;
+  return listOutput(r.segments);   // round 6's second commit: the list inside, one segment or several (THE OUTPUT MODEL)
+}
+// THE OUTPUT MODEL (round 6's second commit, 2026-09-20; round 5's tests-1 found `(echo 'cp ..') | bash` and `{ echo 'cp ..'; } | bash`
+// pinned allowed under a label that called the producer one the guard cannot read, while the text stood in the command and bash, zsh
+// and dash ran it, and the same wrapper defeated `bash -c "$(...)"`, `bash <(...)` and the here-string): what a command LIST prints, a
+// subshell's or a `{ }` group's body before a pipe, the list inside a `$(...)`, a backtick or a `<(...)`. The outputs of its simple
+// segments in order, concatenated as the shells concatenate them on the one stream. A segment whose command is a literal echo or
+// printf prints segmentOutput's reading, an echo's text followed by the newline every shell adds (when the echo takes no option word
+// and its operands hold no backslash: zsh's `-` and a `\c` omit it, so beside another printer such an echo is UNRESOLVABLE), a printf's
+// text as it is; a `cat` with no operand (or `-`) fed one here-document prints the body (the text stands in the command: `bash -c
+// "$(cat <<'EOF' .. EOF)"` ran the body in every shell, measured); a segment that prints nothing on the stream adds nothing
+// (SILENT_COMMANDS with no wrapper, assignment words alone, a paren marker, a `{` or `}` alone); any other segment, or one holding a
+// redirection, a here-document elsewhere, a `<`, a substitution, an arithmetic body, or an operator that is not `;`, a newline or the
+// list's own closer (a `|` inside sends the segment's output to the next command, `&&`, `||` and `&` are outside the model), puts the
+// list outside the model: UNRESOLVABLE when a printer stands beside it (a part of the text on the stream the resolver cannot
+// establish), null when nothing in the list prints by the model (`(cat f) | bash`, as `cat f | bash`: the producer outside the output
+// model, the residual the surfaces name). One printer alone is its own reading unchanged (plain stays plain: the text road is open to
+// `$(echo cp)` as before); several are joined, the union capped at 64 texts (past it, UNRESOLVABLE).
+const SILENT_COMMANDS = new Set(['true', ':', 'false', 'test', '[', 'sleep', 'shift', 'break', 'continue', 'exit', 'return', 'wait']);
+const catOfHeredoc = (s) => {
+  if (!s.heredocs.length || s.redirects.length || (s.stdin && s.stdin.length) || s.subs.length || s.viaSubs.length || s.arith.length || (s.closerTail && s.closerTail.length)) return null;
+  const cmd = commandOf(s.words);
+  if (!cmd || cmd.unknown || cmd.opaque || 'script' in cmd || cmd.wrapped || cmd.chdirs.length || cmd.writes.length || cmd.name !== 'cat') return null;
+  if (cmd.args.some((w) => !(w.literal && (w.text === '-' || w.text === '-u')))) return null;
+  return s.heredocs.map((b) => b + '\n');   // the body, each alternative the lexer read of it, with the newline the shell ends the data with
+};
+function listOutput(segs) {
+  const parts = [];
+  let outside = false;
+  for (const s of segs) {
+    if (s.paren) continue;
+    if (s.words.length && s.words.every((w) => plainWord(w) && (w.text === '{' || w.text === '}'))) continue;
+    if (s.op && s.op !== ';' && s.op !== '\n' && s.op !== ')') { outside = true; continue; }
+    const cat = catOfHeredoc(s);
+    if (cat) { parts.push({ texts: cat, plain: false, newline: false }); continue; }
+    if (s.redirects.length || s.heredocs.length || (s.stdin && s.stdin.length) || s.subs.length || s.viaSubs.length || s.arith.length || (s.closerTail && s.closerTail.length)) { outside = true; continue; }
+    const cmd = commandOf(s.words);
+    if (!cmd) { if (s.words.every((w) => isAssignmentWord(w) || (plainWord(w) && RESERVED.has(w.text)))) continue; outside = true; continue; }
+    if (cmd.unknown || cmd.opaque || 'script' in cmd || cmd.chdirs.length || cmd.writes.length) { outside = true; continue; }
+    if (SILENT_COMMANDS.has(cmd.name) && !cmd.wrapped) continue;
+    if (cmd.name !== 'echo' && cmd.name !== 'printf') { outside = true; continue; }
+    const r = segmentOutput({ ...s, op: '' });
+    if (r == null) { outside = true; continue; }
+    if (r.unresolvableReading) return r;
+    parts.push({ texts: r.texts, plain: !!r.plain, newline: cmd.name === 'echo', echo: cmd });
+  }
+  if (!parts.length) return null;
+  if (outside) return unresolvable('a command whose output I do not read stands in the list beside an echo, a printf or a cat of a here-document, so the text printed is not known');
+  if (parts.length === 1) return parts[0].plain ? plain(parts[0].texts) : sound(parts[0].texts);
+  let texts = [''];
+  for (const p of parts) {
+    if (p.newline && p.echo.args.some((w) => /^-/.test(w.text) || w.text.includes('\\'))) return unresolvable('an echo with an option word or a backslash in its operands stands beside another command that prints, and whether its newline is printed differs by shell');
+    const pieces = p.texts.map((t) => t + (p.newline ? '\n' : ''));
+    texts = texts.flatMap((a) => pieces.map((b) => a + b));
+    if (texts.length > 64) return unresolvable('a list printing more alternative texts than I hold');
+  }
+  return sound(texts);
 }
 // THE DEFAULT WORD's reading (lex's braceParameter reads `${name:-word}` and its kin through this): the one word the nested lex made
 // of the operator's word, its name and operator peeled (`prefixLen` literal characters at the text's start). Sound when the word is
@@ -3510,6 +3641,25 @@ function extract(command, ctx) {
   let varsPoisoned = !!ctx.varsPoisoned;
   let poisonWhy = ctx.poisonWhy || null;
   const definedFunctions = ctx.definedFunctions || new Set();
+  // THE ALIAS ROAD (round 6's second commit, 2026-09-20; round 5's extra7-2: `alias c=cp` and, on the next line, `c ../base/report.md
+  // report.md` were read as two unknown commands and allowed while dash copied through `-c`, zsh and dash through a here-document or a
+  // pipe, and bash under `expand_aliases`, measured; the text stood in the command). `aliases`: name -> { body (the text the shell puts in
+  // the name's place, null when the resolver cannot read it), line (the definition's line: the shells expand an alias when a later line
+  // is read, never on the line that defines it; bash reads a whole compound before running it, so a use inside one is over-included on
+  // the safe side), global (zsh's `-g`: the name is expanded in every word position), suffix (zsh's `-s`: a command word ending in
+  // `.name` runs the body with the word as its operand) }. `hashes`: name -> the path `hash -p PATH NAME` (bash) or `hash NAME=PATH`
+  // (zsh) binds it to, null when unreadable. `aliasState.unread`: an alias whose NAME the resolver cannot read was defined, so every
+  // later command name may be it. `bound`: an absolute path the command made by a copy or a link (cp, install, ln, link, mv) -> the
+  // literal source's text, null when the source is not literal, so `cp /usr/bin/cp ../scratch/c2; ../scratch/c2 a b` is read as the copy it
+  // runs (measured: every shell copied). `aliasChain`: the alias names being expanded on this road (a name identical to one of them is not
+  // expanded again, the shells' own rule). A fresh shell (`bash -c`) inherits no alias or hash; the paths made are on the filesystem for
+  // every shell. Consumed by THE HEAD SPLICE in the walk below.
+  const aliases = ctx.aliases || new Map();
+  const hashes = ctx.hashes || new Map();
+  const aliasState = ctx.aliasState || { unread: null };
+  const bound = ctx.bound || new Map();
+  const aliasChain = ctx.aliasChain || new Set();
+  const lineOf = (seg) => (ctx.headSplice ? Infinity : seg && seg.start ? command.slice(0, seg.start).split('\n').length : 1);   // a spliced text stands on a later line than every binding it may use (an alias of an alias, a trailing-blank alias's next word)
   // The readability rule's two marks: a name a construct outside the plain form may write (sticky), and the whole table
   // once a construct may write any name. The text names the construct, so the refusal can say why the name was not read.
   const wroteThrough = (name, construct, raw) => `the command writes \`${name}\` through ${construct} (${raw}), which I do not follow`;
@@ -3938,6 +4088,19 @@ function extract(command, ctx) {
     if (!cwd) return;
     const abs = (w) => (w && w.literal ? literalPath(w.text, cwd) : null);
     const markAllCandidates = (verb) => { for (const c of optionCandidates(args)) markMutated(abs(c), verb); };
+    // THE ALIAS ROAD's bound paths: a copy or a link this command makes (cp, install, ln, link, mv) binds the destination path to the
+    // source's text, so a later command named by that path is read as the source (`cp /usr/bin/cp ../scratch/c2; ../scratch/c2 a b` and
+    // `ln -s /usr/bin/cp ../scratch/c2 && ../scratch/c2 a b` copied in every shell, measured); a source the resolver cannot read binds null
+    if (name === 'cp' || name === 'install' || name === 'ln' || name === 'mv' || name === 'link') {
+      const parsed = name === 'link' ? { operands: args.filter((a) => !(a.text.startsWith('-') && a.text.length > 1)) } : parseCopyOptions(args, name);
+      if (!parsed.unknown && !parsed.installDir) {
+        const ops = parsed.operands || [];
+        const srcText = (w) => (w && w.literal ? w.text : null);
+        if (parsed.targetDir) { if (parsed.targetDir.literal) for (const src of ops) { const d = literalPath(path.join(parsed.targetDir.text, path.basename(src.text)), cwd); if (d) bound.set(d, srcText(src)); } }
+        else if (ops.length === 2) { const d = abs(ops[1]); if (d) bound.set(d, srcText(ops[0])); }
+        else if (ops.length > 2) { const dst = ops[ops.length - 1]; if (dst.literal) for (const src of ops.slice(0, -1)) { const d = literalPath(path.join(dst.text, path.basename(src.text)), cwd); if (d) bound.set(d, srcText(src)); } }
+      }
+    }
     if (name === 'rm' || name === 'rmdir' || name === 'unlink' || name === 'shred') {
       for (const a of args) if (!(a.text.startsWith('-') && a.text.length > 1)) markMutated(abs(a), name);
       return;
@@ -4053,14 +4216,16 @@ function extract(command, ctx) {
   // the reading functions above extract). `role` 'text': the word's own text is the script (a `-c` operand, an interpreter's inline
   // code); 'file': the word names what the script is read from (a here-string or a `<` into the standard input, a process
   // substitution as the script operand, a piped producer's printed text), so only its readings count; 'head': the command's name,
-  // where a word the resolver could not establish is refused and anything else is the command the walk reads on its own. A word the resolver could not establish is a target the hook cannot read (cannotRead: refused while a project is in
+  // where a word the resolver could not establish is refused, a word with readings yields them (THE HEAD SPLICE reads the segment
+  // again with each in the name's place: round 6's second commit, after `${x:-cp} ../base/report.md report.md` ran the copy in every
+  // shell while the reading `cp` went unused in head position) and anything else is the command the walk reads on its own. A word the resolver could not establish is a target the hook cannot read (cannotRead: refused while a project is in
   // play, with the reason) and yields no text, so no site can hand such a script to the shell as the residual pass; a word with
   // readings yields them; a literal word its text (role 'text'); anything else is a script the guard cannot see, the residual
   // decision 47 names, marked opaque.
   const scriptTexts = (w, how, role = 'text') => {
     if (!w) return [];
     if (w.unresolvableReading) { cannotRead(w, how, { kind: 'unresolvableReading', spelling: w.unresolvableReading.raw, text: w.unresolvableReading.why }); return []; }
-    if (role === 'head') return [];
+    if (role === 'head') return w.readings || [];
     if (w.readings) return w.readings;
     if (role === 'text' && w.literal) return [w.text];
     if (role === 'text' || w.herestring || procsubOf(w) != null) sawOpaqueCommand = true;
@@ -4110,7 +4275,7 @@ function extract(command, ctx) {
   let sawOpaqueCommand = false;
   // A script run by `sh` (a `$(...)`, a heredoc-fed shell, a `-c` operand) is read as that shell reads it; a
   // `$(...)` in this command runs in this command's shell, so it inherits `shell`, and the directory state.
-  const recurse = (text, sh = shell, fresh = sh !== shell, via = '', stdin = null) => {
+  const recurse = (text, sh = shell, fresh = sh !== shell, via = '', stdin = null, chain = aliasChain, spliced = false) => {
     if (depth >= RECURSION_CAP) { sawOpaqueCommand = true; return; }
     // B2: a `$(...)` runs in a subshell of this shell and sees its names (a copy: its own assignments do not come back);
     // a script handed to a named shell sees the environment alone, so it inherits none of them (fail closed: a name
@@ -4121,6 +4286,7 @@ function extract(command, ctx) {
     const homeValue = vars.has('HOME') && vars.get('HOME') != null ? [['HOME', vars.get('HOME')]] : [];
     const sub = extract(text, {
       dir, unknownDir, unknownWhy, shell: sh, depth: depth + 1, homeAssigned: homeUnreadableNow(), homeWhy: homeWhyNow(), unreadableNames, links, cdFunctions, mutated, keywordMode,
+      aliases: fresh ? new Map() : aliases, hashes: fresh ? new Map() : hashes, aliasState: fresh ? { unread: null } : aliasState, bound, aliasChain: chain, headSplice: spliced,   // THE ALIAS ROAD: a fresh shell starts with no alias or hash; the paths made are on the filesystem for every shell
       vars: fresh ? new Map(homeValue) : new Map(vars), unreadableWhy: fresh ? new Map() : new Map(unreadableWhy), refTargets: fresh ? new Set() : new Set(refTargets), readonlyNames: fresh ? new Set() : new Set(readonlyNames), oldDir, varsPoisoned: fresh ? false : varsPoisoned, poisonWhy: fresh ? null : poisonWhy, definedFunctions,
       via: viaOf() + via,
       // THE INHERITED STDIN (the third fix-up): a `-c` script, a `$(...)` and a script the shell reads from a file run with this
@@ -4239,7 +4405,7 @@ function extract(command, ctx) {
   };
   // THE PIPED SCRIPT (the second fix-up), read at the producer's segment `p` (the segment before the consumer, or before the compound
   // holding it): the words a literal echo or printf would print
-  const pipedScripts = (p) => (segments[p].paren ? [] : scriptTexts(segments[p].printed, 'piped script', 'file'));   // lex placed the producer's printed text on the segment (placeReading, mode 'segment')
+  const pipedScripts = (p) => (segments[p].printed ? scriptTexts(segments[p].printed, 'piped script', 'file') : []);   // lex placed the producer's printed text on the segment (placeReading, mode 'segment'): the echo or printf itself, or since round 6's second commit the `)` or `}` closing a subshell or group of such commands (THE OUTPUT MODEL); a producer with no printed text is outside the model
   // Open scopes, innermost last: a subshell frame holds the dir to restore at its `)`; a function
   // frame (`f() { ... }`, a body defined, not run) holds the dir to restore at its closing brace;
   // a compound frame (if, while, until, for, case) records whether a cd ran in its body.
@@ -4673,7 +4839,51 @@ function extract(command, ctx) {
     // RESOLVER'S CONTRACT; round 5's correctness-2: `$(echo cp ../base/*.md report.md)` alone ran the globbed copy in bash, zsh and
     // dash while its head was an unread expansion), one the resolver never read stays the residual decision 47 names
     const headWord = cmd.args ? seg.words[seg.words.length - cmd.args.length - 1] : null;
-    if (headWord) scriptTexts(headWord, 'command name', 'head');
+    const headIdx = headWord ? seg.words.length - cmd.args.length - 1 : -1;
+    // THE HEAD SPLICE (round 6's second commit, 2026-09-20): a command name that stands for a text the shell runs in its place is read
+    // again with that text spliced in, the segment's other words and redirections after it as spelled (a body may end in a redirection
+    // operator, so the text is spliced and re-lexed, never swapped word for word), beside the segment as spelled: the readings of an
+    // expansion the resolver established (`${x:-cp} a b`, `$(echo -e cp) a b`), an alias body the command bound on an earlier line
+    // (THE ALIAS ROAD; a suffix alias's body takes the word as its operand; a `-g` alias is expanded in every position, so a later
+    // unquoted word spelled so is a target the hook cannot read), a hashed path, and a path the command made by a copy or a link of
+    // another command (`bound`: the source's text). A binding whose text the resolver cannot read makes the name a target the hook
+    // cannot read (refused while a project is in play); after an alias whose NAME is unreadable, every later command name is one.
+    // The splice runs in this shell with this command's names (not a fresh shell), the chain of alias names bounding the recursion.
+    const headTexts = headWord ? scriptTexts(headWord, 'command name', 'head').map((t) => ({ text: t, chain: aliasChain })) : [];
+    if (headWord && plainWord(headWord)) {
+      const here = lineOf(seg);
+      const name = headWord.text;
+      const a = aliases.get(name);
+      if (a && !a.suffix && a.line < here && !aliasChain.has(name)) {
+        if (a.body == null) cannotRead(headWord, 'command name', { kind: 'aliasUnread', text: `\`${name}\` is an alias this command defines with a text I do not read, so what runs in its place is not known` });
+        else headTexts.push({ text: a.body, chain: new Set([...aliasChain, name]) });
+      }
+      for (const [suf, sa] of aliases) if (sa.suffix && sa.line < here && name.endsWith('.' + suf) && !aliasChain.has(suf)) {
+        if (sa.body == null) cannotRead(headWord, 'command name', { kind: 'aliasUnread', text: `\`${name}\` ends in a suffix this command aliases to a text I do not read` });
+        else headTexts.push({ text: sa.body + ' ' + headWord.raw, chain: new Set([...aliasChain, suf]) });
+      }
+      if (hashes.has(name)) {
+        const p = hashes.get(name);
+        if (p == null) cannotRead(headWord, 'command name', { kind: 'aliasUnread', text: `\`${name}\` is hashed by this command to a path I do not read` });
+        else headTexts.push({ text: p, chain: aliasChain });
+      }
+      if (aliasState.unread && !a) cannotRead(headWord, 'command name', { kind: 'aliasUnread', text: `an earlier \`alias\` of this command binds a name I do not read (${aliasState.unread}), so \`${name}\` may run another command` });
+      if (name.includes('/') && !unknownDir) {
+        const abs = literalPath(name, dir);
+        if (abs && bound.has(abs)) {
+          const src = bound.get(abs);
+          if (src == null) cannotRead(headWord, 'command name', { kind: 'aliasUnread', text: `\`${name}\` is a path this command made by copying or linking a source I do not read` });
+          else headTexts.push({ text: src, chain: aliasChain });
+        }
+      }
+    }
+    for (const w of seg.words) if (w !== headWord && plainWord(w)) { const g = aliases.get(w.text); if (g && g.global && g.line < lineOf(seg)) cannotRead(w, 'a global alias', { kind: 'aliasUnread', text: `\`${w.text}\` is a global alias this command defines (zsh expands it in every position), so the word is not the text spelled` }); }
+    if (headTexts.length) {
+      const before = seg.words.slice(0, headIdx).map((w) => w.raw).join(' ');
+      const after = seg.words.slice(headIdx + 1).map((w) => w.raw).join(' ');
+      const redirs = seg.redirects.map((r) => `${r.op} ${r.target.raw}`).join(' ');
+      for (const { text, chain } of headTexts) recurse([before, text, after, redirs].filter(Boolean).join(' '), shell, false, ` through the command name \`${headWord.raw}\``, stdinBodies(idx), chain, true);
+    }
     const asSpelled = cmd.args;
     let { name } = cmd;
     if (/^(python[0-9.]*|pypy[0-9]*)$/.test(name)) name = 'python';
@@ -4919,7 +5129,64 @@ function extract(command, ctx) {
         }
         break;
       }
-      case 'eval': case 'xargs': sawOpaqueCommand = true; break;
+      case 'eval': case 'trap': {
+        // round 6's second commit: `eval 'cp ../base/report.md report.md'` and `trap 'cp ../base/report.md report.md' EXIT` ran the copy in
+        // every shell while allowed, the text standing in the command. The words eval joins with one space, or trap's action (its first
+        // operand, unless an option word or a `-`; `trap SIG` alone resets), are a script of this shell when every word is literal or carries
+        // readings (THE RESOLVER'S CONTRACT: a word the resolver could not establish refuses through scriptTexts); an expansion the resolver
+        // never reads keeps what the base did, the command marked opaque (`eval "$cmd"`: a script held in a variable, the residual named)
+        let ws = args;
+        if (name === 'trap') { ws = args.length && args[0].literal && args[0].text === '--' ? args.slice(1) : args; ws = ws.length >= 2 && !(ws[0].literal && /^-/.test(ws[0].text)) ? [ws[0]] : []; }
+        let texts = [''];
+        let unread = !ws.length;
+        for (const w of ws) {
+          const ts = scriptTexts(w, name === 'eval' ? 'eval' : 'trap action', 'text');
+          if (!ts.length) { unread = true; break; }
+          texts = texts.flatMap((a) => ts.map((b) => (a ? a + ' ' : '') + b));
+          if (texts.length > 64) { unread = true; break; }
+        }
+        if (unread) { if (name === 'eval') sawOpaqueCommand = true; break; }
+        for (const t of texts) recurse(t, shell, false, ` through \`${name}\``);
+        break;
+      }
+      case 'xargs': sawOpaqueCommand = true; break;
+      case 'alias': {
+        // THE ALIAS ROAD's definitions (see `aliases` above): each NAME=BODY operand binds NAME to BODY's text (after quote removal, as the
+        // shell stores it) for the segments on a later line; `-g` and `-s` are zsh's global and suffix aliases; `-p`, `-r`, `-m`, `-L` and
+        // `--` are option words; an operand with no `=` prints an alias. A BODY the resolver cannot read (an expansion in it) binds the
+        // name to null; a NAME it cannot read marks aliasState.unread. `unalias` is not read: a binding stays (the safe side).
+        let k = 0;
+        let global = false;
+        let suffix = false;
+        for (; k < args.length && args[k].literal && /^-/.test(args[k].text) && args[k].text !== '-'; k++) { if (args[k].text === '--') { k++; break; } if (args[k].text.includes('g')) global = true; if (args[k].text.includes('s')) suffix = true; }
+        for (; k < args.length; k++) {
+          const w = args[k];
+          const eq = w.text.indexOf('=');
+          if (eq < 0) continue;
+          const nameLiteral = !w.marks || !w.marks.slice(0, eq).includes('x');
+          if (!nameLiteral) { if (!aliasState.unread) aliasState.unread = w.raw; continue; }
+          aliases.set(w.text.slice(0, eq), { body: w.literal ? w.text.slice(eq + 1) : null, line: lineOf(seg), global, suffix });
+        }
+        break;
+      }
+      case 'hash': {
+        // bash's `hash -p PATH NAME...` and zsh's `hash NAME=PATH` bind a command name to a path (measured: each shell ran the copy through
+        // the bound name); every other option word (`-r`, `-d`, `-l`, `-t`, `-v`, `-f`, `-m`) binds nothing the walk reads
+        if (args.length >= 3 && args[0].literal && args[0].text === '-p') { for (const n of args.slice(2)) if (n.literal) hashes.set(n.text, args[1].literal ? args[1].text : null); }
+        for (const w of args) {
+          const eq = w.text.indexOf('=');
+          if (eq <= 0 || (w.marks && w.marks.slice(0, eq).includes('x'))) continue;
+          hashes.set(w.text.slice(0, eq), w.literal ? w.text.slice(eq + 1) : null);
+        }
+        break;
+      }
+      case 'source': case '.': {
+        // a sourced script whose operand names the standard input (`source /dev/stdin <<'EOF'`, `. /dev/stdin <<< '..'`: bash and zsh ran the
+        // body, measured) reads what this command reads, in this shell (round 6's second commit); a sourced file's contents are not in the
+        // command (the residual the surfaces name; the name poison VAR_POISONERS applies as before)
+        if (args.length && args[0].literal && STDIN_NAMES.has(args[0].text)) for (const body of stdinBodies(idx)) recurse(body, shell, false, ` through \`${name} ${args[0].text}\``, []);
+        break;
+      }
       default:
         if (SHELLS.has(name)) {
           // the script is read as the shell named reads it (`$'...'` is quoting under bash and zsh only; the
@@ -5676,6 +5943,15 @@ function judge(command, cwd) {
         + `cannot tell which file it would write, and ${where} tracks files whose changes are recorded for me to accept or `
         + `reject. Spell the command without that option, or use the long form I know: outside that project the command then `
         + `runs as usual, and a tracked file takes its change through track-edit instead:\n${TRACK_EDIT}`;
+    }
+    if (u.why && u.why.kind === 'aliasUnread') {
+      // THE ALIAS ROAD (round 6's second commit): a command name bound by this command (an alias, a hash, a copied or linked path) to a
+      // text the resolver cannot read, an alias whose name it cannot read, or a word a `-g` alias would expand: the reason recorded
+      // at the binding is the refusal's text, so the person sees which binding it is
+      return `This command is blocked here: its ${u.how} names ${u.raw}, and ${u.why.text}, so I cannot tell what would run or which file it `
+        + `would write, and ${where} tracks files whose changes are recorded for me to accept or reject. Spell the command the alias or `
+        + `the binding stands for, with its paths: outside that project the command then runs as usual, and a tracked file takes its change `
+        + `through track-edit instead:\n${TRACK_EDIT}`;
     }
     if (u.why && u.why.kind === 'opaqueScript') {
       // rule (b) (the third pass): env -S hands env a string that env's own splitter reads (its options, assignments, `--`

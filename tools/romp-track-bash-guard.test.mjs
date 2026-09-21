@@ -109,10 +109,19 @@ const namedPresent = (cmd, what, table = NAMED_PROBE, report = (line) => console
   const named = programsNamed(cmd, table);
   return shellsFor(named, what, table, report).length === named.length;
 };
-// the matrix rows whose named consumer this box lacks: row id -> the program, for the run to skip and the summary to name
-const rowsNotRun = (rows, namedShell, table = NAMED_PROBE) => {
+// the matrix rows whose EVIDENCE needs a program this box lacks: row id -> the program, for the run to skip and the summary to name.
+// Round 6's second commit (ruling E; round 5's regression-3): the skip was keyed on the program a row NAMES, but in the heredoc-body
+// matrix the write is performed by the running shell before the named consumer is reached (`zsh <<EOF` with `$(cp ..)` in the body:
+// bash, zsh and dash each copy while expanding the body, zsh never runs), so on a runner without zsh the hard invariant went unmeasured
+// for rows the box could measure. The fixture carries `needs`, per row the programs its evidence needs, DERIVED on the box that wrote
+// it: a named program present there was hidden behind a scratch bin dir linking every program but it, and the row's writers and parsing
+// re-measured (needed when they changed); a named program absent there is needed when the row shows no writer (its evidence would
+// come from that program). A row is skipped only when a program it needs is absent here; a row that names an absent program but
+// does not need it runs, its masks compared column by column for the shells present.
+const rowsNotRun = (rows, pin, table = NAMED_PROBE) => {
   const skip = new Map();
-  for (const row of rows) { const p = namedShell(row); if (p && !probeOk(table, p)) skip.set(row.id, p); }
+  const needs = (pin && pin.needs) || {};
+  for (const row of rows) for (const p of needs[row.id] || []) if (!probeOk(table, p)) { skip.set(row.id, p); break; }
   return skip;
 };
 // THE LIVE-VALUE CHECK (round 5): the spawnSync every leg of this file calls. A shell the probe declined throws by name, so a leg
@@ -4266,8 +4275,12 @@ test("round 5's fifth addendum, fourth fix-up: a row whose command names a progr
   assert.equal(namedPresent("echo 'cp a b' | busybox sh", 'R-synthetic', T, (l) => lines.push(l)), false);
   assert.equal(lines.length, 2);
   assert.match(lines[1], /^NOT RUN: real busybox is not on this runner, so its evidence leg did not run: R-synthetic \(/);
-  const synth = [{ id: 'a/zsh', consumer: Z }, { id: 'a/sh', consumer: 'sh' }, { id: 'a/ksh', consumer: 'ksh' }, { id: 'a/cat', consumer: 'cat' }];   // no shell of the probe spelled here: the scan would read a list holding one as a leg's list
-  assert.deepEqual([...rowsNotRun(synth, (r) => (r.consumer === 'cat' ? null : r.consumer), T)], [['a/zsh', Z], ['a/ksh', 'ksh']], 'the matrix rows to skip, by id and program; a row naming a present shell or no shell is run');
+  const synth = [{ id: 'a/zsh', consumer: Z }, { id: 'a/sh', consumer: 'sh' }, { id: 'a/ksh', consumer: 'ksh' }, { id: 'a/cat', consumer: 'cat' }, { id: 'a/heredoc-zsh', consumer: Z }];   // no shell of the probe spelled here: the scan would read a list holding one as a leg's list
+  // round 6's second commit (ruling E): the skip is keyed on the fixture's `needs`, the programs a row's evidence needs, not on the program
+  // the row names: a/heredoc-zsh names zsh and needs nothing (the running shell performs its write), so it runs
+  const synthPin = { needs: { 'a/zsh': [Z], 'a/sh': ['sh'], 'a/ksh': ['ksh'] } };
+  assert.deepEqual([...rowsNotRun(synth, synthPin, T)], [['a/zsh', Z], ['a/ksh', 'ksh']], 'the matrix rows to skip, by id and program: a row whose evidence needs an absent program; one naming it and not needing it, or needing a present one, is run');
+  assert.deepEqual([...rowsNotRun(synth, { needs: {} }, T)], [], 'a fixture with no needs skips nothing');
   assert.deepEqual([NAMED_PROBE.bash, NAMED_PROBE.zsh, NAMED_PROBE.dash], [SHELL_PROBE.bash, SHELL_PROBE.zsh, SHELL_PROBE.dash], 'the three shells are the probe\'s own record, not a second probe');
   for (const p of NAMED_PROGRAMS) assert.equal(typeof NAMED_PROBE[p].ok, 'boolean', `${p} is probed`);
 });
@@ -5824,7 +5837,9 @@ test("round 5's third addendum, the brace matrix: every frame kind x brace place
 
 // THE CONSTRUCT MATRIX (round 5's fifth addendum, 2026-09-20): the attack on the two-grammar rule, kept as a pin beside the brace
 // matrix. Its population is DERIVED from the hook's own table: the heads are the command-position entries of CONSTRUCT_HEADS (`[[` and
-// `((` today; a head the hook learns without a kind here changes the row count and reds the fixture pin), crossed with twelve positions
+// `((` today; a head the hook learns reds a pin whatever its kind: a command-position head added without a matrix kind changes the row
+// count, an `expansion: true` head (`$((` today, pinned by the rows test) the key-set pin beside the heads pin, which lists both kinds
+// from the fixture; round 6's second commit, ruling F), crossed with twelve positions
 // (alone; after `!`; as an if, while or until condition; as a for head, which only `((` fills, `for [[ .. ]]` being a syntax error in every
 // shell; in a group; in a pipeline; in a function body, defined only and defined then called; after `&&` and after `||`), the PLACEMENT of
 // the write against the construct (the addendum's fix-up, 2026-09-20: the verifier found the population scoped to a write among the
@@ -5896,6 +5911,15 @@ const constructMatrixRows = (heads = CONSTRUCT_MATRIX.HEADS) => {
   }
   return rows;
 };
+// the fixture's population sentence, DERIVED from the dimension tables above (round 6's second commit, ruling G: the sentence was spelled by
+// hand and pinned to nothing, so it could contradict the heads array while every test stayed green); the glosses say what each name means
+const CONSTRUCT_GLOSS = {
+  positions: { alone: 'alone', bang: 'after !', if: 'an if condition', while: 'a while condition', until: 'an until condition', 'for-head': 'a for head', group: 'in a { } group', pipe: 'into a pipe', fn: 'a function body defined', 'fn-called': 'a function body defined then called', and: 'after &&', or: 'after ||' },
+  placements: { operand: 'among the operands', sub: 'inside a $(...) among them', procsub: 'inside a <(...) among them', 'closer-glued': 'glued to the closer', 'closer-spaced': 'spaced after the closer' },
+  operators: { '>': '>', '>>': '>>', '&>': '&>', '>|': '>|', '<>': '<>', 'name-set': 'a > onto a name set to the target in the same command', 'name-unset': 'a > onto a name never set (one row)' },
+  targets: { tracked: 'the tracked docs/report.md', folder: 'a new name under the tracked notes/ folder', untracked: 'the untracked scratch/keep.md' },
+};
+const constructMatrixPopulation = () => `head (the command-position entries of the hook's CONSTRUCT_HEADS: ${CONSTRUCT_MATRIX.HEADS.map((h) => h.head).join(', ')}) x position (${CONSTRUCT_MATRIX.POSITIONS.map((p) => `${p[0]}: ${CONSTRUCT_GLOSS.positions[p[0]]}`).join('; ')}) x placement of the write against the construct (${CONSTRUCT_MATRIX.PLACEMENTS.map((p) => `${p[0]}: ${CONSTRUCT_GLOSS.placements[p[0]]}`).join('; ')}) x operator (${CONSTRUCT_MATRIX.OPERATORS.map((o) => CONSTRUCT_GLOSS.operators[o]).join('; ')}) x target (${Object.keys(CONSTRUCT_MATRIX.TARGETS).map((t) => `${t}: ${CONSTRUCT_GLOSS.targets[t]}`).join('; ')}), produced by constructMatrixRows in tools/romp-track-bash-guard.test.mjs`;
 // CONSTRUCT MATRIX GENERATOR END
 const CONSTRUCT_MATRIX_PIN = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'romp-track-bash-guard-construct-matrix.json'), 'utf8'));
 
@@ -5905,8 +5929,14 @@ test("round 5's fifth addendum, the construct matrix: head (the command-position
   process.env.HOME = w.HOME;
   try {
     const rows = constructMatrixRows();
-    assert.equal(rows.length, CONSTRUCT_MATRIX_PIN.rows, 'the generator produces the rows the fixture pins (a head the hook learns without a kind changes this count)');
+    assert.equal(rows.length, CONSTRUCT_MATRIX_PIN.rows, 'the generator produces the rows the fixture pins (a command-position head the hook learns without a kind changes this count)');
     assert.deepEqual(CONSTRUCT_MATRIX.HEADS.map((h) => h.head), CONSTRUCT_MATRIX_PIN.heads, 'the fixture names the heads it was generated over');
+    // the key-set pin (round 6's second commit, ruling F): every head the hook learns is pinned, a command-position head by the matrix and an
+    // `expansion: true` head by the rows test, and the fixture lists both kinds, so an entry of EITHER kind added to CONSTRUCT_HEADS reds here
+    // (before, an expansion head landed with nothing red while four sentences said a head added reds the pin)
+    assert.deepEqual(Object.keys(guard.CONSTRUCT_HEADS), [...CONSTRUCT_MATRIX_PIN.heads, ...CONSTRUCT_MATRIX_PIN.expansionHeads], 'every head of CONSTRUCT_HEADS is pinned by kind: the command-position heads in this matrix, the expansion heads by the rows test');
+    for (const h of CONSTRUCT_MATRIX_PIN.expansionHeads) assert.ok(guard.CONSTRUCT_HEADS[h] && guard.CONSTRUCT_HEADS[h].expansion, `${h} is an expansion head`);
+    assert.equal(CONSTRUCT_MATRIX_PIN.population, constructMatrixPopulation(), 'the fixture\'s population sentence is the one the dimension tables derive (ruling G)');
     assert.deepEqual(CONSTRUCT_MATRIX.PLACEMENTS.map((p) => p[0]), CONSTRUCT_MATRIX_PIN.placements, 'the fixture names the placements it was generated over');
     const present = shellsFor(SHELL_ORDER, 'the construct matrix');
     const mismatches = [];
@@ -6040,13 +6070,21 @@ const PIPED_SCRIPT_MATRIX = {
   SCRIPTS: [['cp', 'cp ../base/report.md report.md'], ['test', '[[ x > report.md ]]'], ['glued', '[[ a ]]>report.md']],
   CONSUMERS: [...guard.SHELLS],
   FORMS: [['bare', (c) => c], ['dash-s', (c) => `${c} -s`], ['dash', (c) => `${c} -`]],
-  // the producers the guard does not read (the residual), given the single-quoted copy script
+  // the producers outside THE OUTPUT MODEL (the residual: not a literal echo or printf, alone or in a subshell or group of such
+  // commands, directly before the pipe), given the single-quoted copy script: a cat of a file, a tee (a further pipe), a call of a
+  // function the command defines (its body is not read as the call's output)
   RESIDUAL: [
     ['cat', (q) => 'cat ../scratch/other.md'],
     ['tee', (q) => `echo ${q} | tee /dev/null`],
+    ['function', (q) => `f() { echo ${q}; }; f`],
+  ],
+  // the producers THE OUTPUT MODEL reads since round 6's second commit (round 5's tests-1 found them pinned allowed as residual while
+  // bash, zsh and dash ran the copy): a subshell and a `{ }` group holding the echo, and each holding a silent command beside it
+  LIST: [
     ['subshell', (q) => `(echo ${q})`],
     ['group', (q) => `{ echo ${q}; }`],
-    ['function', (q) => `f() { echo ${q}; }; f`],
+    ['subshell-true', (q) => `(true; echo ${q})`],
+    ['group-echo', (q) => `{ echo true; echo ${q}; }`],
   ],
 };
 const pipedScriptMatrixRows = () => {
@@ -6067,6 +6105,11 @@ const pipedScriptMatrixRows = () => {
       rows.push({ id: `residual-${producer}/single/cp/${consumer}/bare`, producer: `residual-${producer}`, quoting: 'single', script: 'cp', consumer, form: 'bare', residual: true, cwd: 'nad', cmd: `${prodOf("'cp ../base/report.md report.md'")} | ${consumer}` });
     }
   }
+  for (const [producer, prodOf] of PIPED_SCRIPT_MATRIX.LIST) {
+    for (const consumer of PIPED_SCRIPT_MATRIX.CONSUMERS) {
+      rows.push({ id: `list-${producer}/single/cp/${consumer}/bare`, producer: `list-${producer}`, quoting: 'single', script: 'cp', consumer, form: 'bare', residual: false, cwd: 'nad', cmd: `${prodOf("'cp ../base/report.md report.md'")} | ${consumer}` });
+    }
+  }
   // round 6 (THE RESOLVER'S CONTRACT): an echo whose operand is an expansion the resolver does not read is UNRESOLVABLE, so the
   // `value` producer is refused, not residual; its rows keep their place in the fixture under ids of their own
   for (const consumer of PIPED_SCRIPT_MATRIX.CONSUMERS) {
@@ -6080,11 +6123,13 @@ const PIPED_SCRIPT_MATRIX_PIN = JSON.parse(fs.readFileSync(path.join(path.dirnam
 
 // One matrix run: every row judged in-process and run unguarded in the shells present, matched to its fixture row by row; the
 // hard invariant over the rows not marked residual; a residual row is expected allowed (the documented residual, its writers
-// recorded); the refusals where no shell writes are classed by `classOf` and printed. A row whose named consumer (`namedShell`,
-// the shell the row's command feeds) this box lacks is NOT RUN by name (rowsNotRun; one loud line per missing program): its
-// verdict is compared, its writers and parsing are not measured, and its refusal is the cost class absent.
+// recorded); the refusals where no shell writes are classed by `classOf` and printed. A row whose EVIDENCE needs a program this box
+// lacks (the fixture's `needs`, rowsNotRun) is NOT RUN (one loud line per missing program): its verdict is compared, its writers and
+// parsing are not measured, and its refusal is the cost class absent; `namedShell` (the shell the row's command feeds) is checked
+// against the command's text and against `needs`: a needed program is one the row spells.
 const runMatrixAgainstPin = (w, rows, pin, label, classOf, present, namedShell = () => null) => {
-  const notRun = rowsNotRun(rows, namedShell);
+  const notRun = rowsNotRun(rows, pin);
+  for (const row of rows) for (const p of (pin.needs || {})[row.id] || []) assert.ok(programsNamed(row.cmd).includes(p), `${row.id}: its evidence needs ${p}, a program the command spells: ${JSON.stringify(row.cmd)}`);
   const mismatches = [];
   const hard = [];
   const residualRead = [];
@@ -6101,7 +6146,7 @@ const runMatrixAgainstPin = (w, rows, pin, label, classOf, present, namedShell =
     if (v === 'r') refused++;
     const named = namedShell(row);
     if (named) assert.ok(programsNamed(row.cmd).includes(named), `${row.id}: the command spells its consumer ${named}: ${JSON.stringify(row.cmd)}`);
-    if (notRun.has(row.id)) {   // the consumer is not on this box: the verdict, judged in-process, is compared; the shells are not run
+    if (notRun.has(row.id)) {   // a program the row's evidence needs is not on this box: the verdict, judged in-process, is compared; the shells are not run
       if (v !== pv) mismatches.push(`${row.id}: ${v} (pinned ${pinned}; writers and parsing not measured, ${notRun.get(row.id)} is not on this box): ${JSON.stringify(row.cmd)}`);
       if (v === 'r') (costs.absent = costs.absent || []).push(row.id);
       continue;
@@ -6125,13 +6170,13 @@ const runMatrixAgainstPin = (w, rows, pin, label, classOf, present, namedShell =
   }
   const byProgram = {};
   for (const p of notRun.values()) byProgram[p] = (byProgram[p] || 0) + 1;
-  for (const [p, n] of Object.entries(byProgram)) shellsFor([p], `${label}'s ${n} rows naming ${p} as the consumer, their verdicts compared and their writers and parsing not`, NAMED_PROBE);
+  for (const [p, n] of Object.entries(byProgram)) shellsFor([p], `${label}'s ${n} rows whose evidence needs ${p}, their verdicts compared and their writers and parsing not`, NAMED_PROBE);
   assert.deepEqual(hard, [], `${label}: no row a shell writes is allowed`);
   assert.deepEqual(residualRead, [], `${label}: a residual row stays allowed, so the residual stays named as one (a producer read is a rule to state, not a fixture drift)`);
   assert.deepEqual(mismatches, [], `${label}: every row matches the fixture`);
   const classes = Object.entries(costs).map(([k, v]) => `${v.length} ${k}`).join(', ') || 'none';
   const skipped = Object.entries(byProgram).map(([p, n]) => `${n} naming ${p}`).join(', ') || 'none';
-  console.log(`# ${label}: rows ${rows.length}, refused ${refused}, allowed ${rows.length - refused}, writes bash=${writesBy.bash} zsh=${writesBy.zsh} dash=${writesBy.dash}; refused with no tracked write: ${classes}; not run, the consumer not on this box: ${skipped}`);
+  console.log(`# ${label}: rows ${rows.length}, refused ${refused}, allowed ${rows.length - refused}, writes bash=${writesBy.bash} zsh=${writesBy.zsh} dash=${writesBy.dash}; refused with no tracked write: ${classes}; not run, a program the evidence needs not on this box: ${skipped}`);
   for (const line of costs.other || []) console.log(`#   other: ${line}`);
 };
 
@@ -6163,6 +6208,15 @@ test("round 5's fifth addendum, second fix-up, the piped-script matrix: the prod
     assert.equal(rows.length, PIPED_SCRIPT_MATRIX_PIN.rows, 'the generator produces the rows the fixture pins (a shell added to SHELLS changes this count)');
     assert.deepEqual(PIPED_SCRIPT_MATRIX.CONSUMERS, PIPED_SCRIPT_MATRIX_PIN.consumers, 'the fixture names the consumers it was generated over, the hook\'s SHELLS');
     assert.equal(rows.filter((r) => r.residual).length, PIPED_SCRIPT_MATRIX_PIN.residualRows, 'and the residual rows');
+    // THE OUTPUT MODEL keys the residual set (round 6's second commit; round 5's tests-1 found the set a hand list under a label its members
+    // did not fit): a row is residual exactly when the lexer places no printed text on the producer before the consumer, so a producer the
+    // model starts reading leaves the set by derivation, and one it stops reading joins it, never by hand
+    for (const row of rows) {
+      const segs = lex(row.cmd).segments;
+      const p = segs.length - 2;
+      const modelled = p >= 0 && segs[p].op === '|' && !!segs[p].printed;
+      assert.equal(!!row.residual, !modelled, `${row.id}: residual exactly when the producer before the pipe is outside THE OUTPUT MODEL (no printed text): ${JSON.stringify(row.cmd)}`);
+    }
     const present = shellsFor(SHELL_ORDER, 'the piped-script matrix');
     runMatrixAgainstPin(w, rows, PIPED_SCRIPT_MATRIX_PIN, 'the piped-script matrix', () => null, present, (row) => row.consumer);
   } finally { process.env.HOME = savedHome; w.rm(); }
@@ -6364,6 +6418,14 @@ test("round 5's fifth addendum, second fix-up, the rows: an expansion nested in 
       ['Q-read', 'nad', 'echo ${x:-$(cat report.md)}', N, 'allow'],
       // the cost: the word's command is read whatever the parameter's state
       ['C-set-colon-minus', 'nad', 'x=1; echo ${x:-$(cp ../base/report.md report.md)}', N, ['name', WORD]],
+      // the four constructs the param-word fixture's note names as outside its population (round 6's second commit, ruling G: each had no
+      // pinning row), the shells that write measured: bash resolves `${!x}` of an unset name to an error and zsh and dash have no such form
+      // (no shell evaluates the word: a cost row); `${#x[..]}` and zsh's `:h` modifier evaluate their word in zsh alone; a here-document
+      // DELIMITER is expanded by no shell (a cost row), where the BODY of an unquoted one is, in every shell (the existing rule)
+      ['Q-indirect', 'nad', 'echo ${!x:-$(cp ../base/report.md report.md)}', N, ['name', WORD]],
+      ['Q-length-subscript', 'nad', 'echo ${#x[$(cp ../base/report.md report.md)]}', Z, ['name', WORD]],
+      ['Q-zsh-modifier', 'nad', 'echo ${${x:-$(cp ../base/report.md report.md)}:h}', Z, ['name', WORD]],
+      ['Q-heredoc-delimiter', 'nad', 'cat <<${x:-$(cp ../base/report.md report.md)}\nhello\nEOF', N, ['name', WORD]],
       // (4) the piped script: a literal echo or printf into a shell reading stdin, under the consumer's grammar
       ['S-echo-bash', 'nad', "echo 'cp ../base/report.md report.md' | bash", A, 'name'],
       ['S-echo-sh', 'nad', "echo 'echo x > report.md' | sh", A, 'name'],
@@ -6386,12 +6448,17 @@ test("round 5's fifth addendum, second fix-up, the rows: an expansion nested in 
       ['S-echo-read', 'nad', "echo 'cat report.md' | bash", N, 'allow'],
       ['S-echo-c', 'nad', "echo 'cp ../base/report.md report.md' | bash -c 'true'", N, 'allow'],   // a -c script: the pipe is not the script
       ['S-printf-v', 'nad', "printf -v t 'cp ../base/report.md report.md' | bash", N, 'allow'],   // into a variable, nothing printed
-      // (5) the residual, named: a producer the guard does not read
+      // (5) the residual, named: a producer outside THE OUTPUT MODEL (round 6's second commit narrowed it: a subshell or a `{ }` group
+      // holding echo or printf commands, and silent ones, is read as what it prints; a cat of a file, a further pipe (tee) and a call of a
+      // function the command defines stay outside the model, allowed while every shell writes, the residual named on the surfaces)
       ['R-value', 'nad', "s='cp ../base/report.md report.md'; echo \"$s\" | bash", A, ['text', 'an operand of the echo is an expansion whose value I do not read']],   // a value with whitespace is never resolved (the readability rule); round 6: the echo is a producer the resolver reads and its operand one it cannot establish, UNRESOLVABLE, so the piped script refuses (`bash <<< \"$s\"` stays the unread residual: no resolver applies to a here-string word)
       ['R-cat', 'nad', 'cat ../scratch/other.md | bash', N, 'allow'],
       ['R-tee', 'nad', "echo 'cp ../base/report.md report.md' | tee /dev/null | bash", A, 'allow'],
-      ['R-subshell', 'nad', "(echo 'cp ../base/report.md report.md') | bash", A, 'allow'],
-      ['R-function', 'nad', "f() { echo 'cp ../base/report.md report.md'; }; f | bash", A, 'allow'],
+      ['R-subshell', 'nad', "(echo 'cp ../base/report.md report.md') | bash", A, 'name'],   // round 6's second commit: THE OUTPUT MODEL reads the subshell's list (round 5's tests-1 found this row pinned allowed as a residual)
+      ['R-group', 'nad', "{ echo 'cp ../base/report.md report.md'; } | bash", A, 'name'],   // and the group's
+      ['R-subshell-true', 'nad', "(true; echo 'cp ../base/report.md report.md') | bash", A, 'name'],   // a silent command beside the echo prints nothing
+      ['R-inner-pipe', 'nad', "(echo 'cp ../base/report.md report.md' | cat) | bash", A, 'allow'],   // the echo's output goes to cat, whose output the model does not read: outside the model, as `cat f | bash` is
+      ['R-function', 'nad', "f() { echo 'cp ../base/report.md report.md'; }; f | bash", A, 'allow'],   // a call of a function the command defines: outside the model (its body is not read as the call's output)
       // a shell outside SHELLS: busybox's sh and ash, whose `[[` is a builtin that performs the redirection (measured), each named on decision 47
       ['R-busybox-sh-c', 'nad', "busybox sh -c 'cp ../base/report.md report.md'", A, 'allow'],
       ['R-busybox-ash-test', 'nad', "busybox ash -c '[[ x > report.md ]]'", A, 'allow'],
@@ -6421,7 +6488,7 @@ test("round 5's fifth addendum, second fix-up, the rows: an expansion nested in 
         assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
       }
     }
-    assert.equal(n, 79);
+    assert.equal(n, 86);
     // the lexer's descent: the nested substitutions join the segment's viaSubs with the word's text, in every quoting the shells give the word
     const via = (c, sh) => lex(c, sh).segments.flatMap((s) => s.viaSubs.filter((v) => v.via === WORD).map((v) => v.text));
     assert.deepEqual(via('echo ${x:-$(cp a b)}'), ['cp a b'], 'a $(...) inside a ${...} word is read');
@@ -7091,4 +7158,323 @@ test("round 6, the rows: the four readings round 5 found allowing a write the ba
     }
     assert.equal(n, 73);
   } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+// ── round 6, second commit (2026-09-20): THE ALIAS ROAD, THE HEAD SPLICE, THE OUTPUT MODEL and THE RESIDUAL TABLE ─────────────────
+//
+// Round 5's extra7-2: a writer behind a shell alias the command itself defines was read as an unknown command and allowed while its
+// text stood in the command; extra7-3: the contract paragraph's closing list was a hand list; tests-1: the piped-script matrix
+// exempted producers the lexer had read. The rows below are each run through the hook as a process from the tracked docs/ cwd and
+// from the cwd in no project, and unguarded in bash, zsh and dash over a fresh world, the shells that write pinned as measured.
+
+test("round 6, second commit, THE ALIAS ROAD and THE HEAD SPLICE: an alias the command defines on an earlier line is read at a later command name (its body spliced in, the tail as spelled; a suffix alias, a chained alias, a trailing-blank body, a `-g` alias's word; a hashed path; a copied or linked writer; a `${x:-cp}` head's reading; `eval`, `trap`, `source /dev/stdin`), the shells that write measured; a same-line use, a quoted use and a body no shell runs are the stated costs or allowed", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const A = ['bash', 'zsh', 'dash'];
+    const BZ = ['bash', 'zsh'];
+    const BD = ['bash', 'dash'];
+    const B = ['bash'];
+    const Z = ['zsh'];
+    const D = ['dash'];
+    const N = [];
+    const HEAD = (name) => `through the command name \`${name}\``;
+    // [id, cwd, command, the shells that write the tracked subset unguarded, the verdict]
+    const rows = [
+      // the alias road by the grammar (bash ALIASES: the first unquoted word of a simple command, expand_aliases when not interactive, never on
+      // the line that defines it, a trailing blank chains; dash(1) Aliases: wherever a reserved word may occur, in the input stream; zshmisc
+      // ALIASING: command position, `-g` everywhere, `-s` a suffix): dash copies through `-c` on the next line, bash under expand_aliases
+      ['AL-same-line', 'nad', 'alias c=cp; c ../base/report.md report.md', N, 'allow'],   // no shell expands an alias on the line that defines it
+      ['AL-next-line', 'nad', 'alias c=cp\nc ../base/report.md report.md', D, ['text', HEAD('c')]],
+      ['AL-and-same-line', 'nad', 'alias c=cp && c ../base/report.md report.md', N, 'allow'],
+      ['AL-shopt-next', 'nad', 'shopt -s expand_aliases\nalias c=cp\nc ../base/report.md report.md', BD, ['text', HEAD('c')]],   // bash expands with the option (rule (d) leaves the directory unknown too, so the reason names either)
+      ['AL-body-full', 'nad', "alias c='cp ../base/report.md report.md'\nc", D, ['text', HEAD('c')]],
+      ['AL-body-redirect', 'nad', "alias c='cat ../base/report.md >'\nc report.md", D, ['text', HEAD('c')]],   // the body ends in a redirection operator: the text is spliced and re-lexed
+      ['AL-two-pairs', 'nad', "alias c='cp ../base/report.md' d=mv\nc report.md", D, ['text', HEAD('c')]],
+      ['AL-chained', 'nad', 'alias c=cp\nalias d=c\nd ../base/report.md report.md', D, ['text', HEAD('d')]],   // an alias of an alias, expanded once each (the shells' own rule)
+      ['AL-trailing-blank', 'nad', "alias s='command '\nalias c=cp\ns c ../base/report.md report.md", D, ['text', HEAD('s')]],   // the blank makes the next word eligible
+      ['AL-quoted-name-def', 'nad', "alias 'c'=cp\nc ../base/report.md report.md", D, ['text', HEAD('c')]],
+      ['AL-dq-body', 'nad', 'alias c="cp"\nc ../base/report.md report.md', D, ['text', HEAD('c')]],
+      ['AL-in-if', 'nad', 'alias c=cp\nif true; then c ../base/report.md report.md; fi', D, ['text', HEAD('c')]],
+      ['AL-in-group', 'nad', 'alias c=cp\n{ c ../base/report.md report.md; }', D, ['text', HEAD('c')]],
+      ['AL-before-fn', 'nad', 'alias c=cp\nf() { c ../base/report.md report.md; }\nf', D, ['text', HEAD('c')]],   // expanded when the definition is read
+      ['AL-fn-before-alias', 'nad', 'f() { c ../base/report.md report.md; }\nalias c=cp\nf', N, 'allow'],   // the body was read before the alias existed: no shell expands it
+      ['AL-redirect-after', 'nad', "alias c='cp ../base/report.md'\nc report.md > /dev/null", D, ['text', HEAD('c')]],
+      ['AL-body-var', 'nad', 'x=cp\nalias c=$x\nc ../base/report.md report.md', D, ['text', HEAD('c')]],   // the body is a readable name's value (B2): read as `alias c=cp`
+      ['AL-body-read-var', 'nad', 'read x <<< cp\nalias c=$x\nc ../base/report.md report.md', N, ['text', 'an alias this command defines with a text I do not read']],   // a name the shell fills in: the body is a text the hook cannot read, so the command name is refused with that reason (no shell writes: bash and zsh expand no alias here, dash rejects the here-string)
+      ['AL-body-unset-var', 'nad', 'alias c=$x\nc ../base/report.md report.md', N, ['text', 'an alias this command defines with a text I do not read']],   // the cost: an empty body runs c itself, which no box has
+      ['AL-name-var', 'nad', 'n=c\nalias $n=cp\nc ../base/report.md report.md', D, ['text', HEAD('c')]],   // the name is a readable name's value (B2): read as `alias c=cp`
+      ['AL-name-read-var', 'nad', 'read n <<< c\nalias $n=cp\nc ../base/report.md report.md', N, ['text', 'binds a name I do not read']],   // the name is one the shell fills in: every later command name may be it (no shell writes: bash and zsh expand no alias here, dash rejects the here-string)
+      ['AL-unalias', 'nad', 'alias c=cp\nunalias c\nc ../base/report.md report.md', N, ['text', HEAD('c')]],   // the cost: `unalias` is not read, the binding stays
+      ['AL-quoted-use', 'nad', "alias c=cp\n'c' ../base/report.md report.md", N, 'allow'],   // a quoted word is never an alias
+      ['AL-backslash-use', 'nad', 'alias c=cp\n\\c ../base/report.md report.md', N, 'allow'],
+      ['AL-global-operand', 'nad', 'alias -g R=report.md\ncp ../base/report.md R', N, ['text', 'a global alias this command defines']],   // zsh expands `-g` in every position; through `zsh -c` it expands nothing (the cost); from a file or a pipe it writes (the piped rows below)
+      ['AL-suffix', 'nad', "alias -s md='cp ../base/report.md'\nreport.md", N, ['text', HEAD('report.md')]],   // zsh's suffix alias: `report.md` runs `cp ../base/report.md report.md` from a file or a pipe; `zsh -c` expands nothing (the cost)
+      ['AL-zsh-c-same', 'nad', "zsh -c 'alias c=cp; c ../base/report.md report.md'", N, 'allow'],
+      ['AL-zsh-c-next', 'nad', "zsh -c $'alias c=cp\\nc ../base/report.md report.md'", N, ['text', HEAD('c')]],   // the cost: a `-c` string is parsed whole by zsh, so the alias is never expanded there; the guard reads the script line by line as dash and bash do
+      ['AL-zsh-heredoc', 'nad', "zsh <<'EOF'\nalias c=cp\nc ../base/report.md report.md\nEOF", A, ['text', HEAD('c')]],   // fed a script, zsh expands line by line: every running shell hands it the body
+      ['AL-piped-two-lines', 'nad', "printf 'alias c=cp\\nc ../base/report.md report.md\\n' | zsh", A, ['text', HEAD('c')]],
+      ['AL-dash-heredoc', 'nad', "dash <<'EOF'\nalias c=cp\nc ../base/report.md report.md\nEOF", A, ['text', HEAD('c')]],
+      ['AL-sh-heredoc', 'nad', "sh <<'EOF'\nalias c=cp\nc ../base/report.md report.md\nEOF", A, ['text', HEAD('c')]],
+      ['AL-bash-heredoc-shopt', 'nad', "bash <<'EOF'\nshopt -s expand_aliases\nalias c=cp\nc ../base/report.md report.md\nEOF", A, ['text', HEAD('c')]],
+      ['AL-untracked', 'nad', 'alias c=cp\nc ../base/report.md ../scratch/keep.md', N, 'allow'],   // the spliced copy lands outside the tracked subset
+      ['AL-read', 'nad', 'alias c=cat\nc report.md', N, 'allow'],
+      ['AL-ls', 'nad', "alias ll='ls -l'\nll", N, 'allow'],
+      // the hash road: bash's `hash -p PATH NAME`, zsh's `hash NAME=PATH`
+      ['HA-bash', 'nad', 'hash -p /usr/bin/cp c\nc ../base/report.md report.md', B, ['text', HEAD('c')]],
+      ['HA-zsh', 'nad', 'hash c=/usr/bin/cp\nc ../base/report.md report.md', Z, ['text', HEAD('c')]],
+      ['HA-read', 'nad', 'hash -p /usr/bin/cat c\nc report.md', N, 'allow'],
+      // a writer's binary copied or linked under another name and run (every shell)
+      ['BI-link', 'nad', 'ln -s /usr/bin/cp ../scratch/c2 && ../scratch/c2 ../base/report.md report.md', A, ['text', HEAD('../scratch/c2')]],
+      ['BI-copy', 'nad', 'cp /usr/bin/cp ../scratch/c2; ../scratch/c2 ../base/report.md report.md', A, ['text', HEAD('../scratch/c2')]],
+      ['BI-copy-read', 'nad', 'cp /usr/bin/cat ../scratch/c2; ../scratch/c2 report.md', N, 'allow'],
+      // a head with a reading (round 5's correctness-2 family: the reading `cp` was sound and unused in command position)
+      ['HD-default-word', 'nad', '${x:-cp} ../base/report.md report.md', A, ['text', HEAD('${x:-cp}')]],
+      ['HD-default-word-read', 'nad', '${x:-cat} report.md', N, 'allow'],
+      ['HD-default-word-consumer', 'nad', "echo 'cp ../base/report.md report.md' | ${x:-bash}", A, ['text', HEAD('${x:-bash}')]],   // the verifiers' by-name row of round 4, read now
+      ['HD-echo-e-head', 'nad', "$(echo -e 'cp') ../base/report.md report.md", BZ, ['text', HEAD("$(echo -e 'cp')")]],   // a two-reading echo (dash prints the `-e` and runs a command named so, which is not there) is no plain reading: the script road, spliced
+      // eval and trap with literal text, `source` and `.` of the standard input
+      ['EV-eval', 'nad', "eval 'cp ../base/report.md report.md'", A, ['text', 'through `eval`']],
+      ['EV-eval-words', 'nad', 'eval cp ../base/report.md report.md', A, ['text', 'through `eval`']],
+      ['EV-eval-var', 'nad', "c='cp ../base/report.md report.md'; eval \"$c\"", A, 'allow'],   // a script held in a variable: the residual, named
+      ['EV-trap', 'nad', "trap 'cp ../base/report.md report.md' EXIT", A, ['text', 'through `trap`']],
+      ['EV-trap-reset', 'nad', 'trap - EXIT; trap EXIT', N, 'allow'],
+      ['EV-source-stdin', 'nad', "source /dev/stdin <<'EOF'\ncp ../base/report.md report.md\nEOF", BZ, ['text', 'through `source /dev/stdin`']],   // dash has no `source`
+      ['EV-dot-herestring', 'nad', ". /dev/stdin <<< 'cp ../base/report.md report.md'", BZ, ['text', 'through `. /dev/stdin`']],
+    ];
+    let n = 0;
+    for (const [id, cwd, raw, writers, expect] of rows) {
+      const cmd = w.fill(raw);
+      const at = w.cwds[cwd];
+      const h = w.hook(cmd, at);
+      n++;
+      if (expect === 'allow') assert.equal(h.status, 0, `${id}: allowed: ${cmd}: ${h.reason}`);
+      else {
+        assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`);
+        assert.ok(!/\u2014/.test(h.reason) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash, no romp noun`);
+        assert.ok(h.reason.includes(expect[1]), `${id}: refused, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
+      }
+      assert.equal(w.hook(cmd, w.cwds.out).status, 0, `${id}: from a cwd in no project the relative write reaches no tracked file: ${cmd}`);
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+        const r = w.run(cmd, at, shell);
+        assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
+      }
+    }
+    assert.equal(n, 53);
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+test("round 6, second commit, THE OUTPUT MODEL: a subshell or a `{ }` group of echo, printf and silent commands before a pipe, inside a `$(...)`, a `<(...)` or a here-string, prints what its list prints and the text is the consumer's script; a list holding a command the model does not read beside a printer is UNRESOLVABLE and refused; a producer outside the model (a file, a further pipe, a function call) stays the residual, allowed while every shell writes", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const A = ['bash', 'zsh', 'dash'];
+    const BZ = ['bash', 'zsh'];
+    const N = [];
+    const CP = "'cp ../base/report.md report.md'";
+    const UNREAD = 'a text the shell produces when the command runs';
+    const rows = [
+      ['OM-subshell', 'nad', `(echo ${CP}) | bash`, A, 'name'],
+      ['OM-group', 'nad', `{ echo ${CP}; } | bash`, A, 'name'],
+      ['OM-nested-subshell', 'nad', `( (echo ${CP}) ) | bash`, A, 'name'],
+      ['OM-group-in-subshell', 'nad', `( { echo ${CP}; } ) | bash`, A, 'name'],
+      ['OM-true-echo', 'nad', `(true; echo ${CP}) | bash`, A, 'name'],   // a silent command adds nothing
+      ['OM-echo-echo', 'nad', `(echo true; echo ${CP}) | bash`, A, 'name'],   // two lines, the newline every shell adds between them
+      ['OM-printf-two', 'nad', `(printf 'cp ../base/report.md '; printf 'report.md\\n') | bash`, A, 'name'],
+      ['OM-zsh', 'nad', `(echo ${CP}) | zsh`, A, 'name'],
+      ['OM-dash-s', 'nad', `(echo ${CP}) | dash -s`, A, 'name'],
+      ['OM-consumer-subshell', 'nad', `{ echo ${CP}; } | (bash)`, A, 'name'],
+      ['OM-sub-subshell', 'nad', `bash -c "$( (echo ${CP}) )"`, A, 'name'],   // the wrapper defeated the `$(...)` road too (round 5's tests-1, the second refuter)
+      ['OM-sub-group', 'nad', `bash -c "$({ echo ${CP}; })"`, A, 'name'],
+      ['OM-sub-two-echo', 'nad', `bash -c "$(echo true; echo ${CP})"`, A, 'name'],
+      ['OM-procsub-subshell', 'nad', `bash <( (echo ${CP}) )`, BZ, 'name'],
+      ['OM-herestring-group', 'nad', `bash <<< "$({ echo ${CP}; })"`, BZ, 'name'],
+      ['OM-cat-heredoc-sub', 'nad', `bash -c "$(cat <<'EOF'\ncp ../base/report.md report.md\nEOF\n)"`, A, 'name'],   // a cat fed one here-document prints the body
+      ['OM-cat-heredoc-subshell', 'nad', `(cat <<'EOF'\ncp ../base/report.md report.md\nEOF\n) | bash`, A, 'name'],
+      ['OM-cat-heredoc-target', 'nad', "echo x > $(cat <<'EOF'\nreport.md\nEOF\n)", A, ['literal', '$(cat <<']],   // the script road only: as a target the substitution keeps the non-literal rule
+      // outside the model beside a printer: UNRESOLVABLE, refused with the reason
+      ['OM-echo-cat', 'nad', `(echo ${CP}; cat /dev/null) | bash`, A, ['text', UNREAD]],
+      ['OM-cat-echo', 'nad', `(cat /dev/null; echo ${CP}) | bash`, A, ['text', UNREAD]],
+      ['OM-echo-n-two', 'nad', `(echo -n 'cp ../base/report.md '; echo report.md) | bash`, A, ['text', UNREAD]],   // an option word beside another printer: the newline's rule is not modelled
+      ['OM-and-list', 'nad', `(true && echo ${CP}) | bash`, A, ['text', UNREAD]],
+      ['OM-sub-write-echo', 'out', "cp ../notes-api/base/report.md $(echo x > ../notes-api/docs/report.md; echo ../scratch/keep.md)", A, 'refused'],   // the write inside an unresolvable list is still read as a command (from a cwd in no project too)
+      // outside the model with no printer: the residual, allowed while every shell writes (its label on the surfaces: a producer outside the output model)
+      ['OM-function', 'nad', `f() { echo ${CP}; }; f | bash`, A, 'allow'],
+      ['OM-tee', 'nad', `echo ${CP} | tee /dev/null | bash`, A, 'allow'],
+      ['OM-inner-pipe', 'nad', `(echo ${CP} | cat) | bash`, A, 'allow'],
+      ['OM-cat-file', 'nad', 'cat ../scratch/other.md | bash', N, 'allow'],
+      ['OM-echo-redirected', 'nad', `(echo ${CP} > /dev/null) | bash`, N, 'allow'],   // the echo's output goes to the file: nothing on the pipe
+      // controls: ordinary lists stay allowed
+      ['OM-control-cat', 'nad', '(echo hi) | cat', N, 'allow'],
+      ['OM-control-wc', 'nad', '{ echo a; echo b; } | wc -l', N, 'allow'],
+      ['OM-control-sub-two', 'nad', 'x="$(echo a; echo b)"; echo "$x"', N, 'allow'],
+      ['OM-control-untracked', 'nad', "(echo 'cp ../base/report.md ../scratch/keep.md') | bash", N, 'allow'],
+      ['OM-control-read', 'nad', "bash -c \"$(cat <<'EOF'\ncat report.md\nEOF\n)\"", N, 'allow'],
+    ];
+    let n = 0;
+    for (const [id, cwd, raw, writers, expect] of rows) {
+      const cmd = w.fill(raw);
+      const at = w.cwds[cwd];
+      const h = w.hook(cmd, at);
+      n++;
+      if (expect === 'allow') assert.equal(h.status, 0, `${id}: allowed: ${cmd}: ${h.reason}`);
+      else {
+        assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`);
+        assert.ok(!/\u2014/.test(h.reason) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash, no romp noun`);
+        if (expect === 'name') assert.match(h.reason, BY_NAME_RE, `${id}: by name: ${h.reason.split('\n')[0]}`);
+        else if (expect[0] === 'text') assert.ok(h.reason.includes(expect[1]), `${id}: refused, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
+        else if (expect[0] === 'literal') assert.ok(NOT_LITERAL.test(h.reason) && h.reason.includes(expect[1]), `${id}: refused as not literal: ${h.reason.split('\n')[0]}`);
+      }
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+        const r = w.run(cmd, at, shell);
+        assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
+      }
+    }
+    assert.equal(n, 33);
+    // the lexer's side of the model: the printed text is placed on the closer that carries the pipe, and nowhere else
+    const closer = (cmd) => { const segs = lex(cmd).segments; return segs[segs.length - 2]; };
+    assert.deepEqual(closer(`(echo 'cp a b') | bash`).printed.readings, ['cp a b'], 'a subshell producer: the reading on the `)` marker');
+    assert.deepEqual(closer(`{ echo 'cp a b'; } | bash`).printed.readings, ['cp a b'], 'a group producer: the reading on the `}` segment');
+    assert.deepEqual(closer(`(echo a; echo b) | bash`).printed.readings, ['a\nb'], 'two echoes: the newline between them');
+    assert.deepEqual(closer(`(printf 'a'; printf 'b') | bash`).printed.readings, ['ab'], 'printf adds nothing');
+    assert.ok(closer(`(echo a; cat f) | bash`).printed.unresolvableReading, 'a command outside the model beside a printer: unresolvable');
+    assert.equal(closer(`(cat f) | bash`).printed, undefined, 'no printer: no reading (the residual)');
+    assert.equal(closer(`f | bash`).printed, undefined, 'a function call: no reading');
+    assert.deepEqual(lex(`bash -c "$(echo a; echo b)"`).segments[0].words[2].readings, ['a\nb'], 'a `$(...)` over a list: the script road');
+    assert.ok(lex(`bash -c "$(echo a; echo b)"`).segments[0].words[2].literal === false, 'and the word stays an expansion (not plain: two commands are no plain reading)');
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+// THE RESIDUAL TABLE (round 6's second commit; round 5's ruling C): every shape the round could name that still reaches a tracked
+// file from the tracked cwd, run through the hook (allowed) and the shells (the writers measured), each under the class of THE
+// RESIDUAL PROPERTY stated on the hook header, decision 47, the vendored SKILL.md, hooks/README.md, docs/install.md, docs/guide.md
+// and the ledger entry. A row whose program this box lacks is NOT RUN by name. The table is the population the property is a
+// statement over: a shape added here must be under one of its classes (the class is a key of RESIDUAL_CLASSES, whose text the
+// property carries), and a row that stops writing, or that the hook starts refusing, reds here (a rule to state, not drift).
+const RESIDUAL_CLASSES = {
+  'a writer outside the model': 'a program that writes the file by its own nature and is not among the writers the hook models (rsync, patch, tar -x, ed, ex, vim, make, shuf -o, gawk -i inplace, curl -o, wget -O, find -exec, a git alias or a subcommand that writes the tree, sed\'s e command, busybox\'s applets)',
+  'a reader outside the roads': 'a program that runs a command or a script the hook does not follow into it (xargs, an interpreter\'s system, exec or subprocess call, a wrapper outside the set, a shell outside SHELLS, a file the command writes and then runs or sources)',
+  'a command name the resolver never reads': 'a command whose name is an expansion of a kind the resolver does not read ("$@", $1, $*, "${a[@]}", a loop variable, a name read, printf -v or a nameref filled, ${SHELL})',
+  'a script held in a variable': 'a plain-string name whose value holds whitespace (the readability rule stores no such value), run as a command or handed to a shell (`$c`, `bash -c "$c"`, `eval "$c"`)',
+  'a producer outside the output model': 'a pipe into a shell from anything but a literal echo or printf, alone or in a subshell or group of such commands (a call of a function the command defines, a tee or a further pipe, a cat of a file)',
+  'zsh\'s glob grouping': 'a `(..)` inside a word handed to zsh, read as a subshell by the lexer\'s zsh grammar while zsh globs it (a lexer gap, stated since the first commit of this round)',
+  'an opaque expansion from a cwd outside every project': 'a leading opaque expansion, or one after a literal head outside every project, from a cwd in no project (B2 as ruled, with its boundary)',
+};
+const RESIDUAL_TABLE = [
+  // [id, class, the program the row needs (null: the shells alone), the command from docs/, the shells that write]
+  ['RT-var-head', 'a script held in a variable', null, "c='cp ../base/report.md report.md'; $c", ['bash', 'dash']],
+  ['RT-var-bash-c', 'a script held in a variable', null, "c='cp ../base/report.md report.md'; bash -c \"$c\"", ['bash', 'zsh', 'dash']],
+  ['RT-xargs', 'a reader outside the roads', 'xargs', "printf '%s\\n' ../base/report.md report.md | xargs cp", ['bash', 'zsh', 'dash']],
+  ['RT-xargs-I', 'a reader outside the roads', 'xargs', 'echo report.md | xargs -I{} cp ../base/report.md {}', ['bash', 'zsh', 'dash']],
+  ['RT-script-file-path', 'a reader outside the roads', null, "printf 'cp \"$@\"\\n' > ../scratch/c2; chmod +x ../scratch/c2; PATH=../scratch:$PATH; c2 ../base/report.md report.md", ['bash', 'zsh', 'dash']],
+  ['RT-source-written', 'a reader outside the roads', null, "printf 'cp ../base/report.md report.md\\n' > ../scratch/s.sh; . ../scratch/s.sh", ['bash', 'zsh', 'dash']],
+  ['RT-perl-system', 'a reader outside the roads', 'perl', "perl -e 'system(\"cp ../base/report.md report.md\")'", ['bash', 'zsh', 'dash']],
+  ['RT-python-system', 'a reader outside the roads', 'python3', "python3 -c 'import os; os.system(\"cp ../base/report.md report.md\")'", ['bash', 'zsh', 'dash']],
+  ['RT-python-subprocess', 'a reader outside the roads', 'python3', "python3 -c 'import subprocess; subprocess.call([\"cp\",\"../base/report.md\",\"report.md\"])'", ['bash', 'zsh', 'dash']],
+  ['RT-node-execSync', 'a reader outside the roads', 'node', "node -e \"require('child_process').execSync('cp ../base/report.md report.md')\"", ['bash', 'zsh', 'dash']],
+  ['RT-awk-system', 'a reader outside the roads', 'awk', "awk 'BEGIN{system(\"cp ../base/report.md report.md\")}'", ['bash', 'zsh', 'dash']],
+  ['RT-script-wrapper', 'a reader outside the roads', 'script', "script -qc 'cp ../base/report.md report.md' /dev/null", ['bash', 'zsh', 'dash']],
+  ['RT-strace', 'a reader outside the roads', 'strace', 'strace -o /dev/null cp ../base/report.md report.md', ['bash', 'zsh', 'dash']],
+  ['RT-busybox-sh', 'a reader outside the roads', 'busybox', "busybox sh -c 'cp ../base/report.md report.md'", ['bash', 'zsh', 'dash']],
+  ['RT-positional-at', 'a command name the resolver never reads', null, 'set -- cp ../base/report.md report.md; "$@"', ['bash', 'zsh', 'dash']],
+  ['RT-positional-123', 'a command name the resolver never reads', null, 'set -- cp ../base/report.md report.md; $1 "$2" "$3"', ['bash', 'zsh', 'dash']],
+  ['RT-positional-star', 'a command name the resolver never reads', null, 'set -- cp ../base/report.md report.md; $*', ['bash', 'zsh', 'dash']],
+  ['RT-array-head', 'a command name the resolver never reads', null, 'cmd=(cp); "${cmd[@]}" ../base/report.md report.md', ['bash', 'zsh']],
+  ['RT-nameref-head', 'a command name the resolver never reads', null, 'c=cp; declare -n r=c; $r ../base/report.md report.md', ['bash']],
+  ['RT-loop-head', 'a command name the resolver never reads', null, 'for c in cp; do $c ../base/report.md report.md; done', ['bash', 'zsh', 'dash']],
+  ['RT-printf-v-head', 'a command name the resolver never reads', null, 'printf -v c cp; $c ../base/report.md report.md', ['bash', 'zsh']],
+  ['RT-read-head', 'a command name the resolver never reads', null, 'read c <<< cp; $c ../base/report.md report.md', ['bash', 'zsh']],
+  ['RT-shell-var-c', 'a command name the resolver never reads', null, "${SHELL} -c 'cp ../base/report.md report.md'", ['bash']],   // the world's SHELL is bash's alone (zsh and dash have no SHELL of their own here)
+  ['RT-function-producer', 'a producer outside the output model', null, "f() { echo 'cp ../base/report.md report.md'; }; f | bash", ['bash', 'zsh', 'dash']],
+  ['RT-tee-producer', 'a producer outside the output model', 'tee', "echo 'cp ../base/report.md report.md' | tee /dev/null | bash", ['bash', 'zsh', 'dash']],
+  ['RT-inner-pipe-producer', 'a producer outside the output model', null, "(echo 'cp ../base/report.md report.md' | cat) | bash", ['bash', 'zsh', 'dash']],
+  ['RT-perl-open', 'a writer outside the model', 'perl', "perl -e 'open(F,\">report.md\"); print F \"x\"; close F'", ['bash', 'zsh', 'dash']],
+  ['RT-ruby-e', 'a writer outside the model', 'ruby', "ruby -e 'File.write(\"report.md\",\"x\")'", ['bash', 'zsh', 'dash']],
+  ['RT-sed-e', 'a writer outside the model', 'sed', "sed -n '1e cp ../base/report.md report.md' ../base/report.md", ['bash', 'zsh', 'dash']],
+  ['RT-find-exec', 'a writer outside the model', 'find', 'find . -maxdepth 0 -exec cp ../base/report.md report.md \\;', ['bash', 'zsh', 'dash']],
+  ['RT-git-alias', 'a writer outside the model', 'git', "git -c alias.x='!cp ../base/report.md report.md' x", ['bash', 'zsh', 'dash']],
+  ['RT-patch', 'a writer outside the model', 'patch', 'diff -u report.md ../base/report.md > ../scratch/p.diff; patch report.md ../scratch/p.diff', ['bash', 'zsh', 'dash']],
+  ['RT-tar-x', 'a writer outside the model', 'tar', 'tar -cf ../scratch/t.tar -C ../base report.md && tar -xf ../scratch/t.tar', ['bash', 'zsh', 'dash']],
+  ['RT-rsync', 'a writer outside the model', 'rsync', 'rsync ../base/report.md report.md', ['bash', 'zsh', 'dash']],
+  ['RT-busybox-cp', 'a writer outside the model', 'busybox', 'busybox cp ../base/report.md report.md', ['bash', 'zsh', 'dash']],
+  ['RT-ed', 'a writer outside the model', 'ed', "printf '1d\\nw\\n' | ed -s report.md", ['bash', 'zsh', 'dash']],
+  ['RT-make', 'a writer outside the model', 'make', "printf 'all:\\n\\tcp ../base/report.md report.md\\n' | make -f - -s", ['bash', 'zsh', 'dash']],
+  ['RT-shuf-o', 'a writer outside the model', 'shuf', 'shuf -o report.md ../base/report.md', ['bash', 'zsh', 'dash']],
+  ['RT-gawk-inplace', 'a writer outside the model', 'gawk', "gawk -i inplace '{print \"x\"}' report.md", ['bash', 'zsh', 'dash']],
+  ['RT-ex', 'a writer outside the model', 'ex', "ex -s -c '1d' -c 'wq' report.md", ['bash', 'zsh', 'dash']],
+  ['RT-vim-es', 'a writer outside the model', 'vim', "vim -es -c '%d' -c 'wq' report.md", ['bash', 'zsh', 'dash']],
+  ['RT-curl-o', 'a writer outside the model', 'curl', 'curl -s -o report.md file://$PWD/../base/report.md', ['bash', 'zsh', 'dash']],
+  ['RT-wget-O', 'a writer outside the model', 'wget', 'wget -q -O report.md file://$PWD/../base/report.md', ['bash', 'zsh', 'dash']],
+  ['RT-zsh-glob-group', "zsh's glob grouping", null, "zsh -c 'cp ../base/(r)eport.md report.md'", ['bash', 'zsh', 'dash']],
+];
+test("round 6, second commit, THE RESIDUAL TABLE: every shape the round could name that still reaches a tracked file, run through the hook (allowed) and the shells (the writers as measured), each under a class of THE RESIDUAL PROPERTY, and the property's paragraph on the hook header names every class", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const A = ['bash', 'zsh', 'dash'];
+    const toolPresent = (p) => _spawnSync('sh', ['-c', `command -v ${p}`], { encoding: 'utf8' }).status === 0;   // `sh` is not a shell of the probe: plumbing, as the NAMED_PROBE's own `command -v`
+    let ran = 0;
+    let notRun = 0;
+    for (const [id, cls, program, raw, writers] of RESIDUAL_TABLE) {
+      assert.ok(Object.hasOwn(RESIDUAL_CLASSES, cls), `${id}: its class ${cls} is one the property states`);
+      const cmd = w.fill(raw);
+      const h = w.hook(cmd, w.cwds.nad);
+      assert.equal(h.status, 0, `${id}: allowed from the tracked cwd (the residual): ${cmd}: ${h.reason}`);
+      if (program && !toolPresent(program)) { console.error(`NOT RUN: real ${program} is not on this runner, so its evidence leg did not run: the residual table's ${id}`); notRun++; continue; }
+      if (!namedPresent(cmd, `the residual table's ${id}, whose command names it`)) { notRun++; continue; }
+      for (const shell of shellsFor(A, `the residual table's ${id}`)) {
+        const r = w.run(cmd, w.cwds.nad, shell);
+        assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset (the residual is live): ${cmd}: ${r.stderr}`);
+      }
+      ran++;
+    }
+    console.log(`# the residual table: ${RESIDUAL_TABLE.length} rows, ${ran} measured, ${notRun} not run for a program this box lacks; classes ${Object.keys(RESIDUAL_CLASSES).length}`);
+    assert.ok(ran >= 25, `most rows measured here (${ran})`);
+    // the property on the hook header names every class of the table, in the words RESIDUAL_CLASSES pairs with it
+    const header = fs.readFileSync(HOOK, 'utf8').replace(/\n\/\/ ?/g, ' ').replace(/\s+/g, ' ');
+    assert.ok(header.includes('THE RESIDUAL PROPERTY.'), 'the header states the property');
+    for (const [cls, gloss] of Object.entries(RESIDUAL_CLASSES)) {
+      assert.ok(header.includes(cls), `the header names the class: ${cls}`);
+      assert.ok(header.includes(gloss.replace(/\s+/g, ' ')), `the header carries the class's gloss: ${cls}`);
+    }
+    for (const cls of new Set(RESIDUAL_TABLE.map((r) => r[1]))) assert.ok(Object.hasOwn(RESIDUAL_CLASSES, cls), `every class the table uses is stated: ${cls}`);
+    assert.deepEqual(Object.keys(RESIDUAL_CLASSES).filter((c) => !RESIDUAL_TABLE.some((r) => r[1] === c)), ['an opaque expansion from a cwd outside every project'], 'every class but the B2 residual (pinned by its own rows above) has a row in the table');
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+test("round 6, second commit (rulings E and tests-2), a runner lacking zsh reproduced: the three matrices with a named consumer run as a child under a PATH linking every program but zsh, the runner's own child marker removed; the child passes, prints the NOT RUN line per matrix, skips exactly the rows whose evidence needs zsh (the fixture's `needs`) and measures the rest, so the hard invariant holds on the rows the box can measure", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-bash-guard-nozsh-'));
+  try {
+    const bin = path.join(dir, 'bin');
+    fs.mkdirSync(bin);
+    let linked = 0;
+    for (const d of process.env.PATH.split(':')) {
+      let names = [];
+      try { names = fs.readdirSync(d); } catch { continue; }
+      for (const n of names) {
+        if (n === 'zsh' || fs.existsSync(path.join(bin, n))) continue;
+        try { fs.symlinkSync(path.join(d, n), path.join(bin, n)); linked++; } catch { /* a name that raced or cannot be linked */ }
+      }
+    }
+    assert.ok(linked > 10 && !fs.existsSync(path.join(bin, 'zsh')), `a bin dir linking every program but zsh (${linked} linked)`);
+    const env = { ...process.env, PATH: bin };
+    delete env.NODE_TEST_CONTEXT;
+    const r = _spawnSync(process.execPath, ['--test', '--test-name-pattern', 'the piped-script matrix|the stdin-script matrix|the heredoc-body matrix', fileURLToPath(import.meta.url)], { env, encoding: 'utf8', timeout: 900000, maxBuffer: 64 * 1024 * 1024 });
+    const out = String(r.stdout || '') + String(r.stderr || '');
+    assert.equal(r.status, 0, `the child passes without zsh: ${out.slice(0, 3000)}`);
+    const loud = out.split('\n').filter((l) => /NOT RUN: real zsh is not on this runner, so its evidence leg did not run: the (piped-script|stdin-script|heredoc-body) matrix/.test(l));
+    assert.ok(loud.length >= 3, `one loud line per matrix at least (${loud.length}): ${loud.join(' | ')}`);
+    const needsZsh = (pin) => Object.values(pin.needs).filter((n) => n.includes('zsh')).length;
+    for (const [label, pin] of [['the piped-script matrix', PIPED_SCRIPT_MATRIX_PIN], ['the stdin-script matrix', STDIN_SCRIPT_MATRIX_PIN], ['the heredoc-body matrix', HEREDOC_BODY_MATRIX_PIN]]) {
+      const m = out.match(new RegExp(`# ${label}: rows (\\d+), .*not run, a program the evidence needs not on this box: ([^\\n]*)`));
+      assert.ok(m, `the child printed ${label}'s summary`);
+      const zsh = m[2].match(/(\d+) naming zsh/);
+      assert.equal(zsh ? Number(zsh[1]) : 0, needsZsh(pin), `${label}: the rows not run are exactly those whose evidence needs zsh`);
+      const naming = Object.keys(pin.pin).filter((id) => /(^|\/)zsh(\/|$)/.test(id)).length;
+      console.log(`# without zsh, ${label}: ${m[1]} rows, ${naming} naming zsh, ${needsZsh(pin)} needing it and not run, ${naming - needsZsh(pin)} naming it measured all the same`);
+    }
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
