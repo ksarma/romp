@@ -13,7 +13,7 @@ import * as crypto from "node:crypto";   // the census holds a text over 300 cha
 import * as ts from "typescript";   // the census blanks file-view.ts's comments with the compiler's own read of them (the round-5 fix; writer-census.ts is the precedent, a runtime require of the test bundle)
 import { hideEdges } from "../test-dom-shim";   // every stand-in below that carries a tree edge (parentElement, children, childNodes, firstElementChild) hides it, the shared module's rule (ui/test-dom-shim.test.ts's ratchet)
 import { step, RESTING, DISABLED, armedWords, preparingWords, waitingWords, stalledWords, anywayWords, ANYWAY_TITLE, isPrintChord, isPrintKeys, settlePictures, collectPictures, bodyReady, rootKind, PRINT_SETTLE_MS, setPrintSettleMs, printSettleMs,
-  WITH_WORDS, WITHOUT_WORDS, ANYWAY_WORDS, KEEP_WORDS, TAB_WORDS, NO_TAB_WORDS, pdfFrameWindow, READY_ROOTS, NOT_READY_ROOTS, LINE_ROOTS, PDF_LOADER_ROOT, printable, figurePrintable, figureHidden, rendered, SVG_NS, PAINTS_SEL,
+  WITH_WORDS, WITHOUT_WORDS, ANYWAY_WORDS, KEEP_WORDS, TAB_WORDS, NO_TAB_WORDS, pdfFrameWindow, READY_ROOTS, NOT_READY_ROOTS, LINE_ROOTS, PDF_LOADER_ROOT, printable, figurePrintable, figureHidden, rendered, SVG_NS, PAINTS_SEL, REFERENCE_DEPTH,
   type PrintState, type Picture, type Timers, type BodyLike, type PrintableNode, type FigureNode } from "./file-print";
 import { ANYWAY_SENTENCE } from "./file-print-fixtures";   // the sentence's one test-side home, fixed: a compare against it does not move with the product (the round-7 review's cluster A)
 
@@ -493,6 +493,49 @@ test("collectPictures reads the container walk for an svg image as well as the b
   const pics = collectPictures(fakeBody({ img: [], "video[poster]": [], image: [...never, ...renders, deep, bare] }), "http://notes-api.test/files", probe);
   assert.deepEqual(probed, ["http://notes-api.test/g.svg", "http://notes-api.test/a.svg", "http://notes-api.test/switch.svg", "http://notes-api.test/svg.svg", "http://notes-api.test/bare.svg"], "the images under a rendering container alone, and the namespace-less stand-in");
   assert.equal(pics.length, 5);
+});
+
+// the author's closing pass over round 8 (2026-09-21): the reference walk's shapes the figure leg does not measure, over stand-ins.
+// The leg's reference case holds the direct reference (a referrer in rendering content naming a container inside <defs>) and
+// the pattern inherited through href to the ink per engine; the nested, the capped and the cyclic shapes are the rule's own
+// statement, executed here: a reference from inside another container's content is followed to REFERENCE_DEPTH references,
+// a chain past the cap is not collected, and a cycle ends at the cap and collects nothing (the verifiers' r8v-A-E-1 and
+// r8v-A-E-2: the inheriting pattern painted in every engine and was collected in none, and the recursive clause was executed
+// by no test)
+test("svgReachesPaper over stand-ins: an image inside a pattern a printable rect fills is collected; one inside a pattern that an empty second pattern inherits through href, the rect filling the second, is collected (the alias walk, paintingIds; a mask has no href); a reference from inside a mask's content is followed, so a pattern referenced by a rect inside a mask that a printable rect references is collected at two references, and at four; a chain of five references is past the cap and not collected; a cycle of references between a pattern and a mask, referenced by nothing in rendering content, ends at the cap and collects nothing; and a fallback after the url() is not read", () => {
+  const probed: string[] = [];
+  const probe = (url: string): Picture => { probed.push(url); return new FakePic(); };
+  type SvgStandIn = PrintableNode & { namespaceURI: string; getAttribute(name: string): string | null };
+  const svgEl = (localName: string, attrs: Record<string, string>, parentElement: PrintableNode | null): SvgStandIn => hideEdges({ localName, parentElement, namespaceURI: SVG_NS, hasAttribute: (k) => k in attrs, getAttribute: (k) => (k in attrs ? attrs[k] : null), checkVisibility: () => true, getClientRects: () => ({ length: 1 }) });
+  const root = svgEl("svg", {}, node("div"));
+  const patterns: SvgStandIn[] = [], referrers: SvgStandIn[] = [], images: FakeEl[] = [];
+  /** A pattern of id `id` under the root holding an image of `href`. */
+  const pattern = (id: string, href: string): SvgStandIn => { const p = svgEl("pattern", { id }, root); patterns.push(p); images.push(elm({ href }, false, undefined, p, "image", { cv: true, rects: 0 })); return p; };
+  /** A mask of id `id` under the root, empty until a referrer is placed in it. */
+  const mask = (id: string): SvgStandIn => svgEl("mask", { id }, root);
+  /** A rect carrying `attrs` under `parent` (the root, in rendering content, or a container). */
+  const rect = (attrs: Record<string, string>, parent: SvgStandIn = root): SvgStandIn => { const r = svgEl("rect", attrs, parent); referrers.push(r); return r; };
+  // direct: a printable rect fills the pattern
+  pattern("p1", "direct.svg"); rect({ fill: "url(#p1)" });
+  // inherited: an empty pattern q2 inherits p2's content through href, and the rect fills q2
+  pattern("p2", "inherited.svg"); const q2 = svgEl("pattern", { id: "q2", href: "#p2" }, root); patterns.push(q2); rect({ fill: "url(#q2)" });
+  // a mask has no href: a mask "inheriting" a pattern through href is no alias, so its referrer reaches nothing
+  pattern("p2b", "mask-href.svg"); const m2b = svgEl("mask", { id: "m2b", href: "#p2b" }, root); patterns.push(m2b); rect({ fill: "url(#m2b)" });
+  // nested, two references: a rect inside mask m3 fills p3, and a printable rect is masked by m3
+  pattern("p3", "nested-2.svg"); const m3 = mask("m3"); rect({ fill: "url(#p3)" }, m3); rect({ mask: "url(#m3)" });
+  // nested, four references (the cap): p4 <- rect in m4a <- rect in m4b <- rect in m4c <- printable rect
+  pattern("p4", "nested-4.svg"); const m4a = mask("m4a"), m4b = mask("m4b"), m4c = mask("m4c"); rect({ fill: "url(#p4)" }, m4a); rect({ mask: "url(#m4a)" }, m4b); rect({ mask: "url(#m4b)" }, m4c); rect({ mask: "url(#m4c)" });
+  // five references: one past the cap
+  pattern("p5", "nested-5.svg"); const m5a = mask("m5a"), m5b = mask("m5b"), m5c = mask("m5c"), m5d = mask("m5d"); rect({ fill: "url(#p5)" }, m5a); rect({ mask: "url(#m5a)" }, m5b); rect({ mask: "url(#m5b)" }, m5c); rect({ mask: "url(#m5c)" }, m5d); rect({ mask: "url(#m5d)" });
+  // a cycle: p6's content is masked by m6, m6's content fills p6, and nothing in rendering content names either
+  const p6 = pattern("p6", "cycle.svg"); const m6 = mask("m6"); rect({ mask: "url(#m6)" }, p6); rect({ fill: "url(#p6)" }, m6);
+  // a fallback after the url(): not read
+  pattern("p7", "fallback.svg"); rect({ fill: "url(#p7) red" });
+  const body = { querySelectorAll: (sel: string) => (sel === "image" ? images : sel === "pattern" ? patterns : sel === "img" || sel === "video[poster]" ? [] : referrers) as unknown as NodeListOf<Element> } as unknown as ParentNode;
+  const pics = collectPictures(body, "http://notes-api.test/files", probe);
+  assert.deepEqual(probed, ["http://notes-api.test/direct.svg", "http://notes-api.test/inherited.svg", "http://notes-api.test/nested-2.svg", "http://notes-api.test/nested-4.svg"], "collected: the direct reference, the pattern inherited through href, and the nested references within the cap; not collected: the mask named by href (no alias), the chain past the cap, the cycle and the fallback spelling");
+  assert.equal(pics.length, 4);
+  assert.equal(REFERENCE_DEPTH, 4, "the cap the chain of five is past and the chain of four is within");
 });
 
 test("isPrintKeys enumerates the chord's keys and answers false for every other key or modifier set (the flow prevents no key it does not know; the browser's default stands for the rest): Ctrl or Meta with p or P, no Shift, no Alt; a repeat is the keys (isPrintChord alone refuses it)", () => {

@@ -8382,7 +8382,9 @@ and WebKit one), so it is never read on such an image; one inside `<defs>`, a `<
 paints in every engine when a printable svg element that reaches the paper names the container by `url(#id)` in fill,
 stroke, mask or a marker property, and is collected when such a referrer exists, the browser's answer read on the
 referrer (the round-7 review's cluster E, 2026-09-21; the figure leg's reference case per engine measures the ink of
-the pattern, mask and marker each inside `<defs>`, referenced as the sanitizer spells the id it mints, against a 404
+the pattern, mask and marker each inside `<defs>`, and of a pattern an empty second pattern inherits through `href`
+(the author's closing pass over round 8: the rect fills the second, so the first's image paints, and `svgReachesPaper`
+reads the inheriting pattern as an alias of the container), referenced as the sanitizer spells the id it mints, against a 404
 twin, and holds the collection to it, the author's ordinary `url(#id)`, dead after the sanitize, the control collected
 in no engine); before the round-7 fixes (2026-09-20, the round-6 review's finding) the rect alone decided, so on the figure leg's
 body of eight such images and an `<img>` Chromium collected two pictures and Firefox and WebKit eight, the wait there
@@ -9246,7 +9248,9 @@ the plan's last because this section lands at the same place; it pins nothing of
   probed, and the render itself requested every one of the nine (FAILS BEFORE in its title, in Firefox and WebKit: eight
   pictures and seven probes against Chromium's two and one), with `rendered` read per container and held to the
   per-engine reading the docstrings state; and a reference case per engine over sanitized bodies whose svg image
-  stands inside a pattern, a mask or a marker inside `<defs>` that a rect or a line references by `url(#id)`, the
+  stands inside a pattern, a mask or a marker inside `<defs>` that a rect or a line references by `url(#id)`, and a
+  fourth shape whose rect fills an empty second pattern inheriting the first pattern's content through `href` (the
+  author's closing pass over round 8), the
   reference spelled as an author writes it (dead after the sanitize) and as the sanitizer spells the id, each with the
   image served and with a 404 twin: the picture reaches the paper, measured as ink differing from the twin's, exactly
   where the prefixed reference names the container, screen and print alike, collectPictures collects exactly the images

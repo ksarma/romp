@@ -647,9 +647,10 @@ function resolved(value: string | null, base: string): string | null {
  *  reports no rect for it and Firefox and WebKit report one, rendered's docstring), so it is never read on such an image.
  *  One inside <defs>, a <symbol>, a <clipPath> or <metadata> is not a picture the print shows in any engine
  *  (inRenderingSvg's docstring); one inside a <pattern>, a <mask> or a <marker> PAINTS in every engine when a printable svg
- *  element that reaches the paper names the container by url(#id) in fill, stroke, mask or a marker property, and is
- *  collected when such a referrer exists, the browser's answer read on the referrer (the round-7 review's cluster E,
- *  2026-09-21). Before the round-7 fixes (2026-09-20) the rect alone decided, so on a body of eight svg images, one in each
+ *  element that reaches the paper names the container by url(#id) in fill, stroke, mask or a marker property (or names a
+ *  pattern that inherits the container's content through href, paintingIds), and is collected when such a referrer exists,
+ *  the browser's answer read on the referrer (the round-7 review's cluster E, 2026-09-21; the inheriting pattern the
+ *  author's closing pass over round 8). Before the round-7 fixes (2026-09-20) the rect alone decided, so on a body of eight svg images, one in each
  *  of the six containers, one in <metadata> and one in <g>, plus an <img>, Chromium collected two pictures and Firefox and
  *  WebKit eight, awaiting and probing seven images the print never shows; with the walk every engine collects the <img>
  *  and the image in <g> alone (file-print-figure-browser.test.ts, the collectPictures case per engine; their hrefs were
@@ -697,28 +698,67 @@ type SvgWalkNode = { parentElement: SvgWalkNode | null; namespaceURI?: string | 
  *  property a <mask>, a marker property a <marker>, each by url(#id). A <symbol> paints through <use>, which the sanitizer
  *  drops, and <clipPath> content that is an image clips nothing, so neither is listed (inRenderingSvg's docstring). */
 const REFERENCED_CONTAINERS: readonly string[] = ["pattern", "mask", "marker"];
-/** The properties, as attributes, through which an svg element references one of those containers. An inline `style` is not
- *  read: the sanitizer keeps colour declarations alone in it (md-sanitize.ts), so no url() reaches the page that way. */
-const REFERENCE_ATTRS: readonly string[] = ["fill", "stroke", "mask", "marker-start", "marker-mid", "marker-end", "marker"];
+/** The properties, as attributes, through which an svg element references one of those containers: the marker properties by
+ *  their three longhand names (`marker`, the shorthand, is a property and not a presentation attribute, so no engine reads it
+ *  off an element and the sanitizer drops it: the author's closing pass over round 8, 2026-09-21; it stood here until then, a
+ *  dead entry that would have collected a picture no engine paints had it reached the page). An inline `style` is not read:
+ *  the sanitizer keeps colour declarations alone in it (md-sanitize.ts), so no url() reaches the page that way. */
+const REFERENCE_ATTRS: readonly string[] = ["fill", "stroke", "mask", "marker-start", "marker-mid", "marker-end"];
 const REFERENCE_SEL = REFERENCE_ATTRS.map((a) => "[" + a + "]").join(",");
 /** How many references deep the reach is followed (a rect filled by a pattern whose image stands inside a mask another
  *  rect references, and so on): a cycle of references paints nothing and would otherwise recurse without end. */
-const REFERENCE_DEPTH = 4;
-/** The id `value` references as a same-document url(#id), quotes and spaces tolerated, or null for any other value. */
+export const REFERENCE_DEPTH = 4;
+/** The id `value` references as a same-document url(#id), quotes and spaces tolerated, or null for any other value. A
+ *  fallback after the url() (`fill="url(#p) red"`, which paints the pattern when the id resolves) is not read, so a picture
+ *  referenced that way is not collected: not awaited and not probed, the side that costs no fetch; no note is known to spell
+ *  it (the author's closing pass over round 8, 2026-09-21). */
 function referencedId(value: string | null): string | null {
   const m = value ? /^\s*url\(\s*(["']?)#([^"')\s]+)\1\s*\)\s*$/.exec(value) : null;
   return m ? m[2] : null;
 }
+/** The ids under which the content of `container` (id `id`) paints: its own and, for a <pattern>, the id of every <pattern> in
+ *  `body` that inherits its content through `href` (or `xlink:href`) naming one of them, REFERENCE_DEPTH inheritances deep at
+ *  most (a pattern with no children of its own paints the content of the pattern its href names, so a rect filled by the
+ *  inheriting pattern paints this container's image: measured in Chromium, Firefox and WebKit by the author's closing pass
+ *  over round 8, 2026-09-21, which found the wait collecting it in none). A <mask> and a <marker> have no href, so the walk is
+ *  the pattern's alone; a body without querySelectorAll gives the container's own id. */
+function paintingIds(container: SvgWalkNode, id: string, body: ParentNode): Set<string> {
+  const ids = new Set([id]);
+  if (container.localName !== "pattern" || typeof body.querySelectorAll !== "function") return ids;
+  const patterns = Array.from(body.querySelectorAll("pattern") || []);
+  for (let round = 0; round < REFERENCE_DEPTH; round++) {
+    let grew = false;
+    for (const p of patterns) {
+      if (p.namespaceURI !== SVG_NS || p.localName !== "pattern") continue;   // the selector answers patterns; a stand-in body may not
+      const pid = p.getAttribute("id"), href = (p.getAttribute("href") ?? p.getAttribute("xlink:href") ?? "").trim();
+      if (pid && href.charAt(0) === "#" && ids.has(href.slice(1)) && !ids.has(pid)) { ids.add(pid); grew = true; }
+    }
+    if (!grew) break;
+  }
+  return ids;
+}
 /** Whether the svg element `el` reaches the paper. With every SVG ancestor rendering its content (inRenderingSvg): printable,
  *  the browser's own answer read on `el` itself. With the walk meeting a <pattern>, a <mask> or a <marker> that carries an
- *  id: when some svg element in `body` references that id through one of REFERENCE_ATTRS and itself reaches the paper by
- *  this rule, REFERENCE_DEPTH references deep at most, the browser's own answer read on that referrer, never on `el`
- *  (Chromium reports no rect for an element inside such a container whether the container paints or not). With the walk
- *  meeting any other container (defs above no such container, a symbol, a clipPath, metadata, a gradient, a filter, one
- *  SVG_RENDERS does not name), or a container without an id: off the paper. A container stand-in without getAttribute, or a
- *  body without querySelectorAll, reads as unreferenced. The round-7 review's cluster E (2026-09-21): from the round-7 fixes
- *  to the round-8 fixes the walk alone decided, and the image inside a referenced pattern, which paints in every engine, was
- *  collected in none. */
+ *  id: when some svg element in `body` references that id, or the id of a pattern inheriting the container's content through
+ *  href (paintingIds), through one of REFERENCE_ATTRS and itself reaches the paper by this rule, REFERENCE_DEPTH references
+ *  deep at most, the browser's own answer read on that referrer, never on `el` (Chromium reports no rect for an element
+ *  inside such a container whether the container paints or not). The referrer's own reach is this rule again, so a reference
+ *  from inside another pattern's or mask's content is followed and the image collected whether or not the engine paints
+ *  the nested shape: the figure leg's reference case measures the direct reference alone (a referrer in rendering content,
+ *  the container inside <defs>); of the nested shapes, probed outside the leg by the author's closing pass over round 8
+ *  (2026-09-21) in Chromium, Firefox and WebKit, a pattern inside a pattern and a pattern inside a mask paint in all three, a
+ *  mask inside a pattern paints in none, and a mask inside a mask paints in Firefox and WebKit and not in Chromium, so a nested
+ *  reference can await a picture the paper does not carry, the side that costs a wait and never a fetch the render did not
+ *  make (the render requests every svg image's href, referenced or not); a chain of more than REFERENCE_DEPTH references is not
+ *  collected, and a cycle of references ends at the cap and collects nothing (file-print.test.ts holds the direct, the
+ *  inherited, the nested, the capped and the cyclic shapes over stand-ins). A duplicate id is read on the collecting side: the
+ *  container's own id is matched, whichever element the document resolves the id to (Chromium and Firefox paint the first in
+ *  tree order and WebKit the last, the same closing pass), so under two containers of one id the image in the other one may be
+ *  awaited; malformed markup, left as read. With the walk meeting any other container (defs above no such container, a symbol,
+ *  a clipPath, metadata, a gradient, a filter, one SVG_RENDERS does not name), or a container without an id: off the paper. A
+ *  container stand-in without getAttribute, or a body without querySelectorAll, reads as unreferenced. The round-7 review's
+ *  cluster E (2026-09-21): from the round-7 fixes to the round-8 fixes the walk alone decided, and the image inside a
+ *  referenced pattern, which paints in every engine, was collected in none. */
 function svgReachesPaper(el: PrintableNode & SvgWalkNode, body: ParentNode, depth = 0): boolean {
   if (inRenderingSvg(el)) return printable(el);
   let container: SvgWalkNode | null = null;
@@ -726,8 +766,9 @@ function svgReachesPaper(el: PrintableNode & SvgWalkNode, body: ParentNode, dept
   if (!container || !REFERENCED_CONTAINERS.includes(container.localName) || typeof container.getAttribute !== "function" || depth >= REFERENCE_DEPTH) return false;
   const id = container.getAttribute("id");
   if (!id || typeof body.querySelectorAll !== "function") return false;
+  const ids = paintingIds(container, id, body);
   const found = body.querySelectorAll(REFERENCE_SEL);
-  return !!found && Array.from(found).some((r) => r.namespaceURI === SVG_NS && REFERENCE_ATTRS.some((k) => referencedId(r.getAttribute(k)) === id) && svgReachesPaper(r, body, depth + 1));
+  return !!found && Array.from(found).some((r) => r.namespaceURI === SVG_NS && REFERENCE_ATTRS.some((k) => { const ref = referencedId(r.getAttribute(k)); return ref !== null && ids.has(ref); }) && svgReachesPaper(r, body, depth + 1));
 }
 
 export type SettleWhy = "settled" | "deadline" | "cancelled";
