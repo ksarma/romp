@@ -35347,8 +35347,8 @@ def _subagent_tree_charge(kind, t0):
 # terms included, with the lab cells that are its evidence and the tests that execute it in the tree, is stated once in
 # _subagent_tree_memo_report's docstring; this block, docs/reference.md's memos paragraph and the ledger entry point there
 # (round 1 of #882's extra9-3 asked for the derived form in place of a per-call figure; the owner's pass before round 2 found
-# the miss-path term stated per agent in four homes where the code pays it once per cycle, shared, and made the docstring
-# its one home). Motivation, a
+# the miss-path term stated per agent, in the tree and in the PR body, where the code pays it once per cycle, shared, and
+# made the docstring its one home). Motivation, a
 # dated reading and not the law's evidence: on two deployed kernels (2026-09-19), on one _dir_stamp's one os.stat was the top
 # self frame of a 20 s py-spy profile, 28% of the samples by that profile's reading, and on the other the memo's own counters
 # showed 24.5 million validation lstats in 6.8 hours over 1,294 directories (the user 2026-09-05, who wanted the one-core
@@ -35637,7 +35637,8 @@ def _subagent_tree_memo_report():
     happens at most once per pusher cycle and once per jobs pass since 2026-09-19 (_subagent_scope).
 
     THE COST, one derived expression, stated here once: the comment block at _subagent_scope_open, docs/reference.md's
-    memos paragraph and the ledger entry point here and restate none of it (round 1 of #882's extra9-3: it was stated per
+    memos paragraph and the ledger entry name its terms in a clause each and point here for the expression, its figures
+    and its evidence (round 1 of #882's extra9-3: it was stated per
     call and per tree, with two production kernels' totals as its evidence, and two kernels cannot separate the
     directories from the sessions, the agents and the reads; the lab below can). Per pusher cycle or jobs pass, for the two
     loops' own reads, with N the _session_awaiting reads per session in the cycle, A_s the agents of session s whose
@@ -35654,10 +35655,14 @@ def _subagent_tree_memo_report():
         first such lookup's re-check pays them and every later one in the cycle is served: _dir_stamp), in dirStats 1 plus
         those sibling trees' directories; plus, per such agent whose walk runs (once per cycle, when the agent-file memo
         has no entry for the agent or a stamp it read moved: the cold walk, which lists the project directory and reads
-        each sibling's tree once for every such agent), that walk's own cost outside dirStats, one stat per candidate
-        place (the flat place and one per directory of each tree it looked through) and, for each sibling tree it reaches,
-        one lstat of the sibling root by _find_agent_file's realpath (the symlink guard). Until the owner's pass before
-        round 2 of #882 this term read per such agent, G of them predicting G project-directory stats where the code pays 1;
+        each sibling's tree once for every such agent), that walk's own cost outside dirStats: one stat per candidate
+        place (the flat place and one per directory of each tree it looked through); W lstats of the own root, its two
+        symlink checks (os.path.islink in _subagent_file_walk and _find_agent_file's realpath of the own root), W counted
+        by running the two calls rather than written out, since how many lstats realpath takes is the interpreter's
+        (tests/test_subagent_tree_stamps_per_cycle.py _miss_walk_cycle, which asserts D + G x W lstats on the tree's
+        directories over the cycle); and, for each sibling tree it reaches, one lstat of the sibling root by the same
+        realpath (the symlink guard). Until the owner's pass before round 2 of #882 this term read per such agent, G of
+        them predicting G project-directory stats where the code pays 1, and omitted the own root's W;
       - per root that left the memo in the cycle (an ownership eviction, a missing or replaced root), one read of that root
         at its next lookup (a walk, or D_r lstats when a read on another thread re-inserted it since) and one fold per
         awaiting agent of the transcripts whose own root it is, A_r (the fold's root, its bound and the test that executes
@@ -35684,7 +35689,8 @@ def _subagent_tree_memo_report():
     sibling root per walk. Executed in the tree by tests/test_subagent_tree_stamps_per_cycle.py through the real cycles:
     the bound and the shared miss-path term by BoundPerCycleAndPerPass (the one-row case and
     test_two_agents_whose_files_are_nowhere_share_the_project_directorys_one_stamp_stat, dirStats D at one row and at
-    two), the sum over roots by SumOverRoots, the eviction term by ScopedInvalidation, the fault term by Guards.
+    two, the cold walk's own terms, W included, by _miss_walk_cycle under both), the sum over roots by SumOverRoots, the
+    eviction term by ScopedInvalidation, the fault term by Guards.
 
     The reads a handler thread makes (per call, as before) and the re-read of a root that left the memo mid-cycle land in
     the same counter, so dirStats over an interval is bounded per scoped reader set, not per interval. Written from several
