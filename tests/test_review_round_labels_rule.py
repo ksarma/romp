@@ -12,10 +12,13 @@ range expanded so a caller's set need not be contiguous), the forms refused as u
 the two refusals told apart, the caller's author form named in the refusal, and the tree-only pin carried over from the 857
 guard and adapted: the helper imports re alone and reads no file, no environment and no path, pinned by resolution over its
 source and by the absence of any file or reflective primitive. A probe's set is synthetic (no PR's rounds live here or in the
-helper: a cell holds that no integer constant is bound at the helper's module level, that the same text gets opposite
-verdicts under two caller sets, and that neither the helper's text nor this module's spells a numbered-round form, so a
-caller that censuses either reads it clean and no credit to any PR's round lives in the rule's text)."""
+helper: a cell holds that no round set lives in the helper by any shape it could take, an integer constant bound at module
+level by any assignment, in any function's default, in any set, tuple, list or dict-key display or any range(), set() or
+frozenset() anywhere in the module, and by execution that offences() takes its rounds with no default; that the same text gets
+opposite verdicts under two caller sets; and that neither the helper's text nor this module's spells a numbered-round form, so
+a caller that censuses either reads it clean and no credit to any PR's round lives in the rule's text)."""
 import ast
+import inspect
 import os
 import re
 import unittest
@@ -90,15 +93,38 @@ class RoundLabelRule(unittest.TestCase):
         self.assertEqual(bound, [], "the imported helper binds a name that reaches the file system or the environment: %r" % (bound,))
 
     def test_no_round_set_lives_in_the_helper(self):
-        """The rounds are the caller's: no integer constant is bound at the helper's module level (a set of a PR's rounds would
-        be one); the same text gets opposite verdicts under two caller sets, so the verdict is the caller's set's and nothing
-        of the helper's; and neither the helper's text nor this module's spells a numbered-round form (the docstrings write N,
-        and every probe is assembled at run time), so no credit to any PR's round lives in the rule's text and a caller that
-        censuses either file reads it clean (pass 11's closing fixer pass: the two files are added by the branch that carries
-        the rule and sit outside its guard's population, so this is what holds them)."""
-        ints = [(ast.unparse(n.targets[0]), n.lineno) for n in _helper_tree().body if isinstance(n, ast.Assign)
-                for c in ast.walk(n.value) if isinstance(c, ast.Constant) and isinstance(c.value, int) and not isinstance(c.value, bool)]
-        self.assertEqual(ints, [], "an integer constant bound at the helper's module level: a round set is the caller's, never the helper's: %r" % (ints,))
+        """The rounds are the caller's, held over the helper's source by every shape a round set could take and once by execution
+        (pass 11's second closing fixer pass: the first check read plain module-level assignments alone, so an annotated
+        assignment, a function returning a set, an annotated range() and a default on offences() all passed it): no integer
+        constant is bound at the helper's module level by any assignment (plain, annotated or augmented); no default of any
+        function or lambda of the helper holds one (a caller could then omit its set); no set, tuple, list or dict-key display
+        over integer constants and no range(), set() or frozenset() over integer constants anywhere in the module (a round set
+        inside a function is one; the one range() the helper makes takes computed bounds); and, by execution, offences() takes
+        `rounds` with no default. Then the same text gets opposite verdicts under two caller sets, so the verdict is the
+        caller's set's and nothing of the helper's; and neither the helper's text nor this module's spells a numbered-round
+        form (the docstrings write N, and every probe is assembled at run time), so no credit to any PR's round lives in the
+        rule's text and a caller that censuses either file reads it clean (pass 11's closing fixer pass: the two files are
+        added by the branch that carries the rule and sit outside its guard's population, so this is what holds them)."""
+        tree = _helper_tree()
+
+        def ints(node):
+            return [c for c in ast.walk(node) if isinstance(c, ast.Constant) and isinstance(c.value, int) and not isinstance(c.value, bool)]
+
+        bound = [(ast.unparse(n.targets[0] if isinstance(n, ast.Assign) else n.target), n.lineno) for n in tree.body
+                 if isinstance(n, (ast.Assign, ast.AnnAssign, ast.AugAssign)) and n.value is not None and ints(n.value)]
+        self.assertEqual(bound, [], "an integer constant bound at the helper's module level (a plain, annotated or augmented assignment): a round set is the caller's, never the helper's: %r" % (bound,))
+        defaults = [(fn.name if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) else "lambda", ast.unparse(d), d.lineno)
+                    for fn in ast.walk(tree) if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))
+                    for d in list(fn.args.defaults) + [k for k in fn.args.kw_defaults if k is not None] if ints(d)]
+        self.assertEqual(defaults, [], "an integer constant in a default of a helper function (a round set a caller could omit): %r" % (defaults,))
+        displays = [(ast.unparse(n), n.lineno) for n in ast.walk(tree)
+                    if (isinstance(n, (ast.Set, ast.Tuple, ast.List)) and any(isinstance(e, ast.Constant) and ints(e) for e in n.elts))
+                    or (isinstance(n, ast.Dict) and any(isinstance(k, ast.Constant) and ints(k) for k in n.keys))]
+        self.assertEqual(displays, [], "a set, tuple, list or dict-key display over integer constants anywhere in the helper (a round set inside a function is one): %r" % (displays,))
+        calls = [(ast.unparse(n), n.lineno) for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                 and n.func.id in ("range", "set", "frozenset") and any(isinstance(a, ast.Constant) and ints(a) for a in n.args)]
+        self.assertEqual(calls, [], "a range(), set() or frozenset() over integer constants anywhere in the helper (the one range() it makes takes computed bounds): %r" % (calls,))
+        self.assertIs(inspect.signature(rule.offences).parameters["rounds"].default, inspect.Parameter.empty, "offences() takes the caller's rounds with no default, so no caller can omit its set")
         for path in (HELPER, os.path.realpath(__file__)):
             with open(path, encoding="utf-8") as f:
                 spelled = [(line, s, kind) for line, s, kind, _ in rule.forms(f.read()) if kind != "unnumbered"]
