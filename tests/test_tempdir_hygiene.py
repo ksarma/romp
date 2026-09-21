@@ -1149,7 +1149,16 @@ def assert_socket_fits(case, what, tmpdir_bytes, harness, lab, sock_bytes, budge
 
 class HarnessSocketBudget(unittest.TestCase):
     """Beside, not inside, proven by execution; and the longest hosts-on socket path the harness can produce,
-    derived and held against the kernel's budget. Not under_conftest: the placement is the package's."""
+    derived and held against the kernel's budget. Not under_conftest: the placement is the package's.
+
+    ARM 1 HAS ZERO SLACK BY DESIGN. The sweep arm holds the deepest hosts-on lab at the box rule's 17-byte TMPDIR
+    to a margin of at least one root level (20 bytes), and today's figure is 17 + 20 + 30 + 20 = 87 against 107:
+    the margin IS one level, exactly. So the deepest hosts-on lab (tests/test_session_host_restart.py's
+    `host-served-XXXXXXXX/xdg/romp`, 30 bytes below the root) cannot grow by a byte, and a new hosts-on lab may be
+    at most as deep. A maintainer who hits this arm has three honest moves: shorten the lab (its prefix or its
+    state suffix), shrink the box rule's TMPDIR template (SWEEP_TMPDIR_TEMPLATE, and the rule it states), or relax
+    the margin requirement (min_margin=level, which is what makes a re-nesting of a worker's root red here) —
+    never widen the budget, which is the kernel's sun_path."""
 
     def _child(self, env_overrides, hold_dir):
         """A Python process that imports the tests package under the environment given and reports its root, its
