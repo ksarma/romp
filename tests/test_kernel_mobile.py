@@ -5,7 +5,6 @@ brings the chat forward. Pure-HTML + routing asserts; no real session data.
 """
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -34,17 +33,43 @@ def _mobile_js():
     return km._LANDING_MOBILE_JS
 
 
-_VIEWPORT_META = re.compile(r"<meta name=viewport content='([^']*)'>")
-
-
 def _viewport_meta_tokens(html):
-    """The viewport META's content attribute as its comma-separated tokens, read from the ONE static meta element (the
-    standalone flip rewrites the attribute from script and serves no second tag). A pin over these reads the element it
-    pins: the fit script's served comments spell the same tokens in prose, and a substring assertion over the whole page
-    was satisfied by a comment after the meta had lost the token it exists to pin (D1 round 1, 2026-09-19)."""
-    metas = _VIEWPORT_META.findall(html)
-    assert len(metas) == 1, "one static viewport meta, found %d" % len(metas)
-    return metas[0].split(",")
+    """The viewport META's content attribute as its comma-separated tokens, read from the ONE live meta element through the
+    parser (served_css.meta_content; the standalone flip rewrites the attribute from script and serves no second tag). A pin
+    over these reads the element it pins: the fit script's served comments spell the same tokens in prose, and a substring
+    assertion over the whole page was satisfied by a comment after the meta had lost the token it exists to pin (D1 round 1,
+    2026-09-19). Round 9 (2026-09-20, the maintainer's round 5 ruling): the helper had found the meta by a regular expression
+    over the RAW page, so a meta written inside an HTML comment read as the live one, the exact case it existed to stop; the
+    element layer reads a commented meta as comment text and a live one whatever its attribute order or quoting."""
+    return (served_css.meta_content(html, "viewport") or "").split(",")
+
+
+class ViewportMetaReader(unittest.TestCase):
+    """The viewport meta helper reads the ELEMENT (round 9, 2026-09-20, the maintainer's round 5 ruling): it had matched a regular
+    expression over the raw page, so a meta written inside an HTML comment read as the live one, the exact case the helper existed
+    to stop, and it pinned one attribute order and one quoting. Each case here was green under the regex where it should have
+    refused, or refused where it should have read. The reader feeds the whole page to the tokenizer in one call, so a tag split
+    across a chunk boundary is not a state it can be in (no chunked case)."""
+    LIVE = "<meta name=viewport content='a=1,b=2'>"
+
+    def test_a_meta_inside_a_comment_or_a_script_string_is_not_the_live_meta(self):
+        commented = "<!-- <meta name=viewport content='x=9'> -->"
+        self.assertEqual(_viewport_meta_tokens("<head>%s%s</head>" % (commented, self.LIVE)), ["a=1", "b=2"], "the live meta beside a commented copy")
+        with self.assertRaises(AssertionError) as cm:
+            _viewport_meta_tokens("<head>%s</head>" % commented)
+        self.assertIn("found 0", str(cm.exception), "a commented meta alone is no meta: the helper refuses loudly")
+        self.assertEqual(_viewport_meta_tokens("<head><script>var s=\"<meta name=viewport content='x=9'>\";</script>%s</head>" % self.LIVE), ["a=1", "b=2"])
+
+    def test_the_live_meta_is_read_whatever_its_spelling(self):
+        for meta in ("<META NAME=Viewport CONTENT='a=1,b=2'>", '<meta content="a=1,b=2" name="viewport">', "<meta content=a=1,b=2 name=viewport>",
+                     "<meta charset=utf-8 name=viewport content='a=1,b=2'/>"):
+            self.assertEqual(_viewport_meta_tokens("<head>%s</head>" % meta), ["a=1", "b=2"], meta)
+        with self.assertRaises(AssertionError):
+            _viewport_meta_tokens("<head><meta name=' viewport ' content='a=1'></head>")   # the name is compared as written: not this meta
+        with self.assertRaises(AssertionError) as cm:
+            _viewport_meta_tokens("<head>%s%s</head>" % (self.LIVE, self.LIVE))
+        self.assertIn("found 2", str(cm.exception))
+        self.assertEqual(_viewport_meta_tokens("<head><meta name=viewport></head>"), [""], "a meta with no content has no tokens, and a pin over the tokens fails on it")
 
 
 class LandingShell(unittest.TestCase):
@@ -175,9 +200,11 @@ class LandingShell(unittest.TestCase):
         # One pane fills a phone screen, so a 3px sliver of backdrop down its edge reads as a rendering
         # fault, not as slack. The desktop longhand survives the media query unless it is named there.
         html = km._landing()
-        i = html.index("@media (max-width:820px),(pointer:coarse)")
-        mobile = html[i:i + 2000]
-        self.assertIn("padding-right:0", mobile, "the mobile .col must cancel the desktop strip")
+        # the .col rule inside the mobile block, read as a parsed rule (round 9, 2026-09-20: a 2000-character window of raw page
+        # text after the query's first spelling had stood for the block)
+        mobile = ("@media " + km._MOBILE_MQ,)
+        col = [(p, v) for r in served_css.rules(html) if r.at == mobile and ".col" in served_css.subjects(r.selector) for p, v in r.decls]
+        self.assertIn(("padding-right", "0"), col, "the mobile .col must cancel the desktop strip: %r" % (col,))
 
     def test_mobile_pane_has_explicit_height_not_auto(self):
         # regression: the mobile pane was sized with height:auto + bottom offset; mobile browsers read
@@ -229,7 +256,9 @@ class LandingShell(unittest.TestCase):
         # registers as its refused fallback — its own script so a banner throw cannot take the reload with it
         # +1: the bottom bar's API health cell (_LANDING_APIH_JS), after the usage script whose backdrop it shares
         # +1 2026-09-08: the chat split columns (_LANDING_SPLIT_JS), after the pane controller it leans on
-        self.assertEqual(html.count("<script>"), 21)
+        # the count is of live script ELEMENTS with no attributes, the isolated blocks (round 9, 2026-09-20: a raw count of the
+        # tag's spelling over the page had stood for it); the bundles' <script src=...> elements are outside it
+        self.assertEqual(len([e for e in served_css.elements(html) if e.kind == "script" and not e.attrs]), 21)
 
     def test_bottom_bar_is_text_only_and_compact(self):
         html = km._landing()
@@ -274,11 +303,17 @@ class LandingShell(unittest.TestCase):
         # navigator.standalone, which is iOS-only and standalone-only. No Android browser can ever take
         # that branch, so the 2026-06-17 regression cannot recur through it.
         html = km._landing()
-        self.assertIn("<meta name=viewport content='width=device-width,initial-scale=1,"
-                      "maximum-scale=1,user-scalable=no,interactive-widget=resizes-content'>", html)   # the static meta: no cover
-        self.assertEqual(html.count("viewport-fit=cover"), 1)         # exactly the runtime flip…
-        self.assertIn("if(navigator.standalone)", html)               # …behind the iOS-standalone gate
-        self.assertLess(html.index("if(navigator.standalone)"), html.index("viewport-fit=cover"))
+        # the static meta's content, read from the element (round 9, 2026-09-20: it had been a substring of the page): no cover
+        self.assertEqual(served_css.meta_content(html, "viewport"),
+                         "width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,interactive-widget=resizes-content")
+        # exactly the runtime flip, in the code of one live script (comments removed), behind the iOS-standalone gate, and the token
+        # in no markup (round 9: a count and an ordering over the raw page had stood for these)
+        scripts = served_css.scripts(html)
+        flips = [js for js in scripts if "viewport-fit=cover" in js]
+        self.assertEqual(sum(js.count("viewport-fit=cover") for js in scripts), 1)
+        self.assertEqual(len(flips), 1)
+        self.assertLess(flips[0].index("if(navigator.standalone)"), flips[0].index("viewport-fit=cover"))
+        self.assertNotIn("viewport-fit=cover", served_css._blank(html, [(s, e) for s, e, _ in served_css.element_spans(html)]), "the token is in no markup")
         self.assertTrue(any("100dvh" in v for r in served_css.rules(html) for _, v in r.decls), "still address-bar-aware (a parsed declaration, not page text)")
         self.assertIn("user-scalable=no", _viewport_meta_tokens(html))  # pinch-zoom governance preserved alongside the change, read from the meta
 
@@ -308,7 +343,9 @@ class LandingShell(unittest.TestCase):
         # keyed on html.ios-standalone — a class set only under navigator.standalone, which no Android
         # browser exposes — reclaims the inset there and nowhere else.
         html = km._landing()
-        self.assertEqual(html.count("env(safe-area-inset"), 1)        # exactly the standalone rule below
+        # exactly the standalone rule below, as a parsed declaration (round 9, 2026-09-20: a raw count over the page had stood for it)
+        insets = [(r.selector, p) for r in served_css.rules(html) for p, v in r.decls if "env(safe-area-inset" in v]
+        self.assertEqual(insets, [("html.ios-standalone #mtabs", "padding-bottom")])
         self.assertIn("html.ios-standalone #mtabs{padding-bottom:env(safe-area-inset-bottom,0px)}", html)
         self.assertIn("#mtabs{display:flex;position:fixed;left:0;right:0;bottom:0", html)
 

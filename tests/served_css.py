@@ -15,7 +15,15 @@ unconditional CSS, round 8), and the answer is yes: the tokenizer reads tags, at
 the first of a duplicate), comments, and script and style CDATA the way HTML does, and getpos() maps to absolute offsets by
 line start, which is all this layer needs; those three closed members are its unit cases. What it does not do, and this module
 still does itself: tokenize CSS and JS (the scanners below), and the HTML5 script-data escaped states (a `<!-- <script>` inside
-a script), which the served pages do not use. The tokenizer's CDATA end-tag and comment rules were tightened in the 3.12 and
+a script), which the served pages do not use. Where the tokenizer parts from HTML the reader REFUSES rather than parse past it
+(round 9, 2026-09-20, the maintainer's round 5 ruling): a `<![CDATA[` marked section, which html.parser consumes whole to `]]>`
+where HTML reads `<!` followed by anything but `--` or DOCTYPE as a bogus comment ending at the FIRST `>`, so a live style
+element after a `>` inside the section was invisible to elements() and rules() with no refusal (the fourth silent divergence
+this module closed; the plant is a unit case), and a tag or attribute name outside ASCII (the attribute paragraph below). The
+enumeration of what the tokenizer hands this reader is DERIVED, not kept by hand: `TOKENIZER_SURFACE` names every handle_*
+method and unknown_decl of html.parser with what this reader does on it (read, comment, event, refused) and HTML's behaviour
+beside it, and tests/test_shell_viewport_fit.py walks the class for the handler surface, the CDATA and RCDATA element sets and
+the constructor's parameters, and reds on a member the table does not classify. The tokenizer's CDATA end-tag and comment rules were tightened in the 3.12 and
 3.13 maintenance releases (a `</script` ends the element only before whitespace, `/` or `>`; a comment closes at `-->` or
 `--!>`); the shapes this module's unit cases pin read the same under 3.10, 3.11, 3.12, 3.13 and 3.14, and the eight served
 pages gave byte-identical spans, scripts and rules under each at round 8. Refuses a script or style element the page never
@@ -166,6 +174,34 @@ _UNCONDITIONAL_MEDIA = {"", "all", "screen"}
 _CSS_TYPES = {"", "text/css"}
 
 
+# html.parser's handler surface, each with what this reader does on it and HTML's behaviour (round 9, 2026-09-20; the test walks the
+# class and reds on a handler this table does not name). Verbs: `read` (an element or attribute this layer returns), `comment` (a
+# span the pins census treats as comment text), `event` (a position boundary only: the construct closes a pending comment span and
+# is otherwise ignored), `refused` (a loud assertion).
+TOKENIZER_SURFACE = {
+    "handle_starttag": ("read", "a script, style, link or meta element is recorded (a script or style opens its content span; a link or meta is its tag);"
+                                " any other tag is an event; a tag or attribute name outside ASCII refuses. HTML: a start tag token, names ASCII-lowercased"),
+    "handle_startendtag": ("read", "a link or meta is recorded; a self-closing <script/> or <style/> refuses (HTML reads the slash as a start tag and the element stays open);"
+                                   " other tags are events"),
+    "handle_endtag": ("read", "a </script> or </style> closes the open element's content span at the tag (an end tag with no open element refuses); other end tags are events."
+                              " HTML: the same end-tag rule inside script data and RAWTEXT (the 3.12 and 3.13 maintenance releases aligned the tokenizer's end-tag match)"),
+    "handle_comment": ("comment", "a `<!-- -->` outside a script or style element, and every bogus comment html.parser reports here (`<!foo>`, `</ >` shapes). HTML: comment tokens, text a pin can be satisfied by"),
+    "handle_data": ("event", "text; HTML: character tokens. Inside a script or style element the content is the element's span, read by offsets, not through this handler"),
+    "handle_entityref": ("event", "a named character reference in text (convert_charrefs is False, so it is reported, not decoded); HTML: a character token"),
+    "handle_charref": ("event", "a numeric character reference in text; HTML: a character token"),
+    "handle_decl": ("event", "the DOCTYPE, to the first `>`; HTML: a DOCTYPE token, the same extent"),
+    "handle_pi": ("comment", "a `<?...>` to the first `>`; HTML has no processing instructions and reads `<?` as a bogus comment to the first `>`, the same extent"),
+    "unknown_decl": ("refused", "a `<![CDATA[` marked section refuses: html.parser consumes it to `]]>` where HTML reads a bogus comment to the FIRST `>` (in foreign content,"
+                                " svg or math, HTML does read a CDATA section, but this reader refuses those containers). Any other `<![...]>` form html.parser reports here"
+                                " (`<![if !IE]>`, to the first `>`) is a comment: HTML reads a bogus comment of the same extent (Python 3.10 and 3.11 route it through"
+                                " _markupbase.parse_marked_section, which raises on a keyword it does not know: a refusal of its own)"),
+}
+# the element sets html.parser reads as text, by version: CDATA (RAWTEXT to HTML) and RCDATA; a script or style element inside one is
+# text to HTML and to a tokenizer that knows the set, and a start tag to one that does not (3.10 knows script and style alone), so the
+# reader treats them as containers whose content it does not read (the container census), so the outcome is never a live read
+TOKENIZER_TEXT_ELEMENTS = {"script", "style", "xmp", "iframe", "noembed", "noframes", "textarea", "title", "plaintext", "noscript"}
+
+
 class _Elements(HTMLParser):
     """The element and attribute layer of a served page, read by the standard library's HTML tokenizer (round 8, 2026-09-20):
     every live script, style and link element with absolute offsets and its attributes, and every HTML comment's span. A
@@ -194,9 +230,9 @@ class _Elements(HTMLParser):
             self.comments.append((self.pending, pos))
             self.pending = None
 
-    def _link(self, pos, attrs):
+    def _void(self, kind, pos, attrs):
         end = pos + len(self.get_starttag_text())
-        self.elements.append(Element("link", pos, end, end, end, tuple(attrs)))
+        self.elements.append(Element(kind, pos, end, end, end, tuple(attrs)))
 
     def _ascii_names(self, pos, names):
         # round 9 (2026-09-20): HTML lower-cases tag and attribute names over ASCII, the tokenizer over Unicode, and the two part on
@@ -210,16 +246,16 @@ class _Elements(HTMLParser):
         self._ascii_names(pos, _raw_names(self.get_starttag_text()))
         if tag in ("script", "style"):
             self.open = (tag, pos, pos + len(self.get_starttag_text()), tuple(attrs))
-        elif tag == "link":
-            self._link(pos, attrs)
+        elif tag in ("link", "meta"):
+            self._void(tag, pos, attrs)
 
     def handle_startendtag(self, tag, attrs):
         pos = self._pos()
         self._event(pos)
         self._ascii_names(pos, _raw_names(self.get_starttag_text()))
         assert tag not in ("script", "style"), "a self-closing <%s/> at offset %d is a start tag to HTML; this reader refuses it" % (tag, pos)
-        if tag == "link":
-            self._link(pos, attrs)
+        if tag in ("link", "meta"):
+            self._void(tag, pos, attrs)
 
     def handle_endtag(self, tag):
         pos = self._pos()
@@ -249,16 +285,37 @@ class _Elements(HTMLParser):
         self._event(self._pos())
 
     def handle_pi(self, data):
-        self._event(self._pos())
+        # a `<?...>` is a bogus comment to HTML, ending at the first `>`, the extent html.parser reads too: comment text
+        pos = self._pos()
+        self._event(pos)
+        self.pending = pos
 
     def unknown_decl(self, data):
-        self._event(self._pos())
+        # round 9 (2026-09-20), the maintainer's round 5 ruling: html.parser consumes a `<![CDATA[ ... ]]>` section whole (to `]]>`, or
+        # to the end of the page when unterminated) where HTML reads a bogus comment that ends at the FIRST `>`, so a live style
+        # element after a `>` inside the section was invisible to this reader with no refusal. Refused rather than parsed past.
+        # Every other marked section html.parser reports here (`<![if !IE]>`) ends at the first `>`, HTML's extent: comment text
+        pos = self._pos()
+        self._event(pos)
+        assert not data.startswith("CDATA["), "a <![CDATA[ marked section at offset %d: html.parser consumes it to ]]> where HTML reads a bogus comment to the first >, so an element inside it is invisible here; this reader refuses it" % pos
+        self.pending = pos
 
 
 @functools.lru_cache(maxsize=64)
 def elements(html):
-    """Every live script, style and link element of a page, as Element records in document order (parsed once per page text)."""
+    """Every live script, style, link and meta element of a page, as Element records in document order (parsed once per page text)."""
     return tuple(_Elements(html).elements)
+
+
+def meta_content(html, name):
+    """The `content` attribute of the ONE live `<meta>` element whose `name` is an ASCII case-insensitive match for `name`, as
+    written (no whitespace stripped), read through the element layer: a meta inside an HTML comment or a script string is no
+    element, whatever the attribute order or quoting (round 9, 2026-09-20, the maintainer's round 5 ruling: the viewport meta had
+    been found by a regular expression over the raw page, so a commented copy read as the live meta, the exact case the helper
+    existed to stop). None for a meta with no content attribute; refuses 0 or 2 or more matching metas."""
+    metas = [e for e in elements(html) if e.kind == "meta" and _ascii_lower(attr(e, "name") or "") == _ascii_lower(name)]
+    assert len(metas) == 1, "one live <meta name=%s> element, found %d" % (name, len(metas))
+    return attr(metas[0], "content")
 
 
 @functools.lru_cache(maxsize=64)

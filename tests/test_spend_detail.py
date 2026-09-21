@@ -596,8 +596,7 @@ class SpendDetail(unittest.TestCase):
                       "Escape closes it through the shell's one Escape chain")
         self.assertIn("#rsp-back{position:fixed;inset:0;z-index:205;display:flex;align-items:center;justify-content:center;"
                       "background:rgba(0,0,0,0.55)}", html, "the panel rule: a centered card over rgba(0,0,0,0.55)")
-        self.assertNotIn("__ROMP_LOADER__", html.split("_LANDING_JS")[0] if "_LANDING_JS" in html else html,
-                         "the loader markup is spliced, not left as a placeholder")
+        self.assertNotIn("__ROMP_LOADER__", html, "the loader markup is spliced, not left as a placeholder")   # (round 9: a dead split stood here)
         code = served_css.code(html)   # the code and markup with every served comment blanked: the spend script's comments spell these strings too
         self.assertIn("rl-word", code)
         self.assertNotIn("this machine only", html, "T247c: every attached kernel's sessions are in — no such note")

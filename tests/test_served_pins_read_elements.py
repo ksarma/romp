@@ -243,7 +243,10 @@ def landing_kinds(text):
     no page carries it."""
     kinds = set()
     for g, page in pages().items():
-        spans = _element_spans(g)
+        # a text served as a script or a style sheet is that kind throughout: the element layer reads MARKUP (round 9, 2026-09-20:
+        # it had been run over the script getters' JS too, where `<t.length` reads as a tag opening; the layer refuses a name
+        # outside ASCII now and the JS carried one)
+        spans = _element_spans(g) if getter_kind(g) == "markup" else [(0, len(page), getter_kind(g))]
         starts = [s for s, _, _ in spans]
         start = 0
         while len(kinds) < 3:
@@ -621,6 +624,133 @@ def textual_census(path, getters, constants, routes=None):
     return sites, containers
 
 
+_STR_READS = {"index", "find", "rindex", "rfind", "count", "split", "rsplit", "splitlines", "strip", "lstrip", "rstrip", "lower", "upper", "casefold",
+              "startswith", "endswith", "partition", "rpartition", "replace", "removeprefix", "removesuffix", "translate", "expandtabs",
+              "format", "join", "zfill", "center", "ljust", "rjust", "title", "capitalize", "swapcase", "isascii", "isspace", "isalpha", "isdigit", "isalnum"}
+_CONVERSIONS = {"encode", "decode", "read"}
+_RE_FUNCS = {"search", "match", "fullmatch", "findall", "finditer", "split", "sub", "subn"}
+_ASSERTS = {"assertIn", "assertNotIn", "assertEqual", "assertNotEqual", "assertTrue", "assertFalse", "assertIs", "assertIsNot", "assertIsNone", "assertIsNotNone",
+            "assertMultiLineEqual", "assertRegex", "assertNotRegex", "assertCountEqual", "assertLess", "assertGreater", "assertLessEqual", "assertGreaterEqual"}
+# the forms a read of a served text can take (readers_of); the census test states which are the parser road or a stated read and reds on the rest
+READER_FORMS = ("parser", "assert", "position", "position-unpinned", "membership-unpinned", "regex", "slice", "span-slice", "method", "conversion", "value-use",
+                "compare", "unclassified")
+
+
+def readers_of(path, getters, constants, routes=None):
+    """[(line, form, text, source)] for every READ of a served text in one test module: the population the maintainer's round 5
+    ruling asked to be derived once, of every road (round 9, 2026-09-20), after the one HTML regex this change had added beside
+    the parser it introduced. A served text is what rows_of resolves (a getter call, a constant, a Name or self.<attr> bound to
+    one or to a fetched body, the variable of a `for` over texts), and a read is X in any of these forms, each named in
+    READER_FORMS: `served_css.<fn>(X, ...)` or a name imported from served_css called on X (`parser`, the one road for an
+    element, an attribute or a rule); `X.<index|find|rindex|rfind|count>(needle)` with a literal or loop-literal needle
+    (`position`: a pins-census row, judged there) or any other needle (`position-unpinned`, a read the pins census does not
+    see); `<needle> in X` with a non-literal needle (`membership-unpinned`); `re.<fn>(..., X)` or `<pattern>.<fn>(X)` with the
+    pattern a Name bound by re.compile in the module (`regex`); `X[a:b]` with both bounds Names a `for` over a `served_css.<fn>(...)`
+    iterable binds (`span-slice`: offsets the parser derived) and any other subscript of X (`slice`); any other str method on X
+    (`method`, the method's name in the source column); X.encode/decode/read (`conversion`: bytes to text and back, no content
+    read); X handed whole to a `self.assert*` (`assert`: a membership the pins census reads, or a whole-text compare); X handed
+    whole to any other callable, len, print, json.dumps, a file's write, another string's replace (`value-use`: the text is not
+    read at that site); X as the operand of a comparison other than a membership (`compare`); anything else (`unclassified`).
+    A module-level function of the same module called with X is FOLLOWED one level, its parameter bound to the text, so a
+    membership or a read inside a helper (`_has(self, lit, body)`) is a row at the helper's own line; a callable outside the
+    module is a value-use."""
+    with open(path, encoding="utf-8") as f:
+        src = f.read()
+    tree = ast.parse(src, path)
+    seg = lambda node: (ast.get_source_segment(src, node) or "").replace("\n", " ")[:160]
+    patterns = {t.id for node in ast.walk(tree) if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Attribute) and isinstance(node.value.func.value, ast.Name) and node.value.func.value.id == "re"
+                and node.value.func.attr == "compile" for t in node.targets if isinstance(t, ast.Name)}
+    parser_names = {alias.asname or alias.name for node in tree.body if isinstance(node, ast.ImportFrom) and node.module == "served_css" for alias in node.names}
+    functions = (ast.FunctionDef, ast.AsyncFunctionDef)
+    helpers = {n.name: n for n in tree.body if isinstance(n, functions) and not n.name.startswith("test")}
+    groups = [[n for n in cls.body if isinstance(n, functions)] for cls in ast.walk(tree) if isinstance(cls, ast.ClassDef)]
+    groups.append([n for n in tree.body if isinstance(n, functions)])
+
+    def bindings(fn):
+        for st in ast.walk(fn):
+            if isinstance(st, ast.Assign):
+                yield st.targets, st.value
+            elif isinstance(st, ast.With):
+                for item in st.items:
+                    if item.optional_vars is not None:
+                        yield [item.optional_vars], item.context_expr
+
+    def walk(fn, names, attrs, depth):
+        for targets, value in bindings(fn):
+            _bind(targets, value, names, attrs, getters, constants, None, routes)
+        for var, it, _ in _loops(fn):   # a for over served texts binds its variable (to the first text: one form per variable)
+            texts = [_text(e, getters, constants) for e in it.elts] if isinstance(it, (ast.Tuple, ast.List)) and it.elts else []
+            if texts and all(texts):
+                names[var] = texts[0]
+        span_names = set()
+        for node in ast.walk(fn):   # the Names a `for a, b in served_css.<fn>(...)` binds: parser-derived offsets
+            if isinstance(node, (ast.For, ast.comprehension)) and isinstance(node.iter, ast.Call) and isinstance(node.iter.func, ast.Attribute) \
+                    and isinstance(node.iter.func.value, ast.Name) and node.iter.func.value.id == "served_css" and isinstance(node.target, ast.Tuple):
+                span_names |= {e.id for e in node.target.elts if isinstance(e, ast.Name)}
+        text_of = lambda x: _resolve(x, names, attrs, getters, constants)
+        lits = {var for var, it, _ in _loops(fn) if _literals(it)}
+        literal = lambda a: bool(_literals(a)) or (isinstance(a, ast.Name) and a.id in lits)
+        rows = []
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Call):
+                f = node.func
+                if isinstance(f, ast.Attribute) and text_of(f.value):   # X.<method>(...)
+                    t = text_of(f.value)
+                    if f.attr in _POSITION:
+                        rows.append((node.lineno, "position" if node.args and literal(node.args[0]) else "position-unpinned", t, seg(node)))
+                    elif f.attr in _CONVERSIONS:
+                        rows.append((node.lineno, "conversion", t, seg(node)))
+                    elif f.attr in _STR_READS:
+                        rows.append((node.lineno, "method", t, f.attr + ": " + seg(node)))
+                    else:
+                        rows.append((node.lineno, "unclassified", t, seg(node)))
+                    continue
+                served = [(i, a) for i, a in enumerate(node.args) if text_of(a)]
+                if not served:
+                    continue
+                t = text_of(served[0][1])
+                callee = f.attr if isinstance(f, ast.Attribute) else f.id if isinstance(f, ast.Name) else None
+                if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "served_css" or isinstance(f, ast.Name) and f.id in parser_names:
+                    rows.append((node.lineno, "parser", t, seg(node)))
+                elif isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and (f.value.id == "re" and f.attr in _RE_FUNCS or f.value.id in patterns):
+                    rows.append((node.lineno, "regex", t, seg(node)))
+                elif isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "self" and f.attr in _ASSERTS:
+                    rows.append((node.lineno, "assert", t, seg(node)))
+                elif isinstance(f, ast.Name) and f.id in helpers and depth == 0:   # a helper of this module: followed once
+                    h = helpers[f.id]
+                    params = [a.arg for a in h.args.args]
+                    bound = {params[i]: text_of(a) for i, a in served if i < len(params)}
+                    rows.append((node.lineno, "value-use", t, "helper %s: " % f.id + seg(node)))
+                    rows += walk(h, dict(bound), {}, depth + 1)
+                else:
+                    rows.append((node.lineno, "value-use", t, "%s: " % callee + seg(node)))
+            elif isinstance(node, ast.Subscript) and text_of(node.value):
+                sl = node.slice
+                spans = isinstance(sl, ast.Slice) and (sl.lower is not None or sl.upper is not None) \
+                    and all(isinstance(bd, ast.Name) and bd.id in span_names for bd in (sl.lower, sl.upper) if bd is not None)
+                rows.append((node.lineno, "span-slice" if spans else "slice", text_of(node.value), seg(node)))
+            elif isinstance(node, ast.Compare):
+                for i, (op, right) in enumerate(zip(node.ops, node.comparators)):
+                    left = node.left if i == 0 else node.comparators[i - 1]
+                    if isinstance(op, (ast.In, ast.NotIn)) and text_of(right):
+                        if not literal(left):
+                            rows.append((node.lineno, "membership-unpinned", text_of(right), seg(node)))
+                    elif text_of(left) or text_of(right):
+                        rows.append((node.lineno, "compare", text_of(left) or text_of(right), seg(node)))
+        return rows
+
+    out = []
+    for fns in groups:
+        attrs = {}
+        for fn in fns:
+            for targets, value in bindings(fn):
+                _bind(targets, value, {}, attrs, getters, constants, None, routes)
+        for fn in fns:
+            out += walk(fn, {}, attrs, 0)
+    return sorted(set(out))
+
+
 def inline_sites(path, getters, constants):
     """The textual census's sites alone (textual_census)."""
     return textual_census(path, getters, constants)[0]
@@ -866,6 +996,119 @@ def test_module_level():
         self.assertTrue(set(sites) <= {r[:4] for r in rows if r[4]}, "every site is a readable row")
         # the containers the module pins, whatever the name: the getters, the constants, and `other` and `dyn` are not containers
         self.assertEqual(containers, {(g, True) for g in getters} | {("_LANDING_MOBILE_JS", False), (css, False), (html, False), (script, False), (mark, False)})
+
+    def test_every_reader_of_a_served_page_is_the_parser_or_a_stated_read(self):
+        # round 9 (2026-09-20), the maintainer's round 5 ruling asked once, of every road that reads the served page, whether it is
+        # HTML-correct or refuses what it cannot resolve: the change had moved the element reads onto html.parser as ruled and then
+        # added a fresh regex over the raw page beside it (the viewport meta, satisfiable by a commented copy, the case it existed to
+        # stop). The population is EVERY read of a served text across the suite, derived by readers_of (its form space in
+        # READER_FORMS and pinned below), and each form has a status: the parser road (`parser`); a stated read that is not a read of
+        # markup by another road (`assert`: a literal membership the pins census judges or a whole-text compare; `position` with a
+        # literal needle: a pins-census row, an order or count over text the census judges against every comment span, not an
+        # element's extent or attributes; `span-slice`: parser-derived offsets; `conversion` and `value-use`: the text handed whole,
+        # not read here; `compare`); a raw read of markup (`regex`, `slice`, `method`, `position-unpinned`, `membership-unpinned`):
+        # a road beside the parser, which a module that has adopted the parser road (it imports served_css) may not keep, and
+        # which a module that has not is reported with (the sweep left, a figure, not a red here); a read over a text that is
+        # JS or CSS source and not markup (a script or style constant, a script getter) is `source`: the element layer has no
+        # element to offer for it, and its literal pins are the pins census's. A form the walk cannot name reds everywhere.
+        getters, constants, routes = page_getters(), served_constants(), route_getters()
+        kinds = {g: frozenset([getter_kind(g)]) for g in getters}
+        kinds.update(constants)
+        rows, pins, road = [], set(), {}
+        for path in sorted(glob.glob(os.path.join(HERE, "test_*.py"))):
+            fname = os.path.basename(path)
+            if os.path.realpath(path) == os.path.realpath(__file__):
+                continue
+            with open(path, encoding="utf-8") as f:
+                road[fname] = "served_css" in f.read()
+            rows += [(fname, line, form, text, source) for line, form, text, source in readers_of(path, getters, constants, routes)]
+            pins |= {(fname, line, text) for line, lit, text, form, readable in rows_of(path, getters, constants, routes) if form in _POSITION}
+        self.assertGreater(len(rows), 1000, "the population read: %d rows" % len(rows))
+        self.assertEqual(sorted({r[2] for r in rows} - set(READER_FORMS)), [], "a form readers_of names that READER_FORMS does not")
+        self.assertTrue(len({r[2] for r in rows}) >= 10, "the forms met across the suite: %r" % (sorted({r[2] for r in rows}),))
+        def status(fname, line, form, text, source):
+            if form == "position" and (fname, line, text) not in pins:
+                form = "position-unpinned"   # a position pin the pins census does not see (inside a followed helper): raw
+            if form in ("parser", "assert", "position", "span-slice", "conversion", "value-use", "compare"):
+                return form
+            if form == "unclassified":
+                return "unclassified"
+            return "raw" if "markup" in kinds[text] else "source"
+        by = {}
+        for r in rows:
+            by.setdefault(status(*r), []).append(r)
+        self.assertEqual(by.get("unclassified", []), [], "a read of a served text the walk cannot classify")
+        raw_on_road = [r for r in by.get("raw", []) if road[r[0]]]
+        self.assertEqual(raw_on_road, [], "a module on the parser road reads the page by another road; route it through served_css or state it:\n"
+                         + "\n".join("%s:%d %s %s: %s" % (f, l, form, t, src) for f, l, form, t, src in raw_on_road))
+        # the parser road is live across the suite, and the classes it replaced are met (so the census reads them)
+        self.assertTrue([r for r in by.get("parser", []) if road[r[0]]], "parser-road reads")
+        self.assertTrue(by.get("source"), "reads over a script or style constant, JS or CSS source: %r" % (len(by.get("source", [])),))
+        self.assertTrue(by.get("position"), "position pins tied to pins-census rows")
+        self.assertTrue([r for r in by.get("value-use", []) if r[4].startswith("helper ")], "a helper followed one level")
+        # the sweep left, reported: raw markup reads in modules not on the parser road (a figure the record carries; not a red here)
+        off = by.get("raw", [])
+        self.assertEqual([r for r in off if road[r[0]]], [])
+        self.assertTrue(all(not road[r[0]] for r in off), "every remaining raw markup read is in a module not on the parser road: %d reads in %d modules"
+                        % (len(off), len({r[0] for r in off})))
+
+    def test_the_reader_census_reads_the_forms_it_claims(self):
+        # the reader census is a derivation, so its form space is pinned on a synthetic module holding one site of every form in
+        # READER_FORMS, each named here, never inferred from the suite: the parser road inline and through an imported name, an
+        # assert, a literal position pin and one with a Name needle, a non-literal membership, a regex through re and through a
+        # compiled pattern, a slice by index and a slice by parser-derived spans, a str method, a conversion, a value-use (json.dumps)
+        # and a helper followed one level (its membership a row at its own line), a whole-text compare, and a read over a script
+        # constant (its form is the read's; the census test gives it the `source` status by the text's kind)
+        getters, constants, routes = page_getters(), served_constants(), route_getters()
+        src = '''
+import re
+from served_css import code
+PAT = re.compile("x")
+def _has(self, lit, body):
+    self.assertIn(lit, body)
+def _win(page):
+    return page[page.index("<a>"):page.index("</a>")]
+class T(unittest.TestCase):
+    def test_a(self):
+        page = km._landing()
+        served_css.rules(page)
+        code(page)
+        self.assertIn("x", page)
+        page.index("x")
+        tok = "y"
+        page.count(tok)
+        assert tok in page
+        re.search("z", page)
+        PAT.findall(page)
+        page[3:9]
+        for s, e in served_css.comment_spans(page):
+            page[s:e]
+        page.split("<")
+        page.encode()
+        json.dumps(page)
+        _has(self, "w", page)
+        _win(page)
+        page == "q"
+        re.search("v", km._LANDING_MOBILE_JS)
+        f.write(page)
+'''
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
+            f.write(src)
+        try:
+            rows = readers_of(f.name, getters, constants, routes)
+        finally:
+            os.unlink(f.name)
+        self.assertEqual([(line, form, text) for line, form, text, _ in rows],
+                         [(6, "assert", "_landing"), (8, "position", "_landing"), (8, "position", "_landing"), (8, "slice", "_landing"),
+                          (12, "parser", "_landing"), (13, "parser", "_landing"), (14, "assert", "_landing"), (15, "position", "_landing"),
+                          (17, "position-unpinned", "_landing"), (18, "membership-unpinned", "_landing"), (19, "regex", "_landing"), (20, "regex", "_landing"),
+                          (21, "slice", "_landing"), (22, "parser", "_landing"), (23, "span-slice", "_landing"), (24, "method", "_landing"), (25, "conversion", "_landing"),
+                          (26, "value-use", "_landing"), (27, "value-use", "_landing"), (28, "value-use", "_landing"), (29, "compare", "_landing"),
+                          (30, "regex", "_LANDING_MOBILE_JS"), (31, "value-use", "_landing")])
+        self.assertEqual([r[3] for r in rows if r[1] == "method"], ["split: page.split(\"<\")"])
+        self.assertTrue([r for r in rows if r[1] == "value-use" and r[3].startswith("helper _has")] and [r for r in rows if r[1] == "value-use" and r[3].startswith("helper _win")])
+        self.assertEqual(sorted({r[1] for r in rows} - set(READER_FORMS)), [])
+        self.assertEqual(sorted(set(READER_FORMS) - {r[1] for r in rows}), ["unclassified"], "every named form but the catch-all is met by the synthetic module")
 
     def test_the_route_walk_reads_equality_and_membership(self):
         # round 8 (2026-09-20): the (route, getter) pairs are derived from the handler by a shape-sensitive walk, never restated. A

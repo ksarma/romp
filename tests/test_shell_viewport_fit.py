@@ -15,11 +15,13 @@ tablet is too wide for both mobile breakpoints, so it took the desktop branch.
 Verified in real Firefox before/after by forcing --app-h shorter than 100vh (the iOS toolbar case): the
 rail measured 870..900 inside a 600px-tall body before, and 570..600 after.
 """
+import inspect
 import os
 import re
 import sys
 import tempfile
 import unittest
+from html.parser import HTMLParser
 from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -81,18 +83,22 @@ class OneHeightBasis(unittest.TestCase):
         # transform, filter or contain on the body, so the shell's fixed panels keep the viewport as their containing block:
         # test_no_html_or_body_rule_gives_the_fixed_panels_a_new_containing_block, over the served CSS.
         html = self.html
-        rule = _FIXED_BODY_RULE
-        self.assertEqual(html.count(rule), 1)
-        mobile_at = html.index("@media " + km._MOBILE_MQ + "{")
-        self.assertLess(mobile_at, html.index(rule), "the fixed body is a mobile rule")
-        self.assertLess(html.index("body{display:flex;flex-direction:column;height:100vh;height:var(--app-h,100dvh)}"), html.index(rule),
-                        "after the flex body rule it extends")
+        # the rule as parsed (round 9, 2026-09-20: a count of its spelling and three raw index pins over the page had stood for it):
+        # exactly one body rule with these declarations, inside the mobile block, after the flex body rule it extends
+        rules = served_css.rules(html)
+        mobile = ("@media " + km._MOBILE_MQ,)
+        fixed = [r for r in rules if r.selector == "body" and "body{%s}" % r.declarations == _FIXED_BODY_RULE]
+        self.assertEqual(len(fixed), 1, [(r.at, r.declarations) for r in rules if r.selector == "body"])
+        self.assertEqual(fixed[0].at, mobile, "the fixed body is a mobile rule")
+        flex = [r for r in rules if r.selector == "body" and r.declarations == "display:flex;flex-direction:column;height:100vh;height:var(--app-h,100dvh)"]
+        self.assertEqual(len(flex), 1)
+        self.assertLess(flex[0].index, fixed[0].index, "after the flex body rule it extends")
         # the only position:fixed body rule is the one inside the mobile block, so a document outside _MOBILE_MQ (a fine
         # pointer above 820 px, a coarse one above 1024 px) keeps its body in flow, and the base html,body chain
         # (test_the_shell_height_chain_applies_at_every_width) carries no top or position. Inside the block a fine pointer at
         # or under 820 px takes this fixed body too, at the 0px fit() writes whenever the pointer is not coarse (round 2, 2026-09-19:
         # test_kernel_mobile's finePointer scenario, and the populations legs in test_keyboard_gap_served)
-        self.assertEqual(html.count("body{position:fixed"), 1)
+        self.assertEqual([r.at for r in rules if r.selector == "body" and served_css.is_fixed(r, rules)], [mobile])
         # round 4 (2026-09-20): the consumers of --app-top DERIVED by the parser over every served style element, through any
         # custom-property alias, rather than a substring over the page's prefix (which saw nothing after the block): exactly
         # the two rules the census below holds to the origin, both inside the mobile block, so the population claim in
@@ -293,6 +299,61 @@ class ParsedSheetReads(unittest.TestCase):
         self.assertEqual([(r.selector, r.at) for r in served_css.rules("<style type=text/css media=print>#a{top:0}</style>")], [("#a", ("@media print",))])
         # a script element's type is read and not judged (the module's disclosure): a data block is still script text to scripts()
         self.assertEqual(served_css.scripts("<script type=application/json>{\"a\":1}</script>"), ['{"a":1}'])
+
+    def test_a_cdata_marked_section_refuses_and_every_other_declaration_reads_as_html_does(self):
+        # round 9 (2026-09-20), the maintainer's round 5 ruling: html.parser consumes a `<![CDATA[ ... ]]>` section whole where HTML
+        # reads `<!` followed by anything but `--` or DOCTYPE as a bogus comment ending at the FIRST `>`, so a live style element
+        # after a `>` inside such a section was invisible to elements() and rules() with no refusal, the fourth silent divergence
+        # on this module's roads and the first on the parser road. The section refuses now, wherever it sits and however it ends
+        # (the plant: a page that passed silently before, with the style unread)
+        for page in ("<![CDATA[ x > <style>#a{top:0}</style> ]]>", "<![CDATA[ x > ]]><style>#a{top:0}</style>", "<![CDATA[ oops <style>#a{top:0}</style>",
+                     "<style>#b{top:0}</style><![CDATA[]]>"):
+            with self.assertRaises(AssertionError, msg=page) as cm:
+                served_css.rules(page)
+            self.assertIn("CDATA", str(cm.exception), page)
+        # the other declarations html.parser hands over end where HTML's bogus comments end, at the first `>`, and read as comment
+        # text: a conditional-comment section, a bogus `<!foo>`, a processing instruction; the style after each is live, and each
+        # span is comment text to the pins census (a token inside one is comment-satisfiable)
+        for page, spans in (("<![if !IE]><style>#a{top:0}</style><![endif]>", ["<![if !IE]>", "<![endif]>"]),
+                            ("<!foo bar><style>#a{top:0}</style>", ["<!foo bar>"]),
+                            ("<?xml version='1.0'?><style>#a{top:0}</style>", ["<?xml version='1.0'?>"])):
+            self.assertEqual([r.selector for r in served_css.rules(page)], ["#a"], page)
+            self.assertEqual([page[s:e] for s, e in served_css.html_comment_spans(page)], spans, page)
+        # the DOCTYPE is a declaration HTML reads as its own token, to the first `>`, and nothing inside it: an event, no span
+        page = "<!DOCTYPE html><style>#a{top:0}</style>"
+        self.assertEqual(([r.selector for r in served_css.rules(page)], served_css.html_comment_spans(page)), (["#a"], []))
+
+    def test_the_tokenizers_handler_surface_is_enumerated_by_the_module(self):
+        # round 9 (2026-09-20): the module's account of what html.parser hands it is DERIVED from the class, not kept by hand (the
+        # hand-kept enumeration had named CSS and JS tokenizing and the script-data escaped states, and not the marked section that
+        # passed silently). Every handle_* method and unknown_decl on the class is a row of TOKENIZER_SURFACE with a verb the reader
+        # actually implements (an override for a verb other than `event`, none for `event` where the base method is inherited), the
+        # element sets the tokenizer reads as text are all refused containers, and the constructor's parameters are the two the
+        # module sets or leaves. A handler a Python release adds reds here until the module classifies it.
+        handlers = sorted(n for n in dir(HTMLParser) if n.startswith("handle_") or n == "unknown_decl")
+        self.assertEqual(handlers, sorted(served_css.TOKENIZER_SURFACE), "a handler the module's table does not classify")
+        verbs = {"read", "comment", "event", "refused"}
+        for name, (verb, what) in served_css.TOKENIZER_SURFACE.items():
+            self.assertIn(verb, verbs, name)
+            self.assertTrue(what and "HTML" in what, "the HTML behaviour stands beside the reader's: %s" % name)
+            overridden = name in vars(served_css._Elements)
+            self.assertTrue(overridden, "%s: the reader implements every handler (the position event at least)" % name)
+        text_sets = set(getattr(HTMLParser, "CDATA_CONTENT_ELEMENTS", ())) | set(getattr(HTMLParser, "RCDATA_CONTENT_ELEMENTS", ()))
+        self.assertTrue(text_sets >= {"script", "style"}, text_sets)
+        self.assertEqual(sorted(text_sets - served_css.TOKENIZER_TEXT_ELEMENTS), [], "an element the tokenizer reads as text that the module does not name")
+        params = sorted(inspect.signature(HTMLParser.__init__).parameters)
+        self.assertEqual(sorted(set(params) - {"self", "convert_charrefs", "scripting"}), [], "a constructor parameter the module has not considered: %r" % (params,))
+
+    def test_the_viewport_meta_is_read_from_the_element(self):
+        # round 9 (2026-09-20): meta elements join the layer (D in the maintainer's round 5 ruling: the one regex over raw page text
+        # this change had added); the reader compares the name as written, ASCII-folded, and refuses zero or two matches
+        page = "<!-- <meta name=viewport content='x'> --><META Name=Viewport content=\"a,b\"><meta name=other content=c>"
+        self.assertEqual(served_css.meta_content(page, "viewport"), "a,b")
+        self.assertEqual([(e.kind, served_css.attr(e, "name")) for e in served_css.elements(page)], [("meta", "Viewport"), ("meta", "other")])
+        for page in ("<meta name=other content=c>", "<meta name=viewport content=a><meta name=viewport content=b>", "<meta name=' viewport ' content=a>"):
+            with self.assertRaises(AssertionError, msg=page):
+                served_css.meta_content(page, "viewport")
+        self.assertIsNone(served_css.meta_content("<meta name=viewport>", "viewport"))
 
     def test_every_attribute_compare_follows_the_html_rule_for_that_attribute(self):
         # round 9 (2026-09-20), the maintainer's round 5 ruling asked once, of every road: the style type refusal had stripped the

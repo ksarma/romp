@@ -5,6 +5,7 @@ It used to be hidden unless Debug mode was on (an `applyDebug()` helper in the g
 only governs the timeline's judging band. Source-level pin against the kernel's embedded gear chrome.
 """
 import os
+import sys
 import unittest
 from romp_load import load_source
 import tempfile
@@ -18,6 +19,8 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))
+sys.path.insert(0, HERE)
+import served_css   # noqa: E402  the served page's live scripts, comments removed (loads no romp code)
 
 
 class RefreshButtonDecoupledTest(unittest.TestCase):
@@ -83,8 +86,11 @@ class RestartReloadRaceTest(unittest.TestCase):
     def test_the_flip_hands_the_decision_to_the_reload_core_and_never_reloads_by_itself(self):
         import json
         html = km._landing()
-        a = html.index("window.__rompRestart=function(){")
-        fn = html[a:html.index("var rf=document.getElementById('rail-refresh');", a)]
+        # the function's window inside one live script's code, comments removed (round 9, 2026-09-20: it had been sliced from the
+        # raw page)
+        js = next(s for s in served_css.scripts(html) if "window.__rompRestart=function(){" in s)
+        a = js.index("window.__rompRestart=function(){")
+        fn = js[a:js.index("var rf=document.getElementById('rail-refresh');", a)]
         self.assertIn("if(b&&b!==%s){boot.classList.add('gone');if(window.__rompReload)window.__rompReload.checkBoot();else location.reload();}" % json.dumps(km._BOOT_ID), fn,
                       "the flip drops the splash and asks the core to read /version; only a page without the core reloads as before")
         self.assertNotIn("if(b&&b!==%s)location.reload()" % json.dumps(km._BOOT_ID), fn, "the flip's own reload is gone (2026-09-14)")
