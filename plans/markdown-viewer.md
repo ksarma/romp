@@ -8578,7 +8578,10 @@ L6. **No kernel change, no new route; one new kind of request leaves the machine
 route: a Back or Forward open fetches the file through the same `/file` route the link's open used, a figure's open in
 the viewer fetches the picture through it as the report's paint did, and the trail lives in the page. One request is
 new (the file review's HIGH 1): a plain click on a loaded remote picture, its Open the picture control, and a
-Cmd/Ctrl-click on it open a top-level tab at the picture's address (L3, `openUrlTab`), a second, differently kinded,
+Cmd/Ctrl-click on it (the control at any time, and the two clicks on the picture where the press reaches it, the Comments
+panel closed or the pointer coarse; L3, and the file review's round 10, regression-1, which found this home and open
+point 11 without the condition round 8's fresh-1 put in every other) open a top-level tab at the picture's address (L3,
+`openUrlTab`), a second, differently kinded,
 credentialed request: a request of type document to a host the page had requested the image from, carrying cookie
 classes the image request did not (measured in Chromium by file-view-figure-chosen-browser.test.ts: the Lax and the
 None cookie on the tab's document request, the None cookie alone on the image request, the Strict one on neither);
@@ -8903,13 +8906,14 @@ Playwright browser).
     should be other keys, is a ruling; the guide's trail sentence states the exception (the review's round 2, held by
     tests/test_guide_trail_chords_and_figure_button.py to the shell script's lines).
 11. The remote picture's tab (L3, L6; the file review's HIGH 1). Two roads, both priced here and neither chosen: (a) as
-    built: a plain click on a loaded remote picture, its control, and a Cmd/Ctrl-click on it open a top-level tab at
-    the picture's address, a document request to a host the page had requested the image from that carries cookie
+    built: a plain click on a loaded remote picture, its control, and a Cmd/Ctrl-click on it (the control at any time,
+    and the two clicks on the picture where the press reaches it, the Comments panel closed or the pointer coarse; L3)
+    open a top-level tab at the picture's address, a document request to a host the page had requested the image from that carries cookie
     classes the image request did not (L3's table), where before the follow-on only an author's link did; one gesture
     opens every picture, remote or local, and the tab is observed as a request by
     file-view-figure-chosen-browser.test.ts from each of the three gestures; (b) the narrow road: the tab for the
-    explicit control and for a Cmd/Ctrl-click alone, a bare plain click on a remote picture doing nothing, as before
-    the follow-on. The narrow road keeps the request: the control and the modified click still open the same
+    explicit control and for a Cmd/Ctrl-click where the press reaches the picture alone, a bare plain click on a remote
+    picture doing nothing, as before the follow-on. The narrow road keeps the request: the control and the modified click still open the same
     credentialed tab (the file review's round 2, extra5-3), so it changes which gesture makes it and not what leaves;
     the cost is one gesture meaning two things by where the picture comes from, and the change is a flag on
     openFigure's call from the control's branch that the web arm reads beside `wantsOwnTab`, with the plain-click case

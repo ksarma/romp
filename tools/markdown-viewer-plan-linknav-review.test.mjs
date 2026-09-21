@@ -268,7 +268,23 @@ test('the file review: L3 and L6 record the remote picture\'s tab as the one new
   assert.ok(viewer.includes('if (control) { const img = figureOfControl(control); if (img) openFigure(img, ev); return; }'), 'the control\'s click takes openFigure too');
   assert.ok(L3.includes('a plain click on a LOADED remote picture, its control, and a Cmd/Ctrl-click on it, three gestures through one arm, all call `openUrlTab`'), 'L3 names the three gestures');
   assert.ok(L3.includes('The modified click opens the picture\'s own address and never the kernel\'s /file URL, since openFigure\'s web arm runs before its /file-tab branch'), 'L3 corrects the modified click');
-  assert.ok(L6.includes('a plain click on a loaded remote picture, its Open the picture control, and a Cmd/Ctrl-click on it open a top-level tab'), 'L6 names the three gestures');
+  /** The clause of `text` in which the three gestures open the tab, from the plain click on a loaded remote picture to "open a
+   *  top-level tab": it names the control and the Cmd/Ctrl-click, and carries the condition beside them, the control at any time
+   *  and the two clicks on the picture where the press reaches it, the Comments panel closed or the pointer coarse. Keyed on the
+   *  property and not the bytes (the file review's round 10, regression-1: the pins on L6 and open point 11 held the unconditioned
+   *  phrases by text, so the condition round 8's fresh-1 put in every other home could never be red in these two). */
+  const gesturesConditioned = (text, home) => {
+    const at = text.indexOf('a plain click on a loaded remote picture');
+    assert.ok(at >= 0, home + ' names the plain click on a loaded remote picture');
+    const end = text.indexOf('open a top-level tab', at);
+    assert.ok(end > at, home + ': the gestures open a top-level tab');
+    const clause = text.slice(at, end);
+    assert.match(clause, /, its (?:Open the picture )?control,/, home + ' names the control among the gestures: ' + clause);
+    assert.match(clause, /and a Cmd\/Ctrl-click on it\b/, home + ' names the Cmd\/Ctrl-click among the gestures: ' + clause);
+    assert.match(clause, /\(the control at any time, and the two clicks on the picture where the press reaches it, the Comments panel closed or the pointer coarse\b/, home + ' carries the condition beside the gestures (the control at any time; the two clicks where the press reaches the picture, the Comments panel closed or the pointer coarse): ' + clause);
+    return clause;
+  };
+  gesturesConditioned(L6, 'L6');
   // the claim's clauses, by their text, in L3 and in L6 (extra5-1: L6's own statement was pinned nowhere, so it could drift with both
   // pin modules green); "requested" for "fetched" (extra5-4), and the failed figure that makes the clause hold everywhere
   const CLAUSES = ['a second, differently kinded, credentialed request', 'a host the page had requested the image from', 'only an author\'s link opened such a tab', 'The gate is not bypassed: no request reaches a host the gate still holds'];
@@ -297,7 +313,8 @@ test('the file review: L3 and L6 record the remote picture\'s tab as the one new
   assert.ok(L6.includes('the Lax and the None cookie on the tab\'s document request, the None cookie alone on the image request, the Strict one on neither'), 'L6 states the same table');
   const op11 = between(openPoints, '11. The remote picture\'s tab (L3, L6; the file review\'s HIGH 1).', '12. A picture opened from a figure takes no Recent row (L3)');
   assert.ok(op11.includes('(a) as built') && op11.includes('(b) the narrow road'), 'both roads priced');
-  assert.ok(op11.includes('a plain click on a loaded remote picture, its control, and a Cmd/Ctrl-click on it open a top-level tab'), 'road (a) names the three gestures');
+  gesturesConditioned(between(op11, '(a) as built', '(b) the narrow road'), 'open point 11, road (a)');
+  assert.match(between(op11, '(b) the narrow road', 'a bare plain click'), /the tab for the explicit control and for a Cmd\/Ctrl-click where the press reaches the picture alone/, 'road (b) keeps the tab for the control and for the modified click under the same condition, where the press reaches the picture');
   assert.ok(op11.includes('The narrow road keeps the request: the control and the modified click still open the same credentialed tab'), 'road (b) says what it keeps (extra5-3)');
   assert.ok(op11.includes('The reviewer\'s reading (romp-manager, 2026-09-20), for the owner to take or leave: the explicit control is an unambiguous gesture and a plain click on a picture is not'), 'the reviewer\'s reading, attributed');
   assert.ok(op11.includes('The landing is the owner\'s whatever the tier'));
