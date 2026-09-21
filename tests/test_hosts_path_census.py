@@ -11,9 +11,12 @@ the three files makes a by-path syscall on a hosts path except the sites `RESIDU
 reason. The roles (the fourth addendum, 2026-09-20, split the second and third addenda's UNCONVERTED into the first
 two, on the reviewer's ruling of 19:12Z): PERMANENT, the connect to the published socket (HostTransport.connect): a
 Unix socket is connected by the path in its address and connect(2) has no dir_fd form, so the site stays by path for
-as long as the transport is a Unix socket, closed as an open item; FOLLOW-UP, the five sites of ONE queued change,
-"the journal reads descend by descriptor" (the general notes' small-asks file): the two journal globs in the kernel
-and sh.read_journal_dir's glob and the two reads that take the paths it yields; HELPER, the two directory helpers'
+as long as the transport is a Unix socket, closed as an open item; FOLLOW-UP, a site of a queued change, EMPTY since the
+fork PR that follows #814 (2026-09-21) landed the one item the role held, "the journal reads descend by descriptor"
+(the general notes' small-asks file): its five sites, the two journal globs in the kernel and the host module's
+read_journal_dir with its glob and the two reads that took the paths it yielded, are gone, the reader rewritten in
+kernel/host_transport.py over the held <sid> descriptor (journal_segments, read_journal_dir), and the pin now holds the
+role empty and refuses a by-path read under hosts/ that would refill it; HELPER, the two directory helpers'
 path-taking syscalls before the spawn road's descent (condition 1's window, stated in write_spawn_spec); GUARD, the
 descent's own open of hosts/ by path with O_NOFOLLOW off the state root and the lstat that words its refusal, and host
 side the lstat of hosts/ before the bind; UNREACHABLE, a by-path arm a guard makes unreachable (none at this head:
@@ -1702,7 +1705,7 @@ def wide_census(root=ROOT):
 # and the reason by hand.
 PERMANENT, FOLLOW_UP, HELPER, GUARD, UNREACHABLE, HANDOFF, HOST = "permanent", "follow-up", "helper", "guard", "unreachable", "handoff", "host"
 ROLES = (PERMANENT, FOLLOW_UP, HELPER, GUARD, UNREACHABLE, HANDOFF, HOST)
-FOLLOW_UP_ITEM = "the journal reads descend by descriptor"     # the one small-asks item the five follow-up sites point at
+FOLLOW_UP_ITEM = "the journal reads descend by descriptor"     # the one small-asks item the role held; landed by the fork PR that follows #814 (2026-09-21), the role EMPTY since
 RESIDUAL = {
     ('kernel/host_transport.py', '_open_dir_nofollow', 'os.open', 'name', 1):
         ('mixed', GUARD, "the descent's own open: hosts/ by PATH with O_DIRECTORY|O_NOFOLLOW off the state root, <sid> by NAME under the first descriptor; the spawn, read and removal roads all enter here"),
@@ -1722,12 +1725,6 @@ RESIDUAL = {
         ('by-path', HOST, "an acknowledged segment deleted by path"),
     ('kernel/session_host.py', 'Journal.read_from', 'open', 'self._path(seg)', 1):
         ('by-path', HOST, "a segment read by path"),
-    ('kernel/session_host.py', 'read_journal_dir', 'glob', 'd', 1):
-        ('by-path', FOLLOW_UP, FOLLOW_UP_ITEM + ": the orphan journal's segment listing is a glob over the directory; the descriptor form is a scandir off the <sid> descriptor with a name match, a rewrite of the function and its two callers (the orphan road's tail check, the replay transport's _read_journal)"),
-    ('kernel/session_host.py', 'read_journal_dir', 'read_text', 'd / "gaps.json"', 1):
-        ('by-path', FOLLOW_UP, FOLLOW_UP_ITEM + ": gaps.json read by the path of the directory the glob lists; converted with the glob"),
-    ('kernel/session_host.py', 'read_journal_dir', 'open', 'p', 1):
-        ('by-path', FOLLOW_UP, FOLLOW_UP_ITEM + ": each segment opened by the path the glob yields; converted with the glob"),
     ('kernel/session_host.py', 'owner_only_dir', 'mkdir', 'd', 1):
         ('by-path', HELPER, "the mkdir by path; hosts/ for hosts_dir's callers, hosts/<sid>/ for write_spawn_spec and the host's Journal (condition 1's window)"),
     ('kernel/session_host.py', 'owner_only_dir', 'os.lstat', 'd', 1):
@@ -1760,12 +1757,8 @@ RESIDUAL = {
         ('by-path', HOST, "identity.json written by path after the constructor's guard"),
     ('kernel/session_host.py', 'SessionHost.run', 'unlink', 'self.sock_path', 1):
         ('by-path', HOST, "the exit's unlink of the published socket"),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_lease_applies', 'glob', 'hdir', 1):
-        ('by-path', FOLLOW_UP, FOLLOW_UP_ITEM + ": the connect road's journal glob, reached only after the identity read that now takes the descent; a glob's descriptor form is a scandir under the <sid> descriptor"),
     ('kernel/sdk_backend.py', 'SdkBackend._spawn_host', 'subprocess.Popen', 'argv', 1):
         ('exec-arg', HANDOFF, "the spec path leaves the process in argv (host.stderr's descriptor as the child's stderr beside it); the host re-opens it by path in its constructor, the host-side item"),
-    ('kernel/sdk_backend.py', 'SdkBackend._host_orphan_recover', 'glob', 'hdir', 1):
-        ('by-path', FOLLOW_UP, FOLLOW_UP_ITEM + ": the orphan road's journal glob, reached only when the road's descent admitted the directory; the same descriptor form as the other glob"),
 }
 # The read roads' terminals since the second addendum, each held by-descriptor: the owner question's stat of the name
 # under the <sid> descriptor (_stat_name, shared by host_file_exists and read_host_file since the fifth addendum, and by
@@ -1777,12 +1770,21 @@ RESIDUAL = {
 # terminal of their own since the seventh addendum: host_log_mark reads the size off _stat_name's answer and
 # _open_host_log opens through _open_host_file, so the two by-descriptor terminals they had (the mark's stat by name, the
 # open by name and its fdopen) and the two by-path arms listed UNREACHABLE through the sixth are gone from the derived set.
+# Since the fork PR that follows #814 (2026-09-21): the orphan journal's listing, a scandir off the <sid> descriptor
+# (journal_segments; the five follow-up sites it and read_journal_dir replaced asked the owner question through
+# _stat_name and _open_host_file, so they add no terminal of their own beyond the scandir), and the write side's opener
+# (_open_host_file_for_write: the fstat of the descriptor its open returned and the fchmod on it, which through #814 were
+# host_stderr_open's and write_spawn_spec's own; write_spawn_spec's fdopen of that descriptor stays its own).
 CONVERTED = (
     ('kernel/host_transport.py', '_stat_name', 'os.stat', 'name', 1),
     ('kernel/host_transport.py', '_open_file_nofollow', 'os.open', 'name', 1),
     ('kernel/host_transport.py', '_open_host_file', 'os.fstat', 'fd', 1),
     ('kernel/host_transport.py', '_open_host_file', 'os.fdopen', 'fd', 1),
     ('kernel/host_transport.py', 'host_sock_present', 'os.stat', 'name', 1),
+    ('kernel/host_transport.py', 'journal_segments', 'os.scandir', 'dirs.dir', 1),
+    ('kernel/host_transport.py', '_open_host_file_for_write', 'os.fstat', 'fd', 1),
+    ('kernel/host_transport.py', '_open_host_file_for_write', 'os.fchmod', 'fd', 1),
+    ('kernel/host_transport.py', 'write_spawn_spec', 'os.fdopen', 'fd', 1),
 )
 
 
@@ -2024,9 +2026,10 @@ class HostsPathCensus(unittest.TestCase):
         outside the list is a new road or a read moved back onto a path; a listed one that is gone or now takes a
         descriptor is removed from the list. The read roads' terminals are by-descriptor (CONVERTED). Every entry has a
         role of the seven and a reason; the permanent set is exactly the connect (the fourth addendum: closed as an open
-        item, by-path for as long as the transport is a Unix socket); the follow-up set is exactly the five sites of the
-        one queued item, each reason naming it, by-path, and non-empty while the item is open (when it lands this
-        assertion becomes `assertEqual(follow_up, [])`)."""
+        item, by-path for as long as the transport is a Unix socket); the follow-up set is EMPTY (the fork PR that
+        follows #814, 2026-09-21: the one queued item landed, its five sites converted, and the assertion that held the
+        set at those five became `assertEqual(follow_up, [])`, so a by-path journal read written back under hosts/ is
+        an unlisted site here and a listed one under this role is a refill of a landed item, both red)."""
         derived = {t.key(): t.mech for t in self.census.members() if t.op not in ("carrier", "mint", "escape")}
         self.assertGreater(len(derived), 0, "the census found no syscall on a path under hosts/: the seed rule is broken")
         residual = self.census.residual()
@@ -2054,11 +2057,11 @@ class HostsPathCensus(unittest.TestCase):
         self.assertEqual([k[1] for k in permanent], ["HostTransport.connect"],
                          "the permanent residual is the connect and nothing else: connect(2) has no dir_fd form")
         follow_up = sorted(k for k, v in RESIDUAL.items() if v[1] == FOLLOW_UP)
-        self.assertGreater(len(follow_up), 0, "no follow-up site is listed: the item landed, and this assertion becomes assertEqual(follow_up, [])")
-        self.assertEqual(sorted(k[1] for k in follow_up),
-                         sorted(["read_journal_dir", "read_journal_dir", "read_journal_dir",
-                                 "SdkBackend._host_lease_applies", "SdkBackend._host_orphan_recover"]),
-                         "the follow-up item's five sites by function: read_journal_dir's three reads, the two journal globs")
+        self.assertEqual(follow_up, [], "the follow-up role is empty since its one item landed (the journal reads descend by "
+                                        "descriptor, the fork PR that follows #814): a by-path journal read under hosts/ is converted, "
+                                        "not listed: %r" % (follow_up,))
+        self.assertEqual([k for k in derived if k[1] in ("read_journal_dir", "journal_segments", "journal_has_tail") and derived[k] != "by-descriptor"], [],
+                         "the orphan reader's terminals are all by-descriptor")
 
     def test_no_use_escapes_the_walk(self):
         """The six forms the escape rule covers (the module docstring, CLASSIFY) are printed as escapes by file and line;
