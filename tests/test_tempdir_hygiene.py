@@ -1266,6 +1266,36 @@ class HarnessSocketBudget(unittest.TestCase):
         self._release(ctl)
         self.assertEqual(os.listdir(synthetic), [], "the controller removed the dead worker's root along with its own")
 
+    @unittest.skipUnless(os.path.isdir("/proc"), "procfs: the zombie state is read from /proc/<pid>/stat")
+    def test_a_zombie_child_is_dead_and_its_listed_root_is_removed(self):
+        """A child that exited but was never reaped (state Z) owns nothing: the package's _pid_alive says dead where
+        signal 0 still says alive, and remove_dead_children takes the root it listed (2026-09-21; until then a zombie
+        worker's root survived the parent's exit)."""
+        pkg = sys.modules["tests"]
+        system = tempfile.mkdtemp(prefix="zombie-")
+        parent = tempfile.mkdtemp(prefix="romp-tests-", dir=system)
+        child_root = tempfile.mkdtemp(prefix="romp-tests-", dir=system)
+        proc = subprocess.Popen([sys.executable, "-c", "pass"])
+        self.addCleanup(proc.wait)
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:                                     # loop-ok: bounded wait for the exit itself
+            with open("/proc/%d/stat" % proc.pid, "rb") as fh:
+                stat = fh.read()
+            if stat[stat.rindex(b")") + 1:].split()[0] == b"Z":
+                break
+            time.sleep(0.01)
+        else:
+            self.fail("the child never reached the zombie state")
+        os.kill(proc.pid, 0)                                                   # signal 0 still finds it: the rule this replaces
+        self.assertFalse(pkg._pid_alive(proc.pid), "a zombie is dead")
+        self.assertTrue(pkg._pid_alive(os.getpid()), "this process is alive")
+        with open(os.path.join(parent, pkg.TEST_ROOT_CHILDREN), "w", encoding="utf-8") as fh:
+            fh.write(json.dumps({"pid": proc.pid, "root": child_root}) + "\n")
+        self.assertEqual(pkg.remove_dead_children(parent, system), [])
+        self.assertFalse(os.path.isdir(child_root), "the zombie's root is removed")
+        proc.wait()
+        self.assertFalse(pkg._pid_alive(proc.pid), "and reaped, it stays dead")
+
     def test_a_live_child_keeps_its_root_when_the_parent_exits(self):
         """The other direction: a child still alive at the parent's exit owns its root; the parent leaves it, and the
         child removes it itself. (A nested pytest that outlives its test is such a child.)"""

@@ -177,12 +177,30 @@ write_owner_marker(TMP_ROOT)
 
 
 def _pid_alive(pid):
-    """The kernel's rule (sdk_backend._pid_alive): signal 0, and only "no such process" means dead."""
+    """Is the owner of a listed child root still running? On Linux `/proc/<pid>/stat` decides, and a ZOMBIE (state Z:
+    exited, not yet reaped by its parent) is DEAD here — a worker xdist has not collected yet, or a child whose parent
+    never waits, owns nothing any more and its root is for the taking, where signal 0 would still call it alive. Where
+    there is no procfs, or the stat file cannot be read (a race with the exit), the kernel's rule (sdk_backend._pid_alive):
+    signal 0, and only "no such process" means dead. A pid that is not a number is left alone (alive)."""
     try:
-        os.kill(int(pid), 0)
+        pid = int(pid)
+    except (ValueError, TypeError):
+        return True
+    try:
+        with open("/proc/%d/stat" % pid, "rb") as fh:
+            stat = fh.read()
+        # the comm field is in parentheses and may hold spaces or a ')': the state is the first field after the LAST ')'
+        state = stat[stat.rindex(b")") + 1:].split()[0]
+        if state == b"Z":
+            return False
+        return True
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        os.kill(pid, 0)
     except ProcessLookupError:
         return False
-    except (OSError, ValueError, TypeError):
+    except OSError:
         return True
     return True
 
