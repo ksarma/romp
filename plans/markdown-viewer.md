@@ -8710,7 +8710,8 @@ receiver's spelling, the form and WHAT THE SEAT SEATS, the seated arguments or t
 receiver is and so why its seat lands no child in the body, and the declaration a bare receiver name is bound to, so an
 entry reads ONE binding and ONE seat: a second declaration of a listed name inside the entry's function fails with its line
 rather than passing under the entry's claim (the branch's verification pass finding census-2); a second seat at a listed
-site is a second entry and fails until read (the round-6 review's cluster A, 2026-09-20: keyed on the function, receiver
+site is a second entry and fails until read, and a seat spelled byte for byte alike in two branches of one function declares
+`times` and is read at each, so one entry is one seat SPELLING (the round-6 review's cluster A, 2026-09-20: keyed on the function, receiver
 and form alone, one entry admitted every seat sharing the triple, so a second `main.appendChild` seating an unlisted root
 in the viewer's body passed under the entry hand-read for `main.appendChild(body)`; the rise across the change of key is
 the key's alone, four numbers from one walk (the round-7 pre-answers, 2026-09-21, an analyst's and a refuter's independent
@@ -8719,8 +8720,8 @@ runs agreeing in every cell: each head's census code over each head's comment-st
 a detached scratch copy's out-tests after `node esbuild.js --tests` in vscode-extension and `node --test` over the probe
 module under the systemd-run recipe): the triple key gives 60 at the round-6 file and 60 at the round-7 file, and the seat
 key gives 90 entries over 92 seats at both, two entries standing for two byte-identical seats each (codeBlock's
-`pre.appendChild(code)` and `wrap.appendChild(pre)`, spelled alike in the numbered and plain branches), so the rise of 30
-entries is what the triple hid and the site population, 92, moves in neither file's cell; beside the total, the merge-base
+`pre.appendChild(code)` and `wrap.appendChild(pre)`, spelled alike in the numbered and plain branches), each read at both
+seats, which is why the seats exceed the entries by two, so the rise of 30 entries is what the triple hid and the site population, 92, moves in neither file's cell; beside the total, the merge-base
 file (the round-7 head's base with origin/main) gives 90 non-body sites, 59 triples and 88 seat-key entries under the same
 walk (the refuter's run alone, one execution), so this PR's own contribution is two seats (the two `print.button` seats), one
 triple (openUrlView's `acts.insertBefore`; the fileGroup seat folds into an existing triple) and two seat-key entries, each a

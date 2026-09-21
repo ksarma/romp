@@ -676,7 +676,9 @@ test("bodyReady reads the element children through `children`, else through `chi
 // seating call or assignment, its enclosing function's name, the receiver's spelling, the form, WHAT IT SEATS (the seated
 // arguments as spelled, or the value assigned; for a site-read call every argument, since where it seats into is among
 // them), and, for a receiver that is a bare name, the DECLARATION it is bound to, with what the receiver is and so why its
-// seat lands no child in the body; two seats at one site are two entries; an entry the file has two seats for fails; a
+// seat lands no child in the body; two seats at one site are two entries, since one entry is one seat SPELLING, and a seat
+// spelled byte for byte alike in two branches of one function declares `times` and is read at each; an entry two seats match
+// fails unless it says so; a
 // second declaration of a listed name inside the entry's function (a block's `const main = md.parentElement!`, a
 // callback's `(main) =>`) fails with its line rather than passing under the entry's claim (the branch's verification pass
 // finding census-2); each seated argument that is a bare name is held to ITS declaration too (`seatedBy`; the verifiers'
@@ -782,9 +784,14 @@ test("bodyReady reads the element children through `children`, else through `chi
 // on<event> handler passes only as a site ATTR_NAMES_READ_BY_HAND lists. A listed site the source no longer has fails too (a
 // stale entry is removed, never kept). The resolved set is then held equal to the flow's three lists (READY_ROOTS, NOT_READY_ROOTS, LINE_ROOTS) and
 // bodyReady is executed over each root as its list says. Each seated expression resolves as before: a builder call
-// (`mdBlock(...)`) to the `el(...)` assigned to the variable the builder's last `return` names; a bare variable to the
-// expression assigned to it last before the site; a ternary to both its branches; an `el("<tag>", "<class>")` to itself;
-// anything else fails with the expression.
+// (`mdBlock(...)`) to the `el(...)` EVERY return of the builder names, each return read from the compiler's tree (a nested
+// function's excluded), a return of anything but a bare name refused, and the roots united; a bare variable to the ONE
+// expression assigned to it in its declaring block, its initializer or its one assignment, a name assigned an element more
+// than once there refused, a null or undefined write not counted (the round-8 fixes, the round-7 review's extra9-1, 2026-09-21: before this the builder's LAST line-anchored
+// `return <name>;` alone was read, so a root seated through an early return, a guarded one-liner among them, was neither
+// derived nor refused, and a bare name resolved to the last textual assignment before the site, so a branch's assignment
+// was passed over); a ternary to both its branches; an `el("<tag>", "<class>")` to itself; anything else fails with the
+// expression.
 // WHERE THIS MODULE LIVES (the maintainer's round-8 ruling on cluster C, 2026-09-21): the census builds a TypeScript PROGRAM
 // over the viewer (ts.createProgram, programOver) and runs under npm test in vscode-extension, where node_modules stands, so it
 // is permanently a vscode-extension-leg module; no part of it moves under tools/. The record module there
@@ -900,21 +907,52 @@ function rootsOf(src: string, expr: string, before: number): string[] {
   if (built) return [built[1] + "." + built[2].split(" ").join(".")];
   const call = /^(\w+)\(/.exec(e);
   if (call && call[1] !== "el") {
-    const head = "\nfunction " + call[1] + "(";
-    const at = src.indexOf(head);
-    assert.ok(at >= 0, "the builder " + call[1] + " is a top-level function of file-view.ts");
-    const end = src.indexOf("\n}\n", at);
-    const body = src.slice(at, end);
-    const returns = [...body.matchAll(/^\s+return (\w+);$/gm)];
-    assert.ok(returns.length >= 1, "the builder " + call[1] + " returns a variable");
-    return rootsOf(src, returns[returns.length - 1][1], at + body.length);
+    // every return of the builder, read from the compiler's tree (the round-8 fixes, the round-7 review's extra9-1: a
+    // line-anchored regex read the LAST `return <name>;` alone, so a root returned early, `if (x) return early;` among them,
+    // was neither derived nor refused); a return inside a nested function is that function's; a return of anything but a
+    // bare name is refused, which the census turns into a refusal with the seat's line
+    const sf = programOver(src).getSourceFile(VIEWER_PATH)!;
+    const fn = sf.statements.find((s): s is ts.FunctionDeclaration => ts.isFunctionDeclaration(s) && s.name !== undefined && s.name.text === call[1]);
+    assert.ok(fn !== undefined && fn.body !== undefined, "the builder " + call[1] + " is a top-level function of file-view.ts");
+    const returns: ts.ReturnStatement[] = [];
+    const walk = (n: ts.Node): void => { if (ts.isFunctionLike(n)) return; if (ts.isReturnStatement(n)) returns.push(n); ts.forEachChild(n, walk); };
+    ts.forEachChild(fn.body, walk);
+    assert.ok(returns.length >= 1, "the builder " + call[1] + " returns a value");
+    const roots = new Set<string>();
+    for (const r of returns) {
+      assert.ok(r.expression !== undefined && ts.isIdentifier(r.expression), "the builder " + call[1] + " returns a bare name at every return, and line " + (sf.getLineAndCharacterOfPosition(r.getStart(sf)).line + 1) + " returns `" + (r.expression ? r.expression.getText(sf).replace(/\s+/g, " ") : "") + "`, which the census cannot resolve: a builder's root is read from the name each return hands back");
+      for (const root of rootsOf(src, r.expression.text, r.getStart(sf))) roots.add(root);
+    }
+    return [...roots];
   }
   const name = /^(\w+)$/.exec(e);
   if (name) {
-    const assigned = [...src.slice(0, before).matchAll(new RegExp("\\b" + name[1] + " = (?!=)([^;\\n]+?)(?: as \\w+)?;", "g"))];
-    assert.ok(assigned.length >= 1, "the variable " + name[1] + " is assigned before the site at " + before);
-    const last = assigned[assigned.length - 1];
-    return rootsOf(src, last[1], last.index!);
+    // the ONE expression the name is bound to in its declaring block (the round-8 fixes, extra9-1: before this the last textual
+    // assignment before the site was taken, so a branch's assignment was passed over): the declaration the compiler resolves the
+    // name to from the site, its initializer and every assignment to that binding inside the block that declares it, nested
+    // functions included; a nullish write (`null`, `undefined`) assigns no element and is not counted (the viewer's fallback
+    // textarea is null-initialised, assigned its element once and nulled on exit); more than one element write is refused,
+    // since the census cannot say which the seat sees; none is refused as before
+    const program = programOver(src), sf = program.getSourceFile(VIEWER_PATH)!, checker = program.getTypeChecker();
+    let at: ts.Node = sf;
+    for (;;) { const child = ts.forEachChild(at, (c) => (c.getFullStart() <= before && before < c.getEnd() ? c : undefined)); if (!child) break; at = child; }
+    const sym = checker.resolveName(name[1], at, ts.SymbolFlags.Variable, false);
+    const decl = sym?.declarations?.find((d): d is ts.VariableDeclaration => ts.isVariableDeclaration(d));
+    assert.ok(decl !== undefined, "the variable " + name[1] + " is assigned before the site at " + before);
+    let block: ts.Node = decl.parent;
+    while (!ts.isBlock(block) && !ts.isSourceFile(block) && !ts.isFunctionLike(block)) block = block.parent;
+    const peelCast = (x: ts.Expression): ts.Expression => { let r = x; while (ts.isAsExpression(r) || ts.isParenthesizedExpression(r) || ts.isNonNullExpression(r) || ts.isSatisfiesExpression(r)) r = r.expression; return r; };
+    const writes: Array<{ text: string; at: number; line: number }> = [];
+    if (decl.initializer) writes.push({ text: peelCast(decl.initializer).getText(sf).replace(/\s+/g, " "), at: decl.initializer.getStart(sf), line: sf.getLineAndCharacterOfPosition(decl.getStart(sf)).line + 1 });
+    const collect = (n: ts.Node): void => {
+      if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken) { const l = peelCast(n.left); if (ts.isIdentifier(l) && checker.getSymbolAtLocation(l) === sym) writes.push({ text: peelCast(n.right).getText(sf).replace(/\s+/g, " "), at: n.right.getStart(sf), line: sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1 }); }
+      ts.forEachChild(n, collect);
+    };
+    collect(block);
+    const elementWrites = writes.filter((w) => w.text !== "null" && w.text !== "undefined");
+    assert.ok(elementWrites.length >= 1, "the variable " + name[1] + " is assigned before the site at " + before);
+    assert.ok(elementWrites.length === 1, "the variable " + name[1] + " is assigned " + elementWrites.length + " times in the block that declares it (lines " + elementWrites.map((w) => w.line).join(", ") + "; a null or undefined write is not counted), so it resolves to no one expression at the seat: a bare seated name assigned more than once where it is declared is refused (seat each branch's own element, or bind the name once)");
+    return rootsOf(src, elementWrites[0].text, elementWrites[0].at);
   }
   throw new Error("a seated expression the census cannot resolve: " + e);
 }
@@ -1603,15 +1641,26 @@ function seatSites(src: string): SecondRead {
   const ELEMENT_MAKERS = ["createElement", "createElementNS", "querySelector", "closest", "getElementById", "cloneNode", "importNode", "createTextNode", "createDocumentFragment"];
   /** The element an expression is, by its shape (the verifiers' records-1 of the round-7 build: a root gained through an imported
    *  helper handed an el()-built const or a query result was read on no axis, while the argument axis knew NODE_MEMBERS chains
-   *  alone): `el(...)`, a call of an ELEMENT_MAKERS method, a call of a local builder whose last return is an el()-built variable
-   *  (rootsOf's rule), a name bound to any of these by its declaration, a parameter typed as an element or a node, each
+   *  alone): `el(...)`, a call of an ELEMENT_MAKERS method, a call of a local builder any of whose returns names an el()-built
+   *  variable (every return read, as rootsOf reads them since the round-8 fixes), a name bound to any of these by its declaration, a parameter typed as an element or a node, each
    *  through parentheses, casts and `!`; null for anything else. */
   const elementShape = (a: ts.Expression, depth = 0): string | null => {
     const r = peel(a);
     if (depth > 8) return null;
     if (ts.isCallExpression(r)) {
       const c = r.expression;
-      if (ts.isIdentifier(c)) { if (c.text === "el") return "el(...)"; const d = declNodeOf(c); if (d && ts.isFunctionDeclaration(d) && d.body) { const rets = d.body.statements.filter(ts.isReturnStatement); const last = rets[rets.length - 1]; if (last && last.expression && ts.isIdentifier(last.expression)) { const v = last.expression; const shape = elementShape(v, depth + 1); if (shape) return "a call of the builder " + c.text + ", which returns " + shape; } } return null; }
+      if (ts.isIdentifier(c)) {
+        if (c.text === "el") return "el(...)";
+        const d = declNodeOf(c);
+        if (d && ts.isFunctionDeclaration(d) && d.body) {   // every return of the builder, a nested function's excluded, the shapes united (the round-8 fixes, extra9-1: the last top-level return alone was read)
+          const rets: ts.ReturnStatement[] = [];
+          const walk = (x: ts.Node): void => { if (ts.isFunctionLike(x)) return; if (ts.isReturnStatement(x)) rets.push(x); ts.forEachChild(x, walk); };
+          ts.forEachChild(d.body, walk);
+          const shapes = [...new Set(rets.map((r) => (r.expression && ts.isIdentifier(r.expression) ? elementShape(r.expression, depth + 1) : null)).filter((x): x is string => x !== null))];
+          if (shapes.length) return "a call of the builder " + c.text + ", which returns " + shapes.join(" or ");
+        }
+        return null;
+      }
       const name = memberName(c);
       return name !== null && ELEMENT_MAKERS.includes(name) ? "a " + name + "(...) result" : null;
     }
@@ -1873,8 +1922,10 @@ function seatSites(src: string): SecondRead {
  *  as SeatSite spells it; the verifiers' census-2 of the round-7 build, 2026-09-20: without it a second binding wearing the
  *  seated name passed on the receiver's read alone). A seat the
  *  table does not list fails the census with its line, whatever produced the receiver and however close a listed entry
- *  stands (a second seat at a listed site is a second entry, read where it stands), an entry the source has no seat for
- *  fails it too, and an entry two seats match fails, so the table is the live set of seats and nothing more (the round-5
+ *  stands (a second seat at a listed site is a second entry, read where it stands: one entry is one seat SPELLING, and a seat
+ *  spelled byte for byte alike in two branches of one function declares `times` and is read at each), an entry the source has
+ *  no seat for fails it too, and an entry two seats match fails unless it says `times`, so the table is the live set of seats
+ *  and nothing more (the round-5
  *  review, 2026-09-20: before this the census refused a closed list of dangerous forms and passed every other seat unread;
  *  the round-6 review: keyed on the function, receiver and form, one entry covered every seat on its binding). A body
  *  root's own children (a hint inside the failure pane, the glyph inside a loader) are seats inside the root, not beside
@@ -2227,7 +2278,7 @@ test("the census of the body's roots, its default refusing: every `body` token i
   const roots = [...seated.keys()].sort();
   t.diagnostic("census: " + roots.map((r) => r + " (line " + seated.get(r)!.join(", ") + ")").join("; "));
   const second = seatSites(VIEWER_SRC);
-  t.diagnostic("second read: " + second.sites.length + " seats and site-read calls (" + second.sites.filter((s) => s.body).length + " on the body token, " + second.sites.filter((s) => !s.body).length + " on other receivers, " + SEATS_READ_BY_HAND.length + " entries listed over " + SEATS_READ_BY_HAND.reduce((n, e) => n + (e.times ?? 1), 0) + " seats, one entry per seat), " + second.indexReads.length + " stored index reads (" + INDEX_READS_BY_HAND.length + " distinct sites listed), " + NON_SEATING_METHODS.length + " method names listed as seating nothing; member writes on receivers other than the body token: " + (second.writes.length + second.sites.filter((s) => !s.body && s.assign).length) + " over " + new Set([...second.writes.map((w) => w.name), ...second.sites.filter((s) => !s.body && s.assign).map((s) => s.via.split(" ")[0])]).size + " distinct names (" + second.sites.filter((s) => !s.body && s.assign).length + " seats, " + second.writes.filter((w) => w.through === undefined).length + " by " + NON_SEATING_WRITES.length + " names listed as seating nothing, " + second.writes.filter((w) => w.through !== undefined).length + " through style or dataset by the rule), the body token's " + second.bodyWrites + "; " + second.handedNodes.length + " nodes handed to callees and " + second.elementsHanded.length + " elements handed to callees the file does not declare, " + second.elementsHanded.filter((h) => h.unnamed).length + " of them named by the compiler's type alone (" + ARGS_READ_BY_HAND.length + " entries listed over " + ARGS_READ_BY_HAND.reduce((n, e) => n + (e.times ?? 1), 0) + " hand-offs, " + ARGS_READ_BY_HAND.filter((e) => e.unnamed).length + " of the entries marked `unnamed`), " + second.urlWrites.length + " URL writes (" + URL_WRITES_READ_BY_HAND.length + " entries listed over " + URL_WRITES_READ_BY_HAND.reduce((n, e) => n + (e.times ?? 1), 0) + " writes), " + second.styleWrites.length + " CSS properties written through style from a non-literal under a name listed as taking no url() (" + NON_URL_STYLE_PROPS.length + " names listed), " + second.attrNames.length + " attribute names read by hand (" + ATTR_NAMES_READ_BY_HAND.length + " listed), " + second.attrWrites.length + " attributes set from a non-literal under an aria-* or data-* name (" + NON_URL_ATTRS.length + " names listed as carrying no URL)");
+  t.diagnostic("second read: " + second.sites.length + " seats and site-read calls (" + second.sites.filter((s) => s.body).length + " on the body token, " + second.sites.filter((s) => !s.body).length + " on other receivers, " + SEATS_READ_BY_HAND.length + " entries listed over " + SEATS_READ_BY_HAND.reduce((n, e) => n + (e.times ?? 1), 0) + " seats, one entry per seat spelling, `times` for a repeat), " + second.indexReads.length + " stored index reads (" + INDEX_READS_BY_HAND.length + " distinct sites listed), " + NON_SEATING_METHODS.length + " method names listed as seating nothing; member writes on receivers other than the body token: " + (second.writes.length + second.sites.filter((s) => !s.body && s.assign).length) + " over " + new Set([...second.writes.map((w) => w.name), ...second.sites.filter((s) => !s.body && s.assign).map((s) => s.via.split(" ")[0])]).size + " distinct names (" + second.sites.filter((s) => !s.body && s.assign).length + " seats, " + second.writes.filter((w) => w.through === undefined).length + " by " + NON_SEATING_WRITES.length + " names listed as seating nothing, " + second.writes.filter((w) => w.through !== undefined).length + " through style or dataset by the rule), the body token's " + second.bodyWrites + "; " + second.handedNodes.length + " nodes handed to callees and " + second.elementsHanded.length + " elements handed to callees the file does not declare, " + second.elementsHanded.filter((h) => h.unnamed).length + " of them named by the compiler's type alone (" + ARGS_READ_BY_HAND.length + " entries listed over " + ARGS_READ_BY_HAND.reduce((n, e) => n + (e.times ?? 1), 0) + " hand-offs, " + ARGS_READ_BY_HAND.filter((e) => e.unnamed).length + " of the entries marked `unnamed`), " + second.urlWrites.length + " URL writes (" + URL_WRITES_READ_BY_HAND.length + " entries listed over " + URL_WRITES_READ_BY_HAND.reduce((n, e) => n + (e.times ?? 1), 0) + " writes), " + second.styleWrites.length + " CSS properties written through style from a non-literal under a name listed as taking no url() (" + NON_URL_STYLE_PROPS.length + " names listed), " + second.attrNames.length + " attribute names read by hand (" + ATTR_NAMES_READ_BY_HAND.length + " listed), " + second.attrWrites.length + " attributes set from a non-literal under an aria-* or data-* name (" + NON_URL_ATTRS.length + " names listed as carrying no URL)");
   t.diagnostic("live seats on receivers other than the body token: " + JSON.stringify(second.sites.filter((s) => !s.body).map((s) => ({ in: s.fn, on: s.on, via: s.via, seats: s.seats, decl: s.decl, kind: s.kind, writes: s.writes, line: s.line }))));
   assert.ok([...seated.values()].reduce((n, ls) => n + ls.length, 0) >= 10, "the seating sites are found in file-view.ts");
   const listed = [...READY_ROOTS, ...NOT_READY_ROOTS, ...LINE_ROOTS].sort();
@@ -2619,6 +2670,25 @@ test("the census refuses its unknown and derives its population, executed over m
   // the branch's verification pass finding census-4 (2026-09-20): an argument the resolver cannot read is refused with its line (before this rootsOf threw, naming the expression and not the line)
   refusedMutant(seat('body.append(...[el("div", "fileview-mutant")]);'), "a spread into body.append", /body\.append\(\.\.\.\) seats `\.\.\.\[el\("div", "fileview-mutant"\)\]`, an expression the census cannot resolve to a root \(a seated expression the census cannot resolve/);
   refusedMutant(seat('const kids = [el("div", "fileview-mutant")]; body.append(...kids);'), "a spread of a variable into body.append", /body\.append\(\.\.\.\) seats `\.\.\.kids`, an expression the census cannot resolve to a root/);
+  // the round-8 fixes (the round-7 review's extra9-1, 2026-09-21): the resolver took the LAST return of a builder and the last
+  // textual assignment of a bare name (FAILS BEFORE: the early return below left div.fileview-mutant out of every root list with
+  // no refusal, and the branch-assigned name resolved to its last assignment); every return is read from the tree and united, and
+  // a name assigned more than once in its declaring block is refused
+  const CODE_WRAP = '\n  const wrap = el("div", "fileview-code");\n';
+  assert.equal(VIEWER_SRC.split(CODE_WRAP).length, 2, "codeBlock declares its wrap once, at the top of the builder");
+  const earlyReturn = census(VIEWER_SRC.replace(CODE_WRAP, CODE_WRAP + '  const early = el("div", "fileview-mutant"); if (text.length > 1e9) return early;\n'));
+  assert.deepEqual(earlyReturn.refused, [], "a guarded one-line early return in the codeBlock builder: no refusal");
+  assert.deepEqual([...earlyReturn.seated.keys()].filter((k) => !before.seated.has(k)), ["div.fileview-mutant"], "FAILS BEFORE: the root the early return hands back is derived beside the last return's, so the lists comparison reds (before this only the last `return wrap;` was read)");
+  const nonName = census(VIEWER_SRC.replace(CODE_WRAP, CODE_WRAP + '  if (text.length > 1e9) return el("div", "fileview-mutant");\n'));
+  assert.ok(nonName.refused.length >= 1 && nonName.refused.every((r) => /^line \d+: body\.replaceChildren\(\.\.\.\) seats `[^`]*codeBlock\([^`]*`, an expression the census cannot resolve to a root \(the builder codeBlock returns a bare name at every return, and line \d+ returns `el\("div", "fileview-mutant"\)`, which the census cannot resolve/.test(r)), "a builder returning anything but a bare name is refused at each seat of the builder (bare or in a ternary's branch), with the return's line: " + JSON.stringify(nonName.refused));
+  assert.equal(nonName.refused.length, seatSites(VIEWER_SRC).sites.filter((x) => x.body && x.via === "replaceChildren" && x.whole.includes("codeBlock(")).length, "...once per body seat that resolves through the builder, derived from the second read's seats (bare or in a ternary's branch)");
+  refusedMutant(seat('let root2 = el("div", "fileview-md"); if (owner) root2 = el("div", "fileview-mutant"); body.append(root2);'), "FAILS BEFORE: a bare seated name assigned in a branch after its declaration", /body\.append\(\.\.\.\) seats `root2`, an expression the census cannot resolve to a root \(the variable root2 is assigned 2 times in the block that declares it \(lines \d+, \d+; a null or undefined write is not counted\), so it resolves to no one expression at the seat/);
+  const nulled = census(seat('let root4: HTMLElement | null = null; if (owner) root4 = el("div", "fileview-mutant"); if (root4) body.append(root4); root4 = null;'));
+  assert.deepEqual(nulled.refused, [], "a null-initialised name assigned its element once and nulled after (the viewer's fallback textarea's shape) resolves: the nullish writes assign no element and are not counted");
+  assert.deepEqual([...nulled.seated.keys()].filter((k) => !before.seated.has(k)), ["div.fileview-mutant"], "...to the one element write's root");
+  const declaredOnce = census(seat('const root3 = el("div", "fileview-mutant"); body.append(root3);'));
+  assert.deepEqual(declaredOnce.refused, [], "a name bound once resolves through its initializer");
+  assert.deepEqual([...declaredOnce.seated.keys()].filter((k) => !before.seated.has(k)), ["div.fileview-mutant"], "...to its root");
   // the action-context accessor passes at its one site alone (the round-5 review's extra8-2): the spelling anywhere else is refused
   const ACCESSOR_ELSEWHERE = /body: \(\) => body is written outside the object literal declared `const ctx: FileViewActionCtx =`/;
   refusedMutant(seat('const other = { body: () => body };'), "the accessor in a second object literal", ACCESSOR_ELSEWHERE);
@@ -2666,7 +2736,14 @@ test("the census refuses its unknown and derives its population, executed over m
   const seatKeys = live.sites.filter((s) => !s.body).map((s) => s.fn + "|" + s.on + "|" + s.via + "|" + s.seats);
   assert.equal(new Set(seatKeys).size, SEATS_READ_BY_HAND.length, "one entry per distinct seat (function, receiver, form, what is seated): the table has no duplicate and no seat is covered twice (the round-6 review's cluster A)");
   assert.equal(SEATS_READ_BY_HAND.reduce((n, e) => n + (e.times ?? 1), 0), seatKeys.length, "...and the entries' `times` sum to the live seats, so every seat spelled alike is counted");
-  assert.ok(SEATS_READ_BY_HAND.length > new Set(live.sites.filter((s) => !s.body).map((s) => s.fn + "|" + s.on + "|" + s.via)).size, "the seat key is finer than the triple the round-6 review refused: more entries than distinct (function, receiver, form) triples (the counts are the diagnostic's, derived by this read, not kept here)");
+  // the triple count is held EQUAL to P7's own number for it, read from the sentence (the round-7 review's extra6-4: an inequality
+  // here let the sentence's "rise of 30, which is what the triple hid" go false by one the first time a seat lands at a new
+  // triple; the maintainer's OPEN-5 ruling: the number stays derived and read from P7, and a parse that finds no number FAILS here)
+  const tripleCells = [...sectionPart("P7. **", "**Derivations and their unknown cases.**").matchAll(/the triple key gives (\d+) at the round-6 file and (\d+) at the round-7 file/g)];
+  assert.equal(tripleCells.length, 1, "P7 states the triple key's two cells once, in the sentence's form (a sentence the pattern does not find is a loud failure here, never a default and never a compare against undefined)");
+  const triplesLive = new Set(live.sites.filter((s) => !s.body).map((s) => s.fn + "|" + s.on + "|" + s.via)).size;
+  assert.equal(triplesLive, Number(tripleCells[0][2]), "P7's own number: the distinct (function, receiver, form) triples of the live seats equal the triple key's count at the round-7 file that P7 carries, " + tripleCells[0][2] + ", against which the seat-keyed table's rise of " + (SEATS_READ_BY_HAND.length - Number(tripleCells[0][2])) + " is measured; a seat at a new triple moves this number and the sentence with it, so P7 is re-derived rather than a reader editing the cell (the round-7 review's extra6-4)");
+  assert.ok(SEATS_READ_BY_HAND.length > triplesLive, "...and the seat key is finer than the triple the round-6 review refused: more entries than distinct triples");
   assert.deepEqual({ unknown: live.unknown, handedOut: live.handedOut, oddCallee: live.oddCallee }, { unknown: [], handedOut: [], oddCallee: [] }, "every method file-view.ts calls is by a name the census lists, no seating method is read without being called, and every callee is a name or a member (the branch's verification pass finding census-1)");
   assert.equal(new Set(live.indexReads.map((i) => i.fn + "|" + i.on)).size, INDEX_READS_BY_HAND.length, "one entry per stored index read (function, receiver): the index table has no duplicate and no site is covered twice");
   for (const e of SEATS_READ_BY_HAND) { const s = live.sites.find((x) => x.fn === e.in && x.on === e.on && x.via === e.via && x.seats === e.seats)!; assert.equal(e.decl, s.decl, "the entry for " + e.in + "/" + e.on + "/" + e.via + " names the binding its seat resolves to (a member chain names none)"); }
@@ -2999,12 +3076,12 @@ test("P7's derived numbers are the tables this module runs: the seat-keyed table
   assert.equal(triples.length, 1, "the triple-key cells stand in P7 once");
   const tripleAtRound7 = Number(triples[0][2]);
   assert.equal(triples[0][1], triples[0][2], "the two triple cells are equal, so the rise across the change of key is the key's alone, as the sentence says (" + triples[0][1] + " at the round-6 file, " + triples[0][2] + " at the round-7 file)");
-  const seatSentence = [...P7.matchAll(/the seat key gives (\d+) entries over (\d+) seats at both, (\w+) entries standing for two byte-identical seats each \(((?:[^()]|\([^()]*\))*)\), so the rise of (\d+) entries is what the triple hid and the site population, (\d+), moves in neither file's cell/g)];
+  const seatSentence = [...P7.matchAll(/the seat key gives (\d+) entries over (\d+) seats at both, (\w+) entries standing for two byte-identical seats each \(((?:[^()]|\([^()]*\))*)\), each read at both seats, which is why the seats exceed the entries by (\w+), so the rise of (\d+) entries is what the triple hid and the site population, (\d+), moves in neither file's cell/g)];
   assert.equal(seatSentence.length, 1, "the seat-keyed table's size stands in P7 once");
   const twice = SEATS_READ_BY_HAND.filter((e) => e.times !== undefined);
   assert.ok(twice.length > 0 && twice.every((e) => e.times === 2), "every entry with a `times` reads two seats (" + JSON.stringify(twice.map((e) => e.times)) + "), the sentence's two byte-identical seats each");
-  const [, sEntries, sSeats, sTwice, sNamed, sRise, sPopulation] = seatSentence[0];
-  assert.deepEqual([sEntries, sSeats, sTwice, sRise, sPopulation], [String(entries), String(seats), COUNT_WORDS[twice.length], String(entries - tripleAtRound7), String(seats)], "P7's entries, seats, entries reading two seats, rise and site population are the table's (" + entries + " over " + seats + ", " + twice.length + " reading two, a rise of " + (entries - tripleAtRound7) + " over the round-7 triple count)");
+  const [, sEntries, sSeats, sTwice, sNamed, sExcess, sRise, sPopulation] = seatSentence[0];
+  assert.deepEqual([sEntries, sSeats, sTwice, sExcess, sRise, sPopulation], [String(entries), String(seats), COUNT_WORDS[twice.length], COUNT_WORDS[seats - entries], String(entries - tripleAtRound7), String(seats)], "P7's entries, seats, entries reading two seats, the seats' excess over the entries (why 92 exceeds 90: the `times` entries, each read at two seats), rise and site population are the table's (" + entries + " over " + seats + ", " + twice.length + " reading two, an excess of " + (seats - entries) + ", a rise of " + (entries - tripleAtRound7) + " over the round-7 triple count)");
   assert.equal(live.sites.filter((x) => !x.body).length, seats, "the site population the sentence names is the live non-body seats, which the entries' `times` sum to");
   for (const e of twice) {
     assert.ok(sNamed.includes(e.in + "'s") && sNamed.includes("`" + e.on + "." + e.via + "(" + e.seats + ")`"), "the sentence names the entry reading two seats, " + e.in + "'s `" + e.on + "." + e.via + "(" + e.seats + ")`: " + sNamed);

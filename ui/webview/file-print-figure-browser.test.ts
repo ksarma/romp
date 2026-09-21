@@ -113,7 +113,8 @@ const image = (attrs = "") => (url: string): string => '<image href="' + url + '
  *  the author's declaration does not. */
 const HIDE_RULE = ".leg-hide { display: none; }";
 /** Every shape: the spellings of opacity, visibility and display on a gated svg (`hidden`: the answer figureHidden must give
- *  for the root; `paints`: whether the browser paints the twin, which figurePrintable must match), the HTML attributes on
+ *  for the root; `paints`: the ink the twin puts on the page; both columns, and where the oracle or the flow is recorded as
+ *  reading other than the ink, are documented at the Shape type above), the HTML attributes on
  *  HTML and SVG elements, the structures whose painting element is not the root, and the shapes with two painting elements
  *  on two hosts. */
 function shapes(): Shape[] {

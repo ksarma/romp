@@ -758,8 +758,9 @@ function elementChildren(body: BodyLike): BodyChild[] {
  *  down to the `el("<tag>", "<class>")` that builds it; a seat on ANY OTHER receiver (a seating call, an innerHTML or
  *  outerHTML assignment) passes only as the ONE seat an entry the census lists by hand reads (its function, receiver,
  *  form, what it seats and the receiver's binding, with what the receiver is; a second seat at a listed site is a second
- *  entry, and a reassignable receiver is refused unless the entry pins what it holds: the round-6 review's cluster A,
- *  2026-09-20), every other method call passes only by a name the census lists, as read by its site (call, apply, bind,
+ *  entry, one entry being one seat spelling and a seat spelled byte for byte alike in two branches of one function
+ *  declaring `times` and read at each, and a reassignable receiver is refused unless the entry pins what it holds: the
+ *  round-6 review's cluster A, 2026-09-20), every other method call passes only by a name the census lists, as read by its site (call, apply, bind,
  *  mount, render, a reflection global's method: a listed site too) or as seating nothing, every other member write passes
  *  as a seat, by a name the census lists or through `style` or `dataset`, `Object`, `Reflect` and `Function` pass as a
  *  listed call's receiver alone, a node of the tree handed to any callee, an element the census can see by its shape handed
