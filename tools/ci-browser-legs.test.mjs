@@ -128,7 +128,12 @@ test('the step exists once in the ' + JOB + ' job, directly after the Chromium i
   assert.ok(!('working-directory' in step.fields), 'no working-directory override: the roster, the script and out-tests/ are under the job\'s default, vscode-extension/');
   assert.match(job.lines.join('\n'), /^    defaults:\n      run:\n        working-directory: vscode-extension$/m, 'the job\'s default working directory is vscode-extension');
   const comment = step.comments.join('\n');
-  assert.ok(comment.includes('measured on the runner at the pushed head'), 'the step\'s comment carries the three numbers measured on the runner (or the placeholder the first run fills)');
+  // the three numbers are a property of the comment, not a spelling: a step duration in seconds, a job duration in minutes and the
+  // 40-minute cap, all three measured on the runner (the first run's placeholder held none of them, and the pin that accepted it
+  // by its spelling was the kind that lets a filled sentence go red for its wording)
+  assert.ok(/measured on the runner/.test(comment), 'the step\'s comment says its numbers were measured on the runner');
+  assert.ok(/\b\d+ s\b/.test(comment) && /\b\d+ min\b/.test(comment) && /40-minute cap/.test(comment),
+    'the step\'s comment carries the three numbers: the step\'s seconds, the job\'s minutes and the 40-minute cap');
   assert.ok(comment.includes(ROSTER) && comment.includes(EXCLUDED), 'the comment names both files');
   assert.ok(!step.lines.join('\n').includes(String.fromCharCode(0x2014)), 'no em dash');
 });
