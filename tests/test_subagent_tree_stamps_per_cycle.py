@@ -285,15 +285,28 @@ class _World(unittest.TestCase):
         """A tick job's stand-in (the pusher's _turn_notify_tick, the pass's _auto_nudge_tick): CALLS _session_awaiting
         reads of the session, as the chat, feed and timeline builds make in one cycle. Records into `rec` rather than
         asserting: the cycle runs each job under a try that writes a raise to stderr and goes on. `spy` given, the
-        spy's totals after each call; `probe`, the listing and the sidecar map as read inside the cycle."""
+        spy's totals after each call; `probe`, the listing and the sidecar map as read inside the cycle. `asked` records,
+        per _subagent_tree call on the session's root made by those reads, whether the scope already held the pair and
+        answered with it ("served") or the call validated or walked ("validated"): the premise the bound rests on, that
+        every read reached the memo, is asserted, so a read that never asked cannot satisfy the bound for nothing."""
         def job(now, live_map, **kw):
             rec["scope"] = _scope()
-            rec["counts"], rec["per_call"] = [], []
-            for _ in range(CALLS):
-                aw = km._session_awaiting(SID, self.path, True)
-                rec["counts"].append((aw or {}).get("count"))
-                if spy is not None:
-                    rec["per_call"].append(spy.total())
+            rec["counts"], rec["per_call"], rec["asked"] = [], [], []
+            real, root = km._subagent_tree, str(self.sub)
+
+            def asking(d):
+                sc = _scope()
+                held = (sc["trees"].get(str(d)) if sc is not None else None)
+                out = real(d)
+                if str(d) == root:
+                    rec["asked"].append("served" if held is not None and out is held else "validated")
+                return out
+            with mock.patch.object(km, "_subagent_tree", asking):   # what _subagent_dirs, _subagent_meta_map and the file walk look up
+                for _ in range(CALLS):
+                    aw = km._session_awaiting(SID, self.path, True)
+                    rec["counts"].append((aw or {}).get("count"))
+                    if spy is not None:
+                        rec["per_call"].append(spy.total())
             if probe:
                 rec["dirs"] = list(km._subagent_dirs(str(self.sub)))
                 rec["meta"] = set(km._subagent_meta_map(self.path))
@@ -303,6 +316,10 @@ class _World(unittest.TestCase):
         """The per-cycle bound, derived from D and A: the counts one pusher cycle or one jobs pass pays on the tree. The
         counts first, so a red names the cost, then the scope's presence inside the cycle and its absence after."""
         self.assertEqual(rec.get("counts"), [A] * CALLS, "the stubbed job made its %d reads and each saw the A agents: %r" % (CALLS, rec))
+        self.assertEqual(rec.get("asked"), ["validated"] + ["served"] * (CALLS - 1),
+                         "each of the %d reads in one %s reached the tree memo, the first validating and every later one served the held "
+                         "pair: %r (a bound met because a later read never asked is no bound; a later read that validated again is the "
+                         "per-reader cost the scope removes)" % (CALLS, what, rec.get("asked")))
         self.assertEqual(t["dir_stat"], 0,
                          "os.stat on the tree's %d directories over one %s: %d; the bound is 0, every agent-file hit's stamp re-check "
                          "(_dir_stamps) served from the scope _subagent_tree filled at the cycle's one validation; before the scope "
