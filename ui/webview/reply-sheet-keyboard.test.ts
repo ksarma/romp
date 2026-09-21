@@ -275,11 +275,21 @@ test("the two builders share the skeleton the four rules key on, in one order, a
 });
 
 // ── the sheet's rules, pinned at source ──────────────────────────────────────────────────────────
+// the sheet with its comments stripped FIRST, so a declaration commented out in place is gone from what a pin reads (a
+// raw-text match kept a pin green over `/* overflow-y: auto; */`, the maintainer's round 1 ruling), and a brace inside a
+// comment cannot end a rule's slice early
+const CSS_LIVE = CSS.replace(/\/\*[\s\S]*?\*\//g, "");
 const rule = (sel: string): string => {
-  const at = CSS.indexOf("\n" + sel + " {");
+  const at = CSS_LIVE.indexOf("\n" + sel + " {");
   assert.ok(at >= 0, sel + " is a rule in styles.css");
-  return CSS.slice(at + 1, CSS.indexOf("}", at) + 1);   // from the selector to its closing brace
+  return CSS_LIVE.slice(at + 1, CSS_LIVE.indexOf("}", at) + 1);   // from the selector to its closing brace, live declarations only
 };
+test("rule() reads live declarations: a declaration commented out in place is not in the slice", () => {
+  const stripped = "\n.x { a: 1; /* b: 2; */ c: 3; }\n".replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.equal(stripped, "\n.x { a: 1;  c: 3; }\n");
+  assert.doesNotMatch(CSS_LIVE, /\/\*/, "no comment opener survives the strip");
+  assert.ok(CSS_LIVE.length < CSS.length, "the sheet has comments, and the strip removed them");
+});
 
 test("the answer box is a fixed flex item that holds three rows: it never absorbs the box's deficit", () => {
   const r = rule("#ut-reply-prompt .ut-reply-input");
@@ -295,8 +305,9 @@ test("the detail is the part that gives way: it shrinks (a scroll container's fl
   assert.match(r, /flex: 1 1 auto;/);
   assert.match(r, /min-height: 32px; min-height: 2lh;/, "the FLOOR: two of the detail's own lines (2lh), the px value ahead of it so an engine without the lh unit falls to two lines at the default size, never to zero; without it the detail resolved to 0px at 390x508 with the answer grown (invisible, unscrollable), the dead end the picker's fold forbids its list with min-height: 52px (one row). The browser legs measure it: the detail's height is at least twice its computed line-height in every deficit state");
   assert.doesNotMatch(r, /min-height: 0;/, "no zero floor beside the real one: the later declaration in a block wins, and the executed legs pin the floor, not this string");
-  assert.match(r, /max-height: min\(12em, 35dvh\);/, "the cap: some lines of detail, never more than a third of the visible window (dvh, as the picker's fold)");
-  assert.match(r, /overflow-y: auto;/, "the rest of the detail is a scroll away, never clipped (a collapsed region stays reachable)");
+  assert.match(r, /max-height: 12em;/, "the cap at rest: 12em of the detail's own font, about eight and a half of its lines at line-height 1.4 (the browser legs pin the height at 900px to 12 times the computed font size); with the keyboard up the flex shrink and the two-line floor govern, not this. A 35dvh arm stood beside it in round 1 as the keyboard-up cap and never bound (177.8px against 134px at 508; under about 383px the shrink is already below both), so it is gone");
+  assert.doesNotMatch(r, /dvh/, "no viewport arm presented as the keyboard's mechanism: the keyboard case is the shrink and the floor, measured by execution");
+  assert.match(r, /overflow-y: auto;/, "the rest of the detail is a scroll away, never clipped; live by execution in the browser legs (the detail's scrollTop moves) and here read with comments stripped, so commenting it out reds both");
   assert.match(r, /overscroll-behavior: contain;/, "a swipe past its end does not scroll the box or the page under it (#pinned-notes's rule)");
   assert.match(rule("#pinned-notes"), /max-height: min\(11em, 30vh\); overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain;/, "the precedent this follows");
   assert.match(rule(".ut-detail.open"), /^\.ut-detail\.open \{ display: block; \}$/, "the base rule stays: display block, no flex or cap of its own — the fix is scoped to this dialog");

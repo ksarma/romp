@@ -95,7 +95,7 @@ type Rect = { top: number; bottom: number; left: number; right: number };
 type Sheet = {
   frameH: number; tight: boolean; alignItems: string; paddingTop: string;
   inputH: number; floorH: number; lineHeight: string; inputOverflowY: string; inputStyleH: string;
-  detailScrollH: number; detailClientH: number; detailOverflowY: string; detailLineH: number;
+  detailScrollH: number; detailClientH: number; detailOverflowY: string; detailLineH: number; detailFontPx: number; detailScrolls: boolean;
   actionsBottom: number; boxTop: number; boxBottom: number; boxScrollH: number; boxClientH: number; boxOverflowY: string;
   sendRect: Rect; cancelRect: Rect; hitAtSend: string; hitAtCancel: string; kinds: string[];
 };
@@ -169,7 +169,9 @@ async function boot(browser: any) {
       frameH: win.innerHeight, tight: overlay.classList.contains("kb-tight"), alignItems: cs(overlay).alignItems, paddingTop: cs(overlay).paddingTop,
       inputH: input.clientHeight, floorH, lineHeight: cs(input).lineHeight, inputOverflowY: cs(input).overflowY, inputStyleH: input.style.height,
       detailScrollH: detail ? detail.scrollHeight : 0, detailClientH: detail ? detail.clientHeight : 0, detailOverflowY: detail ? cs(detail).overflowY : "",
-      detailLineH: detail ? parseFloat(cs(detail).lineHeight) : 0,
+      detailLineH: detail ? parseFloat(cs(detail).lineHeight) : 0, detailFontPx: detail ? parseFloat(cs(detail).fontSize) : 0,
+      // the overflow declaration, live: a scroll container's scrollTop moves; with overflow visible it stays at 0
+      detailScrolls: detail ? ((): boolean => { detail.scrollTop = 30; const moved = detail.scrollTop > 0; detail.scrollTop = 0; return moved; })() : false,
       actionsBottom: actions.getBoundingClientRect().bottom, boxTop: box.getBoundingClientRect().top, boxBottom: box.getBoundingClientRect().bottom,
       boxScrollH: box.scrollHeight, boxClientH: box.clientHeight, boxOverflowY: cs(box).overflowY,
       sendRect: rect(send), cancelRect: rect(cancel), hitAtSend: hit(send), hitAtCancel: hit(cancel),
@@ -282,6 +284,7 @@ for (const name of ["chromium", "firefox", "webkit"]) {
       assert.ok(m.floorH > 30, `the probe laid out three rows (${m.floorH}px; line-height ${m.lineHeight})`);
       assert.ok(m.inputH >= m.floorH - 1, `the answer box holds three rows: ${m.inputH}px against the ${m.floorH}px three-row probe (on the base tree it was a sliver — the textarea took the whole deficit)`);
       assert.equal(m.detailOverflowY, "auto", "the detail scrolls within itself");
+      assert.ok(m.detailScrolls, "the overflow declaration is LIVE: the detail's scrollTop moves (with overflow visible it stays at 0, and the detail's text paints over the answer box); the rule pin reads the sheet with comments stripped, this reads the engine");
       assert.ok(m.detailScrollH > m.detailClientH + 8, `the forty-line detail overflows its cap and is a scroll away, not clipped (${m.detailClientH} of ${m.detailScrollH}px)`);
       assert.ok(m.detailClientH > 20, `the detail still shows some lines (${m.detailClientH}px): the box gave way, not the whole detail`);
       assert.ok(m.actionsBottom > 0 && m.actionsBottom <= m.frameH + 0.5, `Cancel and Send are inside the frame (bottom edge ${m.actionsBottom.toFixed(1)} of ${m.frameH}px)`);
@@ -317,6 +320,9 @@ for (const name of ["chromium", "firefox", "webkit"]) {
       assert.notEqual(m.alignItems, "flex-start", "the sheet centers again (.confirm-overlay)");
       assert.ok(m.inputH >= m.floorH - 1, `tall, the answer box holds three rows (${m.inputH} against ${m.floorH}px)`);
       assert.ok(m.actionsBottom <= m.frameH + 0.5, "the buttons are inside the frame");
+      // the cap at rest, where nothing squeezes: 12em of the detail's own font (about eight and a half lines), the whole of it
+      // executed rather than a spelling; the keyboard-up heights above are the shrink and the floor, not this cap
+      assert.ok(Math.abs(m.detailClientH - 12 * m.detailFontPx) <= 1.5, `tall, the forty-line detail sits at its cap: ${m.detailClientH}px against 12em of its ${m.detailFontPx}px font (${(12 * m.detailFontPx).toFixed(1)}px)`);
       // ── the answer grown TALL, then the keyboard: the window shrinks under an answer already grown, and the resize re-fits it
       // to the room the smaller box has (the cap's stated purpose; no leg measured it in round 1)
       await fill(ANSWER(14));
