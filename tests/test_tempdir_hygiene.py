@@ -1287,7 +1287,10 @@ class HarnessSocketBudget(unittest.TestCase):
             assert_socket_fits(self, "under the box rule's %d-byte TMPDIR" % canonical, canonical, harness, lab, sock, budget,
                                min_margin=level)
         with self.subTest(arm="this run's TMPDIR"):
-            system = os.path.realpath(os.environ["ROMP_TESTS_SYSTEM_TMPDIR"])
+            # abspath, not realpath: tempfile takes the handed TMPDIR through os.path.abspath, the roots are minted under
+            # that string and the host binds the path built from it, so the length the bind sees is the abspath's (a
+            # TMPDIR through a symlink — macOS's /tmp, a /var/folders link — resolves to a different length).
+            system = os.path.abspath(os.environ["ROMP_TESTS_SYSTEM_TMPDIR"])
             if sys.platform == "darwin" and deepest_socket_path(len(os.fsencode(system)), own, lab, sock) > budget:
                 # The Darwin per-user TMPDIR (/var/folders/.../T, about 49 bytes) is over the bound for the deepest lab,
                 # which needs romp's SDK venv and skips on a checkout without it, so a Mac run without the venv is not
