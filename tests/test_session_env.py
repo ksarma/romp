@@ -1013,7 +1013,7 @@ class EnvRowsPopulation(unittest.TestCase):
     ENV ROWS line is the derivation, every value-tainted door call declares problem=, an unreduced message is named and
     never dropped, the negative half finds the kernel's doors before it asserts them clean, the counts equal their committed tables,
     and the parameter-indirection road is exercised on planted modules, one the walk follows and one it cannot, which
-    must fail loudly. PR 792's POOL SITES line and its pin in tests/test_perf_stats.py are the precedent."""
+    must fail loudly. Fork PR #792's POOL SITES line and its pin in tests/test_perf_stats.py are the precedent."""
 
     @classmethod
     def setUpClass(cls):
@@ -1120,7 +1120,7 @@ class EnvRowsPopulation(unittest.TestCase):
         problem road. 18 at the round-6 addendum: round 6's 15, set_mode's two withdrawal lines and the bypass-consult
         line, reached once the taint followed attribute stores (the mode the landing stores is derived from the surface
         set); 20 at the merge (main's relaunch-slot line and the conduit's second call). The vocabulary gains "live work"
-        at the merge, and this is why: main's live-work reconcile (its PR 787) sends its lines through the conduit, and
+        at the merge, and this is why: main's live-work reconcile (its fork PR #787) sends its lines through the conduit, and
         the conduit's own two calls carry the UNION of every caller's heads (26 heads each at the merged head, first
         words {'live work', 'permission consult', 'reconnect'}), so "live work" is a head of the conduit's two rows even
         though no live-work site is itself pick-tainted (none is in the census's tainted set; the heads are read off the
@@ -1364,8 +1364,8 @@ class EnvRowsPopulation(unittest.TestCase):
         env-pick door bounds. A declared residual with no reason reads later as an oversight, so the comment block above
         each call is read here for the reason's parts, and the census docstring and the ENV ROWS paragraph for the reason
         class, stated once each. Red with any one comment removed, or the reason class dropped from either paragraph.
-        Ruling 2 of the post-merge census (2026-09-20): a FOURTH row, SdkSession._log_quietly's problem road (main's PR
-        787 made the conduit forward problem=True, key= and ring_text=), is accepted on the same terms with its own
+        Ruling 2 of the post-merge census (2026-09-20): a FOURTH row, SdkSession._log_quietly's problem road (main's fork PR
+        #787 made the conduit forward problem=True, key= and ring_text=), is accepted on the same terms with its own
         reason: its text is the union of every caller's line, formatted inline by each caller, the conduit shapes nothing
         and forwards ring_text as given, so the bound is each CALLER's responsibility; the callers passing problem=True are
         named in the comment and pass no ring_text, so each rings its whole line. They are read off the module with each
@@ -1708,8 +1708,9 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
     # exiting, every worker's exit code read back as SIGKILL's.
     # Every degradation is announced two ways from the one place, `_pool_lost`: a RuntimeWarning carrying the reason
     # (pytest records it, counts it on the -q summary line and prints it in the warnings section, so a degraded
-    # class reads "N passed, 2 failed, 1 warning" and names its cause) and one stderr line naming the reason and
-    # that the results are unchanged. A loss is then a FAILURE wherever in the class's order it happens (round 8,
+    # class reads "N passed, M failed, 1 warning" and names its cause, M the tests the next sentence names) and one
+    # stderr line naming the reason and that the results are unchanged.
+    # A loss is then a FAILURE wherever in the class's order it happens (round 8,
     # extra6-2: a skip reports success, so a pool lost for a real reason left the run green and silent; and round 8's
     # mutation verifier: the pins that need the pool road fail only for a pool lost BEFORE them in unittest's
     # alphabetical order, so a loss planted inside a test sorted after them failed nothing): every pin that needs the
@@ -2869,7 +2870,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         """The taint visit's inner loop over a function's own stores runs at most six passes. A chain of seven names
         assigned in reverse order (each from the one the NEXT statement fills, the last from the env) gains one link
         per pass, so the sixth pass ends with the first name clean and the visit ends still growing. Before fork PR
-        781's readers index, the module-wide sweep on a grown module name happened to give the function another visit
+        #781's readers index, the module-wide sweep on a grown module name happened to give the function another visit
         (a name grew after its first visit); the index removed the sweep, so the census re-visits a function whose loop
         ran out (Census.cap_requeues counts them), and the tenth row is found through the chain with the chain's taint
         alone: the ring text counts the last link and reads no source."""
@@ -2920,7 +2921,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
             '    def _tenth_store(self, sess):\n        _TENTH_SEEN.extend(sorted(sess.env_vars))\n\n' + self.METHOD_ANCHOR))
 
     def test_every_function_whose_taint_visit_reads_a_module_name_is_in_the_readers_index_for_it(self):
-        """Fork PR 781, before round 7: the census walk's cost on CI. The taint pass re-visited every function of a module
+        """Fork PR #781, before round 7: the census walk's cost on CI. The taint pass re-visited every function of a module
         whenever a module-level name's stored taint grew (three such events over 715 functions: 2101 visits of 743
         functions, 85 of them changing anything), and with this class constructing 175 censuses the module ran 337 s
         serial against 1.55 s at the PR's base, past CI's 25-minute job ceiling. The pass now re-visits the name's
@@ -3580,7 +3581,7 @@ class LogQuietlyAtRuntime(_Backend):
 
     def test_a_failure_report_through_the_conduit_from_its_own_handler_is_one_ring_row(self):
         """Round 7 of the review (2026-09-20, regression-1 and extra5-1): the merge of main resolved _log_quietly so that a
-        caller saying nothing of problem= takes the problem=False road, which demoted the five failure reports main's PR 787
+        caller saying nothing of problem= takes the problem=False road, which demoted the five failure reports main's fork PR #787
         files inside except handlers to kernel-log lines nobody reads. Each passes problem=True itself now. Driven on
         _reconcile_seeded_work's except road: a lock that refuses raises inside the reconcile, and the guard's one line is
         one ring row (be.problems()) and one kernel-log line. Red at the round-6 head: 0 ring rows, the line in the kernel
@@ -4047,9 +4048,9 @@ class EnvSecretsStayPrivate(unittest.TestCase):
         # Until 2026-09-18 the writer opened the published path O_CREAT|O_TRUNC at 0600 and chmod'd it AFTER the
         # write: a fresh file was born 0600, but a file created before the 0600 open (2026-09-03) kept its looser
         # mode through the truncating open, took the env block at that mode, and tightened only afterwards. Since the
-        # merge of PR 789 with the env-pick door's temp-and-rename write the published path is never opened: the
+        # merge of fork PR #789 with the env-pick door's temp-and-rename write the published path is never opened: the
         # writer creates a fresh O_EXCL 0600 temp, puts the mode onto the TEMP's descriptor before the first byte
-        # (PR 789, review round 1: the same write-then-tighten window the reg and the parked-ops mirror lost; the
+        # (fork PR #789, review round 1: the same write-then-tighten window the reg and the parked-ops mirror lost; the
         # fchmod is what makes the mode exact under a umask that would strip bits from the create), writes the env
         # block, and os.replace carries the temp onto the path over the pre-existing looser inode, which is unlinked,
         # not tightened. os.chmod is interposed and recorded, so a chmod on the path would show; os.fchmod is

@@ -588,7 +588,7 @@ class Census:
             """The loop nodes under fields this pass does not otherwise visit (a class statement's keywords, a def's or
             class's type parameters), for Fn.loops of `owner`, by the walk that defines the set; and the reads under
             those fields, for the readers indexes (name_reads, so global_readers; attr_readers, the reflected forms
-            too), the way `handle` records a read it visits. Fork PR 781's independent verifier found the loop nodes
+            too), the way `handle` records a read it visits. Fork PR #781's independent verifier found the loop nodes
             fed without their reads: a comprehension in a class keyword read a module list a later method extends,
             the readers-only enqueue on the grown name did not know its function, and the comprehension's variable
             stayed clean where the module-wide sweep had tainted it (pinned in tests/test_session_env.py). The nodes
@@ -2262,7 +2262,7 @@ class Census:
                 # a module-level name's stored taint grew: re-visit its READERS (global_readers, built in _index from the
                 # same test expr_taint and _keyed_taint make before they read the name's stored taint, a bare Name read
                 # that no scope of the function binds), the way a grown attribute re-visits attr_readers. Until fork
-                # PR 781 this enqueued every function of the module: three such events over 715 functions made 2101
+                # PR #781 this enqueued every function of the module: three such events over 715 functions made 2101
                 # visits of 743 functions, 85 of which changed anything, and with the blind-spot class constructing 175
                 # censuses that put tests/test_session_env.py at 337 s serial against 1.55 s at the PR's base, past CI's
                 # 25-minute job ceiling. A function with no read of the grown name re-derives the same sets from the

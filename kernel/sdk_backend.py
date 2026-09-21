@@ -5824,8 +5824,8 @@ def flag_settings_path(state_dir, sid: str, *, ultracode: bool = False, fast: bo
             # review round 4, 2026-09-19), so no chmod after: the one the in-place write needed was for a
             # pre-existing file that kept its mode through O_CREAT, and nothing pre-exists here
             fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            # The mode goes onto the descriptor BEFORE the first write (PR 789, review round 1, 2026-09-18: the shape
-            # write_reg and the parked-ops mirror took, and the one PR 789 gave this writer's in-place road for a
+            # The mode goes onto the descriptor BEFORE the first write (fork PR #789, review round 1, 2026-09-18: the shape
+            # write_reg and the parked-ops mirror took, and the one fork PR #789 gave this writer's in-place road for a
             # pre-existing file at a looser mode). Here nothing pre-exists, but the create's mode goes through the
             # umask and fchmod is exact under any umask, so the block never sits at a mode other than 0600, and
             # os.replace carries the temp's mode onto the published path: a file from before the 0600 open is
@@ -5833,7 +5833,7 @@ def flag_settings_path(state_dir, sid: str, *, ultracode: bool = False, fast: bo
             try:
                 os.fchmod(fd, 0o600)
             except BaseException:
-                # PR 789, review round 2 (2026-09-19): a raising fchmod left the descriptor open (os.fdopen below was
+                # fork PR #789, review round 2 (2026-09-19): a raising fchmod left the descriptor open (os.fdopen below was
                 # the only close), once per launch or reconnect for as long as it failed. Closed and re-raised, not a
                 # finally: the file object closes it on the success road; the finally below removes the temp.
                 os.close(fd)
