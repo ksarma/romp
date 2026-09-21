@@ -157,24 +157,37 @@ class PrivateTempRoot(unittest.TestCase):
             sh = _run(["mktemp", "-d", "-u"])   # -u: name only, nothing created
             self.assertEqual(os.path.dirname(sh.stdout.strip()), root, "a shell's mktemp -d lands in it")
 
-    def test_the_handed_temp_dir_is_recorded_once_and_the_roots_nest_under_it(self):
+    def test_the_handed_temp_dir_is_recorded_once_and_every_root_sits_directly_under_it(self):
         # The one sanctioned way out of the root (tests/test_host_transport.py's two reads, in
         # TransportOverSocket._path and BackendHostRules._be, for an AF_UNIX socket path that
         # would not fit sun_path; and tests/test_session_host.py's system_tmp, for the padded
         # socket roots its budget cases build to an exact byte length) goes to the dir the RUN
-        # was handed, never to a
-        # literal system path. Recorded once: serially the root sits directly in it; in an xdist
-        # worker the worker's root sits inside the controller's and the record is still the dir
-        # above both — a worker that re-recorded its own gettempdir() would name the controller's
-        # root, one level too deep for the socket under a long TMPDIR.
+        # was handed, never to a literal system path. Recorded once, and every process's root sits
+        # DIRECTLY in it: a nested process (an xdist worker, handed the controller's root as its
+        # TMPDIR) mints BESIDE its parent, never inside (2026-09-21; until then a worker's root
+        # nested one level deeper, and the level cost the AF_UNIX socket path 20 bytes —
+        # HarnessSocketBudget has the arithmetic). A nested process also tells its parent where it
+        # minted, so the parent can remove the root of a child that died without its hooks.
+        pkg = sys.modules["tests"]
         handed = os.environ.get("ROMP_TESTS_SYSTEM_TMPDIR")
         self.assertTrue(handed, "the package records the temp dir it replaced")
+        self.assertEqual(handed, pkg.SYSTEM_TMPDIR)
         handed, root = os.path.realpath(handed), os.path.realpath(tempfile.gettempdir())
         self.assertFalse(os.path.basename(handed).startswith("romp-tests-"), handed)
-        self.assertEqual(os.path.commonpath([handed, root]), handed, root)
-        between = os.path.relpath(root, handed).split(os.sep)
-        self.assertTrue(all(p.startswith("romp-tests-") for p in between), between)
-        self.assertEqual(len(between), 2 if os.environ.get("PYTEST_XDIST_WORKER") else 1, between)
+        self.assertTrue(os.path.basename(root).startswith("romp-tests-"), root)
+        self.assertEqual(os.path.dirname(root), handed,
+                         "one root level in every process, beside the parent's: %r" % os.path.relpath(root, handed))
+        if os.environ.get("PYTEST_XDIST_WORKER"):
+            self.assertIsNotNone(pkg.PARENT_ROOT, "an xdist worker was handed the controller's root as its TMPDIR")
+        if pkg.PARENT_ROOT:
+            parent = os.path.realpath(pkg.PARENT_ROOT)
+            self.assertTrue(os.path.basename(parent).startswith("romp-tests-"), parent)
+            self.assertEqual(os.path.dirname(parent), handed, "the parent's root sits in the same dir")
+            self.assertNotEqual(parent, root)
+            self.assertNotEqual(os.path.commonpath([parent, root]), parent, "beside, not inside: %s / %s" % (parent, root))
+            with open(os.path.join(pkg.PARENT_ROOT, pkg.TEST_ROOT_CHILDREN), encoding="utf-8") as fh:
+                listed = [json.loads(line) for line in fh.read().splitlines()]
+            self.assertIn({"pid": os.getpid(), "root": pkg.TMP_ROOT}, listed, "this process told its parent where it minted")
 
     def test_no_test_pins_a_temp_path_to_a_literal_directory(self):
         # A literal directory as a tempfile call's `dir` bypasses the redirect: the socket tests
@@ -589,8 +602,9 @@ class RunLeavesNothing(unittest.TestCase):
 
     @unittest.skipUnless(importlib.util.find_spec("xdist"), "pytest-xdist not installed")
     def test_under_xdist_the_run_leaves_nothing_either(self):
-        # Pins the outcome, not each process's hook: a worker's root sits inside the controller's
-        # (it inherits that TMPDIR), so the controller's removal alone would satisfy this.
+        # Each process's own removal: a worker's root sits BESIDE the controller's (2026-09-21), so the
+        # controller's rmtree no longer covers the workers and this holds only if every worker removes
+        # its own root at exit (until then the nesting made the controller's removal enough).
         self._nested("-n", "2")
 
 
