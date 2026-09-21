@@ -90,6 +90,25 @@
 # own error line where it printed one; the per-commit diff failed that way with
 # the real git once the added file's blob was gone from the store.
 #
+# Both content checks read what git calls TEXT: the tip's grep skips a blob
+# git calls binary (-I), and the per-commit diff prints no line for one. git
+# calls a blob binary by its bytes (a NUL in the first 8000) or by its PATH's
+# diff attribute: a `-diff` line or the `binary` macro, in .gitattributes,
+# .git/info/attributes or the file core.attributesFile names, or a diff driver
+# whose diff.<driver>.binary is true. A text file under such an attribute is
+# read by neither check, and a real push published a banned string in one with
+# the denylist armed and nothing printed (2026-09-21). Where an attribute can
+# hide content from the scan, the push is refused rather than scanned
+# (refuse_hidden_paths, the rule refuse_replace_refs set): the diff attribute
+# of every regular file at the tip and in each new commit's post-image is read
+# in one git check-attr, which consults the same sources git grep and
+# diff-tree consult in this clone, and a hidden path whose blob is text by
+# git's byte rule is named with the tip or the commit, the attribute and the
+# remedy. A hidden path whose blob is BINARY by its bytes passes as it always
+# did: the scan never read binaries, and the attribute adds nothing, so a
+# repository marking its images binary is not refused. Reading such a file
+# from the objects instead of refusing is the longer fix, not this one.
+#
 # The credential scan reads the same new commits, each merge by its
 # first-parent diff, and refuses the push on a hit. A range this clone cannot
 # resolve (a force-push over a remote tip nobody fetched) sends both scans over
@@ -118,7 +137,10 @@
 # gitleaks' git is asked for a plain stream (the options in gitleaks_args, each
 # outranking the config key it neutralises) so a clean push agrees, and a
 # transform no option reaches (log.showRoot set to false hides a root commit's
-# diff) now refuses on the count rather than passing on it.
+# diff) now refuses on the count rather than passing on it, naming the key and
+# the remedy: set it to true (git config log.showRoot true) or unset it and
+# push again, or ROMP_NO_GITLEAKS=1 skips the credential scan for this one
+# push.
 #
 # Both scans read the objects at the pushed shas, on the premise that what they
 # read is what the push transfers. A replace ref (git replace) breaks it: every
@@ -128,7 +150,14 @@
 # included, runs with replacement OFF (GIT_NO_REPLACE_OBJECTS), and a clone that
 # carries any replace ref at all is refused before either scan
 # (refuse_replace_refs): a scan under replacement cannot vouch for the bytes
-# pushed.
+# pushed. Only where a scan would otherwise run, though: the refusal exists
+# because a replace ref makes the scanned bytes diverge from the transferred
+# bytes, so a CLEAN REPORT would be false; where no scan runs (no denylist
+# file, and gitleaks skipped or absent) there is no report and nothing false to
+# prevent, and a clone that never asked for either scan is unaffected, as
+# CLAUDE.md promises. The two arming tests (identifier_scan_armed,
+# credential_scan_armed) are the ones the scans' own early returns read, so the
+# gate and the scans agree by construction.
 #
 # Why pushed commits rather than a working-tree scan: the hook is symlinked into
 # the SHARED git hooks dir (by install.sh), so it fires from every worktree —
@@ -154,6 +183,8 @@ blocked_tags=0          # an annotated tag's own tagger or message: one of the t
 blocked_creds=0
 failed_scan=0           # a read or scan that could not complete: refused as unscanned (unscanned, the gitleaks arm)
 failed_creds=0          # a subset of failed_scan: gitleaks itself could not scan, with advice of its own
+hidden_paths=0          # a subset of failed_scan: a diff attribute hides a text file from the identifier scan, with a remedy of its own
+scratch=""              # a directory for the NUL-delimited listings the attribute check reads (refuse_hidden_paths); made on first use, removed by scan_identifiers
 
 # The commits THIS push publishes for one ref: what no remote already has.
 # "Already has" means reachable from the remote ref's current value or from ANY
@@ -295,14 +326,43 @@ tag_unread() {   # <local_ref> <tag_sha> <FIELD> [<consequence>]
 type_unread() {   # <local_ref> <sha>
     unscanned "the TYPE of the object $1 pushes (${2:0:10}) could not be read, so whether it is an annotated tag is unknown"
 }
+# Whether each scan WOULD run: the identifier scan when the denylist file exists
+# (ROMP_PRIVATE_STRINGS, else the XDG default), the credential scan when it is
+# not skipped (ROMP_NO_GITLEAKS) and a gitleaks binary resolves and is
+# executable (ROMP_GITLEAKS, else the first on PATH). Each scan's own early
+# return reads its predicate, and so does refuse_replace_refs, so the gate and
+# the scans agree by construction. The predicates decide only whether a scan
+# runs: an empty denylist arms a scan that greps for nothing, and a skipped or
+# absent scanner keeps its silence or its notice in scan_credentials. Each is
+# called as a condition (an `if`, an `||`), where set -e does not act on it.
+private_strings_file() {
+    printf '%s' "${ROMP_PRIVATE_STRINGS:-${XDG_CONFIG_HOME:-$HOME/.config}/romp/private-strings.txt}"
+}
+identifier_scan_armed() {
+    [ -f "$(private_strings_file)" ]
+}
+gitleaks_binary() {   # the scanner's path when one resolves and is executable; nothing otherwise, status 0 either way
+    local gl
+    gl="${ROMP_GITLEAKS:-$(command -v gitleaks || true)}"
+    if [ -n "$gl" ] && [ -x "$gl" ]; then printf '%s' "$gl"; fi
+}
+credential_scan_armed() {
+    [ -z "${ROMP_NO_GITLEAKS:-}" ] && [ -n "$(gitleaks_binary)" ]
+}
+
 # A clone that carries a replace ref is refused before either scan runs (the
 # header's premise): under a replacement, what a scan reads and what the push
-# transfers can differ, and the push is refused rather than scanned. Each ref is
-# named; GIT_REPLACE_REF_BASE moves the namespace git reads, so the same
-# variable says where to look. A listing that failed refuses too: whether the
-# reads and the push agree is then unknown.
+# transfers can differ, and the push is refused rather than scanned. Only where
+# a scan would otherwise run: the refusal exists because a replace ref makes
+# the scanned bytes diverge from the transferred bytes, so a CLEAN REPORT would
+# be false; where neither scan runs there is no report and nothing false to
+# prevent, and a clone that never asked for either scan is unaffected (the
+# header). Each ref is named; GIT_REPLACE_REF_BASE moves the namespace git
+# reads, so the same variable says where to look. A listing that failed refuses
+# too: whether the reads and the push agree is then unknown.
 refuse_replace_refs() {
     local rc=0 found ref
+    identifier_scan_armed || credential_scan_armed || return 0
     found=$(git for-each-ref --format='%(refname)' "${GIT_REPLACE_REF_BASE:-refs/replace/}") || rc=$?
     [ "$rc" -eq 0 ] || unscanned "the REPLACE REFS of this clone could not be listed (git for-each-ref exited $rc), so whether the scans read what the push transfers is unknown"
     [ -n "$found" ] || return 0
@@ -313,12 +373,122 @@ refuse_replace_refs() {
     failed_scan=1
 }
 
+# The blobs the identifier scan reads whose PATH's diff attribute hides them
+# (the header): the tip's regular files and each new commit's post-image
+# regular files. A deletion has nothing to read; a symlink's target is read
+# whole by the tip pass and printed by the diff whatever its attribute (checked
+# by execution, 2026-09-21); a gitlink is no blob. The listings are read with
+# -z into a scratch directory, so every path reaches check-attr byte for byte
+# (a quoted path would ask about a file that does not exist, which reads as
+# unspecified), and one check-attr answers for all of them, from the same
+# sources git grep and diff-tree consult here: unset (a -diff line, the binary
+# macro) hides; a driver name hides when diff.<driver>.binary is true (read
+# once per driver); set and unspecified do not. A hidden path's blob is then
+# read (cat-file) and judged by git's own byte rule with no diff machinery: a
+# NUL in the first 8000 bytes is binary, and passes as binaries always have;
+# anything else is text the scan could not see, named with the tip or the
+# commit and the attribute, and the push is refused rather than scanned. An
+# empty blob hides nothing and passes. A read that fails (a listing, the
+# check-attr, a cat-file, the scratch directory) refuses as unscanned, naming
+# the read; whatever was listed is still judged. The tip is not listed again
+# when its first listing (the symlink pass) failed or found no tree: the
+# failure is reported there once, and a pushed object that peels to a blob has
+# no path an attribute could name.
+refuse_hidden_paths() {   # <local_ref> <local_sha> <revs> <tip listed: 1 or 0>
+    local local_ref="$1" local_sha="$2" revs="$3" tip_listed="$4"
+    local rc rev entry meta path mode blob place fields k attr value how drivers counts bytes nuls
+    if [ -z "$scratch" ]; then
+        scratch=$(mktemp -d "${TMPDIR:-/tmp}/romp-pre-push.XXXXXX") \
+            || { scratch=""; unscanned "the DIFF ATTRIBUTES of the paths $local_ref (${local_sha:0:10}) publishes could not be checked (no scratch directory: mktemp failed)"; return 0; }
+    fi
+    : > "$scratch/entries"      # "<tip, or the commit's sha>\t<blob>\t<path>", one per NUL
+    if [ "$tip_listed" -ne 0 ]; then
+        rc=0; git ls-tree -r -z "$local_sha" > "$scratch/listing" || rc=$?
+        [ "$rc" -eq 0 ] || unscanned "the TREE of the tip of $local_ref (${local_sha:0:10}) could not be listed for the DIFF ATTRIBUTE check (git ls-tree exited $rc)"
+        while IFS= read -r -d '' entry; do
+            meta=${entry%%$'\t'*}; path=${entry#*$'\t'}
+            mode=${meta%% *}; blob=${meta##* }
+            case "$mode" in 100644|100755) printf 'tip\t%s\t%s\0' "$blob" "$path" >> "$scratch/entries" ;; esac
+        done < "$scratch/listing"
+    fi
+    for rev in $revs; do
+        rc=0; git diff-tree -r --raw --no-renames --root -c -z --no-commit-id "$rev" > "$scratch/listing" || rc=$?
+        [ "$rc" -eq 0 ] || unscanned "the CHANGED PATHS of commit ${rev:0:10} could not be listed for the DIFF ATTRIBUTE check (git diff-tree exited $rc)"
+        # Two records per entry: ":<modes> <shas> <status>" (a merge's combined
+        # line has one more mode, sha and leading colon per parent; the
+        # post-image mode and sha come last of their kind) and then the path.
+        while IFS= read -r -d '' meta && IFS= read -r -d '' path; do
+            k=${meta%%[^:]*}; k=${#k}
+            # shellcheck disable=SC2206  # the record is deliberately word-split
+            fields=($meta)
+            mode=${fields[k]}; blob=${fields[2 * k + 1]}
+            case "$mode" in 100644|100755) printf '%s\t%s\t%s\0' "$rev" "$blob" "$path" >> "$scratch/entries" ;; esac
+        done < "$scratch/listing"
+    done
+    [ -s "$scratch/entries" ] || return 0
+    while IFS= read -r -d '' entry; do printf '%s\0' "${entry#*$'\t'*$'\t'}"; done < "$scratch/entries" > "$scratch/paths"
+    rc=0; git check-attr --stdin -z diff < "$scratch/paths" > "$scratch/attrs" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        unscanned "the DIFF ATTRIBUTES of the paths $local_ref (${local_sha:0:10}) publishes could not be read (git check-attr exited $rc)"
+        return 0
+    fi
+    # One answer per path asked, in order: "<path>\0diff\0<value>\0", read in
+    # step with the entries so each answer meets its blob and place.
+    drivers=""
+    exec 3< "$scratch/entries"
+    while IFS= read -r -d '' path && IFS= read -r -d '' attr && IFS= read -r -d '' value; do
+        IFS= read -r -d '' entry <&3 || entry=""
+        if [ "$attr" != diff ] || [ "$path" != "${entry#*$'\t'*$'\t'}" ]; then
+            unscanned "the DIFF ATTRIBUTES of the paths $local_ref (${local_sha:0:10}) publishes could not be read (git check-attr answered out of step with the paths asked)"
+            break
+        fi
+        case "$value" in
+            unspecified|set) continue ;;
+            unset) how="unset" ;;
+            *)  case " $drivers " in
+                    *" $value=true "*)  ;;
+                    *" $value=false "*) continue ;;
+                    *)  if [ "$(git config --type=bool "diff.$value.binary" 2>/dev/null || true)" = true ]; then
+                            drivers="$drivers $value=true"
+                        else
+                            drivers="$drivers $value=false"; continue
+                        fi ;;
+                esac
+                how="diff=$value, binary" ;;
+        esac
+        place=${entry%%$'\t'*}; blob=${entry#*$'\t'}; blob=${blob%%$'\t'*}
+        # The first 8000 bytes, counted with their NULs; the rest is drained so
+        # the cat-file is never cut off mid-write (its status is the pipe's).
+        rc=0; counts=$(git cat-file blob "$blob" | { head -c 8000 | LC_ALL=C od -An -v -tu1 | awk '{ for (i = 1; i <= NF; i++) { b++; if ($i == 0) z++ } } END { print b + 0, z + 0 }'; cat > /dev/null; }) || rc=$?
+        if [ "$rc" -ne 0 ]; then
+            if [ "$place" = tip ]; then
+                unscanned "the CONTENT of $path at the tip of $local_ref (${local_sha:0:10}), which its diff attribute ($how) hides from the identifier scan, could not be read (git cat-file exited $rc)"
+            else
+                unscanned "the CONTENT of $path in commit ${place:0:10}, which its diff attribute ($how) hides from the identifier scan, could not be read (git cat-file exited $rc)"
+            fi
+            continue
+        fi
+        read -r bytes nuls <<< "$counts"
+        if [ "$bytes" -eq 0 ] || [ "$nuls" -gt 0 ]; then
+            continue        # empty: nothing hidden; a NUL: binary, which the scan never read
+        fi
+        if [ "$place" = tip ]; then
+            echo "romp pre-push: $path at the tip of $local_ref (${local_sha:0:10}) is text that its diff attribute ($how) hides from the identifier scan, so the push is refused rather than scanned" >&2
+        else
+            echo "romp pre-push: $path in commit ${place:0:10} is text that its diff attribute ($how) hides from the identifier scan, so the push is refused rather than scanned" >&2
+        fi
+        hidden_paths=1
+        failed_scan=1
+    done < "$scratch/attrs"
+    exec 3<&-
+}
+
 # ── identifiers ───────────────────────────────────────────────────────────
 scan_identifiers() {
     local strings_file line grep_args local_ref local_sha _remote_ref remote_sha lines role email obj tagger chosen
-    local rc out errs hits listing links link blob link_path target revs rev n msg addrs inner kind
-    strings_file="${ROMP_PRIVATE_STRINGS:-${XDG_CONFIG_HOME:-$HOME/.config}/romp/private-strings.txt}"
-    [ -f "$strings_file" ] || return 0
+    local rc out errs hits listing links link blob link_path target revs rev n msg addrs inner kind tip_listed
+    strings_file="$(private_strings_file)"
+    identifier_scan_armed || return 0
 
     # Banned strings: strip comments and surrounding whitespace, drop blanks. The
     # `|| [ -n "$line" ]`: a last line with no trailing newline (an editor that
@@ -387,7 +557,9 @@ scan_identifiers() {
         # list: the listing is absent, not unreadable, and the content scan above
         # read the blob itself. The peel-type read is made only when the listing
         # failed, and its own failure refuses like any other.
+        tip_listed=1            # read again with -z by refuse_hidden_paths; not when this listing failed or found no tree
         listing=$(git ls-tree -r "$local_sha" 2>/dev/null) || {
+            tip_listed=0
             if [ "$(git cat-file -t "${local_sha}^{}" 2>/dev/null || true)" = blob ]; then
                 listing=""
             else
@@ -467,6 +639,10 @@ scan_identifiers() {
             fi
         done
 
+        # The paths a diff attribute hides from the two content checks above
+        # (the header): refused rather than scanned, whatever they carry.
+        refuse_hidden_paths "$local_ref" "$local_sha" "$revs" "$tip_listed"
+
         # An annotated tag's own tagger and message (the header note): the pushed
         # object, peeled tag by tag down to the commit, which the loop above read.
         # The tagger's address is read as a commit's are (not when the clone chose
@@ -505,7 +681,11 @@ scan_identifiers() {
             kind="$(git cat-file -t "$obj" 2>/dev/null)" || { kind=""; type_unread "$local_ref" "$obj"; }
         done
     done <<< "$refs"
+    [ -z "$scratch" ] || rm -rf "$scratch"
 
+    if [ "$hidden_paths" -ne 0 ]; then
+        echo "  Remove the diff attribute for each path named (the -diff line or binary macro in .gitattributes, .git/info/attributes or the global attributes file core.attributesFile names; or the driver's diff.<driver>.binary), or push from a clone where it is not set." >&2
+    fi
     if [ "$blocked_ids" -ne 0 ]; then
         echo "" >&2
         echo "romp pre-push: BLOCKED — a banned string from $strings_file is in a pushed commit." >&2
@@ -617,19 +797,18 @@ gitleaks_args() {   # <root> <range> [<config option>...]: fills GL_ARGS
 }
 
 scan_credentials() {
-    [ -n "${ROMP_NO_GITLEAKS:-}" ] && return 0
-
     local gl root cfg range rc local_ref local_sha _remote_ref remote_sha log plain err expected reported
-    gl="${ROMP_GITLEAKS:-$(command -v gitleaks || true)}"
-    if [ -z "$gl" ] || [ ! -x "$gl" ]; then
-        # Loud rather than silent, but not a blocker: requiring an install to
-        # push would break every clone that never wanted the scanner, and CI
-        # scans the full history regardless.
+    if ! credential_scan_armed; then
+        [ -n "${ROMP_NO_GITLEAKS:-}" ] && return 0     # a skip asked for: silent
+        # No binary. Loud rather than silent, but not a blocker: requiring an
+        # install to push would break every clone that never wanted the
+        # scanner, and CI scans the full history regardless.
         echo "romp pre-push: gitleaks not installed, pushing WITHOUT a secret scan." >&2
         echo "  Install it (brew install gitleaks, or the release .github/workflows/ci.yml pins)." >&2
         echo "  ROMP_GITLEAKS names a binary that is not on PATH; ROMP_NO_GITLEAKS=1 silences this." >&2
         return 0
     fi
+    gl="$(gitleaks_binary)"
 
     root="$(git rev-parse --show-toplevel)"
     # The repo's rules, named explicitly: without --config gitleaks reads a
@@ -698,6 +877,14 @@ scan_credentials() {
             elif [ -n "$expected" ] && [ "$reported" != "$expected" ]; then
                 unscanned "the CREDENTIAL scan of $local_ref (${local_sha:0:10}) covered $reported of the $expected commits with content to scan"
                 failed_creds=1
+                # A count that came up SHORT with log.showRoot false and a root
+                # commit in the range (the header): the key is what hid the
+                # diff, and a refusal a contributor cannot act on is a defect.
+                # shellcheck disable=SC2086  # the range is deliberately word-split
+                if [ "$reported" -lt "$expected" ] 2>/dev/null && [ "$(git config --type=bool log.showRoot 2>/dev/null || true)" = false ] \
+                    && [ -n "$(git rev-list --max-parents=0 $range 2>/dev/null || true)" ]; then
+                    echo "romp pre-push: log.showRoot is false in this clone's git configuration, which hides a root commit's diff from the scanner's log; set it to true (git config log.showRoot true) or unset it and push again, or ROMP_NO_GITLEAKS=1 skips the credential scan for this one push" >&2
+                fi
             fi
         fi
     done <<< "$refs"

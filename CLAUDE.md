@@ -79,7 +79,14 @@ This repo may go public; assume every commit is permanent and world-readable.
   over the project's own history when it pushes a branch cut from the project's
   main to the fork — 2026-09-07; and the metadata since 2026-09-09, when a
   clone with no `user.email` had git stamp `<login>@<hostname -f>` on a
-  branch's commits and a pushed merge, through both content scans); and the
+  branch's commits and a pushed merge, through both content scans); a text
+  file whose diff attribute marks it binary (a `-diff` line or the `binary`
+  macro in `.gitattributes`, `.git/info/attributes` or the file
+  `core.attributesFile` names, or a driver with `diff.<driver>.binary` true)
+  is refused rather than read, since git's grep and diff both skip such a file
+  and a banned string in one published (2026-09-21); the refusal names the
+  path and the attribute, and the remedy is to remove the attribute for that
+  path or push from a clone where it is not set; and the
   maintainer's clone carries an UNTRACKED
   `tests/test_no_personal_identifiers.py` that scans the working tree for the
   same strings plus that machine's hostname and home path. The pytest file is
@@ -102,8 +109,10 @@ so there is no list to write. **gitleaks** covers them, in two places:
   count of the commits with content to scan, or no count at all (the two
   coverage conditions). A git configuration the hook cannot override
   (`log.showRoot` set to false, with a root commit in the push) leaves gitleaks
-  short and refuses a clean push; `ROMP_NO_GITLEAKS=1` skips the scan for one
-  push, `ROMP_GITLEAKS` points at a binary. This is the same hook as the
+  short and refuses a clean push, naming the key and the remedy: set it to true
+  (`git config log.showRoot true`) or unset it and push again, or
+  `ROMP_NO_GITLEAKS=1` skips the credential scan for this one push.
+  `ROMP_GITLEAKS` points at a binary. This is the same hook as the
   identifier scan and both report before it refuses, so one push tells you
   about both.
 - **CI's `Secret scan (gitleaks)` job** scans all of history, every branch and
