@@ -374,6 +374,9 @@ const HELD: Record<GateHeld, (base: string | null, module: string) => string> = 
  *  the same bytes and an uncommitted edit is charged like a committed one; the diff lists tracked paths alone, so a new
  *  uncommitted file is road 1's. `created` is the diff's added files, for a human to compare with CREATED. */
 export type RoadTwo = { gate: Gate; base: string | null; created: string[]; touched: string[]; faults: string[] };
+/** The checks this module keys on the delta since the merge-base: road 2, one. tools/markdown-viewer-plan-linknav.test.mjs
+ *  reads this line and holds the plan's stand-down sentence to this count plus its own checks run through its door. */
+export const ROAD_TWO_GATED_CHECKS = 1;
 export function roadTwo(repo: string, reviews: Reviews, module: string): RoadTwo {
   const git = (...args: string[]): string => execFileSync("git", args, { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
   let base: string | null = null;

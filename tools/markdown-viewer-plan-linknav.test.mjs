@@ -11,8 +11,9 @@
 // trail, the reload keeping it, the delegate's push, the buttons' open with no target, the capture-phase chord
 // listener); the words quoted in the section and the guide are the sources' literals; both sheets carry L3's rules
 // under `screen` and the print block names the control nowhere; no history API call stands in the trail or the viewer
-// (L5); the trail module imports nothing and fetches nothing, and L6's two verifications are run from the merge-base with
-// origin/main where that base tells this branch's delta from main's tip, behind a two-part gate read off git: the
+// (L5); the trail module imports nothing and fetches nothing, and the checks keyed on the delta (L6's two verifications, and
+// the re-aimed count's comparison with it, below) are run from the merge-base with origin/main where that base tells this
+// branch's delta from main's tip, behind a two-part gate read off git: the
 // merge-base is not origin/main itself, and the diff since it adds this module (the file review's round 4, extra8-1: the
 // verifications are claims about this follow-on's delta, and the diff since the merge-base is that delta only on the open
 // PR branch in a clone where origin/main has moved past the branch's last merge of it; main itself, a batch head cut from
@@ -21,11 +22,15 @@
 // names the part of the gate that held them; before the gate they ran there and failed on a delta that was not this one's;
 // a batch head that main has moved under passes both parts and fails the count on the other PRs' files, the gate's
 // residual, disclosed here and in the plan and not closed, with a third part named for the maintainer in the PR body: the
-// author's closing pass after the file review's round 4, attribution-and-gates-2 with records-2; and the verifications run
-// in no CI job and in none after the merge, since the shell job that runs this module checks the pull request out at depth
-// 1 with no origin/main and a landed follow-on's diff is some later branch's, so where landing is gated the prose alone
-// carries L6, re-derived by hand at the merged head: the file review's round 5, correctness-4, the plan's Tests paragraph
-// stating it once with the checkouts, and this module holding the two CI jobs that run the tools and the UI tests to a
+// author's closing pass after the file review's round 4, attribution-and-gates-2 with records-2; and the checks keyed on the
+// delta run in no CI job and in none after the merge, since the shell job that runs this module checks the pull request out
+// at depth 1 with no origin/main and a landed follow-on's diff is some later branch's, so where landing is gated the prose
+// alone carries L6 and the re-aimed count, re-derived by hand at the merged head: the file review's round 5, correctness-4,
+// the plan's Tests paragraph stating it once with the checkouts, as a rule over those checks whose count is derived (every
+// check this module keys on the delta runs through one door, `gated`, which records it, and the attribution module exports
+// the count of its own; the sentence's number word is held to the sum, and each check is named in it: the file review's
+// landing round, extra6-1, the sentence had named two of three and its pin held the bytes, so a widened, truer sentence
+// was red), and this module holding the two CI jobs that run the tools and the UI tests to a
 // checkout with no fetch-depth: 0, so a change there names the plan's sentence; the gate itself is a pure function over git's
 // answers, gateOf, pinned in all four cells, this module's own path asserted to exist in the tree, and the running shape and
 // the three hold-offs run against a temp repo shaped as the open PR branch: the file review's round 5, tests-7, since a
@@ -65,12 +70,13 @@ export function gateOf(base, main, added, module) {
   if (!added.includes(module)) return { ran: false, held: 'the diff does not add the module' };
   return { ran: true, held: null };
 }
-const NOWHERE = '; the verifications run in no CI job and in none after the merge (the plan\'s Tests paragraph)';
-/** What the diagnostic says for each part of the gate that held the verifications off. */
+const NOWHERE = '; the checks keyed on the delta run in no CI job and in none after the merge (the plan\'s Tests paragraph)';
+/** What the diagnostic says for each part of the gate that held a check off, naming the check (the file review's landing
+ *  round, extra6-1: the re-aimed count's stand-down had reused L6's message, so it was reported as L6's). */
 const HELD = {
-  'no origin/main': () => 'L6\'s verifications did not run: origin/main is not known in this checkout (CI\'s default-depth checkout); the prose alone holds them here' + NOWHERE,
-  'the merge-base is origin/main': () => 'L6\'s verifications did not run: the merge-base with origin/main is origin/main itself (main itself, a branch or a batch head cut from main\'s tip, or this branch just after merging origin/main), so the diff since it is the whole history over main\'s tip and not this follow-on\'s delta; they run on the open PR branch once main has moved past the branch\'s last merge of it' + NOWHERE,
-  'the diff does not add the module': (base, module) => 'L6\'s verifications did not run: the diff since the merge-base ' + base + ' does not add ' + module + ' (a later branch after this follow-on landed, whose fork point main has moved past; or HEAD is main), so the diff is that branch\'s delta and not this follow-on\'s; they run on the open PR branch once main has moved past the branch\'s last merge of it' + NOWHERE,
+  'no origin/main': (name) => name + ' did not run: origin/main is not known in this checkout (CI\'s default-depth checkout); the prose alone holds it here' + NOWHERE,
+  'the merge-base is origin/main': (name) => name + ' did not run: the merge-base with origin/main is origin/main itself (main itself, a branch or a batch head cut from main\'s tip, or this branch just after merging origin/main), so the diff since it is the whole history over main\'s tip and not this follow-on\'s delta; it runs on the open PR branch once main has moved past the branch\'s last merge of it' + NOWHERE,
+  'the diff does not add the module': (name, base, module) => name + ' did not run: the diff since the merge-base ' + base + ' does not add ' + module + ' (a later branch after this follow-on landed, whose fork point main has moved past; or HEAD is main), so the diff is that branch\'s delta and not this follow-on\'s; it runs on the open PR branch once main has moved past the branch\'s last merge of it' + NOWHERE,
 };
 /** The delta L6 speaks of, read off git in `repo`: the gate, and where it ran, every file the diff since the merge-base lists
  *  (HEAD against the merge-base, the committed delta) and the kernel stat over the same span. */
@@ -83,6 +89,20 @@ function deltaOf(repo, module) {
   const gate = gateOf(base, main, status.filter((s) => s[0] === 'A').map((s) => s[1]), module);
   if (!gate.ran) return { gate, base, files: [], modified: [], kernel: '' };
   return { gate, base, files: status.map((s) => s[s.length - 1]), modified: status.filter((s) => s[0] === 'M').map((s) => s[1]), kernel: git('diff', '--stat', base, 'HEAD', '--', 'kernel/') };
+}
+/** The checks this module keys on the delta since the merge-base, by the names the plan's stand-down sentence gives them. */
+const L6_CHECK = "L6's kernel stat and listing";
+const REAIMED_CHECK = "the re-aimed count's comparison with the delta";
+/** Every check of this module keyed on the delta, by name, once it has been run or held off through `gated` below. */
+const GATED_RAN = new Set();
+/** The one door for a check keyed on the delta: deltaOf over this repository is called here and nowhere else (asserted in the
+ *  last test), so GATED_RAN is the set of such checks and the plan's sentence counting them is held to it plus the
+ *  attribution module's exported count. Where the gate holds, the diagnostic names the check that did not run. */
+function gated(t, name, check, heldNote = '') {
+  GATED_RAN.add(name);
+  const d = deltaOf(REPO, THIS_MODULE);
+  if (!d.gate.ran) { t.diagnostic(HELD[d.gate.held](name, d.base, THIS_MODULE) + heldNote); return; }
+  check(d);
 }
 
 const plan = read('plans', 'markdown-viewer.md');
@@ -315,7 +335,8 @@ test('L5 and L6: no history API call in the trail or the viewer; the trail modul
   // the merge (the file review's round 5, correctness-4): the plan's Tests paragraph says so once, with the checkouts, and the
   // premise is held here off ci.yml itself, the jobs whose steps run the tools tests and npm test checking out with no
   // fetch-depth: 0, so a job that starts fetching history names the plan's sentence to reword.
-  assert.ok(section.includes('L6\'s two verifications and the attribution module\'s second road (below) run in no checkout that gates landing, and in none after the merge'), 'the plan states once that the verifications run in no checkout that gates landing');
+  // the plan's stand-down sentence, a rule over the checks keyed on the delta with their count, is held by the last test of
+  // this module, once every gated check has run through `gated`
   const ci = read('.github', 'workflows', 'ci.yml');
   const jobsAt = ci.indexOf('\njobs:\n');
   assert.ok(jobsAt >= 0, 'ci.yml has a jobs: block');
@@ -333,13 +354,13 @@ test('L5 and L6: no history API call in the trail or the viewer; the trail modul
   assert.ok(count, 'L6 counts the listing beside the command');
   assert.ok(exists('upstream', '2026-09-19-linknav-trail-back-forward.md'), 'the ledger entry the section names');
   assert.ok(exists(...THIS_MODULE.split('/')), 'THIS_MODULE names a file in the tree: ' + THIS_MODULE + ' (a misspelt path would hold the verifications off for good behind a green diagnostic; the file review\'s round 5, tests-7)');
-  const d = deltaOf(REPO, THIS_MODULE);
-  if (!d.gate.ran) { t.diagnostic(HELD[d.gate.held](d.base, THIS_MODULE)); return; }
-  assert.equal(d.kernel, '', 'no kernel change since the merge-base ' + d.base);
-  const DIRS = ['ui/webview/', 'docs/', 'plans/', 'tools/', 'upstream/', 'tests/'];
-  for (const f of d.files) assert.ok(DIRS.some((dir) => f.startsWith(dir)), f + ' lies under one of the six directories L6 names');
-  assert.equal(d.files.length, Number(count[1]), 'L6 says the listing since the merge-base has ' + count[1] + ' files; it has ' + d.files.length + ': ' + d.files.join(', '));
-  t.diagnostic('L6\'s verifications ran: ' + d.files.length + ' files since the merge-base ' + d.base + ', none under kernel/, all under the six directories');
+  gated(t, L6_CHECK, (d) => {
+    assert.equal(d.kernel, '', 'no kernel change since the merge-base ' + d.base);
+    const DIRS = ['ui/webview/', 'docs/', 'plans/', 'tools/', 'upstream/', 'tests/'];
+    for (const f of d.files) assert.ok(DIRS.some((dir) => f.startsWith(dir)), f + ' lies under one of the six directories L6 names');
+    assert.equal(d.files.length, Number(count[1]), 'L6 says the listing since the merge-base has ' + count[1] + ' files; it has ' + d.files.length + ': ' + d.files.join(', '));
+    t.diagnostic('L6\'s verifications ran: ' + d.files.length + ' files since the merge-base ' + d.base + ', none under kernel/, all under the six directories');
+  });
 });
 
 // ── the guide and the browser plan ─────────────────────────────────────────────────────────────────
@@ -438,13 +459,13 @@ test('the re-aimed sentence: its count is the number of pre-existing test module
   const sentence = flat(section.slice(m.index, end));
   const named = [...new Set([...sentence.matchAll(/\b((?:ui\/webview|tools|tests)\/[\w-]+\.(?:test\.ts|test\.mjs|py))\b/g)].map((x) => x[1]))];
   assert.equal(named.length, count, 'the sentence names as many test modules as it counts: ' + named.join(', '));
-  const d = deltaOf(REPO, THIS_MODULE);
-  if (!d.gate.ran) { t.diagnostic(HELD[d.gate.held](d.base, THIS_MODULE) + '; the re-aimed count is held to the sentence\'s own list alone here'); return; }
-  const TEST_MODULE = /^(?:ui\/webview\/[\w-]+\.test\.ts|tools\/[\w-]+\.test\.mjs|tests\/test_\w+\.py)$/;
-  const reAimed = d.modified.filter((f) => TEST_MODULE.test(f)).sort();
-  assert.equal(reAimed.length, count, 'the sentence says ' + m[1] + ' standing suites were re-aimed; the diff since the merge-base ' + d.base + ' modifies ' + reAimed.length + ' pre-existing test modules: ' + reAimed.join(', '));
-  for (const f of reAimed) assert.ok(named.includes(f), f + ' is modified since the merge-base and named in the re-aimed sentence');
-  t.diagnostic('the re-aimed count ran: ' + reAimed.length + ' pre-existing test modules modified since the merge-base ' + d.base);
+  gated(t, REAIMED_CHECK, (d) => {
+    const TEST_MODULE = /^(?:ui\/webview\/[\w-]+\.test\.ts|tools\/[\w-]+\.test\.mjs|tests\/test_\w+\.py)$/;
+    const reAimed = d.modified.filter((f) => TEST_MODULE.test(f)).sort();
+    assert.equal(reAimed.length, count, 'the sentence says ' + m[1] + ' standing suites were re-aimed; the diff since the merge-base ' + d.base + ' modifies ' + reAimed.length + ' pre-existing test modules: ' + reAimed.join(', '));
+    for (const f of reAimed) assert.ok(named.includes(f), f + ' is modified since the merge-base and named in the re-aimed sentence');
+    t.diagnostic('the re-aimed count ran: ' + reAimed.length + ' pre-existing test modules modified since the merge-base ' + d.base);
+  }, '; the re-aimed count is held to the sentence\'s own list alone here');
 });
 
 // ── the gate on L6's verifications ─────────────────────────────────────────────────────────────────
@@ -498,4 +519,26 @@ test('L6\'s gate (the file review\'s round 5, tests-7): a pure function over git
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }
+});
+
+// ── the stand-down sentence, held to the checks that stand down ────────────────────────────────────
+
+test('the plan\'s stand-down sentence is a rule over the checks keyed on the delta since the merge-base, and its count is derived: the number word equals the checks this module ran through `gated` plus the attribution module\'s exported count, each check is named in it, and it says they run in no checkout that gates landing and in none after the merge; deltaOf over this repository is called through `gated` alone, and every held-off diagnostic names its check (the file review\'s landing round, extra6-1: the sentence had named two of three and its pin held the bytes, so the short enumeration could never go red)', () => {
+  const own = read(...THIS_MODULE.split('/'));
+  assert.equal((own.match(/deltaOf\(REPO, /g) || []).length, 1, 'deltaOf over the repository is called in gated alone, so GATED_RAN is every check this module keys on the delta');
+  assert.equal((own.match(/\bgated\(t, [A-Z0-9_]+_CHECK, /g) || []).length, GATED_RAN.size, 'every gated call in this module ran before this test (a check declared and not run is red here): ' + [...GATED_RAN].join('; '));
+  assert.ok(GATED_RAN.size >= 2, 'at least two checks ran through the door (an empty set cannot satisfy the count): ' + [...GATED_RAN].join('; '));
+  const road2 = /^export const ROAD_TWO_GATED_CHECKS = (\d+);$/m.exec(read('ui', 'webview', 'linknav-records-attribution.test.ts'));
+  assert.ok(road2, 'the attribution module exports the count of its checks keyed on the delta (ROAD_TWO_GATED_CHECKS)');
+  const expected = GATED_RAN.size + Number(road2[1]);
+  const m = /The (\w+) checks keyed on the diff since the merge-base with `origin\/main` \(([^()]*)\) run in no checkout that gates landing, and in none after the merge:/.exec(section);
+  assert.ok(m, 'the plan states the stand-down once as a rule over the checks keyed on the delta, with their count and their names, saying they run in no checkout that gates landing and in none after the merge');
+  assert.equal(NUMBER_WORDS[m[1].toLowerCase()], expected, 'the sentence counts the checks keyed on the delta: ' + GATED_RAN.size + ' in this module (' + [...GATED_RAN].join('; ') + ') and ' + road2[1] + ' in the attribution module, ' + expected + ' in all; it says ' + m[1]);
+  for (const name of GATED_RAN) assert.ok(m[2].includes(name), 'the sentence names the check ' + JSON.stringify(name));
+  assert.ok(m[2].includes("the attribution module's second road"), "the sentence names the attribution module's second road");
+  assert.ok(m[2].includes("the re-aimed count's list-vs-count half is not among them and runs in every checkout"), 'and says which half of the re-aimed check is not gated (both refuters of extra6-1)');
+  assert.ok(section.includes("and every claim about the delta, L6's two and the re-aimed count's comparison, holds by the prose alone, re-derived by hand at the merged head"), 'the closing clause covers every gated claim, the re-aimed count\'s among them');
+  // the held-off diagnostics name the check, whichever part of the gate held it (extra6-1: the re-aimed count's stand-down had
+  // been reported as L6's)
+  for (const held of Object.keys(HELD)) for (const name of GATED_RAN) assert.ok(HELD[held](name, 'aaaa', THIS_MODULE).startsWith(name + ' did not run: '), 'the diagnostic for ' + JSON.stringify(held) + ' names ' + JSON.stringify(name));
 });
