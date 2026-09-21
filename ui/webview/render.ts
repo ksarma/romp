@@ -14132,19 +14132,17 @@ function queueSpacerRow(sid: string, topBefore: number, topAfter: number, botBef
     spacerRowsRaf = null;
     const rows = spacerRowsPending; spacerRowsPending = [];
     // the scroller's heights belong to the view active IN THIS FRAME: #content is the one scroller and a view switched away since its row
-    // was queued has no geometry, so its row is filed with none (sh and ch null) rather than with the other view's figures, which corrupted
-    // the journal this change's own defect was diagnosed from (the maintainer's round 1 addendum). The marker that said so, a `view` key
-    // holding one fixed word, "inactive", and no host name, is WITHDRAWN from the post pending the owner's approval of the field (the
-    // reviewer's ruling of 2026-09-21: a new field a page posts to the kernel is the owner's, field by field, and the maintainer's round 2
-    // ruling had admitted it to the kernel's chat allowlist without his word): the row posts no `view` for now, the allowlist is main's, and
-    // the marker returns on the owner's word (reverting the commit that withdrew it restores the key here, in scroll-write.ts's builder, in
-    // the allowlist and in their pins). One read, and only when a queued row is the active view's; a row of the active view under a scroller
-    // with no box carries the 0 the scroller reads, an honest figure.
+    // was queued has no geometry, so its row is filed with none (sh and ch null) and says so (view: "inactive") rather than with the other
+    // view's figures, which corrupted the journal this change's own defect was diagnosed from (the maintainer's round 1 addendum). The marker
+    // is a `view` key holding one fixed word, "inactive", and no host name, admitted to the kernel's chat allowlist on the owner's approval
+    // (the owner 2026-09-21, who approved the field: a new field a page posts to the kernel is his to approve, field by field). One read, and
+    // only when a queued row is the active view's; a row of the active view under a scroller with no box carries the 0 the scroller reads,
+    // an honest figure.
     const content = document.getElementById("content");
     const live = activeId;
     let sh: number | null = null, ch: number | null = null;
     if (live && content && rows.some(([rsid]) => rsid === live)) { sh = content.scrollHeight; ch = content.clientHeight; }
-    for (const [rsid, a, b, c, d] of rows) scrollDiagRow("spacer", rsid === live ? spacerRow(rsid, a, b, c, d, sh, ch) : spacerRow(rsid, a, b, c, d, null, null));
+    for (const [rsid, a, b, c, d] of rows) scrollDiagRow("spacer", rsid === live ? spacerRow(rsid, a, b, c, d, sh, ch) : spacerRow(rsid, a, b, c, d, null, null, "inactive"));
   });
 }
 

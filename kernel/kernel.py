@@ -3534,7 +3534,8 @@ CLIENT_DIAG_KEYS = {
                        "writer", "before", "after", "delta", "stick", "gesture", "sh", "ch",
                        "anchor", "proto", "events", "regions", "headKnown", "headFrom", "older", "noframe", "trail",
                        "dh", "last", "cls", "fromTail", "atBottom", "where", "removed", "added", "reAdded", "shBefore", "shAfter", "st",
-                       "top", "bot", "dTop", "dBot", "lo", "hi", "edge", "why", "notice", "nav", "kind", "keep", "reland")),
+                       "top", "bot", "dTop", "dBot", "lo", "hi", "edge", "why", "notice", "nav", "kind", "keep", "reland",
+                       "view")),                                    # a spacer row of a view switched away before its frame: one fixed word ("inactive"), no host name (PR E; the owner 2026-09-21, who approved the field)
     "strip": frozenset(("ok", "tunnels", "err", "open", "base")),
     "feed": frozenset(("id", "from", "to", "ev", "buildId", "predicted", "appeared", "gone", "total")),
     "outline": frozenset(("buildId", "slot", "rev")),

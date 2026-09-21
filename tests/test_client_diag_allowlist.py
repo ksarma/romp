@@ -153,31 +153,29 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         for surface in ("shell", "federation", "chat", "perf", "reload-core"):
             self.assertNotIn("parked", km.CLIENT_DIAG_KEYS[surface], "the key is the pane-shim surface's alone")
 
-    def test_the_inactive_spacer_row_posts_no_view_marker_and_no_surface_admits_one(self):
+    def test_the_inactive_spacer_rows_marker_passes_whole_on_the_owners_approval(self):
         # PR E's author's pass 1b (applying the maintainer's round 1 addendum) marked a spacer row whose view was switched away before its
-        # frame `view: "inactive"` (sh and ch null: no geometry, and the row said so; ui/webview/scroll-write.ts spacerRow), and the author's
+        # frame `view: "inactive"` (sh and ch null: no geometry, and the row says so; ui/webview/scroll-write.ts spacerRow), and the author's
         # pass 3 (applying the maintainer's round 2 ruling) admitted the key to the chat allowlist, after the kernel had dropped it with a
-        # stderr line and the stored row was byte-identical to an active view's row read with #content missing; this cell then pinned the
-        # marked row stored whole, the key the chat surface's alone, with a second spacer fixture row in the census below carrying the marker.
-        # The field is WITHDRAWN (the reviewer's ruling of 2026-09-21): a new field a page posts to the kernel is the owner's, field by field,
-        # and the maintainer's round 2 ruling admitted this one without his word; he is being asked. Until he answers, this cell pins the
-        # ABSENCE: the row the page posts for a switched-away view carries no `view` (its nulls alone say so), no surface's entry admits
-        # `view` (the chat entry is main's, byte for byte), and a `view` a page did post is dropped as any unlisted key is, with the
-        # kernel's line naming it. Reverting the commit that withdrew the field restores the marker at the post, the allowlist entry, the
-        # marked fixture row and this cell's former shape.
-        row = {"sid": WID, "top": [40, 48], "bot": [0, 0], "dTop": 8, "dBot": 0, "sh": None, "ch": None}
+        # stderr line and the stored row was byte-identical to an active view's row read with #content missing. A new field a page posts to
+        # the kernel is the owner's to approve, field by field, and that ruling was not his word: the field was taken out of the tree
+        # restorably on 2026-09-21 and restored the same day on his approval (the owner 2026-09-21, who approved the field), which stands on
+        # his word and not on the maintainer's round 2 ruling. This cell pins the PRESENCE at the dispatch level: the marked row through the
+        # real handler, stored whole with nothing said; the key in the chat entry and in no other surface's (one fixed word, no host name);
+        # and the second spacer fixture row in the census below carries the marker, so the census executes the marker's shape too (drop the
+        # key from the table and the census reds with this cell). Red under the reverse plants: the key out of the chat entry (the kernel
+        # drops the posted key with its stderr line, so the stored row is not the posted one); the marker out of the page's post, and the
+        # builder's argument out with the bundle rebuilt, red the node pins (ui/webview/spacer-measure.test.ts, scroll-movers.test.ts).
+        row = {"sid": WID, "top": [40, 48], "bot": [0, 0], "dTop": 8, "dBot": 0, "sh": None, "ch": None, "view": "inactive"}
         err = self.post("chat", "spacer", row)
-        self.assertEqual(err, "", "the unmarked row is admitted whole, nothing said: %s" % err)
+        self.assertEqual(err, "", "the marked row is admitted whole, nothing said (the owner 2026-09-21, who approved the field): %s" % err)
         stored = self.rows()[-1]["data"]
-        self.assertEqual(stored, row, "the switched-away view's row survives the allowlist whole: nulls and no `view`")
-        self.assertNotIn("view", stored)
+        self.assertEqual(stored, row, "the inactive spacer row survives the allowlist whole, marker included")
+        self.assertEqual(stored["view"], "inactive", "one fixed word")
+        self.assertIn("view", km.CLIENT_DIAG_KEYS["chat"], "the chat entry names the key on the owner's approval of 2026-09-21")
         for surface in km.CLIENT_DIAG_KEYS:
-            self.assertNotIn("view", km.CLIENT_DIAG_KEYS[surface], "no surface admits the withdrawn field until the owner approves it (%s)" % surface)
-        # the would-be shape, posted anyway: dropped like any unlisted key, and said so
-        err = self.post("chat", "spacer", dict(row, view="inactive"))
-        self.assertIn("'view'", err, "the kernel names the key it dropped: %s" % err)
-        self.assertIn("does not admit", err)
-        self.assertEqual(self.rows()[-1]["data"], row, "and stores the row without it")
+            if surface != "chat":
+                self.assertNotIn("view", km.CLIENT_DIAG_KEYS[surface], "the key is the chat surface's alone (%s)" % surface)
 
     def test_every_surface_in_the_table_admits_every_key_it_names(self):
         for surface, keys in sorted(km.CLIENT_DIAG_KEYS.items()):
@@ -522,7 +520,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                 ("unitchange", {"sid": sid, "dh": 4, "cls": "turn", "fromTail": True, "stick": False, "atBottom": True, "sh": 5000, "ch": 800}),
                 ("tailmut", {"sid": sid, "where": "tail", "removed": 1, "added": 2, "reAdded": 0, "shBefore": 5000, "shAfter": 5010, "st": 4200, "ch": 800}),
                 ("spacer", {"sid": sid, "top": 40, "bot": 0, "dTop": 8, "dBot": 0, "sh": 5000, "ch": 800}),
-                ("spacer", {"sid": sid, "top": [40, 48], "bot": [0, 0], "dTop": 8, "dBot": 0, "sh": None, "ch": None}),   # the same poster's other road: a view switched away before its frame carries no geometry (PR E, the maintainer's round 1 addendum); its `view: "inactive"` marker is withdrawn pending the owner's approval of the field (the reviewer's ruling of 2026-09-21), so the row carries no key the table lacks
+                ("spacer", {"sid": sid, "top": [40, 48], "bot": [0, 0], "dTop": 8, "dBot": 0, "sh": None, "ch": None, "view": "inactive"}),   # the same poster's other road: a view switched away before its frame carries no geometry and the marker (PR E, the maintainer's round 1 addendum; the key in the chat entry on the owner's approval: the owner 2026-09-21, who approved the field)
                 ("scrollgesture", {"sid": sid, "top": 4100, "gesture": True, "sh": 5000, "ch": 800}),
                 ("regionask", {"sid": sid, "lo": 10, "hi": 20, "edge": "top", "why": "scroll", "notice": False}),
                 ("regionask", {"sid": sid, "why": "land", "nav": "reload", "kind": "older", "keep": 2, "reland": False, "trail": 1, "notice": True, "atBottom": False}),
