@@ -32,6 +32,18 @@ CI_YML = os.path.join(ROOT, ".github", "workflows", "ci.yml")
 CONTROL = "test_served_tests_require.py"
 CONFTEST = os.path.join(HERE, "conftest.py")
 CORNERS = os.path.join(HERE, "test_federated_capability_corners_served.py")
+# the shared browser-legs step and its two files, by the names the shared change fixed (the reviewer's ruling of 2026-09-21: the
+# step that runs browser legs after the Chromium install lands once, as its own change, and each PR adds its leg's roster line)
+BROWSER_LEGS_STEP = "Browser legs (node --test over ci-browser-legs.txt)"
+ROSTER = os.path.join(ROOT, "vscode-extension", "ci-browser-legs.txt")
+EXCLUDED = os.path.join(ROOT, "vscode-extension", "ci-browser-legs-excluded.txt")
+GEAR_LEG = "out-tests/ui/webview/gear-sub-focus-browser.test.js"
+GEAR_SRC = os.path.join(ROOT, "ui", "webview", "gear-sub-focus-browser.test.ts")
+LEDGER_ENTRY = os.path.join(ROOT, "upstream", "2026-09-19-relay-dial-page-caps-ws-bytes-by-host.md")
+# the sentence the ledger entry carries while the step is not in the tree, held whole (a prefix would let the rest drift)
+DISCLOSURE = ("The gear description browser legs (ui/webview/gear-sub-focus-browser.test.ts) run in the gating vscode-extension job only "
+              "once the shared browser-legs step lands, with " + GEAR_LEG + " as its roster line; until then the Test step runs the "
+              "file before the Chromium install, where its browser legs skip and its source pins alone read the sheet.")
 
 
 def conftest_module():
@@ -106,24 +118,44 @@ def ci_served_files():
     return [tok for tok in step["pytest"] if tok.startswith("tests/") and "*" not in tok]
 
 
-def ci_gear_browser_step():
-    """The gear browser legs' step as the workflow states it (the maintainer's round 5 of the wsBytesByHost review, tests-1): the
-    one step that sets ROMP_GEAR_BROWSER_REQUIRE to 1, its run line, and its place in the job (after the Chromium install, before
-    the served step); None when its anchors are gone, so a caller fails on None rather than passing on nothing."""
+def ci_steps():
+    """Every step of the workflow file in order, read by text (the runner installs no YAML reader): its name and its lines up to
+    the next step's name line, whichever job it sits in."""
     with open(CI_YML, encoding="utf-8") as f:
         lines = f.read().split("\n")
-    at = [i for i, l in enumerate(lines) if 'ROMP_GEAR_BROWSER_REQUIRE: "1"' in l]
-    if len(at) != 1:
+    starts = [(i, l.split("- name:", 1)[1].strip()) for i, l in enumerate(lines) if re.match(r"\s+- name: ", l)]
+    steps = []
+    for k, (i, name) in enumerate(starts):
+        end = starts[k + 1][0] if k + 1 < len(starts) else len(lines)
+        steps.append({"name": name, "lines": lines[i:end]})
+    return steps
+
+
+def ci_browser_legs_step():
+    """The shared browser-legs step's place, by the exact name the shared change fixed: the indexes of the steps of that name (a
+    list, so a duplicate shows) and of the steps whose lines install playwright's Chromium, over ci_steps()'s order; a caller reads
+    the two states off the first list's emptiness and never off a skip."""
+    steps = ci_steps()
+    return {"steps": steps,
+            "named": [k for k, s in enumerate(steps) if s["name"] == BROWSER_LEGS_STEP],
+            "install": [k for k, s in enumerate(steps) if any("npx playwright install chromium" in l for l in s["lines"])]}
+
+
+def roster_lines(path):
+    """The compiled bundle paths a roster file lists, one per line, blank lines and # lines ignored; in the exclusions file the
+    path is the text before the first tab (a reason follows it). None when the file does not exist, so a caller tells absent from
+    empty."""
+    if not os.path.exists(path):
         return None
-    i = at[0]
-    k = i
-    while k < len(lines) and not lines[k].strip().startswith("run:"):
-        k += 1
-    if k >= len(lines):
-        return None
-    install = [j for j, l in enumerate(lines) if "npx playwright install chromium" in l]
-    served = [j for j, l in enumerate(lines) if 'ROMP_SERVED_TESTS_REQUIRE: "1"' in l]
-    return {"run": lines[k].split("run:", 1)[1].strip(), "after_install": bool(install) and install[0] < i, "before_served": bool(served) and i < served[0]}
+    with open(path, encoding="utf-8") as f:
+        raw = f.read().split("\n")
+    out = []
+    for line in raw:
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        out.append(line.split("\t", 1)[0].strip())
+    return out
 
 
 def two_host_lab_knob():
@@ -197,23 +229,66 @@ class ServedLabsUnderCI(unittest.TestCase):
         self.assertTrue((step["env"].get(knob) or "").strip(),
                         "the served step does not set the two-host lab's knob %s (the gate reads any non-blank value): %r" % (knob, step["env"]))
 
-    def test_the_gear_browser_legs_run_after_the_browser_install(self):
+    def test_the_gear_browser_legs_run_in_ci_after_the_browser_install_or_the_gap_is_disclosed(self):
         """ui/webview/gear-sub-focus-browser.test.ts holds the source pins and the browser legs of the description-on-focus work
         (the wsBytesByHost review). The Test step runs it before the job installs Chromium, so there its browser legs skip and the
-        gate's read is the pins alone (the maintainer's round 5, tests-1); the job runs the file again by name after the install,
-        under ROMP_GEAR_BROWSER_REQUIRE=1, which the file reads to turn its browser skip into a failure naming the reason. This
-        pins the step's switch, its run line (the Test step's bundle, which npm run build leaves in place) and its place: after
-        the install and before the served step, the job's long phase."""
-        step = ci_gear_browser_step()
-        self.assertIsNotNone(step, "ci.yml has no step setting ROMP_GEAR_BROWSER_REQUIRE: the gear browser legs run in no CI job")
-        self.assertEqual(step["run"], "node --test out-tests/ui/webview/gear-sub-focus-browser.test.js", "the step runs the Test step's bundle of the file by name")
-        self.assertTrue(step["after_install"], "the step sits after the Chromium install (before it the legs skip)")
-        self.assertTrue(step["before_served"], "and before the served step")
-        src_path = os.path.join(ROOT, "ui", "webview", "gear-sub-focus-browser.test.ts")
-        self.assertTrue(os.path.exists(src_path), "the file the step names is gone")
-        with open(src_path, encoding="utf-8") as f:
+        gate's read is the pins alone (the maintainer's round 5, tests-1); the browser legs run in a job with a browser only
+        through the shared browser-legs step, which the reviewer's ruling of 2026-09-21 lands once as its own change (it touches
+        .github/), each PR adding its leg's line to the roster. Two states over the tree, never a skip: (A) the step named
+        BROWSER_LEGS_STEP and the roster are in the tree: the roster lists the leg's bundle exactly once, the leg is not in the
+        exclusions file when that file exists, and the step sits directly after the Chromium install step; (B) neither is: the
+        ledger entry discloses the gap with DISCLOSURE, whole. A half-present tree (the step without the roster, the roster without
+        the step) is a refusal naming what is missing. In both states the leg launches through the shared helper, where the switch
+        is read, and holds no private launch and no switch read of its own."""
+        step = ci_browser_legs_step()
+        roster = roster_lines(ROSTER)
+        present = bool(step["named"])
+        if present and roster is None:
+            self.fail("ci.yml holds the step %r but vscode-extension/ci-browser-legs.txt does not exist: the step reads the roster, so a "
+                      "step without one runs nothing; the two land together (state A) or neither does (state B, the ledger disclosure)"
+                      % BROWSER_LEGS_STEP)
+        if roster is not None and not present:
+            self.fail("vscode-extension/ci-browser-legs.txt exists but ci.yml holds no step named exactly %r: the roster is read by that "
+                      "step alone, so the step was renamed (move this pin's name with it) or the roster is orphaned; the two land together "
+                      "(state A) or neither does (state B, the ledger disclosure)" % BROWSER_LEGS_STEP)
+        if present:
+            # state A: the roster line once, the leg not excluded, the step directly after the install
+            self.assertEqual(len(step["named"]), 1, "ci.yml holds %d steps named %r; one" % (len(step["named"]), BROWSER_LEGS_STEP))
+            self.assertEqual(len(step["install"]), 1, "ci.yml holds %d steps installing playwright's Chromium; the pin places the "
+                                                      "browser-legs step after the one" % len(step["install"]))
+            k, i = step["named"][0], step["install"][0]
+            after = step["steps"][i + 1]["name"] if i + 1 < len(step["steps"]) else None
+            self.assertEqual(k, i + 1, "the browser-legs step sits directly after the Chromium install step (before it every leg skips, or "
+                                       "fails under the switch); the step after the install is %r (state B, the ledger disclosure, holds "
+                                       "only while the step is absent)" % after)
+            excluded = roster_lines(EXCLUDED)
+            in_excluded = excluded is not None and GEAR_LEG in excluded
+            count = roster.count(GEAR_LEG)
+            if count == 0:
+                self.fail(("%s is in ci-browser-legs-excluded.txt and not in ci-browser-legs.txt: move the line from the exclusions into "
+                           "the roster, with the leg's measured numbers in the PR body" if in_excluded else
+                           "%s is in neither ci-browser-legs.txt nor ci-browser-legs-excluded.txt: add the line to the roster, with the "
+                           "leg's measured numbers in the PR body") % GEAR_LEG
+                          + " (state B, the ledger disclosure, holds only while the step is absent)")
+            self.assertEqual(count, 1, "%s is listed %d times in ci-browser-legs.txt; the roster lists a leg once (the step runs each line "
+                                       "once)" % (GEAR_LEG, count))
+            self.assertFalse(in_excluded, "%s is in both ci-browser-legs.txt and ci-browser-legs-excluded.txt: a leg is in one or the other; "
+                                          "remove the line from the exclusions" % GEAR_LEG)
+        else:
+            # state B: the gap disclosed in the ledger entry, by the whole sentence
+            with open(LEDGER_ENTRY, encoding="utf-8") as f:
+                entry = f.read()
+            self.assertIn(DISCLOSURE, entry, "neither the browser-legs step nor the roster is in the tree, so the gear browser legs run in no "
+                                             "CI job with a browser, and the ledger entry does not disclose it; the sentence: %r (state A, "
+                                             "once the step and the roster land: the roster lists %s once, the leg is not in the exclusions, "
+                                             "and the step sits directly after the Chromium install)" % (DISCLOSURE, GEAR_LEG))
+        # both states: the launch is the shared helper's, where the switch is read
+        with open(GEAR_SRC, encoding="utf-8") as f:
             src = f.read()
-        self.assertIn("process.env.ROMP_GEAR_BROWSER_REQUIRE", src, "the file reads the switch the step sets")
+        self.assertRegex(src, r'import \{[^}]*\binBrowser\b[^}]*\} from "\./real-viewer-leg"',
+                         "the leg launches through the shared helper (real-viewer-leg.ts inBrowser), which reads the switch")
+        self.assertIsNone(re.search(r"\.chromium\.launch\(", src), "the leg holds no private launch (a copy would read no switch)")
+        self.assertIsNone(re.search(r"process\.env\.\w*REQUIRE", src), "the leg holds no switch read of its own: the shared helper's is the one read")
 
     def test_the_ci_globs_are_the_conftest_suffixes(self):
         self.assertEqual(sorted(ci_served_globs()), ["tests/test_*_browser.py", "tests/test_*_served.py"])
