@@ -555,18 +555,24 @@ const codeLines = (src) => {
  *  property access, an optional chain, a bracket holding a string literal) followed by a call is refused; a launch reached
  *  through a name computed at run time (`pw.chromium["la" + "unch"]()`) is outside this read, and a `launch` key in an object is
  *  no call and passes. A stand-down is the pair's other half (the file review's round 10, tests-2: the guard had refused the
- *  launch alone): a `skip` or `todo` call under the same spellings, or a `skip:` or `todo:` option (node:test's
- *  `test(name, { skip }, fn)` form), which defeats a roster's switch as a private launch does, since the switch turns the shared
- *  helper's launch skip into a failure and a leg that skips itself never reaches it; the convention's road for a leg that must
- *  not run is the exclusions file, not a private skip. The bound of the read: strings are not stripped, so `skip:` inside a
- *  message reds too, the safe side, and a computed name is outside it as for launch. The helper is the road a browser-legs
+ *  launch alone): a `skip` or `todo` call under the same spellings, a `skip:` or `todo:` option with its value written out,
+ *  a `skip` or `todo` standing as a shorthand property between braces (node:test's `test(name, { skip }, fn)` form with the
+ *  value declared under the option's own name, and the destructuring `const { skip } = t` that takes the method off the
+ *  context), or a bare `skip(` or `todo(` call (the destructured method called; the author's closing pass after the file
+ *  review's round 10, mechanism-1: the option read had needed the colon, so the shorthand the docstring itself named as the
+ *  form passed, and so did the destructured call). Any of them defeats a roster's switch as a private launch does, since the
+ *  switch turns the shared helper's launch skip into a failure and a leg that skips itself never reaches it; the convention's
+ *  road for a leg that must not run is the exclusions file, not a private skip. The bound of the read: strings are not
+ *  stripped, so `skip:` or `{ skip }` inside a message reds too, the safe side; a computed name is outside it as for launch,
+ *  and so is the method bound to a name of its own (`const stop = t.skip; stop(...)`), a read without a call followed by a
+ *  call of another name. The helper is the road a browser-legs
  *  roster's switch reaches (ci-browser-legs.txt's header names it), so a leg with a launch or a stand-down of its own would
  *  skip under such a step as it does without one. */
 const offRoute = (code) => {
   if (!/^import \{[^}]*\binBrowser\b[^}]*\} from "\.\/real-viewer-leg";/m.test(code)) return 'no import of inBrowser from real-viewer-leg.ts at a line\'s start';
   const launch = /(?:\.|\?\.)\s*launch\s*\(|\[\s*(["'`])launch\1\s*\]\s*\(/.exec(code);
   if (launch) return 'a launch outside the helper: ' + launch[0];
-  const standDown = /(?:\.|\?\.)\s*(?:skip|todo)\s*\(|\[\s*(["'`])(?:skip|todo)\1\s*\]\s*\(|\b(?:skip|todo)\s*:/.exec(code);
+  const standDown = /(?:\.|\?\.)\s*(?:skip|todo)\s*\(|\[\s*(["'`])(?:skip|todo)\1\s*\]\s*\(|\b(?:skip|todo)\s*:|[{,]\s*(?:skip|todo)\s*[,}]|\b(?:skip|todo)\s*\(/.exec(code);
   return standDown ? 'a stand-down outside the helper: ' + standDown[0] : null;
 };
 /** The browser legs among `files` (paths from the repo root, the delta's) that `legs` (the derived legs, basenames) does not hold:
@@ -717,9 +723,14 @@ test('the follow-on\'s browser legs and the job that gates a landing, a two-stat
   assert.equal(offRoute(codeLines('import { inBrowser } from "./real-viewer-leg";\nconst b = 1; // pw.chromium.launch()\n')), 'a launch outside the helper: .launch(', 'a launch quoted in a comment after code reds too: the stripper reads line shapes, and this is its safe side');
   // the pair's other half: a stand-down of the leg's own, under the launch spellings and node:test's option form (the file review's
   // round 10, tests-2)
-  for (const [spelling, want] of [['test("y", (t) => { t.skip("no browser here"); });', '.skip('], ['t?.skip("no browser here");', '?.skip('], ['t["skip"]("no browser here");', '["skip"]('], ["t['todo']('later');", "['todo']("], ['test.todo("later");', '.todo('], ['test("y", { skip: !pw }, () => {});', 'skip:'], ['test("y", { todo: true }, () => {});', 'todo:']]) {
+  for (const [spelling, want] of [['test("y", (t) => { t.skip("no browser here"); });', '.skip('], ['t?.skip("no browser here");', '?.skip('], ['t["skip"]("no browser here");', '["skip"]('], ["t['todo']('later');", "['todo']("], ['test.todo("later");', '.todo('], ['test("y", { skip: !pw }, () => {});', 'skip:'], ['test("y", { todo: true }, () => {});', 'todo:'],
+    // the shorthand property and the destructured call (the author's closing pass after the file review's round 10, mechanism-1:
+    // both had passed the option read, which needed the colon)
+    ['const skip = !process.env.PW;\ntest("y", { skip }, () => {});', '{ skip }'], ['test("y", { only: false, todo }, () => {});', ', todo }'], ['test("y", {skip,only: false}, () => {});', '{skip,'], ['const { skip } = t;\nskip("no browser here");', '{ skip }'], ['skip("no browser here");', 'skip('], ['todo ("later");', 'todo (']]) {
     assert.equal(offRoute(codeLines('import { inBrowser } from "./real-viewer-leg";\n' + spelling + '\n')), 'a stand-down outside the helper: ' + want, 'a private stand-down is refused under the spelling ' + spelling);
   }
+  assert.equal(offRoute(codeLines('import { inBrowser } from "./real-viewer-leg";\nconst skip = !process.env.PW; const t = { todo: 1 }.todo; void skip; void t;\n')), 'a stand-down outside the helper: todo:', 'a bare declaration of the name is no stand-down by itself, and the object property with its colon is the option read (the read\'s bound is stated in offRoute\'s docstring: the method bound to a name of its own is outside it)');
+  assert.equal(offRoute(codeLines('import { inBrowser } from "./real-viewer-leg";\nconst skip = !process.env.PW; void skip; const skipped = { skipTo: 1, myskip: 2 }; void skipped;\n')), null, 'the name declared or standing inside a longer identifier, with neither a call, an option colon nor a shorthand place between braces, is no stand-down');
   assert.equal(offRoute(codeLines('import { inBrowser } from "./real-viewer-leg";\n// Skips LOUDLY without a playwright browser: the helper calls t.skip(...) itself\ntest("x", (t) => inBrowser(t, async () => {}));\n')), null, 'prose about skipping on a comment line is no stand-down (the stripper drops the line)');
   assert.equal(offRoute(codeLines('import { inBrowser } from "./real-viewer-leg";\nconst why = "skipped where no browser is installed";\n')), null, 'the word skipped, and skip with neither a call nor an option colon, is no stand-down');
   assert.equal(offRoute(codeLines('import { inBrowser } from "./real-viewer-leg";\nconst b = 1; // t.skip("x")\n')), 'a stand-down outside the helper: .skip(', 'a stand-down quoted in a comment after code reds too, the stripper\'s safe side');
