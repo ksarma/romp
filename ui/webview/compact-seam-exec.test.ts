@@ -10,6 +10,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as ts from "typescript";
 import { createRequire } from "node:module";
 import { compactTailPlan } from "./chat-compact-tail";
 import type { DisplayItem } from "./compact";
@@ -219,27 +220,102 @@ test("normal mode's exact tail trims through the shared walk (trimUnitsFrom from
   assert.deepEqual(w2.calls.filter((c) => c[0] === "trim" || c[0] === "renderEvent"), [["trim", 2], ["renderEvent", "e2"]]);
 });
 
-test("render.ts: one remover per hover class. The tail paint (both paths and the trim) removes no class itself and names neither hover class; the rings' one remover is the band module's clearRailRings, host-scoped when the tail paint calls it; the glow's one remover is applyGlow (the maintainer's round 3 ruling D: a second remover of a class outside its owner is the defect)", () => {
-  // the population: the classes the tail paint took off until this pass (.rail-ring, the band's; .ext-glow, applyGlow's), each with its adder
-  // and its remover named, so the ownership is a fact of the tree and not of a comment
-  const seam = RENDER.slice(RENDER.indexOf("function syncViewInner("), RENDER.indexOf("function patchWorkedFooters("));
-  const trim = RENDER.slice(RENDER.indexOf("function trimUnitsFrom("), RENDER.indexOf("\n}\n", RENDER.indexOf("function trimUnitsFrom(")));
-  for (const [name, span] of [["syncViewInner", seam], ["trimUnitsFrom", trim]] as const) {
-    assert.doesNotMatch(span, /classList\.remove\(|classList\.toggle\(|className\s*=/, name + " removes no class itself");
-    assert.doesNotMatch(span, /ext-glow|rail-ring/, name + " names neither hover class");
+test("render.ts: one owner per hover class. The tail paint (both paths and the trim) removes no class itself; the rings' one remover is the band module's clearRailRings, host-scoped when the tail paint calls it; the glow's one remover is applyGlow (the maintainer's round 3 ruling D: a second remover of a class outside its owner is the defect). The census reads the compiler's syntax tree of render.ts and of every module it reaches, and keys on the class a mutation RESOLVES to, never on a spelling (the author's fixer pass over pass 4)", () => {
+  // the population: the classes the tail paint took off until pass 4 (.rail-ring, the band's; .ext-glow, applyGlow's), each with its adder and
+  // its remover named, so the ownership is a fact of the tree and not of a comment. The census parses render.ts and every module it reaches
+  // through relative imports (the webview's bundle from this entry) and keys on the PROPERTY: a class mutation (classList.add/remove/toggle/
+  // replace, a className write, setAttribute("class")) whose class argument RESOLVES to an owned class sits inside its owner, whatever the
+  // spelling and whatever the file. Resolution: a string literal, a substitution-free template, a template or `+` concatenation of resolvable
+  // parts, a conditional's two arms, an identifier bound to a string constant in an enclosing block or at module level. The pass-4 census
+  // counted the literal `classList.remove("ext-glow")` over render.ts alone, so a `classList.toggle("ext-glow", false)`, a remover through an
+  // alias of the class name and a remover in another module all passed it (the mutations note, R4-M32 and its variants). Second axis: every
+  // string literal naming an owned class as a token, by (module, owner), a closed multiset, so a literal handed to a helper that mutates by
+  // parameter, or a new selector on the class, is enumerated here or reds. Outside the census: a mutator whose class comes from a parameter
+  // or a computed value with no literal at its site (41 such mutators are reached at this head; none is handed an owned class by any literal
+  // the second axis sees, and a caller passing the class through a variable shows up as its module's literal).
+  const dir = path.resolve(process.cwd(), "..", "ui", "webview");
+  const files = new Map<string, ts.SourceFile>();
+  const load = (rel: string): void => {
+    const base = path.resolve(dir, rel);
+    const p = [base + ".ts", base + ".js", base].find((c) => fs.existsSync(c) && fs.statSync(c).isFile());   // a specifier may carry its extension (a vendored .js module)
+    assert.ok(p, "an import in render.ts's bundle resolves to a module file: " + rel);
+    if (files.has(p!)) return;
+    const sf = ts.createSourceFile(p!, fs.readFileSync(p!, "utf8"), ts.ScriptTarget.Latest, true, p!.endsWith(".js") ? ts.ScriptKind.JS : ts.ScriptKind.TS);
+    files.set(p!, sf);
+    for (const st of sf.statements) {
+      const spec = (ts.isImportDeclaration(st) || ts.isExportDeclaration(st)) && st.moduleSpecifier && ts.isStringLiteral(st.moduleSpecifier) ? st.moduleSpecifier.text : null;
+      if (spec && spec.startsWith(".")) load(path.join(path.dirname(path.relative(dir, p!)), spec));
+    }
+  };
+  load("render");
+  assert.ok(files.size > 100, "the bundle's modules are reached from render.ts (" + files.size + ")");
+  const OWNED = new Set(["ext-glow", "rail-ring"]);
+  const namesOwned = (text: string): boolean => text.split(/[^A-Za-z0-9_-]+/).some((t) => OWNED.has(t));
+  const REMOVERS = new Set(["classList.remove", "classList.toggle", "classList.replace", "className=", "setAttribute(class)"]);
+  const mutations: string[] = [], literals: string[] = [], tailPaint: string[] = [], ringCalls: string[] = [];
+  let clearHoverMarks = 0;
+  for (const [p, sf] of files) {
+    const rel = path.relative(dir, p);
+    const nameOf = (fn: ts.SignatureDeclaration): string | null => {
+      if ((ts.isFunctionDeclaration(fn) || ts.isMethodDeclaration(fn) || ts.isFunctionExpression(fn)) && fn.name) return fn.name.getText(sf);
+      const q = fn.parent;
+      if (q && ts.isVariableDeclaration(q) && ts.isIdentifier(q.name)) return q.name.text;
+      if (q && (ts.isPropertyAssignment(q) || ts.isPropertyDeclaration(q))) return q.name.getText(sf);
+      return null;
+    };
+    const ownerOf = (n: ts.Node): string => { for (let q: ts.Node | undefined = n.parent; q; q = q.parent) { if (ts.isFunctionLike(q)) { const nm = nameOf(q); if (nm) return nm; } } return "<module>"; };
+    const constOf = (id: ts.Identifier): string | null => {   // `const <id> = "<literal>"` in the nearest enclosing block that declares it, else the module's
+      for (let q: ts.Node | undefined = id.parent; q; q = q.parent) {
+        if (!ts.isBlock(q) && !ts.isSourceFile(q)) continue;
+        for (const st of q.statements) if (ts.isVariableStatement(st)) for (const d of st.declarationList.declarations) if (ts.isIdentifier(d.name) && d.name.text === id.text && d.initializer && (ts.isStringLiteral(d.initializer) || ts.isNoSubstitutionTemplateLiteral(d.initializer))) return d.initializer.text;
+      }
+      return null;
+    };
+    const resolve = (e: ts.Expression | undefined): string | null => {   // null: the class is not a constant of the source
+      if (!e) return "";
+      if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) return e.text;
+      if (ts.isIdentifier(e)) return constOf(e);
+      if (ts.isTemplateExpression(e)) { let t = e.head.text; for (const sp of e.templateSpans) { const r = resolve(sp.expression); if (r == null) return null; t += r + sp.literal.text; } return t; }
+      if (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.PlusToken) { const a = resolve(e.left), b = resolve(e.right); return a == null || b == null ? null : a + b; }
+      if (ts.isParenthesizedExpression(e)) return resolve(e.expression);
+      if (ts.isConditionalExpression(e)) { const a = resolve(e.whenTrue), b = resolve(e.whenFalse); return a == null || b == null ? null : a + " " + b; }
+      return null;
+    };
+    const record = (n: ts.Node, method: string, args: readonly ts.Expression[]): void => {
+      const owner = ownerOf(n);
+      if ((owner === "syncViewInner" || owner === "trimUnitsFrom") && REMOVERS.has(method)) tailPaint.push(rel + ":" + owner + ":" + method);
+      for (const a of args) { const r = resolve(a); if (r != null && namesOwned(r)) mutations.push(rel + ":" + owner + ":" + method + ":" + r); }
+    };
+    const visit = (n: ts.Node): void => {
+      if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression)) {
+        const m = n.expression.name.text, obj = n.expression.expression;
+        if (["add", "remove", "toggle", "replace"].includes(m) && ts.isPropertyAccessExpression(obj) && obj.name.text === "classList") record(n, "classList." + m, m === "toggle" ? n.arguments.slice(0, 1) : n.arguments);
+        if (m === "setAttribute" && n.arguments[0] && ts.isStringLiteral(n.arguments[0]) && n.arguments[0].text === "class") record(n, "setAttribute(class)", n.arguments.slice(1));
+      }
+      if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "clearRailRings") ringCalls.push(rel + ":" + ownerOf(n) + "(" + n.arguments.map((a) => a.getText(sf)).join(", ") + ")");
+      if (ts.isBinaryExpression(n) && (n.operatorToken.kind === ts.SyntaxKind.EqualsToken || n.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken) && ts.isPropertyAccessExpression(n.left) && n.left.name.text === "className") record(n, "className=", [n.right]);
+      if ((ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateHead(n) || ts.isTemplateMiddle(n) || ts.isTemplateTail(n)) && namesOwned(n.text)) literals.push(rel + ":" + ownerOf(n) + ":" + JSON.stringify(n.text));
+      if (ts.isIdentifier(n) && n.text === "clearHoverMarks") clearHoverMarks++;
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
   }
-  assert.equal((seam.match(/(?<![\w.])clearRailRings\(v\.el\);/g) || []).length, 2, "both tail paths hand the view's own host to the band module's remover (the compact seam's append branch, normal mode's exact tail)");
-  assert.doesNotMatch(RENDER, /function clearHoverMarks\(/, "the second remover is gone");
-  // .rail-ring: drawRailBand adds it, clearRailRings alone removes it (document-wide by default, host-scoped when a host is given)
-  assert.equal((RENDER.match(/classList\.add\("rail-ring"\)/g) || []).length, 1, "one adder of the rings: drawRailBand");
-  assert.equal((RENDER.match(/classList\.remove\("rail-ring"\)/g) || []).length, 1, "one remover of the rings: clearRailRings");
-  assert.match(RENDER, /function clearRailRings\(host: ParentNode = document\): void \{\s*\n\s*host\.querySelectorAll\("\.dot\.rail-ring"\)\.forEach\(\(n\) => n\.classList\.remove\("rail-ring"\)\);\s*\n\}/, "the remover reads the host it is given, the document by default");
-  // .ext-glow: applyGlow adds it (by mid, by uuid) and applyGlow alone removes it (document-wide, at the start of every application)
-  const glow = RENDER.slice(RENDER.indexOf("function applyGlow("), RENDER.indexOf("\n}\n", RENDER.indexOf("function applyGlow(")));
-  assert.equal((RENDER.match(/classList\.add\("ext-glow"\)/g) || []).length, 2, "two adders of the glow, both applyGlow's");
-  assert.equal((glow.match(/classList\.add\("ext-glow"\)/g) || []).length, 2);
-  assert.equal((RENDER.match(/classList\.remove\("ext-glow"\)/g) || []).length, 1, "one remover of the glow");
-  assert.match(glow, /document\.querySelectorAll\("\.ext-glow"\)\.forEach\(\(n\) => n\.classList\.remove\("ext-glow"\)\);/, "…applyGlow itself, at the start of every application");
+  assert.deepEqual(mutations.sort(), [
+    "render.ts:applyGlow:classList.add:ext-glow", "render.ts:applyGlow:classList.add:ext-glow",   // by mid, by uuid
+    "render.ts:applyGlow:classList.remove:ext-glow",                                            // the one remover of the glow: document-wide, at the start of every application
+    "render.ts:clearRailRings:classList.remove:rail-ring",                                      // the one remover of the rings: on the host it is given, the document by default
+    "render.ts:drawRailBand:classList.add:rail-ring",                                           // the one adder of the rings
+  ].sort(), "every class mutation in the bundle that resolves to a hover class, by module, owner and method: one adder and one remover per class, each inside its owner; a second remover in any spelling, through an alias of the class name or in another module reds");
+  assert.deepEqual(literals.sort(), [
+    'render.ts:applyGlow:".ext-glow"', 'render.ts:applyGlow:"ext-glow"', 'render.ts:applyGlow:"ext-glow"', 'render.ts:applyGlow:"ext-glow"',   // the remover's selector and the three mutations
+    'render.ts:clearRailRings:".dot.rail-ring"', 'render.ts:clearRailRings:"rail-ring"',                                                    // the remover's selector and the mutation
+    'render.ts:drawRailBand:"rail-ring"',                                                                                                 // the adder
+    'render.ts:paintGlowRuler:".turn.ext-glow"', 'render.ts:paintRailBand:".turn.ext-glow"',                                                // the two READERS of the glow: the ruler mirrors it, the band reads it
+  ].sort(), "every string literal in the bundle naming a hover class as a token, by module and owner: the owners, the two readers, nothing else (a literal handed to a helper that mutates by parameter, or a new selector on the class, is enumerated here or reds)");
+  assert.deepEqual(tailPaint, [], "the tail paint (syncViewInner, both paths, and the trim) removes or replaces no class of any kind itself, by owner from the tree");
+  assert.deepEqual(ringCalls.filter((c) => c.startsWith("render.ts:syncViewInner")), ["render.ts:syncViewInner(v.el)", "render.ts:syncViewInner(v.el)"], "both tail paths hand the view's own host to the band module's remover (the compact seam's append branch, normal mode's exact tail; compact-tail-differential.test.ts lifts the remover and executes both paths)");
+  assert.equal(clearHoverMarks, 0, "the second remover is gone: no identifier in the bundle names it");
+  assert.match(RENDER, /function clearRailRings\(host: ParentNode = document\): void \{\s*\n\s*host\.querySelectorAll\("\.dot\.rail-ring"\)\.forEach\(\(n\) => n\.classList\.remove\("rail-ring"\)\);\s*\n\}/, "the remover reads the host it is given, the document by default (executed by the differential's lift)");
 });
 
 test("a paint of the view ends a re-window's follow of its rebuilt rows: the mark armed by the stick re-window is cleared before any branch runs (the maintainer's round 1 addendum; the reader's own scroll is the other ending event, tail-shrink.test.ts)", () => {
