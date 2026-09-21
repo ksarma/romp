@@ -71,8 +71,8 @@ MENTION = re.compile(r"\bround[- ](\d+)\b|\b(?:the|this|that) round\b(?![- ]?tri
 QUALIFIER = re.compile(r"\bmaintainer's\s+$", re.I)   # what must stand immediately before a numbered mention: on its line, or ending the line above when the mention opens its line (THE RULE, the docstring)
 MARKER = re.compile(r"^\s*(?:#|//|/\*|\*|<!--)?\s*")               # a comment marker and the whitespace around it, which a wrapped line begins with
 
-# a doubled attribution in one run of prose (the maintainer's round 6, H): the same possessive's "pass after" twice in a row
-# ("the author's fixer pass after the author's fixer pass after ..."), or the same attribution twice adjacent
+# a doubled attribution in one run of prose (the maintainer's round 6, H): the same possessive's "pass after" twice in a row (the
+# sweep's artefact, a qualifier inlined on a line whose line above already ended with it), or the same attribution twice adjacent
 DOUBLED = re.compile(r"\b(the (?:author's|maintainer's))\s+(?:fixer\s+)?pass after\s+\1\s+(?:fixer\s+)?pass after\b"
                      r"|\b(the (?:author's|maintainer's) (?:fixer pass|pass|round)(?:[- ]\d+)?)\s+\2\b", re.I)
 
@@ -210,9 +210,9 @@ class RoundLabels(unittest.TestCase):
                                   % (sorted(REVIEWER_ROUNDS), how, read, len(carrying), len(added), "\n".join(bad)))
 
     def test_no_added_comment_repeats_an_attribution_across_its_line_breaks(self):
-        """A mechanical rewrite over prose owes a read-back (the maintainer's round 6, H): the round-word sweep inlined the full
-        qualifier on a continuation line whose line above already ended with it, and a per-line census cannot see a doubling that
-        spans the break. So the added lines are read as prose, joined_runs, and a doubled attribution in one run is refused
+        """A mechanical rewrite over prose owes a read-back (the maintainer's round 6, H): the sweep that reworded the mentions
+        inlined the full qualifier on a continuation line whose line above already ended with it, and a per-line census cannot see
+        a doubling that spans the break. So the added lines are read as prose, joined_runs, and a doubled attribution in one run is refused
         (DOUBLED). A list of distinct forms is not a repeat, and the probes below say so."""
         added, how = branch_population()
         bad = []
