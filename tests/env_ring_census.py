@@ -149,8 +149,10 @@ From these the pin derives the CONTENT rows (value-tainted door calls filed with
 the module's ENV ROWS line names by identity (writing function plus the module-level format the ring text starts
 from), requires every value-tainted door call to declare problem= explicitly (False, or True with a ring text that
 reduces to one module-level format the worst-case table bounds), asserts the negative half of kernel.py and
-credentials.py only after asserting it FOUND their doors, and refuses to pass on a derivation that finds fewer
-entries than the floors the test states (a walk that sees less than the last one did is blind, not clean). An
+credentials.py only after asserting it FOUND their doors, and holds its own counts to the EXACT numbers the test
+commits, derived at a named head and re-derived deliberately when the population moves (round 8 of the review,
+2026-09-21: a walk that finds fewer is blind, not clean, and one that finds more is growth nobody has looked at; a
+floor let the second pass, and twice a merge grew the population under floors that stayed green). An
 EXISTENCE row (tag "pick" alone, a fixed vocabulary plus names, never a value) filed problem=True owes the constant
 and no format, and the reason is stated where it is declared (ruling 1 of review round 6: a declared residual with no
 reason reads later as an oversight): four at this head. Three are _do_set_mode's failure reports about the mode
@@ -2219,6 +2221,7 @@ class Census:
         queued = set(id(f) for f in self.all_fns)
         rounds = 0
         self.cap_requeues = 0
+        self.residual_cap_hits = 0       # _residual_names ran its passes out while still growing (round 8): a failure too
 
         def enqueue(f):
             if id(f) not in queued:
@@ -3105,6 +3108,15 @@ class Census:
 
     # ------------------------------------------------------------------ residual taint (round 7, kernel-1)
     RESIDUAL_DEPTH = 6
+    # The residual walk over a function's own stores runs to a FIXPOINT (round 8 of the review, 2026-09-21, correctness-2
+    # and extra10-2: it was six passes with no signal, so a conduit whose fold reached the inner call through a chain the
+    # passes could not finish read as residual-empty and the inner call was skipped, while the main pass's identical
+    # loop had been given a cap-hit requeue). The growth is monotone over a finite lattice (a pass that grows adds at
+    # least one (name, tag) pair, of at most assigned names x tags), so a walk that is still growing after this many
+    # passes is a defect of the walk, not a long chain: it is filed as a "residual-cap" failure naming the function,
+    # counted in residual_cap_hits, and the names read as the main pass left them (the restricted side: the inner call
+    # is then judged, never skipped), so exhausting the cap is distinguishable from converging.
+    RESIDUAL_PASS_CAP = 256
 
     def residual_taint(self, inner):
         """The taint a conduit's inner door call carries that its SITES do not: its message's, ring text's and key's
@@ -3118,7 +3130,12 @@ class Census:
         read in the conduit's body (a source name, an attribute source on any receiver, a source function's call), an
         attribute read's stored taint, a module name's stored taint and an enclosing scope's taint all count; a call
         the walk cannot resolve is walked into; a helper deeper than RESIDUAL_DEPTH, or one in a recursion, reads as
-        its whole return from the main pass, the over-approximating side."""
+        its whole return from the main pass, the over-approximating side. The walk over the locals runs to a fixpoint
+        (RESIDUAL_PASS_CAP says what happens if it does not converge), and it is flow-insensitive: a parameter reads
+        clean only while nothing has been stored onto it, and once the conduit folds a source onto its own parameter
+        (`msg = msg + fold`, `msg += fold`) the parameter carries that taint at every read, before the store as well
+        as after (round 8 of the review, 2026-09-21, extra9-2: parameters were read as clean before the locals, so a
+        fold onto the parameter itself had an empty residual and the inner call was skipped)."""
         fn = inner.fn
         names = self._residual_names(fn, 0)
         tags = set()
@@ -3128,7 +3145,9 @@ class Census:
         return tags
 
     def _residual_names(self, fn, depth):
-        """{local: tags} over fn's own body with fn's parameters clean (residual_taint says how)."""
+        """{local: tags} over fn's own body with fn's parameters clean (residual_taint says how), to a fixpoint: the passes
+        repeat while a store grows a name (a chain assigned in reverse order gains one link per pass), and a walk still
+        growing at RESIDUAL_PASS_CAP is a failure of the census (the comment at the cap), never an empty residual."""
         names = {}
 
         def store(target, tags):
@@ -3140,7 +3159,7 @@ class Census:
                     names.setdefault(leaf.id, set()).update(tags)
                     grew = True
             return grew
-        for _ in range(6):
+        for _ in range(self.RESIDUAL_PASS_CAP):
             grew = False
             for st in fn.assigns:
                 if st.value is None:
@@ -3166,6 +3185,15 @@ class Census:
                     grew |= store(f.value, vt)
             if not grew:
                 break
+        else:
+            # every pass grew: the signal, then the restricted side (the main pass's own names for this function, so
+            # what the inner call reads is at least what the context-insensitive pass gave it and it is judged)
+            self.residual_cap_hits += 1
+            self._fail("residual-cap", fn.base, fn.node.lineno, "the residual walk over %s was still growing after %d passes; "
+                       "the inner call is judged on the main pass's taint, not skipped" % (fn.qual, self.RESIDUAL_PASS_CAP))
+            for k, v in self.tainted_names.get(fn, {}).items():
+                if v:
+                    names.setdefault(k, set()).update(v)
         return names
 
     def _residual_return(self, callee, depth):
@@ -3195,10 +3223,13 @@ class Census:
         return tags
 
     def _residual_expr(self, expr, fn, names, depth):
-        """expr_taint with fn's parameters clean: a parameter Name yields nothing, a local its residual, everything else
-        what the main pass gives it (a source read, a stored attribute, a module name, an enclosing scope), a resolved
-        call its callee's residual return plus its arguments' residual (the safe side: an argument's fold reaches the
-        return whether or not the callee keeps it)."""
+        """expr_taint with fn's parameters clean: a Name something was stored onto yields its residual (a parameter
+        included: `_residual_names` records a store onto a parameter name like any other, and only a non-empty tag set,
+        so a parameter reassigned from a clean expression stays clean; round 8, extra9-2: read as clean before the locals,
+        a fold onto the parameter itself was invisible), a parameter nothing was stored onto yields nothing, everything
+        else what the main pass gives it (a source read, a stored attribute, a module name, an enclosing scope), a
+        resolved call its callee's residual return plus its arguments' residual (the safe side: an argument's fold reaches
+        the return whether or not the callee keeps it)."""
         tags = set()
         stack = [expr]
         params = fn.all_params()
@@ -3210,10 +3241,10 @@ class Census:
             if tag:
                 tags.add(tag)
             if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
-                if node.id in params:
-                    continue
                 if node.id in names:
                     tags |= names[node.id]
+                    continue
+                if node.id in params:
                     continue
                 if node.id in fn.assigned():
                     continue
@@ -3334,6 +3365,8 @@ class Census:
         out["writer"] = (self.writer.qual, self.writer.node.lineno, self.append_call.lineno)
         out["line"] = self.content_rows_line()
         out["taint_rounds"] = self.taint_rounds
+        out["cap_requeues"] = self.cap_requeues
+        out["residual_cap_hits"] = self.residual_cap_hits
         return out
 
 

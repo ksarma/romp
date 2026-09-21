@@ -5344,8 +5344,10 @@ FLAG_SETTINGS_DIR = "sdk-flag-settings"   # per-session --settings payloads, one
 # mid-word on both surfaces). Pinned to the TypeScript literal by tests/test_session_env.py. The cap counts UTF-16 CODE
 # UNITS (JavaScript's `s.length`), so every budget derived from it is charged in that unit by credentials.cut_to (round 7
 # of the env-pick door's review, 2026-09-20: charged in code points, a host reason of characters above U+FFFF overran
-# the cap by one unit each and a run of them put the centre's cut inside a surrogate pair); the worst-case table
-# measures each row in both units.
+# the cap by one unit each and a run of them put the centre's cut inside a surrogate pair), and the one budget computed
+# from a head at run time, set_env's refusal body's share, charges the head in the same unit (round 8, 2026-09-21: it
+# charged the head in code points, so a registry name above U+FFFF left the composed row over the cap); the worst-case
+# table measures each row in both units.
 ERROR_CENTER_TEXT_CAP = 240
 # The problem rows this module writes about a per-session env or its flag-settings file are a DERIVED population, and
 # the derivation is a rule over RING WRITERS, not over call-site names (review round 6 of the env-pick door, 2026-09-19;
@@ -7739,7 +7741,7 @@ class SdkSession:
         exception reaches the error centre as it did on main. `problem`, `key` and `ring_text` are _log's own
         (round 5 of the reviewer's review of the auth-default PR, 2026-09-19): a problem row from a place that must
         not raise (the Stop hook's unreadable list, the reconcile's unknown label, the five failure reports) passes
-        problem=True through, keyed where a recurring shape should count on one ring row. The two roads are two
+        problem=True through, keyed so a recurring shape counts on one ring row. The two roads are two
         calls with a constant problem= each,
         never one call forwarding the parameter: the census's rule (2) reads the constant at the call, and the
         parameter's None default (a caller that said nothing) takes the routine road, so no line through here
@@ -7762,7 +7764,10 @@ class SdkSession:
                 # _served_by_connect (the served ask's reg flag), _arm_after_relaunch_slot (the slot wait),
                 # _reconcile_seeded_with_report (the mirror write, and the reconcile's guard) and _reconcile_seeded_work
                 # (its guard), each interpolating an exception's class and text (round 7, 2026-09-20), pass no
-                # ring_text, so the ring shows each one's whole line, unbounded by a module-level format; and their
+                # ring_text, so the ring shows each one's whole line, unbounded by a module-level format (each of the
+                # five is keyed by site, session and exception class since round 8, 2026-09-21, so a failure that
+                # repeats every turn counts on one ring row instead of appending one per turn and evicting the ring;
+                # on main the same five sites are unkeyed); and their
                 # subject, the live-work reconcile and the reconnect's bookkeeping, is a mechanism outside what the
                 # env-pick door bounds. That responsibility is CURRENTLY UNMET: every caller formats self.name uncut
                 # (kernel.NAME_RE caps no length), the unreadable-list line joins up to twelve CLI key names uncut into
@@ -7975,7 +7980,9 @@ class SdkSession:
                     self._mirror_auth_pending()
                 except Exception as e:
                     self._log_quietly("reconnect (%s): the served ask's reg flag could not be cleared: %s" % (self.name, e),
-                                      problem=True)   # a caught exception's report: the error centre's, as on main (round 7)
+                                      problem=True, key=("reconnect-reg-flag-clear-failed", self.sid, type(e).__name__))
+                    #   a caught exception's report: the error centre's, as on main (round 7); keyed (round 8) so a failure
+                    #   that repeats every settle counts on one ring row, the kernel log keeping each line
                 try:
                     self.backend._poke()   # every sibling clear pokes: left to the next unrelated poke, the dots stayed on
                 except Exception:
@@ -8153,7 +8160,9 @@ class SdkSession:
             raise
         except Exception as e:
             self._log_quietly("reconnect (%s): the relaunch slot wait failed: %s: %s" % (self.name, type(e).__name__, e),
-                              problem=True)   # a caught exception's report: the error centre's, as on main (round 7)
+                              problem=True, key=("relaunch-slot-wait-failed", self.sid, type(e).__name__))
+            #   a caught exception's report: the error centre's, as on main (round 7); keyed (round 8) so a wait that fails
+            #   at every reconnect counts on one ring row, the kernel log keeping each line
 
     def _note_work_ended(self, what: str) -> None:
         """A removal from the live sets (a subagent's stop, a task's end, a run's roster drop) while a pick
@@ -12984,15 +12993,20 @@ class SdkSession:
                     self.backend._update_reg(self.sid, bgTasks=self._live_bg_tasks())
                 except Exception as e:
                     self._log_quietly("live work (%s): bgTasks mirror write failed after the report's reconcile: %s" % (self.name, e),
-                                      problem=True)   # a caught exception's report: the error centre's, as on main (round 7)
+                                      problem=True, key=("bg-mirror-write-failed", self.sid, type(e).__name__))
+                    #   a caught exception's report: the error centre's, as on main (round 7); keyed (round 8) so a mirror
+                    #   that fails at every report counts on one ring row, the kernel log keeping each line
             try:
                 self.backend._poke()
             except Exception:
                 pass
         except Exception as e:
             self._log_quietly("live work (%s): the seeded-work reconcile against the turn-end report failed: %s: %s"
-                              % (self.name, type(e).__name__, e), problem=True)   # a caught exception's report: the error
-            #   centre's, as on main (round 7 of the env-pick door, 2026-09-20)
+                              % (self.name, type(e).__name__, e), problem=True,
+                              key=("report-reconcile-failed", self.sid, type(e).__name__))
+            #   a caught exception's report: the error centre's, as on main (round 7 of the env-pick door, 2026-09-20);
+            #   keyed (round 8) so a reconcile that fails at every turn end counts on one ring row, the kernel log keeping
+            #   each line
 
     def _note_unknown_bg_type(self, label, where: str) -> None:
         """A task type spelling this build's record does not know is SAID (round 5 of the reviewer's review, 2026-09-19;
@@ -13076,7 +13090,9 @@ class SdkSession:
                                  "it" if n == 1 else "they", "it" if n == 1 else "them"))
         except Exception as e:
             self._log_quietly("live work (%s): the seeded-work reconcile failed: %s: %s" % (self.name, type(e).__name__, e),
-                              problem=True)   # a caught exception's report: the error centre's, as on main (round 7)
+                              problem=True, key=("seeded-reconcile-failed", self.sid, type(e).__name__))
+            #   a caught exception's report: the error centre's, as on main (round 7); keyed (round 8) so a reconcile that
+            #   fails at every settle counts on one ring row, the kernel log keeping each line
 
     # ---- snapshot for live_sessions() ----
 
@@ -19600,7 +19616,10 @@ class SdkBackend:
             # registry falls back to, to RING_SESSION_BUDGET, the credential refusal's short form names one
             # variable and counts the rest (credentials.credential_env_ring_text), and any other refusal's body,
             # which quotes the offending name and nothing bounds a name's length, is cut to what the cap leaves
-            # after the head, marked.
+            # after the head, marked. The head's share is charged in the cap's own unit (UTF-16 code units, what
+            # credentials.cut_to charges the body): until round 8 of the review (2026-09-21) it was charged in code
+            # points, so a registry name carrying characters above U+FFFF left the composed row over the cap by one
+            # unit per such character, the one place a budget of the cap's was computed in the other unit.
             nm = (reg or {}).get("name") or sid
             body = err.removeprefix("env: ")
             line = "env (%s): pick refused: %s" % (nm, body)
@@ -19609,7 +19628,7 @@ class SdkBackend:
             if secret and body == _cred.credential_env_refusal(secret):
                 ring = head + _cred.credential_env_ring_text(secret)
             else:
-                ring = head + _cred.cut_to(body, ERROR_CENTER_TEXT_CAP - len(head))
+                ring = head + _cred.cut_to(body, ERROR_CENTER_TEXT_CAP - _cred.utf16_units(head))
             self._log(line, problem=True, ring_text=ring)
             return False
         if not reg:

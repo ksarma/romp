@@ -70,7 +70,9 @@ import os
 import pickle
 import re
 import shutil
+import signal
 import stat
+import subprocess
 import sys
 import tempfile
 import threading
@@ -199,6 +201,24 @@ def _declaration_surfaces():
     return census_doc, para
 
 
+def _comment_block(path, marker):
+    """A comment block read AS ITSELF (round 8 of the review, 2026-09-21, tests-3: a pin whose message named a docstring or a
+    paragraph read the whole file, so a sentence leaving the surface the message names kept it green): the contiguous run
+    of comment lines around the ONE line of `path` containing `marker`, at any indent, each stripped of its hash and
+    whitespace, joined with single spaces so a phrase reads across a wrap."""
+    lines = Path(path).read_text(encoding="utf-8").splitlines()
+    hits = [i for i, ln in enumerate(lines) if marker in ln]
+    assert len(hits) == 1, "one line of %s carries the marker %r: %r" % (os.path.basename(path), marker, hits)
+    is_comment = lambda i: 0 <= i < len(lines) and lines[i].lstrip().startswith("#")
+    assert is_comment(hits[0]), "the marker line is a comment line: %r" % lines[hits[0]]
+    lo = hi = hits[0]
+    while is_comment(lo - 1):
+        lo -= 1
+    while is_comment(hi + 1):
+        hi += 1
+    return " ".join(lines[i].lstrip().lstrip("#").strip() for i in range(lo, hi + 1))
+
+
 def _method_docstring(path, cls, name):
     """A method's docstring read AS ITSELF (ast.get_docstring on the def, whitespace-normalised), for a declaration pinned
     on the def's own prose rather than on the module's text (round 7's lenses, 2026-09-20: the conduit's routine-list
@@ -242,48 +262,60 @@ ROWS = [
     ("fork", "FORK_RESERVED_RING", False), ("fork", "FORK_DROP_RING", False),
     ("set_env", "REFUSAL_RING_HEAD", False), ("set_env", "REFUSAL_RING_HEAD", False),
 ]
-# The floors: what the census found at round 7's head (the merge of main and that round's commit, 2026-09-20), each with
-# its derivation, pasted from `python -m tests.env_ring_census` there. A run that finds FEWER is a blind derivation, not
-# a cleaner module; lowering one is a deliberate edit, and a merge that grows the population re-derives them (round 7:
-# the merge of main grew the census by 38 doors and the floors stayed at review round 6's, 38 doors of slack a blinded
-# walk could hide in).
-FLOORS = {
-    "doors": 433,                  # 1 appender + 353 calls reaching it + 45 conduit and feeder call sites (_log_quietly 21,
-    #                                problem_row 12, _sdk_problem 8, _spend_guard_row 2, _note_ws_drop 2) + 19 door-as-argument
+# The tables: what the census finds at the head this block ships on, each entry an EXACT count asserted by EQUALITY
+# (round 8 of the review, 2026-09-21; derived at round 8's commit and pasted). Until round 8 these were FLOORS, and a floor
+# is silent slack: twice a merge of main grew the population under floors that stayed green (38 doors of slack at round
+# 7's commit; three doors, a call, a door-value site, a problem_row site and a function at round 7's head), and at that
+# head a walk blinded to one param-kind door call passed every floor. The rule as enforced now: any growth or shrinkage
+# of the population reds this equality, and the author re-derives deliberately, stating the new head in this sentence.
+# The expected value is NEVER read from the census at run time (a pin whose expected value comes from the artifact it
+# guards cannot disagree with it). Re-derive, from the repository root:
+#   python3 -c 'import json, os, sys; sys.path.insert(0, "tests"); import env_ring_census as e
+#   c = e.Census([os.path.join("kernel", f) for f in ("sdk_backend.py", "kernel.py", "credentials.py")], e.DEFAULT_SOURCES)
+#   print(json.dumps(c.counts, sort_keys=True)); print(json.dumps(c.by_kind, sort_keys=True))
+#   print(len(c.existence_rows), len(c.mods["credentials.py"].fns))'
+COUNTS = {
+    "doors": 436,                  # 1 appender + 354 calls reaching it + 46 conduit and feeder call sites (_log_quietly 21,
+    #                                problem_row 13, _sdk_problem 8, _spend_guard_row 2, _note_ws_drop 2) + 20 door-as-argument
     #                                sites + 10 parameter-bound functions + 2 feeder appends + 3 merge reads
-    "calls_reaching_writer": 353,  # self._log in SdkBackend 198, another receiver 109, ApiHealth's bound self._log 7,
-    #                                a log= parameter 34, a local alias 5
+    "calls_reaching_writer": 354,  # self._log in SdkBackend 198, another receiver 109, ApiHealth's bound self._log 7,
+    #                                a log= parameter 35, a local alias 5
     "log_param_fns": 10,           # problem_row, ApiHealth.__init__, flag_settings_path, cli_scope_supported, cli_scope_limits and
     #                                its pass-through _cli_scope_settle, helper_fast_org_env and its pass-through key_fast_org_env,
     #                                relocate_transcripts, sweep_dead_test_roots
-    "door_value_sites": 19,        # call sites passing a door as an argument: 12 problem_row (one in kernel.py, through getattr),
+    "door_value_sites": 20,        # call sites passing a door as an argument: 13 problem_row (one in kernel.py, through getattr),
     #                                ApiHealth, cli_scope_supported, cli_scope_limits, sweep_dead_test_roots, flag_settings_path,
     #                                helper_fast_org_env, relocate_transcripts
-    "problem_row_sites": 12,       # main's two refused-launch rows call problem_row without log=, so they are sites of it and
+    "problem_row_sites": 13,       # main's two refused-launch sites call problem_row without log=, so they are sites of it and
     #                                not door-as-argument sites
     "sdk_problem_sites": 8,
     "feeder_appends": 2,           # _SDK_BOOT_PROBLEMS in _sdk_problem, _WS_DROPS in _note_ws_drop
     "merge_reads": 3,              # _sdk_problem_rows reads the two lists and be.problems()
-    "content_rows": 11,            # the ENV ROWS line's rows; content_identities() == ROWS holds them exactly, so this floor
+    "content_rows": 11,            # the ENV ROWS line's rows; content_identities() == ROWS holds them exactly, so this entry
     #                                carries no tension of its own and is here so the block is truthful
-    "functions": 3232,             # every def and lambda of the three files, nested ones included
+    "functions": 3233,             # every def and lambda of the three files, nested ones included
 }
-CALLS_BY_KIND = {"self": 198, "typed": 109, "bound-self": 7, "param": 34, "alias": 5}   # the 353's derivation, a floor each
+CALLS_BY_KIND = {"self": 198, "typed": 109, "bound-self": 7, "param": 35, "alias": 5}   # the 354's derivation, an equality each
+EXISTENCE_ROWS = 20      # the existence rows (tag "pick" alone, a fixed vocabulary plus names): derived at round 8's commit, like
+#                          the tables above; the vocabulary test holds the count exactly (a floor of 20 stood here until round 8)
+CREDENTIALS_FNS = 28     # every def and lambda of kernel/credentials.py, the census's proof that it read a file with no door:
+#                          derived at round 8's commit (a floor of 20 stood here until round 8)
 
 
-def _floor_shortfalls(counts, by_kind):
-    """Every floor the census's counts fall short of, as (name, found, floor): FLOORS over the counts, then
-    CALLS_BY_KIND over the per-kind calls. All of them, so a per-kind shortfall is named even when the doors total
-    falls with it (the round-6 mutation pass dropped `self` by one and saw only the doors floor fire, the assertions
-    running in order)."""
+def _table_mismatches(counts, by_kind):
+    """Every table entry the census's counts DIFFER from, as (name, found, committed): COUNTS over the counts, then
+    CALLS_BY_KIND over the per-kind calls, in both directions (round 8: the floors this replaces named a shortfall alone,
+    and growth passed in silence). All of them, so a per-kind difference is named even when the doors total moves with
+    it (the round-6 mutation pass dropped `self` by one and saw only the doors floor fire, the assertions running in
+    order)."""
     got = {"doors": counts["doors"], "calls_reaching_writer": counts["calls_reaching_writer"],
            "log_param_fns": counts["log_param_fns"], "door_value_sites": counts["door_value_sites"],
            "problem_row_sites": counts["conduit_sites"]["conduit:problem_row"],
            "sdk_problem_sites": counts["conduit_sites"]["conduit:_sdk_problem"],
            "feeder_appends": counts["feeder_appends"], "merge_reads": counts["merge_reads"],
            "content_rows": counts["content_rows"], "functions": counts["functions"]}
-    out = [(k, got[k], floor) for k, floor in FLOORS.items() if got[k] < floor]
-    out += [(kind, by_kind.get(kind, 0), floor) for kind, floor in CALLS_BY_KIND.items() if by_kind.get(kind, 0) < floor]
+    out = [(k, got[k], n) for k, n in COUNTS.items() if got[k] != n]
+    out += [(kind, by_kind.get(kind, 0), n) for kind, n in CALLS_BY_KIND.items() if by_kind.get(kind, 0) != n]
     return out
 
 
@@ -979,7 +1011,7 @@ class EnvRowsPopulation(unittest.TestCase):
     could not reduce fell out of both assertions, and the head filter stood in for a rule). tests/env_ring_census.py
     enumerates every door by resolution and derives the content rows by taint; this class holds the module to it: the
     ENV ROWS line is the derivation, every value-tainted door call declares problem=, an unreduced message is named and
-    never dropped, the negative half finds the kernel's doors before it asserts them clean, the counts meet their floors,
+    never dropped, the negative half finds the kernel's doors before it asserts them clean, the counts equal their committed tables,
     and the parameter-indirection road is exercised on planted modules, one the walk follows and one it cannot, which
     must fail loudly. PR 792's POOL SITES line and its pin in tests/test_perf_stats.py are the precedent."""
 
@@ -989,7 +1021,7 @@ class EnvRowsPopulation(unittest.TestCase):
 
     def _assert_pin(self, c):
         """The pin's first assertions, shared with the planted-module tests: a failure of the derivation itself refuses
-        before anything is compared, and the content rows are the eleven (nine at round 6, see ROWS)."""
+        before anything is compared, and the content rows are ROWS's, by identity (eleven at round 7's head, nine at round 6)."""
         self.assertEqual(c.failures, [], "the derivation failed (a door value the walk could not follow, or a writer it "
                          "could not resolve): %r" % (c.failures,))
         self.assertEqual((c.writer.qual, c.door, c.msg_param), ("SdkBackend._log", "_log", "m"), "the one appender to self._problems")
@@ -1096,7 +1128,8 @@ class EnvRowsPopulation(unittest.TestCase):
         'live work (%s): %d background task%s'), the conduit's problem road (ruling 2 of the post-merge census)."""
         c = self.c
         ex = c.existence_rows
-        self.assertGreaterEqual(len(ex), 20, "the existence floor at round 7's head (20 at the merge of main); fewer is a blind walk")
+        self.assertEqual(len(ex), EXISTENCE_ROWS, "the existence rows at round 8's commit (%d): fewer is a blind walk, more is growth "
+                         "nobody re-derived; re-derive EXISTENCE_ROWS deliberately and name the head" % EXISTENCE_ROWS)
         for dc in ex:
             self.assertEqual(dc.taint, frozenset({"pick"}), (dc.lineno, dc.taint))
             self.assertEqual(dc.problem_decl[0], "const", (dc.lineno, dc.problem_decl))
@@ -1134,36 +1167,47 @@ class EnvRowsPopulation(unittest.TestCase):
         defined = sorted(n for (b, n) in list(DEFAULT_SOURCES["name"]) + list(DEFAULT_SOURCES["func"])
                          if b == "credentials.py" and (n in cred.top_defs or n in cred.top_assigns))
         self.assertEqual(len(defined), 12, defined)
-        self.assertGreaterEqual(len(cred.fns), 20)
+        self.assertEqual(len(cred.fns), CREDENTIALS_FNS, "every def and lambda of credentials.py at round 8's commit; a different count "
+                         "is a file the walk did not read whole, or growth to re-derive deliberately")
 
-    def test_the_derivation_meets_its_floors(self):
+    def test_the_derivation_equals_its_committed_tables(self):
+        """The census's counts EQUAL the tables committed at round 8's commit (COUNTS, CALLS_BY_KIND). Fewer is a blind
+        walk; more is growth nobody has re-derived; either reds, and the author re-derives the tables deliberately, naming
+        the head. The floors this replaces were blind by construction: at round 7's head a walk with one param-kind door
+        call removed passed every floor (the reviewer's round 7, extra8-1), and the same blinding reds this equality on
+        three entries (param, calls_reaching_writer, doors), pasted in round 8's commit message."""
         c = self.c
-        self.assertEqual(_floor_shortfalls(c.counts, c.by_kind), [],
-                         "derivation blind: (floor, found, the floor at round 7's head); a run that finds fewer is blind, not cleaner")
+        self.assertEqual(_table_mismatches(c.counts, c.by_kind), [],
+                         "the census disagrees with the committed tables: (entry, found, committed at round 8's commit); fewer is a blind "
+                         "walk, more is growth nobody re-derived: re-derive COUNTS and CALLS_BY_KIND deliberately and name the head")
         self.assertEqual(sum(c.by_kind.values()), c.counts["calls_reaching_writer"])
 
-    def test_a_per_kind_floor_fires_alone_and_at_the_floor_none_does(self):
+    def test_a_table_entry_fires_alone_one_below_and_one_above_and_at_the_table_none_does(self):
         """The round-6 mutation pass left CALLS_BY_KIND's per-kind floors unshown: dropping one self._log call lowered
-        `self` to 182 and the doors floor fired first. The shortfall list names every floor missed, so a per-kind
-        shortfall is named on its own; both boundary cases on a stand-in: at the floor nothing fires, one below it the
-        kind alone, and the doors total one below fires alone too."""
+        `self` to 182 and the doors floor fired first. The mismatch list names every entry that differs, so a per-kind
+        difference is named on its own, and since round 8 in BOTH directions; the boundary cases on a stand-in: at the
+        table nothing fires, one below an entry the entry alone, one above it the entry alone (the growth a floor let
+        pass), and the doors total one below or one above fires alone too."""
         c = self.c
-        at_floor = dict(c.by_kind)
-        for kind, floor in CALLS_BY_KIND.items():
-            at_floor[kind] = floor
+        at_table = dict(c.by_kind)
+        for kind, n in CALLS_BY_KIND.items():
+            at_table[kind] = n
         counts = dict(c.counts)
-        counts["calls_reaching_writer"] = sum(at_floor.values())
+        counts["calls_reaching_writer"] = sum(at_table.values())
         for k in ("doors", "log_param_fns", "door_value_sites", "feeder_appends", "merge_reads", "content_rows", "functions"):
-            counts[k] = FLOORS[k]
-        self.assertEqual(_floor_shortfalls(counts, at_floor), [], "at every floor exactly, nothing fires")
-        for kind, floor in CALLS_BY_KIND.items():
-            with self.subTest(kind=kind):
-                low = dict(at_floor)
-                low[kind] = floor - 1
-                self.assertEqual(_floor_shortfalls(counts, low), [(kind, floor - 1, floor)], "the kind's floor fires alone")
-        low_doors = dict(counts)
-        low_doors["doors"] = FLOORS["doors"] - 1
-        self.assertEqual(_floor_shortfalls(low_doors, at_floor), [("doors", FLOORS["doors"] - 1, FLOORS["doors"])])
+            counts[k] = COUNTS[k]
+        self.assertEqual(_table_mismatches(counts, at_table), [], "at the table exactly, nothing fires")
+        for kind, n in CALLS_BY_KIND.items():
+            for delta in (-1, 1):
+                with self.subTest(kind=kind, delta=delta):
+                    moved = dict(at_table)
+                    moved[kind] = n + delta
+                    self.assertEqual(_table_mismatches(counts, moved), [(kind, n + delta, n)], "the kind's entry fires alone, either way")
+        for delta in (-1, 1):
+            with self.subTest(entry="doors", delta=delta):
+                moved = dict(counts)
+                moved["doors"] = COUNTS["doors"] + delta
+                self.assertEqual(_table_mismatches(moved, at_table), [("doors", COUNTS["doors"] + delta, COUNTS["doors"])])
 
     def test_the_kernel_adds_no_content_row_so_a_module_copy_is_read_with_credentials_alone(self):
         """The planted-module and module-copy tests below run the census over kernel/sdk_backend.py and
@@ -1353,6 +1397,20 @@ class EnvRowsPopulation(unittest.TestCase):
                                         ("_reconcile_seeded_with_report", False), ("_reconcile_seeded_with_report", False),
                                         ("_reconcile_seeded_work", False), ("_served_by_connect", False)],
                          "the conduit's problem=True callers at round 7's head, none passing ring_text (the reason's 'each rings its whole line')")
+        # The conduit's keyed sentence is a contract over its problem=True callers (round 8 of the review, 2026-09-21, kernel-2
+        # and extra7-2: round 7 had weakened it to "should count" to fit five unkeyed sites; the sentence is restored and
+        # the five sites keyed, by site label, session and exception class). Every True caller passes a key= tuple whose
+        # first element is a fixed label, read off the bound arguments; the execution half (twelve calls, one ring row) is
+        # LogQuietlyAtRuntime's.
+        label = lambda b: (b["key"].elts[0].value if isinstance(b.get("key"), ast.Tuple) and b["key"].elts
+                           and isinstance(b["key"].elts[0], ast.Constant) else None)
+        self.assertEqual(sorted((caller.name, label(b)) for caller, _call, b in rows if _true_road(b.get("problem"))),
+                         [("_arm_after_relaunch_slot", "relaunch-slot-wait-failed"), ("_note_unknown_bg_type", "bg-type-unknown"),
+                          ("_note_unreadable_bg_list", "bg-list-unreadable"), ("_reconcile_seeded_with_report", "bg-mirror-write-failed"),
+                          ("_reconcile_seeded_with_report", "report-reconcile-failed"), ("_reconcile_seeded_work", "seeded-reconcile-failed"),
+                          ("_served_by_connect", "reconnect-reg-flag-clear-failed")],
+                         "every problem=True caller of the conduit passes key=(a fixed site label, ...): the conduit's rule, keyed so a "
+                         "recurring shape counts on one ring row")
         for dc in filed:
             i, block = dc.lineno - 2, []
             while i >= 0 and lines[i].strip().startswith("#"):
@@ -1392,6 +1450,9 @@ class EnvRowsPopulation(unittest.TestCase):
         self.assertIn("the live-work reconcile's report and hold lines), so it is filed problem=False", conduit_doc,
                       "the routine list covers the reconcile's report and hold lines, not its failure reports")
         self.assertNotIn("the live-work reconcile's lines)", conduit_doc, "the round-6 clause that covered the failure reports")
+        self.assertIn("passes problem=True through, keyed so a recurring shape counts on one ring row", conduit_doc,
+                      "the keyed sentence is the contract (round 8: restored from the 'should count' round 7 had fitted to the code)")
+        self.assertNotIn("should count on one ring row", conduit_doc, "a rule edited down to fit a violation is no rule")
         self.assertIn("That ruling was made over a population in which no caller was itself a failure report; the merge of main "
                       "brought five that are", conduit_doc, "the ruling's scope, stated where the road is")
 
@@ -1427,18 +1488,29 @@ class EnvRowsPopulation(unittest.TestCase):
         class" are different claims, so the census docstring, the ENV ROWS paragraph and the PR body all state it in the
         second sense: the census does not follow the pick tag across a dict return, a pick that crosses one is OUTSIDE the
         census, and the existence population is the direct readers of the surface set by construction. The earlier
-        wording, which stated it as a fact about the picks, is asserted gone from both."""
+        wording, which stated it as a fact about the picks, is asserted gone from both files. Three surfaces state the
+        bound and each is read AS ITSELF (round 8 of the review, 2026-09-21, tests-3: round 7 read both whole files
+        behind messages naming the docstring and the paragraph, so the sentence could leave the surface named and stay
+        anywhere in the file): the census module's docstring (ast.get_docstring), the taint pass's comment block in
+        env_ring_census.py where the returns are classified, and kernel/sdk_backend.py's census-rule comment block above
+        the ring budgets (not the ENV ROWS paragraph, which states the bound in other words), each joined across its
+        wraps. The absence assertions stay over the whole files, the stronger check for an absence."""
         norm = lambda t: " ".join(t.split())
-        census_doc = norm(Path(os.path.join(HERE, "env_ring_census.py")).read_text(encoding="utf-8"))
-        module = norm(Path(SDK_BACKEND).read_text(encoding="utf-8"))
-        for text, where in ((census_doc, "the census docstring"), (module, "the ENV ROWS paragraph")):
+        census_doc, _para = _declaration_surfaces()
+        taint_block = _comment_block(os.path.join(HERE, "env_ring_census.py"), "That bounds the census's reach and says nothing of")
+        rule_block = _comment_block(SDK_BACKEND, "so a pick that crosses one is OUTSIDE the census")
+        for text, where in ((census_doc, "the census docstring"), (taint_block, "the taint pass's comment block"),
+                            (rule_block, "kernel/sdk_backend.py's census-rule comment block")):
             self.assertIn("a pick that crosses one is OUTSIDE the census", text, where)
             self.assertIn("direct readers of the surface set by construction", text, where)
-            self.assertNotIn("does not cross a dict at all", text, "%s states it as a property of the kernel" % where)
-        self.assertIn("a bound on the census's reach, not a property of the kernel", census_doc)
-        self.assertIn("That bounds the census's reach and says nothing of", census_doc,
+        self.assertIn("a bound on the census's reach, not a property of the kernel", census_doc, "the census docstring")
+        self.assertIn("That bounds the census's reach and says nothing of the kernel", taint_block,
                       "the taint pass's own comment states the bound in the same sense (the mutation pass reverted it green)")
-        self.assertIn("a bound on the census's reach and not a property # of this module", module)
+        self.assertIn("a bound on the census's reach and not a property of this module", rule_block,
+                      "the module's census-rule block, read across its wrap")
+        for path, where in ((os.path.join(HERE, "env_ring_census.py"), "the census module"), (SDK_BACKEND, "kernel/sdk_backend.py")):
+            self.assertNotIn("does not cross a dict at all", norm(Path(path).read_text(encoding="utf-8")),
+                             "%s states it as a property of the kernel somewhere in the file" % where)
 
 
 
@@ -1464,6 +1536,40 @@ class _Pending:
 
     def __init__(self, spec, future):
         self.spec, self.future = spec, future
+
+
+# The wedged-worker driver (round 8 of the review, 2026-09-21, extra6-1), run by EnvRowsCensusBlindSpots in a subprocess: a
+# pool of the class's shape, a worker sleeping far past the bound, a read that gives up at the bound and drops the pool,
+# and then the interpreter's EXIT, which is what the pin measures (with the drop a shutdown(wait=False) alone, the
+# executor's manager thread kept waiting on the sleeper's work item and the exit joined that thread, so the process lived
+# as long as the sleeper). The driver prints what it saw, one fact per line; the test reads the lines.
+WEDGED_WORKER_DRIVER = r"""
+import json, os, sys, time
+sys.path.insert(0, %(here)r)
+import test_session_env as m
+cls = m.EnvRowsCensusBlindSpots
+cls.POOL_READ_TIMEOUT = 0.5
+pool = cls._new_pool()
+cls._pool = pool
+manager = pool._executor_manager_thread                   # read before shutdown() nulls it
+wedged = pool.submit(time.sleep, %(sleep)r)
+time.sleep(0.5)                                            # the executor spawns a worker for the submit; read the table settled
+procs = list(pool._processes.values())                     # the workers, read before shutdown() nulls the table
+case = cls("test_the_censuses_come_through_the_worker_pool_and_read_the_same_as_this_process_builds")
+t0 = time.monotonic()
+out = case._resolve(m._Pending((m.CENSUS_FILES, m.DEFAULT_SOURCES), wedged))
+for p in procs:
+    p.join(%(join)r)
+manager.join(%(join)r)
+print("resolved", type(out).__name__, "in", round(time.monotonic() - t0, 1), "s;", cls._pool_reason)
+print("workers", json.dumps([[p.pid, p.exitcode] for p in procs]))
+print("manager alive", manager.is_alive())
+try:
+    exc = wedged.exception(timeout=%(join)r)
+except BaseException as e:
+    exc = e
+print("wedged", type(exc).__name__)
+"""
 
 
 class EnvRowsCensusBlindSpots(unittest.TestCase):
@@ -1562,17 +1668,32 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
     #     construction in this process, so what a read returns is a Census or the construction's own exception,
     #     whichever road built it, never nothing.
     #   the WORK RAISES (a CensusError over a loud plant, or an exception the census code should never raise, an
-    #     AttributeError say): not a pool failure, and caught by none of the three. The worker's `build_census`
+    #     AttributeError or a TypeError say): not a pool failure, and caught by none of the three; the start's
+    #     catch-all never sees it either, since the start submits `pool_probe` alone. The worker's `build_census`
     #     carries it as DATA, a ("raised", exc) payload with the worker's traceback on it, so the read's catch never
-    #     sees it; `_unpack` wraps it in a `_Raised` and `_take` re-raises it in this process where the test asked for
-    #     the result, the worker's traceback as its cause; `_serial` carries a serial construction's exception the
-    #     same way. The class does NOT degrade for it: the pool stays, no line, no warning, and the test that drove
-    #     the work ERRORS with the exception itself. An exception at a read outside the tuple (pickle.loads raising
-    #     over a class this process cannot import, say) is a transport defect and propagates as itself too.
+    #     sees it; `_unpack` wraps it in a `_Raised` and `_take` re-raises it in this process, AS ITSELF, where the
+    #     test asked for the result, the worker's traceback as its cause; `_serial` carries a serial construction's
+    #     exception the same way. It is distinguishable from a clean empty result by construction: a `_Raised`, never
+    #     a Census and never None, so a read that would have handed the test an empty census raises instead. The
+    #     class does NOT degrade for it: the pool stays, no line, no warning, and the test that drove the work ERRORS
+    #     with the exception itself. An exception at a read outside the tuple (pickle.loads raising over a class this
+    #     process cannot import, say) is a transport defect and propagates as itself too.
+    # The DROP does not join (round 8 of the review, 2026-09-21, extra6-1: a shutdown(wait=False) alone leaves the
+    # executor's manager thread waiting on a running work item, and the interpreter's exit joins that thread, so a
+    # worker that never returns held the pytest process open for as long as it ran, the wedged case the bound exists
+    # for). `_drop_pool` reads the workers off the executor before shutdown() nulls its table, shuts down without
+    # waiting, and sends each worker SIGKILL through multiprocessing.Process.kill; the manager thread wakes on a
+    # killed worker's sentinel, marks the pool broken (a pending future ends with BrokenProcessPool, never a result),
+    # joins every worker, which reaps it, and returns, so the exit joins a finished thread. Pinned by running a driver
+    # in a subprocess with a wall-clock limit: a worker sleeping far past the bound, the read giving up, the process
+    # exiting, every worker's exit code read back as SIGKILL's.
     # Every degradation is announced two ways from the one place, `_pool_lost`: a RuntimeWarning carrying the reason
     # (pytest records it, counts it on the -q summary line and prints it in the warnings section, so a degraded
-    # class reads "N passed, 2 skipped, 1 warning" and names its cause) and one stderr line naming the reason and
-    # that the results are unchanged; the two pins that need the pool road then skip naming the reason.
+    # class reads "N passed, 2 failed, 1 warning" and names its cause) and one stderr line naming the reason and
+    # that the results are unchanged. The two pins that need the pool road then FAIL naming the reason (round 8,
+    # extra6-2: a skip reports success, so a pool lost for a real reason left the run green and silent); the ONE
+    # environment limitation they skip on instead, asserted as such, is the stdlib's refusal to build a
+    # ProcessPoolExecutor at all (ENVIRONMENT_LIMITATION below).
     # The two test-local Census subclasses below (Tracing, Sweeping) are not
     # importable by a worker and build in this process, as does the `census(CENSUS_FILES)` door with its own cache.
     # `roads` records the road each batch took and `built` counts constructions by road; the last two tests of the
@@ -1595,21 +1716,47 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
     roads = []                        # per batch, in order, the road it was routed to: "pool" or "serial (<reason>)"
     built = collections.Counter()     # constructions by the road that built them (a pooled batch's stragglers may be serial)
 
+    # The one environment limitation a pool-road pin may SKIP on (round 8, extra6-2): the stdlib refusing to build a
+    # ProcessPoolExecutor at all, concurrent.futures.process._check_system_limits raising NotImplementedError on a Python
+    # built without multiprocessing.synchronize or on a system with fewer than 256 semaphores (both of its messages name
+    # semaphores). Any other reason the pool was lost is a FAILURE of the pin that needs the pool.
+    ENVIRONMENT_LIMITATION = "the census pool could not start: NotImplementedError: "
+
+    @classmethod
+    def _drop_pool(cls, pool):
+        """The executor dropped WITHOUT a join and its workers killed (the block comment above, the DROP). The workers are
+        read off the executor first (`_processes`, the stdlib's private table, the one handle the executor gives; shutdown()
+        nulls it), the executor is shut down without waiting and its pending futures cancelled, and each worker is sent
+        SIGKILL through multiprocessing.Process.kill. Reaping is the manager thread's: a killed worker's sentinel wakes it,
+        it marks the pool broken and joins every worker (concurrent.futures.process, _join_executor_internals), so the
+        interpreter's exit joins a thread that is done. A worker already closed or never started has nothing to kill."""
+        procs = list((getattr(pool, "_processes", None) or {}).values())
+        pool.shutdown(wait=False, cancel_futures=True)
+        for proc in procs:
+            try:
+                proc.kill()
+            except (ValueError, AttributeError):
+                pass
+
     @classmethod
     def _new_pool(cls):
-        """A fresh executor whose first worker has answered the start probe; raises what the start raised."""
+        """A fresh executor whose first worker has answered the start probe; raises what the start raised, the executor
+        dropped (a probe that never answers is a wedged worker, killed like any other)."""
         pool = concurrent.futures.ProcessPoolExecutor(max_workers=cls.POOL_WORKERS, mp_context=multiprocessing.get_context("spawn"))
         try:
             pool.submit(erc.pool_probe).result(timeout=cls.POOL_START_TIMEOUT)
         except BaseException:
-            pool.shutdown(wait=False, cancel_futures=True)
+            cls._drop_pool(pool)
             raise
         return pool
 
     @classmethod
     def _start_pool(cls):
         """The class's pool, or none: whatever the start raises (the block comment above says why every exception, not
-        POOL_FAILURES alone) leaves the pool unavailable with the reason named once on stderr."""
+        POOL_FAILURES alone) leaves the pool unavailable, ANNOUNCED. The catch-all's scope is the start path alone: the
+        executor's construction and the probe; no pooled work runs here, so an AttributeError or TypeError raised inside
+        the census's work is never caught by it and never degrades the class. Such an exception travels as data and is
+        re-raised as itself by `_take` where the test asked for the result (the block comment above, the WORK RAISES)."""
         try:
             cls._pool = cls._new_pool()
         except Exception as e:
@@ -1620,14 +1767,30 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         """The pool is gone for the rest of the class, ANNOUNCED: a RuntimeWarning carrying the reason (the block comment above
         says why a warning: pytest counts it on the -q summary line and prints it, where a stderr line is captured) and the
         same text as one line on stderr; every construction from here builds in this process (a batch already submitted
-        finishes serially as its results are read). Every degradation of the class comes through here, whatever its kind."""
+        finishes serially as its results are read). The executor is dropped through `_drop_pool`: no join, its workers
+        killed, so a wedged worker cannot hold the interpreter's exit. Every degradation of the class comes through here,
+        whatever its kind."""
         pool, cls._pool, cls._pool_reason = cls._pool, None, reason
         if pool is not None:
-            pool.shutdown(wait=False, cancel_futures=True)
+            cls._drop_pool(pool)
         line = ("[%s] %s; building this class's censuses in the test process instead (the results are unchanged, the class is slower)"
                 % (cls.__name__, reason))
         warnings.warn(line, RuntimeWarning, stacklevel=2)
         print(line, file=sys.stderr, flush=True)
+
+    def _pool_or_fail(self):
+        """The class's pool for a pin that needs the pool road. A pool lost for the ONE declared environment limitation
+        (ENVIRONMENT_LIMITATION, asserted by its text) skips, naming it; a pool lost for any other reason FAILS the pin,
+        naming the reason (round 8 of the review, 2026-09-21, extra6-2: the pin skipped on every reason, so a class that
+        lost its pool to a real defect reported success)."""
+        cls = type(self)
+        if cls._pool is not None:
+            return cls._pool
+        reason = cls._pool_reason or ""
+        if reason.startswith(cls.ENVIRONMENT_LIMITATION) and "semaphore" in reason:
+            self.skipTest("the declared environment limitation, the stdlib's refusal to build a process pool: %s" % reason)
+        self.fail("the census pool was lost for a reason that is no environment limitation, so the road this pin needs did "
+                  "not run (a failure of the pin, not a skip): %s" % reason)
 
     def _censuses(self, specs):
         """The censuses over `specs`, one result per (files, sources) in the specs' order, each read through `_take`: on the
@@ -1987,7 +2150,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         nothing stored the key into) is tainted whole; and `.pop("env")` reads the key like `.get`. The refusal side:
         the head's two dict-returning sources are located at their env key, their returns carry no env whole (so
         `shape["mode"]` stays clean and the 96 content rows and 267 violations of the addendum's first census stay
-        gone), and the head reads content rows 9, violations 0."""
+        gone), and the head reads BASE content rows, violations 0."""
         declared = self._declared()
         plants = []       # (variant, form, spec) in the order the subTests run
         for label, (body, expr) in self.REKEYS.items():
@@ -2519,14 +2682,40 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
                       ("key", "msg, problem=bool(ring), key=%s" % fold, at_site))
         local_roads = (("a fold through a conduit local", "msg + %s" % fold, ""),
                        ("a fold through a helper's return", "str(msg) + self._tenth_wrap(msg)", wrap % fold))
-        tainted_roads = (("the parameter alone through a local and a clean helper, under a tainted site (the control)", wrap % "' tail'"),
-                         ("a clean helper chain past RESIDUAL_DEPTH, under a tainted site (the over-approximating side)", chain))
-        helper_of = lambda road: "_tenth_wrap" if "wrap" in road else "_tenth_w1"
+        # Round 8 of the review (2026-09-21, tests-1): each tainted road carries the NAME of the helper its local calls, and
+        # census_with_local asserts the helper is defined in the copy and resolved at the local's call. Until round 8 the
+        # name was sniffed off the road's LABEL ("wrap" in it), neither label had the word, so the control arm's local
+        # called `_tenth_w1` while its helpers text defined `_tenth_wrap`: an undefined helper resolves to nothing and
+        # reads as clean, so the "clean helper" half of the control was green by construction (a census reading a
+        # helper's return from the main pass, the property the control controls for, left it green; it reds it now).
+        tainted_roads = (("the parameter alone through a local and a clean helper, under a tainted site (the control)", wrap % "' tail'", "_tenth_wrap"),
+                         ("a clean helper chain past RESIDUAL_DEPTH, under a tainted site (the over-approximating side)", chain, "_tenth_w1"))
+        # Round 8 (correctness-2 and extra10-2): a fold reaching the inner call through SEVEN conduit locals assigned in
+        # reverse order, each from the one the next statement fills and the last from the source, so the residual walk
+        # gains one link per pass and needs eight; the round-7 walk stopped at six with no signal and read the residual
+        # as empty (the inner call was skipped, the silence the residual exists to remove), while the main pass's identical
+        # loop re-queued on its cap. The walk runs to a fixpoint now; its cap-hit signal is pinned two tests below.
+        reverse_chain = "msg + g\n" + "".join("        %s = %s\n" % (a, b) for a, b in zip("gfedcb", "fedcba")) + "        a = %s" % fold
+        local_roads = local_roads + (("a fold through a chain of seven conduit locals assigned in reverse order", reverse_chain, ""),)
+        # Round 8 (extra9-2): a fold onto the conduit's OWN PARAMETER, by assignment and by augmented assignment. The
+        # residual walk read every parameter as clean before it read the locals, so the store onto msg was invisible and
+        # the inner call skipped, on a planted conduit and on the real problem_row alike. A parameter reads clean only
+        # while nothing has been stored onto it; the control: a parameter reassigned from a CLEAN expression stays clean
+        # (the store records a non-empty tag set alone), so under a tainted site the residual is empty, the inner call is
+        # skipped and the site is judged, as for the local-and-helper control above.
+        relay3 = "    def _tenth_relay(self, msg, ring=True):\n        %s\n        self._log(msg, problem=bool(ring))\n\n"
+        param_roads = (("a fold onto the conduit's own parameter by assignment", "msg = msg + %s" % fold, site, True),
+                       ("a fold onto the conduit's own parameter by augmented assignment", "msg += %s" % fold, site, True),
+                       ("the parameter reassigned from a clean expression, under a tainted site (the control)", "msg = str(msg) + ' tail'", tainted_site, False))
+
+        def path_with_param(stmt, where):
+            return self._copy(lambda s: s.replace(anchor, relay3 % stmt + where + anchor))
         built = iter(self._censuses(
             [self._spec(path_with(inner)) for _road, inner, _rows in fold_roads]
             + [self._spec(path_with_local(local, helpers)) for _road, local, helpers in local_roads]
-            + [self._spec(path_with_local("str(msg) + self.%s(msg)" % helper_of(road), helpers, tainted_site)) for road, helpers in tainted_roads]
-            + [self._spec(path_with_local("str(msg) + self._tenth_w1(msg)", chain)), self._spec(path_with("msg, problem=bool(ring)"))]))
+            + [self._spec(path_with_local("str(msg) + self.%s(msg)" % helper, helpers, tainted_site)) for _road, helpers, helper in tainted_roads]
+            + [self._spec(path_with_local("str(msg) + self._tenth_w1(msg)", chain)), self._spec(path_with("msg, problem=bool(ring)"))]
+            + [self._spec(path_with_param(stmt, where)) for _road, stmt, where, _folded in param_roads]))
         for road, inner, site_rows in fold_roads:
             with self.subTest(road=road):
                 c, dc = census_with(self._take(next(built)))
@@ -2569,13 +2758,19 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
             with self.subTest(road=road):
                 c, dc = census_with_local(self._take(next(built)))
                 self.assertEqual((sorted(dc.taint), sorted(dc.residual)), (["env"], ["env"]),
-                                 "the fold reaches the inner call through the local (and the helper's return); the residual names it")
+                                 "the fold reaches the inner call through the local (and the helper's return, or the chain); the residual names it")
                 self.assertEqual(sorted((d.owner, why) for d, why in c.explicit_violations), [inner_row], "refused at the inner call")
                 self.assertEqual(([d.owner for d in c.tainted if d.owner == "_tenth"], len(c.content_rows)), ([], self.BASE),
                                  "the site passed a clean prose and is not judged; no constant True at the inner call, so no row")
-        for road, helpers in tainted_roads:
+                self.assertEqual(c.residual_cap_hits, 0, "the residual walk converged; a cap hit is a failure, never read as convergence")
+        for road, helpers, helper in tainted_roads:
             with self.subTest(road=road):
                 c, dc = census_with_local(self._take(next(built)))
+                relay_fn = [f for f in c.all_fns if f.qual == "SdkBackend._tenth_relay"]
+                self.assertEqual([f.qual for f in c.all_fns if f.qual == "SdkBackend.%s" % helper], ["SdkBackend.%s" % helper],
+                                 "the helper the local calls is defined in the copy (round 8, tests-1: the control called one its helpers never defined)")
+                self.assertIn("SdkBackend.%s" % helper, {callee.qual for call in relay_fn[0].calls for callee, _via in c.callees.get(id(call), [])},
+                              "and resolved at the local's call, so the residual walk read the helper's return, not nothing")
                 self.assertEqual(sorted(dc.taint), ["env"], "the main pass carries the site's env into the inner call through msg")
                 deep = "RESIDUAL_DEPTH" in road
                 self.assertEqual(sorted(dc.residual), ["env"] if deep else [],
@@ -2595,9 +2790,55 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
             c, dc = census_with(self._take(next(built)))
             self.assertEqual((sorted(dc.taint), sorted(dc.residual), c.explicit_violations), ([], [], []))
             self.assertEqual(len(c.content_rows), self.BASE)
+        for road, _stmt, _where, folded in param_roads:
+            with self.subTest(road=road):
+                c, dc = census_with_local(self._take(next(built)))
+                self.assertEqual(sorted(dc.taint), ["env"], "the inner call is tainted, by the fold or by the site's env through msg")
+                if folded:
+                    self.assertEqual(sorted(dc.residual), ["env"], "a parameter something was stored onto reads its residual: the fold onto msg itself")
+                    self.assertEqual(sorted((d.owner, why) for d, why in c.explicit_violations), [inner_row], "refused at the inner call")
+                    self.assertEqual(([d.owner for d in c.tainted if d.owner == "_tenth"], len(c.content_rows)), ([], self.BASE),
+                                     "the site passed a clean prose and is not judged; no constant True at the inner call, so no row")
+                else:
+                    self.assertEqual(sorted(dc.residual), [], "a parameter reassigned from a clean expression stays clean: the taint is wholly the parameters'")
+                    self.assertEqual(sorted((d.owner, why) for d, why in c.explicit_violations), sorted(at_site), "the site is judged, the inner call skipped")
+                    self.assertEqual(([d.owner for d in c.tainted if d.owner == "_tenth"], len(c.content_rows)), (["_tenth"], self.BASE + 1))
         with self.subTest(road="the head's own inner calls carry no residual"):
             self.assertEqual([(dc.owner, dc.lineno) for dc in census(CENSUS_FILES).tainted if dc.residual], [],
                              "problem_row's line, built from prose through a helper's returned row, and _log_quietly's forwarded parameters")
+
+    def test_a_residual_walk_still_growing_at_its_cap_is_a_failure_naming_the_conduit_and_the_inner_call_is_judged(self):
+        """The residual walk's cap-hit signal (round 8 of the review, 2026-09-21, correctness-2 and extra10-2): the walk over
+        a conduit's locals runs to a fixpoint, and a walk STILL GROWING at RESIDUAL_PASS_CAP is filed as a "residual-cap"
+        failure naming the conduit and the pass count, counted in residual_cap_hits, and the inner call is judged on the
+        main pass's names (the restricted side), never skipped; so exhausting the cap is distinguishable from converging.
+        Shown with the cap lowered to three on the seven-link reverse chain, which needs eight passes, built in this
+        process on a Census subclass (the pool's workers would not see a patched class attribute); at the default cap the
+        same plant converges with no failure and no hit (the fold test's chain subtest), and the head's own walk records
+        no hit. Red before the signal: the walk stopped at six passes, filed nothing, and read the residual as empty."""
+        class _Capped(Census):
+            RESIDUAL_PASS_CAP = 3
+        fold = "', '.join(sorted(AUTH_ENV_NAMES))"
+        relay = ("    def _tenth_relay(self, msg, ring=True):\n        line = msg + g\n"
+                 + "".join("        %s = %s\n" % (a, b) for a, b in zip("gfedcb", "fedcba"))
+                 + "        a = %s\n        self._log(line, problem=bool(ring))\n\n" % fold)
+        site = "    def _tenth(self, sess):\n        self._tenth_relay('env (%s): tenth' % sess.name)\n\n"
+        path = self._copy(lambda s: s.replace(self.METHOD_ANCHOR, relay + site + self.METHOD_ANCHOR))
+        c = _Capped((path, CREDENTIALS_PY), DEFAULT_SOURCES)
+        hits = [f for f in c.failures if f[0] == "residual-cap"]
+        self.assertEqual(len(hits), 1, "one residual-cap failure, naming the conduit: %r" % (c.failures,))
+        self.assertEqual((hits[0][1], hits[0][2] > 0), ("sdk_backend.py", True))
+        self.assertIn("SdkBackend._tenth_relay", hits[0][3])
+        self.assertIn("still growing after 3 passes", hits[0][3])
+        self.assertEqual(c.residual_cap_hits, 1, "the hit is counted, distinguishable from convergence")
+        inner = [dc for dc in c.door_calls if dc.owner == "_tenth_relay"]
+        self.assertEqual([dc.kind for dc in inner], ["self"])
+        self.assertEqual(sorted(inner[0].residual), ["env"], "on the restricted side: the main pass's names, so the inner call is judged")
+        self.assertIn(("_tenth_relay", "problem= is the expression bool(ring)"), [(d.owner, why) for d, why in c.explicit_violations],
+                      "the inner call is refused, not skipped")
+        head = census(CENSUS_FILES)
+        self.assertEqual((head.residual_cap_hits, [f for f in head.failures if f[0] == "residual-cap"]), (0, []), "the head's own walk converges")
+        self.assertEqual(head.summary()["residual_cap_hits"], 0, "the signal is in the CLI's summary beside the main pass's rounds")
 
 
     def test_a_chain_the_inner_loop_needs_seven_passes_for_is_followed_to_the_door(self):
@@ -2811,12 +3052,13 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         """The ruling's pin that the pool road is TAKEN: in this run, for this batch, the class's censuses came from the
         worker pool (a fallback that silently ran every batch passes every other test of the class and fails here), and
         what came through reads the same as this process builds over the same inputs, a loud plant's CensusError text
-        included, so the tests above prove the same things they proved serially. Where the pool is unavailable in this
-        environment the class has already said so on stderr and ran serial; this pin then skips naming the reason,
-        since the road it pins did not run (condition (2) of the ruling: the module never fails for want of a pool)."""
+        included, so the tests above prove the same things they proved serially. Where the pool was lost the class has already
+        said so (a RuntimeWarning and a stderr line) and ran serial; this pin then FAILS naming the reason, since the road
+        it pins did not run, unless the reason is the one declared environment limitation, the only skip (round 8 of
+        the review, 2026-09-21, extra6-2; until then it skipped on any reason, and condition (2) of the round-6 ruling,
+        that the module never fails for want of a pool, holds for the limitation alone)."""
         cls = type(self)
-        if cls._pool is None:
-            self.skipTest("the census pool is unavailable here, the class ran serial: %s" % cls._pool_reason)
+        self._pool_or_fail()
         specs = self._pool_specs()
         pooled = self._censuses(specs)
         self.assertEqual(cls.roads[-1], "pool", "the batch was routed to the pool")
@@ -3006,23 +3248,31 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         that sleeps past a bound of 0.2 s; the read times out while the worker still sleeps, the class degrades ANNOUNCED
         (ONE RuntimeWarning and ONE stderr line naming TimeoutError and the bound), the construction is built here, and it
         reads the same as a serial build over the same spec: a Census carrying the planted tenth row and BASE + 1 content
-        rows, so a timeout never yields an empty census silently. The class's own pool comes back after the test. Skips
-        naming the reason where no pool starts, as the pool-taken pin does (the road it pins did not run)."""
+        rows, so a timeout never yields an empty census silently. The drop KILLS the sleeper (round 8, extra6-1): its
+        future ends broken, never with a result, and no worker of the dropped pool outlives the test. The class's own pool
+        comes back after the test. Fails naming the reason where the pool was lost, as the pool-taken pin does (the road it
+        pins did not run), the declared environment limitation the only skip."""
         cls = type(self)
-        if cls._pool is None:
-            self.skipTest("the census pool is unavailable here, the class ran serial: %s" % cls._pool_reason)
+        self._pool_or_fail()
         spec = self._pool_specs()[0]
         pool = cls._new_pool()
-        self.addCleanup(pool.shutdown, wait=True)          # joins the sleeper once it wakes; no worker outlives the test
-        wedged = pool.submit(time.sleep, 8.0)               # past the bound by far, short enough to join at cleanup
+        self.addCleanup(pool.shutdown, wait=True)          # after the drop: joins a manager thread that has finished
+        wedged = pool.submit(time.sleep, 900.0)             # past the bound by far; the drop kills it, nothing waits for it
+        time.sleep(0.5)                                     # the executor spawns a worker for the submit; read the table settled
+        workers = list(pool._processes.values())
+        self.assertTrue(workers, "the pool has a worker for the sleeper")
         err = io.StringIO()
         with mock.patch.object(cls, "_pool", pool), mock.patch.object(cls, "_pool_reason", None), mock.patch.object(cls, "roads", []), \
                 mock.patch.object(cls, "built", collections.Counter()), mock.patch.object(cls, "POOL_READ_TIMEOUT", 0.2), \
                 contextlib.redirect_stderr(err), warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             first = self._resolve(_Pending(spec, wedged))
-            self.assertFalse(wedged.done(), "the read gave up at the bound while the worker still slept")
             self.assertIsNone(cls._pool, "the pool is dropped at the timeout")
+            self.assertIsInstance(wedged.exception(timeout=30), BrokenProcessPool,
+                                  "the sleeper's future ends broken: the drop killed its worker, and nothing waited for the sleep")
+            for w in workers:
+                w.join(30)
+            self.assertEqual({w.exitcode for w in workers}, {-signal.SIGKILL}, "every worker killed and reaped: %r" % [(w.pid, w.exitcode) for w in workers])
             reason = "the census pool failed under a batch: TimeoutError: no result within 0.2 s"
             self.assertEqual(cls._pool_reason, reason)
             self.assertEqual(cls.built, {"serial": 1}, "the timed-out construction was built here")
@@ -3048,26 +3298,109 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         every exception and the worker's payload re-raised at the read: the class degraded and rebuilt here instead."""
         cls = type(self)
         pool_up, reason_before = cls._pool is not None, cls._pool_reason
-        broken = dict(DEFAULT_SOURCES, func={("sdk_backend.py", 5): "env"})    # a qualifier the census cannot split
-        spec = (self._pool_specs()[0][0], broken)                                # the tenth-row copy's files, the broken sources
-        err = io.StringIO()
-        with mock.patch.object(cls, "roads", []), mock.patch.object(cls, "built", collections.Counter()), \
-                contextlib.redirect_stderr(err), warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            results = self._censuses([spec])
-            with self.assertRaises(AttributeError) as cm:
-                self._take(results[0])
-            self.assertIs(cls._pool is not None, pool_up, "the pool is where it was: a failure of the work is not a pool failure")
-            self.assertEqual(cls._pool_reason, reason_before, "no degradation recorded for a failure of the work")
-            self.assertEqual(cls.roads, ["pool"] if pool_up else ["serial (%s)" % reason_before])
-            self.assertEqual(cls.built, {"pool": 1} if pool_up else {"serial": 1}, "counted to the road that built it")
-        self.assertIn("split", str(cm.exception), "the census's own error, as itself: %r" % (cm.exception,))
-        self.assertEqual(err.getvalue(), "", "no degradation line for a failure of the work")
-        self.assertEqual([str(w.message) for w in caught if w.category is RuntimeWarning], [],
-                         "no degradation warning for a failure of the work: the class degraded instead of raising it as itself")
-        if pool_up:
-            self.assertIsInstance(cm.exception.__cause__, _WorkerTraceback, "the worker's traceback travels as the cause")
-            self.assertIn("split", cm.exception.__cause__.args[0], "and names the line that raised")
+        files = self._pool_specs()[0][0]                                          # the tenth-row copy's files
+        plants = ((AttributeError, "split", dict(DEFAULT_SOURCES, func={("sdk_backend.py", 5): "env"})),   # a qualifier the census cannot split
+                  (TypeError, "unpack", dict(DEFAULT_SOURCES, func={5: "env"})))                          # a key the census cannot unpack
+        for exc_type, word, broken in plants:
+            with self.subTest(raises=exc_type.__name__):
+                err = io.StringIO()
+                with mock.patch.object(cls, "roads", []), mock.patch.object(cls, "built", collections.Counter()), \
+                        contextlib.redirect_stderr(err), warnings.catch_warnings(record=True) as caught:
+                    warnings.simplefilter("always")
+                    results = self._censuses([(files, broken)])
+                    # distinguishable from a clean empty result by construction: the read returns a _Raised, never a Census
+                    # and never None (round 8 of the review, 2026-09-21, extra6-2)
+                    resolved = self._resolve(results[0])
+                    self.assertIsInstance(resolved, _Raised, "the read hands back the exception as data, not an empty census: %r" % (resolved,))
+                    self.assertIsInstance(resolved.exc, exc_type)
+                    with self.assertRaises(exc_type) as cm:
+                        self._take(resolved)
+                    self.assertIs(cls._pool is not None, pool_up, "the pool is where it was: a failure of the work is not a pool failure")
+                    self.assertEqual(cls._pool_reason, reason_before, "no degradation recorded for a failure of the work")
+                    self.assertEqual(cls.roads, ["pool"] if pool_up else ["serial (%s)" % reason_before])
+                    self.assertEqual(cls.built, {"pool": 1} if pool_up else {"serial": 1}, "counted to the road that built it")
+                self.assertIn(word, str(cm.exception), "the census's own error, as itself: %r" % (cm.exception,))
+                self.assertEqual(err.getvalue(), "", "no degradation line for a failure of the work")
+                self.assertEqual([str(w.message) for w in caught if w.category is RuntimeWarning], [],
+                                 "no degradation warning for a failure of the work: the class degraded instead of raising it as itself")
+                if pool_up:
+                    self.assertIsInstance(cm.exception.__cause__, _WorkerTraceback, "the worker's traceback travels as the cause")
+                    self.assertIn(word, cm.exception.__cause__.args[0], "and names the line that raised")
+
+    def test_the_pool_road_pin_fails_on_a_lost_pool_and_skips_on_the_declared_environment_limitation_alone(self):
+        """Both arms of `_pool_or_fail` (round 8 of the review, 2026-09-21, extra6-2; a guard is run against what it refuses
+        and what it admits): with the pool lost for a real reason (a planted start failure of the kind a defect raises, and
+        a pool broken under a batch) the pin FAILS naming the reason; with the pool lost for the declared environment
+        limitation, the stdlib's NotImplementedError from _check_system_limits in either of its two spellings, it skips
+        naming that; a reason spelled like the limitation but not about semaphores is no limitation and fails. With the
+        pool up, the pool is returned. Red at round 7's head: every lost pool skipped."""
+        cls = type(self)
+        real = ["the census pool could not start: RuntimeError: planted: a start failure the pool's own failures do not name",
+                "the census pool failed under a batch of 2: BrokenProcessPool: planted: every worker is gone",
+                "the census pool failed under a batch: TimeoutError: no result within 0.2 s",
+                "the census pool could not start: NotImplementedError: planted: a refusal that is not the stdlib's"]
+        for reason in real:
+            with self.subTest(fails=reason[:60]):
+                with mock.patch.object(cls, "_pool", None), mock.patch.object(cls, "_pool_reason", reason):
+                    with self.assertRaises(AssertionError) as cm:
+                        self._pool_or_fail()
+                self.assertNotIsInstance(cm.exception, unittest.SkipTest)
+                self.assertIn(reason, str(cm.exception), "the failure names the reason")
+        limitation = ["the census pool could not start: NotImplementedError: This Python build lacks multiprocessing.synchronize, "
+                      "usually due to named semaphores being unavailable on this platform.",
+                      "the census pool could not start: NotImplementedError: system provides too few semaphores (32 available, 256 necessary)"]
+        for reason in limitation:
+            with self.subTest(skips=reason[:60]):
+                with mock.patch.object(cls, "_pool", None), mock.patch.object(cls, "_pool_reason", reason):
+                    with self.assertRaises(unittest.SkipTest) as cm:
+                        self._pool_or_fail()
+                self.assertIn(reason, str(cm.exception), "the skip names the limitation")
+        if cls._pool is not None:
+            self.assertIs(self._pool_or_fail(), cls._pool, "with the pool up, the pool")
+
+    WEDGED_EXIT_LIMIT = 150.0    # seconds the driver below has to EXIT. Its own work is a few seconds (the module's import,
+                                 # one worker's start, a 0.5 s bound, one census built here, a 15 s join at most); the
+                                 # planted sleep is 900 s, so an exit within the limit means the drop did not wait for it
+
+    def test_a_worker_that_never_returns_does_not_hold_the_interpreters_exit_once_the_pool_is_dropped(self):
+        """The bound BOUNDS (round 8 of the review, 2026-09-21, extra6-1): a worker that never returns within the run, a
+        read that gives up at the bound, the pool dropped, and then the interpreter's EXIT, which is where the round-7
+        drop still waited. Run as a driver in a subprocess with a wall-clock limit (WEDGED_WORKER_DRIVER: a pool of this
+        class's shape, a worker sleeping 900 s, the bound at 0.5 s, `_resolve` over the sleeper's future), since the
+        wait was the exit's own. Asserted: the driver exits within WEDGED_EXIT_LIMIT with status 0; the read returned a
+        Census built here (never empty) naming TimeoutError and the bound; every worker's exit code reads back as
+        SIGKILL's, so each was killed AND reaped (an exit code is read from a reaped process); the manager thread had
+        finished; the sleeper's future ended broken, never with a result; and the degradation announced itself in the
+        driver too. Red before the drop killed the workers: the driver printed its lines and then did not exit, the
+        interpreter joining the manager thread that waited on the sleeper (150 s here, 900 s left alone); this test then
+        kills the driver's process group (its pid, recorded here) and fails."""
+        self._pool_or_fail()
+        driver = WEDGED_WORKER_DRIVER % {"here": HERE, "sleep": 900.0, "join": 15.0}
+        t0 = time.monotonic()
+        proc = subprocess.Popen([sys.executable, "-c", driver], cwd=HERE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True, start_new_session=True)
+        try:
+            out, err = proc.communicate(timeout=self.WEDGED_EXIT_LIMIT)
+        except subprocess.TimeoutExpired:
+            os.killpg(proc.pid, signal.SIGKILL)     # the driver's own session: it and the spawn workers it started, nothing else
+            out, err = proc.communicate()
+            self.fail("the driver did not exit within %g s: the drop still holds the interpreter's exit on the wedged worker\n"
+                      "stdout: %s\nstderr: %s" % (self.WEDGED_EXIT_LIMIT, out[-2000:], err[-2000:]))
+        elapsed = time.monotonic() - t0
+        self.assertEqual(proc.returncode, 0, "the driver exited cleanly: %s" % err[-3000:])
+        lines = out.splitlines()
+        resolved = [ln for ln in lines if ln.startswith("resolved ")]
+        self.assertEqual(len(resolved), 1, out)
+        self.assertTrue(resolved[0].startswith("resolved Census in "), "the timed-out read is a census built here, never empty: %s" % resolved[0])
+        self.assertIn("the census pool failed under a batch: TimeoutError: no result within 0.5 s", resolved[0])
+        workers = json.loads([ln for ln in lines if ln.startswith("workers ")][0][len("workers "):])
+        self.assertTrue(workers, "the pool had a worker for the sleeper")
+        self.assertEqual({code for _pid, code in workers}, {-signal.SIGKILL},
+                         "every worker was killed (SIGKILL) and reaped (its exit code read back): %r" % (workers,))
+        self.assertIn("manager alive False", lines, "the executor's manager thread finished: the reaping is done, the exit has nothing to join")
+        self.assertIn("wedged BrokenProcessPool", lines, "the sleeper's future ended broken, never with a result")
+        self.assertIn("RuntimeWarning", err, "the degradation announced itself in the driver too")
+        self.assertLess(elapsed, self.WEDGED_EXIT_LIMIT)
 
 
 class CensusParseRetention(unittest.TestCase):
@@ -3201,6 +3534,49 @@ class LogQuietlyAtRuntime(_Backend):
         self.assertEqual([r["text"] for r in self.be.problems() if "the seeded-work reconcile failed" in r["text"]], [want],
                          "the caught exception's report is one ring row (as on main before the merge)")
         self.assertEqual([l for l in lines if "the seeded-work reconcile failed" in l], [want], "and one kernel-log line")
+
+    def test_a_failure_report_that_repeats_counts_on_one_ring_row_keyed_by_site_session_and_exception_class(self):
+        """The conduit's keyed sentence by execution (round 8 of the review, 2026-09-21, kernel-2 and extra7-2): the five
+        failure reports the merge of main brought passed problem=True with no key, so a failure repeating at every settle
+        appended a ring row per occurrence and bumped problem_seq, the feed's cache key, each time, and a hundred of them
+        evicted the ring; the same five sites are unkeyed on main, so this tightens main's behaviour rather than repairing
+        a regression of this change. Each of the five is keyed (site label, sid, exception class) now. Driven twelve times
+        on _reconcile_seeded_work's except road with one failure: ONE ring row, its key the triple, its count 12, its text
+        the first line with the repeat suffix, problem_seq up by ONE, twelve kernel-log lines (the log keeps each); then a
+        second exception class at the same site is a second row, since the class is in the key and a distinct cause is not
+        hidden behind the first. Red at round 7's head: twelve rows and problem_seq up by twelve."""
+        lines = []
+        self.be._log_cb = lines.append
+        sid = self.be.spawn("web", "/tmp", env=ENV)
+        s = self._sess(sid)
+
+        class _Refusing:
+            def __init__(self, exc):
+                self.exc = exc
+
+            def __enter__(self):
+                raise self.exc
+
+            def __exit__(self, *a):
+                return False
+        seq0 = self.be.problem_seq()
+        s._sub_lock = _Refusing(RuntimeError("the lock refused"))
+        for _ in range(12):
+            s._reconcile_seeded_work()
+        want = "live work (web): the seeded-work reconcile failed: RuntimeError: the lock refused"
+        rows = [r for r in self.be.problems() if "the seeded-work reconcile failed" in r["text"]]
+        self.assertEqual(len(rows), 1, "twelve occurrences, one ring row: %r" % ([r["text"][:70] for r in rows],))
+        self.assertEqual(rows[0]["key"], ("seeded-reconcile-failed", sid, "RuntimeError"), "keyed by site label, session and exception class")
+        self.assertEqual((rows[0]["count"], rows[0]["first"]), (12, want))
+        self.assertTrue(rows[0]["text"].startswith(want + " (11 repeats this kernel life;"), rows[0]["text"])
+        self.assertEqual(self.be.problem_seq(), seq0 + 1, "one cache bust for a recurring failure, not one per occurrence")
+        self.assertEqual([l for l in lines if "the seeded-work reconcile failed" in l], [want] * 12, "the kernel log keeps every line")
+        s._sub_lock = _Refusing(OSError("the lock's file is gone"))
+        s._reconcile_seeded_work()
+        rows = [r for r in self.be.problems() if "the seeded-work reconcile failed" in r["text"]]
+        self.assertEqual([r["key"] for r in rows], [("seeded-reconcile-failed", sid, "RuntimeError"), ("seeded-reconcile-failed", sid, "OSError")],
+                         "a second cause at the same site is its own row")
+        self.assertEqual(self.be.problem_seq(), seq0 + 2)
 
 class FlagSettingsLockOrder(_OptionsBackend):
     """The callee half of _flag_settings_lock's order sentence, pinned by execution (correctness-3, tests-4, regression-2;
@@ -4381,6 +4757,39 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
         old = sb.HOST_REFUSED_RING % ("webb", astral[:sb.RING_REASON_BUDGET - 1] + mark)
         self.assertGreater(units(old), cap)
         self.assertEqual(len(lone(self._centre_cut(old, cap))), 1, "the pre-fix row: the centre's slice left a lone surrogate")
+
+    def test_set_envs_refusal_row_charges_its_head_in_the_centres_unit_so_an_astral_registry_name_leaves_the_row_under_the_cap(self):
+        """Round 8 of the review (2026-09-21, extra7-3, the refuter's narrowed shape): credentials.cut_to has charged UTF-16
+        code units since round 7, but set_env's refusal row computed the body's share of the cap as the cap less len(head),
+        in code points, so the two halves of one cap arithmetic were in different units and a head carrying characters
+        above U+FFFF left the COMPOSED row over the cap by one unit per such character (nine here). No product door
+        reaches it (kernel.NAME_RE admits no such name and the sid is kernel-minted): the registry name is written
+        directly, a test road. The composition is measured through the real set_env, not the helper: the row fits the
+        cap in the centre's unit exactly (the body's share is the cap less the head's UNITS), the centre's cut has nothing
+        to do, no lone surrogate, the marker last; the pre-fix arithmetic is stated beside it. The overrun predates this
+        change's delta (nineteen units at round 6's head); the round-7 cut narrowed it and this closes it."""
+        cap, mark = sb.ERROR_CENTER_TEXT_CAP, sb._cred.CUT_MARK
+        units = lambda t: len(t.encode("utf-16-le")) // 2
+        lone = lambda t: [hex(ord(ch)) for ch in t if 0xD800 <= ord(ch) <= 0xDFFF]
+        name = "\U0001F600" * 19                     # 19 code points, 38 units: over the 20-unit session budget
+        sid = self.be.spawn("web", "/tmp", env=ENV)
+        self.be._update_reg(sid, name=name)
+        head = sb.REFUSAL_RING_HEAD % sb._cred.cut_to(name, sb.RING_SESSION_BUDGET)
+        self.assertEqual((len(head), units(head)), (32, 41), "the head: 22 fixed characters and a 20-unit budget spent on nine pairs and the marker")
+        bad = "B" * 300 + "-"                          # outside the alphabet: the other-body road, whose body quotes the whole name
+        self.assertFalse(self.be.set_env(sid, {bad: "x"}), "refused")
+        rows = [kw.get("ring_text") for m, problem, kw in self.logged if problem and str(kw.get("ring_text", "")).startswith(head)]
+        self.assertEqual(len(rows), 1, "one problem row with the astral head (this class records _log's calls in self.logged): %r" % (rows,))
+        row = rows[0]
+        self.assertEqual(units(row), cap, "the composed row spends the cap exactly in the centre's unit: the body's share is the cap less the head's units")
+        self.assertLessEqual(len(row), cap)
+        self.assertEqual(self._centre_cut(row, cap), row, "the centre's cut has nothing to do")
+        self.assertEqual(lone(row), [], "no lone surrogate")
+        self.assertTrue(row.endswith(mark), "the cut is visible")
+        self.assertIn("bad name", row)
+        self.assertNotIn(bad, row, "the name never fits whole: it is cut")
+        self.assertEqual((cap - len(head)) - (cap - units(head)), 9,
+                         "the pre-fix share, computed in code points, was nine units too large: nine pairs in the head, nine units over the cap")
 
     SKIP_FORMAT = ('RESERVED_DROP_RING = ("env (%s): ignoring reserved %s from the stored session env: romp sets the identity env; a credential is "\n'
                    '                      "Claude Code\'s own")')

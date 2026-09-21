@@ -226,6 +226,13 @@ class ReferenceLister(unittest.TestCase):
         # OP_ACCOUNT alone, so a doc edit narrowing the snippet's tuple left this pin green; OP_CONNECT_HOST, which no
         # suffix catches, is the one that escaped), and a name added to the rule later is planted by construction
         env_a.update({n: "synthetic-op-%d" % i for i, n in enumerate(sb._cred.OP_ENV_NAMES)})
+        # and a witness per SUFFIX of the rule, by construction, in both casings (round 8 of the review, 2026-09-21,
+        # extra8-2: the op names were planted from the rule since round 2 but no name built from CREDENTIAL_ENV_SUFFIXES
+        # was, so a suffix added to the rule left the lister's literal tuple behind with every pin green: the mutation
+        # adding _PASSWORD kept the module green while the documented audit under-reported end to end; `want` below is
+        # built from the rule, so the doc's tuple reds when the rule widens)
+        env_a.update({"SYNTH" + suf: "synthetic-suffix-%d" % i for i, suf in enumerate(sb._cred.CREDENTIAL_ENV_SUFFIXES)})
+        env_a.update({("synth" + suf).lower(): "synthetic-suffix-%d" % i for i, suf in enumerate(sb._cred.CREDENTIAL_ENV_SUFFIXES)})
         env_b = {"FEATURE_FLAG": "1", "Notes_Api_Key": val, "editor_tokenizer": "x", "options_for_x": "x"}
         pa = os.path.join(root, "sdk-flag-settings", self.SID_A + ".json")
         pb = os.path.join(root, "sdk", self.SID_B + ".json")
@@ -263,6 +270,9 @@ class ReferenceLister(unittest.TestCase):
         self.assertIn("%s OP_CONNECT_HOST" % pa, got, "the one 1Password name no suffix catches is listed")
         for n in sb._cred.OP_ENV_NAMES:
             self.assertIn("%s %s" % (pa, n), got, n)
+        for suf in sb._cred.CREDENTIAL_ENV_SUFFIXES:
+            self.assertIn("%s SYNTH%s" % (pa, suf), got, "the suffix witness %s is listed" % suf)
+            self.assertIn("%s %s" % (pa, ("synth" + suf).lower()), got, "and its lowercase twin")
         self.assertIn("%s notes_api_token" % pa, got)
         self.assertNotIn("%s EMPTY_TOKEN" % pa, got)
         self.assertNotIn(val, r.stdout, "names only, never a value")
