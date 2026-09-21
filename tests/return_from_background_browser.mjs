@@ -439,7 +439,7 @@ try {
       // engine (probed on all three: route.continue with the header deleted, and route.fetch with it deleted, both had the browser reattach
       // the stored cookie and the kernel answered 200), and fulfils the frame with that response: the kernel's own status, headers and bytes
       // (403, text/plain, a body that names the serve-token file's path), as it answers a token-gated route with no credential; the context's
-      // cookie stays for every other request (the shell's socket and the eager panes ride it; round 3's leg fulfilled a hand-written body here
+      // cookie stays for every other request (the shell's socket and the eager panes ride it; pass 3's leg fulfilled a hand-written body here
       // and called it the kernel's, so no test met the real one). The response's STATUS is recorded; its body is never read, printed or kept
       // by this driver: that path is the reason the shell must not show this document as content. The 403 commits a document and fires
       // load in every engine, so the load listener is its detector on all three (the abort's is the backstop off Chromium).
@@ -489,7 +489,7 @@ try {
       }
       // ui-1 (review round 4, 2026-09-19): the keyboard's retry keeps its focus across the re-failure. Enter on the focused button runs its
       // click (the retry); paintLoading hides the button while the retry loads, which drops focus to the body in every engine, and the failed
-      // paint that shows it again must put focus back, or the keyboard road survives one activation (round 3's leg pressed nothing). The route
+      // paint that shows it again must put focus back, or the keyboard road survives one activation (pass 3's leg pressed nothing). The route
       // still fails the fetch, so the second failure comes with the episode's second copy; read then: the active element and the button's
       // hidden state. Legs whose detector is the load listener (cfg.retryEnter: the Chromium abort leg, the denied legs), so the wait is the load's.
       let retryEnter = null;

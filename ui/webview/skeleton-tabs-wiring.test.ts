@@ -458,7 +458,7 @@ test("the idle prefetch's START GATE (stage 0, 2026-09-18): upsert reads the sho
   const SK = fs.readFileSync(path.join(WEBVIEW, "skeleton-tabs.ts"), "utf8");
   assert.match(SK, /export function onSocketUp\(st: SkeletonState, phone\?: boolean\): void \{\s*\n\s*st\.loaded\.clear\(\);\s*\n\s*st\.gate = false;[^\n]*\n\s*st\.returnHold = phone === true;/, "a new socket closes the gate, and on the phone holds the chain for the socket's life");
   for (const opener of ["gateOnFrame", "gateOnShow"]) assert.match(SK, new RegExp("export function " + opener + "\\([^\\n]*\\n\\s*if \\(st\\.gate \\|\\| st\\.returnHold"), opener + " opens nothing while the return hold stands (gateOnStrip reads no hold since pass 4b, the author's label, taking the reviewer's round-3 addendum's extra7-1; the composed case at the end of this file is its pin)");
-  assert.match(SK, /if \(hidden \|\| !st\.gate \|\| st\.returnHold\) return null;/, "nextPrefetch is null while the gate is closed or the return hold stands: no background ask leaves (the hold term since round 3: a hold set on a layout word after the gate opened must stop the chain)");
+  assert.match(SK, /if \(hidden \|\| !st\.gate \|\| st\.returnHold\) return null;/, "nextPrefetch is null while the gate is closed or the return hold stands: no background ask leaves (the hold term since pass 3: a hold set on a layout word after the gate opened must stop the chain)");
   assert.match(SK, /return \{ ids: new Set\(\), order: \[\], status: new Map\(\), loaded: new Set\(\), gate: false, returnHold: false, redialed: false \};/, "a fresh state's gate is closed, nothing is held and no redial is recorded (the boot dial sends no wsup)");
   assert.match(SK, /export function onLayoutWord\(st: SkeletonState, phone: boolean\): boolean \{\n\s*const was = st\.returnHold;\n\s*st\.returnHold = st\.redialed && phone;\n\s*return was && !st\.returnHold;\n\}/, "the hold is the redial record AND the word's layout; the return says whether a standing hold was lifted");
 });
@@ -486,7 +486,7 @@ test("review round 1 (2026-09-19): the gate's show half, the chat pane's show re
 });
 
 // The chat's panes handler's `on` block, lifted from render.ts and run over the shell's words with a counting schedulePrebuild (the
-// belt case below and the round-4 layout-word case after it). The block's collaborators stand in unless `state` supplies the real ones:
+// belt case below and the pass-4 layout-word case after it). The block's collaborators stand in unless `state` supplies the real ones:
 // the layout word's calls are counted either way (review round 3, extra8-1), and the gate's answer is scripted (`lifts`, `opens`) or, when
 // `state.skeletonTabs` is a real SkeletonState with the real onLayoutWord and gateOnShow beside it, read from the state machine itself
 // (review round 4, verdict 1: the branch over a gate already open is unreachable through a scripted gate over `{}`).
@@ -547,7 +547,7 @@ test("review round 3 (2026-09-19, extra9-1): the panes-word BELT, executed: the 
  *  this branch too, or a column's hold outlives the layout. */
 function liftedLinkBlock(): (m: unknown, st: PanesWordState) => PanesWordResult {
   const start = RENDER.indexOf('  if (m.romp === "link") {');
-  assert.ok(start > 0, "the chat frame handler's link branch was found (a block, not the round-2 bare return)");
+  assert.ok(start > 0, "the chat frame handler's link branch was found (a block, not the pass-2 bare return)");
   const end = RENDER.indexOf("\n    return;\n  }\n", start);
   assert.ok(end > start && end - start < 1200, "the link block ends in its return: " + [start, end].join(","));
   const block = RENDER.slice(start, end + "\n    return;\n  }\n".length);
@@ -591,7 +591,7 @@ test("review round 4 (2026-09-19, verdict 1): a lift that finds the prefetch gat
   // The desktop's redial: the shown tab's full opens the gate and the chain runs. A flip to the phone sets the hold (nextPrefetch null; the
   // chain is dormant, nothing lands to re-arm it) and the flip back lifts it: gateOnShow refuses a gate already open (skeleton-tabs.ts), so
   // before this fix the lift armed nothing and the chain waited for an unrelated arm (a frame for another tab, a visibilitychange). The
-  // lifted lines run over the REAL state and the real onLayoutWord and gateOnShow; the round-3 case above scripts the gate over `{}` and
+  // lifted lines run over the REAL state and the real onLayoutWord and gateOnShow; the pass-3 case above scripts the gate over `{}` and
   // cannot reach this branch. Synthetic ids.
   const A = "11111111-2222-3333-4444-aaaaaaaaaaaa", B = "11111111-2222-3333-4444-bbbbbbbbbbbb", C = "11111111-2222-3333-4444-cccccccccccc";
   const none = new Set<string>(), all = () => true;
@@ -625,7 +625,7 @@ test("review round 4 (2026-09-19, verdict 1): a lift that finds the prefetch gat
   r = run({ romp: "panes", on: { chat: true }, mob: false }, { ...real, activeId: null });
   assert.deepEqual([r.gateAsks, r.armed], [0, 1], "no shown tab: the gate is not asked, and a lift over the open gate arms the chain (nextPrefetch runs with no active tab)");
   assert.equal(nextPrefetch(st, null, none, false, all), B);
-  // the phone's redial, then a flip to the desktop (the round-3 road): the gate was closed, gateOnShow opens it for the shown tab and the lift arms
+  // the phone's redial, then a flip to the desktop (the pass-3 road): the gate was closed, gateOnShow opens it for the shown tab and the lift arms
   const st2 = newSkeletonState();
   applyTabOrderSkeleton(st2, [B, C], [A, B, C]);
   onSocketUp(st2, true);

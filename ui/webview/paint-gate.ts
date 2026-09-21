@@ -53,8 +53,8 @@ export function firstPaintHeld(hasContent: boolean, phone: boolean | undefined, 
 // both retired by the pane's visibility events). When the shell's last word says the pane is OFF screen and this gesture shows no
 // tab (the phone's notification landing, whose /reveal has already put the session in front) the decision is `drop`: no park,
 // since nothing in the gesture will show the pane and the next show would be an unrelated later tap, hours on, scrolling to a
-// card the reader had moved past (the round-2 failure); and no openSession either (the landing did that, and a deferred or
-// duplicate session switch was rejected in round 1). feed.ts says the drop as a breadcrumb.
+// card the reader had moved past (the pass-2 failure); and no openSession either (the landing did that, and a deferred or
+// duplicate session switch was rejected in pass 1). feed.ts says the drop as a breadcrumb.
 export type RevealDecision = "jump" | "park" | "open" | "none" | "drop";
 export function revealDecision(targetFound: boolean, paintDirty: boolean, willPaint: boolean, hasSid: boolean, shellOn: boolean | undefined): RevealDecision {
   if (targetFound) return "jump";

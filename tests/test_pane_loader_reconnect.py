@@ -172,7 +172,7 @@ class PaneLoaderFirstPaintHold(unittest.TestCase):
     def test_the_held_first_paint_stands_the_sheet_down_from_its_timer_and_the_release_re_arms_it(self):
         o = self._run()
         self.assertEqual(o["boot"], {"live30": 1, "gone": False, "listeners": ["romp:firstpaintheld", "romp:firstpaintreleased", "romp:wsdown", "romp:wsfresh", "romp:wsup"]},
-                         "at load the sheet is up with its 30 s failsafe armed, and the two hold events are listened for beside the socket's (wsdown and wsup each carry a second, fork listener since round 3: the latch)")
+                         "at load the sheet is up with its 30 s failsafe armed, and the two hold events are listened for beside the socket's (wsdown and wsup each carry a second, fork listener since pass 3: the latch)")
         self.assertEqual(o["held"], {"live30": 0, "gone": False}, "the hold clears the failsafe: the sheet stands with no timer")
         self.assertFalse(o["after30"]["gone"], "30 s later the sheet is still up (before this the failsafe faded it over the empty list, and the tap revealed a blank pane)")
         self.assertEqual(o["released"], {"live30": 1, "gone": False}, "the release re-arms the 30 s backstop; the render's first child, not this event, retires the sheet (the observer)")
@@ -195,7 +195,7 @@ class PaneLoaderFirstPaintHold(unittest.TestCase):
         js = km._pane_spin("feed-list")
         self.assertIn("var held=false;window.addEventListener('romp:firstpaintheld',function(){held=true;clearTimeout(fail);o.classList.remove('gone');});", js)
         self.assertIn("window.addEventListener('romp:firstpaintreleased',function(){held=false;arm();});", js)
-        self.assertIn("window.addEventListener('romp:wsdown',function(){if(held)clearTimeout(fail);});", js, "the fork's wsdown listener (round 3): the failsafe upstream's show() re-armed is cleared while held")
+        self.assertIn("window.addEventListener('romp:wsdown',function(){if(held)clearTimeout(fail);});", js, "the fork's wsdown listener (pass 3): the failsafe upstream's show() re-armed is cleared while held")
         self.assertIn("window.addEventListener('romp:wsup',function(){if(held)o.classList.remove('gone');});", js, "the fork's wsup listener: the sheet upstream's hide() faded is re-shown while held")
         # upstream's text stands: its own wsdown and wsup lines, unchanged, BEFORE ours (same-target listeners run in registration order, so the fork's arms run after upstream's)
         self.assertIn("window.addEventListener('romp:wsdown',function(){if(ready()){badge(true);}else{show();}});", js)

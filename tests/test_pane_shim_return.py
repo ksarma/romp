@@ -1500,7 +1500,7 @@ rf:dialed?rows(sock(),"return-fresh").map(function(x){return x.data;}):[]});""" 
             self.assertEqual(r["rf"], [])
 
     def test_a_parked_pane_hears_the_shells_own_link_word_and_dials_nothing_until_its_tap(self):
-        # PR 768's round 1 (2026-09-18) gives every shim-bearing iframe a link word of its own ({romp:'link',link,mob}: the shim takes the link alone, render.ts the layout term) beside the
+        # The first round of PR 768's review (2026-09-18) gives every shim-bearing iframe a link word of its own ({romp:'link',link,mob}: the shim takes the link alone, render.ts the layout term) beside the
         # panes word's link field, and the shim's link listener accepts both. A parked pane must hear it without dialing: a park
         # never awaits the link (the park branch returns before the D3 block sets awaitLink), so the listener's `awaitLink&&!ws`
         # gate holds, and connect()'s parked guard would hold a dial anyway. The tap still dials once, through the link now up.

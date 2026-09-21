@@ -81,7 +81,7 @@ const WL = {};
 global.window = {
   addEventListener: (k, f) => { (WL[k] = WL[k] || []).push(f); },
   __rompPaneToggle: (k, to) => { TOGGLES.push(k + ':' + to); SEQ.push('toggle:' + k + ':' + to); },
-  __rompMobileTab: (t) => { SEQ.push('tab:' + t); STORE['romp-mobile-tab'] = t; },   // the mobile script's show(): on the phone the pane's tab comes forward (round 3, extra9-1); it persists the remembered tab whatever the layout, which is why the Log row gates the call (round 4)
+  __rompMobileTab: (t) => { SEQ.push('tab:' + t); STORE['romp-mobile-tab'] = t; },   // the mobile script's show(): on the phone the pane's tab comes forward (pass 3, extra9-1); it persists the remembered tab whatever the layout, which is why the Log row gates the call (pass 4)
   __rompMobileOn: () => MOBILE_ON,   // the layout probe the Log row's gate reads (review round 4, correctness-3 and regression-3)
   __rompShellSend: (m) => { SENT.push(m); return SHELL_OK; },
   __rompPaneEnabled: (k) => !(k === 'feed' && FEED_OFF),   // the head script's reader of the Panes setting, stubbed

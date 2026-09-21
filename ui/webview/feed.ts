@@ -5668,7 +5668,7 @@ function parentMobile(): boolean | undefined {
 }
 // a bell jump or a notification tap that reached this pane while its first paint was held (the board applied, unpainted): the
 // card's key, revealed by the paint that lands (releasePaint), never a card-gone fallback for a card the paint will stamp (review
-// round 1, 2026-09-19: the lookup over the empty DOM took the fallback and posted openSession for an existing card). Its
+// pass 1, 2026-09-19: the lookup over the empty DOM took the fallback and posted openSession for an existing card). Its
 // retirement is the pane's NEXT visibility change (review round 2, D5: a park with no bound was consumed by an unrelated
 // Feed-tab tap hours later, a card move on no new information): the show that follows the reveal consumes it in
 // releasePaint's tail; a flip to hidden (the shell's word, or the observer's) drops it; a second reveal replaces or drops it; a re-tell
@@ -5680,7 +5680,7 @@ function parentMobile(): boolean | undefined {
 // alone, so the key stays the one latch its retirements clear); at the consume a card the release paint stamped under another key (an
 // ask folded into its turn's group card while the park stood) is found through the plan's answer for the itemId, and a card the paint
 // did not stamp at all drops with the sid kept in the breadcrumb, never through openSession (a deferred session switch on an unrelated
-// tap was rejected in round 1).
+// tap was rejected in pass 1).
 let pendingRevealKey: string | null = null;
 let pendingReveal: { itemId: string; sid: string } = { itemId: "", sid: "" };
 // a reveal this pane could not land, said as a breadcrumb (client-diag.jsonl, the column-flip tripwire's channel): ids only, no card text.

@@ -205,7 +205,7 @@ export function onLayoutWord(st: SkeletonState, phone: boolean): boolean {
  *  when nothing is left. Otherwise the first id of the kernel's order still held, not the active tab (its own
  *  click path asks), and in the current view (a view-hidden tab loads on click instead). Null too while the start gate is
  *  closed (`st.gate`, stage 0): the visible tab's first frame has not applied on this socket and the strip lists it, and while the
- *  return hold stands (`st.returnHold`, the owner's decision of 2026-09-19, re-decided on the shell's layout word since round 3). */
+ *  return hold stands (`st.returnHold`, the owner's decision of 2026-09-19, re-decided on the shell's layout word since pass 3). */
 export function nextPrefetch(st: SkeletonState, activeId: string | null, inFlight: ReadonlySet<string>,
                              hidden: boolean, inView: (id: string) => boolean): string | null {
   if (hidden || !st.gate || st.returnHold) return null;   // …and while the return hold stands (review round 3, extra8-1: a hold set on a layout word after the gate opened must stop the chain too; before this only the openers read the hold, so a flip to the phone mid-socket held nothing; and, since gateOnStrip reads no hold (pass 4b, the author's label, the reviewer's round-3 addendum's extra7-1), the one term that keeps an open gate silent under it)

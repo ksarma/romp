@@ -70147,7 +70147,7 @@ function filesCtlM(){try{var st=JSON.parse(localStorage.getItem('romp:settings')
 // 2026-09-19, kernel-1 and tests-1): a 200 the kernel served at the pane's url is not a failure just because this reader cannot
 // recognise it, so `doc` is SHOWN AS SERVED (the loader clears, the src stays, one shell client-diag row `pane-load-unmarked`
 // {pane, via} says what was seen, never silence); every other status is NOT shown as served: `other` is a failure like `none`,
-// re-parked with the failed state and its retry road (a re-tap, the overlay tap, the Try again button). Round 3 had shown every
+// re-parked with the failed state and its retry road (a re-tap, the overlay tap, the Try again button). Pass 3 had shown every
 // same-origin document as served, which put the kernel's 403 line, whose body names the serve-token file's path, on the phone's
 // screen with no retry road for the page's life; the stamp is what a 403, a 500 or a 502 body cannot carry. The iframe's `error`
 // event never fires for a failed navigation in any engine; the load listener reads docState() on every load but the initial
@@ -70160,13 +70160,13 @@ function filesCtlM(){try{var st=JSON.parse(localStorage.getItem('romp:settings')
 // `loading` for `failed`; on the desktop it hands the url back to data-src (what the gear's reconcile and the desktop boot read),
 // clears `failed` (a later rotation must not paint a stale failure over a pane that loaded there) and promotes once more, since the
 // grid shows the pane with no tap. EVERY promotion arms the load listener and the 30 s backstop, the desktop's included (review
-// round 4, 2026-09-19, regression-1: round 3 armed them under mobileOn() alone, so the desktop's re-promotion had no detector; when
+// pass 4, 2026-09-19, regression-1: pass 3 armed them under mobileOn() alone, so the desktop's re-promotion had no detector; when
 // it failed too the pane kept a src over a dead document with no state, lazyFlip's flip-back parking skipped a frame with a src,
 // and back on the phone the tab tap, the overlay tap and the Try again button all did nothing for the page's life, a dead end the
 // parent commit did not have). The desktop's response is a TABLE over the episode count (EPI) and docState's answer (pass 5, the author's label,
 // 2026-09-20, taking the reviewer's round-4 findings correctness-3 and extra9-1). `blank` at the backstop HOLDS: the src is kept for the fetch still in flight, nothing is
 // re-fetched, the row and the episode count record the 30 s uncommitted document and DEAD records the promotion for the flip back; a
-// healthy slow load is not torn down and lands through the load listener as ever, loaded() ending the episode (round 4 tore it down at
+// healthy slow load is not torn down and lands through the load listener as ever, loaded() ending the episode (pass 4 tore it down at
 // 30 s, re-fetched it, and a rotation to the desktop armed one such deadline per parked pane in the same tick). Otherwise the episode's
 // first failure re-parks under data-src and promotes again, and the second is the bound: `other`, a document the kernel sent (its 403
 // line, whose body names the serve-token file's path; its 500 page), is dropped from the frame (the src removed, so the frame navigates
@@ -70176,8 +70176,8 @@ function filesCtlM(){try{var st=JSON.parse(localStorage.getItem('romp:settings')
 // one re-fetch and one pane-load-failed row per save, the author's pass-5 verify), so on the desktop nothing promotes it again short of a
 // flip to the phone or a reload; and `none`, the browser's own error page, keeps its src as a desktop failure always showed;
 // both record the promotion's token in DEAD, so the promote-fail loop is closed at two and the flip back to the phone (lazyFlip's phone
-// branch) parks that pane under data-lazy-src with the failed state, where the three retry roads promote it again. Round 4's bound kept
-// the src whatever the answer, which left the kernel's 403 body on the desktop's screen with no failed state and no retry: round 3's
+// branch) parks that pane under data-lazy-src with the failed state, where the three retry roads promote it again. Pass 4's bound kept
+// the src whatever the answer, which left the kernel's 403 body on the desktop's screen with no failed state and no retry: pass 3's
 // high moved to the desktop layout. The cost of the hold: the desktop's one automatic retry for a navigation that never commits
 // (Firefox and WebKit fire no load event for one) is gone, no worse than the parent, which armed nothing there; and a fetch still in
 // flight at a flip back to the phone is dropped with the src, an open residual. The backstop's guard is
@@ -70188,7 +70188,7 @@ function filesCtlM(){try{var st=JSON.parse(localStorage.getItem('romp:settings')
 // the desktop's boot promotions (the controller's reconcile in _LANDING_COLLAPSE_JS, and _LANDING_DESKTOP_PANES_JS for the Waiting and
 // Files panes) set src from data-src with no token, listener or backstop, as before this change, so a pane that fails at a
 // desktop-layout boot and is then flipped to the phone has no state and no retry road short of a reload (a residual, disclosed in
-// review round 4's verify; a fix changes the desktop's boot and needs a ruling). The failed state is painted where the user
+// the author's pass-4 verify; a fix changes the desktop's boot and needs a ruling). The failed state is painted where the user
 // looks: body.pane-failed keeps #pane-load up with #pane-load-msg (role=alert, so it is announced) saying the pane did not load and the
 // #pane-load-retry button, a real button shown in the failed state alone (review round 3, ui-1: focusable and named for the keyboard
 // and a screen reader, the way #rail-api's row is; a tap anywhere on #pane-load retries too); the second failure and later of an
@@ -70197,7 +70197,7 @@ function filesCtlM(){try{var st=JSON.parse(localStorage.getItem('romp:settings')
 // The copy names no input (ui-2: "Try again" sits on the control), since the phone layout also serves a narrowed mouse window.
 var LAZY='data-lazy-src',LOAD_MS=30000,URLS={},FAILS={},EPI={},TOK={},PEND={},DEAD={};   // PEND: per pane, the token of the promotion still awaiting its verdict (the backstop's guard); DEAD: the token of a desktop promotion recorded for the flip back to the phone to park: the episode's bound, or a backstop over a fetch still in flight (pass 4, the table of pass 5; the author's labels)
 var MSG_FAILED="Couldn't load this pane.",MSG_FAILED_AGAIN="Still not loading. Try again, or reload the page.";
-var RFOC=false;   // the Try again button's click retried with the keyboard's focus on it (review round 4, 2026-09-19, ui-1): paintLoading hides the button while the retry loads, and hiding the focused control drops focus to the body in every engine with nothing bringing it back, so round 3's keyboard road survived exactly one activation; the failed paint that shows the button again puts focus on it while this is set, and clears it. A load (loaded) and a tab switch (show) clear it too, so a later pane's first failure moves focus onto nothing the user did not ask for; the overlay tap sets nothing (a pointer gesture keeps its own focus)
+var RFOC=false;   // the Try again button's click retried with the keyboard's focus on it (review round 4, 2026-09-19, ui-1): paintLoading hides the button while the retry loads, and hiding the focused control drops focus to the body in every engine with nothing bringing it back, so pass 3's keyboard road survived exactly one activation; the failed paint that shows the button again puts focus on it while this is set, and clears it. A load (loaded) and a tab switch (show) clear it too, so a later pane's first failure moves focus onto nothing the user did not ask for; the overlay tap sets nothing (a pointer gesture keeps its own focus)
 function paneDiv(f){try{var d=f&&f.parentNode;return (d&&d.classList&&typeof d.classList.contains==='function')?d:null;}catch(e){return null;}}
 function paintLoading(){try{var k=document.body.getAttribute('data-tab'),d=paneDiv(F[k]);document.body.classList.toggle('pane-loading',!!(d&&d.classList.contains('loading')));
 var bad=!!(d&&d.classList.contains('failed'));document.body.classList.toggle('pane-failed',bad);

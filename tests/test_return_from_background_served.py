@@ -473,7 +473,7 @@ class ReturnFromBackground(unittest.TestCase):
         own 200, status and headers, its body with the inline shim's WHOLE <script> element removed (the one holding the marker statement
         `window.__rompApp=APP;`): a document the kernel stamped (data-romp-served=200 on its <html> tag, Handler._send's rule over every
         text/html 200 with a root tag) with no pane shim in its window, the shape of the kernel's "needs the ui/ modules" fallback page,
-        through Chromium's own HTML parser. Round 3's leg for this road was deleted with round 4's narrowing, which left the `doc` answer
+        through Chromium's own HTML parser. Pass 3's leg for this road was deleted with pass 4's narrowing, which left the `doc` answer
         with a hand-built stand-in as its only driver; pass 5's first cut removed the one statement, and the shim ran on to its connect()
         and redialed the kernel every ~250 ms, refused each time (the author's pass-5 verify): the document the prose called shim-less was not.
         Asserted: the route removed exactly one script element holding exactly one marker statement and a stamped root tag survived (counts,
@@ -522,9 +522,9 @@ class ReturnFromBackground(unittest.TestCase):
         """The tapped pane's one document request was re-issued to the lab kernel with an explicit empty Cookie header (the driver's route, through
         route.fetch: the one form every engine lets keep the stored cookie off the wire) and the frame fulfilled with the kernel's own answer, so
         the REAL kernel answered as it does for a token-gated route with no credential: 403, text/plain, a body that names the serve-token
-        file's path, and that is what the frame received, status, headers and bytes. Round 3
+        file's path, and that is what the frame received, status, headers and bytes. Pass 3
         showed any same-origin document as served, which painted that body as the pane with no retry road for the page's life, and its leg
-        fulfilled a hand-written stand-in, so no test met the real one. The round-2 rule is scoped to a 200 the kernel served; the kernel
+        fulfilled a hand-written stand-in, so no test met the real one. The pass-2 rule is scoped to a 200 the kernel served; the kernel
         now stamps every text/html 200 whose body has an <html> tag (data-romp-served=200 on that tag) and the shell's docState shows as served only a document
         carrying it. Asserted, on top of _abort's failed-state and re-tap checks: the status the kernel answered was 403 (read off the
         response event; the body is never read, printed or kept, by the driver or here), the failed overlay is painted opaque and fixed over
@@ -557,7 +557,7 @@ class ReturnFromBackground(unittest.TestCase):
         then loads it (the frame at the pane's url, its shim up, the failed state gone). Chromium detects the failure on the error
         page's load event (`via` load); Firefox and WebKit fire no load event the shell can act on for the aborted navigation (the
         frame keeps about:blank), so the 30 s backstop detects it (`via` backstop), which is what the WebKit leg's wait is for.
-        (Round 3 showed any same-origin document at the url as served; round 4 narrowed that to a 200 the kernel stamped, so the
+        (Pass 3 showed any same-origin document at the url as served; pass 4 narrowed that to a 200 the kernel stamped, so the
         kernel's own 403 is a failure again, driven for real in the denied mode.)"""
         where = name + ": "
         a = r.get("abort") or {}
@@ -875,7 +875,7 @@ class ReturnFromBackground(unittest.TestCase):
 
     # review round 4 (2026-09-19, kernel-1 and tests-1): the tapped pane's one request loses its cookie on the wire, so the REAL kernel answers its 403
     # (text/plain, the body naming the serve-token file's path); the shell must not show it as served: the failed state, the retry road, one
-    # pane-load-failed row via load and no pane-load-unmarked row, and the re-tap (the cookie flowing again) loads the pane. Round 3's leg fulfilled
+    # pane-load-failed row via load and no pane-load-unmarked row, and the re-tap (the cookie flowing again) loads the pane. Pass 3's leg fulfilled
     # a stand-in body here. The load listener is the detector in every engine (a 403 commits a document), so the twins pin the same via
     def test_phone_hung_12s_tab_tap_denied_document(self):
         self._leg("phone", "hung", 12, tap="fleet", denied=True, retry_enter=True)   # + ui-1 (review round 4): the keyboard's retry keeps its focus across the re-failure, on every engine (the 403 fires load everywhere)
@@ -941,7 +941,7 @@ class ReturnFromBackground(unittest.TestCase):
     # The F1 legs (stage 0, review round 1): a phone opened on the Feed tab holds the chat's idle chain while the chat is display:none
     # (paneHidden) and the Chat tab's show re-arms it, by one of two roads in render.ts: the chat-visibility hook (onShown, the published
     # word's flip from hidden to shown) and the panes-word belt (the shell's word saying the chat is on). On Chromium and WebKit the two
-    # roads are the only re-arm, so the legs there red when BOTH go (the round-3 record) and pass through either alone: the hook's own
+    # roads are the only re-arm, so the legs there red when BOTH go (the pass-3 record) and pass through either alone: the hook's own
     # witness is tests/test_pane_hidden_word_browser.py (real engines) and the belt's is the executed panes-handler case in
     # ui/webview/skeleton-tabs-wiring.test.ts. The ACTIVE tab is the transcript-less `docs` (review round 3, extra9-1), chosen to leave
     # no build rAF pending while hidden; measured, its full still carries two events (the kernel's head events for a session with no

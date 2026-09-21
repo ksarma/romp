@@ -112,7 +112,7 @@ test("the zero-viewport probe off a window: a framed pane at 0 by 0 has been hid
   assert.equal(viewportHiddenSinceLoad(top(0, 0)), false, "a top-level page is its own parent: the probe never applies");
 });
 
-test("a reveal's decision (review round 1 F2, executed since round 2; the park's bound since round 3): a found card is jumped to; a card the paint will stamp under an owed paint is parked while the pane is on screen or its place is unknown, dropped while the shell's word has it off screen, never opened; a card it will not stamp, or a gone one, opens its session when one is named", () => {
+test("a reveal's decision (review round 1 F2, executed since pass 2; the park's bound since pass 3): a found card is jumped to; a card the paint will stamp under an owed paint is parked while the pane is on screen or its place is unknown, dropped while the shell's word has it off screen, never opened; a card it will not stamp, or a gone one, opens its session when one is named", () => {
   // the columns: (targetFound, paintDirty, willPaint, hasSid, shellOn), shellOn the shell's last panes word for this pane (undefined before one)
   for (const on of [true, undefined, false] as const) {
     assert.equal(revealDecision(true, false, true, true, on), "jump", "the painted board has the card (shellOn " + on + ")");

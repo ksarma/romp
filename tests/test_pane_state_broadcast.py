@@ -712,8 +712,8 @@ class MobileScript(unittest.TestCase):
 
 
 # ── every road into the mobile script's show() (pass 5, the author's label, 2026-09-20, the reviewer's round-4 ui-2) ─────────────────────────
-# show() is the one writer of body data-tab and the remembered tab (romp-mobile-tab). Round 3 ruled one of its callers (the Log row's
-# switch, gated on the layout probe) and round 4 found another ungated (the feed's browse arm): a fix at one site with the population
+# show() is the one writer of body data-tab and the remembered tab (romp-mobile-tab). The reviewer's round 3 ruled one of its callers (the Log row's
+# switch, gated on the layout probe in pass 4) and the reviewer's round 4 found another ungated (the feed's browse arm, gated in pass 5): a fix at one site with the population
 # unread. The population is DERIVED here from the served page's scripts: every call of the hook the other scripts use (`__rompMobileTab(`
 # in _landing()'s HTML; the export `window.__rompMobileTab=show;` is not a call) and, inside the mobile script, every call of show(),
 # userSwitch() and reveal() outside a declaration, comments cut. Each is classified by the text at it; an unclassified site is a red, so
@@ -1039,7 +1039,7 @@ out.gearInFlightSecond = Object.assign(snap(), { src: ATTRS['f-settings'].src, s
 SETTINGS_URL = 'http://TESTHOST:1/settings'; SETTINGS_APP = 'settings'; SETTINGS_LOADS.slice().forEach((f) => f());   // the restarted fetch's page loads
 out.gearInFlightLoaded = Object.assign(snap(), { sets: SETTINGS_SETS - setsBefore }); reset();
 // (g) pass 5, the author's label (2026-09-20, taking the reviewer's round-4 finding ui-1): a tap while the page has COMMITTED at /settings but its inline shim has not run (no marker yet,
-// no load event yet: the stylesheets load ahead of the shim). Round 4's read called that not-live and restarted, tearing down the
+// no load event yet: the stylesheets load ahead of the shim). Pass 4's read called that not-live and restarted, tearing down the
 // navigation in flight where the parent rode it. The load event tells the two apart: with the pending flag still up the tap rides the
 // fetch once, re-recording its own ask so the load posts THIS tap's names; a further tap in the unchanged state restarts (the refuter's
 // once rule: a link lost mid-load must not leave the gear unopenable); no document and about:blank restart as before ((a), (b), (f))
@@ -1198,7 +1198,7 @@ class RelayArms(unittest.TestCase):
         b = self.out["gearAskAgain"]
         self.assertEqual(b["settings"], [], "a second ask while the page loads is not queued: the page's opener toggles, two would open and close it")
         self.assertEqual(b["waiting"], 1, "and adds no listener (one load listener for the element's life, review round 3)")
-        self.assertEqual(b["src"], "/settings", "the src stands (a second tap over a frame still at about:blank restarts the fetch, round 3's dead-document rule; the page still opens once, at its load)")
+        self.assertEqual(b["src"], "/settings", "the src stands (a second tap over a frame still at about:blank restarts the fetch, pass 3's dead-document rule; the page still opens once, at its load)")
         self.assertEqual(self.out["gearBlankLoad"]["settings"], [], "the empty document's own load event is not the page's")
         self.assertEqual(self.out["gearLoaded"]["settings"], [{"romp": "openSettings"}], "the page's load delivers the open, once")
         self.assertEqual(self.out["gearOpen"]["src"], "/settings")
@@ -1256,7 +1256,7 @@ class RelayArms(unittest.TestCase):
         self.assertIn("\n  sOpen=open;sDeferred=false;", js, "a fetch starting clears the flag, on the fork line after the upstream promotion line")
 
     def test_the_re_fetched_pages_load_delivers_the_latest_taps_ask_with_its_tab_and_section(self):
-        # review round 4 (2026-09-19, correctness-2 and extra6-2): the gear's one load listener (armed for the element's life since round 3) closed
+        # review round 4 (2026-09-19, correctness-2 and extra6-2): the gear's one load listener (armed for the element's life since pass 3) closed
         # over the FIRST tap's open, and so its msg, so a re-fetch after a dead document, or the restart a tap during the first fetch makes, opened
         # the gear at the first tap's tab and section whatever the later tap named. The tap that fetches records its own poster (sOpen, written on
         # a fork line beside the upstream promotion line) and the listener posts and clears it: the load delivers the LATEST tap's ask.
@@ -1601,9 +1601,9 @@ console.log(JSON.stringify(out));
 # "needs the ui/ modules" fallback page; the stamp is data-romp-served=200 on its <html> tag, written by Handler._send on every text/html
 # 200 whose body has an <html> tag) is a 200 the kernel served that this reader cannot classify. It is shown as served (the loading state ends, the src stays, no failed
 # state, no re-park) and said once (one shell client-diag row `pane-load-unmarked` {pane, via}); a reader that cannot classify a 200 never
-# reports absent. Round 2 called it a failure, which re-parked the kernel's own diagnostic behind an overlay no tap could clear; round 3
+# reports absent. Pass 2 called it a failure, which re-parked the kernel's own diagnostic behind an overlay no tap could clear; pass 3
 # then showed EVERY same-origin document as served, the kernel's 403 line (its body naming the serve-token file's path) included, with no
-# retry road: the round-4 rule is "a 200 the kernel served", read off the stamp. The refused inputs stay refused: no document (an error
+# retry road: the pass-4 rule is "a 200 the kernel served", read off the stamp. The refused inputs stay refused: no document (an error
 # page) fails via load; a frame never committed fails via the backstop; a document with neither marker nor stamp fails (the driver below).
 _LAZY_UNMARKED_DRIVER = _LAZY_TOOLS + r"""
 SOCKS.forEach((s) => { s.readyState = 1; s.onopen && s.onopen(); });
@@ -1630,7 +1630,7 @@ console.log(JSON.stringify(out));
 """
 # Review round 4 (2026-09-19, kernel-1 and tests-1): a same-origin document at the pane's url with neither the pane shim's marker nor the
 # kernel's 200 stamp is NOT shown as served: the kernel's 403 line for a token-gated route once the cookie is stale (text/plain: the browser
-# wraps it in a bare <html> the kernel never wrote, so no stamp), its 500 page, a proxy's 502 body while it restarts. Round 3 showed every
+# wraps it in a bare <html> the kernel never wrote, so no stamp), its 500 page, a proxy's 502 body while it restarts. Pass 3 showed every
 # such document as served, which put the 403 body (it names the serve-token file's path) on the phone's screen with no retry road for the
 # page's life. Now it is a failure like an error page, on both detectors: the load listener (the 403 and the 500 commit a document and fire
 # load in every engine) and the 30 s backstop (a document with no load event); re-parked under data-lazy-src, the failed state painted, one
@@ -1700,7 +1700,7 @@ const setsAtTap = SETS.fleet;
 const snapF = () => ({ src: src().fleet, lazy: lazy().fleet, dataSrc: dataSrc().fleet, div: divCls('fleet'), sets: SETS.fleet - setsAtTap, rows: diagRows('pane-load-failed').filter((r) => r.pane === 'fleet'), bodyFailed: BODY_CLS.has('pane-failed'), bodyLoading: BODY_CLS.has('pane-loading'), msg: MSG.textContent, retryHidden: RETRY.hidden, mobile: window.__rompMobileOn(), listeners: (LOADS.fleet || []).length, backstops: TIMERS.filter((t) => t.ms === 30000).length });
 MATCHES = false; MQL.forEach((f) => f({}));   // the flip mid-load: lazyFlip refuses a pane with a src; the phone's listener stands
 out.flippedB = snapF();
-['timeline', 'waiting', 'files'].forEach((k) => { shimUp(k); (LOADS[k] || []).forEach((f) => f()); });   // the grid's other three panes, promoted by the flip, load (their own detectors, armed on the desktop since round 4, are satisfied; a pane left uncommitted through its backstop is the desktop backstop case, _LAZY_DESKTOP_BACKSTOP_DRIVER)
+['timeline', 'waiting', 'files'].forEach((k) => { shimUp(k); (LOADS[k] || []).forEach((f) => f()); });   // the grid's other three panes, promoted by the flip, load (their own detectors, armed on the desktop since pass 4, are satisfied; a pane left uncommitted through its backstop is the desktop backstop case, _LAZY_DESKTOP_BACKSTOP_DRIVER)
 frames['f-fleet'].contentDocument = null; (LOADS.fleet || []).forEach((f) => f());   // the abort lands after the flip: failed() reads the DESKTOP and promotes again, arming its own listener and backstop (review round 4)
 out.desktopFailedB = snapF();
 frames['f-fleet'].contentDocument = { URL: 'about:blank' }; backstops();   // the desktop's re-promotion fails too, with NO load event (WebKit's road: the frame never commits): ITS OWN 30 s backstop judges it (the phone's is inert on its stale token; the desktop wears no loading class, so the guard is the pending verdict); the episode's bound: the src stays, nothing promotes a third time, the failure recorded
@@ -1853,8 +1853,8 @@ console.log(JSON.stringify(out));
 # ui-1 (review round 4, 2026-09-19): the keyboard's retry keeps its focus. paintLoading hides the button while the retry loads, which drops focus to the
 # body in every engine (the served leg's witness); the failed paint that shows it again must put focus back, and nothing else may move focus onto it.
 # pass 5, the author's label (2026-09-20, taking the reviewer's round-4 finding correctness-3, ruled high): the desktop's bound is reached by docState's `other` answer too, whose commonest
-# member is a document the KERNEL sent (its 403 line under a stale cookie, whose body names the serve-token file's path). Round 4's bound kept
-# the src whatever the answer, so that body stood on the desktop's screen with no failed state and no retry for the page's life: round 3's
+# member is a document the KERNEL sent (its 403 line under a stale cookie, whose body names the serve-token file's path). Pass 4's bound kept
+# the src whatever the answer, so that body stood on the desktop's screen with no failed state and no retry for the page's life: pass 3's
 # high moved to the desktop. The bound now drops a document the kernel sent from the frame (src removed, the url under data-lazy-src) and keeps
 # the browser's own error page (`none`) as before; both record DEAD, and the flip back parks the pane with the failed state (the DEAD branch
 # ahead of the unloaded parking: a defensive order, since the bound's park leaves no data-src for that parking to take at this head; the flip
@@ -2124,7 +2124,7 @@ class LazyPanes(unittest.TestCase):
         self.assertFalse(b["bodyLoading"], "the shown tab (the chat) is not loading: no loader over it")
         self.assertEqual(sorted(b["hidden"]), ["chat", "feed", "files", "fleet", "timeline", "waiting"], "the six panes (the read's keys, before a comprehension over them stands in for an expectation)")
         self.assertEqual(b["hidden"], {k: False for k in b["hidden"]}, "every tab is a place to go")
-        self.assertEqual(b["promote"], "undefined", "no export: the three promotion roads call promote() directly (round 3, fresh-3); a re-add would be an unused seam")
+        self.assertEqual(b["promote"], "undefined", "no export: the three promotion roads call promote() directly (pass 3, fresh-3); a re-add would be an unused seam")
 
     def test_the_first_tap_sets_the_src_once_before_the_re_tell_and_paints_the_loader_until_the_load(self):
         t = self.out["tap"]
@@ -2260,11 +2260,11 @@ class LazyPanes(unittest.TestCase):
         self.assertEqual(o["feed"], {"src": "/feed", "div": []}, "the feed's document, committed at boot, is untouched throughout")
 
     def test_a_document_the_origin_served_with_no_shim_is_shown_as_served_and_said_never_a_failure(self):
-        # Family two (review round 3, 2026-09-19; narrowed in round 4, kernel-1): the detector must not claim failure for a 200 the kernel served
+        # Family two (review round 3, 2026-09-19; narrowed in pass 4, kernel-1): the detector must not claim failure for a 200 the kernel served
         # that it cannot classify. A same-origin document at the pane's url with no pane shim that carries the kernel's 200 stamp (its own
         # "needs the ui/ modules" page: data-romp-served=200 on the <html> tag, Handler._send's mark on every text/html 200 whose body has an <html> tag) is what the
         # kernel served, so the loading state ends, the src stays, no failed state paints and one pane-load-unmarked row says what was seen.
-        # Round 2 called this a failure and re-parked the kernel's own diagnostic behind an overlay no tap could clear. The input is recorded
+        # Pass 2 called this a failure and re-parked the kernel's own diagnostic behind an overlay no tap could clear. The input is recorded
         # beside the verdict; the refused inputs (no document; a frame never committed by the backstop; a document with neither marker nor
         # stamp, the case below) stay refused.
         o = _lazy(self.seed, _LAZY_UNMARKED_DRIVER)
@@ -2293,7 +2293,7 @@ class LazyPanes(unittest.TestCase):
         self.assertTrue({"pane", "via"} <= set(km.CLIENT_DIAG_KEYS["shell"]), "the row's keys survive the shell allowlist (its fixture row is test_client_diag_allowlist's)")
 
     def test_a_document_the_kernel_did_not_serve_as_a_200_is_a_failure_with_the_retry_road_never_shown_as_served(self):
-        # Review round 4 (2026-09-19, kernel-1 and tests-1): round 3's inversion showed ANY same-origin document as served, the kernel's 403
+        # Review round 4 (2026-09-19, kernel-1 and tests-1): pass 3's inversion showed ANY same-origin document as served, the kernel's 403
         # line included (its body names the serve-token file's path), with no retry road for the page's life; the round-2 ruling it rested on
         # is scoped to a 200 the kernel served. A document with neither the marker nor the kernel's 200 stamp (the 403 line, a 500 page, a
         # proxy's 502 body: none can carry the stamp) is a failure on both detectors, and the three retry roads promote it again.
@@ -2323,7 +2323,7 @@ class LazyPanes(unittest.TestCase):
         self.assertEqual((o["secondPaneLoaded"]["src"], o["secondPaneLoaded"]["div"], o["secondPaneLoaded"]["unmarked"]), ("/fleet", [], []), "...and its good load ends it")
 
     def test_the_kernel_stamps_every_200_html_document_it_writes_and_nothing_else(self):
-        # The writer's side of the round-4 rule (kernel-1): Handler._send marks every text/html 200 whose body has an <html> tag with
+        # The writer's side of the pass-4 rule (kernel-1): Handler._send marks every text/html 200 whose body has an <html> tag with
         # data-romp-served=200 on that tag (a rule over the writer, so no list of pages can go stale), and nothing else: the seven pane routes'
         # pages, the shell page every client loads (pass 5, the reviewer's round-4 tests-4: _landing(), covered by neither census before), the four fallback
         # pages a missing ui/ module yields all carry it; a 403 or a 500 text/plain body (what the kernel's denial and its traceback are), a
@@ -2408,8 +2408,8 @@ class LazyPanes(unittest.TestCase):
         # loaded pane with no failed overlay. (B) flip while loading, the abort landing after it: failed() reads the desktop, parks under data-src
         # and promotes once, with its own detectors (review round 4, regression-1); when that fails too the bound holds (the src stays, nothing
         # promotes a third time, the phone's backstop is inert on its token) and the flip back parks the recorded pane with the failed state, from
-        # which the tab tap, the overlay tap and the Try again button each promote it again; before round 3 the pane was left with neither src
-        # nor data-src, and at round 3's head with a src over a dead document and every road dead.
+        # which the tab tap, the overlay tap and the Try again button each promote it again; before pass 3 the pane was left with neither src
+        # nor data-src, and at pass 3's head with a src over a dead document and every road dead.
         o = _lazy(self.seed, _LAZY_FLIP_FAILED_DRIVER)
         pf = o["phoneFailed"]
         self.assertEqual((pf["mobile"], pf["src"], pf["lazy"], pf["div"], pf["bodyFailed"]), (True, None, "/waiting", ["failed"], True), "failed on the phone: re-parked under data-lazy-src, the failed state painted")
@@ -2425,13 +2425,13 @@ class LazyPanes(unittest.TestCase):
         fb = o["flippedB"]
         self.assertEqual((fb["mobile"], fb["src"], fb["div"], fb["sets"], fb["bodyLoading"]), (False, "/fleet", ["loading"], 0, True), "the flip mid-load leaves the loading promotion standing (lazyFlip refuses a pane with a src)")
         db = o["desktopFailedB"]
-        self.assertEqual((db["src"], db["lazy"], db["dataSrc"], db["div"]), ("/fleet", None, "/fleet", []), "the failure judged on the desktop: the url back under data-src (the attribute the desktop reads), promoted again at once, no failed class, no loading class (the grid paints none) (before round 3: neither src nor data-src, an empty column with no road)")
+        self.assertEqual((db["src"], db["lazy"], db["dataSrc"], db["div"]), ("/fleet", None, "/fleet", []), "the failure judged on the desktop: the url back under data-src (the attribute the desktop reads), promoted again at once, no failed class, no loading class (the grid paints none) (before pass 3: neither src nor data-src, an empty column with no road)")
         self.assertEqual(db["sets"], 1, "one re-promotion")
         self.assertEqual(db["rows"], [{"pane": "fleet", "via": "load", "n": 1}], "the failure is counted and said")
-        self.assertEqual((db["listeners"], db["backstops"]), (fb["listeners"] + 1, fb["backstops"] + 1), "the desktop's re-promotion armed its own load listener and its own 30 s backstop (review round 4: round 3 armed none off the phone, so its failure went unjudged)")
+        self.assertEqual((db["listeners"], db["backstops"]), (fb["listeners"] + 1, fb["backstops"] + 1), "the desktop's re-promotion armed its own load listener and its own 30 s backstop (review round 4: pass 3 armed none off the phone, so its failure went unjudged)")
         sb = o["secondFailB"]
-        self.assertEqual((sb["src"], sb["lazy"], sb["dataSrc"], sb["div"], sb["sets"]), ("/fleet", None, "/fleet", [], 1), "the desktop's re-promotion fails too, never committing (no load event): judged by its own 30 s backstop (round 3 armed none off the phone, and a class-guarded backstop would return on the desktop's missing loading class), and the episode's bound holds: the src stays (the browser's own page, as a desktop failure always showed), no third promotion (without the bound: promote, fail, promote, without end)")
-        self.assertEqual(sb["rows"], [{"pane": "fleet", "via": "load", "n": 1}, {"pane": "fleet", "via": "backstop", "n": 2}], "the second failure is counted and said too, via the backstop (round 3 left it unsaid)")
+        self.assertEqual((sb["src"], sb["lazy"], sb["dataSrc"], sb["div"], sb["sets"]), ("/fleet", None, "/fleet", [], 1), "the desktop's re-promotion fails too, never committing (no load event): judged by its own 30 s backstop (pass 3 armed none off the phone, and a class-guarded backstop would return on the desktop's missing loading class), and the episode's bound holds: the src stays (the browser's own page, as a desktop failure always showed), no third promotion (without the bound: promote, fail, promote, without end)")
+        self.assertEqual(sb["rows"], [{"pane": "fleet", "via": "load", "n": 1}, {"pane": "fleet", "via": "backstop", "n": 2}], "the second failure is counted and said too, via the backstop (pass 3 left it unsaid)")
         self.assertEqual(o["backstopB"], sb, "every backstop fires again: the phone's is inert on its stale token, the desktop's on its verdict already given (PEND)")
         bb = o["backB"]
         self.assertEqual((bb["mobile"], bb["src"], bb["lazy"], bb["dataSrc"], bb["div"], bb["bodyFailed"], bb["bodyLoading"], bb["sets"]), (True, None, "/fleet", None, ["failed"], True, False, 1), "the flip back to the phone: the recorded failure parks the pane under data-lazy-src with the failed state painted over the shown tab (before: a src over a dead document, no state, and every road dead for the page's life)")
@@ -2528,7 +2528,7 @@ class LazyPanes(unittest.TestCase):
 
     def test_at_the_desktop_bound_a_document_the_kernel_sent_is_dropped_from_the_frame_and_the_browsers_own_error_page_is_kept(self):
         # pass 5, the author's label, taking the reviewer's round-4 finding correctness-3, ruled high: the bound is reached by docState's `other` answer too, whose commonest member is the
-        # kernel's own 403 line, its body naming the serve-token file's path; round 4's bound kept the src whatever the answer, so on the
+        # kernel's own 403 line, its body naming the serve-token file's path; pass 4's bound kept the src whatever the answer, so on the
         # desktop that body stood as the pane with no failed state and no retry short of a flip or a reload. Now the bound drops a document
         # the kernel sent (src removed, the url under data-lazy-src, the frame navigates to about:blank) and keeps the browser's own error page;
         # both are recorded, and the flip back parks the pane with the failed state, from which the tab tap recovers it. The dropped
@@ -2575,7 +2575,7 @@ class LazyPanes(unittest.TestCase):
         self.assertEqual((b["fleet"]["src"], b["fleet"]["div"], b["fleet"]["rows"], b["fleet"]["unmarked"], b["fleet"]["sets"]), ("/fleet", [], [], [{"pane": "fleet", "via": "backstop"}], 1), "the benign case: the kernel's stamped page with no shim is shown as served and said, src kept")
         self.assertEqual((b["files"]["src"], b["files"]["div"], b["files"]["rows"], b["files"]["sets"]), ("/files", [], [], 1), "a loaded pane's backstop is inert")
         w = b["waiting"]
-        self.assertEqual((w["src"], w["dataSrc"], w["lazy"], w["sets"], w["listeners"]), ("/waiting", "/waiting", None, 1, fl["waiting"]["listeners"]), "the HOLD: the fetch still in flight keeps its src, no re-fetch, no second load listener armed (round 4: the src dropped and a second promotion)")
+        self.assertEqual((w["src"], w["dataSrc"], w["lazy"], w["sets"], w["listeners"]), ("/waiting", "/waiting", None, 1, fl["waiting"]["listeners"]), "the HOLD: the fetch still in flight keeps its src, no re-fetch, no second load listener armed (pass 4: the src dropped and a second promotion)")
         self.assertEqual((w["div"], w["bodyFailed"], w["bodyLoading"], w["msg"]), ([], False, False, ""), "no failed class on the desktop, nothing painted")
         self.assertEqual(w["rows"], [{"pane": "waiting", "via": "backstop", "n": 1}], "the row records the 30 s uncommitted document, via the backstop")
         ld = o["landed"]
@@ -2621,7 +2621,7 @@ class LazyPanes(unittest.TestCase):
 
     def test_the_keyboards_retry_keeps_its_focus_across_the_re_failure_and_nothing_else_moves_focus_onto_the_button(self):
         # ui-1 (review round 4, 2026-09-19): paintLoading hides #pane-load-retry while the retry loads, and hiding the focused button moves focus
-        # to the document body in all three engines with nothing restoring it when the failed state repaints, so round 3's keyboard road survived
+        # to the document body in all three engines with nothing restoring it when the failed state repaints, so pass 3's keyboard road survived
         # exactly one activation. The button's click sets a flag; the failed paint that shows the button again focuses it once on that flag; a
         # load and a tab switch clear the flag (the refuter's amendment: without that a later pane's first failure stole focus onto the button).
         # The harness models document.activeElement over the button alone; the served leg reads the real one (test_return_from_background_served.py).

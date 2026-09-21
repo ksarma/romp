@@ -156,7 +156,7 @@ class LazyPaneLayoutFlip(unittest.TestCase):
         self.assertEqual(r["errors"], [], "no page errors")
 
     def _case_c(self, recover):
-        # review round 4 (2026-09-19, regression-1 with correctness-1 and extra6-1: one defect). At round 3's head the desktop promotion armed no
+        # review round 4 (2026-09-19, regression-1 with correctness-1 and extra6-1: one defect). At pass 3's head the desktop promotion armed no
         # listener and no backstop, so when the desktop's re-promotion failed too the pane kept a src over the browser's error page with no
         # state, lazyFlip's flip-back parking skipped a frame with a src, and back on the phone the tab tap, the overlay tap and the Try again
         # button all did nothing for the page's life (the parent commit recovered from the same sequence). Now every promotion arms both
@@ -174,7 +174,7 @@ class LazyPaneLayoutFlip(unittest.TestCase):
         pb = r["phoneBack"]
         self.assertGreaterEqual(pb.get("ms", -1), 0, "the flip back parked the recorded pane within the wait: %r" % (pb,))
         self.assertEqual((pb["mobile"], pb["src"], pb["lazy"], pb["dataSrc"], pb["divFailed"], pb["bodyFailed"], pb["bodyLoading"], pb["sets"]), (True, None, "/waiting", None, True, True, False, 2),
-                         "back on the phone: no src over the dead document, the url under data-lazy-src, the failed state painted over the shown Waiting tab (at round 3's head: the src stood, no state, every road dead): %r" % (pb,))
+                         "back on the phone: no src over the dead document, the url under data-lazy-src, the failed state painted over the shown Waiting tab (at pass 3's head: the src stood, no state, every road dead): %r" % (pb,))
         self.assertEqual(pb["msg"], "Still not loading. Try again, or reload the page.", "the episode's copy (two failures in it): %r" % (pb,))
         rb = pb.get("retry") or {}
         self.assertEqual((rb.get("hidden"), rb.get("text")), (False, "Try again"), "the button is shown: %r" % (rb,))
@@ -186,7 +186,7 @@ class LazyPaneLayoutFlip(unittest.TestCase):
         self.assertEqual(len(r["requests"]), 3, "three document requests in all: the two aborted and the one that passed: %r" % (r["requests"],))
         self.assertEqual(r["routeHeld"], 3, "the route saw exactly the three: %r" % (r["routeHeld"],))
         self.assertEqual([x for x in r["rows"] if x["what"] == "pane-load-failed"], [{"what": "pane-load-failed", "pane": "waiting", "via": "load", "n": 1}, {"what": "pane-load-failed", "pane": "waiting", "via": "load", "n": 2}],
-                         "two failure rows: the phone-armed detector's and the desktop's own (round 3 left the second unsaid); the recovery filed none: %r" % (r["rows"],))
+                         "two failure rows: the phone-armed detector's and the desktop's own (pass 3 left the second unsaid); the recovery filed none: %r" % (r["rows"],))
         self.assertEqual([x for x in r["rows"] if x["what"] == "pane-load-unmarked"], [], "nothing was shown as served")
         self.assertEqual(r["errors"], [], "no page errors")
 
@@ -201,7 +201,7 @@ class LazyPaneLayoutFlip(unittest.TestCase):
 
     def test_D_at_the_desktop_bound_the_kernels_own_denial_is_dropped_from_the_frame_and_the_flip_back_parks_it_with_the_failed_state(self):
         # pass 5, the author's label (2026-09-20, taking the reviewer's round-4 finding correctness-3, ruled high): the desktop's bound is reached by docState's `other` answer too, whose commonest
-        # member is the kernel's own 403 line (its body names the serve-token file's path). Round 4's bound kept the src whatever the answer, so
+        # member is the kernel's own 403 line (its body names the serve-token file's path). Pass 4's bound kept the src whatever the answer, so
         # that body stood on the desktop's screen with no failed state and no retry for the page's life. Driven against the REAL kernel's denial
         # (the route re-issues the request credential-less and hands the frame the kernel's answer): at the bound the src is dropped and the frame
         # navigates to about:blank (the kernel's answer is on show for the frames between its commit and the load event that judged it, then
@@ -246,9 +246,9 @@ class LazyPaneLayoutFlip(unittest.TestCase):
         self.assertEqual((fl["mobile"], fl["src"], fl["lazy"], fl["dataSrc"], fl["sets"], fl["url"]), (False, "/waiting", None, "/waiting", 1, "about:blank"), "the rotation to the desktop promoted the parked pane; its request is held, the frame's document still the initial about:blank: %r" % (fl,))
         ab = r["atBackstop"]
         self.assertGreaterEqual(ab["atMs"], 30000, "the read is past LOAD_MS: %r" % (ab,))
-        self.assertEqual((ab["src"], ab["lazy"], ab["dataSrc"], ab["sets"], ab["url"]), ("/waiting", None, "/waiting", 1, "about:blank"), "the HOLD: past the backstop the src is kept and nothing was re-fetched (one set; round 4: the src dropped and a second promotion): %r" % (ab,))
+        self.assertEqual((ab["src"], ab["lazy"], ab["dataSrc"], ab["sets"], ab["url"]), ("/waiting", None, "/waiting", 1, "about:blank"), "the HOLD: past the backstop the src is kept and nothing was re-fetched (one set; pass 4: the src dropped and a second promotion): %r" % (ab,))
         self.assertEqual((ab["divFailed"], ab["bodyFailed"], ab["divLoading"], ab["bodyLoading"]), (False, False, False, False), "no failed or loading state on the desktop: %r" % (ab,))
-        self.assertEqual(r["requestsAtBackstop"], 1, "one document request on the wire past the backstop: the held fetch was not torn down (round 4: two): %r" % (r["requests"],))
+        self.assertEqual(r["requestsAtBackstop"], 1, "one document request on the wire past the backstop: the held fetch was not torn down (pass 4: two): %r" % (r["requests"],))
         ld = r["landed"]
         self.assertGreaterEqual(ld.get("ms", -1), 0, "the held request was answered and the document loaded and painted on the kept src within the wait: %r" % (ld,))
         self.assertEqual((ld["src"], ld["dataSrc"], ld["sets"], ld["divFailed"], ld["bodyFailed"], ld["divLoading"], ld["bodyLoading"]), ("/waiting", "/waiting", 1, False, False, False, False), "landed: one src set for the page's life, no state: %r" % (ld,))
