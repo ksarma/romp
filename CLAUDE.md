@@ -85,9 +85,11 @@ This repo may go public; assume every commit is permanent and world-readable.
   `core.attributesFile` names, or a driver with `diff.<driver>.binary` true)
   is refused rather than read, since git's grep and diff both skip such a file
   and a banned string in one published (2026-09-21); the refusal names the
-  path and the attribute, and the remedy is to remove the attribute for that
-  path or push from a clone where it is not set; and the
-  maintainer's clone carries an UNTRACKED
+  path and the attribute as the cause, and the remedy: remove the attribute
+  for that path, or keep the file text on purpose with an explicit `diff`
+  line for it that outranks the `-diff`; a rename or copy of such a file is
+  refused the same way, since its bytes reach the remote under the new path;
+  and the maintainer's clone carries an UNTRACKED
   `tests/test_no_personal_identifiers.py` that scans the working tree for the
   same strings plus that machine's hostname and home path. The pytest file is
   deliberately not in the repo: one machine's identifiers mean nothing on anyone
@@ -107,13 +109,12 @@ so there is no list to write. **gitleaks** covers them, in two places:
   says so, and so does one that ran but cannot show what it scanned: an error
   line in its own log, or a scanned-commit count that is not the hook's own
   count of the commits with content to scan, or no count at all (the two
-  coverage conditions). A git configuration the hook cannot override
-  (`log.showRoot` set to false, with a root commit in the push) leaves gitleaks
-  short and refuses a clean push, naming the key and the remedy: set it to true
-  (`git config log.showRoot true`) or unset it and push again, or
-  `ROMP_NO_GITLEAKS=1` skips the credential scan for this one push.
-  `ROMP_GITLEAKS` points at a binary. This is the same hook as the
-  identifier scan and both report before it refuses, so one push tells you
+  coverage conditions). `log.showRoot` set to false would hide a root commit's
+  diff from the scanner's log: the hook passes `--root` on the scanner's log so
+  a root commit's diff is scanned whatever `log.showRoot` says, and a scanner
+  whose git does not honour it refuses on the count and says so, naming the key
+  and the remedy. `ROMP_GITLEAKS` points at a binary. This is the same hook as
+  the identifier scan and both report before it refuses, so one push tells you
   about both.
 - **CI's `Secret scan (gitleaks)` job** scans all of history, every branch and
   tag the checkout brings, on every PR and every push to `main`, from a

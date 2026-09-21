@@ -1141,11 +1141,13 @@ scan_direct() {   # <sha>
 # read a substitute while the push transfers the original). The hook's count is
 # now read from the objects, and the scanner's git is given an option outranking
 # each key, so a credential under each is found and a clean push under each
-# passes; a transform no option reaches (log.showRoot) refuses on the count,
-# naming the key and the remedy. The identifier scan, when armed, refuses a TEXT
-# file under a -diff attribute before either scan reads it (the attribute
-# section at the end), so the two -diff cases here, the credential half's, run
-# with the denylist absent.
+# passes; log.showRoot set to false is neutralised the same way, by --root on
+# the scanner's log, so a root commit's credential is found and a clean root
+# passes, and a scanner whose git does not honour the option refuses on the
+# count, naming the key and the remedy.
+# The identifier scan, when armed, refuses a TEXT file under a -diff attribute
+# before either scan reads it (the attribute section at the end), so the two
+# -diff cases here, the credential half's, run with the denylist absent.
 
 hiding_textconv() {   # a diff driver whose textconv prints nothing: git's patch for a file under it has no hunk
     printf '#!/usr/bin/env bash\nexit 0\n' > "$TEST_DIR/hide.sh"
@@ -1349,30 +1351,189 @@ substitute_for() {   # <commit>: a clean commit over the same parent, with a cle
     [[ "$output" == *"git push --no-verify"* ]]
 }
 
-# The count condition's own pin: a transform no option on the log reaches.
-# log.showRoot set to false hides a root commit's diff from `git log -p`, and
-# there is no option to turn it back on, so the scanner sees one commit fewer
-# with no ERR line. A count read from the same stream agreed with it and a
-# credential in a root commit passed; a count read from the objects does not.
+# The count condition's own pin: log.showRoot set to false hides a root commit's
+# diff from `git log -p`, so the scanner sees one commit fewer with no ERR line,
+# and a count read from the same stream agreed with it (a credential in a root
+# commit passed) where a count read from the objects does not. The hook passes
+# --root in the scanner's log options (gitleaks_args), the option that outranks
+# the key in every scope, so the scanner's git reads the root's diff and the
+# count agrees; the option travels on the command line, so a scanner whose git
+# does not inherit the hook's environment reads it too, and the hook exports no
+# configuration pair for the key (the negative pin below). scan_direct runs the
+# hook's own argument list, --root included; scan_direct_without_root runs the
+# same list with the option removed, the road as git applies the key, so each
+# case shows what the option closes. The refusal stays for the one case the
+# option cannot reach, a scanner whose git does not honour it: refused on the
+# count as before, the line naming the key, saying the option was not honoured,
+# and the remedy.
 
-@test "a transform no option reaches refuses on the count: log.showRoot=false hides a root commit's diff from the scanner, not from the hook's count" {
+# The hook's argument list with --root taken out of its log options and every
+# other word kept: the scanner as git applies log.showRoot, for the road.
+scan_direct_without_root() {   # <sha>
+    local i
+    eval "$(awk '/^gitleaks_args\(\) /,/^}$/' "$HOOK")"
+    [ "$(type -t gitleaks_args)" = function ]
+    gitleaks_args "$REPO" "$1"
+    for i in "${!GL_ARGS[@]}"; do
+        case ${GL_ARGS[$i]} in --log-opts=*)
+            [[ "${GL_ARGS[$i]}" == *" --root"* ]]          # the hook's list carries the option: the pin that it is there
+            GL_ARGS[$i]="${GL_ARGS[$i]// --root/}" ;;
+        esac
+    done
+    run _hook_in "$REPO" -c 'exec "$@"' _ "$GL" "${GL_ARGS[@]}"
+}
+
+@test "log.showRoot=false is neutralised by --root on the scanner's log: the root commit's credential is FOUND and the push refused as a finding, no coverage line" {
     real_gitleaks
     commit_file probe.py "token = \"$(probe_token)\"" "a credential in the root commit"
     commit_file clean.txt "nothing to see" "a clean tip"
     git -C "$REPO" config log.showRoot false
     sha="$(git -C "$REPO" rev-parse HEAD)"
-    scan_direct "$sha"                                  # the scanner as the hook invokes it: one of the two commits, no finding, no ERR line
+    scan_direct_without_root "$sha"                     # the road: without the option, one of the two commits, no finding, no ERR line
     [ "$status" -eq 0 ]
     [[ "$output" == *"1 commits scanned"* ]]
     [[ "$output" != *"ERR"* ]]
+    scan_direct "$sha"                                  # the hook's own list, --root included: both commits and the finding
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"2 commits scanned"* ]]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"2 commits scanned"* ]]            # the option reached the scanner's git: the root's diff is in its log
+    [[ "$output" == *"github-pat"* ]]
+    [[ "$output" == *"gitleaks found a credential"* ]]
+    [[ "$output" != *"covered 1 of the 2"* ]]
+    [[ "$output" != *"the scan is incomplete"* ]]
+    [[ "$output" != *"log.showRoot"* ]]
+    [[ "$output" != *"gitleaks could not scan"* ]]
+}
+
+@test "a clean push with a root commit under log.showRoot=false passes, the scanner's count the hook's own: --root reached the scanner's git" {
+    real_gitleaks
+    commit_file base.txt "notes-api" "a clean root commit"
+    commit_file clean.txt "nothing to see" "a clean tip"
+    git -C "$REPO" config log.showRoot false
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    scan_direct_without_root "$sha"                     # the road: without the option the root's diff is hidden, one of the two
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"1 commits scanned"* ]]
+    run_hook
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"2 commits scanned"* ]]
+    [[ "$output" != *"romp pre-push"* ]]
+}
+
+# A git that runs the real git unchanged and, for gitleaks' invocation shape,
+# first writes the command-scope configuration it sees (the environment's pairs,
+# in index order) to a file: what the scanner's git was given, read back, so the
+# case below can assert the hook added nothing to it.
+gitleaks_git_recording_pairs() {   # <file>
+    local real_git
+    real_git="$(command -v git)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if %s; then\n' "$GITLEAKS_GIT"
+        printf '    %q -C "$2" config --show-scope --list | grep "^command" > %q\n' "$real_git" "$1"
+        printf 'fi\n'
+        printf 'exec %q "$@"\n' "$real_git"
+    } > "$TEST_DIR/shim/git"
+    chmod 755 "$TEST_DIR/shim/git"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+
+@test "the hook exports no GIT_CONFIG pair of its own: with the caller's GIT_CONFIG_COUNT=1 (gc.auto) set, the scanner's git sees exactly that pair in its command scope, and a clean root-commit push under log.showRoot=false still passes, by --root" {
+    real_gitleaks
+    # the caller's environment: one pair of its own in place of the floor's five (the floor's global config file still carries those keys)
+    export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=gc.auto GIT_CONFIG_VALUE_0=0
+    unset GIT_CONFIG_KEY_1 GIT_CONFIG_VALUE_1 GIT_CONFIG_KEY_2 GIT_CONFIG_VALUE_2 GIT_CONFIG_KEY_3 GIT_CONFIG_VALUE_3 GIT_CONFIG_KEY_4 GIT_CONFIG_VALUE_4
+    commit_file base.txt "notes-api" "a clean root commit"
+    commit_file clean.txt "nothing to see" "a clean tip"
+    git -C "$REPO" config log.showRoot false
+    gitleaks_git_recording_pairs "$TEST_DIR/scanner-git-pairs"
+    run_hook
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"2 commits scanned"* ]]
+    [[ "$output" != *"romp pre-push"* ]]
+    # the caller's pair alone, nothing appended: the key is neutralised on the command line, not in the environment (a negative pin)
+    run cat "$TEST_DIR/scanner-git-pairs"
+    [ "$output" = "$(printf 'command\tgc.auto=0')" ]
+}
+
+# A scanner whose git does not inherit the hook's environment: a wrapper that
+# unsets every GIT_CONFIG_COUNT, GIT_CONFIG_KEY_n and GIT_CONFIG_VALUE_n variable
+# present (each name computed at run time from GIT_CONFIG_COUNT) and then runs
+# the real gitleaks, whose git then reads the clone's files alone. An option on
+# the command line reaches it all the same: the shape an environment override
+# could not reach, kept to show the option does.
+gitleaks_without_config_pairs() {
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'names=(); n=${GIT_CONFIG_COUNT:-0}; i=0\n'
+        printf 'while [ "$i" -lt "$n" ]; do names+=(-u "GIT_CONFIG_KEY_$i" -u "GIT_CONFIG_VALUE_$i"); i=$((i + 1)); done\n'
+        printf '[ -z "${GIT_CONFIG_COUNT+x}" ] || names+=(-u GIT_CONFIG_COUNT)\n'
+        printf 'exec env "${names[@]}" %q "$@"\n' "$GL"
+    } > "$TEST_DIR/shim/gitleaks"
+    chmod 755 "$TEST_DIR/shim/gitleaks"
+    export ROMP_GITLEAKS="$TEST_DIR/shim/gitleaks"
+}
+
+@test "a scanner whose git does not inherit the hook's environment (a wrapper stripping every GIT_CONFIG pair) still scans a root commit under log.showRoot=false: --root travels on the command line, so the count agrees and a clean root push passes" {
+    real_gitleaks
+    commit_file base.txt "notes-api" "a clean root commit"
+    commit_file clean.txt "nothing to see" "a clean tip"
+    git -C "$REPO" config log.showRoot false
+    gitleaks_without_config_pairs
+    run_hook
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"2 commits scanned"* ]]
+    [[ "$output" != *"romp pre-push"* ]]
+}
+
+# A scanner whose git does not honour the option: a wrapper that removes the
+# word --root from the --log-opts value, keeps every other word and runs the
+# real gitleaks, whose git then applies log.showRoot as the clone's files set
+# it. The one way the refusal arm can fire for this key now. The wrapper writes
+# the argument list it ran to a file, so the case can show what it kept.
+gitleaks_without_root_option() {   # <file>: the rewritten argument list, one word per line
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'args=()\n'
+        printf 'for a in "$@"; do\n'
+        printf '    case $a in --log-opts=*) a=" ${a#--log-opts=} "; a=${a// --root / }; a=${a# }; a="--log-opts=${a%% }" ;; esac\n'
+        printf '    args+=("$a")\n'
+        printf 'done\n'
+        printf 'printf "%%s\\n" "${args[@]}" > %q\n' "$1"
+        printf 'exec %q "${args[@]}"\n' "$GL"
+    } > "$TEST_DIR/shim/gitleaks"
+    chmod 755 "$TEST_DIR/shim/gitleaks"
+    export ROMP_GITLEAKS="$TEST_DIR/shim/gitleaks"
+}
+
+@test "a scanner whose git does not honour --root (a wrapper removing the option from the scanner's log options) is refused on the count under log.showRoot=false with a root credential: the line names the key, says the option was not honoured, and gives the remedy; no finding" {
+    real_gitleaks
+    commit_file probe.py "token = \"$(probe_token)\"" "a credential in the root commit"
+    commit_file clean.txt "nothing to see" "a clean tip"
+    git -C "$REPO" config log.showRoot false
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    gitleaks_without_root_option "$TEST_DIR/scanner-args"
     run_hook
     [ "$status" -eq 1 ]
     [[ "$output" == *"the CREDENTIAL scan of refs/heads/main (${sha:0:10}) covered 1 of the 2 commits with content to scan"* ]]
     [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
-    # the refusal says which key caused it and what to do: a refusal a contributor cannot act on is a defect
-    [[ "$output" == *"romp pre-push: log.showRoot is false in this clone's git configuration, which hides a root commit's diff from the scanner's log; set it to true (git config log.showRoot true) or unset it and push again, or ROMP_NO_GITLEAKS=1 skips the credential scan for this one push"* ]]
+    [[ "$output" == *"romp pre-push: log.showRoot is false in this clone's configuration and the scanner's git did not honour the --root option the hook passes on its log, which hides a root commit's diff; set the key to true (git config log.showRoot true) or unset it and push again, or ROMP_NO_GITLEAKS=1 skips the credential scan for this one push"* ]]
     [[ "$output" == *"gitleaks could not scan"* ]]
     [[ "$output" != *"gitleaks found a credential"* ]]
+    # the wrapper removed --root alone: the options after the range are the hook's own list less that one word
+    eval "$(awk '/^gitleaks_args\(\) /,/^}$/' "$HOOK")"
+    gitleaks_args "$REPO" "$sha"
+    hook_opts=; for a in "${GL_ARGS[@]}"; do case $a in --log-opts=*) hook_opts=$a ;; esac; done
+    hook_tail=${hook_opts#* --diff-merges=first-parent}
+    [[ "$hook_tail" == *" --root"* ]]
+    run grep -- '^--log-opts=' "$TEST_DIR/scanner-args"
+    [[ "$output" != *"--root"* ]]
+    [ "${output#* --diff-merges=first-parent}" = "${hook_tail// --root/}" ]
 }
 
 @test "the same count shortfall with log.showRoot unset names no key: the line is the key's, not the shortfall's" {
@@ -1481,8 +1642,12 @@ path_without_gitleaks() {
 # each new commit, and a hidden path whose blob is text by git's byte rule (no
 # NUL in the first 8000 bytes) refuses the push rather than being scanned,
 # naming the tip or the commit, the path and the attribute; a hidden blob that
-# is binary by its bytes passes as binaries always have. The first two cases
-# push for real with the hook installed, so the remote's state is asserted too.
+# is binary by its bytes passes as binaries always have. The advice names the
+# attribute as the cause and what to do about it (drop it, or keep the file text
+# on purpose with an explicit diff line that outranks it), and a rename or copy
+# of such a file is refused the same way, since its bytes reach the remote under
+# the new path. The first two cases push for real with the hook installed, so
+# the remote's state is asserted too.
 
 # The hook installed for one real push of main to the bare remote; the
 # fixture's own commits run no hooks before or after.
@@ -1590,6 +1755,26 @@ attributes() {   # <line>: a committed .gitattributes
     [[ "$output" == *"romp pre-push: notes.txt in commit ${leak:0:10} is text that its diff attribute (unset) hides from the identifier scan, so the push is refused rather than scanned"* ]]
     [[ "$output" != *"at the tip of"* ]]
     [[ "$output" != *"ADDS a personal identifier"* ]]
+}
+
+@test "a pure RENAME of a hidden text file the remote already holds is refused too, the line naming the new path, and the advice naming the attribute as the cause, the explicit diff remedy and the rename clause" {
+    add_remote
+    attributes 'notes-*.txt -diff'
+    commit_file notes-a.txt "nothing to see" "a clean file under a pattern -diff"
+    git -C "$REPO" push -q origin main                       # the original is on the remote; the rename is all this push adds
+    before="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" mv notes-a.txt notes-b.txt
+    git -C "$REPO" commit -qm "rename"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    run_hook "$before"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"romp pre-push: notes-b.txt in commit ${sha:0:10} is text that its diff attribute (unset) hides from the identifier scan, so the push is refused rather than scanned"* ]]
+    [[ "$output" == *"notes-b.txt at the tip of refs/heads/main (${sha:0:10}) is text"* ]]
+    [[ "$output" != *"notes-a.txt"* ]]                        # the old path is a deletion: nothing to read there
+    [[ "$output" == *"Remove the diff attribute for each path named"* ]]
+    [[ "$output" == *"or keep the file text on purpose with an explicit \"<path> diff\" line (a later line in .gitattributes overrides a -diff inherited from a broader pattern"* ]]
+    [[ "$output" == *"A rename or copy of such a file is content too: its bytes reach the remote under the new path, so the refusal is about the attribute, not the rename."* ]]
+    [[ "$output" != *"personal identifier"* ]]
 }
 
 @test "with no denylist a -diff text file passes and no such line prints: the identifier scan is a no-op, attribute or not" {

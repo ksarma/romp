@@ -107,7 +107,12 @@
 # remedy. A hidden path whose blob is BINARY by its bytes passes as it always
 # did: the scan never read binaries, and the attribute adds nothing, so a
 # repository marking its images binary is not refused. Reading such a file
-# from the objects instead of refusing is the longer fix, not this one.
+# from the objects instead of refusing is the longer fix, not this one. The
+# check's NUL-delimited listings live in a scratch directory under TMPDIR
+# (mktemp -d, prefix romp-pre-push.), removed by its exact minted path when
+# the identifier scan ends: a hard kill between the minting and the removal
+# leaves it behind, bounded by its living under TMPDIR with that prefix, so a
+# reader can find and remove it.
 #
 # The credential scan reads the same new commits, each merge by its
 # first-parent diff, and refuses the push on a hit. A range this clone cannot
@@ -135,12 +140,21 @@
 # of which published a credential with the hook reporting clean; and
 # format.pretty, log.date and log.showSignature, which refused clean pushes.
 # gitleaks' git is asked for a plain stream (the options in gitleaks_args, each
-# outranking the config key it neutralises) so a clean push agrees, and a
-# transform no option reaches (log.showRoot set to false hides a root commit's
-# diff) now refuses on the count rather than passing on it, naming the key and
-# the remedy: set it to true (git config log.showRoot true) or unset it and
-# push again, or ROMP_NO_GITLEAKS=1 skips the credential scan for this one
-# push.
+# outranking the config key it neutralises) so a clean push agrees. log.showRoot
+# set to false (it hides a root commit's diff from git log -p) is neutralised
+# the same way, by --root on the scanner's log, the shape --pretty and --date
+# take: the option outranks the key in every scope and travels on the scanner's
+# command line, so a scanner git that does not inherit the hook's environment
+# still reads it. A scanner whose git does not honour that option, or any other
+# count that comes up short, refuses on the count as before; when the short
+# count meets the key false in the clone's configuration and a root commit in
+# the range, the refusal also names the key, says the scanner's git did not
+# honour the --root option the hook passes, and gives the remedy. The two
+# halves differ in kind: the credential half's own count is derived from the
+# objects and no configuration touches it, while the identifier half reads a
+# log and diff stream and is config-dependent by construction, hardened key by
+# key (log.showRoot today, another key another day); reading its input from
+# the objects is the long fix, not taken in this fold.
 #
 # Both scans read the objects at the pushed shas, on the premise that what they
 # read is what the push transfers. A replace ref (git replace) breaks it: every
@@ -172,6 +186,12 @@ set -euo pipefail
 # Replacement off for every git below, gitleaks' own included (the header's
 # premise): the scans read the objects the push transfers, never a substitute.
 export GIT_NO_REPLACE_OBJECTS=1
+# The value this clone's configuration gives log.showRoot, for the refusal arm
+# in scan_credentials (the header): a plain read, so the arm can name the key
+# when a short count meets it false. The key itself is neutralised on the
+# scanner's command line (--root, in gitleaks_args), not here: beyond the
+# replacement switch above, the hook sets nothing for the gits it runs.
+showroot_configured=$(git config --type=bool log.showRoot 2>/dev/null || true)
 
 # git feeds the ref list on stdin and both scans need it, so read it once.
 refs="$(cat)"
@@ -681,10 +701,19 @@ scan_identifiers() {
             kind="$(git cat-file -t "$obj" 2>/dev/null)" || { kind=""; type_unread "$local_ref" "$obj"; }
         done
     done <<< "$refs"
-    [ -z "$scratch" ] || rm -rf "$scratch"
+    [ -z "$scratch" ] || rm -rf -- "$scratch"      # the exact minted path, never a glob (the header's residual)
 
     if [ "$hidden_paths" -ne 0 ]; then
-        echo "  Remove the diff attribute for each path named (the -diff line or binary macro in .gitattributes, .git/info/attributes or the global attributes file core.attributesFile names; or the driver's diff.<driver>.binary), or push from a clone where it is not set." >&2
+        # The attribute is the cause, so the advice says what to do about the
+        # attribute: drop it, or keep the file text on purpose with a diff line
+        # that outranks it (a later line in the same .gitattributes, a file git
+        # reads ahead of the one carrying the -diff; .git/info/attributes
+        # outranks the tree's files, so a -diff there is changed there). A
+        # rename or copy of such a file is refused the same way, on purpose: its
+        # bytes reach the remote under the new path. A refusal a contributor
+        # cannot act on is a reason to bypass the hook (2026-09-21).
+        echo "  Remove the diff attribute for each path named (the -diff line or binary macro in .gitattributes, .git/info/attributes or the file core.attributesFile names, or the driver's diff.<driver>.binary), or keep the file text on purpose with an explicit \"<path> diff\" line (a later line in .gitattributes overrides a -diff inherited from a broader pattern or from core.attributesFile; a -diff in .git/info/attributes outranks the tree's files and is changed there), then push again." >&2
+        echo "  A rename or copy of such a file is content too: its bytes reach the remote under the new path, so the refusal is about the attribute, not the rename." >&2
     fi
     if [ "$blocked_ids" -ne 0 ]; then
         echo "" >&2
@@ -788,12 +817,15 @@ scannable_commits() {   # <rev-list argument list>
 # counts it); --submodule=short and --ignore-submodules=none (diff.submodule,
 # diff.ignoreSubmodules: a gitlink change stays one hunk); --no-show-signature
 # (log.showSignature writes gpg's report into the stream); --pretty=medium and
-# --date=default (format.pretty, log.date: gitleaks parses the default header).
+# --date=default (format.pretty, log.date: gitleaks parses the default header);
+# --root (log.showRoot set to false hides a root commit's diff, so the scanner
+# read one commit fewer with no error line).
 gitleaks_args() {   # <root> <range> [<config option>...]: fills GL_ARGS
     local root="$1" range="$2"
     shift 2
+    # --root outranks log.showRoot=false (verified by execution) and travels on the scanner's command line, so a scanner git that does not inherit the hook's environment still reads it.
     GL_ARGS=(git "$root" --no-banner --redact -v --exit-code 2 "$@"
-        "--log-opts=$range --diff-merges=first-parent --no-color --no-textconv --text --no-renames --submodule=short --ignore-submodules=none --no-show-signature --pretty=medium --date=default")
+        "--log-opts=$range --diff-merges=first-parent --no-color --no-textconv --text --no-renames --submodule=short --ignore-submodules=none --no-show-signature --pretty=medium --date=default --root")
 }
 
 scan_credentials() {
@@ -877,13 +909,16 @@ scan_credentials() {
             elif [ -n "$expected" ] && [ "$reported" != "$expected" ]; then
                 unscanned "the CREDENTIAL scan of $local_ref (${local_sha:0:10}) covered $reported of the $expected commits with content to scan"
                 failed_creds=1
-                # A count that came up SHORT with log.showRoot false and a root
-                # commit in the range (the header): the key is what hid the
-                # diff, and a refusal a contributor cannot act on is a defect.
+                # A count that came up SHORT with log.showRoot false in the
+                # clone's configuration (showroot_configured) and a root commit
+                # in the range (the header): the --root option gitleaks_args
+                # passes outranks the key, so the scanner's git did not honour
+                # it and the key is what hid the diff; a refusal a contributor
+                # cannot act on is a defect.
                 # shellcheck disable=SC2086  # the range is deliberately word-split
-                if [ "$reported" -lt "$expected" ] 2>/dev/null && [ "$(git config --type=bool log.showRoot 2>/dev/null || true)" = false ] \
+                if [ "$reported" -lt "$expected" ] 2>/dev/null && [ "$showroot_configured" = false ] \
                     && [ -n "$(git rev-list --max-parents=0 $range 2>/dev/null || true)" ]; then
-                    echo "romp pre-push: log.showRoot is false in this clone's git configuration, which hides a root commit's diff from the scanner's log; set it to true (git config log.showRoot true) or unset it and push again, or ROMP_NO_GITLEAKS=1 skips the credential scan for this one push" >&2
+                    echo "romp pre-push: log.showRoot is false in this clone's configuration and the scanner's git did not honour the --root option the hook passes on its log, which hides a root commit's diff; set the key to true (git config log.showRoot true) or unset it and push again, or ROMP_NO_GITLEAKS=1 skips the credential scan for this one push" >&2
                 fi
             fi
         fi
