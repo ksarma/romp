@@ -115,7 +115,10 @@ AUTO_WAITING_ACTIONS = ("click", "dblclick", "fill", "press", "type", "check", "
 # pass-8 head, the refuter's probe against the lab's playwright: locator.textContent, innerText, ariaSnapshot and a locator's
 # evaluate auto-wait under the 30 s default; count, first, isVisible, isHidden, allTextContents and allInnerTexts do not;
 # locator, on, addInitScript, newContext, newPage, launch and close are the driver's makers and hooks, the launch carried by the
-# arithmetic as a fixed term, LAUNCH_TIMEOUT_S); (2) a wait form, WAIT_FORMS, whose timeout the census above requires to be one
+# arithmetic as a fixed term, LAUNCH_TIMEOUT_S; "does not auto-wait" is not "does not wait": count is a protocol read the renderer
+# answers, so a renderer a busy evaluate callback has wedged holds every later count() until the loop ends, outside the budget,
+# whose race bounded the driver's wait on that evaluate and not the renderer, and the drive's bound there is DRIVER_TIMEOUT_S,
+# the kill that keeps a RESULT the driver had printed: pass 11's fixer pass measured it); (2) a wait form, WAIT_FORMS, whose timeout the census above requires to be one
 # budget.capped(...) call; (3) an UNTIMED PROTOCOL READ, UNTIMED_READS (a page's evaluate: no timeout option, no default bound,
 # a wedged renderer holds it open), allowed ONLY as the first argument of budget.bounded(...), the budget's race of the read
 # against what is left of it (BUDGET_JS), which the arithmetic cell checks here by spelling (_bounded_reads) and the parsed

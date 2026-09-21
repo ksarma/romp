@@ -148,7 +148,12 @@ reads: a loop whose exit is decided in its body (`for (;;) { if (await ...count(
 a loop whose header calls a helper the walk does NOT resolve to a function (one held in a literal's member, reached through a
 road the walk does not follow), since the header rule follows the helpers the walk resolves and no other,
 a loop whose header reads no receiver (a busy loop over Date.now in the driver; one inside a callback handed to evaluate is
-bounded by budget.bounded since pass 11, and one handed to waitForFunction by its capped timeout), CPU-bound work, and an awaited
+raced by budget.bounded since pass 11, which bounds the DRIVER's wait on that read and not the renderer: the loop keeps the
+renderer wedged, every later locator.count() (class (1) of the allow-list, a call that does not auto-wait but a protocol read
+the renderer answers) waits for the wedge to end outside the budget, and the drive's bound there is DRIVER_TIMEOUT_S, the
+kill, with the RESULT line held when the driver had printed one (pass 11's fixer pass measured it: the race lost at the
+budget's remaining time and the next count() returned when the wedge ended); one handed to waitForFunction by its capped
+timeout), CPU-bound work, and an awaited
 object whose `then` never settles, since the census reads call sites and their timeouts and resolves no loop's exit beyond the
 header rule and the cycle rule above; (2) a call of a known global (`String`,
 `setTimeout` inside the sleep, `fetch`) or of a known member of a global or a module (`Date.now`, `JSON.parse`, the driver's
@@ -1754,8 +1759,10 @@ class TheDriverParsed(unittest.TestCase):
         no-op, its shape now accepted) is a red naming the cell where the union alone stayed green because a PLANTS row fires
         the same line; the two token-less cells (bare-wait, second-browser) fire no refusal by design and are held to their
         verdict class instead (an unlisted wait form, an unlisted receiver call); (c) the number of sites with ONE exerciser
-        and the cells that are that sole exerciser are derived and printed, not claimed: a cell deleted from under a branch is
-        a red only when it was that branch's sole exerciser, and the printed figure says how many are. Per-cell uniqueness is
+        and the cells that are that sole exerciser are derived and printed, not claimed, as two counts with their nouns (the sites
+        whose sole exerciser is a REFUSED_CELLS cell, and the distinct cells that are those exercisers: one cell can be the sole
+        exerciser of two sites, so the two differ, and pass 11's fixer pass found one print that read as both): a cell deleted
+        from under a branch is a red only when it was that branch's sole exerciser, and the printed figure says how many are. Per-cell uniqueness is
         not asserted because it is false by construction: there are more cells than sites, and PLANTS rows fire most sites
         too. The convergence cell: under rounds=1 the walk refuses that it did not converge (a page reaches a binding through
         a helper's return, typed in the fixpoint's second round), and under the default bound the same source is clean and
@@ -1803,8 +1810,10 @@ class TheDriverParsed(unittest.TestCase):
         exercisers = {site: sorted(who for who, lines in fired_by.items() if site in lines) for site in sites}
         sole = {site: who[0] for site, who in exercisers.items() if len(who) == 1}
         sole_cells = sorted({name for kind, name in sole.values() if kind == "cell"})
-        print("coverage: %d refusal sites, %d cells, %d rows; %d sites have one exerciser (%d of them a REFUSED_CELLS cell: %s); a cell deleted from under a branch is a red only when it is that branch's sole exerciser"
-              % (len(sites), len(REFUSED_CELLS), len(PLANTS), len(sole), len(sole_cells), ", ".join(sole_cells) or "none"))
+        sole_sites_by_a_cell = sum(1 for kind, _ in sole.values() if kind == "cell")
+        print("coverage: %d refusal sites, %d cells, %d rows; %d sites have one exerciser; %d of those sites have a REFUSED_CELLS cell as their sole exerciser, and %d distinct cells are those exercisers (%s); "
+              "a cell deleted from under a branch is a red only when it is that branch's sole exerciser"
+              % (len(sites), len(REFUSED_CELLS), len(PLANTS), len(sole), sole_sites_by_a_cell, len(sole_cells), ", ".join(sole_cells) or "none"))
 
     def test_the_driver_stores_each_read_under_the_key_the_driver_bound_module_names(self):
         """The record keys the driver-bound module's wiring pin reads (WAITED_READS, UNWAITED_READS), derived here from the
