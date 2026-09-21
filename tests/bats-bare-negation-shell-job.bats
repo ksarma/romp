@@ -14,9 +14,9 @@
 # test fails.
 #
 # One test per class or module test, not one for all: the job's BATS_TEST_TIMEOUT is a per-test bound of 180 s, and a single test
-# running the register and the corpus took 139 s under it on a loaded box (2:19.14 total); apart, on this box under that bound
-# and beside each other, the register took 65185 ms, the road 7845 ms and the corpus 103415 ms with bats 1.10.0, and 63263 ms,
-# 8683 ms and 104918 ms with 1.11.1 from the release tarball in a scratch prefix as the outer and the inner bats (bats -T). Every
+# running the register and the corpus took 139 s under it on a loaded box (2:19.14 total); apart, each of the three stays well
+# inside the bound (the register's and the corpus's measured times, under both bats versions the record is verified against, are
+# in the module docstring, the one home of those figures; the road's tests each bound the runs they start themselves). Every
 # bats run the module starts is bounded itself (RUN_TIMEOUT, 60 s per corpus run), and the corpus prints each candidate's row as
 # it is decided, so a run the outer bound ends still names its candidate in the output bats shows. Since fork PR #871's round 2
 # each rewrite of a candidate runs twice (REPEATS) and four candidates are decided at a time (CORPUS_WORKERS), each run in its own
