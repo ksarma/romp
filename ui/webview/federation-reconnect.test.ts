@@ -777,22 +777,152 @@ test("the WAITING pane renders the feed payload too, so it pends its attached ho
   });
 });
 
-test("every app the kernel's _push addresses is a pushed-channel pane here, on the channel its audience names: the roster is read from kernel.py (every tuple and singleton in _push's body), so a pane the kernel adds to any audience and this set misses reads red, and a member pendingFor would fall to the per-host feed reads red (review rounds 1 and 2, 2026-09-21)", async () => {
+// ── the pushed-channel roster, derived from the kernel's send loop (review rounds 1 to 3, 2026-09-21) ────────────────
+// Enough of Python's surface to read _push's body as statements: comments dropped, a backslash continuation joined, a
+// newline inside brackets folded to one space (a wrapped tuple reads as one line), every other newline kept. Per output
+// character: whether it sits inside a string literal (an f-string field, a docstring's prose), the output index of its
+// innermost open bracket (a % format's operand tuple), and its source line for the failure messages.
+function pyNormalise(src: string, firstLine: number): { text: string; inStr: boolean[]; encl: number[]; line: number[] } {
+  const out: string[] = [], inStr: boolean[] = [], encl: number[] = [], line: number[] = [];
+  const stack: number[] = [];
+  let ln = firstLine;
+  const emit = (ch: string, s: boolean) => { out.push(ch); inStr.push(s); encl.push(stack.length ? stack[stack.length - 1] : -1); line.push(ln); };
+  const n = src.length;
+  let i = 0;
+  while (i < n) {
+    const ch = src[i];
+    const pm = /^([rRbBuUfF]{0,2})("""|'''|"|')/.exec(src.slice(i, i + 5));   // a string literal, with any prefix letters
+    if (pm && (pm[1] === "" || i === 0 || !/[A-Za-z0-9_]/.test(src[i - 1]))) {
+      for (const p of pm[1]) emit(p, false);
+      i += pm[1].length;
+      const q = pm[2];
+      for (const qc of q) emit(qc, true);
+      i += q.length;
+      while (i < n) {
+        if (src[i] === "\\" && i + 1 < n) {                 // an escape: the next character is the string's, whatever it is
+          if (src[i + 1] === "\n") ln++;
+          emit(src[i], true); emit(src[i + 1], true); i += 2; continue;
+        }
+        if (src.startsWith(q, i)) { for (const qc of q) emit(qc, true); i += q.length; break; }
+        if (src[i] === "\n") ln++;
+        emit(src[i], true); i++;
+      }
+      continue;
+    }
+    if (ch === "#") { while (i < n && src[i] !== "\n") i++; continue; }                        // a comment, to its line's end
+    if (ch === "\\" && src[i + 1] === "\n") {                                                // a continuation: one line
+      i += 2; ln++;
+      while (i < n && (src[i] === " " || src[i] === "\t")) i++;
+      emit(" ", false); continue;
+    }
+    if (ch === "\n") {
+      ln++; i++;
+      if (stack.length) { while (i < n && (src[i] === " " || src[i] === "\t")) i++; emit(" ", false); continue; }   // wrapped
+      emit("\n", false); continue;
+    }
+    if (ch === "(" || ch === "[" || ch === "{") { emit(ch, false); stack.push(out.length - 1); i++; continue; }
+    if (ch === ")" || ch === "]" || ch === "}") { stack.pop(); emit(ch, false); i++; continue; }
+    emit(ch, false); i++;
+  }
+  return { text: out.join(""), inStr, encl, line };
+}
+
+// The forms a read of the "app" key in _push's body can take. Two the census READS as an audience; one it can rule out as
+// no audience at all (the value becomes text: the send log line's `%` operand); every other form it cannot see through, so
+// each is NAMED, counted over the body and asserted absent, the way tests/test_card_boards.py's _other_card_forms
+// enumerates what its card census cannot read (review round 3, 2026-09-21: both refuters defeated a wider regex with a
+// named constant, `c["app"] in NOTE_APPS`, which no pattern over literals can read; the enumeration turns it red instead of
+// invisible). Keyed on the KEY, whatever expression reads it, so a renamed loop variable is still read.
+const READ_TUPLE = "a tuple of string literals (the audience, read)";
+const READ_SINGLE = "a singleton, == a string literal (the audience, read)";
+const READ_TEXT = "a value formatted into text (a % format's operand, a .format argument, a field inside a string literal): no audience";
+const OTHER_FORMS = [
+  "a membership test against a name, an attribute or a call (a named constant, a variable)",
+  "a membership test against a list or a set literal",
+  "a tuple with a member that is not a string literal",
+  "a negated test (!= or not in)",
+  "an equality test against something other than a string literal",
+  "a .get(\"app\", ...) with a default",
+  "the read bound to a name (an assignment or a walrus)",
+  "a read in any other position (a call's argument, a returned value, a comparison's right operand, a yield): not followed",
+] as const;
+type Audiences = { tuples: string[][]; singles: string[]; text: string[]; other: Map<string, string[]>; reads: number };
+function pushAudiences(kernel: string): Audiences {
+  const at = kernel.indexOf("\ndef _push(targets");
+  assert.ok(at >= 0, "kernel.py's _push(targets, ...) is the pusher's send loop");
+  const body = kernel.slice(at + 1, kernel.indexOf("\ndef ", at + 1));   // _push's own body, up to the next top-level def
+  const { text, inStr, encl, line } = pyNormalise(body, kernel.slice(0, at + 1).split("\n").length);
+  const a: Audiences = { tuples: [], singles: [], text: [], other: new Map(OTHER_FORMS.map((f) => [f, []])), reads: 0 };
+  const lit = /(["'])([^"'\\]*)\1/g;
+  for (const m of text.matchAll(/\[(["'])app\1\]|\.get\((["'])app\2/g)) {   // the KEY, whatever reads it
+    const p = m.index!;
+    let e = p + m[0].length;
+    a.reads++;
+    const ls = text.lastIndexOf("\n", p) + 1;
+    const le = text.indexOf("\n", p);
+    const where = "kernel.py:" + line[p] + " " + text.slice(ls, le < 0 ? text.length : le).trim().slice(0, 120);
+    const other = (form: string) => a.other.get(form)!.push(where);
+    if (inStr[p]) { a.text.push(where); continue; }
+    if (m[2]) {                                            // `.get("app"`: closed at once, or a default follows
+      const tail = /^\s*\)/.exec(text.slice(e));
+      if (!tail) { other(OTHER_FORMS[5]); continue; }
+      e += tail[0].length;
+    }
+    const after = text.slice(e);
+    let mm: RegExpExecArray | null;
+    if ((mm = /^\s*==\s*(["'])([^"'\\]+)\1/.exec(after))) { a.singles.push(mm[2]); continue; }
+    if (/^\s*==/.test(after)) { other(OTHER_FORMS[4]); continue; }
+    if (/^\s*!=/.test(after) || /^\s+not\s+in\b/.test(after)) { other(OTHER_FORMS[3]); continue; }
+    if ((mm = /^\s+in\s+\(/.exec(after))) {
+      const q = e + mm[0].length - 1;                      // the tuple's "(": its members run to the matching ")"
+      let d = 0, r = q;
+      for (; r < text.length; r++) {
+        if (inStr[r]) continue;
+        if (text[r] === "(") d++;
+        else if (text[r] === ")" && --d === 0) break;
+      }
+      const inner = text.slice(q + 1, r);
+      const members = [...inner.matchAll(lit)].map((l) => l[2]);
+      if (members.length >= 1 && inner.replace(lit, "").replace(/[\s,]/g, "") === "") { a.tuples.push(members); continue; }
+      other(OTHER_FORMS[2]); continue;
+    }
+    if (/^\s+in\s+[\[{]/.test(after)) { other(OTHER_FORMS[1]); continue; }
+    if (/^\s+in\b/.test(after)) { other(OTHER_FORMS[0]); continue; }
+    if (/(?:^|[\s,(])[A-Za-z_]\w*\s*(?::\s*[\w\[\], ]+)?\s*:?=\s*[A-Za-z_][\w.]*(?:\[[^\]]*\])*$/.test(text.slice(ls, p))) { other(OTHER_FORMS[6]); continue; }   // `name = <receiver>` before the key
+    const enc = encl[p];
+    if (enc >= 0 && text[enc] === "(" && /(?:(["'])\s*%|\.format)\s*$/.test(text.slice(0, enc))) { a.text.push(where); continue; }
+    other(OTHER_FORMS[7]);
+  }
+  return a;
+}
+
+test("every app the kernel's _push addresses is a pushed-channel pane here, on the channel its audience names: the roster is derived from every read of the app key in _push's body (a tuple of string literals however wrapped or spaced, a singleton of any name, or a value formatted into text), every other form is named and asserted absent, so a pane added to any of _push's audiences in any spelling reads red here, in the roster or as a named form, and a member _push never addresses reads red (review rounds 1 to 3, 2026-09-21)", async () => {
   // Keyed on the PRODUCER, not on the compliant sites: a set that names the panes it knows cannot see the one it misses,
   // and the project's four-name set missed this fork's fifth. Round 1 read the first `if c["app"] in (...):` alone, the
   // feed branch, so a pane added to the timeline's or the chat's audience (a `==` widened to a tuple) took no verdict.
-  // Every `c["app"] in (...)` tuple and `c["app"] == "..."` singleton in _push's body is read now, with no trailing colon
-  // on the pattern (the except arm's twin and the warm gate's pair count too). A tuple's channel is the one of feed, chat,
-  // timeline it names, a singleton's its own name, and each member is driven through the manager on that channel with the
-  // other two channels' frames refused, so a non-feed member cannot fall silently to perHostFeed in pendingFor's selector
-  // (federation.ts), where every app that is not the timeline or the chat reads the feed.
+  // Round 2 matched every one-line tuple and singleton of lowercase names, so a pane added in a wrapped tuple, under a
+  // name with a hyphen or a digit, or through a named constant took no verdict either. The belt (pushAudiences above):
+  // every read of the "app" key in _push's body is accounted for, as a tuple of string literals (the body normalised
+  // first: comments dropped, continuations joined, a newline inside brackets folded, the separator a comma plus any
+  // whitespace), a singleton of any name, or a value formatted into text (the send log line, no audience), and every
+  // other form is NAMED and counted (OTHER_FORMS): the premise is asserted here as an empty set, and each detector is
+  // shown to fire in the case below. A tuple's channel is the one of feed, chat, timeline it names, a singleton's its own
+  // name, and each member is driven through the manager on that channel with the other two channels' frames refused, so
+  // a non-feed member cannot fall silently to perHostFeed in pendingFor's selector (federation.ts), where every app that
+  // is not the timeline or the chat reads the feed.
+  // The harm of a missed pane, as the round 3 refuters measured it: NOT every attached host pending forever. pendingFor
+  // returns [] for an app outside PANE_CHANNELS, so the pane posts no hostsPending at all: the shell loses its
+  // "connected, loading sessions" caveat for that pane while the pane's own loading line still shows (the 2026-09-18
+  // waiting-pane dropout). The forever-pending direction is the other miss, a set member _push never addresses, which the
+  // second roster assertion below catches.
+  // SCOPE: this census reads _push's body, the pusher's send loop. Senders outside it test the app key on their own
+  // (_feed_first's cold first feed frame, _send_feed_now's ready-time frame, the tab strips of _push_session_now and
+  // _confirm_close_now), each addressing a pane _push also addresses; none is read here, so a pane pushed ONLY by a route
+  // outside _push's body is outside this case's claim.
   const kernel = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
-  const at = kernel.indexOf("\ndef _push(targets");
-  assert.ok(at > 0, "kernel.py's _push(targets, ...) is the pusher's send loop");
-  const body = kernel.slice(at + 1, kernel.indexOf("\ndef ", at + 1));   // _push's own body, up to the next top-level def
-  const tuples = [...body.matchAll(/c(?:\["app"\]|\.get\("app"\)) in \(("[a-z]+"(?:, "[a-z]+")*),?\)/g)]
-    .map((m) => m[1].split(",").map((s) => s.trim().replace(/^"|"$/g, "")));
-  const singles = [...body.matchAll(/c(?:\["app"\]|\.get\("app"\)) == "([a-z]+)"/g)].map((m) => m[1]);
+  const { tuples, singles, other } = pushAudiences(kernel);
+  assert.deepEqual([...other].filter(([, hits]) => hits.length), [],
+    "a read of the app key in _push's body the census cannot read, as [form, [kernel.py:line statement]]: write the audience as a tuple of string literals or a singleton, or teach pushAudiences the form and say what it reads");
   assert.ok(tuples.length >= 1, "the send loop's `c[\"app\"] in (...)` feed branch is an audience");
   const union = new Set<string>([...tuples.flat(), ...singles]);
   assert.ok(union.has("feed") && union.has("waiting"), "the feed audience carries the feed pane and this fork's Waiting-on-you pane (" + [...union].sort().join(", ") + ")");
@@ -840,6 +970,62 @@ test("every app the kernel's _push addresses is a pushed-channel pane here, on t
       fm.closeRemote("TESTHOST");
     });
   }
+});
+
+test("the census's premise, shown to hold for a reason: on a planted _push every named form the census cannot read fires exactly where planted, the roster reads the wrapped, unspaced, hyphenated, digit-carrying and continued spellings, a formatted value and a docstring's prose read as text, and every read lands in exactly one form (review round 3, 2026-09-21)", () => {
+  // the synthetic body, one read per tagged line: T a tuple the roster reads, S a singleton, X text, a number the
+  // OTHER_FORMS index that must fire there, null a line with no read of its own (a wrapped tuple's continuation lines)
+  const T = READ_TUPLE, S = READ_SINGLE, X = READ_TEXT;
+  const plant: [string, string | number | null][] = [
+    ["def _push(targets, connect=False, live_map=None):", null],
+    ['    """prose naming c["app"] in NOTE_APPS is text, not a test"""', X],
+    ['    if c["app"] in ("feed",   # a wrapped tuple, a comment inside it, a hyphen, a digit, a trailing comma', T],
+    ['                    "outline",', null],
+    ['                    "waiting-2", "x9",):', null],
+    ["        pass", null],
+    ['    if c["app"] in ("timeline","notes"):', T],
+    ["        pass", null],
+    ['    ok = any(c["app"] \\', S],
+    ['             == "chat" for c in targets)', null],
+    ["    tl = [t for t in targets if t.get('app') == 'timeline']", S],
+    ['    sys.stderr.write("push send %s (%s)\\n" % ("feed", c.get("app")))', X],
+    ["    log(f\"push {c['app']}\")", X],
+    ['    if c["app"] in NOTE_APPS:', 0],
+    ["        pass", null],
+    ['    if c["app"] in ["feed", "outline"]:', 1],
+    ["        pass", null],
+    ['    if c["app"] in ("feed", OUTLINE_APP):', 2],
+    ["        pass", null],
+    ['    if c["app"] != "chat":', 3],
+    ["        pass", null],
+    ['    if c["app"] not in ("a", "b"):', 3],
+    ["        pass", null],
+    ['    if c["app"] == APP:', 4],
+    ["        pass", null],
+    ['    if c.get("app", "") == "chat":', 5],
+    ["        pass", null],
+    ['    app = c["app"]', 6],
+    ['    if (a := c.get("app")) == "x":', 6],
+    ["        pass", null],
+    ['    _serve(c["app"])', 7],
+    ['    return c["app"]', 7],
+  ];
+  const src = "\n" + plant.map(([l]) => l).join("\n") + "\n\ndef _next():\n    pass\n";
+  const a = pushAudiences(src);
+  const lineOf = (w: string) => parseInt(w.slice("kernel.py:".length), 10);
+  const linesTagged = (tag: string | number) => plant.flatMap(([, t], i) => (t === tag ? [i + 2] : []));   // the leading newline: plant[0] is line 2
+  assert.deepEqual(a.tuples, [["feed", "outline", "waiting-2", "x9"], ["timeline", "notes"]], T);
+  assert.deepEqual(a.singles, ["chat", "timeline"], S);
+  assert.deepEqual(a.text.map(lineOf), linesTagged(X), X);
+  OTHER_FORMS.forEach((form, k) => {
+    assert.ok(linesTagged(k).length >= 1, form + ": planted at least once, so the detector is known to fire");
+    assert.deepEqual(a.other.get(form)!.map(lineOf), linesTagged(k), form);
+  });
+  assert.equal(a.reads, a.tuples.length + a.singles.length + a.text.length + [...a.other.values()].flat().length,
+    "every read of the app key landed in exactly one form");
+  assert.equal(a.reads, plant.filter(([, t]) => t !== null).length, "and the plant's reads were all seen");
+  // the message a red carries names the form, the line and the statement
+  assert.match(a.other.get(OTHER_FORMS[0])![0], /^kernel\.py:\d+ if c\["app"\] in NOTE_APPS:$/);
 });
 
 test("a pane's FIRST publish posts even an empty list, so a reloaded pane replaces the list its predecessor left (2026-09-18)", async () => {
