@@ -42,7 +42,9 @@ unreachable: origin/main (a shallow CI clone, where this guard checks nothing an
 merged head, where BASE is raised to the new merge base with the merge; or another branch, whose lines this guard is not
 about). A guard that cannot derive its population substitutes no other (the maintainer's round 6, tests-2: the manifest this
 module read where git could not answer made it a repo-wide gate over every later change's lines, in CI from its first run and
-on main after landing). The form-space test runs everywhere: the rule needs no tree.
+on main after landing). A derived population that lacks this module (a tree that is main itself, where the merge base equals BASE
+and the diff is empty) is refused by both population tests, the rig standing in the derivation, so neither passes over nothing.
+The form-space test runs everywhere: the rule needs no tree.
 
 Exits, for a later change that reds here: a line that names an author's pass names it as the author's; a line that names a
 maintainer's round of THIS PR names it as the maintainer's; a round of another PR's review in one of these files is written with
@@ -191,7 +193,10 @@ def added_lines(diff):
 
 def branch_population():
     """(the lines this branch adds, by file; how they were derived), from the committed tree, or a SkipTest whose reason names what
-    was unreachable: this guard reads a population it derived or none."""
+    was unreachable: this guard reads a population it derived or none. A derived population that lacks this module is REFUSED, not
+    returned: the rig stands here so that no caller runs over an empty population (at a tree that is main itself the merge base equals
+    BASE and the diff is empty; the census had failed there while the doubled-attribution test passed over {}: the fixer pass over the
+    second closing lens after the maintainer's round 6, F1-5)."""
     mb, why = _git("merge-base", "origin/main", "HEAD")
     if mb is None:
         raise unittest.SkipTest("the merge base of origin/main and HEAD is not reachable in this checkout (%s; a shallow CI clone has no "
@@ -205,13 +210,17 @@ def branch_population():
     if diff is None:
         raise unittest.SkipTest("the diff of BASE %s against HEAD could not be read (%s), so the branch's added lines cannot be derived: "
                                 "nothing was read" % (BASE[:9], why))
-    return added_lines(diff), "the added lines of `git diff -U0 %s HEAD`, the committed tree" % BASE[:9]
+    added, how = added_lines(diff), "the added lines of `git diff -U0 %s HEAD`, the committed tree" % BASE[:9]
+    if SELF not in added:
+        raise AssertionError("the rig: this module is a file the branch adds, so its own lines are in the population it derives (%s); the "
+                             "derivation read %d files and not %s, so this is a tree that is main itself (the diff empty) or a reader that "
+                             "dropped the module, and the guard refuses rather than passing over nothing" % (how, len(added), SELF))
+    return added, how
 
 
 class RoundLabels(unittest.TestCase):
     def test_no_branch_line_names_a_round_the_maintainer_did_not_hold_or_names_it_bare(self):
         added, how = branch_population()
-        self.assertIn(SELF, added, "the rig: this module is a file the branch adds, so its own lines are in the population it derives (%s)" % how)
         bad, read, carrying = [], 0, set()
         for rel, lines in sorted(added.items()):
             if not any(MENTION.search(line) for _, line in lines):
