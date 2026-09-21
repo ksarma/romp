@@ -57,8 +57,11 @@ two. Comment, string and heredoc are bash's call too: the test's text up to the 
 `bash -n` in the C locale (its English wording is what is read), which refuses the `||` token only in command text
 (_command_context); a backtick substitution's text is opaque to bash -n, so a `!` inside one is a candidate whatever surrounds it,
 and its pipeline ends at the closing backtick. Three exclusions are lexical, by the word before the `!`: `[ !`, `[[ !` and `run !`
-(_OPERATOR_OF). A `!` that is another command's argument (`find . ! -name x`) is a candidate, and bats reports it as inert or
-undecided: a false report on the visible side, none in the tree today. The one piece of grammar left is the negated pipeline's
+(_OPERATOR_OF; the word before is bounded as bash bounds a word, _word_before over _word_ends, so `true;[ !` and `(run !` are
+`[`'s and run's too; before round 2's ninth commit it was read as blank-delimited, `true;[` and `(run`, and the `!` was a
+candidate, reported undecided or decided read, population 0 in the tree). A `!` that is another command's argument
+(`find . ! -name x`) is a candidate, and bats reports it as inert or undecided: a false report on the visible side, none in the
+tree today. The one piece of grammar left is the negated pipeline's
 extent (negated_pipeline), and bash decides it too: the walker proposes where the text may end, at every `;`, `&&`, `||`, lone
 `&` and `)` of the text wherever it stands, at a `#` at the start of a word, and at the line's end, and at each proposal asks
 `bash -n` whether the text so far, in a brace group, is a complete command (_pipeline_complete). Where it is, the pipeline ends
@@ -89,15 +92,15 @@ than passing an empty corpus as clean: suite_files; BatsSuites lists a file's ca
 them): 232 `!` words file-wide, 191 of them `[ !`, 24 inside comments and strings (the word rule takes a `!` next to a backtick, a
 `)` or a `>`), 5 at file scope, and 12 candidates in test bodies (bootstrap-sh.bats 184; install-optional-deps.bats 505;
 install-sh.bats 329, 400, 411; pr-orphans.bats 125; romp-serve.bats 117, 309, 334, 382; romp-service.bats 683; romp-sessions.bats
-84), listed in 7.35 s with the extents (one `bash -n` per `}` word of a test's lines through its close since the sixth commit,
-7.02 s there and 7.52 s at the seventh commit, and one per `}` word of the close line for its column; the fifth commit asked
-every brace, 8.36 s, and the head before it 6.89 s). bats
+84), listed in 6.73 s with the extents (one `bash -n` per `}` word of a test's lines through its close since the sixth commit,
+7.02 s there, 7.52 s at the seventh commit and 7.35 s at the eighth, and one per `}` word of the close line for its column; the
+fifth commit asked every brace, 8.36 s, and the head before it 6.89 s). bats
 reads all 12 (BatsCorpus, under 1.10.0 and 1.11.1): the nine at line start are `not
 ok` on their own line under `! true` and `ok` under `! false`; the three condition heads of romp-serve.bats (309, 334 and 382, `if
 ! _dead "$pid"; then kill ...; return 1; fi`) the reverse, `ok` under `! true` and `not ok` on their own line under `! false`, so
 they are read only through the second rewrite; 0 inert, 0 undecided. Each rewrite runs twice (REPEATS) and four candidates are
-decided at a time (CORPUS_WORKERS): 166.44 s of runs in 77.96 s on this box under 1.10.0 (74.75 s under 1.11.1), 119.63 s of the
-runs the three heads' probe tests, whose slowest side is romp-serve.bats 334 under `! true`, 27.81 s for its two runs, against
+decided at a time (CORPUS_WORKERS): 154.12 s of runs in 72.27 s on this box under 1.10.0 (72.30 s under 1.11.1), 109.10 s of the
+runs the three heads' probe tests, whose slowest side is romp-serve.bats 334 under `! true`, 25.45 s for its two runs, against
 which RUN_TIMEOUT stands at 60 s a run. The 5 file-scope `!` words sit in helpers and a setup (bats-state-isolation.bats 125, 126
 and 129 twice; romp-postal.bats 47): outside the subject, since a `!` there has no enclosing test to run alone, and so is one in
 the text after a test's close, on its close line or on the lines a construct opened there runs on to: a helper defined there, a
@@ -190,8 +193,8 @@ test of this module that derives from bash skips under such a bash wherever it r
 (bash_shortfall, skip_unless_bash_serves: BASH_4_SYNTAX and the warning; the Python cells run the module on macOS with no bats,
 where before round 2's second commit the two recall tests, the extents and the candidates were red, and the two tests that need no bash run
 there). The inner bats resolves through a PATH without the outer's libexec directory (_bats_env), since the entry point there
-expects the BATS_ROOT the scrub removes and did not load under CI's /usr/local layout. Measured at this head: 531 shapes, 557
-tests, in 75.61 s under 1.10.0 and 75.62 s under 1.11.1; under `! true` 317 ok and 240 not ok, under `! false` 540 ok and 17 not
+expects the BATS_ROOT the scrub removes and did not load under CI's /usr/local layout. Measured at this head: 533 shapes, 559
+tests, in 69.68 s under 1.10.0 and 74.83 s under 1.11.1; under `! true` 319 ok and 240 not ok, under `! false` 542 ok and 17 not
 ok (the four condition heads whose branch fails the test, `command _h` and `env _h`, which find no shell function, `run ! true`,
 which run itself fails, the doubled negation mid and last and the doubled negation across a line continuation mid and last,
 whose inversions cancel, `! true && false` mid and last, the backgrounded negation whose job status `wait %%` reads, mid and
@@ -199,15 +202,16 @@ last, the status saved with `rc=$?` and read by `[ ]`, and the brace glued to a 
 nowhere, `}#: command not found`, failing under both); decide over the 521 tests holding one candidate: 241 read, 276 inert, 4
 undecided (`command _h`, `env _h`, `! true && false` last and `}# not a comment`, failing under both), the 9 holding two (the
 doubled and tripled negations, the doubled negation across a line continuation, `if ! _h` and `! _h` mid and last with their
-helpers) and the 27 holding none not asked (among them the fourteen `y` tests of I_close_then_*,
+helpers) and the 29 holding none not asked (among them the fourteen `y` tests of I_close_then_*,
 I_close_backslash_newline_then_test and I_one_liner_then_arming, which call or read what the file-scope text after a close
-defines, or run after it, and the three tests whose one `!` is declared one word with what follows it, G_procsub_glued_* and
-G_bang_backslash_newline_glued_mid). The 515 shapes of the head before this commit keep their recorded verdicts under both bats,
-and their extents, close columns, candidates and rewrites are byte for byte that head's walker's (measured over every one of
-them and the corpus's 24 rewrites: 0 differences; the `!` word rule's matches and the `}` words too, over every line of both; of
-the 16 shapes this commit adds, 8 move, the glued process substitutions on both sides, the `!` continued onto ` true` and the
-doubled negation across a join, and 8 read the same at both heads, the separated and the declared forms, controls), as each
-head of fork PR #871's review kept the one before it (513, 506, 497, 493, 481, 429 and 381 shapes); the 250 shapes of the
+defines, or run after it, the three tests whose one `!` is declared one word with what follows it, G_procsub_glued_* and
+G_bang_backslash_newline_glued_mid, and the five whose one `!` is the operator of `[`, `[[` or run, X_*, two of them with the
+word before the `!` begun after a `;` or a `(`). The 531 shapes of the head before this commit keep their recorded verdicts under
+both bats, and their extents, close columns, candidates and rewrites are byte for byte that head's walker's (measured over every
+one of them and the corpus's 24 rewrites: 0 differences; the `!` word rule's matches and the `}` words too, over every line of
+both; both shapes this commit adds move, the operators of `[` and run after a `;` and a `(`, a candidate each at that head and
+none here), as each head of fork PR #871's review kept the one before it (515, 513, 506, 497, 493, 481, 429 and 381 shapes); the
+250 shapes of the
 earlier register keep their 260 recorded `! true` verdicts and are 260 ok under `! false`; every negation of the register is a
 candidate (541, 299 of them in tests recorded ok, 495 at line start), the 139 recorded-inert line-start sites the earlier
 register counted and every one off line start among them.
@@ -314,8 +318,9 @@ def _bang_at(lines, i, j):
     line = lines[i]
     return (j < len(line) and line[j] == "!" and (j == 0 or line[j - 1] in _METACHARACTERS or line[j - 1] == "`")
             and (line[j + 1:j + 2] == "`" or _word_ends(lines, i, j + 1)))
-# the word before a `!` that makes it an operator of `[` or `[[`, or bats's own inverted `run` (`run ! cmd` fails the test itself
-# when cmd succeeds, in a file declaring bats_require_minimum_version 1.5.0), rather than a command's negation
+# the word before a `!` (_word_before, bounded as bash bounds a word: `true;[ !` and `(run !` are `[`'s and run's) that makes it
+# an operator of `[` or `[[`, or bats's own inverted `run` (`run ! cmd` fails the test itself when cmd succeeds, in a file
+# declaring bats_require_minimum_version 1.5.0), rather than a command's negation
 _OPERATOR_OF = ("[", "[[", "run")
 # what `bash -n` says of a test's text cut at a `!` with ` || ||` appended when the cut is in command text. Inside a quoted string
 # or an arithmetic expansion it reports the unmatched delimiter instead, inside a here-document its end-of-file warning, inside a
@@ -340,6 +345,14 @@ def _bash_n(lines):
     `${x}` followed by a blank inside a `[[ "` still is), so a strict decode raised there; none of the phrases read is touched."""
     r = subprocess.run(["bash", "-n"], input="\n".join(lines) + "\n", capture_output=True, text=True, errors="replace", env=dict(os.environ, LC_ALL="C"))
     return r.returncode, r.stderr
+
+
+def _declared(line):
+    """What bash prints for a function whose body is the line (`declare -f`, in the C locale): its own parse of the line, one
+    command per line, so where bash ends a word and begins the next is read off bash and not off this module's rule
+    (Candidates reads it for the word before a `!`)."""
+    return subprocess.run(["bash", "-c", "f() {\n%s\n}\ndeclare -f f" % line], capture_output=True, text=True, errors="replace",
+                          env=dict(os.environ, LC_ALL="C")).stdout
 
 
 def _bash_parses(lines):
@@ -597,13 +610,27 @@ def _test_bangs(lines, o, c, rewritten=None):
                 yield i, j
 
 
-def _word_before(line, j):
-    """The word before column j of the line, blanks between skipped: "" at the line's start."""
+def _word_before(lines, i, j):
+    r"""The word before column j of lines[i], blanks between skipped, bounded where bash bounds a word: it ends at the last
+    character before the blanks, and it begins after the character that ends the word before it, _word_ends read backwards
+    (the one statement of bash's word-break rule here, the `}` and `!` readers' too), or at the line's start. So the word before
+    the `!` of `true;[ ! -f /x ]` is `[` and of `(run ! false)` is `run`, as `declare -f` prints them, `true;` then `[ ! -f /x ]`
+    and `( run ! false )` (bash -n exit 0 on each): the `!` is `[`'s and run's operator. "" at the line's start and right after
+    a metacharacter (`true; ! true`, `(! true)`: a negation). A character bash does not break a word at glues, `echo[ ! -f /x ]`
+    and `"[" ! -s /dev/null ]` have `echo[` and `"["` before the `!`, no operator to _OPERATOR_OF, the `!` a candidate bats
+    reports, the safe side; a word bash reads through a matching parenthesis, `<(true)`, ends at its `)`, a metacharacter to this
+    backward read, and the word before is "" then, a candidate again. The character before a word at a line's start is not read
+    across a continuation, as _bang_at does not read it for the `!`: `[ \` then `! -f /x ]` is `[ ! -f /x ]` to bash and "" here,
+    a candidate bats reports. Before fork PR #871's round 2, ninth commit, the word was read as blank-delimited, a second
+    spelling of the boundary the eighth commit made one function: `true;[` and `(run`, neither in _OPERATOR_OF, so the `!` was a
+    candidate, the first rewritten to `true;[ ! true`, `[: missing ]` under both, and reported undecided (the visible side), the
+    second to `(run ! true)`, which run itself fails, and decided read, no report and no defect; population 0 in tests/*.bats."""
+    line = lines[i]
     k = j
     while k > 0 and line[k - 1] in " \t":
         k -= 1
     s = k
-    while s > 0 and line[s - 1] not in " \t":
+    while s > 0 and not _word_ends(lines, i, s - 1):
         s -= 1
     return line[s:k]
 
@@ -632,7 +659,7 @@ def candidates(lines, extents):
         # reaches here
         shift = len(_TEST_OPENER) - _tail_start(_test_line(lines[o]))
         for i, j in _test_bangs(lines, o, c, rewritten):
-            if _word_before(lines[i], j) in _OPERATOR_OF:
+            if _word_before(lines, i, j) in _OPERATOR_OF:
                 continue
             context = _command_context(rewritten, o, i, j + shift if i == o else j)
             if context:
@@ -1937,6 +1964,58 @@ class Candidates(unittest.TestCase):
             self.assertEqual(rewritten_shape(lines, extents, repl), ['@test "x" {', "    true", "    ! " + repl, "", "}"])
         self.assertEqual(rewrite(lines, Candidate(0, 3, 4, False), "! false"), ['@test "x" {', "    true", "    ! \\", "    ! false", "}"])
 
+    def test_the_word_before_a_negation_ends_where_bash_ends_a_word_so_an_operator_after_a_metacharacter_is_none(self):
+        # fork PR #871's round 2, ninth commit (the reviewer's landing edit): _word_before read the word before a `!` as
+        # blank-delimited, a second spelling of the boundary the eighth commit made one function (_word_ends), so on
+        # `true;[ ! -f /x ]` and `(run ! false)` it gave `true;[` and `(run`, neither in _OPERATOR_OF, and the `!` was a
+        # candidate, where bash ends the word before it at the `;` and at the `(`: `bash -n` over `f() {`, the line, `}` exits 0,
+        # and `declare -f f` prints `true;` and `[ ! -f /x ]` on lines of their own, and `( run ! false )`, the `!` the operator
+        # of `[` and of run (asserted below, from bash's own printing of the function it parsed). At the eighth commit the first
+        # was rewritten to `true;[ ! true`, `[: missing ]` under both, and reported undecided, the visible side; the second to
+        # `(run ! true)`, which run itself fails, and decided read, no report. Now _word_before reads _word_ends backwards: the
+        # word before begins after the character that ends the word before it, a metacharacter or the line's start. Red before:
+        # `'true;[' != '['`, this pin's first assertion. The register's X_test_bracket_after_semicolon_mid and
+        # X_run_negation_in_subshell_mid declare the two operators, so a reader taking them reds the declaration test as stale
+        RUN = "bats_require_minimum_version 1.5.0\n\n"
+        for line, word, prefix, printed in (("    true;[ ! -f /x ]", "[", "", "    true;\n    [ ! -f /x ]\n"),
+                                            ("    (run ! false)", "run", RUN, "    ( run ! false )\n"),
+                                            ("    $([ ! -f /x ])", "[", "", "    $([ ! -f /x ])\n"),
+                                            ("    x;[[ ! -s /dev/null ]]", "[[", "", "    x;\n    [[ ! -s /dev/null ]]\n"),
+                                            ("    { run ! false; }", "run", RUN, "    { \n        run ! false\n    }\n"),
+                                            ("    [ ! -s /dev/null ]", "[", "", "    [ ! -s /dev/null ]\n"),
+                                            ("\trun ! true", "run", RUN, "    run ! true\n")):
+            lines = (prefix + '@test "x" {\n%s\n    true\n}\n' % line).split("\n")
+            extents = bash_test_extents(lines)
+            i, j = lines.index(line), line.index("!")
+            self.assertEqual(_word_before(lines, i, j), word, line)
+            self.assertEqual(candidates(lines, extents), [], line)
+            self.assertEqual(list(_bangs(_ANY_BANG, lines, *extents[0])), [(i, j)], line)   # the register's expected set holds it: a shape declares it
+            self.assertEqual(_bash_n(["f() {", line, "}"])[0], 0, line)
+            self.assertIn(printed, _declared(line), line)
+        # the boundary is bash's and no other: a character that is no metacharacter glues (`xrun`, `"["`: another word to bash, no
+        # operator, the `!` its argument and a candidate bats reports, the safe side), and a `!` right after a metacharacter has
+        # "" before it, a negation
+        for line, word, printed in (("    x;xrun ! true", "xrun", "    x;\n    xrun ! true\n"),
+                                    ('    "[" ! -s /dev/null ]', '"["', '    "[" ! -s /dev/null ]\n'),
+                                    ("    true; ! true", "", "    true;\n    ! true\n"), ("    true;! true", "", "    true;\n    ! true\n"),
+                                    ("    (! true)", "", "    ( ! true )\n")):
+            lines = ['@test "x" {', line, "    true", "}"]
+            extents = bash_test_extents(lines)
+            j = line.index("!")
+            self.assertEqual(_word_before(lines, 1, j), word, line)
+            self.assertEqual(candidates(lines, extents), [Candidate(0, 1, j, False)], line)
+            self.assertIn(printed, _declared(line), line)
+        # `echo[` glues the same way (`declare -f` prints `x;` then `echo[ ! -f /x ]`), and the `!` after it is no candidate for
+        # another reason, bash's: a word `name[` at a command's start opens a subscript, so the test's text cut at the `!` is no
+        # command text (_command_context: `bash -n` on `x;echo[ || ||` says `unexpected EOF while looking for matching `]'`), and a
+        # `!` inside a subscript is the arithmetic operator
+        lines = ['@test "x" {', "    x;echo[ ! -f /x ]", "    true", "}"]
+        self.assertEqual(_word_before(lines, 1, 12), "echo[")
+        self.assertEqual(candidates(lines, bash_test_extents(lines)), [])
+        self.assertIsNone(_command_context(_rewritten(lines), 0, 1, 12))
+        self.assertIn("unexpected EOF while looking for matching `]'", _bash_n(["f() {", "    x;echo[ || ||"])[1])
+        self.assertIn("    x;\n    echo[ ! -f /x ]\n", _declared("    x;echo[ ! -f /x ]"))
+
     def test_the_negated_pipeline_ends_at_the_first_top_level_operator_or_comment_and_follows_a_continuation(self):
         lines = ['@test "x" {',
                  '    ! grep -q x "$f" ; true',                      # 1: `;`
@@ -2584,6 +2663,11 @@ def ground_truth_shapes():
     S["X_test_bracket_mid"] = '@test "x" {\n    [ ! -s /dev/null ]\n    true\n}\n'
     S["X_test_dbracket_mid"] = '@test "x" {\n    [[ ! -s /dev/null ]]\n    true\n}\n'
     S["X_run_negation_mid"] = 'bats_require_minimum_version 1.5.0\n\n@test "x" {\n    run ! true\n    true\n}\n'
+    # and the same operators with the word before the `!` ended by a metacharacter and no blank, `;` and `(`, where bash begins
+    # `[` and `run` (fork PR #871's round 2, ninth commit: the word before was read as blank-delimited, `true;[` and `(run`, and
+    # the `!` a candidate, the first reported undecided under both rewrites and the second decided read)
+    S["X_test_bracket_after_semicolon_mid"] = '@test "x" {\n    true;[ ! -f /x ]\n    true\n}\n'
+    S["X_run_negation_in_subshell_mid"] = 'bats_require_minimum_version 1.5.0\n\n@test "x" {\n    (run ! false)\n    true\n}\n'
     return S
 
 
@@ -2610,6 +2694,8 @@ NOT_A_NEGATION = dict(
     X_test_bracket_mid={2: "the operator of `[`"},
     X_test_dbracket_mid={2: "the operator of `[[`"},
     X_run_negation_mid={4: "run's own inverted status, checked by run"},
+    X_test_bracket_after_semicolon_mid={2: "the operator of `[`, the word before the `!` begun after the `;`, a metacharacter and no blank"},
+    X_run_negation_in_subshell_mid={4: "run's own inverted status, checked by run, the word before the `!` begun after the `(`"},
 )
 # the tests of the register that hold no `!` at all, by shape and 1-based test ordinal: a test recorded `ok` with no candidate must
 # be one of these, or hold only declared `!` words, for the gate to pass it
@@ -3232,7 +3318,9 @@ class BatsGroundTruth(unittest.TestCase):
         'T_while_condition_multiline': ('ok', 'ok'),
         'T_while_last': ('not ok', 'ok'),
         'T_while_mid': ('ok', 'ok'),
+        'X_run_negation_in_subshell_mid': ('ok', 'ok'),
         'X_run_negation_mid': ('not ok', 'not ok'),
+        'X_test_bracket_after_semicolon_mid': ('ok', 'ok'),
         'X_test_bracket_mid': ('ok', 'ok'),
         'X_test_dbracket_mid': ('ok', 'ok'),
     }
@@ -3248,7 +3336,7 @@ class BatsGroundTruth(unittest.TestCase):
     def test_every_negation_of_the_register_is_a_candidate_unless_declared_an_operator_or_text(self):
         # the recall half, over every test of every shape (the recorded-inert ones, in a test bats passes with the negated command
         # succeeding, are the ones a miss would hide; the read ones are counted too): the expected set is every `!` CHARACTER of the
-        # test's text (_ANY_BANG, not the predicate's word rule _BANG), minus the lines NOT_A_NEGATION declares, so it is derived
+        # test's text (_ANY_BANG, not the predicate's word rule, _bang_at over _word_ends), minus the lines NOT_A_NEGATION declares, so it is derived
         # from the shapes and the record and from no rule of this module's, and a `!` the word rule misses is a miss here
         skip_unless_bash_serves(self)
         shapes = ground_truth_shapes()
