@@ -933,6 +933,24 @@ def verdict(inv):
     return "unlisted"
 
 
+def stale_listings(found, table=None):
+    """The entries of `table` (SWITCH_LISTED by default) that name no pytest invocation among `found`, or name the
+    unnamed placeholder, each described: a stale entry is a reason with no subject (the step renamed or removed and
+    the list not following), and a listing needs a name to be found by. Keyed on (job, step name) against the
+    invocations' keys. Run against what it refuses in PopulationCheckReds (2026-09-21; before that the check had no
+    case supplying a stale or an unnamed key)."""
+    table = SWITCH_LISTED if table is None else table
+    keys = {(i["job"], i["step"]) for i in found}
+    out = []
+    for key in table:
+        if key[1] == UNNAMED:
+            out.append("%r: SWITCH_LISTED lists an unnamed step: give the step a name: to list it by" % (key,))
+        elif key not in keys:
+            out.append("%r: SWITCH_LISTED names a step that is not a pytest invocation in the workflow (keyed on the job key "
+                       "and the step's name: line): renamed or removed, drop or fix the entry" % (key,))
+    return out
+
+
 def _describe(inv):
     """The offender, named: job, step, file line, and what it lacks. The flag half keys on the SPELLING `-p no:anyio`
     (one space) in the command's own arguments; the switch half on the merged env reading exactly 1."""
@@ -1013,12 +1031,10 @@ class PytestPopulation(unittest.TestCase):
 
     def test_every_listed_entry_names_an_invocation_that_exists(self):
         # a stale entry is a reason with no subject: the step was renamed or removed and the list did not follow; and a
-        # listing needs a name to be found by, so the unnamed placeholder is refused as a key
-        keys = {(i["job"], i["step"]) for i in self.found}
-        for key in SWITCH_LISTED:
-            self.assertNotEqual(key[1], UNNAMED, "SWITCH_LISTED lists an unnamed step: give the step a name: to list it by")
-            self.assertIn(key, keys, "SWITCH_LISTED names %r, which is not a pytest invocation in the workflow (keyed on "
-                          "the job key and the step's name: line)" % (key,))
+        # listing needs a name to be found by, so the unnamed placeholder is refused as a key (stale_listings; run
+        # against a stale and an unnamed key in PopulationCheckReds)
+        self.assertEqual(stale_listings(self.found), [], "SWITCH_LISTED carries an entry that names no pytest invocation "
+                         "in the workflow, or an unnamed step (keyed on the job key and the step's name: line)")
 
 
 class ListedInvocations(unittest.TestCase):
@@ -1231,6 +1247,22 @@ class PopulationCheckReds(unittest.TestCase):
         self.assertEqual(verdict(served[0]), "listed", _describe(served[0]))
         with mock.patch.dict(SWITCH_LISTED, clear=True):
             self.assertEqual(verdict(served[0]), "unlisted", _describe(served[0]))
+
+    def test_a_stale_listing_and_an_unnamed_listing_are_named_by_the_stale_entry_check(self):
+        # the check against what it refuses: a key naming a step the workflow no longer has (renamed), and the unnamed
+        # placeholder as a key; the live entry beside them stays unnamed by the check
+        found = self.found_live()
+        self.assertEqual(stale_listings(found), [], "the live table has no stale entry")
+        with mock.patch.dict(SWITCH_LISTED, {("vscode-extension", "Renamed (pytest)"): "synthetic stale entry",
+                                             ("shell", UNNAMED): "synthetic unnamed entry"}):
+            stale = stale_listings(found)
+        self.assertEqual(len(stale), 2, stale)
+        self.assertIn("('vscode-extension', 'Renamed (pytest)'): SWITCH_LISTED names a step that is not a pytest invocation", stale[0])
+        self.assertIn("renamed or removed", stale[0])
+        self.assertIn("('shell', '(unnamed step)'): SWITCH_LISTED lists an unnamed step", stale[1])
+        # and with a scratch table alone, so the live entry is not what makes it green
+        self.assertEqual(stale_listings(found, {SERVED_STEP: "x"}), [])
+        self.assertEqual(len(stale_listings(found, {("python", "Renamed pytest"): "x"})), 1)
 
     def test_a_job_level_env_a_workflow_level_env_and_their_precedence_are_read(self):
         lit = ('      - name: Literal (pytest)\n        run: |\n          set -e\n          # pytest in a comment is not a call\n'
