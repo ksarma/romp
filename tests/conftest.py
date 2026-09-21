@@ -33,7 +33,9 @@ from _pytest._code.code import ReprExceptionInfo, ReprFileLocation, ReprTracebac
 # inside it. Under pytest-xdist both hooks run in the controller and in every worker: each imported
 # the package and this file and so owns a root of its own, and a worker's sits BESIDE the controller's
 # in the system temp dir the package recorded (ROMP_TESTS_SYSTEM_TMPDIR, a setdefault the worker
-# inherits), never inside it (2026-09-21; nested until then, and each level cost 20 bytes of the AF_UNIX
+# inherits), never inside it: beside whenever that recorded dir exists, differs from the handed dir and
+# is its parent; otherwise inside the handed dir, as before, and the PrivateTempRoot pin in
+# tests/test_tempdir_hygiene.py reds on that shape (2026-09-21; nested until then, and each level cost 20 bytes of the AF_UNIX
 # socket path budget, which put the deepest hosts-on lab's socket at the budget exactly under a 17-byte
 # TMPDIR under -n: the package's comment has the arithmetic). Each process removes its own root; the
 # controller's removal below also takes the root of any worker that died without its hooks (the

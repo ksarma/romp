@@ -89,7 +89,11 @@ def remove_made_dirs():
 # `dir=` would bypass the redirect (one did).
 # BESIDE, NOT INSIDE (2026-09-21): a process handed a `romp-tests-*` root as its temp dir — an xdist
 # worker, a nested pytest, any child of a run that imports this package — mints its own root in the
-# recorded system dir, beside its parent's, never inside it. Until then a worker's root nested inside
+# recorded system dir, beside its parent's, never inside it: beside whenever the recorded system dir
+# exists, differs from the handed dir and is the handed dir's own parent (parent_root below); otherwise
+# inside the handed dir, as before 2026-09-21 (a record gone or unwritable falls back to inside too, and
+# tests/test_tempdir_hygiene.py PrivateTempRoot's every-root-directly-under-it pin reds on that shape,
+# so a run that fell back says so). Until then a worker's root nested inside
 # the controller's, and each level cost 20 bytes (`/romp-tests-XXXXXXXX`) of the AF_UNIX path budget:
 # the deepest hosts-on lab (tests/test_session_host_restart.py, `host-served-XXXXXXXX/xdg/romp` plus the
 # host's `hosts/<sid8>.sock`) came to TMPDIR + 90 bytes under -n and TMPDIR + 70 alone, so at a 17-byte
