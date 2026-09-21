@@ -30,7 +30,11 @@ pixels and Send's centre stays under a finger (the backstop state, measured as i
 fitted state); the unbreakable token wraps, so the detail's scrollWidth is no wider than its offsetWidth, the border box
 (overflow-wrap: anywhere); the answer typed at 900px and the window then shrunk to 508 re-fits the answer box (kbFit
 re-runs grow on the resize); and on the other todo's sheet an inline height written as the resize grip writes it stands
-through a keystroke (the drag guard). And the tree each builder emits, read from the real pages: the pane's chips are
+through a keystroke (the drag guard), then the grip pulled past the box's bottom edge and released over the backdrop
+leaves the sheet up with its text (the click that ends a drag of the grip is not a dismissal: Chromium and WebKit
+dispatch it to the overlay, the common ancestor of the press and the release, and before the guard it closed the sheet
+with the answer; Firefox retargets it to the textarea), and a plain tap on the backdrop then dismisses. And the tree each
+builder emits, read from the real pages: the pane's chips are
 flex children of the box, the chat's sit inside the quoted line, and the elements the fix's four rules key on match
 their selectors in both.
 
@@ -292,6 +296,15 @@ class ReplySheetServed(unittest.TestCase):
         self.assertGreater(d["draggedH"], d["openH"] + 30, where + "the written height laid out taller than the floor: %r" % (d,))
         self.assertEqual(d["afterKeyStyleH"], "150px", where + "one keystroke after the drag: the inline height the person set stands, grow stood down (before the guard it snapped back to the content's height): %r" % (d,))
         self.assertGreaterEqual(d["afterKeyH"], d["draggedH"] - 1, where + "and the box keeps the dragged height: %r" % (d,))
+        # the click that ends a drag of the grip, released over the backdrop, is not a dismissal (the author's pass after the
+        # maintainer's round 1, composition-2): the sheet stands with its text in every engine (Chromium and WebKit dispatch
+        # the click to the overlay, the common ancestor of the press and the release; Firefox to the textarea), and a plain
+        # tap on the backdrop still dismisses (what a dismiss does with the text is the filed discard item's, untouched)
+        rel = r.get("release", {"error": "the release step did not run"})
+        self.assertNotIn("error", rel, where + "the release step ran to its end: %r" % (rel,))
+        self.assertTrue(rel["overlayUp"], where + "the click that ends a grip drag released over the backdrop (%s; the clicks' targets %r) is not a dismissal: the sheet stands; before the guard Chromium and WebKit closed it with the answer: %r" % (rel["road"], rel["clicks"], rel))
+        self.assertEqual(rel["value"], "a", where + "the answer is intact through the release: %r" % (rel,))
+        self.assertFalse(r["backdropTap"]["overlayUp"], where + "a plain tap on the backdrop still dismisses: %r" % (r["backdropTap"],))
 
     def test_waiting_chromium(self):
         self._leg("chromium", "waiting")

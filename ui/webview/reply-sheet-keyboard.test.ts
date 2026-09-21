@@ -25,7 +25,10 @@
 // closing IS a resize here; render.ts's picker keys on the same event, at the same 480px) and re-runs grow, and
 // close() removes the listener, which also removes itself when the overlay was replaced by a second Reply; grow lets
 // the box follow the answer up to the room the box has left, never under the three-row floor, and stands down for a
-// height the person dragged (file-comments.ts autosize's guard).
+// height the person dragged (file-comments.ts autosize's guard). The backdrop's click dismisses, except the click that
+// ends a drag of the answer box's grip: the press began on the box and the box's inline height changed under it (the
+// author's pass after the maintainer's round 1, composition-2; the record and the click line are executed below out of
+// each builder).
 //
 // Two kinds of leg, no browser (the browser legs are waiting-reply-sheet-browser.test.ts and
 // render-reply-sheet-browser.test.ts). The executed legs slice the fold's lines and the grow handler out of EACH
@@ -61,6 +64,11 @@ const KBFIT = /^\s*const kbFit = .*$/m;
 const CLOSE = /^\s*const close = .*$/m;
 const KB_ARM = /window\.addEventListener\("resize", kbFit\);\n\s*kbFit\(\);/;
 const GROW_ARM = /input\.addEventListener\("input", grow\);/;
+// the backdrop's click and the record it reads: whether the last press began on the answer box and the box's inline height
+// then (a drag of the grip changes it under the press), the press listener that writes the record, and the click line
+const PRESS_RECORD = /^\s*const press = \{ on: false, at: "" \};.*$/m;
+const PRESS_ARM = /^\s*overlay\.addEventListener\("pointerdown", .*$/m;
+const DISMISS = /^\s*overlay\.addEventListener\("click", .*$/m;
 // the grow handler is a BLOCK (its head, its statements, the `};` that closes it), sliced whole; a builder whose head or
 // close moved is a loud failure here, and the browser legs slice the same block
 function growBlock(src: string, name: string): string {
@@ -254,11 +262,57 @@ for (const [name, src] of BUILDERS) {
   });
 }
 
+// ── the backdrop's click, executed out of each builder ───────────────────────────────────────────
+// A tap on the backdrop dismisses. The click that ends a drag of the answer box's grip does not: Chromium and WebKit
+// dispatch a click whose press and release targets differ to their common ancestor, the overlay, so a grip pull released
+// past the box's bottom edge (at 508 the box is at its cap and cannot grow with the answer box, so the pointer leaves it)
+// arrived as a backdrop click and closed the sheet with the answer (the author's pass after the maintainer's round 1,
+// composition-2; the browser legs and tests/test_reply_sheet_served.py drive the real pull in each engine). The drag is
+// known by its events: the press began on the answer box and at the click the box's inline height is not what it was at
+// the press (resize: vertical writes it as the grip moves); the record holds those two facts. It is spent by the click
+// that ends the press, and a new press starts it over. What a dismiss DOES (close with no save) is untouched: the filed
+// discard item's. Run here against shim nodes with the three lines sliced out of each builder
+for (const [name, src] of BUILDERS) {
+  test(`${name}: the backdrop's click dismisses, except the click that ends a drag of the answer box's grip`, () => {
+    const overlay = makeNode("div"), input = makeNode("textarea");
+    overlay.appendChild(input);
+    let closed = 0;
+    const close = () => { closed++; };
+    const body = [line(src, PRESS_RECORD, "the press record", name), line(src, PRESS_ARM, "the press listener", name), line(src, DISMISS, "the backdrop's click", name)].join("\n");
+    new Function("overlay", "input", "close", body)(overlay, input, close);
+    const press = (target: unknown) => overlay._listeners.pointerdown({ type: "pointerdown", target });
+    const click = (target: unknown) => overlay._listeners.click({ type: "click", target });
+    input.style.height = "78px";
+    // a tap on the backdrop: the press and its click both on the overlay
+    press(overlay); click(overlay);
+    assert.equal(closed, 1, "a tap on the backdrop dismisses (the sheet's dismiss road, as before)");
+    // a drag of the grip released past the box's bottom edge: the press on the answer box, the inline height changed under it,
+    // the click at the overlay (Chromium and WebKit: the common ancestor of the press and the release)
+    press(input); input.style.height = "148px"; click(overlay);
+    assert.equal(closed, 1, "the click that ends a grip drag is not a dismissal: the sheet stands (before the guard it closed with the answer in Chromium and WebKit)");
+    // the record is spent by that click: the next tap on the backdrop dismisses
+    press(overlay); click(overlay);
+    assert.equal(closed, 2, "the record is read once, by the click that ended the drag: a tap on the backdrop after it dismisses");
+    // Firefox retargets the drag's click to the textarea: not the overlay, so nothing to dismiss, and the record is spent there too
+    press(input); input.style.height = "200px"; click(input);
+    assert.equal(closed, 2, "a click on the textarea is never a dismissal");
+    press(overlay); click(overlay);
+    assert.equal(closed, 3, "and the record it spent does not reach the next tap on the backdrop");
+    // a press on the box whose click never came (released over another frame, no click in this document): the next press starts over
+    press(input); input.style.height = "230px";
+    press(overlay); click(overlay);
+    assert.equal(closed, 4, "a new press starts the record over: a press on the box without a click leaves nothing behind for the next tap");
+  });
+}
+
 // ── twins ────────────────────────────────────────────────────────────────────────────────────────
 test("the two builders stay twins for this fix: the same kbFit line, the same grow line, the same threshold as the picker's fold", () => {
   const [[, w], [, r]] = BUILDERS;
   assert.equal(line(w, KBFIT, "kbFit", "waiting.ts").trim(), line(r, KBFIT, "kbFit", "render.ts").trim(), "one kbFit line in both builders");
   assert.equal(growBlock(w, "waiting.ts"), growBlock(r, "render.ts"), "one grow block in both builders, byte for byte");
+  for (const [what, re] of [["the press record", PRESS_RECORD], ["the press listener", PRESS_ARM], ["the backdrop's click", DISMISS]] as Array<[string, RegExp]>) {
+    assert.equal(line(w, re, what, "waiting.ts").trim(), line(r, re, what, "render.ts").trim(), `one ${what} line in both builders (executed above)`);
+  }
   for (const [name, src] of BUILDERS) {
     assert.match(line(src, KBFIT, "kbFit", name), /overlay\.classList\.toggle\("kb-tight", window\.innerHeight < 480\)/, name + ": the picker's 480px threshold (render.ts showPicker), so the two folds agree on what a short window is");
     assert.match(line(src, KBFIT, "kbFit", name), /if \(!overlay\.isConnected\) \{ window\.removeEventListener\("resize", kbFit\); return; \}/, name + ": the listener drops itself when the overlay was replaced");

@@ -28,6 +28,11 @@
 // title, the ask and most of the detail sat above the clip with no way to scroll back; the first red differs by engine
 // (Chromium and WebKit: the answer box a 14px sliver, and in WebKit the buttons below the clip too; Firefox: the rows
 // kept and the buttons in reach), and the detail's computed overflow-y, visible there, is the red common to all three.
+// The click that ends a drag of the grip is not a tap on the backdrop (the author's pass after the maintainer's round 1,
+// composition-2): at 508 the box is at its cap, so a grip pull released past its bottom edge leaves the pointer over the
+// backdrop, and Chromium and WebKit dispatch that click to the overlay, the common ancestor of the press and the
+// release, which before the guard closed the sheet with the answer (Firefox retargets it to the textarea); now the sheet
+// stands with its text in every engine, and a plain tap on the backdrop still dismisses.
 // Where they skip, the served leg tests/test_reply_sheet_served.py runs the same composition against the served chat
 // page in CI's browser step. Synthetic fixtures only: a placeholder sid, an invented path.
 import { test } from "node:test";
@@ -257,7 +262,56 @@ async function boot(browser: any) {
     }
     return { road, dragged: m };
   };
-  return { page, setHeight, settle, measure, probeShort, openReply, cancelReply, fill, tapSend, dragTaller, waitTight, errors };
+  // the click that ends a drag of the grip (the author's pass after the maintainer's round 1, composition-2): the grip pulled
+  // past the box's bottom edge and released over the backdrop. At 508 the box is at its cap, so it cannot grow with the answer
+  // box and the pointer leaves it; Chromium and WebKit dispatch the click to the overlay, the common ancestor of the press and
+  // the release, Firefox to the textarea. Every click on the document is recorded in the capture phase, so the record
+  // names the click's target per engine. Where the headless grip does not move, the inline height is written under the press,
+  // as the grip writes it, before the release; the road is reported
+  const dragRelease = async (past = 30) => {
+    await page.evaluate(() => {
+      const w = window as any;
+      w.__clicks = [];
+      if (!w.__clickRec) { w.__clickRec = true; w.document.addEventListener("click", (e: any) => { w.__clicks.push(String(e.target.id || e.target.className || e.target.tagName).split(" ")[0]); }, true); }
+    });
+    const before = (await measure())!;
+    const r = await page.evaluate(() => {
+      const d = document;
+      const i = d.querySelector("#ut-reply-prompt .ut-reply-input")!.getBoundingClientRect(); const b = d.querySelector("#ut-reply-prompt .confirm-box")!.getBoundingClientRect();
+      return { right: i.right, bottom: i.bottom, boxTop: b.top, boxBottom: b.bottom };
+    });
+    await page.mouse.move(r.right - 5, r.bottom - 5);
+    await page.mouse.down();
+    await page.mouse.move(r.right - 5, r.boxBottom + past - 12, { steps: 8 });
+    await page.mouse.move(r.right - 5, r.boxBottom + past, { steps: 4 });
+    const mid = (await measure())!;
+    let road = "native grip";
+    if (mid.inputStyleH === before.inputStyleH) {
+      road = "scripted (the headless grip did not move): the inline height written under the press, as the grip writes it";
+      await page.evaluate((h: number) => { (document.querySelector("#ut-reply-prompt .ut-reply-input") as HTMLElement).style.height = h + "px"; }, before.inputH + 60);
+      await settle();
+    }
+    await page.mouse.up();
+    await settle();
+    await page.waitForTimeout(300);
+    const after: { overlayUp: boolean; value: string | null; clicks: string[]; posted: number } = await page.evaluate(() => {
+      const w = window as any; const d = document;
+      const i = d.querySelector("#ut-reply-prompt .ut-reply-input") as HTMLTextAreaElement | null;
+      return { overlayUp: !!d.getElementById("ut-reply-prompt"), value: i ? i.value : null, clicks: w.__clicks as string[], posted: (w.__posted || []).filter((p: any) => p && p.type === "userTodoAnswer").length };
+    });
+    return { road, endY: r.boxBottom + past, boxBottom: r.boxBottom, inputStyleHMid: mid.inputStyleH, ...after };
+  };
+  // a plain tap on the backdrop, above the box
+  const tapBackdrop = async () => {
+    const top: number = await page.evaluate(() => document.querySelector("#ut-reply-prompt .confirm-box")!.getBoundingClientRect().top);
+    const at = { x: PHONE_W / 2, y: Math.max(4, Math.round(top / 2)) };
+    await page.mouse.click(at.x, at.y);
+    await settle();
+    await page.waitForTimeout(200);
+    const overlayUp: boolean = await page.evaluate(() => !!document.getElementById("ut-reply-prompt"));
+    return { at, overlayUp };
+  };
+  return { page, setHeight, settle, measure, probeShort, openReply, cancelReply, fill, tapSend, dragTaller, dragRelease, tapBackdrop, waitTight, errors };
 }
 // a short window with the chip todo open: the box scrolls; the detail keeps its floor and scrolls within itself; its
 // first line's address and Send are each under a finger once the box is scrolled to them
@@ -291,7 +345,7 @@ for (const name of ["chromium", "firefox", "webkit"]) {
     try { browser = await pw[name].launch(); }
     catch (e) { t.skip("no playwright " + name + " on this box, and this leg needs it; the served leg tests/test_reply_sheet_served.py is the guard where this skips (CI's browser step runs it in chromium): " + String((e as Error).message).split("\n")[0]); return; }
     try {
-      const { page, setHeight, settle, measure, probeShort, openReply, cancelReply, fill, tapSend, dragTaller, waitTight, errors } = await boot(browser);
+      const { page, setHeight, settle, measure, probeShort, openReply, cancelReply, fill, tapSend, dragTaller, dragRelease, tapBackdrop, waitTight, errors } = await boot(browser);
       await openReply(TODOS[0]);
       // ── 508px: the keyboard up on a phone, above the fold's threshold: the squeeze fix alone
       let m = (await measure())!;
@@ -408,7 +462,19 @@ for (const name of ["chromium", "firefox", "webkit"]) {
       await fill("");
       await setHeight(KEYBOARD_UP);
       await waitTight(false);
-      await cancelReply();
+      // ── the click that ends a drag of the grip is not a tap on the backdrop (the author's pass after the maintainer's round 1,
+      // composition-2). At 508 the box is at its cap, so a grip pull released past its bottom edge leaves the pointer over the
+      // backdrop; Chromium and WebKit dispatch that click to the overlay, the common ancestor of the press and the release, and
+      // before the guard it closed the sheet with the answer (Firefox retargets the click to the textarea). The sheet stands with
+      // its text in every engine, and a plain tap on the backdrop still dismisses (what a dismiss does is the filed discard item's)
+      await fill(ANSWER(3));
+      const rel = await dragRelease();
+      t.diagnostic(`${name}: the drag's release: ${rel.road}; released at y ${rel.endY.toFixed(1)}, past the box's bottom ${rel.boxBottom.toFixed(1)}; the clicks' targets ${JSON.stringify(rel.clicks)}`);
+      assert.equal(rel.overlayUp, true, `the click that ends a grip drag released over the backdrop (${rel.road}; the clicks' targets ${JSON.stringify(rel.clicks)}) is not a dismissal: the sheet stands (before the guard Chromium and WebKit closed it with the answer; Firefox retargets the click to the textarea)`);
+      assert.equal(rel.value, ANSWER(3), "and the answer is intact");
+      assert.equal(rel.posted, 0, "the release posted nothing");
+      const tapped = await tapBackdrop();
+      assert.equal(tapped.overlayUp, false, `a plain tap on the backdrop (at ${tapped.at.x}, ${tapped.at.y}) still dismisses; what a dismiss does with the text is the filed discard item's, untouched here`);
       // ── the onset of the old clip band, 490px, a todo with no detail and a fourteen-line answer
       await setHeight(ONSET);
       await openReply(TODOS[2]);

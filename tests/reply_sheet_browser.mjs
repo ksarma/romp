@@ -17,7 +17,10 @@
 // centre is under a finger; the chat's column fits); the detail's scrollWidth against its offsetWidth, the border box,
 // with the unbreakable token wrapped (overflow-wrap: anywhere); the answer typed at 900px and the window then shrunk to
 // 508 (kbFit re-runs grow on the resize: the answer box re-fits to the room). After the tap, on the other todo: an
-// inline height written as the resize grip writes it, then one keystroke (the drag guard: the height stands).
+// inline height written as the resize grip writes it, then one keystroke (the drag guard: the height stands); then the
+// grip pulled past the box's bottom edge and released over the backdrop (the click that ends a drag of the grip is not a
+// dismissal: the sheet stands with its text; Chromium and WebKit dispatch that click to the overlay, Firefox to the
+// textarea), and a plain tap on the backdrop (it dismisses).
 //
 // Prints one `RESULT:` JSON line; exits 3 when the browser does not launch (the Python side turns that into a skip), 4
 // when the LAB kernel is not healthy (cfg.healthz names the lab port, asserted before any request; never a live kernel).
@@ -137,6 +140,31 @@ const probeShort = () => page.evaluate(() => {
   box.scrollTop = 0;
   return o;
 });
+// the click that ends a drag of the grip (the author's pass after the maintainer's round 1, composition-2): every click on
+// the document recorded in the capture phase (the record names the click's target per engine); the grip pulled past the
+// box's bottom edge and released over the backdrop (the box at its cap cannot grow with the answer box, so the pointer
+// leaves it); where the headless grip does not move, the inline height is written under the press, as the grip writes it
+const dragRelease = async (past = 30) => {
+  await page.evaluate(() => { window.__clicks = []; if (!window.__clickRec) { window.__clickRec = true; document.addEventListener("click", (e) => { window.__clicks.push(String(e.target.id || e.target.className || e.target.tagName).split(" ")[0]); }, true); } });
+  const before = await measure();
+  const r = await page.evaluate(() => { const i = document.querySelector("#ut-reply-prompt .ut-reply-input").getBoundingClientRect(); const b = document.querySelector("#ut-reply-prompt .confirm-box").getBoundingClientRect(); return { right: i.right, bottom: i.bottom, boxTop: b.top, boxBottom: b.bottom }; });
+  await page.mouse.move(r.right - 5, r.bottom - 5);
+  await page.mouse.down();
+  await page.mouse.move(r.right - 5, r.boxBottom + past - 12, { steps: 8 });
+  await page.mouse.move(r.right - 5, r.boxBottom + past, { steps: 4 });
+  const mid = await measure();
+  let road = "native grip";
+  if (mid.inputStyleH === before.inputStyleH) {
+    road = "scripted (the headless grip did not move): the inline height written under the press, as the grip writes it";
+    await page.evaluate((h) => { document.querySelector("#ut-reply-prompt .ut-reply-input").style.height = h + "px"; }, before.inputH + 60);
+    await settle();
+  }
+  await page.mouse.up();
+  await settle();
+  await page.waitForTimeout(300);
+  const after = await page.evaluate(() => { const i = document.querySelector("#ut-reply-prompt .ut-reply-input"); return { overlayUp: !!document.getElementById("ut-reply-prompt"), value: i ? i.value : null, clicks: window.__clicks }; });
+  return { road, endY: r.boxBottom + past, boxTop: r.boxTop, boxBottom: r.boxBottom, inputStyleHMid: mid.inputStyleH, ...after };
+};
 // the Reply button of a todo, tapped as a person taps it; the chat's card is a collapsible notice whose head is tapped first
 const openReply = async (tid) => {
   const replySel = `.ut-reply[data-tid="${tid}"]`;
@@ -230,8 +258,22 @@ try {
       await settle();
       const typed = await measure();
       out.drag = { openStyleH: at.inputStyleH, openH: at.inputH, draggedStyleH: dragged.inputStyleH, draggedH: dragged.inputH, afterKeyStyleH: typed.inputStyleH, afterKeyH: typed.inputH };
-      await page.locator("#ut-reply-prompt .confirm-actions button").first().click();   // Cancel
     } catch (e) { out.drag = { error: String(e).slice(0, 400) }; }
+    // the click that ends a grip drag is not a tap on the backdrop (composition-2): on the same sheet the grip is pulled past the
+    // box's bottom edge and released over the backdrop; the sheet stands with its text, and a plain tap on the backdrop then
+    // dismisses. Its own failure is recorded, never fatal, so the records above reach the Python side whole
+    if (!out.drag.error) {
+      try {
+        out.release = await dragRelease();
+        if (out.release.overlayUp) {
+          const at = { x: W / 2, y: Math.max(4, Math.round(out.release.boxTop / 2)) };
+          await page.mouse.click(at.x, at.y);
+          await settle();
+          await page.waitForTimeout(200);
+          out.backdropTap = { at, overlayUp: await page.evaluate(() => !!document.getElementById("ut-reply-prompt")) };
+        }
+      } catch (e) { out.release = { error: String(e).slice(0, 400) }; }
+    }
   }
   await result({ ready: true });
 } catch (e) {
