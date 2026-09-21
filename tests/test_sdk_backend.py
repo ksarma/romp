@@ -6982,7 +6982,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         self.assertEqual(s2._launched_mode, "default"); self.assertEqual(s2.perm_mode, "default")
 
     def test_a_refused_live_mode_switch_puts_back_only_the_layers_that_still_hold_the_refused_pick(self):
-        # THE RULING OF ROUND 7 OF FORK PR #813'S REVIEW (2026-09-21), applied to _do_set_mode's revert, a sibling of the billing
+        # THE REVIEWER'S RULING OF 2026-09-21 ON ROUND 6'S OBSERVATION (fork PR #813, round 6, ninth commit), applied to _do_set_mode's revert, a sibling of the billing
         # guard's restore in the ruling's population of restore sites: a restore puts a layer back only if it still holds
         # what the step put there. set_mode writes the record BEFORE the live fields (its locked RMW, then the hold), so a
         # newer pick can have reached the record and not yet the session when the CLI's refusal of an older live switch
@@ -8541,7 +8541,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         # and a turn's init report. Every write is locked, and each writer is reached. An AST walk over the module
         # then enumerates every assignment statement to the four names outside __init__, setattr included, and requires
         # a _hold_write block around it (or a _step_write block: the same lock taken through _hold_write, with a billing
-        # step's recorder, fork PR #813's round 7; tests/test_billing_route.py drives that it holds the lock), so a writer
+        # step's recorder, fork PR #813's ninth commit, round 6 of its review; tests/test_billing_route.py drives that it holds the lock), so a writer
         # the fake does not reach cannot land bare either
         STAMPS = ("_launched_effort", "_launched_mode", "_launched_auth", "_launched_env")
         writes = []

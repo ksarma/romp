@@ -3322,13 +3322,13 @@ class StepWrite:
     exactly what the step's own write took away and nothing another writer put there since. The retry itself writes
     into no carrier: it is the RESTORE, and a carrier it wrote into would read as the step's write.
 
-    THE LIVE HALF (round 7 of the review, 2026-09-21; the reviewer's ruling on round 6's disclosed observation, a lost write
+    THE LIVE HALF (round 6 of the review, ninth commit, 2026-09-21; the reviewer's ruling on round 6's disclosed observation, a lost write
     with a false success): the same discipline for the six live fields a step writes under the hold lock (STEP_LIVE_FIELDS:
     the pick pair, the pending pair, the relaunch slot flag and the landing's slot memo). Every hold a step takes through
     SdkSession._step_write records, per field the hold CHANGED, what it replaced (`live_replaced`, the first per field) and
     what it left (`live_wrote`, the last per field), so the guard's restore (SdkSession._restore_step_writes) can put a
     field back only while it still holds what THIS step wrote and leave a field another writer moved standing, named in
-    the row (`moved`, written by that restore for the walk's summary line). Until round 7 the guard restored a door-time
+    the row (`moved`, written by that restore for the walk's summary line). Until the ninth commit the guard restored a door-time
     snapshot of all six whenever any had moved, so a concurrent pick that landed inside the failing step's window was
     told applied and then silently undone."""
     __slots__ = ("landed", "replaced", "live_replaced", "live_wrote", "moved")
@@ -3352,9 +3352,9 @@ class StepWrite:
 
 STEP_LIVE_FIELDS = ("auth", "auth_login", "_auth_pending", "_auth_pending_login", "_relaunch_bounded", "_landing_ask_bounded")
 # The six live fields of a session a billing STEP writes under the hold lock, and the guard's restore puts back per field
-# (round 7 of the review, 2026-09-21): the session's own pick (auth, auth_login), the pending ask (_auth_pending,
+# (round 6 of the review, ninth commit, 2026-09-21): the session's own pick (auth, auth_login), the pending ask (_auth_pending,
 # _auth_pending_login), the relaunch slot flag (_relaunch_bounded) and the landing's slot memo (_landing_ask_bounded).
-# WRITERS, by enclosing def (derived at the round-7 commit by an ast walk over this file's attribute assignments): inside
+# WRITERS, by enclosing def (derived at the ninth commit by an ast walk over this file's attribute assignments): inside
 # a step, recording into the step's carrier through SdkSession._step_write: set_auth (five roads), _follow_default (four
 # holds), _follow_default_unlanded (one), _clear_served_auth_pending and _ask_parked_pick (recorded only when handed the
 # closer step's carrier, _recover_picked_pending_at_init), and follow_default_auth's live clear (its own carrier); outside
@@ -7499,7 +7499,7 @@ class SdkSession:
         slot flag (_relaunch_bounded: the ask's flag, written in the same hold as the pending it belongs to, so the
         landing's guarded clear cannot be undone by a walk that wrote the flag bare after its pending; the reviewer's
         regression-3); a reader takes _hold_lock bare. A STEP's writer of the six billing fields (STEP_LIVE_FIELDS) takes
-        this lock through _step_write, which is this hold plus the step's recorder (round 7 of the review, 2026-09-21)."""
+        this lock through _step_write, which is this hold plus the step's recorder (round 6 of the review, ninth commit, 2026-09-21)."""
         with self._hold_lock:
             try:
                 yield
@@ -7517,8 +7517,8 @@ class SdkSession:
 
     @contextlib.contextmanager
     def _step_write(self, token=None):
-        """_hold_write for a STEP's write of the six billing fields, with the step's recorder (round 7 of the review,
-        2026-09-21; the reviewer's ruling on round 6's disclosed observation): the same lock, and as the hold closes the
+        """_hold_write for a STEP's write of the six billing fields, with the step's recorder (round 6 of the review, ninth
+        commit, 2026-09-21; the reviewer's ruling on round 6's disclosed observation): the same lock, and as the hold closes the
         fields the block CHANGED are recorded into the step's carrier (StepWrite.note_live: what each change replaced,
         kept from the first, and what it left, the last), under the very lock the write took, so the guard's restore
         (_restore_step_writes) can tell a field that still holds this step's write from one another writer moved since.
@@ -7535,7 +7535,7 @@ class SdkSession:
                     token.note_live(pre, self._step_fields_view())
 
     def _restore_step_writes(self, token, before: dict) -> dict:
-        """THE PER-FIELD RESTORE after a step failed (round 7 of the review, 2026-09-21; the reviewer's ruling: a guard
+        """THE PER-FIELD RESTORE after a step failed (round 6 of the review, ninth commit, 2026-09-21; the reviewer's ruling: a guard
         restore must not be a blanket snapshot; restore a field only if it still holds what the step put there). For each
         of the six fields (STEP_LIVE_FIELDS) the step's carrier recorded as changed (`token.live_wrote`, through
         _step_write): while the field still holds the value the step left, it goes back to the value the step's first
@@ -7546,7 +7546,7 @@ class SdkSession:
         after the restore differs from `before` (the door-time view the caller took under _hold_lock), each with the value
         standing: what another writer moved during the step, for the row that names it; the same names go into
         `token.moved` for the walk's summary line. The caller holds _hold_write (the compare and the put-back are one hold,
-        as _clear_served_auth_pending's compare is). Until round 7 the guard put the whole door-time snapshot back whenever
+        as _clear_served_auth_pending's compare is). Until the ninth commit the guard put the whole door-time snapshot back whenever
         any of the six had moved, and the retry mirrored it to the record: the concurrent writer's pick was gone with no
         row naming it (round 6's observation, the reviewer's drive D2d).
         THE RESIDUAL, named: a compare by value cannot tell another writer's write of the SAME value from the step's own
@@ -8355,9 +8355,9 @@ class SdkSession:
         while a connect composing the other side is in flight leaves that arm standing), so the slot flag there still
         belongs to the relaunch that is coming, the walk's bounded one whenever it is set, and clearing it would send that
         relaunch to a boot slot instead of the spawn stagger. The guard's restore puts the memo back with the pair where
-        each still holds what the step wrote (_follow_default_guarded; per field since round 7 of the review, 2026-09-21),
+        each still holds what the step wrote (_follow_default_guarded; per field since round 6's ninth commit, 2026-09-21),
         and set_auth's request branch writes it from the same `bounded` its slot flag comes from, so a new pending never
-        inherits an old pending's memo. `token` (round 7): the closer step's carrier when this clear is that step's own
+        inherits an old pending's memo. `token` (round 6, ninth commit): the closer step's carrier when this clear is that step's own
         (_recover_picked_pending_at_init), so the guard's restore knows the clear as the step's write; the landing's
         calls hand none."""
         with self._step_write(token):
@@ -8438,7 +8438,7 @@ class SdkSession:
         launched_login = getattr(self, "_launched_login", "") or ""
         running_login = launched_login if self._launched_auth == "login" else ""
         if pending_ask == (self._launched_auth, running_login):
-            self._clear_served_auth_pending(pending_ask, token=token)   # the step's own write, recorded (round 7 of the review)
+            self._clear_served_auth_pending(pending_ask, token=token)   # the step's own write, recorded (round 6, ninth commit)
             self._mirror_auth_pending(token=token)   # `token`: this closer is the guard's step, and the write is the step's own (round 6)
             self.backend._poke()
             self._log_quietly("auth (%s): this session's surviving CLI reported its billing, the %s, which its pick names: "
@@ -8462,7 +8462,7 @@ class SdkSession:
                                   "pick cannot be applied on this box: it stands unapplied, nothing is asked, and the session keeps "
                                   "billing %s" % (self.name, runs, picked, runs), problem=True)
                 return
-        self._ask_parked_pick("init", token=token)   # the step's own writes of the flag and the memo, recorded (round 7)
+        self._ask_parked_pick("init", token=token)   # the step's own writes of the flag and the memo, recorded (round 6, ninth commit)
 
     def _ask_parked_pick(self, how: str, token=None) -> None:
         """THE PICK'S ASK STANDS UNSERVED, AND NO ARM STANDS FOR IT: ask now, with the stamps truthful (round 5 of the
@@ -8508,7 +8508,7 @@ class SdkSession:
         if armed or not pending_auth:
             return
         outcome = self._note_reconnect_ask("auth")
-        with self._step_write(token):   # `token`: the closer step's carrier on the init road; the landing roads hand none (round 7)
+        with self._step_write(token):   # `token`: the closer step's carrier on the init road; the landing roads hand none (round 6, ninth commit)
             bounded = bool(getattr(self, "_landing_ask_bounded", False))
             self._relaunch_bounded = bounded
             self._landing_ask_bounded = False
@@ -9131,10 +9131,10 @@ class SdkSession:
         answer leaves the pick standing (the next connect asserts it, and the running process either took it
         or answered nothing) and says so once, off the ring; a pick a newer one superseded meanwhile (self.mode
         moved) stands down entirely, since the newer pick's own request answers for every layer. THE REVERT IS A
-        COMPARE-AND-SWAP PER LAYER (fork PR #813, round 7 of the review, 2026-09-21; the ruling on the billing guard's
+        COMPARE-AND-SWAP PER LAYER (fork PR #813, round 6 of the review, ninth commit, 2026-09-21; the ruling on the billing guard's
         restore, applied to this sibling restore site): the compare of self.mode against the refused pick and the
         put-back of perm_mode and self.mode are one hold of the hold lock (set_mode writes them under the same lock, so
-        the swap cannot tear; until round 7 the compare ran in one hold and the writes bare after it), and the record's
+        the swap cannot tear; until the ninth commit the compare ran in one hold and the writes bare after it), and the record's
         `mode` goes back only while the record still holds the refused pick (SdkBackend._revert_mode_record, under
         _reg_lock): set_mode writes the record BEFORE its live fields, so a newer pick whose record write had landed
         while its live write had not was reverted on the record alone, the running session then carried the newer pick
@@ -9193,7 +9193,7 @@ class SdkSession:
                 return False
             refusal = _cli_refusal(e)
             with self._hold_write():
-                # the compare and the live put-back in ONE hold (round 7 of fork PR #813's review: the docstring's last paragraph)
+                # the compare and the live put-back in ONE hold (round 6 of fork PR #813's review, ninth commit: the docstring's last paragraph)
                 superseded = self.mode != mode
                 if refusal and not superseded:
                     self.perm_mode = prev
@@ -9218,7 +9218,7 @@ class SdkSession:
                 # the next connect must not re-apply the refused pick either) and ring the problems so the
                 # failed switch is unmissable.
                 # the live layers went back in the hold above; the record goes back only while it still holds the refused
-                # pick (round 7 of fork PR #813's review), and the row says when a newer pick's record write stands instead
+                # pick (round 6 of fork PR #813's review, ninth commit), and the row says when a newer pick's record write stands instead
                 record_back = self.backend._revert_mode_record(self.sid, mode, prev)
                 self.backend._log("set_permission_mode (%s -> %s) refused by the SDK: %s: %s; the switch "
                                   "did NOT apply; the mode reverted to %s%s"
@@ -18503,6 +18503,16 @@ class SdkBackend:
         _has_history = bool(_tp) and _tp.exists() and _tp.stat().st_size > 0
         note = {"renameNote": new_name} if _has_history else {}
         fields = {"name": new_name, **note}          # the keys this write moves: what a failed publish puts back, per field
+        # The names/<sid> read comes BEFORE the record write (fork PR #813, round 6 of the review, twelfth commit,
+        # 2026-09-21): `door_names` is the name the shared identity file held at this rename's door (None when the
+        # file did not read), the compensation's distinguisher below; the rest of the line (cwd, colours) is what the
+        # names write below preserves.
+        try:
+            parts = (Path(self.state_dir) / "names" / sid).read_text().rstrip("\n").split("\t")
+            door_names = parts[0]
+        except (OSError, UnicodeDecodeError):
+            parts, door_names = [new_name, reg.get("cwd", "")], None
+        parts += ["", "", ""]
         self._update_reg(sid, name=new_name, **note)   # locked RMW — see set_effort's race note
         # keep the shared names/ identity file in sync (preserve colours). Durable registry FIRST; a
         # names write that RAISES (ENOSPC, EROFS, a permission fault) used to leave the registry holding
@@ -18514,22 +18524,22 @@ class SdkBackend:
         # a good file). Only the registry can disagree: put the old fields back (dropping a renameNote
         # this rename stamped) and re-raise so the caller stays loud. The in-memory name moves last, so
         # a failure never touches it, the shape CodexBackend.rename has. The put-back is PER FIELD and
-        # conditional (_revert_rename_record; fork PR #813, round 8 of the review, 2026-09-21): a field
-        # goes back only while it still holds what this rename wrote, so a rename another caller landed
+        # conditional (_revert_rename_record; fork PR #813, round 6 of the review, tenth commit, 2026-09-21): a
+        # field goes back only while it still holds what this rename wrote, so a rename another caller landed
         # inside this one's window, and was told applied, stands on the record instead of being written
-        # over by the door-time read; the compensation logs what stood. Before round 8 the put-back was
-        # a blanket rewrite of the door-time values, the lost write with a false success the ruling on
-        # round 6 named, here on a name rather than a billing pick.
-        try:
-            parts = (Path(self.state_dir) / "names" / sid).read_text().rstrip("\n").split("\t")
-        except (OSError, UnicodeDecodeError):
-            parts = [new_name, reg.get("cwd", "")]
-        parts += ["", "", ""]
+        # over by the door-time read; the compensation logs what stood. Before the tenth commit the put-back
+        # was a blanket rewrite of the door-time values, the lost write with a false success the ruling on
+        # round 6 named, here on a name rather than a billing pick. A compare by value cannot tell another
+        # caller's write of the SAME name from this rename's own, so the compensation also reads names/<sid>
+        # (the twelfth commit): this rename never wrote that file (write_name raised before its os.replace),
+        # so a names file that reads new_name now, and did not at the door (`door_names`), was written by
+        # another caller who landed the same name whole; the compensation stands down and logs that, instead
+        # of putting the door-time name back over that caller's rename under a false success.
         try:
             write_name(self.state_dir, sid, new_name, parts[1], parts[2], parts[3])
         except BaseException:
             try:
-                stands = self._revert_rename_record(sid, new_name, reg, fields)
+                verdict, stands = self._revert_rename_record(sid, new_name, reg, fields, door_names)
             except Exception as e2:
                 # a silent pass here hides the ONE moment the code knows the stores disagree: the
                 # registry alone holds the NEW name and will apply the rename the caller was told
@@ -18537,9 +18547,25 @@ class SdkBackend:
                 self._log("sdk rename compensation failed for %s: the registry alone holds the new "
                           "name and will apply it at the next restart (%s)" % (sid, e2))
             else:
-                if stands is None:
-                    self._log("sdk rename compensation for %s: the record would not read, so nothing was put back; "
-                              "if it holds the new name (%s) it will apply it at the next restart" % (sid, new_name))
+                if verdict == "landed":
+                    # nothing is lost and both callers were told the truth: the other caller heard True and its
+                    # rename stands on every store; this one hears its raise
+                    self._log("sdk rename compensation for %s stood down: names/<sid> reads %s, which this rename "
+                              "never wrote (its names write raised), so another caller landed the same name inside "
+                              "its window; the record keeps that caller's %s"
+                              % (sid, new_name, ", ".join("%s %r" % kv for kv in sorted(stands.items()))),
+                              problem=False)
+                elif verdict == "absent":
+                    # this backend never unlinks a record and the kernel only reads the file, so a hand outside the
+                    # kernel removed it during the rename; nothing was lost by this rename and nothing applies at
+                    # a restart
+                    self._log("sdk rename compensation for %s: the record is absent (removed during the rename; "
+                              "this backend never unlinks one), so nothing was put back and no restart applies "
+                              "the new name (%s)" % (sid, new_name), problem=False)
+                elif verdict == "unreadable":
+                    self._log("sdk rename compensation for %s: the record exists and would not read, so nothing was "
+                              "put back; if it holds the new name (%s) it will apply it at the next restart"
+                              % (sid, new_name))
                 elif stands:
                     self._log("sdk rename compensation for %s: the record no longer holds the failed pick (%s); "
                               "another writer's %s stands and is not put back"
@@ -18930,14 +18956,14 @@ class SdkBackend:
         return back_model or ""
 
     def _revert_mode_record(self, sid: str, refused: str, prev: str) -> bool:
-        """The record's half of _do_set_mode's revert after the CLI refused a live switch (fork PR #813, round 7 of the
-        review, 2026-09-21; _revert_model's shape for the reg's `model`): the reg's `mode` goes back to `prev`, the last
+        """The record's half of _do_set_mode's revert after the CLI refused a live switch (fork PR #813, round 6 of the
+        review, ninth commit, 2026-09-21; _revert_model's shape for the reg's `model`): the reg's `mode` goes back to `prev`, the last
         confirmed mode, ONLY while it still holds the refused pick, compared and written under _reg_lock in one read-
         modify-write. set_mode writes the record first (its locked RMW) and the live fields after, under the hold lock, so
         a newer pick can have reached the record and not yet the session when the refusal lands: its record write stands
         here (False), the live compare in _do_set_mode still finds the refused pick and reverts the live layers, and the
         newer pick's own live write then lands over them, so the record and the session agree on the newer pick. Until
-        round 7 the record was written back unconditionally, so that newer pick, whose caller was told it applied, was
+        the ninth commit the record was written back unconditionally, so that newer pick, whose caller was told it applied, was
         undone on the record alone while the session ran it. A record that does not read (None) or is absent is left
         alone: a refusal never builds a record. Returns whether the record moved. WRITERS of the reg's `mode`: set_mode
         (every pick, before the live write) and this revert; READERS: SdkSession.__init__ (the connect-time mode), the
@@ -18951,19 +18977,43 @@ class SdkBackend:
             write_reg(self.state_dir, sid, reg)
             return True
 
-    def _revert_rename_record(self, sid: str, new_name: str, before: dict, fields: dict):
-        """rename()'s compensation after its names write raised (fork PR #813, round 8 of the review, 2026-09-21;
-        _revert_mode_record's shape, on the two keys rename writes): each key in `fields` (`name`, and `renameNote`
-        when the rename stamped one, both written as `new_name`) goes back to what the door-time read `before` held,
-        or is dropped when `before` had no such key, ONLY while the record still holds `new_name` there, compared and
-        written under _reg_lock in one read-modify-write. A key holding anything else was written by another caller
-        after this rename's record write landed (a later rename's name and note, the settle's None over a spent note)
-        and stands. Returns the standing keys with their values ({} when every key went back), or None when the record
-        did not read (unreadable: the writers' one rule, a stderr line and no write, rather than gutting the row) or is
-        absent (a compensation never builds a record; before round 8 the blanket put-back wrote a row of the door-time
-        name over an absent one). Until round 8 the put-back was unconditional, so a rename another caller landed
-        inside this one's window, whose caller was told it applied, was written over on the record alone, the one
-        store a restart applies, while the names file and the live object kept it.
+    def _revert_rename_record(self, sid: str, new_name: str, before: dict, fields: dict, door_names):
+        """rename()'s compensation after its names write raised (fork PR #813, round 6 of the review, tenth commit,
+        2026-09-21; _revert_mode_record's shape, on the two keys rename writes): each key in `fields` (`name`, and
+        `renameNote` when the rename stamped one, both written as `new_name`) goes back to what the door-time read
+        `before` held, or is dropped when `before` had no such key, ONLY while the record still holds `new_name` there,
+        compared and written under _reg_lock in one read-modify-write. A key holding anything else was written by another
+        caller after this rename's record write landed (a later rename's name and note, the settle's None over a spent
+        note) and stands. Until the tenth commit the put-back was unconditional, so a rename another caller landed inside
+        this one's window, whose caller was told it applied, was written over on the record alone, the one store a
+        restart applies, while the names file and the live object kept it.
+
+        THE DISTINGUISHER (the twelfth commit; the round's own verifiers' second pass): a compare by value cannot tell
+        another caller's write of the SAME name from this rename's own, so a rename to the same name that landed whole
+        inside this one's window (record, names file, live name; its caller told True) was put back to the door-time
+        name on the record, the one store a restart applies, under a false success and with no log line. This rename
+        provably never wrote names/<sid>: write_name is tmp + os.replace and raised, so the file is exactly what it was
+        before the write. A names file that reads `new_name` now, and did not at this rename's door (`door_names`:
+        rename's read of the file before its record write; None when the file did not read), was written by another
+        caller who landed the same name, and the compensation STANDS DOWN: nothing is written and the verdict says why.
+        The names read sits under _reg_lock beside the record read, so no record write (each an RMW under this lock)
+        lands between the two reads. A names file that read `new_name` at the door too is no evidence (a rename to the
+        name the file already held) and the compare runs. THE RESIDUAL, narrowed and named: another caller whose record
+        write of the same name has landed and whose names write has not yet landed at the instant of this read is
+        indistinguishable from this rename's own record write and is put back over; no record field carries a writer
+        tag or a generation and none is added (the sibling sites' residual, _restore_step_writes). The kernel's
+        names-file writers for a live SDK session (_set_session_color, _set_session_emoji, _set_palette) rewrite the
+        line with the name it holds, so none makes the file read `new_name` on its own.
+
+        Returns (verdict, stands). "landed": stood down, `stands` the keys with the values the record holds.
+        "compared": the compare-and-swap ran, `stands` the keys another writer holds with their values ({} when every
+        key went back). "absent" and "unreadable", both with None: the record is gone, or exists and would not read
+        (the writers' one rule: a stderr line and no write, rather than gutting the row). rename's except arm is the one
+        caller; it meets an absent record only when the file was removed between its door read, which found one, and
+        this compensation, and ONLY a hand outside the kernel removes one (this backend never unlinks a record and
+        kernel.py only reads the file; its unreadable-record message tells the user to repair or remove it), so the
+        session was dropped during the rename and nothing applies at a restart; a compensation never builds a record.
+        Until the twelfth commit both answered None and rename's arm logged the unreadable sentence for both.
 
         WRITERS of the record's `name`: spawn and fork (the row's creation), resume (its full rewrite keeps the name it
         read), promote_thread (the breakout's name, under _reg_lock), rename (the step's RMW) and this compensation.
@@ -18973,17 +19023,28 @@ class SdkBackend:
         sid_for_name, _finish_move's names rewrite, and the log and row texts of _boot_reconcile, _settled_now,
         _queue_behind_stand_down, move, read_picks, follow_default_auth, set_auth_guarded, ensure_scheduled and
         deliver_lost_wakeups; kernel.py reads the row for its listings. READER of `renameNote`: _deliver_rename_ping.
-        The names file (write_name: spawn, fork, promote_thread, rename, _finish_move) and the live `name`
-        (SdkSession.__init__, promote_thread, rename) are the other two stores; rename writes them after the record
-        and a raise from write_name leaves both as they were, so neither is a restore site."""
+        The names file (write_name: spawn, fork, promote_thread, rename, _finish_move; kernel.py's _set_session_color,
+        _set_session_emoji and _set_palette rewrite it with the name it holds, and its _set_name only for a dead tab no
+        backend runs) and the live `name` (SdkSession.__init__, promote_thread, rename) are the other two stores; rename
+        writes them after the record and a raise from write_name leaves both as they were, so neither is a restore
+        site. READERS of the names file's name: rename (the door read) and this compensation (the distinguisher);
+        _finish_move and write_name (their rewrites carry the fields they read); kernel.py's _names_snapshot and
+        _names_parts (the roster every listing reads), _sdk_transcript_path, _boundary_clear_notices,
+        _name_color_by_name and _producer_sig (its mtime: a new name is re-pushed); bin/romp's restart audit row."""
         with self._reg_lock:
             reg = read_reg(self.state_dir, sid)
             if reg is None:
                 if _reg_absent_for_write(_reg_path(self.state_dir, sid)):
-                    return None
+                    return "absent", None
                 sys.stderr.write("update_reg: %s unreadable; skipping a %s write rather than gutting the reg\n"
                                  % (sid[:8], "/".join(sorted(fields))))
-                return None
+                return "unreadable", None
+            try:
+                names_now = (Path(self.state_dir) / "names" / sid).read_text().rstrip("\n").split("\t")[0]
+            except (OSError, UnicodeDecodeError):
+                names_now = None       # no file, or one that will not read: no evidence either way, the compare runs
+            if names_now == new_name and door_names != new_name:
+                return "landed", {k: reg.get(k) for k in fields}
             stands, moved = {}, False
             for k in fields:
                 if reg.get(k) != new_name:
@@ -18996,7 +19057,7 @@ class SdkBackend:
                 moved = True
             if moved:
                 write_reg(self.state_dir, sid, reg)
-            return stands
+            return "compared", stands
 
     # ---- the shared defaults' `model`, ruled per WRITE ----
     # sdk-defaults.json seeds every NEW session, and every session's set_model writes it BEFORE the CLI has
@@ -19802,7 +19863,7 @@ class SdkBackend:
         never_landed = (bool(s) and s.loop is not None and not s.ended and launched_pick[0] is None
                         and (bool(s.auth_live) or self._host_lease_live(s)))
         if never_landed:
-            with s._step_write(token):   # the step's write, recorded for the guard's per-field restore (round 7 of the review)
+            with s._step_write(token):   # the step's write, recorded for the guard's per-field restore (round 6, ninth commit)
                 if s._launched_auth is None:
                     s.auth = side
                     s.auth_login = login_id
@@ -20073,7 +20134,7 @@ class SdkBackend:
         # round's cluster A list omitted) and the tail's sentence with the count and the names; and the route and printer
         # fixtures in tests/test_billing_route.py, which assert the names.
         moved, skipped, unwritten, failed, parked, diverged, outlook = [], [], [], [], [], [], {}
-        changed = []   # failed followers on which another caller's write landed during the step and stands (token.moved; round 7)
+        changed = []   # failed followers on which another caller's write landed during the step and stands (token.moved; round 6, ninth commit)
         superseded = 0
         label = self.login_display(login_id) if login_id else side
         for s in sessions:
@@ -20107,7 +20168,7 @@ class SdkBackend:
             # the ones it had moved. THROUGH THE ONE GUARDED ENTRY POINT (the verb's rebase onto the reviewer's round 2,
             # 2026-09-19; its kernel-1): the guard puts back, field by field, what the step wrote where it still stands
             # (the pick pair, the pending pair, the slot flag and the landing's memo; a field another caller moved
-            # meanwhile stands and the row names it, round 7 of the review, 2026-09-21; `changed` below carries such a
+            # meanwhile stands and the row names it, round 6 of the review, ninth commit, 2026-09-21; `changed` below carries such a
             # follower to the summary line), so it is a follower again, and an ask it already carried (the default walk's, or one carried across a
             # restart) stands for its next deciding event as it did; the mirror is retried once from the live fields and
             # one problem row names the session, the side it stays on and whether an ask stands. Until then this walk kept
@@ -20250,16 +20311,16 @@ class SdkBackend:
         # round 1's regression-2 (a caller told nothing changed after a change); and the raise escaped this method into POST
         # /billing's catch-all, an HTTP 500 whose body was the traceback, absolute paths included, on a kernel reachable
         # over the tailnet. So the pair is snapshotted, the clear and its mirror run as one unit, and a raise restores the
-        # pair, PER FIELD since round 7 of the review (2026-09-21; the ruling on the guard's restore, applied to this sibling
+        # pair, PER FIELD since round 6's ninth commit (2026-09-21; the ruling on the guard's restore, applied to this sibling
         # site): the clear records what its hold changed into a carrier of its own (_step_write), and the restore puts a
         # field back only while it still holds the "" the clear wrote (_restore_step_writes); a pick another caller landed
-        # between the clear and the failing mirror stands, and the sentence and the row name it (until round 7 the unit put
+        # between the clear and the failing mirror stands, and the sentence and the row name it (until the ninth commit the unit put
         # the door-time pair back blanket, and that pick was gone though its caller was told applied). It then files one
         # problem row, leaves THIS call's own refusal sentence for the route (pop_auth_refusal: never the
         # 409's "record would not read, so nothing was changed", which misdescribes a refused write and the drop before
         # it) and returns False, which is what happened. Its own guard, not the follower step's (_follow_default_guarded):
         # that guard returns True with the pick cleared when the STEP fails, since the clear had happened; here it has not
-        clear = StepWrite()   # the clear's own carrier: what its hold replaced and left, for the per-field restore (round 7)
+        clear = StepWrite()   # the clear's own carrier: what its hold replaced and left, for the per-field restore (round 6, ninth commit)
         with s._hold_lock:
             before = s._step_fields_view()
         try:
@@ -20278,7 +20339,7 @@ class SdkBackend:
                 after = s._step_fields_view()
             stands = ""
             if "auth" in moved or "auth_login" in moved:
-                # a pick another caller landed during the clear stands (its pending and request are its own; round 7)
+                # a pick another caller landed during the clear stands (its pending and request are its own; round 6, ninth commit)
                 stands = (("the %s login" % self.login_display(after["auth_login"])) if after["auth"] == "login" and after["auth_login"]
                           else "the %s" % after["auth"])
             return self._refuse_default_clear(sid, s.name, e, stands=stands)
@@ -20308,8 +20369,8 @@ class SdkBackend:
         that mirrors the clear failed, the live pair is back as it was (the live road) or was never touched (the dormant
         road), so the caller is told the pick stands, in a sentence of this failure's own. The sentence names the failure's
         class only: the route hands it to a caller over HTTP, and an OSError's text carries the record's absolute path,
-        which is this box's business (the problem row below keeps the masked text for the Log). `stands` (round 7 of the
-        review, 2026-09-21): the pick another caller landed on the live session during the clear's window, as the row
+        which is this box's business (the problem row below keeps the masked text for the Log). `stands` (round 6 of the
+        review, ninth commit, 2026-09-21): the pick another caller landed on the live session during the clear's window, as the row
         names it (a side word or a stored login's label), when the per-field restore left it standing; "" when the pick
         that stands is the one the clear found. Always False."""
         keeps = ("it keeps its own pick" if not stands
@@ -20346,7 +20407,7 @@ class SdkBackend:
         `default` road had its guard (follow_default_auth, round 1's fresh-2) and these roads had none. A raise here is
         contained as a follower step's is (_follow_default_guarded, `road` "pick": the pick pair, the pending pair and the
         slot flags put back field by field where each still holds what the step wrote, a field another caller moved
-        meanwhile left standing and named in the row, since round 7 of the review; the mirror retried once, one problem
+        meanwhile left standing and named in the row, since round 6's ninth commit; the mirror retried once, one problem
         row), and this leaves the
         failure's own sentence for the route (pop_auth_refusal; the slot cleared at entry as follow_default_auth clears it, so
         a caller never pops another call's sentence) and answers False, the verdict the route already answers 409 with.
@@ -20500,7 +20561,7 @@ class SdkBackend:
         # review, 2026-09-18, its regression-2 and regression-3; carried here by the rebase follow-up): by the side word a
         # default moved between two stored logins left the old target standing, and a flag written bare after the hold
         # could stand with no ask behind it once the landing's guarded clear ran between the two writes
-        with s._step_write(token):   # the step's write, recorded for the guard's per-field restore (round 7 of the review)
+        with s._step_write(token):   # the step's write, recorded for the guard's per-field restore (round 6, ninth commit)
             landed = bool(s.auth_live) or s._launched_auth is not None
             if not landed:
                 launching = s._launching
@@ -20757,8 +20818,8 @@ class SdkBackend:
             self._follow_default_guarded(s, label)
 
     def _describe_moved(self, moved: dict, after: dict) -> str:
-        """The live fields another caller moved during a failed step, for the guard's row (round 7 of the review,
-        2026-09-21): `moved` is _restore_step_writes' answer (field name to the value standing), `after` the six fields as
+        """The live fields another caller moved during a failed step, for the guard's row (round 6 of the review, ninth
+        commit, 2026-09-21): `moved` is _restore_step_writes' answer (field name to the value standing), `after` the six fields as
         they stand. Grouped as the user knows them: the pick, the pending ask, the relaunch slot flag, the landing's slot
         memo, each with what stands now (a side word or a stored login's label; never a credential, the fields hold none)."""
         def side_of(side, lid):
@@ -20800,8 +20861,8 @@ class SdkBackend:
 
         On a raise the step's OWN writes are undone, never another writer's: the raise can land between the hold that
         wrote a pending and the reg mirror, and a pending with no arm behind it keeps the dots on and makes a later pick
-        read as already applying (the walk's round-1 handler). THE RESTORE IS A COMPARE-AND-SWAP PER FIELD (round 7 of the
-        review, 2026-09-21; the reviewer's ruling on round 6's disclosed observation): every hold the step takes records
+        read as already applying (the walk's round-1 handler). THE RESTORE IS A COMPARE-AND-SWAP PER FIELD (round 6 of the
+        review, ninth commit, 2026-09-21; the reviewer's ruling on round 6's disclosed observation): every hold the step takes records
         what it changed into the step's carrier (SdkSession._step_write, StepWrite.note_live), and under the hold each of
         the six billing fields (STEP_LIVE_FIELDS: the pick pair, the pending pair, the slot flag, the landing's memo) goes
         back to what the step's first change replaced ONLY while it still holds what the step's last change left
@@ -20809,7 +20870,7 @@ class SdkBackend:
         across a restart, or standing from the walk, stands for its next deciding event as it did, and the row says so;
         a field another writer moved after the step wrote it (a concurrent pick on another request or pusher thread, the
         loop's served withdrawal, a landing's clear, the slot grant) STANDS, since that writer's evidence is newer and its
-        caller was told its write applied, and the row names the field and what stands. Until round 7 the guard put a
+        caller was told its write applied, and the row names the field and what stands. Until the ninth commit the guard put a
         door-time snapshot of all six back whenever any had moved, and the retry mirrored it to the record, so a pick a
         second thread landed inside the failing step's window was told applied and silently undone (the reviewer's drive
         D2d: a lost write with a false success, the one failure shape this project treats as unacceptable regardless of
@@ -20936,8 +20997,9 @@ class SdkBackend:
             landed = token.landed   # the step's OWN write landed: read before the retry, which writes into no carrier
             try:
                 with s._hold_write():
-                    # THE RESTORE IS A COMPARE-AND-SWAP PER FIELD (round 7 of the review, 2026-09-21; the reviewer's ruling on
-                    # round 6's disclosed observation, which stood here as an OBSERVATION comment): a field goes back only while it
+                    # THE RESTORE IS A COMPARE-AND-SWAP PER FIELD (round 6 of the review, ninth commit, 2026-09-21; the reviewer's
+                    # ruling of 05:09Z on round 6's disclosed observation, which stood here as an OBSERVATION comment; the ruling
+                    # came before the next review round, queued on the round-6 head, had run, so the commit is round 6's): a field goes back only while it
                     # still holds what the step wrote, recorded at the step's own holds (_step_write); a field another writer
                     # moved stands, and `moved` names it for the row. WRITERS of the six fields that can land inside a step's
                     # window, by enclosing def: set_auth on another request or pusher thread (a concurrent pick: the WS arm, POST
@@ -20994,7 +21056,7 @@ class SdkBackend:
                     else "this session's connect landed",
                     "pick's" if step is not None else "follower's")
                 subject = "the connect goes on with the CLI it has, and it"
-            picked_after = bool(after["auth"])   # what STANDS after the per-field restore (round 7): the step's pick put back, or a
+            picked_after = bool(after["auth"])   # what STANDS after the per-field restore (round 6, ninth commit): the step's pick put back, or a
             #                                        concurrent caller's pick left standing, decides the subject and the event
             if step is not None and landing is None:
                 # the restore put the step's pick back: the walk's follower is a follower still; the per-session door's session
@@ -21013,7 +21075,7 @@ class SdkBackend:
                 ask = "the %s ask another caller made during the step standing" % standing
             else:
                 ask = "the %s ask it already carried standing for that event" % standing
-            # what another caller changed during the step and the restore left standing (round 7 of the review): the row
+            # what another caller changed during the step and the restore left standing (round 6, ninth commit): the row
             # names the field and what stands, since the caller of that write was told it applied and nothing undoes it
             changed = ("" if not moved else
                        "; during the step another caller changed %s, and that stands: the later writer wins"
@@ -21210,7 +21272,7 @@ class SdkBackend:
             # 3: written inside it, the walk held the lock across the reg file's read and replace). The pending is the
             # (side, login) PAIR (round 1 of the reviewer's review): compared by the side word, a default moved between
             # two stored logins while the object waited left the old target standing
-            with s._step_write(token):   # the step's write, recorded for the guard's per-field restore (round 7 of the review)
+            with s._step_write(token):   # the step's write, recorded for the guard's per-field restore (round 6, ninth commit)
                 landed = s._launched_auth is not None
                 # the WALK writes the parked ask (the default moved: new information, and the dots say the follower may
                 # have to move); a cannot-tell ATTACH landing with no ask standing writes none, since nothing has changed
@@ -21273,7 +21335,7 @@ class SdkBackend:
                 self._log("%s; this session's CLI bills a key, and whether Claude Code's settings carry the apiKeyHelper "
                           "that supplies it cannot be told until they read; asked anyway" % head)
         can_arm = s.loop is not None and not s.ended   # reads no I/O: computed before the hold, written inside it
-        with s._step_write(token):   # the hold lock, with the step's recorder (round 7 of the review); the stamp rides in the same hold
+        with s._step_write(token):   # the hold lock, with the step's recorder (round 6, ninth commit); the stamp rides in the same hold
             if s.auth_live and s._launched_auth != s.auth_live:
                 # THE STAMP FOLLOWS THE REPORT: the served check (_served_by_connect) and set_auth's guards read the launched
                 # shape (_launched_auth) as what the running process bills, and after a kernel restart that stamp is the

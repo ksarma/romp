@@ -2344,7 +2344,7 @@ class BackendHelpers(unittest.TestCase):
         # leaves standing); a second thread's differing pick, a stored login on the request road, clears it again (None);
         # the step's fault; the retry sees None and puts True back, over the concurrent pick's clear and over the newer
         # report that clear replaced. Without the concurrent clear the field would read False, so the final True is this
-        # writer's mark. The concurrent pick's live pair and record pair STAND since round 7 of the review (2026-09-21; the
+        # writer's mark. The concurrent pick's live pair and record pair STAND since round 6's ninth commit (2026-09-21; the
         # per-field restore, asserted by the D2d pins further down), and this cell asserts the report's residual alone. Pinned as the DOCUMENTED BEHAVIOUR
         # beside the launch-retirement cell: a change that closes the gap must update both pins. Green at the closing
         # commit by design; the mutation that drops the retry's restore (restore always empty) reds it at the last
@@ -4826,7 +4826,7 @@ class BackendHelpers(unittest.TestCase):
         self.assertTrue(any("auth (web): set to key; unchanged, no reconnect" in m for m in self.logs), self.logs[-2:])
 
     def test_a_concurrent_pick_landing_inside_a_failing_steps_window_stands_and_the_row_names_it(self):
-        # THE RULING ON ROUND 6'S DISCLOSED OBSERVATION (round 7 of the review, 2026-09-21; the reviewer's drive D2d): the guard's
+        # THE RULING ON ROUND 6'S DISCLOSED OBSERVATION (round 6 of the review, ninth commit, 2026-09-21; the reviewer's drive D2d): the guard's
         # restore put back what stood at the door whenever the live pair or the pending had moved, and the retry mirrored
         # that to the record, so a pick a SECOND THREAD landed inside the failing step's window (a WS handler, POST /billing's
         # handler or the drain on one session; set_auth's docstring says several threads pick on one session) was told
@@ -4884,7 +4884,7 @@ class BackendHelpers(unittest.TestCase):
                                     self.logs[-1:])
 
     def test_a_concurrent_pick_landing_inside_a_failing_clears_window_stands_and_the_refusal_names_it(self):
-        # round 7 of the review (2026-09-21): the ruling's population of restore sites includes follow_default_auth's live
+        # round 6 of the review, ninth commit (2026-09-21): the ruling's population of restore sites includes follow_default_auth's live
         # clear, whose own unit restored the door-time pair on a refused mirror, blanket: a pick another thread landed
         # between the clear and the failing mirror was undone though its caller was told applied. Per field now
         # (_restore_step_writes with the clear's own carrier): the pair goes back only where it still holds the clear's "",
@@ -4918,7 +4918,7 @@ class BackendHelpers(unittest.TestCase):
         self.assertIn("; the pick another caller made meanwhile (the key) stands and the session bills as it did", rows[0])
 
     def test_the_step_recorder_and_the_per_field_restore_by_execution(self):
-        # round 7 of the review (2026-09-21): the mechanism under the D2d pins, driven alone. A step's hold through _step_write
+        # round 6 of the review, ninth commit (2026-09-21): the mechanism under the D2d pins, driven alone. A step's hold through _step_write
         # records what it changed into the carrier (the first replaced value and the last written one per field, a field left
         # as found not recorded); the restore puts back only a field that still holds the step's last write, leaves one
         # another writer moved, never touches one the step never wrote, and reports what differs from the door.
@@ -4951,7 +4951,7 @@ class BackendHelpers(unittest.TestCase):
                                                "_landing_ask_bounded"))
 
     def test_every_step_writer_of_the_live_pick_fields_records_into_the_steps_carrier(self):
-        # CENSUS PIN (round 7 of the review, 2026-09-21): the per-field restore knows a write only if the hold that made it went
+        # CENSUS PIN (round 6 of the review, ninth commit, 2026-09-21): the per-field restore knows a write only if the hold that made it went
         # through _step_write with the step's carrier, so every assignment to one of the six fields inside a step function
         # (set_auth, _follow_default, _follow_default_unlanded, _clear_served_auth_pending, _ask_parked_pick and
         # follow_default_auth's clear) must sit in a _step_write block, and no except arm of the guard or the clear's unit

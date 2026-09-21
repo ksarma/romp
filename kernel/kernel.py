@@ -41493,7 +41493,7 @@ def _billing_default(be):
     login, the same side word. Not _auth_avail's `default`: that is the new-session picker's preselected choice, which
     only the explicit machine default seeds (since fork PR #819, merged 2026-09-20, a per-session pick's flag-less write
     preselects nothing; this sentence said a remembered per-session pick seeded it while no explicit default was set,
-    the mechanism that PR removed, until fork PR #813's round 7), and a follower does not bill it (the reference's rule,
+    the mechanism that PR removed, until fork PR #813's ninth commit, round 6 of its review), and a follower does not bill it (the reference's rule,
     "Per-session billing"): the read said login for a default every follower launched on the key."""
     side = str(be.fallback_auth() or "")
     lid = str(be.explicit_default_login() or "") if side == "login" else ""
