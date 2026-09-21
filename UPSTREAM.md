@@ -46,6 +46,13 @@ differs from upstream here; not for offering as-is) · **follow-up** (a fold lef
 Pruning is `declined` or `keep-private` (or deleting the file); promoting is `approved`. Change a
 status with `scripts/upstream-ledger.py set <slug> status <value>` or by editing the one line.
 
+`check` validates the status word and ties it to nothing, so `scripts/upstream-ledger.py stale` is
+the check that reads every `offered` entry's PR through `gh pr view` on the clone's `upstream`
+remote and prints one line per entry whose PR is merged or closed (exit 1; exit 0 when every such
+PR is open, 2 when it could not read). It needs gh and the network, so it is not part of `check` or
+the test; run it before a fold list is drawn and after any project PR of ours changes state, and
+move each entry it names to `merged` with `closed` set to the day the PR merged.
+
 ## Reading the ledger
 
 - `scripts/upstream-ledger.py render` prints the table: open entries first (`approved`, then

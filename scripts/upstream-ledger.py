@@ -38,9 +38,14 @@ Commands (stdlib only):
                                  touch an existing entry unless --replace (the row's title, where and
                                  first paragraph; the entry's non-blank header values are kept) or
                                  --force (the row wins wherever it says something)
+    stale                        every entry whose status says a PR is open upstream (`offered`), read
+                                 against that PR's state through gh (needs gh and the network, so it is
+                                 not part of `check`); exit 1 with one line per entry whose PR is merged
+                                 or closed, 0 when every such PR is open, 2 when it could not read
 """
 import argparse
 import json
+import os
 import re
 import signal
 import subprocess
@@ -848,9 +853,146 @@ def import_row(row, dir_path, root, replace=False, force=False):
     return report + lines, path, ok and not problems
 
 
+# ---------------------------------------------------------------- the stale check (gh and the network)
+
+# `check` validates the status word and ties it to nothing: an entry whose status says a PR is open
+# upstream stays `offered` after that PR merges or closes unless a person moves it, and two entries
+# did (their PRs #1883 and #1865 merged on 2026-09-19 and read `offered` until 2026-09-21). `stale`
+# reads each such PR's state through gh, which is why it is a command of its own and not a rule of
+# `check`: the guard test runs offline.
+
+GH_FIELDS = "state,mergedAt,closedAt,mergeCommit"
+SHORT_SHA = 9   # what `git rev-parse --short` gives in this clone; the entries' dated lines use the same length
+STALE_STATUSES = ("offered",)   # the statuses that claim a PR is open upstream
+
+
+class GhError(Exception):
+    """gh could not answer: the binary is missing, the network is down, or the PR does not exist."""
+
+
+def repo_from_url(url):
+    """`owner/name` from a GitHub remote URL in any of git's spellings (https://github.com/o/r.git,
+    git@github.com:o/r.git, ssh://git@github.com/o/r, a trailing slash), or None when the URL
+    carries no such tail."""
+    m = re.search(r"[:/]([^/:]+)/([^/]+?)(?:\.git)?/?$", url.strip())
+    return f"{m.group(1)}/{m.group(2)}" if m else None
+
+
+def upstream_repo(root):
+    """The project repository, `owner/name`, from the clone's git remote named `upstream` (the fork
+    keeps that remote fetch-only and reads the project through it), or None when the clone has no
+    such remote or its URL names no repository."""
+    try:
+        proc = subprocess.run(["git", "-C", str(root), "config", "--get", "remote.upstream.url"],
+                              capture_output=True, text=True, check=False)
+    except OSError:
+        return None
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None
+    return repo_from_url(proc.stdout)
+
+
+def gh_binary():
+    """The GitHub CLI, as scripts/batch.py finds it: ROMP_GH when set, else `gh` on PATH."""
+    return os.environ.get("ROMP_GH") or "gh"
+
+
+def run_gh(cmd):
+    """The stale check's one door to gh: run `cmd` (a list) and return its stdout. A missing binary or
+    a non-zero exit raises GhError carrying the command and gh's stderr, so a read that failed is
+    never mistaken for an open PR. A test injects a fake in its place (`main(..., run=fake)`)."""
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    except OSError as e:
+        raise GhError(f"{cmd[0]}: {e.strerror or e}") from None
+    if proc.returncode != 0:
+        raise GhError(f"`{' '.join(cmd)}` exited {proc.returncode}: {proc.stderr.strip() or '(no stderr)'}")
+    return proc.stdout
+
+
+def offered_number(entry):
+    """The upstream PR number the entry's `offered` field names, in the form the entries use
+    (`their PR #N`, with any tail after the number), or None when the field names no PR."""
+    m = UPSTREAM_REF.search(entry.get("offered"))
+    return int(next(g for g in m.groups() if g)) if m else None
+
+
+def read_prs(repo, numbers, run):
+    """{number: the JSON object `gh pr view --json` prints} for each PR in `numbers`, read once each
+    through `run`. GhError names the PR whose read failed."""
+    out = {}
+    for n in numbers:
+        cmd = [gh_binary(), "pr", "view", str(n), "-R", repo, "--json", GH_FIELDS]
+        try:
+            out[n] = json.loads(run(cmd))
+        except GhError as e:
+            raise GhError(f"their PR #{n} of {repo}: {e}") from None
+        except ValueError as e:
+            raise GhError(f"their PR #{n} of {repo}: gh printed something that is not JSON: {e}") from None
+    return out
+
+
+def stale_rows(entries, answers):
+    """The decision, pure: entries in, gh's answers in (PR number -> the object `gh pr view --json
+    state,mergedAt,closedAt,mergeCommit` prints), out one line per entry whose status says a PR is
+    open upstream and whose PR is not. Only the statuses in STALE_STATUSES are read; a `merged` entry
+    is right to name a merged PR. An `offered` entry whose field names no PR number is a row too
+    (stale-unparseable): nothing was read for it, so it cannot pass as open. Any state other than
+    OPEN is stale, including one gh has not shown us yet: unverified is not open."""
+    out = []
+    for e in entries:
+        if e.get("status") not in STALE_STATUSES:
+            continue
+        n = offered_number(e)
+        if n is None:
+            out.append(f"{DIR}/{e.name}: stale-unparseable: offered {e.get('offered')!r} names no PR number, entry still offered")
+            continue
+        a = answers[n]
+        state = a.get("state")
+        if state == "OPEN":
+            continue
+        if state == "MERGED":
+            sha = ((a.get("mergeCommit") or {}).get("oid") or "")[:SHORT_SHA] or "(no merge commit reported)"
+            out.append(f"{DIR}/{e.name}: their PR #{n} merged {a.get('mergedAt') or '(no date)'} as {sha}, entry still offered")
+        elif state == "CLOSED":
+            out.append(f"{DIR}/{e.name}: their PR #{n} closed {a.get('closedAt') or '(no date)'} unmerged, entry still offered")
+        else:
+            out.append(f"{DIR}/{e.name}: their PR #{n} state {state!r} is not OPEN, entry still offered")
+    return out
+
+
+def stale_command(root, entries_dir, run=None):
+    """The `stale` subcommand: 0 when every offered entry's PR is open; 1 after printing one line per
+    stale entry; 2 when it could not read (the ledger does not parse, the clone has no `upstream`
+    remote, or gh failed). The summary line carries its denominators either way."""
+    run = run or run_gh
+    entries, problems = load_entries(entries_dir)
+    if problems:
+        print("\n".join(problems), file=sys.stderr)
+        print("stale: the ledger does not parse; fix what `check` reports first", file=sys.stderr)
+        return 2
+    repo = upstream_repo(root)
+    if repo is None:
+        print("stale: this clone has no git remote named `upstream` whose URL names a repository; "
+              "the check reads the project's PRs from that remote (git remote add upstream <url>)", file=sys.stderr)
+        return 2
+    offered = [e for e in entries if e.get("status") in STALE_STATUSES]
+    numbers = sorted({n for n in map(offered_number, offered) if n is not None})
+    try:
+        answers = read_prs(repo, numbers, run)
+    except GhError as e:
+        print(f"stale: could not read {e}", file=sys.stderr)
+        return 2
+    lines = stale_rows(offered, answers)
+    for line in lines:
+        print(line)
+    print(f"stale: {len(lines)} stale of {len(offered)} offered entries; {len(numbers)} distinct PRs read from {repo}")
+    return 1 if lines else 0
+
+
 # ---------------------------------------------------------------- CLI
 
-def main(argv=None):
+def main(argv=None, run=None):
     ap = argparse.ArgumentParser(prog="upstream-ledger.py", description=__doc__.split("\n\n")[0])
     ap.add_argument("--root", default=None, help="repository root (default: this script's grandparent directory)")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -885,6 +1027,14 @@ def main(argv=None):
     p.add_argument("--replace", action="store_true",
                    help="with --row, when an entry with this title exists: take the row's title, where and first paragraph, fill the entry's blank header values, keep its non-blank ones")
     p.add_argument("--force", action="store_true", help="with --row: rewrite an existing entry whole from the row")
+
+    sub.add_parser("stale",
+                   help="every entry whose status says a PR is open upstream, read against that PR's state (needs gh and the network)",
+                   description="Every entry whose status says a PR is open upstream (`offered`), read against that PR's state "
+                               "through `gh pr view` on the clone's `upstream` remote. Needs gh and the network, so it is not part "
+                               "of `check`. Exit 0 when every such PR is open; 1 after printing one line per entry whose PR is "
+                               "merged or closed (or whose offered field names no PR number); 2 when it could not read (no "
+                               "`upstream` remote, a ledger that does not parse, or a gh failure).")
 
     a = ap.parse_args(argv)
     root = Path(a.root) if a.root else Path(__file__).resolve().parents[1]
@@ -938,6 +1088,8 @@ def main(argv=None):
         report, ok = import_file(a.paths[0], a.paths[1], root)
         print("\n".join(report))
         return 0 if ok else 1
+    elif a.cmd == "stale":
+        return stale_command(root, entries_dir, run)
     return 0
 
 
