@@ -378,7 +378,10 @@ class CaptionsMemo(_State):
         # publish through os.replace (a new inode). An in-place rewrite would defeat (ino, mtime_ns, size).
         ksrc = Path(os.path.join(ROOT, "kernel", "kernel.py")).read_text()
         jsrc = Path(os.path.join(ROOT, "kernel", "judge.py")).read_text()
-        self.assertRegex(inspect.getsource(jd.append_caption), r'open\(CAPDIR / \(fsid \+ "\.jsonl"\), "a"\)')
+        # round 4f: the writer appends through the creator (srm.open_private: the file born 0600, then builtins.open in the
+        # mode given), so the open's name may carry the creator's suffix. The "a" is what this pin holds: a "w" or a
+        # rewrite is red. That the site IS the creator is the writers census's pin (tests/test_state_root_writers.py).
+        self.assertRegex(inspect.getsource(jd.append_caption), r'\bopen(?:_private)?\(CAPDIR / \(fsid \+ "\.jsonl"\), "a"\)')
         self.assertNotRegex(ksrc, r'CAPDIR / \([^)]*\)\)\.write_text\(', "no kernel writer rewrites a captions file in place")
         self.assertNotRegex(jsrc, r'CAPDIR / \(fsid \+ "\.jsonl"\)\)\.write_text\(', "no judge writer rewrites a captions file in place")
         self.assertRegex(inspect.getsource(km._seed_fork_stores), r'_atomic_write\(jd\.CAPDIR / \(sid \+ "\.jsonl"\)')

@@ -571,7 +571,11 @@ class EnvSecretsStayPrivate(unittest.TestCase):
         self.assertEqual(out, str(p))
         self.assertEqual(stat.S_IMODE(os.stat(p).st_mode), 0o600, "tightened before the write, with no chmod performed")
         self.assertEqual(fchmods, [(0o600, 0)], "one fchmod on the descriptor while the file is still empty")
-        self.assertEqual(chmods, [], "no chmod on the path after the write")
+        # round 4f: _srm.make_dir tightens the directory mkdir made above at the umask's mode (a loose directory of ours
+        # under the root, the case its docstring names) with an os.chmod on the DIRECTORY's path, which the probe records.
+        # The write-then-tighten this case pins is a chmod on the FILE's path, so the record is read for that path alone;
+        # a chmod on the file after the write is still red.
+        self.assertEqual([c for c in chmods if c[0] == str(p)], [], "no chmod on the file's path after the write")
         self.assertEqual(json.loads(p.read_text()), {"env": {"FEATURE_FLAG": "1"}}, "and the env block landed")
 
     def test_a_raising_fchmod_closes_the_descriptor_and_the_launch_goes_without_the_keys(self):

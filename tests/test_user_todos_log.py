@@ -230,7 +230,10 @@ class AppendOnlyAndRotation(_Sandbox):
     def test_the_writer_is_a_single_append(self):
         import inspect
         src = inspect.getsource(km._user_todos_log_write)
-        self.assertIn('open(p, "a", encoding="utf-8")', src)
+        # round 4f: the append goes through the creator (jd.srm.open_private: the file born 0600, then builtins.open in the
+        # mode given), so the open's name may carry the creator's suffix. The "a" is what this pin holds: a "w" is red.
+        # That the site IS the creator is the writers census's pin (tests/test_state_root_writers.py).
+        self.assertRegex(src, r'\bopen(?:_private)?\(p, "a", encoding="utf-8"\)')
         self.assertIn('f.write(line + "\\n")', src)
         self.assertNotIn("_atomic_write", src, "no rewrite of the whole file, ever")
 
