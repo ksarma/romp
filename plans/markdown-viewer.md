@@ -7940,18 +7940,19 @@ tabindex, role, an href set, resolved or removed), new anchors and spans in plac
 text nodes (`tn.replaceWith(frag)` over text nodes and elements created by `document.createElement`, path-links.ts and
 url-links.ts), and the figure controls, each a clone of a glyph parsed once onto a holder that enters no document (the
 one such line a reached local holds, file-view.ts's figureControlGlyph), and none re-parses under the box. The same
-grep over the whole of file-view.ts finds fourteen sites: thirteen outside mdBlock, all the viewer's own constant
-markup (the tray's icon constants, the trail's two arrows in the bar, the figure control's glyph parsed once onto a
-holder that enters no document and cloned into each control, the loading glyph, codeBlock's numbered rows over escaped
-or hljs text), and the fourteenth the highlight's write inside the fence pass, judged above. file-view-seam.test.ts
-derives the callee list (every bare call in the region, with no method call on an imported binding in the region or in
-a reached local, so a pass in that form is red there rather than hidden from the list), the reached locals, the
-imported callees, the module set, the package list and the import forms the resolver follows (a synthetic module
-holding each form), the judged sites per module and the whole file's count from the code and pins them (its test "no
-re-parse after the adoption"), so a new such site anywhere in file-view.ts or in a reached module, or a new callee or
-import, is red there until it is judged; tools/markdown-viewer-plan-gate-adopt.test.mjs holds this paragraph whole and
-fills its derived figures (the callees, the module count and list, the two sums) from that test's pinned literals,
-never from a copy.
+grep over the whole of file-view.ts finds fourteen sites, the count file-view-seam.test.ts asserts and this
+paragraph's pin reads from that assertion: thirteen outside mdBlock, all the viewer's own constant markup (the tray's
+icon constants, the trail's two arrows in the bar, the figure control's glyph parsed once onto a holder that enters no
+document and cloned into each control, the loading glyph, codeBlock's numbered rows over escaped or hljs text), and
+the one inside it the highlight's write in the fence pass, judged above. file-view-seam.test.ts derives the callee
+list (every bare call in the region, with no method call on an imported binding in the region or in a reached local,
+so a pass in that form is red there rather than hidden from the list), the reached locals, the imported callees, the
+module set, the package list and the import forms the resolver follows (a synthetic module holding each form), the
+judged sites per module and the whole file's count from the code and pins them (its test "no re-parse after the
+adoption"), so a new such site anywhere in file-view.ts or in a reached module, or a new callee or import, is red
+there until it is judged; tools/markdown-viewer-plan-gate-adopt.test.mjs holds this paragraph whole and fills its
+derived figures (the callees, the module count and list, the two sums, the whole file's count) from that test's pinned
+literals, never from a copy.
 
 **The namespace table.** One probe in the three engines, 2026-09-20 (the real sanitizeMd and wrapLinesHtml from the
 bundle, a live-document div's innerHTML set to the split, the figure server's log read after three sentinel round
