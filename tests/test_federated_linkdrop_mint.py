@@ -90,7 +90,9 @@ only it imports run before the lab module under both entry points and are outsid
 the lab module's imports, not the package's), so they are derived and printed as an UNWALKED item
 (`_package_init_unwalked`) beside the unread modules, never counted as read (the maintainer's round 6, extra6-4: the
 import-time docstring called its list everything that could start a program before a recorder). AFTER the recorder is
-lifted: a callable deferred past it from inside a function body (a threading.Timer, a thread, an atexit hook, a finalizer)
+lifted: a callable deferred past it from inside a function body (a threading.Timer or a Thread, a signal handler, a unittest
+cleanup: the spellings ALLOWED_IMPORTS leaves open today; an atexit hook and a weakref finalizer meet a refusal at their
+import, since neither module is allowed, not from the callable rule, so they are no road while the allow-list stands)
 is not refused, since the census refuses a callable handed to a call outside every function body alone and reads nothing
 of when a callable inside one runs, so a program it starts runs under no recorder and is in no derived list (pass 11's
 fixer pass planted a timer-deferred spawn after the checkout: the census and the recorder were both silent, and the plant
