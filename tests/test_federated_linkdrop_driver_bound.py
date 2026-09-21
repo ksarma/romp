@@ -65,6 +65,7 @@ Synthetic: no kernel, no browser; stub classes over scratch directories.
 """
 import ast
 import glob
+import importlib.util
 import json
 import os
 import re
@@ -337,6 +338,44 @@ def _since_at_the_sites(src):
         if found:
             out[fn.name] = [text for _, _, text in sorted(found)]
     return out
+
+
+def _ledger():
+    """scripts/upstream-ledger.py as a module (the shape tests/test_upstream_ledger.py loads it by), for the render the ledger pin reads."""
+    spec = importlib.util.spec_from_file_location("upstream_ledger_for_linkdrop", os.path.join(ROOT, "scripts", "upstream-ledger.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _expand_braces(cell):
+    """The paths a where cell names, one brace group expanded per comma-separated item (`tests/test_x_{a,b}.py` is tests/test_x_a.py
+    and tests/test_x_b.py); an item with no brace is itself. One level, the spelling the entry uses."""
+    out = []
+    for item in _split_outside_braces(cell):
+        m = re.fullmatch(r"([^{}]*)\{([^{}]*)\}([^{}]*)", item)
+        if m:
+            out += [m.group(1) + alt.strip() + m.group(3) for alt in m.group(2).split(",")]
+        else:
+            out.append(item)
+    return out
+
+
+def _split_outside_braces(cell):
+    items, depth, cur = [], 0, ""
+    for ch in cell:
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+        if ch == "," and depth == 0:
+            items.append(cur.strip())
+            cur = ""
+        else:
+            cur += ch
+    if cur.strip():
+        items.append(cur.strip())
+    return items
 
 
 def _without_knobs():
@@ -973,19 +1012,42 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
                          "the return window's since is 1.5 s before the resume: an attach 2.5 s before it is none of this window's, so its row is stray (from 3 s before, it would take the row)")
 
     def test_the_ledger_entry_names_every_module_of_this_family(self):
-        """The upstream ledger entry's `where:` line names every module of the link-drop lab's family in the tree (pass 10,
-        the maintainer's round 5 correctness-5: the line named three modules while the delta added a fourth, the omission the maintainer's round 2
-        had closed once on the same entry). The population is derived from the TREE by the glob tests/test_federated_linkdrop*.py,
-        a spelling-keyed population (a fifth module named otherwise escapes it), stated here because the alternative is a tool
-        reading git's delta against a base a CI checkout may not hold; the pre-push check reads that delta. Every path must
-        appear on the line whole, so the rendered table's 200-character cut is the entry's own concern and not this pin's."""
-        entry = os.path.join(ROOT, "upstream", "2026-09-19-tests-federated-linkdrop-served.md")
-        with open(entry, encoding="utf-8") as f:
-            where = [ln for ln in f.read().splitlines() if ln.startswith("where: ")]
-        self.assertEqual(len(where), 1, "the entry has one where: line")
+        """The upstream ledger entry's RENDERED where cell names every module of the link-drop lab's family in the tree, and
+        nothing the tree lacks (pass 10, the maintainer's round 5 correctness-5: the line named three modules while the delta
+        added a fourth, the omission the maintainer's round 2 had closed once on the same entry; the maintainer's round 6,
+        rules-1: the paths-only line grew to 227 characters with the fifth module and the rendered table dropped that module
+        whole, the third recurrence, while the pin read the raw line and declared the cut out of scope). The population is
+        derived from the TREE by the glob tests/test_federated_linkdrop*.py, a spelling-keyed population (a module named
+        otherwise escapes it), stated here because the alternative is a tool reading git's delta against a base a CI checkout
+        may not hold; the pre-push check reads that delta. The cell is what scripts/upstream-ledger.py's render prints for the
+        entry's row over the tree's entries (the renderer's own cut applied by the renderer, never spelled here), read from the
+        row and brace-expanded (`tests/test_federated_linkdrop_{a,b}.py` names two paths: five full paths cannot fit under the
+        cut in any order, so the line is one stem), and the paths it names are held EQUAL to the family, so a module the cut
+        drops, a module the tree gained, or a stale path on the line is a red naming it. The entry's body points at the where
+        line and keeps no count of modules and no class list (correctness-2: both hand-kept lists went stale as the family
+        grew), and the pin reads the body for a count word before "module"."""
+        ledger = _ledger()
+        entries, problems = ledger.load_entries(os.path.join(ROOT, "upstream"))
+        self.assertEqual(problems, [], "the tree's ledger entries parse: %r" % (problems,))
+        name = "2026-09-19-tests-federated-linkdrop-served.md"
+        entry = next((e for e in entries if e.name == name), None)
+        self.assertIsNotNone(entry, "the family's ledger entry is in the tree: %s" % name)
+        rows = [r for r in ledger.render(entries).split("\n") if name in r]
+        self.assertEqual(len(rows), 1, "the rendered ledger has one row for the entry: %r" % (rows,))
+        cell = ledger.row_cells(rows[0])[1]
         modules = sorted(os.path.relpath(p, ROOT) for p in glob.glob(os.path.join(HERE, "test_federated_linkdrop*.py")))
-        self.assertGreaterEqual(len(modules), 4, "the family in the tree (the served, mint, driver-bound and parsed modules): %r" % (modules,))
-        self.assertEqual([m for m in modules if m not in where[0]], [], "every module of the family is named on the entry's where: line: %r" % (where[0],))
+        self.assertTrue(modules, "the family in the tree, by the glob (a glob that reads nothing is a broken glob, not a clean tree)")
+        named = sorted(_expand_braces(cell))
+        self.assertEqual(cell, entry.get("where"), "the rendered where cell is the entry's whole where value: the renderer cut it (%d characters), so a module is lost from "
+                                                   "the table CI publishes; shorten the spelling (one brace-expanded stem) rather than the family: %r" % (len(entry.get("where") or ""), cell))
+        self.assertEqual(named, modules, "the rendered where cell names exactly the family in the tree; missing from the cell %r, on the cell and not in the tree %r (the cell: %r)"
+                         % (sorted(set(modules) - set(named)), sorted(set(named) - set(modules)), cell))
+        with open(os.path.join(ROOT, "upstream", name), encoding="utf-8") as f:
+            text = f.read()
+        prose = text.split("---", 2)[2] if text.count("---") >= 2 else text
+        counted = re.findall(r"\b(?:one|two|three|four|five|six|seven|eight|nine|ten|\d+) modules?\b", prose)
+        self.assertEqual(counted, [], "the entry's body keeps a count of modules, a hand-kept number that went stale twice; point at the where line instead: %r" % (counted,))
+        self.assertIn("the where line names", prose, "the entry's body points at the where line for the modules")
 
     def test_the_site_censuses_read_every_function_kind_and_every_argument_spelling(self):
         """The two site censuses (pass 10, the maintainer's round 5 tests-4 and extra7-2) over a synthetic source: a call inside
