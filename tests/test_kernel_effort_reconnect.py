@@ -273,13 +273,18 @@ class EffortReconnect(unittest.TestCase):
         # round 6 of the reviewer's review (fork PR #813) appended the step carrier (token=token) to a call that
         # still rode the locked RMW. That pin is gone from this list; the two tests below read the auth write by its
         # property, from the syntax tree (the callee and the keywords present) and by execution (every record write
-        # during the setter made inside _update_reg with _reg_lock held). The six spellings left here stay as they
-        # are this commit. Executed behaviour behind them: set_model's snapshot-and-write in one lock hold is
+        # during the setter made inside _update_reg with _reg_lock held). Five of the six spellings stay as they
+        # were; rename's was re-keyed at round 6's fourteenth commit (fork PR #813) to the compare-and-swap its record
+        # write became (_update_reg_if_holds: the same lock, the write conditional on the door-time name), and its
+        # executed pin is tests/test_sdk_rename_ping.py's RenameRecordWriteIsACompareAndSwap (every record write of a
+        # rename is that helper's, made with _reg_lock held, and it lands). Executed behaviour behind the others:
+        # set_model's snapshot-and-write in one lock hold is
         # tests/test_sdk_backend.py's test_a_defaults_or_reg_read_taken_outside_the_store_lock_never_feeds_the_revert.
         for pin in ('self._update_reg(sid, effort=value, effortPending=True)',
                     'self._update_reg(sid, mode=mode)',
                     'self._update_reg(sid, fast=(value == "on"), liveFast=value)',
-                    'self._update_reg(sid, name=new_name,',   # + the rename ping rides the same locked RMW when owed (2026-08-24/25)
+                    'self._update_reg_if_holds(sid, {"name": reg.get("name")}, fields)',   # rename's record write; the
+                    #   rename ping rides the same write when owed (2026-08-24/25)
                     'self._update_reg(sid, model=value, modelPending=pending)',   # the live model write
                     'self._update_reg(sid, model=value, liveModel=_alias_label(value), modelPending=False)'):
             self.assertIn(pin, BACKEND_SRC)

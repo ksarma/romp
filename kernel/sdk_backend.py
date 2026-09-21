@@ -3306,6 +3306,15 @@ class RegUnreadable(RuntimeError):
     the door, the walk and the drain answer a refusal instead of an applied pick over an unwritten record."""
 
 
+class RenameRefused(RuntimeError):
+    """A rename whose record write did not land (fork PR #813, round 6 of the review, fourteenth commit, 2026-09-21): the
+    record's name moved since the door read (another rename landed inside this one's window, and the later writer wins),
+    or the record was gone or would not read at the write. Raised by SdkBackend._refuse_rename with the sentence the
+    caller hears; the rename door (kernel.py's _rename_claimed) forwards a raise's text as "the rename did not take", so
+    the asker is told the rename did not apply and why. Nothing was written when this is raised, so nothing is
+    compensated."""
+
+
 class StepWrite:
     """THE STEP'S OWN RECORD WRITE, an explicit per-step carrier (round 6 of the review, 2026-09-20; its regression-1,
     correctness-2, extra5-3 and extra8-1 with round 4's kernel-2 and kernel-4). A guard, a row or a door that asks
@@ -18519,7 +18528,26 @@ class SdkBackend:
         if parts is None:                                # no names file read at the door: the names write below creates one
             parts = [new_name, reg.get("cwd", "")]
         parts += ["", "", ""]
-        self._update_reg(sid, name=new_name, **note)   # locked RMW — see set_effort's race note
+        # THE RECORD WRITE IS A COMPARE-AND-SWAP ON `name` (fork PR #813, round 6 of the review, fourteenth commit,
+        # 2026-09-21; the round's own verifiers' fourth pass): the locked RMW lands only while the record still holds the
+        # name the door read (`reg`), compared and written under _reg_lock in one hold (_update_reg_if_holds). A record
+        # whose name moved since the door read was written by another rename that landed whole inside this one's window,
+        # its caller told True; writing over it and compensating cannot repair that: the compensation compares by value
+        # against THIS rename's pick, finds it, and puts the door-time name back over the landed rename with no log line
+        # (the verifiers' drive: rename A to alpha held right after its door read, rename B to beta lands whole, A resumes
+        # and its names write faults; the record read web, the names file and the live name beta, nothing logged). So the
+        # write REFUSES instead: the later writer wins, this caller hears a sentence naming the pick that landed
+        # (RenameRefused, which the rename door hands on as "the rename did not take"), one log line, nothing written and
+        # nothing to compensate. `name` alone is the compare key: it moves on every rename another caller lands. `renameNote`
+        # is not compared, since a note spent by _deliver_rename_ping inside the window is a legitimate writer and a compare
+        # on it would refuse a rename nothing conflicted with; instead the write records, from the same locked read, what
+        # each field held (`replaced`), and THAT is what a failed publish puts back per field, so a spent note is never
+        # re-armed and another caller's note beside an unmoved name is kept. A record gone or unreadable at the write
+        # refuses too: until this commit the RMW's False for the unreadable skip was never read, and the rename went on to
+        # move the names file and the live name and answer True over a record that never moved.
+        verdict, replaced = self._update_reg_if_holds(sid, {"name": reg.get("name")}, fields)
+        if verdict != "written":
+            self._refuse_rename(sid, new_name, reg.get("name"), verdict, replaced)
         # keep the shared names/ identity file in sync (preserve colours). Durable registry FIRST; a
         # names write that RAISES (ENOSPC, EROFS, a permission fault) used to leave the registry holding
         # the new name and the exception escaping with no compensation, so a rename the caller was told
@@ -18533,7 +18561,9 @@ class SdkBackend:
         # conditional (_revert_rename_record; fork PR #813, round 6 of the review, tenth commit, 2026-09-21): a
         # field goes back only while it still holds what this rename wrote, so a rename another caller landed
         # inside this one's window, and was told applied, stands on the record instead of being written
-        # over by the door-time read; the compensation logs what stood. Before the tenth commit the put-back
+        # over by the door-time read; the compensation logs what stood. It goes back to what the record write
+        # itself REPLACED, read in the same locked hold as that write (the fourteenth commit's `replaced`), not
+        # to the door-time read, which a note spent inside the window had moved. Before the tenth commit the put-back
         # was a blanket rewrite of the door-time values, the lost write with a false success the ruling on
         # round 6 named, here on a name rather than a billing pick. A compare by value cannot tell another
         # caller's write of the SAME name from this rename's own, so the compensation also reads names/<sid>
@@ -18547,7 +18577,7 @@ class SdkBackend:
             write_name(self.state_dir, sid, new_name, parts[1], parts[2], parts[3])
         except BaseException:
             try:
-                verdict, stands = self._revert_rename_record(sid, new_name, reg, fields, door_names)
+                verdict, stands = self._revert_rename_record(sid, new_name, replaced, fields, door_names)
             except Exception as e2:
                 # a silent pass here hides the ONE moment the code knows the stores disagree: the
                 # registry alone holds the NEW name and will apply the rename the caller was told
@@ -18986,11 +19016,41 @@ class SdkBackend:
             write_reg(self.state_dir, sid, reg)
             return True
 
+    def _refuse_rename(self, sid: str, new_name: str, door_name, verdict: str, holds) -> None:
+        """rename()'s record write did not land (fork PR #813, round 6 of the review, fourteenth commit, 2026-09-21): one log
+        line says why, and RenameRefused carries the sentence the caller hears (the rename door forwards a raise's text as
+        "the rename did not take"). "moved": another caller's rename landed inside this one's window; `holds` carries the
+        name the record holds and the sentence names that pick, since the later writer wins and this rename must not be
+        written over it and then "compensated" back to the door-time name. "absent": the record is gone (removed during
+        the rename; this backend never unlinks one). "unreadable": it exists and would not read, so the write was skipped
+        rather than gutting it (the writers' one rule), and the names file and the live name are NOT moved over a record
+        that did not, which they were until this commit (the RMW's False for the skip was never read). Nothing was written
+        on any of the three verdicts, so there is nothing to compensate and no restart applies the new name."""
+        if verdict == "moved":
+            landed = (holds or {}).get("name")
+            why = ("another rename of this session, to %r, landed first; it stands, and this rename to %r wrote nothing"
+                   % (landed, new_name))
+            self._log("sdk rename of %s to %r refused: the record's name moved from %r (the door's read) to %r before "
+                      "this rename's write, so the later writer stands, nothing was written and the caller is told"
+                      % (sid[:8], new_name, door_name, landed), problem=False)
+        elif verdict == "absent":
+            why = "the session's record is gone (removed during the rename), so nothing was renamed"
+            self._log("sdk rename of %s to %r refused: the record is absent (removed during the rename; this backend never "
+                      "unlinks one), so nothing was written" % (sid[:8], new_name), problem=False)
+        else:
+            why = "the session's record exists and would not read, so nothing was written and the rename did not apply"
+            self._log("sdk rename of %s to %r refused: the record exists and would not read, so its write was skipped and "
+                      "nothing was changed; the names file and the live name were not moved over it" % (sid[:8], new_name))
+        raise RenameRefused(why)
+
     def _revert_rename_record(self, sid: str, new_name: str, before: dict, fields: dict, door_names):
         """rename()'s compensation after its names write raised (fork PR #813, round 6 of the review, tenth commit,
         2026-09-21; _revert_mode_record's shape, on the two keys rename writes): each key in `fields` (`name`, and
-        `renameNote` when the rename stamped one, both written as `new_name`) goes back to what the door-time read
-        `before` held, or is dropped when `before` had no such key, ONLY while the record still holds `new_name` there,
+        `renameNote` when the rename stamped one, both written as `new_name`) goes back to what `before` held, or is
+        dropped when `before` had no such key, ONLY while the record still holds `new_name` there. `before` is the value
+        each key held in the SAME locked read as this rename's record write (_update_reg_if_holds's `replaced`; the
+        fourteenth commit): until then it was the door-time read, so a note _deliver_rename_ping spent inside the window
+        went back armed, and another caller's note beside an unmoved name was dropped. The compare and the write are
         compared and written under _reg_lock in one read-modify-write. A key holding anything else was written by another
         caller after this rename's record write landed (a later rename's name and note, the settle's None over a spent
         note) and stands. Until the tenth commit the put-back was unconditional, so a rename another caller landed inside
@@ -19036,13 +19096,30 @@ class SdkBackend:
         applies at a restart. The same-sid names writers that rewrite the file with the name IT holds are kernel.py's
         _set_session_color, _set_session_emoji and _set_palette (and _set_name, a dead tab's file only); _finish_move
         carries the file's name when the file reads and the record's when it does not.
+        (5) The names write carries the door-time names line (`parts`: the cwd and the colours read at rename's door),
+        so a move whose names rewrite (_finish_move) lands inside the window has its cwd put back in names/<sid> by this
+        rename's names write while the record's cwd is the new one (the round's own verifiers' drive: a move's finish
+        inside the window, the rename's names write landing; the record's cwd new, the names file's cwd old, no log
+        line). Not a record write and not this compensation: the fourteenth commit's compare-and-swap is on the record's
+        `name`, which a move does not touch, so it passes, and the names file is a second store whose writers share no
+        lock (write_name is tmp + os.replace, last writer wins), so the record write's compare does nothing for it. A
+        repair is named and unruled: carry the cwd the record holds in the same locked read as the record write (the
+        pre-image _update_reg_if_holds returns) rather than the door-time parts[1], which narrows the window to a move
+        whose record write lands after that read and whose names write lands before this one's; closing it needs the
+        names file's writers under one lock.
         REACHABILITY: SdkBackend.rename has one caller in the tree, kernel.py's _rename_claimed (the rename door,
         shared by the HTTP route and the WS op), which claims the target name across be.rename, refuses a concurrent
         claim of a held name, and answers a rename to the name names/<sid> already reads as a no-op with nothing
         written. The same-name concurrent shapes (the twelfth commit's, the thirteenth's and residual 3) are therefore
         reachable today only by a direct caller of be.rename, a public backend method with its own contract; the
         different-name shapes (the tenth commit's and residual 2) and a move inside the window (residual 4) are
-        reachable through the doors.
+        reachable through the doors. Since the fourteenth commit rename's record write is a compare-and-swap on `name`
+        (_update_reg_if_holds; the comment above the write): a rename landing whole between another rename's door read
+        and its record write, to ANY name, is refused at that write (RenameRefused, one log line, nothing written) and
+        never reaches this compensation. What reaches it: a names write that raised after a record write that landed
+        over the name the door read, so the other caller, if any, read its door AFTER this rename's record write and
+        passed its own compare on this rename's unlanded name (residuals 1, 2 and 3, and the move of residual 4), or
+        wrote nothing (the control). Those shapes read as they did before the compare-and-swap.
 
         Returns (verdict, stands). "landed": stood down, `stands` the keys with the values the record holds.
         "compared": the compare-and-swap ran, `stands` the keys another writer holds with their values ({} when every
@@ -19055,10 +19132,11 @@ class SdkBackend:
         Until the twelfth commit both answered None and rename's arm logged the unreadable sentence for both.
 
         WRITERS of the record's `name`: spawn and fork (the row's creation), resume (its full rewrite keeps the name it
-        read), promote_thread (the breakout's name, under _reg_lock), rename (the step's RMW) and this compensation.
+        read), promote_thread (the breakout's name, under _reg_lock), rename (the step's RMW, a compare-and-swap on the
+        door-time name through _update_reg_if_holds since the fourteenth commit) and this compensation.
         WRITERS of `renameNote`: rename (stamped beside the name when prior turns exist), _deliver_rename_ping (spent
-        to None once the ping is provably queued) and this compensation (dropped while it still holds the failed
-        pick). READERS of `name`: SdkSession.__init__ (the live name at connect), resume (`kept`), fork_children,
+        to None once the ping is provably queued, and since the fourteenth commit only while the record still holds the
+        note it delivered) and this compensation (dropped while it still holds the failed pick). READERS of `name`: SdkSession.__init__ (the live name at connect), resume (`kept`), fork_children,
         sid_for_name, _finish_move's names rewrite, and the log and row texts of _boot_reconcile, _settled_now,
         _queue_behind_stand_down, move, read_picks, follow_default_auth, set_auth_guarded, ensure_scheduled and
         deliver_lost_wakeups; kernel.py reads the row for its listings. READER of `renameNote`: _deliver_rename_ping.
@@ -22455,7 +22533,20 @@ class SdkBackend:
         if not s.enqueue_if_empty("<!-- romp-injected --><!-- romp-system -->" + RENAME_NUDGE % note
                                   + "<!-- romp-gist: renamed to '%s' -->" % note):
             return False                   # a queued turn would share the pre-turn window — hold the note
-        self._update_reg(s.sid, renameNote=None)
+        # The spend is a compare-and-swap on the note it delivered (fork PR #813, round 6 of the review, fourteenth
+        # commit, 2026-09-21): a rename landing between the read above and this write leaves a NEWER note, its own name,
+        # on the record, and an unconditional None here spent it, so the session never heard the name it now wears (the
+        # rename's caller was told True and its name stands; its ping alone was lost). A note that moved stands for a
+        # later settle and the verdict is logged once; a record gone or unreadable here is left alone, as every writer
+        # leaves one. The ping already went out either way, so this settle's delivery is reported as made.
+        verdict, detail = self._update_reg_if_holds(s.sid, {"renameNote": note}, {"renameNote": None})
+        if verdict == "moved":
+            self._log("sdk rename ping for %s: the note %r was delivered, and the record now holds %r (a rename landed "
+                      "meanwhile), which stands for a later settle" % (s.sid[:8], note, (detail or {}).get("renameNote")),
+                      problem=False)
+        elif verdict != "written":
+            self._log("sdk rename ping for %s: the note %r was delivered, and the record is %s, so the note was not spent"
+                      % (s.sid[:8], note, "absent" if verdict == "absent" else "unreadable and left as it is"))
         return True
 
     def _update_reg(self, sid: str, live_fields=None, token=None, only_if_none=None, **fields) -> bool:
@@ -22503,6 +22594,37 @@ class SdkBackend:
             if token is not None:
                 token.landed = True                # the step's own write, and only once it landed
             return True
+
+    def _update_reg_if_holds(self, sid: str, expect: dict, fields: dict):
+        """The reg row's COMPARE-AND-SWAP (fork PR #813, round 6 of the review, fourteenth commit, 2026-09-21): `fields` are
+        written only while the record still holds, for every key of `expect`, the value the caller read at its door,
+        compared and written under _reg_lock in one read-modify-write; the shape _update_reg's only_if_none,
+        _revert_mode_record and _revert_rename_record already use, for a caller whose write is WRONG once the door-time
+        value has moved (another caller's landed write would be undone under that caller's success), not merely stale.
+        Returns (verdict, detail). ("written", replaced): `replaced` is the value each written key held in the SAME locked
+        read, for the keys the record had (a key it lacked is absent from the dict, so a put-back can drop it): the
+        per-field pre-image a compensation restores from, never the door-time read, which a writer of another field (a
+        spent note) may have moved meanwhile. ("moved", holds): nothing written; `holds` names the expected keys whose
+        value differs, with the value the record holds now. ("absent", None): the record is gone (a caller whose door
+        read found one never builds a fresh row here). ("unreadable", None): it exists and would not read, the writers'
+        one rule (a stderr line and no write, never gutting the row). Callers: rename (expecting its door-time `name`)
+        and _deliver_rename_ping (expecting the `renameNote` it delivered); each says in its own words what a non-written
+        verdict means for its caller. Every write here is write_reg's, so the registry revision moves with it."""
+        with self._reg_lock:
+            reg = read_reg(self.state_dir, sid)
+            if reg is None:
+                if _reg_absent_for_write(_reg_path(self.state_dir, sid)):
+                    return "absent", None
+                sys.stderr.write("update_reg: %s unreadable; skipping a %s write rather than gutting the reg\n"
+                                 % (sid[:8], "/".join(sorted(fields))))
+                return "unreadable", None
+            holds = {k: reg.get(k) for k, v in expect.items() if reg.get(k) != v}
+            if holds:
+                return "moved", holds
+            replaced = {k: reg[k] for k in fields if k in reg}
+            reg.update(fields)
+            write_reg(self.state_dir, sid, reg)
+            return "written", replaced
 
     def _reg_for_flip(self, sid: str):
         """The RMW base for a VISIBILITY FLIP (kill/resume/promote) when the disk read fails but
