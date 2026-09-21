@@ -155,7 +155,12 @@ class HostFileForeign(HostDirRefused):
     closes), and a foreign owner is an
     ANSWER on the read roads, the way an absent component is (HostDirAbsent): the road files one row naming the file,
     its directory and the owning uid (sdk_backend._refused_directory_row, the file remedy worded for the owner) and
-    answers as it does for an absent file (None from read_host_file's caller, False from host_file_exists's). A
+    answers as it does for an absent file (None from read_host_file's caller, False from host_file_exists's). On the
+    SPAWN road (the round-7 seventh addendum, 2026-09-20: host_log_mark before the spawn, _open_host_log on the refused
+    arms, through the same _stat_name and the same post-open fstat) it is a refusal of the launch at the mark, filed the
+    way every refusal of that road is and starting no process (sdk_backend._refuse_host_directory), and on a refused arm
+    one row and the absent file's answers for the arm's three reads (sdk_backend._refused_launch_log: no reason, no
+    untested row, no position). A
     subclass of HostDirRefused, so every catcher of the parent class sees what it saw before, and a road that catches
     the parent alone files the row and stops, the refusal's arm. `file` names the entry, `uid` its owner; the directory
     is in the text, as on every refusal of this class (and not on an attribute: tests/test_hosts_path_census.py reads a
@@ -256,7 +261,11 @@ class HostDirs:
     descriptor for a read (read_host_file) and as the fstatat of the name under this `dir` descriptor for an existence
     question or a question asked before an open (_stat_name, host_file_exists), so a sixth read site written tomorrow
     has the check at hand in both forms and needs no path stat; that availability, not any one reader, is why the
-    read roads can answer the owner question without reopening the window the descent closes."""
+    read roads can answer the owner question without reopening the window the descent closes. The spawn road's
+    host.log readers take this object and ask through the same two forms since the round-7 seventh addendum
+    (2026-09-20; host_log_mark by the name, _open_host_log by the name and then the descriptor), where through the sixth
+    they took the bare `dir` descriptor and asked nothing, the one class of kernel read under hosts/<sid>/ the design
+    sentence above did not yet cover."""
 
     def __init__(self, hosts: int, dir: int, path=None, loose=(), modes=()):
         self.hosts, self.dir, self.path, self.loose, self.modes = hosts, dir, path, tuple(loose), tuple(modes)
@@ -288,7 +297,9 @@ def open_host_dirs(state_dir, sid: str) -> HostDirs:
     are the operator's (a symlinked ~/.local/state is followed as ever): the guard is against a re-point INSIDE the
     root, where hosts/ lives. The caller holds the descriptors for as long as its writes and reads under the directory
     run (sdk_backend._host_transport_for keeps them across the spawn wait, so its reads of host.stderr's size and
-    host.log go to the directory the spec was written in, whatever hosts/ names by then) and closes them after."""
+    host.log go to the directory the spec was written in, whatever hosts/ names by then; the host.log readers take this
+    object and ask the owner question of the entry at the name since the round-7 seventh addendum, 2026-09-20) and
+    closes them after."""
     return _descend(state_dir, sid, private=True)
 
 
@@ -371,7 +382,9 @@ def _stat_name(name: str, dirs: HostDirs):
     entry at the name (ENOENT), None; an entry ANOTHER UID owns, of ANY kind (a regular file, a symlink, a directory, a
     FIFO, a socket), HostFileForeign naming the entry, the directory and the uid; a SYMLINK of ours, the file-shape
     HostDirRefused (`file` set, the wording _open_file_nofollow gives a link at spawn.json or host.stderr); anything
-    else of ours, the stat result, for the caller to read the kind from (S_ISREG decides whether it is the file). Any
+    else of ours, the stat result, for the caller to read the kind from (S_ISREG decides whether it is the file); the
+    spawn road's host.log readers ask it too since the seventh addendum (host_log_mark reads the size off the answer,
+    _open_host_log asks through _open_host_file). Any
     other OSError of the stat (EACCES on a `<sid>/` of ours with no search bit, EIO) propagates as itself: a fault of
     the directory, not a shape at the name (what each read road does with it: host_file_exists's docstring, the round-7
     sixth addendum). Why the question is asked here and not of an opened descriptor alone:
@@ -428,11 +441,16 @@ def _foreign(name: str, dirs: HostDirs, uid: int) -> HostFileForeign:
     return e
 
 
-def read_host_file(name: str, dirs: HostDirs):
-    """The bytes of `hosts/<sid>/<name>` read whole through the descent, or None when no regular file of ours stands at
-    the name. The read roads' one file read (the round-7 second addendum of the review, 2026-09-20): identity.json on
-    the orphan road, host.log on the served road. Two checks and the open between them (the round-7 fifth addendum,
-    2026-09-20, correcting the fourth).
+def _open_host_file(name: str, dirs: HostDirs):
+    """`hosts/<sid>/<name>` opened for reading through the descent: a binary file object at the file's start, or None when
+    no regular file of ours stands at the name. THE ONE READER every kernel read of a file under `hosts/<sid>/` goes
+    through (the round-7 seventh addendum of the review, 2026-09-20): read_host_file for the orphan road's identity.json
+    and the served road's host.log (the second addendum), and _open_host_log for the spawn road's host.log (host_log_rows
+    and host_exit_reason on its refused arms, sdk_backend._record_refused_launch_position beside them), which through the
+    sixth addendum opened the name under the held descriptor with no owner question asked, so the PR record's lead
+    sentence, that every kernel read of identity.json and host.log under hosts/ asks the owner question before opening,
+    was false for those readers. Two checks and the open between them (the round-7 fifth addendum, 2026-09-20,
+    correcting the fourth).
     FIRST THE OWNER QUESTION, BEFORE ANY OPEN (_stat_name, a stat by NAME under the verified `<sid>` descriptor with no
     link followed): an entry another uid owns, of any kind, raises HostFileForeign; a symlink of ours raises the
     file-shape refusal; no entry, or a directory, a FIFO or a socket of ours, is None here with NOTHING OPENED. That
@@ -440,7 +458,9 @@ def read_host_file(name: str, dirs: HostDirs):
     through the fourth addendum the owner check was the fstat of the descriptor the open returned, and open(2) answers
     ENXIO for a UNIX socket before it returns one, so a peer's socket at identity.json or host.log raised a bare OSError
     the orphan and served roads swallowed with no owner row, while the lease-applies road filed one for the same plant;
-    a FIFO of ours, opened O_NONBLOCK so as not to block, was answered by that fstat; now neither is opened at all.
+    a FIFO of ours, opened O_NONBLOCK so as not to block, was answered by that fstat; now neither is opened at all (and
+    a FIFO at host.log, which the spawn road's opener took with neither the stat nor O_NONBLOCK through the sixth
+    addendum, blocked that open until a writer appeared).
     THEN THE OPEN, by NAME under the same descriptor with O_NOFOLLOW|O_NONBLOCK (_open_file_nofollow), AND THE FSTAT OF
     THE DESCRIPTOR IT RETURNED, which asks the owner question again of the object actually held and reads its kind: the
     authoritative check, since the entry can change between the stat and the open, deciding the same way (another
@@ -449,13 +469,15 @@ def read_host_file(name: str, dirs: HostDirs):
     there now, the file-shape refusal _open_file_nofollow raises; ENXIO, a socket stands there now, the owner question
     asked once more by name (a peer's socket is its row) and then None, the socket's answer; every other errno (EACCES
     on a file of ours with no read bit, EMFILE, EIO) propagates as the fault it is, because the class is for the shapes
-    an entry can take and not for every failure of the open, and the OSError arms of this reader's two callers, the
-    orphan road (raw None) and the served road (return), arms from before this PR, are where a fault is answered; the
-    lease-applies road, host_file_exists's caller, has no such arm, and a fault of the directory propagates out of it to
-    the connect loop (host_file_exists's docstring; the round-7 sixth addendum, 2026-09-20). Every check is on the held
-    descriptor or on the name under it, never on a path (a path stat would reopen
-    the re-point window the descent closes); the census (tests/test_hosts_path_census.py, CONVERTED) holds both stats
-    by-descriptor."""
+    an entry can take and not for every failure of the open, and the OSError arms of this reader's callers, the orphan
+    road (raw None), the served road (return), and on the spawn road host_log_rows ([]) and
+    _record_refused_launch_position (return), arms from before this PR, are where a fault is answered, each re-raising
+    the refusal class ahead of its arm, since HostDirRefused is an OSError and a refusal answered as absent would be a
+    silent read; the lease-applies road, host_file_exists's caller, has no such arm, and a fault of the directory
+    propagates out of it to the connect loop (host_file_exists's docstring; the round-7 sixth addendum, 2026-09-20).
+    Every check is on the held descriptor or on the name under it, never on a path (a path stat would reopen the
+    re-point window the descent closes); the census (tests/test_hosts_path_census.py, CONVERTED) holds both stats
+    by-descriptor. The caller closes the file (a `with`)."""
     st = _stat_name(name, dirs)
     if st is None or not stat.S_ISREG(st.st_mode):
         return None
@@ -478,7 +500,21 @@ def read_host_file(name: str, dirs: HostDirs):
     if not stat.S_ISREG(st.st_mode):
         os.close(fd)
         return None
-    with os.fdopen(fd, "rb") as f:
+    return os.fdopen(fd, "rb")
+
+
+def read_host_file(name: str, dirs: HostDirs):
+    """The bytes of `hosts/<sid>/<name>` read whole through the descent (_open_host_file, above: the owner question of the
+    entry at the name, the O_NOFOLLOW|O_NONBLOCK open by name under the held `<sid>` descriptor, the fstat of the
+    descriptor it returned), or None when no regular file of ours stands at the name. The read roads' one file read (the
+    round-7 second addendum of the review, 2026-09-20): identity.json on the orphan road, host.log on the served road.
+    The answers, kind by kind and owner by owner, are the table tests/test_host_transport.py pins cell by cell
+    (SHAPE_TABLE), the same table host_file_exists answers for an existence question and the spawn road's host.log
+    readers answer since the seventh addendum (host_log_mark, host_log_rows, host_exit_reason)."""
+    f = _open_host_file(name, dirs)
+    if f is None:
+        return None
+    with f:
         return f.read()
 
 
@@ -639,17 +675,25 @@ def remove_host_dir(state_dir, sid: str, log=None) -> bool:
     return True
 
 
-def _open_host_log(state_dir, sid: str, dir_fd=None):
-    """hosts/<sid>/host.log for reading: by path, or, with `dir_fd` (the session directory's descriptor from
-    open_host_dirs), by name relative to it with O_NOFOLLOW, so a read on the spawn road goes to the directory the
-    spec was written in and not through whatever hosts/ names by then."""
-    if dir_fd is None:
-        return open(host_dir(state_dir, sid) / "host.log", "rb")
-    fd = os.open("host.log", os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0), dir_fd=dir_fd)
-    return os.fdopen(fd, "rb")
+def _open_host_log(dirs: HostDirs):
+    """`hosts/<sid>/host.log` for reading on the spawn road, through the one reader (_open_host_file): the owner question
+    asked of the entry at the name under the held `<sid>` descriptor (`dirs`, the HostDirs open_host_dirs returned, which
+    sdk_backend._host_transport_for holds across the spawn wait so every read goes to the directory the spec was written
+    in and not through whatever hosts/ names by then), then the O_NOFOLLOW|O_NONBLOCK open by name and the fstat of the
+    descriptor it returned. A regular file of ours, the file object at its start; no entry, or a directory, a FIFO or a
+    socket of ours at the name, None with nothing opened (a FIFO's open blocked here through the sixth addendum: no
+    O_NONBLOCK and no stat before it); an entry another uid owns, of any kind, HostFileForeign; a symlink of ours, the
+    file-shape HostDirRefused. Round 4 of the review (2026-09-20) gave this open the descriptor (through round 3 it
+    opened a path, so a hosts/ re-pointed after the spec was written was read through the link); the round-7 seventh
+    addendum (2026-09-20) gave it the owner question, which the read roads' reader had since the fourth and this one
+    lacked: a host.log a peer planted while `<sid>/` was loose (sh.owner_only_dir tightens the directory on the spawn
+    road and keeps every entry in it) was read as this host's, its `error` the card's reason and its rows this launch's.
+    The by-path arm this took with no descriptor (dir_fd None; unreachable, held so by the census's forwarding pin) is
+    gone with the signature: every caller holds the descent, and a reader handed none is a TypeError, not a path."""
+    return _open_host_file("host.log", dirs)
 
 
-def host_log_mark(state_dir, sid: str, dir_fd=None) -> int:
+def host_log_mark(dirs: HostDirs) -> int:
     """The size of hosts/<sid>/host.log in bytes, or 0 without one: the watermark the kernel takes right before it
     spawns a host, so every read of what THAT host wrote (host_exit_reason, the untested-version row the refused
     roads file) starts past everything already in the file. The closing check of the review (2026-09-18) replaced
@@ -673,24 +717,44 @@ def host_log_mark(state_dir, sid: str, dir_fd=None) -> int:
     reader-behind, an end-forced) is skipped by every road and VANISHES: no problem row, anywhere. Bounding the
     served road on this mark is the queued served-road change, where that behaviour is fixed, not this one.
 
-    `dir_fd` (round 4 of the review, 2026-09-20): the session directory's descriptor from open_host_dirs, when the caller
-    holds one; the size is then read by name relative to it, never through a path a re-pointed hosts/ could redirect."""
+    `dirs` (round 4 of the review, 2026-09-20, as the session directory's descriptor; the round-7 seventh addendum, the
+    HostDirs open_host_dirs returned): the descent sdk_backend._host_transport_for holds across the spawn wait; the size
+    is read from the fstatat of the NAME under its `<sid>` descriptor, never through a path a re-pointed hosts/ could
+    redirect. THE OWNER QUESTION (the seventh addendum, 2026-09-20) is that same stat, the read roads' _stat_name: the
+    size of a regular file of ours; 0 for no entry and for a directory, a FIFO or a socket of ours (no file, so the mark
+    is the start); HostFileForeign for an entry another uid owns, of any kind, and the file-shape refusal for a symlink
+    of ours, both RAISED to the caller, which refuses the launch before any process starts (a watermark taken on a file
+    that is not this host's would bound this launch's reads to a peer's bytes). Through the sixth addendum the stat
+    asked no owner question and a peer's host.log at the name answered its size. A fault of the stat (EIO; EACCES cannot
+    reach a directory this road verified 0700 and ours) is 0, the arm this has had since it was written; the refusal
+    class, an OSError too, is re-raised ahead of it and is not among what that arm swallows."""
     try:
-        if dir_fd is not None:
-            return os.stat("host.log", dir_fd=dir_fd, follow_symlinks=False).st_size
-        return os.stat(host_dir(state_dir, sid) / "host.log").st_size
+        st = _stat_name("host.log", dirs)
+    except HostDirRefused:
+        raise
     except OSError:
         return 0
+    return st.st_size if st is not None and stat.S_ISREG(st.st_mode) else 0
 
 
-def host_log_rows(state_dir, sid: str, since: int = 0, dir_fd=None) -> list:
+def host_log_rows(dirs: HostDirs, since: int = 0) -> list:
     """The parsed rows of hosts/<sid>/host.log from byte `since` on (a host_log_mark; 0 is the whole file), in
-    order; [] for a missing or unreadable log. A line that is not a JSON object is skipped. `dir_fd`: the session
-    directory's descriptor (open_host_dirs), when the caller holds one; the file is then opened by name relative to it."""
+    order; [] for a missing or unreadable log, and for a directory, a FIFO or a socket of ours at the name (nothing
+    opened). A line that is not a JSON object is skipped. `dirs`: the HostDirs the spawn road holds (open_host_dirs); the
+    file is opened by name relative to its `<sid>` descriptor through _open_host_log, which asks the owner question (the
+    round-7 seventh addendum, 2026-09-20): an entry another uid owns raises HostFileForeign and a symlink of ours the
+    file-shape refusal, out of this function, for the caller to file as a row (sdk_backend._refused_launch_log), where
+    through the sixth addendum a peer's rows were this launch's. The OSError arm below answers a FAULT (EMFILE, EIO) with
+    [], as it has since it was written; the refusal class, an OSError too, is re-raised ahead of it."""
     try:
-        with _open_host_log(state_dir, sid, dir_fd) as f:
+        f = _open_host_log(dirs)
+        if f is None:
+            return []
+        with f:
             f.seek(int(since or 0))
             data = f.read()
+    except HostDirRefused:
+        raise
     except OSError:
         return []
     rows = []
@@ -704,7 +768,7 @@ def host_log_rows(state_dir, sid: str, since: int = 0, dir_fd=None) -> list:
     return rows
 
 
-def host_exit_reason(state_dir, sid: str, since: int = 0, dir_fd=None) -> str:
+def host_exit_reason(dirs: HostDirs, since: int = 0) -> str:
     """What a host that exited before serving its socket said last: the `error` of its final `host-crashed` or
     `cli-spawn-failed` row, for the kernel's launch error; "" when no row says (an unreadable log, a host that
     died without one). `since` is the host_log_mark the kernel took before the spawn: the rows read are the ones
@@ -726,8 +790,9 @@ def host_exit_reason(state_dir, sid: str, since: int = 0, dir_fd=None) -> str:
     last line and could read "OSError: AF_UNIX path too long"; it no longer can. The host writes no spec field and no
     environment value to host.log (its module docstring); that is the guarantee, not "prose".
 
-    `dir_fd` (round 4, 2026-09-20): the session directory's descriptor (open_host_dirs) when the caller holds one; the
-    rows are then read by name relative to it (host_log_rows).
+    `dirs` (round 4, 2026-09-20, as the session directory's descriptor; the round-7 seventh addendum, the HostDirs the
+    spawn road holds): the rows are read by name relative to its `<sid>` descriptor (host_log_rows), the owner question
+    asked first, so a host.log another uid owns at the name is HostFileForeign out of this function and never a reason.
 
     A cli-spawn-failed row is a bare exception type name, and it stays the first word. When this host also wrote
     an sdk-version-untested row (the SDK imports at a version other than the pin, and its internals resolved), the
@@ -745,7 +810,7 @@ def host_exit_reason(state_dir, sid: str, since: int = 0, dir_fd=None) -> str:
     recorded whenever it holds, the remedy rides with the fact, and no failure is attributed by its type. The
     untested row is the one gate left: the host writes it only when the SDK is importable and the version differs,
     so a machine with no SDK at all (the pipe transport's spawn failing the same arm) keeps the bare type name."""
-    rows = host_log_rows(state_dir, sid, since, dir_fd=dir_fd)
+    rows = host_log_rows(dirs, since)
     for i in range(len(rows) - 1, -1, -1):
         row = rows[i]
         if row.get("kind") not in ("host-crashed", "cli-spawn-failed") or not row.get("error"):

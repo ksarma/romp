@@ -13930,7 +13930,23 @@ class SdkBackend:
             # refusal (_record_refused_launch_position), so a previous host's row no road had filed vanishes
             # (round 4, 2026-09-19). Bounding that road on the mark is the queued served-road change, by the
             # reviewer's ruling.
-            mark = ht.host_log_mark(self.state_dir, sess.sid, dir_fd=dirs.dir)
+            # THE OWNER QUESTION at the mark (the round-7 seventh addendum of the review, 2026-09-20): the size is read
+            # off the read roads' _stat_name under the held <sid> descriptor, so a host.log another uid owns at the name,
+            # of any kind, or a link of ours, refuses the launch HERE, with the row and no process started
+            # (_refuse_host_directory, the shape every refusal of this road takes); through the sixth addendum the stat
+            # asked nothing and a peer's file bounded this launch's reads. How such a file can stand under a directory
+            # the descent above verified 0700 and ours: sh.owner_only_dir tightens a loose directory of ours and keeps
+            # every entry a peer planted while it was loose, and a spawn meets a standing directory on two roads that
+            # clear nothing, a stale kernel-held lease (state "none" with a lease, so no leftover check runs) and a
+            # leftover the orphan road's remove_host_dir reported not cleared (a foreign directory inside it). Once the
+            # helpers have tightened it, a create, a rename or an unlink in <sid>/ is checked against the directory's
+            # own mode, a held descriptor included, so no peer changes its entries between this mark and the refused
+            # arms' reads below; a peer holding a descriptor on a file it planted can still write to it, which the
+            # owner question refuses whatever the bytes.
+            try:
+                mark = ht.host_log_mark(dirs)
+            except ht.HostDirRefused as e:              # HostFileForeign among them: the row, and no process starts
+                self._refuse_host_directory(sess, e)
             # host.stderr's watermark beside it (kernel-1 and correctness-1, round 4 of the review, 2026-09-20): the
             # launcher opens that file append-only and a refused launch clears nothing, so a previous launch's traceback
             # stays in it; the two refused arms below read the size again and say whether THIS launch's host wrote to
@@ -13960,7 +13976,7 @@ class SdkBackend:
                     # the host's last word when it left one (an SDK pin mismatch names both versions and the repin
                     # command there; a spawn failure its exception type, with the version it ran beside it when the
                     # host wrote that fact), so the card says why, not just where to look
-                    reason = ht.host_exit_reason(self.state_dir, sess.sid, since=mark, dir_fd=dirs.dir)
+                    reason = self._refused_launch_log(sess, dirs, mark, "exited before serving its socket (code %s)" % proc.returncode)
                     # the file a refused host leaves is named per class (review round 3 of the socket-mode fix, 2026-09-19): a
                     # host refused in its constructor (a hosts/ or hosts/<sid>/ that is a symlink, another uid's or stubbornly
                     # loose) exits before writing any row, so its traceback is on hosts/<sid>/host.stderr beside the
@@ -13996,9 +14012,9 @@ class SdkBackend:
                                 "see hosts/%s/host.log" % (proc.returncode, sess.sid, sess.sid))
                     # The drift fact first, on its own row (fresh-1 as the closing check ruled it, 2026-09-18): a
                     # host that imported an untested SDK wrote so before it failed, and that fact is filed whatever
-                    # the failure was, with the remedy, once per kernel life per version pair. The failure's row below
-                    # keeps the failure's own type; nothing attributes the one to the other.
-                    self._file_refused_launch_context(sess, mark, dir_fd=dirs.dir)
+                    # the failure was, with the remedy, once per kernel life per version pair (_file_refused_launch_context,
+                    # run by _refused_launch_log above beside the reason read, from the same file past the same mark). The
+                    # failure's row below keeps the failure's own type; nothing attributes the one to the other.
                     # One ledger row per refused launch, under its own kind (fresh-3, round 1 of the review,
                     # 2026-09-18): a host that never serves its socket sends no hello and no exit frame, the two
                     # events that file host.log rows, so a refused launch left no session-events row at all and the
@@ -14006,7 +14022,8 @@ class SdkBackend:
                     # untested version whose internals resolve) got host.sdk-untested. Gated on the event, not on the
                     # reason text (a host that died without a row gets a row too), and never host.spawn-failed here.
                     # The one event is counted once because this road also records host.log's line count at the
-                    # refusal (_record_refused_launch_position; regression-1, round 3 of the review, 2026-09-19): until
+                    # refusal (_record_refused_launch_position, run by _refused_launch_log above; regression-1, round 3
+                    # of the review, 2026-09-19): until
                     # then the served road, which starts a host it has not seen at line zero, re-filed this launch's
                     # cli-spawn-failed row as host.spawn-failed when a later host served over a log that survived
                     # (a stale kernel-held lease keeps the directory). That count is the whole file's, so it also
@@ -14015,7 +14032,6 @@ class SdkBackend:
                     # road below files its own kind.
                     problem_row(self.state_dir, "the session host for %s %s" % (sess.name, said), "host.exited-before-socket",
                                 sid=sess.sid, name=sess.name, log=self._log, code=proc.returncode)
-                    self._record_refused_launch_position(sess, dir_fd=dirs.dir)
                     raise CLIConnectionErrorLike("the session host " + said)
                 if time.time() > deadline:
                     # a host that never served is ended, or a resend would start a second host and two CLIs
@@ -14032,14 +14048,15 @@ class SdkBackend:
                     # exit within the wait (correctness-2, round 3 of the review, 2026-09-19: a real host leaves
                     # some 16 to 19 ms between that row and its exit, so this read answers only for one that wedges
                     # after failing); it never returns the untested-version row, which is not a reason and is filed
-                    # on its own by _file_refused_launch_context, the line after it. What this arm says about
+                    # on its own by _file_refused_launch_context, which _refused_launch_log runs beside the reason read.
+                    # What this arm says about
                     # host.stderr is what is true by execution (kernel-5, round 4 of the review, 2026-09-20): the host
                     # was ALIVE at the deadline and was ended by terminate(), which leaves no traceback (the exited
                     # arm's clause, a traceback in host.stderr, would point at a file that is empty by construction
                     # for a host ended this way), so with no reason the message says so and names host.log alone, or,
                     # when the watermark shows the host did write to host.stderr before it stalled, names that file
                     # for what it wrote. The tail main's pins hold, "see hosts/<sid>/host.log", is unchanged.
-                    reason = ht.host_exit_reason(self.state_dir, sess.sid, since=mark, dir_fd=dirs.dir)
+                    reason = self._refused_launch_log(sess, dirs, mark, "did not serve its socket within %.0f s; it was ended" % ht.SOCKET_WAIT_S)
                     if reason:
                         said = "did not serve its socket within %.0f s; it was ended; see hosts/%s/host.log: %s" % (ht.SOCKET_WAIT_S, sess.sid, reason)
                     elif ht.host_stderr_size(dirs) > err_mark:
@@ -14048,10 +14065,8 @@ class SdkBackend:
                     else:
                         said = ("did not serve its socket within %.0f s; it was ended, which leaves no traceback; hosts/%s/host.stderr "
                                 "carries nothing from this launch; see hosts/%s/host.log" % (ht.SOCKET_WAIT_S, sess.sid, sess.sid))
-                    self._file_refused_launch_context(sess, mark, dir_fd=dirs.dir)
                     problem_row(self.state_dir, "the session host for %s %s" % (sess.name, said), "host.never-served-socket",
                                 sid=sess.sid, name=sess.name, log=self._log, waitS=ht.SOCKET_WAIT_S)
-                    self._record_refused_launch_position(sess, dir_fd=dirs.dir)
                     raise CLIConnectionErrorLike("the session host " + said)
                 await asyncio.sleep(0.05)
         finally:
@@ -14082,15 +14097,20 @@ class SdkBackend:
         write_spawn_spec words as a refusal under this class (host_transport.HELPER_SHAPE_ERRNOS). Since the round-7
         second addendum (2026-09-20) the connect road's leftover trigger in _host_transport_for hands here too: its
         descent refused, so the launch that would follow is refused before its own helpers run, with this row and this
-        error."""
+        error. Since the seventh addendum (2026-09-20) so does the spawn watermark (host_transport.host_log_mark, the
+        owner question of host.log under the held descriptor): a host.log another uid owns at the name, of any kind
+        (HostFileForeign, the owner's remedy), or a link of ours (the file's), refuses the launch before any process
+        starts, where through the sixth addendum the size was read with no question asked."""
         said = self._refused_directory_row(sess, e, "was not started")
         raise CLIConnectionErrorLike("the session host " + said)
 
     def _refused_directory_row(self, sess, e, did: str, mode_checked: bool = True) -> str:
         """One host.directory-refused problem row for a refusal of the descent (host_transport.HostDirRefused) on any
         road, the shape _refuse_host_directory has filed since round 4 of the review and the read roads file since the
-        round-7 second addendum (2026-09-20): `did` is the road's clause ("was not started" on the spawn road and at the
-        connect road's leftover trigger; what was not read on the read roads), then the reason with its path, then the
+        round-7 second addendum (2026-09-20): `did` is the road's clause ("was not started" on the spawn road, at the
+        connect road's leftover trigger and at the spawn watermark; the arm's clause with ", and its host.log is not
+        read" on the spawn road's refused arms, _refused_launch_log; what was not read on the read roads), then the
+        reason with its path, then the
         remedy worded for the shape: a file's when the refusal names a link at spawn.json, host.stderr, identity.json or
         host.log (`e.file`), the owner's when it names a file another uid owns (host_transport.HostFileForeign, `e.uid`
         beside `e.file`; the round-7 fourth addendum, 2026-09-20: the read roads' owner check on the object they hold,
@@ -14522,18 +14542,51 @@ class SdkBackend:
         fields = {k: v for k, v in row.items() if k not in ("kind", "t")}
         problem_row(self.state_dir, prose, "host.sdk-untested", sid=sess.sid, name=sess.name, log=self._log, t=row.get("t"), **fields)
 
-    def _file_refused_launch_context(self, sess, mark: int, dir_fd=None) -> None:
+    def _refused_launch_log(self, sess, dirs, mark: int, did: str) -> str:
+        """The refused arms' three reads of host.log, the file THIS launch's host wrote past the spawn watermark `mark`,
+        in one place (the round-7 seventh addendum of the review, 2026-09-20): the reason of the host's last failing row
+        (host_transport.host_exit_reason, the return), the sdk-version-untested row filed as host.sdk-untested
+        (_file_refused_launch_context) and host.log's whole line count recorded as hostLogPos
+        (_record_refused_launch_position). Through the sixth addendum the first ran at each arm's top and the other two
+        between the arm's message and its raise, and each opened host.log by name under the held <sid> descriptor with
+        no owner question asked. Each read now asks it (host_transport._open_host_log through _open_host_file, the reader
+        the orphan and served roads use: the fstatat of the name, the O_NOFOLLOW|O_NONBLOCK open, the fstat of the
+        descriptor), and a refusal at the first of them, HostFileForeign for an entry another uid owns at the name, of
+        any kind, or the file-shape refusal for a link of ours, is ONE host.directory-refused row (_refused_directory_row:
+        the owner's or the file's remedy, `did` the arm's clause) and the absent file's answers for all three: no
+        reason, no untested row, no position, none of the file read. The reads after the refused one are not made,
+        which keeps the row at one per refusal met, the footing every filing here has (a refusal ends its road). The
+        arms' handler is the design's, every read under hosts/<sid>/ asking, and not a road a peer has: the mark
+        (host_log_mark, before the spawn) refuses the launch on a foreign host.log, and once the helpers have tightened
+        <sid>/ to 0700 a create, a rename or an unlink in it is checked against the directory's own mode, a held
+        descriptor included, so the entry at the name changes after the mark only by this uid (the host, which creates
+        host.log by path if none stands). The order of the two filings is the arms' since the closing check of the
+        review (2026-09-18): the untested row first, on its own, then the arm's failure row, which the caller files
+        after this returns; the position, a registry write, moved ahead of that row with no reader between them."""
+        ht = _ht()
+        try:
+            reason = ht.host_exit_reason(dirs, since=mark)
+            self._file_refused_launch_context(sess, mark, dirs)
+            self._record_refused_launch_position(sess, dirs)
+        except ht.HostDirRefused as e:       # HostFileForeign among them: the row, and host.log is not this launch's to read
+            self._refused_directory_row(sess, e, did + ", and its host.log is not read")
+            return ""
+        return reason
+
+    def _file_refused_launch_context(self, sess, mark: int, dirs) -> None:
         """What a host that never served its socket wrote about the SDK it ran, filed on its own: the
         sdk-version-untested row past the spawn watermark `mark` (host_log_mark, so a previous host's row in the same
         file is not this launch's) becomes the host.sdk-untested row through _file_sdk_untested_row. The served
         roads file it from _file_host_log_rows at the hello and the exit; a refused launch reaches neither, so until
         the closing check of the review (2026-09-18) the only trace of the drift on this road was a sentence composed
-        into the failure's own reason, attributed by the failure's type name."""
-        for row in _ht().host_log_rows(self.state_dir, sess.sid, since=mark, dir_fd=dir_fd):
+        into the failure's own reason, attributed by the failure's type name. `dirs`: the HostDirs the spawn road holds
+        (the round-7 seventh addendum, 2026-09-20; a descriptor through the sixth); the rows are read by name under its
+        <sid> descriptor with the owner question asked (host_log_rows), and a refusal propagates to _refused_launch_log."""
+        for row in _ht().host_log_rows(dirs, since=mark):
             if row.get("kind") == "sdk-version-untested":
                 self._file_sdk_untested_row(sess, row)
 
-    def _record_refused_launch_position(self, sess, dir_fd=None) -> None:
+    def _record_refused_launch_position(self, sess, dirs) -> None:
         """host.log's WHOLE line count at a refused launch, as `hostLogPos: {host: HOST_LOG_POS_REFUSED, pos: <lines>}`
         (regression-1, round 3 of the review, 2026-09-19; the reach corrected in round 4). The refused roads file the
         launch's own rows (the untested-version fact, the refusal itself) and the served road, _file_host_log_rows,
@@ -14552,12 +14605,23 @@ class SdkBackend:
         executed both spellings: a position derived from the byte mark re-files the refusal's rows, and one counting
         the lines up to the mark reds the refused-launch case), so the fix is the queued served-road change, which
         bounds that road on the watermark; until then tests/test_session_host_sdk_pin.py pins the drop as the head's
-        behaviour so it cannot change unseen. A line count because that is the unit the served road keeps. `dir_fd`
-        (round 4, 2026-09-20): the session directory's descriptor the spawn road holds, so the count is read by name
-        relative to it and not through a path a re-pointed hosts/ could redirect."""
+        behaviour so it cannot change unseen. A line count because that is the unit the served road keeps. `dirs`
+        (round 4, 2026-09-20, as the session directory's descriptor; the round-7 seventh addendum, the HostDirs the
+        spawn road holds): the count is read by name relative to its <sid> descriptor and not through a path a
+        re-pointed hosts/ could redirect, the owner question asked first (_open_host_log): a host.log another uid owns
+        is HostFileForeign out of here, to _refused_launch_log, and no position is kept from a file that was not read;
+        a directory, a FIFO or a socket of ours at the name is no file, nothing opened, no position. The OSError arm
+        below answers a fault (EMFILE, EIO) as it has since round 3; the refusal class, an OSError too, is re-raised
+        ahead of it."""
+        ht = _ht()
         try:
-            with _ht()._open_host_log(self.state_dir, sess.sid, dir_fd) as f:
+            f = ht._open_host_log(dirs)
+            if f is None:
+                return
+            with f:
                 lines = len(f.read().decode("utf-8", "replace").splitlines())
+        except ht.HostDirRefused:
+            raise
         except OSError:
             return
         try:

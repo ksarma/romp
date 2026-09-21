@@ -16,7 +16,10 @@ as long as the transport is a Unix socket, closed as an open item; FOLLOW-UP, th
 and sh.read_journal_dir's glob and the two reads that take the paths it yields; HELPER, the two directory helpers'
 path-taking syscalls before the spawn road's descent (condition 1's window, stated in write_spawn_spec); GUARD, the
 descent's own open of hosts/ by path with O_NOFOLLOW off the state root and the lstat that words its refusal, and host
-side the lstat of hosts/ before the bind; UNREACHABLE, the two dir_fd=None arms held so by the forwarding pin;
+side the lstat of hosts/ before the bind; UNREACHABLE, a by-path arm a guard makes unreachable (none at this head:
+the two dir_fd=None arms of the spawn road's host.log readers, held so by the forwarding pin through the sixth addendum,
+went with the readers' conversion at the seventh, 2026-09-20, when they took the held HostDirs; the role stays in the
+vocabulary);
 HANDOFF, the spec path in the host's argv; HOST, the host process's own road under its constructor's and prelude's
 guards, and its open of the spec before them (the host-side item the queue keeps). A by-path terminal outside the list
 reds; a listed one that is gone or changed class reds; the converted reads are held by-descriptor (`CONVERTED`,
@@ -98,8 +101,11 @@ lie outside the census by construction as well: a path that reaches a syscall as
 followed to the exec boundary and no further (the `exec-arg` terminal; the host's side re-seeds its `spec_path` by
 declaration), and a syscall made inside a C extension or by code outside the three files given a value this census did
 class (the wide pin holds that no other product module builds such a path itself). The walk is flow-insensitive within
-a function, so it reports a use on a road a guard makes unreachable as it reports a live one (the dir_fd=None arms are
-that shape, listed UNREACHABLE and held so by `test_every_road_into_a_by_path_fallback_arm_passes_a_descriptor`); the
+a function, so it reports a use on a road a guard makes unreachable as it reports a live one (the two dir_fd=None arms
+the spawn road's host.log readers kept through the sixth addendum were that shape, listed UNREACHABLE and held so by the
+forwarding pin; since the seventh addendum no reader has one, and the pin,
+`test_no_reader_has_a_by_path_fallback_arm_and_the_forwarding_analysis_would_report_one`, holds that over this tree and
+shows the analysis live on a scratch copy with one planted); the
 seed rule is a definition, so a hosts path that never passes through the literal segment in these files is never
 tainted; and a leaf name reassembled onto an untainted base after `.name` dropped the taint is a drop by rule.
 
@@ -120,6 +126,16 @@ addendum's commit. The fourth addendum changed no rule and met one: a hosts path
 named `path` (the first cut of HostFileForeign) is a store on a receiver the walk cannot type, and every `.path` read on
 such a receiver in the three files went tainted with it (65 unlisted terminals, 143 escapes at that cut); the class
 carries the directory in its text instead, and this is recorded so the next reader of a `path` attribute knows why.
+The seventh addendum (2026-09-20) met a second engine defect and fixed it: a scope was re-walked after round 0 only
+when something TAINTED could move it (a seed, a tainted local, a call whose value is tainted, a tainted attribute), so a
+HostDirs handed down a chain of functions that carry no taint of their own (the spawn road's _host_transport_for to
+_refused_launch_log to _file_refused_launch_context to host_log_rows, all four taking the holder and none a path or a
+descriptor) was typed only as far as round 0's walk order happened to reach, and that order is not source order; the
+views then bound the rest lazily (tags() of a call binds the callee's parameters), so members() answered differently on
+its second call and the plant harness, which diffs a base census that had been viewed against a fresh planted one, read
+the view's own drift as a change the plants made (two plant cases red at this addendum's first cut). A name typed as a
+holder now makes its scope live like a tainted local, the fixpoint types the whole chain whatever the order, and a pin
+holds the view idempotent and the chain's last reader typed.
 """
 import ast
 import glob
@@ -1524,6 +1540,12 @@ class Census:
             tainted_attrs = {a for (c, a), tags in self.attr.items() if tags} | \
                             {a for (c, a), p in self.properties.items() if self.ret.get((p.file, p.qual))}
             has_local = {(f, q) for (f, q, n), tags in self.local.items() if tags}
+            # a name typed as a HOLDER of descriptors (a HostDirs) makes its scope as live as a tainted local does (the
+            # seventh addendum, 2026-09-20): a holder handed down a chain of functions carrying no taint of their own is
+            # typed one link per walk, so the chain's later links need a walk after their parameter's type arrives,
+            # whatever order round 0 met them in (self.mod_fns is not source order); without this the view typed the
+            # rest lazily and members() was not idempotent
+            has_local |= {(f, q) for (f, q, n), types in self.var_type.items() if any(t in holders for t in types)}
             any_terminal = bool(self.terminals)
             for fn in [x for f in self.files for x in self.mod_fns[f]]:
                 seed, calls, attrs = fn.tokens
@@ -1548,7 +1570,7 @@ class Census:
     def roads(self):
         """The carriers and mints, read off the resolved call sites once the fixpoint holds: a CARRIER hands a tainted
         value (a path or a descriptor), or a HOLDER of one (a HostDirs, whose attributes carry the descriptors: kind
-        `holder`), to a function of the files (`host_log_mark(..., dir_fd=dirs.dir)`, `owner_only_dir(host_dir(...))`,
+        `holder`), to a function of the files (`host_log_mark(dirs)`, `owner_only_dir(host_dir(...))`,
         `HostTransport.from_journal(hdir)`, `host_stderr_size(dirs)`); a MINT is a call whose value is tainted
         (`hdir = ht.host_dir(...)`, `spec_path = ht.write_spawn_spec(...)`) or that enters a function holding a seed or
         returning a descriptor holder (`open_host_dirs(...)`, `remove_host_dir(...)`, `hosts_dir(...)`), the roads by
@@ -1686,10 +1708,6 @@ RESIDUAL = {
         ('mixed', GUARD, "the descent's own open: hosts/ by PATH with O_DIRECTORY|O_NOFOLLOW off the state root, <sid> by NAME under the first descriptor; the spawn, read and removal roads all enter here"),
     ('kernel/host_transport.py', '_open_dir_nofollow', 'os.lstat', 'name', 1):
         ('mixed', GUARD, "the wording of a refused open (a link or a non-directory), by path for hosts/, by name under the descriptor for <sid>; it decides nothing"),
-    ('kernel/host_transport.py', '_open_host_log', 'open', 'host_dir(state_dir, sid) / "host.log"', 1):
-        ('by-path', UNREACHABLE, "the dir_fd=None arm, held by the forwarding pin: every caller passes a descriptor"),
-    ('kernel/host_transport.py', 'host_log_mark', 'os.stat', 'host_dir(state_dir, sid) / "host.log"', 1):
-        ('by-path', UNREACHABLE, "the dir_fd=None arm, held by the forwarding pin"),
     ('kernel/host_transport.py', 'HostTransport.connect', 'asyncio.open_unix_connection', 'self.sock_path', 1):
         ('by-path', PERMANENT, "a Unix socket is connected by the path in its address and connect(2) has no dir_fd form (a connect through /proc/self/fd or a chdir on the descriptor is a different mechanism); reached from the attach by lease, the first connect after the spawn wait and the end by lease; its precondition is a state root a peer can write, since the spawn road's helpers tighten hosts/ before the poll"),
     ('kernel/session_host.py', 'Journal._open_segment', 'open', 'self._path(first)', 1):
@@ -1750,16 +1768,20 @@ RESIDUAL = {
         ('by-path', FOLLOW_UP, FOLLOW_UP_ITEM + ": the orphan road's journal glob, reached only when the road's descent admitted the directory; the same descriptor form as the other glob"),
 }
 # The read roads' terminals since the second addendum, each held by-descriptor: the owner question's stat of the name
-# under the <sid> descriptor (_stat_name, shared by host_file_exists and read_host_file since the fifth addendum; through
-# the fourth it was host_file_exists's own), the open by name under the <sid> descriptor that read_host_file shares with
-# spawn.json and host.stderr (_open_file_nofollow) and its fdopen, the poll's stat of the published name under the hosts/
-# descriptor (host_sock_present), and, since the fourth addendum, the owner check's fstat of the descriptor
-# read_host_file opened.
+# under the <sid> descriptor (_stat_name, shared by host_file_exists and read_host_file since the fifth addendum, and by
+# the spawn road's host_log_mark and _open_host_log since the seventh; through the fourth it was host_file_exists's own),
+# the open by name under the <sid> descriptor that the one file reader (_open_host_file, since the seventh addendum;
+# read_host_file's own body through the sixth) shares with spawn.json and host.stderr (_open_file_nofollow) and its
+# fdopen, the poll's stat of the published name under the hosts/ descriptor (host_sock_present), and, since the fourth
+# addendum, the owner check's fstat of the descriptor that reader opened. The spawn road's host.log readers hold no
+# terminal of their own since the seventh addendum: host_log_mark reads the size off _stat_name's answer and
+# _open_host_log opens through _open_host_file, so the two by-descriptor terminals they had (the mark's stat by name, the
+# open by name and its fdopen) and the two by-path arms listed UNREACHABLE through the sixth are gone from the derived set.
 CONVERTED = (
     ('kernel/host_transport.py', '_stat_name', 'os.stat', 'name', 1),
     ('kernel/host_transport.py', '_open_file_nofollow', 'os.open', 'name', 1),
-    ('kernel/host_transport.py', 'read_host_file', 'os.fstat', 'fd', 1),
-    ('kernel/host_transport.py', 'read_host_file', 'os.fdopen', 'fd', 1),
+    ('kernel/host_transport.py', '_open_host_file', 'os.fstat', 'fd', 1),
+    ('kernel/host_transport.py', '_open_host_file', 'os.fdopen', 'fd', 1),
     ('kernel/host_transport.py', 'host_sock_present', 'os.stat', 'name', 1),
 )
 
@@ -2136,10 +2158,68 @@ class _Q814Escapes:
         for form, line in zip(forms, sorted(escapes)):
             self.assertIn(form, line)
 
-    def test_every_road_into_a_by_path_fallback_arm_passes_a_descriptor(self):
+    def test_the_views_are_idempotent_and_a_holder_typed_down_a_chain_of_untainted_functions_reaches_its_last_reader(self):
+        """The instrument's own fixpoint covers the HOLDER types (the seventh addendum, 2026-09-20; the module docstring's
+        HISTORY): on a fresh census every name the fixpoint typed as a holder of descriptors (a HostDirs, a Journal, a
+        SessionHost, a HostTransport: the classes whose attributes carry taint, the types the carrier classification and
+        the attribute reads depend on) is typed the same after members() ran, members() answers the same keys twice, and
+        the HostDirs the spawn road hands down four functions that carry no taint of their own (_host_transport_for,
+        _refused_launch_log, _file_refused_launch_context, host_log_rows) is typed at the last of them by the fixpoint
+        itself. What the view may still bind lazily, named so it is not mistaken for coverage: a parameter's NON-holder
+        type (two `sess` parameters typed SdkSession at this head, by the tags() of a call the fixpoint did not re-walk
+        for); no member depends on those, which the key equality holds. Red with the holder-typed liveness dropped from
+        run(): members() binds host_log_rows's `dirs` on its first call (the fixpoint had not), and the two views differ
+        on that member (a mint with no tainted argument, then a carrier of the holder)."""
+        c = derive()
+        holders = {cls for (cls, a), tags in c.attr.items() if tags}
+        self.assertIn("HostDirs", holders)
+        typed = lambda: {k: v for k, v in c.var_type.items() if any(t in holders for t in v)}
+        before = typed()
+        keys1 = sorted(t.key() for t in c.members())
+        after = typed()
+        keys2 = sorted(t.key() for t in c.members())
+        self.assertEqual(before, after, "members() typed a name as a holder that the fixpoint had not: the walk stopped short of it")
+        self.assertEqual(keys1, keys2, "the view is not idempotent")
+        self.assertGreater(len(keys1), 0)
+        self.assertEqual(c.var_type.get(("kernel/host_transport.py", "host_log_rows", "dirs")), ("HostDirs",),
+                         "the holder handed down the spawn road's chain is typed at its last reader by the fixpoint")
+
+    def test_no_reader_has_a_by_path_fallback_arm_and_the_forwarding_analysis_would_report_one(self):
+        """Through the sixth addendum two readers (_open_host_log, host_log_mark) kept a by-path arm for a call with no
+        descriptor (dir_fd None), listed UNREACHABLE and held so by this pin's predecessor, which asserted that every road
+        into such an arm passes a descriptor (six functions forwarded one). The seventh addendum (2026-09-20) removed both
+        arms with the readers' conversion (they take the held HostDirs, and a call with none is a TypeError, not a path),
+        so over this tree the analysis finds no function of that shape and no hole: both lists empty. That the analysis
+        still SEES the shape, so the empty answer is a finding and not a broken instrument, is shown on a scratch copy of
+        the three files with one planted at the end of kernel/host_transport.py: a dir_fd=None fallback arm opening
+        host.log by path, and a caller passing no descriptor; the function is listed and the caller is the one hole."""
+        import shutil
+        import tempfile
         holes, fns = self.census.dir_fd_forwarding()
-        self.assertGreater(len(fns), 0, "no reader with a dir_fd=None fallback arm was found")
-        self.assertEqual(holes, [], "a caller reaches a by-path fallback arm without a descriptor: %r" % (holes,))
+        self.assertEqual((fns, holes), ([], []), "a reader with a dir_fd=None fallback arm is back, or a road reaches one "
+                                                 "with no descriptor: give it the held HostDirs, as the seventh addendum did: %r %r" % (fns, holes))
+        src = '''
+
+def _q814_by_path_arm(state_dir, sid, dir_fd=None):
+    if dir_fd is None:
+        return open(host_dir(state_dir, sid) / "host.log", "rb").read()
+    return os.open("host.log", os.O_RDONLY, dir_fd=dir_fd)
+
+
+def _q814_no_descriptor(state_dir, sid):
+    return _q814_by_path_arm(state_dir, sid)
+'''
+        scratch = tempfile.mkdtemp(prefix="hosts-census-")
+        self.addCleanup(shutil.rmtree, scratch, True)
+        for f in FILES:
+            os.makedirs(os.path.dirname(os.path.join(scratch, f)), exist_ok=True)
+            shutil.copy(os.path.join(ROOT, f), os.path.join(scratch, f))
+        with open(os.path.join(scratch, "kernel/host_transport.py"), "a") as fh:
+            fh.write(src)
+        holes, fns = Census(scratch).run().dir_fd_forwarding()
+        self.assertEqual(fns, ["_q814_by_path_arm"], "the planted fallback arm is the one function of that shape: %r" % (fns,))
+        self.assertEqual(len(holes), 1, holes)
+        self.assertIn("_q814_no_descriptor -> _q814_by_path_arm (no dir_fd)", holes[0])
 
 
 def main():

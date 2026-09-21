@@ -3586,7 +3586,8 @@ class PreludeRefusalRead(unittest.TestCase):
     def test_a_peer_planted_host_log_behind_a_swap_after_both_descents_reaches_no_message_no_row_and_no_registry_position(self):
         """tests-2 (round 5 of the review, 2026-09-20): the refused roads' three reads of host.log (host_exit_reason for
         the reason, _file_refused_launch_context for the untested-version row, _record_refused_launch_position for
-        hostLogPos) take a name relative to the held descriptor (_open_host_log's dir_fd), which no case held. The
+        hostLogPos) take a name relative to the held descriptor (_open_host_log's dir_fd then; the held HostDirs since the
+        round-7 seventh addendum, 2026-09-20, which also asks the owner question of the entry), which no case held. The
         before-popen plant of the peer-swap case above, with the peer's <sid>/ holding a host.log of the peer's: a
         host-started row, an sdk-version-untested row and a host-crashed row naming a reason of the peer's. The host
         starts holding the kernel's descriptor, exits 1 (its spec is absent through the link), and every read the
@@ -3894,7 +3895,8 @@ class SpawnWaitMessageArms(unittest.TestCase):
                 self.assertNotIn("code", events[0], "ended, not exited: no return code to record")
 
     def test_the_spawn_watermark_is_read_through_the_descriptor_so_a_hosts_swapped_at_the_mark_hides_no_reason_of_this_host(self):
-        """tests-2 (round 5 of the review, 2026-09-20): host_log_mark's dir_fd, which no case held. The mark is taken
+        """tests-2 (round 5 of the review, 2026-09-20): host_log_mark's dir_fd (the held HostDirs since the round-7 seventh
+        addendum, 2026-09-20), which no case held. The mark is taken
         after the road's descent and before the spawn; a hosts/ swapped for a link to a peer's directory holding a
         LONGER host.log at that moment and put back before the launch (ht.host_log_mark wrapped: swap, delegate,
         restore) would, by path, read the peer's size as the mark, past which this host's own failing row never lands,
@@ -3915,11 +3917,11 @@ class SpawnWaitMessageArms(unittest.TestCase):
         ht = sb._ht()
         real_mark = ht.host_log_mark
 
-        def mark_over_a_swap(state_dir, sid, dir_fd=None):
+        def mark_over_a_swap(dirs):
             os.rename(hosts, moved)
             hosts.symlink_to(peer)
             try:
-                return real_mark(state_dir, sid, dir_fd=dir_fd)
+                return real_mark(dirs)
             finally:
                 os.unlink(hosts)
                 os.rename(moved, hosts)
