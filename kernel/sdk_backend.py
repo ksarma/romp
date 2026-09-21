@@ -13823,8 +13823,8 @@ class SdkBackend:
         # third addendum it answered False here with no row); an entry ANOTHER UID owns at identity.json, of any kind
         # (host_transport.HostFileForeign: the fstatat of the name under the <sid> descriptor, a peer's plant under a
         # loose <sid>/ of ours) is one row naming the file and the owner, and then the answer an absent identity.json
-        # gets: the road goes on to the journal listing below, which is by path until the queued follow-up lands; a
-        # directory, a FIFO or a socket of ours at the name is not the file, False, nothing opened. A FAULT of the
+        # gets: the journal listing below, off the same <sid> descriptor with the owner question per name (next comment);
+        # a directory, a FIFO or a socket of ours at the name is not the file, False, nothing opened. A FAULT of the
         # directory (host_transport._stat_name's PermissionError, EACCES, on a <sid>/ of ours with no search bit) has no
         # arm here and propagates: the connect loop's handler (SdkSession._amain's except) records it as the launch
         # error and ends the connect, which is what the base's Path.exists() did for the same directory (pathlib
@@ -14418,8 +14418,8 @@ class SdkBackend:
         # took a path, so a hosts/ swapped for a symlink to a peer's directory read the peer's identity, which then
         # vouched for the registry's hostAck and set the replay's offset. A refusal (a link at either component or at
         # the file, a non-directory, a foreign uid) is filed as a problem row with the remedy, and the road replays
-        # NOTHING from under that directory: the journal reads below are by path (the queued follow-up, next comment)
-        # and would take the link, so they are not reached on the refused road; the lease and the registry's ack still
+        # NOTHING from under that directory: the reads below run off the held <sid> descriptor (next comment), which the
+        # refused road never obtained, and refuse a link by name before any open; the lease and the registry's ack still
         # go, and remove_host_dir refuses the same object on its own descent and logs it. Since the fourth addendum
         # (2026-09-20): a loose component is a host.directory-loose row, once per connect episode per mode observed (the
         # fifth addendum; the fourth filed one per descent), and the read goes on (_file_loose_directory_rows); an entry
