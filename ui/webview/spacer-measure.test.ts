@@ -75,9 +75,10 @@ type FieldWrite = { node: ts.Node; at: ts.Node; owner: string; field: string; de
  *  LastAssignment: `=`, `??=`, `||=`, `+=` and the rest), a destructuring assignment whose pattern holds the field as a target
  *  (`({ avg: v.avgTurnH } = m)`, `[v.measured] = [x]`), a for-of or for-in over the field, an increment or a decrement, a delete, and a call
  *  of `Object.assign`, `Object.defineProperty`, `Reflect.set`, `Reflect.defineProperty` or `Reflect.deleteProperty` whose receiver names the
- *  field or whose literal source or key does (`Object.assign(v, { measured: x })`, `Reflect.set(v, "measured", x)`). The tree cannot read a
- *  non-literal source's keys or a computed key, so `Object.assign(v, src)` and `v[k] = x` are outside this census by construction:
- *  land-active-keep.test.ts's accessors on the world's view, which every such write reaches at run time, are the guard on those. Each
+ *  field or whose literal source or key does (`Object.assign(v, { measured: x })`, `Reflect.set(v, "measured", x)`, a literal key under a
+ *  spread of a literal). Outside this census by construction, because the tree reads spellings and resolves no binding: a non-literal
+ *  source's keys and a computed key (`Object.assign(v, src)`, `v[k] = x`), a call through an alias of the callee (`const oa = Object.assign;
+ *  oa(v, ...)`), and a write through an alias of the parked object (`const pm = v.measured; pm.avg = x`). Each
  *  write is named by its owner (ownerOf) and described in the census's words (the right side of a plain assignment, else the whole form),
  *  and placed (`at`) where it happens: the node itself, or a for-of or for-in's TARGET, because the statement's span runs to the end of its
  *  body, so a window check that read the statement's span missed a loop whose block enclosed the write it was checking and reddened on the
@@ -96,7 +97,9 @@ function writeSites(root: ts.Node): WriteSite[] {
   const site = (node: ts.Node, targets: Array<ts.Node | undefined>, keys: string[] = [], at: ts.Node = node, plain: ts.BinaryExpression | null = null, describe: string | null = null): void => { out.push({ node, at, targets: targets.filter((t): t is ts.Node => !!t), keys, plain, describe }); };
   const isAssign = (n: ts.Node): n is ts.BinaryExpression => ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && n.operatorToken.kind <= ts.SyntaxKind.LastAssignment;
   const calleeOf = (n: ts.CallExpression): string | null => ts.isPropertyAccessExpression(n.expression) && ts.isIdentifier(n.expression.expression) ? n.expression.expression.text + "." + n.expression.name.text : null;
-  const literalKeys = (a: ts.Node): string[] => ts.isObjectLiteralExpression(a) ? a.properties.flatMap((p) => (ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p)) && (ts.isIdentifier(p.name) || ts.isStringLiteralLike(p.name)) ? [p.name.text] : []) : [];
+  // the literal keys of an object literal, through a spread of another literal (`{ ...{ measured: x } }` names `measured`: the author's fixer
+  // pass over the pass after the maintainer's round 4 ruling, VT20); a spread of anything else names nothing the tree can read
+  const literalKeys = (a: ts.Node): string[] => ts.isObjectLiteralExpression(a) ? a.properties.flatMap((p) => ts.isSpreadAssignment(p) ? literalKeys(p.expression) : (ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p)) && (ts.isIdentifier(p.name) || ts.isStringLiteralLike(p.name)) ? [p.name.text] : []) : [];
   const go = (n: ts.Node): void => {
     if (isAssign(n)) {
       if (ts.isObjectLiteralExpression(n.left) || ts.isArrayLiteralExpression(n.left)) site(n, targetsOf(n.left));
@@ -881,6 +884,6 @@ test("the reload restore's raw write of the persisted rs.top, on the tree: from 
   ];
   assert.deepEqual(between, [], "the reload restore's raw write: the window from the record's binding (line " + line(sB) + ") to the write (line " + line(write) + ") holds a take, so the persisted top, measured in the layout the take before it re-derives, would land in a layout it was not measured in; the site needs no take-back only while this window stays closed");
   // the derivation the window check rests on, pinned after it so a plant in the window is named by the window's message
-  assert.deepEqual([...setters].sort(), ["applyMeasure", "forgetAverage", "measureUnits", "untakeMeasure"], "the take state's writers, by owner from the tree, of any of its three fields in any form the tree can name (writesOf): the take, the reset, the park and the untake; a fifth is a new writer of the take state and belongs with the censuses above (a write through a computed key or a non-literal Object.assign source is outside this census by construction and is caught at run time by land-active-keep.test.ts's accessors on the world's view)");
+  assert.deepEqual([...setters].sort(), ["applyMeasure", "forgetAverage", "measureUnits", "untakeMeasure"], "the take state's writers, by owner from the tree, of any of its three fields in any form the tree can name (writesOf): the take, the reset, the park and the untake; a fifth is a new writer of the take state and belongs with the censuses above (outside this census by construction, the tree reading spellings and resolving no binding: a write through a computed key or a non-literal Object.assign source, a call through an alias of the callee, a write through an alias of the parked object; in the ordering window the first two reach land-active-keep.test.ts's accessors at run time)");
   assert.ok(takers.has("landActive") && takers.has("renderWindowItems") && takers.has("scrollToAnchor") && takers.has("syncViewInner"), "the closure reaches the takers one and two hops out (the walk is not empty): " + [...takers].sort().join(", "));
 });
