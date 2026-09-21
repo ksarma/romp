@@ -11733,58 +11733,69 @@ class SdkSession:
         try:
             crons = inp.get("session_crons") if isinstance(inp, dict) else None
             if isinstance(crons, list):
-                prev = read_reg_for_rmw(self.backend.state_dir, self.sid)
-                if prev is None:
-                    # the except below logs it — skip, never wipe the armed set (field-gutting class)
-                    raise OSError("reg unreadable — session_crons record skipped rather than wiping the armed set")
                 nw = time.time()
-                known = {c.get("id"): c for c in (prev.get("sessionCrons") or []) if isinstance(c, dict)}
-                # Adoption pool for the CALL-TIME records (_sched_tool_hook): a toolhook entry knows the
-                # EXACT dueEpoch but minted its own id; the payload entry carries the CLI's id but no
-                # date. Marry them by prompt + near-due so the reg ends with the CLI's id AND the exact
-                # date, and the toolhook duplicate drops.
-                toolhook = [c for c in (prev.get("sessionCrons") or [])
-                            if isinstance(c, dict) and c.get("src") == "toolhook"]
 
-                def adopt(c):
-                    p = str(c.get("prompt") or "")[:500]
-                    hint = wakeup_due_epoch(str(c.get("schedule") or c.get("cron") or ""),
-                                            float((known.get(str(c.get("id") or "")) or {}).get("armedAt") or nw))
-                    for t in toolhook:
-                        if t.get("prompt") == p and (hint is None or abs(float(t.get("dueEpoch") or 0) - hint) < 90):
-                            return t
+                def derive(prev):
+                    # THE MERGE IS DERIVED FROM THE LOCKED READ (fork PR #813, round 6 of the review, fifteenth commit,
+                    # 2026-09-21; the round's own verifiers' fourth pass on the fourteenth commit): `prev` is the record as it reads under _reg_lock
+                    # at the write, not a read taken before it (read_reg_for_rmw, until this commit), so the kernel thread's
+                    # lost-wakeup drain, which strips this field under the same lock, cannot land between this hook's read
+                    # and its write: a stale rebuild put a stripped and delivered one-shot back (delivered again on the
+                    # next pass) and lost an arm that landed in the window. The session's own event loop still serializes
+                    # this hook against the scheduling-tool hook.
+                    known = {c.get("id"): c for c in (prev.get("sessionCrons") or []) if isinstance(c, dict)}
+                    # Adoption pool for the CALL-TIME records (_sched_tool_hook): a toolhook entry knows the
+                    # EXACT dueEpoch but minted its own id; the payload entry carries the CLI's id but no
+                    # date. Marry them by prompt + near-due so the reg ends with the CLI's id AND the exact
+                    # date, and the toolhook duplicate drops.
+                    toolhook = [c for c in (prev.get("sessionCrons") or [])
+                                if isinstance(c, dict) and c.get("src") == "toolhook"]
+
+                    def adopt(c):
+                        p = str(c.get("prompt") or "")[:500]
+                        hint = wakeup_due_epoch(str(c.get("schedule") or c.get("cron") or ""),
+                                                float((known.get(str(c.get("id") or "")) or {}).get("armedAt") or nw))
+                        for t in toolhook:
+                            if t.get("prompt") == p and (hint is None or abs(float(t.get("dueEpoch") or 0) - hint) < 90):
+                                return t
+                        return None
+
+                    slim = []
+                    for c in crons:
+                        if not isinstance(c, dict):
+                            continue
+                        src = adopt(c) or known.get(str(c.get("id") or "")) or {}
+                        slim.append({"id": str(c.get("id") or ""), "cron": str(c.get("schedule") or c.get("cron") or ""),
+                                     "prompt": str(c.get("prompt") or "")[:500], "kind": str(c.get("kind") or ""),
+                                     "recurring": bool(c.get("recurring")),
+                                     # armedAt/dueEpoch/procGen ride each ENTRY from its first record (the
+                                     # call-time hook when it saw the arm; else first-seen here), so a
+                                     # one-shot's due moment never shifts when later turns rewrite the set
+                                     "armedAt": float(src.get("armedAt") or nw),
+                                     "dueEpoch": (float(src["dueEpoch"]) if src.get("dueEpoch") else None),
+                                     "procGen": str(src.get("procGen") or self.proc_gen)})
+                    # MERGE, don't overwrite: a recycled process LOSES ScheduleWakeup one-shots (verified
+                    # live 2026-08-28), so the fresh process's payload lacks them, and blindly writing the
+                    # payload would erase the very record deliver_lost_wakeups needs. An absent one-shot
+                    # survives while ITS PROCESS GENERATION is gone (the CLI that could have fired it no
+                    # longer exists, so absence from a NEW process's payload is not evidence it fired):
+                    # ownership is exact, no due-time guessing. A one-shot recorded by the LIVE generation
+                    # and absent from its own payload genuinely fired or was cancelled: it drops.
+                    have = {c.get("id") for c in slim}
+                    adopted = {id(t) for c in crons if isinstance(c, dict) for t in [adopt(c)] if t is not None}
+                    for c in (prev.get("sessionCrons") or []):
+                        if (isinstance(c, dict) and not c.get("recurring") and c.get("id") not in have
+                                and id(c) not in adopted
+                                and str(c.get("procGen") or "") != self.proc_gen):
+                            slim.append(c)
+                    if slim != prev.get("sessionCrons"):
+                        return {"sessionCrons": slim, "sessionCronsAt": int(nw)}
                     return None
-
-                slim = []
-                for c in crons:
-                    if not isinstance(c, dict):
-                        continue
-                    src = adopt(c) or known.get(str(c.get("id") or "")) or {}
-                    slim.append({"id": str(c.get("id") or ""), "cron": str(c.get("schedule") or c.get("cron") or ""),
-                                 "prompt": str(c.get("prompt") or "")[:500], "kind": str(c.get("kind") or ""),
-                                 "recurring": bool(c.get("recurring")),
-                                 # armedAt/dueEpoch/procGen ride each ENTRY from its first record (the
-                                 # call-time hook when it saw the arm; else first-seen here), so a
-                                 # one-shot's due moment never shifts when later turns rewrite the set
-                                 "armedAt": float(src.get("armedAt") or nw),
-                                 "dueEpoch": (float(src["dueEpoch"]) if src.get("dueEpoch") else None),
-                                 "procGen": str(src.get("procGen") or self.proc_gen)})
-                # MERGE, don't overwrite: a recycled process LOSES ScheduleWakeup one-shots (verified
-                # live 2026-08-28), so the fresh process's payload lacks them — and blindly writing the
-                # payload would erase the very record deliver_lost_wakeups needs. An absent one-shot
-                # survives while ITS PROCESS GENERATION is gone (the CLI that could have fired it no
-                # longer exists, so absence from a NEW process's payload is not evidence it fired) —
-                # ownership is exact, no due-time guessing. A one-shot recorded by the LIVE generation
-                # and absent from its own payload genuinely fired or was cancelled: it drops.
-                have = {c.get("id") for c in slim}
-                adopted = {id(t) for c in crons if isinstance(c, dict) for t in [adopt(c)] if t is not None}
-                for c in (prev.get("sessionCrons") or []):
-                    if (isinstance(c, dict) and not c.get("recurring") and c.get("id") not in have
-                            and id(c) not in adopted
-                            and str(c.get("procGen") or "") != self.proc_gen):
-                        slim.append(c)
-                if slim != prev.get("sessionCrons"):
-                    self.backend._update_reg(self.sid, sessionCrons=slim, sessionCronsAt=int(nw))
+                verdict = self.backend._update_reg_derived(self.sid, derive)
+                if verdict == "unreadable":
+                    # the except below logs it: skip, never wipe the armed set (field-gutting class)
+                    raise OSError("reg unreadable; session_crons record skipped rather than wiping the armed set")
+                if verdict == "written":
                     self._cron_prompts_refresh()       # the armed set moved under the gate's cache
         except Exception as e:
             self.backend._log("stop hook (%s): session_crons record failed: %s" % (self.name, e))
@@ -11909,47 +11920,57 @@ class SdkSession:
             if not isinstance(targs, dict):
                 return {}
             nw = time.time()
-            prev = read_reg_for_rmw(self.backend.state_dir, self.sid)
-            if prev is None:
-                self.backend._log("sched tool hook (%s): reg unreadable — skipping this record "
-                                  "rather than wiping the armed set" % self.name)
-                return {}
-            cur = [c for c in (prev.get("sessionCrons") or []) if isinstance(c, dict)]
+            # THE ARMED SET IS REBUILT FROM THE LOCKED READ (fork PR #813, round 6 of the review, fifteenth commit,
+            # 2026-09-21; the round's own verifiers' fourth pass on the fourteenth commit): the shape checks below read only the tool call; the list
+            # itself is rebuilt inside _update_reg_derived from the record as it reads at the write, never from a read
+            # taken before the lock (read_reg_for_rmw, until this commit). The kernel thread's lost-wakeup drain
+            # (deliver_lost_wakeups) writes this field too, so a rebuild from an earlier read put back a one-shot the drain
+            # had stripped and delivered (delivered again on the next pass) and, in the other order, lost the arm this
+            # hook recorded. The session's own event loop still serializes this hook against the Stop hook; the lock
+            # serializes both against the drain.
             if tname == "ScheduleWakeup":
-                if targs.get("stop"):
-                    # a dynamic loop ending: drop this session's pending toolhook one-shots — the CLI
-                    # cancels its own pending wakeup on stop, and keeping ours would fabricate a wake
-                    cur = [c for c in cur if not (c.get("src") == "toolhook" and not c.get("recurring"))]
-                    self.backend._update_reg(self.sid, sessionCrons=cur, sessionCronsAt=int(nw))
-                    self._cron_prompts_refresh()
-                    return {}
+                stop = bool(targs.get("stop"))
                 delay = targs.get("delaySeconds")
                 prompt = str(targs.get("prompt") or "")[:500]
-                if not isinstance(delay, (int, float)) or delay <= 0 or not prompt:
+                if not stop and (not isinstance(delay, (int, float)) or delay <= 0 or not prompt):
                     return {}
-                due = nw + max(60.0, min(3600.0, float(delay)))   # the runtime clamps to [60, 3600]
-                # ONE pending wakeup per session, matching ScheduleWakeup's own semantics (arming
-                # replaces the previous pending wakeup): drop earlier toolhook one-shots first
-                cur = [c for c in cur if not (c.get("src") == "toolhook" and not c.get("recurring"))]
-                cur.append({"id": "toolhook-%d" % int(due), "cron": "", "prompt": prompt,
-                            "kind": str(targs.get("reason") or "")[:120], "recurring": False,
-                            "armedAt": nw, "dueEpoch": due, "procGen": self.proc_gen, "src": "toolhook"})
+                due = None if stop else nw + max(60.0, min(3600.0, float(delay)))   # the runtime clamps to [60, 3600]
+                entry = None if stop else {"id": "toolhook-%d" % int(due), "cron": "", "prompt": prompt,
+                                           "kind": str(targs.get("reason") or "")[:120], "recurring": False,
+                                           "armedAt": nw, "dueEpoch": due, "procGen": self.proc_gen, "src": "toolhook"}
             elif tname == "CronCreate":
                 nm = str(targs.get("name") or targs.get("id") or ("cron-%d" % int(nw)))
-                cur = [c for c in cur if c.get("id") != nm]
-                cur.append({"id": nm, "cron": str(targs.get("schedule") or ""),
-                            "prompt": str(targs.get("prompt") or "")[:500], "kind": "cron",
-                            "recurring": True, "armedAt": nw, "dueEpoch": None,
-                            "procGen": self.proc_gen, "src": "toolhook"})
+                entry = {"id": nm, "cron": str(targs.get("schedule") or ""),
+                         "prompt": str(targs.get("prompt") or "")[:500], "kind": "cron",
+                         "recurring": True, "armedAt": nw, "dueEpoch": None,
+                         "procGen": self.proc_gen, "src": "toolhook"}
             elif tname == "CronDelete":
                 nm = str(targs.get("name") or targs.get("id") or "")
                 if not nm:
                     return {}
-                cur = [c for c in cur if c.get("id") != nm]
             else:
                 return {}
-            self.backend._update_reg(self.sid, sessionCrons=cur, sessionCronsAt=int(nw))
-            self._cron_prompts_refresh()               # an arm or delete: the gate's cache follows it
+
+            def derive(prev):
+                cur = [c for c in (prev.get("sessionCrons") or []) if isinstance(c, dict)]
+                if tname == "ScheduleWakeup":
+                    # ONE pending wakeup per session, matching ScheduleWakeup's own semantics (arming replaces the
+                    # previous pending wakeup): drop earlier toolhook one-shots first. A dynamic loop ending (stop)
+                    # drops them too: the CLI cancels its own pending wakeup on stop, and keeping ours would fabricate
+                    # a wake
+                    cur = [c for c in cur if not (c.get("src") == "toolhook" and not c.get("recurring"))]
+                    if entry is not None:
+                        cur.append(entry)
+                else:
+                    cur = [c for c in cur if c.get("id") != nm]
+                    if tname == "CronCreate":
+                        cur.append(entry)
+                return {"sessionCrons": cur, "sessionCronsAt": int(nw)}
+            if self.backend._update_reg_derived(self.sid, derive) == "unreadable":
+                self.backend._log("sched tool hook (%s): reg unreadable; skipping this record "
+                                  "rather than wiping the armed set" % self.name)
+                return {}
+            self._cron_prompts_refresh()               # an arm, a stop or a delete: the gate's cache follows it
         except Exception as e:
             self.backend._log("sched tool hook (%s): %s" % (self.name, e))
         return {}
@@ -13611,7 +13632,9 @@ class SdkBackend:
         #                                             writes to the SHARED sdk-defaults `model`, pending the
         #                                             CLI's verdict (see _seed_write_pending); under _defaults_lock
         self._reg_lock = threading.Lock()         # serializes _update_reg read-modify-writes (queue mirror
-        #                                           writes come from kernel AND loop threads)
+        #                                           writes come from kernel AND loop threads); rename holds it from
+        #                                           its record write through its names write and live set (fork PR
+        #                                           #813, round 6, fifteenth commit), so the three stores move as one
         self._pending_ask: dict[str, bool] = {}   # sid -> has an ask awaiting answer
         self._live: dict[str, dict] = {}          # sid -> {key -> atom}: the in-memory LIVE TAIL (ahead of disk)
         self._live_rev: dict[str, int] = {}       # sid -> count of changes to its live tail (add/edit/drop/flag):
@@ -18545,75 +18568,75 @@ class SdkBackend:
         # re-armed and another caller's note beside an unmoved name is kept. A record gone or unreadable at the write
         # refuses too: until this commit the RMW's False for the unreadable skip was never read, and the rename went on to
         # move the names file and the live name and answer True over a record that never moved.
-        verdict, replaced = self._update_reg_if_holds(sid, {"name": reg.get("name")}, fields)
-        if verdict != "written":
-            self._refuse_rename(sid, new_name, reg.get("name"), verdict, replaced)
-        # keep the shared names/ identity file in sync (preserve colours). Durable registry FIRST; a
-        # names write that RAISES (ENOSPC, EROFS, a permission fault) used to leave the registry holding
-        # the new name and the exception escaping with no compensation, so a rename the caller was told
-        # failed applied itself at the next restart (2026-09-08). write_name is tmp + os.replace and
-        # removes its own temp, so a raise leaves names/<sid> exactly as it was, by construction — there
-        # is NO restore write here (an in-place rewrite would be the one non-atomic write on this path,
-        # an mtime bump for no content change, and under the very ENOSPC it would exist for it truncates
-        # a good file). Only the registry can disagree: put the old fields back (dropping a renameNote
-        # this rename stamped) and re-raise so the caller stays loud. The in-memory name moves last, so
-        # a failure never touches it, the shape CodexBackend.rename has. The put-back is PER FIELD and
-        # conditional (_revert_rename_record; fork PR #813, round 6 of the review, tenth commit, 2026-09-21): a
-        # field goes back only while it still holds what this rename wrote, so a rename another caller landed
-        # inside this one's window, and was told applied, stands on the record instead of being written
-        # over by the door-time read; the compensation logs what stood. It goes back to what the record write
-        # itself REPLACED, read in the same locked hold as that write (the fourteenth commit's `replaced`), not
-        # to the door-time read, which a note spent inside the window had moved. Before the tenth commit the put-back
-        # was a blanket rewrite of the door-time values, the lost write with a false success the ruling on
-        # round 6 named, here on a name rather than a billing pick. A compare by value cannot tell another
-        # caller's write of the SAME name from this rename's own, so the compensation also reads names/<sid>
-        # (the twelfth commit): this rename never wrote that file (write_name raised before its os.replace),
-        # so a names file that reads new_name now, and did not at the door (`door_names`, the door's first
-        # read since the thirteenth commit), was written by another caller: one who landed the same name
-        # whole, or a move's names rewrite that found no names file and carried this rename's record write
-        # (_finish_move's fallback, residual 4 in the helper's docstring); the compensation stands down and
-        # logs that, instead of putting the door-time name back over a landed rename under a false success.
-        try:
-            write_name(self.state_dir, sid, new_name, parts[1], parts[2], parts[3])
-        except BaseException:
-            try:
-                verdict, stands = self._revert_rename_record(sid, new_name, replaced, fields, door_names)
-            except Exception as e2:
-                # a silent pass here hides the ONE moment the code knows the stores disagree: the
-                # registry alone holds the NEW name and will apply the rename the caller was told
-                # failed at the next restart
-                self._log("sdk rename compensation failed for %s: the registry alone holds the new "
-                          "name and will apply it at the next restart (%s)" % (sid, e2))
+        # THE THREE STORES MOVE UNDER ONE HOLD OF _reg_lock (fork PR #813, round 6 of the review, fifteenth commit,
+        # 2026-09-21; the round's own verifiers' fourth pass on the fourteenth commit): the compare-and-swap, the names write, the live set and, when
+        # the names write raises, the compensation run inside one `with self._reg_lock`. The fourteenth commit made the
+        # record write conditional and left the names write and the live set outside the hold, so a rename B whose door
+        # read was this rename's LANDED record write passed its own compare while this rename was still inside its names
+        # write, landed whole (record, names file, live name) and answered True, and then this rename's names write and
+        # live set landed over B's: the record held beta while names/<sid> (the roster every listing reads) and the live
+        # name held alpha, both callers told applied, nothing logged (the verifiers' drive: A alpha held inside
+        # write_name, B beta lands whole, A resumes and lands). Every record writer already takes this lock, so under the
+        # hold no rename, promote or resume moves the record between the compare and the two writes that publish it, and
+        # a second rename's compare runs only after this one has either published on every store or put the record
+        # back: a rename whose door read was this rename's unlanded write is refused (its sentence names the name the
+        # record holds now), one whose door read predates this rename lands after it, and no caller is told a rename
+        # applied that another caller's write then undid. The compensation runs inside the same hold for the same
+        # reason: a rename landing between a failed names write and its put-back would read a record about to be put
+        # back as its door. Log lines are written after the hold is released. The names file's OTHER writers
+        # (_finish_move's rewrite, kernel.py's colour, emoji and palette rewrites) take no lock and stay outside the hold:
+        # residuals 4 and 5 in _revert_rename_record's docstring.
+        refusal = failure = comp = None
+        with self._reg_lock:
+            verdict, replaced = self._update_reg_if_holds(sid, {"name": reg.get("name")}, fields, held=True)
+            if verdict != "written":
+                refusal = (verdict, replaced)
             else:
-                if verdict == "landed":
-                    # nothing is lost and both callers were told the truth: the other caller heard True and its
-                    # rename stands on every store; this one hears its raise
-                    self._log("sdk rename compensation for %s stood down: names/<sid> reads %s, which this rename "
-                              "never wrote (its names write raised), so another caller landed the same name inside "
-                              "its window (or a move's names rewrite, finding no names file, carried this rename's "
-                              "record write); the record keeps the %s it holds"
-                              % (sid, new_name, ", ".join("%s %r" % kv for kv in sorted(stands.items()))),
-                              problem=False)
-                elif verdict == "absent":
-                    # this backend never unlinks a record and the kernel only reads the file, so a hand outside the
-                    # kernel removed it during the rename; nothing was lost by this rename and nothing applies at
-                    # a restart
-                    self._log("sdk rename compensation for %s: the record is absent (removed during the rename; "
-                              "this backend never unlinks one), so nothing was put back and no restart applies "
-                              "the new name (%s)" % (sid, new_name), problem=False)
-                elif verdict == "unreadable":
-                    self._log("sdk rename compensation for %s: the record exists and would not read, so nothing was "
-                              "put back; if it holds the new name (%s) it will apply it at the next restart"
-                              % (sid, new_name))
-                elif stands:
-                    self._log("sdk rename compensation for %s: the record no longer holds the failed pick (%s); "
-                              "another writer's %s stands and is not put back"
-                              % (sid, new_name, ", ".join("%s %r" % kv for kv in sorted(stands.items()))),
-                              problem=False)
-            raise
-        s = self.sessions.get(sid)
-        if s:
-            s.name = new_name
+                # keep the shared names/ identity file in sync (preserve colours). Durable registry FIRST; a
+                # names write that RAISES (ENOSPC, EROFS, a permission fault) used to leave the registry holding
+                # the new name and the exception escaping with no compensation, so a rename the caller was told
+                # failed applied itself at the next restart (2026-09-08). write_name is tmp + os.replace and
+                # removes its own temp, so a raise leaves names/<sid> exactly as it was, by construction: there
+                # is NO restore write here (an in-place rewrite would be the one non-atomic write on this path,
+                # an mtime bump for no content change, and under the very ENOSPC it would exist for it truncates
+                # a good file). Only the registry can disagree: put the old fields back (dropping a renameNote
+                # this rename stamped) and re-raise so the caller stays loud. The in-memory name moves last, so
+                # a failure never touches it, the shape CodexBackend.rename has. The put-back is PER FIELD and
+                # conditional (_revert_rename_record; fork PR #813, round 6 of the review, tenth commit, 2026-09-21): a
+                # field goes back only while it still holds what this rename wrote, so a value another writer put
+                # there meanwhile (a hand outside the kernel, since every writer in this process takes the lock this
+                # runs under) stands on the record instead of being written over by the door-time read; the
+                # compensation logs what stood. It goes back to what the record write itself REPLACED, read in the
+                # same locked hold as that write (the fourteenth commit's `replaced`), not to the door-time read,
+                # which a note spent inside the window had moved. Before the tenth commit the put-back was a blanket
+                # rewrite of the door-time values, the lost write with a false success the ruling on round 6 named,
+                # here on a name rather than a billing pick. A compare by value cannot tell another caller's write of
+                # the SAME name from this rename's own, so the compensation also reads names/<sid> (the twelfth
+                # commit): this rename never wrote that file (write_name raised before its os.replace), so a names
+                # file that reads new_name now, and did not at the door (`door_names`, the door's first read since
+                # the thirteenth commit), was written by another caller: since the fifteenth commit that is a names
+                # writer outside the hold (a move's names rewrite that found no names file and carried this rename's
+                # record write, _finish_move's fallback, residual 4 in the helper's docstring), or a same-name rename
+                # that landed whole between the door's names read and its record read (this rename's compare then
+                # passed on the name it wanted); the compensation stands down and logs that, instead of putting the
+                # door-time name back over a landed rename under a false success.
+                try:
+                    write_name(self.state_dir, sid, new_name, parts[1], parts[2], parts[3])
+                except BaseException as exc:                         # noqa: BLE001 (re-raised below, outside the hold)
+                    failure = exc
+                    try:
+                        comp = self._revert_rename_record(sid, new_name, replaced, fields, door_names, held=True)
+                    except Exception as e2:                          # noqa: BLE001 (logged below: the one moment the
+                        comp = ("failed", e2)                        #   code knows the stores disagree)
+                else:
+                    s = self.sessions.get(sid)
+                    if s:
+                        s.name = new_name
+        if refusal is not None:
+            self._refuse_rename(sid, new_name, reg.get("name"), *refusal)     # one log line, then RenameRefused
+        if failure is not None:
+            self._log_rename_compensation(sid, new_name, comp)
+            raise failure
         return True
 
     def move(self, sid: str, new_cwd: str) -> str:
@@ -19025,11 +19048,19 @@ class SdkBackend:
         the rename; this backend never unlinks one). "unreadable": it exists and would not read, so the write was skipped
         rather than gutting it (the writers' one rule), and the names file and the live name are NOT moved over a record
         that did not, which they were until this commit (the RMW's False for the skip was never read). Nothing was written
-        on any of the three verdicts, so there is nothing to compensate and no restart applies the new name."""
+        on any of the three verdicts, so there is nothing to compensate and no restart applies the new name.
+
+        The "moved" sentence names the name the record holds and says another caller wrote it, not that another RENAME
+        landed (fork PR #813, round 6 of the review, fifteenth commit, 2026-09-21): since that commit rename's three stores
+        move under one hold of _reg_lock, so the record a door read as another rename's unlanded write is, by the time
+        this rename's compare runs, either that rename's landed name or the door-time name its compensation put back; in
+        the second case no rename landed, the record holds what it held before, and a sentence naming "another rename to
+        that name" would be visible and false. Either way the caller's rename did not apply, its pick is retried against
+        the name the sentence gives, and nothing was written."""
         if verdict == "moved":
             landed = (holds or {}).get("name")
-            why = ("another rename of this session, to %r, landed first; it stands, and this rename to %r wrote nothing"
-                   % (landed, new_name))
+            why = ("another caller moved this session's name from %r to %r before this rename's write; %r stands, and "
+                   "this rename to %r wrote nothing" % (door_name, landed, landed, new_name))
             self._log("sdk rename of %s to %r refused: the record's name moved from %r (the door's read) to %r before "
                       "this rename's write, so the later writer stands, nothing was written and the caller is told"
                       % (sid[:8], new_name, door_name, landed), problem=False)
@@ -19043,7 +19074,46 @@ class SdkBackend:
                       "nothing was changed; the names file and the live name were not moved over it" % (sid[:8], new_name))
         raise RenameRefused(why)
 
-    def _revert_rename_record(self, sid: str, new_name: str, before: dict, fields: dict, door_names):
+    def _log_rename_compensation(self, sid: str, new_name: str, comp) -> None:
+        """rename()'s one log line after its names write raised and the compensation ran (fork PR #813, round 6 of the
+        review, fifteenth commit, 2026-09-21): written once the hold of _reg_lock the compensation ran under is released,
+        one line per verdict, the texts the tenth to twelfth commits wrote in rename's except arm. `comp` is (verdict,
+        stands) from _revert_rename_record, or ("failed", exc) when the compensation itself raised. "failed" is the ONE
+        moment the code knows the stores disagree (the registry alone holds the new name and will apply it at the next
+        restart), so it is a problem line, as "unreadable" is; "landed", "absent" and a "compared" with something standing
+        report nothing lost and both callers told the truth; a "compared" where every key went back logs nothing. Not
+        logged under the hold: rename's except arm used to log inside it, and _log's ring takes a lock of its own."""
+        verdict, detail = comp
+        if verdict == "failed":
+            self._log("sdk rename compensation failed for %s: the registry alone holds the new "
+                      "name and will apply it at the next restart (%s)" % (sid, detail), problem=True)
+        elif verdict == "landed":
+            # nothing is lost and both callers were told the truth: the other caller heard True and its
+            # rename stands on every store; this one hears its raise
+            self._log("sdk rename compensation for %s stood down: names/<sid> reads %s, which this rename "
+                      "never wrote (its names write raised), so another caller landed the same name inside "
+                      "its window (or a move's names rewrite, finding no names file, carried this rename's "
+                      "record write); the record keeps the %s it holds"
+                      % (sid, new_name, ", ".join("%s %r" % kv for kv in sorted(detail.items()))),
+                      problem=False)
+        elif verdict == "absent":
+            # this backend never unlinks a record and the kernel only reads the file, so a hand outside the
+            # kernel removed it during the rename; nothing was lost by this rename and nothing applies at
+            # a restart
+            self._log("sdk rename compensation for %s: the record is absent (removed during the rename; "
+                      "this backend never unlinks one), so nothing was put back and no restart applies "
+                      "the new name (%s)" % (sid, new_name), problem=False)
+        elif verdict == "unreadable":
+            self._log("sdk rename compensation for %s: the record exists and would not read, so nothing was "
+                      "put back; if it holds the new name (%s) it will apply it at the next restart"
+                      % (sid, new_name), problem=True)
+        elif detail:
+            self._log("sdk rename compensation for %s: the record no longer holds the failed pick (%s); "
+                      "another writer's %s stands and is not put back"
+                      % (sid, new_name, ", ".join("%s %r" % kv for kv in sorted(detail.items()))),
+                      problem=False)
+
+    def _revert_rename_record(self, sid: str, new_name: str, before: dict, fields: dict, door_names, held=False):
         """rename()'s compensation after its names write raised (fork PR #813, round 6 of the review, tenth commit,
         2026-09-21; _revert_mode_record's shape, on the two keys rename writes): each key in `fields` (`name`, and
         `renameNote` when the rename stamped one, both written as `new_name`) goes back to what `before` held, or is
@@ -19051,7 +19121,9 @@ class SdkBackend:
         each key held in the SAME locked read as this rename's record write (_update_reg_if_holds's `replaced`; the
         fourteenth commit): until then it was the door-time read, so a note _deliver_rename_ping spent inside the window
         went back armed, and another caller's note beside an unmoved name was dropped. The compare and the write are
-        compared and written under _reg_lock in one read-modify-write. A key holding anything else was written by another
+        compared and written under _reg_lock in one read-modify-write: the caller's hold when `held` (rename's, which
+        since the fifteenth commit holds the lock from its compare-and-swap through this put-back), this helper's own
+        otherwise. A key holding anything else was written by another
         caller after this rename's record write landed (a later rename's name and note, the settle's None over a spent
         note) and stands. Until the tenth commit the put-back was unconditional, so a rename another caller landed inside
         this one's window, whose caller was told it applied, was written over on the record alone, the one store a
@@ -19073,53 +19145,79 @@ class SdkBackend:
         file reads `new_name` at the door only when it held that name before this rename began. A names file that read
         `new_name` at the door is no evidence and the compare runs.
 
-        THE RESIDUALS, derived (four, each named so a later fix is fitted to it; none is closed here; the root of the
-        first two is that no record field carries a writer tag or a generation and none is added, the sibling sites'
-        residual, _restore_step_writes):
-        (1) Another caller whose record write of the same name has landed and whose names write has not yet landed at
-        the instant of this locked read is indistinguishable from this rename's own record write and is put back over.
-        (2) Two faulting renames to DIFFERENT names (the round's own verifiers' third pass; reachable through the
-        kernel's rename door, which claims each name apart): the second's door-time `before` is the first's record
-        write, not yet landed and later put back. When the first's compensation runs first, it yields to the second's
-        name and logs that it stands; the second's compensation then puts the FIRST's name and note back, a name no
-        caller was told applied, into the record, while the names file and the live name hold the last name that
-        landed whole and the standing log line names the second's. A repair is proposed and unruled: put `name` back
-        to the name the names file holds at compensation time, the last name that landed whole (write_name lands only
-        on a whole rename), rather than to the door-time value; what `renameNote` goes back to under it is open.
-        (3) A names file that already reads `new_name` at the door while the record reads another name (the tenth
-        commit's opposite-order residual, a disagreement that predates this rename): `door_names == new_name` is no
-        evidence, so a rename to the same name landing whole inside the window is put back over with no log line.
-        (4) _finish_move's fallback: a move landing inside the window while names/<sid> does not read at the move's
-        finish writes the RECORD's name into the file, this rename's own record write, so the file reads `new_name`
-        with no other caller having renamed; the stand-down fires and its log line names a move as the other cause,
-        the record keeps this rename's name and note, the caller was told failure, the live name stays, and the name
-        applies at a restart. The same-sid names writers that rewrite the file with the name IT holds are kernel.py's
-        _set_session_color, _set_session_emoji and _set_palette (and _set_name, a dead tab's file only); _finish_move
-        carries the file's name when the file reads and the record's when it does not.
-        (5) The names write carries the door-time names line (`parts`: the cwd and the colours read at rename's door),
-        so a move whose names rewrite (_finish_move) lands inside the window has its cwd put back in names/<sid> by this
-        rename's names write while the record's cwd is the new one (the round's own verifiers' drive: a move's finish
-        inside the window, the rename's names write landing; the record's cwd new, the names file's cwd old, no log
-        line). Not a record write and not this compensation: the fourteenth commit's compare-and-swap is on the record's
-        `name`, which a move does not touch, so it passes, and the names file is a second store whose writers share no
-        lock (write_name is tmp + os.replace, last writer wins), so the record write's compare does nothing for it. A
+        THE RESIDUALS, derived, and re-derived under the fifteenth commit's hold (rename's compare-and-swap, names write,
+        live set and this compensation run inside ONE hold of _reg_lock since fork PR #813's round 6, fifteenth commit,
+        2026-09-21; the round's own verifiers' fourth pass on the fourteenth commit). Each is named so a later fix is fitted to it. The root of the
+        first three was that no record field carries a writer tag or a generation, and none is added (the sibling sites'
+        residual, _restore_step_writes): the hold closes them for renames by keeping the second writer out of the window,
+        not by telling the writers apart.
+        (1) CLOSED for renames. Another caller whose record write of the same name had landed and whose names write had
+        not yet landed at this locked read was indistinguishable from this rename's own record write and was put back
+        over. No rename's record write lands during this rename's hold now, and every other writer of `name` in this
+        process (promote_thread, resume, spawn and fork) writes the record under this lock too, so no writer is between
+        its record write and its names write while this compensation reads.
+        (2) CLOSED. Two faulting renames to DIFFERENT names (the round's own verifiers' third pass): the second's door-time
+        `before` was the first's record write, not yet landed and later put back, and the order of the two compensations
+        decided which name, told to no caller as applied, stayed on the record. The second's compare now runs after the
+        first has published or put back: a second rename whose door read was the first's unlanded write is refused at
+        its compare (the record holds the door-time name again, and the sentence names it), and one whose door read
+        predates the first lands or fails alone. The proposal to put `name` back to the names file's name is moot.
+        (3) CLOSED for the shape that reached it. A names file that already reads `new_name` at the door while the record
+        reads another name (the tenth commit's opposite-order residual, a disagreement that predates this rename) is no
+        evidence, so the compare runs; until the hold a same-name rename landing whole inside the window was put back
+        over with no log line, and none lands inside the window now. What remains is the disagreement itself: a rename
+        to the name the file already reads, alone, puts the record back and leaves the file reading a name the record
+        does not (the F-B pin); the file's writers are outside this lock (residual 5).
+        (4) NARROWED, open. _finish_move's fallback: a move whose record write landed BEFORE this rename's hold and whose
+        names rewrite runs inside it, while names/<sid> does not read at the move's finish, writes the RECORD's name
+        into the file (a read outside the lock: this rename's own record write), so the file reads `new_name` with no
+        other caller having renamed; the stand-down fires and its log line names a move as the other cause, the record
+        keeps this rename's name and note, the caller was told failure, the live name stays, and the name applies at a
+        restart. Until the hold the move's record write could land inside the window too. The same-sid names writers
+        that rewrite the file with the name IT holds are kernel.py's _set_session_color, _set_session_emoji and
+        _set_palette (and _set_name, a dead tab's file only); _finish_move carries the file's name when the file reads
+        and the record's when it does not.
+        (5) NARROWED, open, outside this lock. The names write carries the door-time names line (`parts`: the cwd and the
+        colours read at rename's door), so a move whose names rewrite (_finish_move) lands between the door read and this
+        rename's names write has its cwd put back in names/<sid> by this rename's names write while the record's cwd is
+        the new one (the round's own verifiers' drive: a move's finish inside the window, the rename's names write
+        landing; the record's cwd new, the names file's cwd old, no log line). Not a record write and not this
+        compensation: the compare-and-swap is on the record's `name`, which a move does not touch, so it passes. The hold
+        narrows it: the move's record write (_update_reg_dropping, under this lock) can no longer land inside the window,
+        so the shape needs the move's record write between the door read and the compare-and-swap and its names rewrite,
+        which takes no lock, before this rename's names write (the fifteenth commit's drive, at both trees: the record's
+        cwd new, the names file's name the rename's and its cwd old, no log line). The names file's writers share no
+        lock (write_name is tmp + os.replace, last writer wins), so the record write's compare covers it not at all. A
         repair is named and unruled: carry the cwd the record holds in the same locked read as the record write (the
-        pre-image _update_reg_if_holds returns) rather than the door-time parts[1], which narrows the window to a move
-        whose record write lands after that read and whose names write lands before this one's; closing it needs the
-        names file's writers under one lock.
+        pre-image _update_reg_if_holds returns) rather than the door-time parts[1], which closes the cwd half under the
+        hold (the move's record write is then either before the locked read, and carried, or after the hold); the
+        colours have no home but the file, so closing them needs the names file's writers under one lock.
+        (6) OPEN, not a lost write (the round's own verifiers' fourth pass on the fourteenth commit). rename's history check (`_has_history`, the
+        stat of the transcript under the door-time cwd) runs before the hold, so a move whose record write lands between
+        the door read and the hold has relocated the transcript: the stat finds nothing, no `renameNote` is stamped, and
+        the renamed session never hears its new name (the verifiers' drive: the record ends with the new name and no
+        note). The name lands on every store. A repair is named and unruled: take the stat under the hold from the
+        locked read's cwd (the compare-and-swap would build `fields` from the record it reads).
+        (7) OPEN, not a lost write (the fifteenth commit, from the verifiers' NOTE_SPENT drive at both trees). The ping's
+        read of `renameNote` (_deliver_rename_ping) and its enqueue run outside this lock, so a settle inside a failing
+        rename's window reads the note that rename stamped and announces the new name to the session; the rename then
+        faults and puts the record back, and the session has heard a name it does not wear. At the fourteenth commit the
+        spend then wrote None over the put-back's None and the compensation logged the note as another writer's; under
+        the hold the spend waits, finds the note gone and logs that a rename landed meanwhile (the text is the spend's
+        moved verdict; here the rename was put back, not landed). The ping's read cannot move under this lock without
+        taking the session's lock inside it, an order no other path takes; a repair is named and unruled: deliver the
+        ping from the record as it reads under _reg_lock and hand the text to the session after the hold.
         REACHABILITY: SdkBackend.rename has one caller in the tree, kernel.py's _rename_claimed (the rename door,
         shared by the HTTP route and the WS op), which claims the target name across be.rename, refuses a concurrent
         claim of a held name, and answers a rename to the name names/<sid> already reads as a no-op with nothing
-        written. The same-name concurrent shapes (the twelfth commit's, the thirteenth's and residual 3) are therefore
-        reachable today only by a direct caller of be.rename, a public backend method with its own contract; the
-        different-name shapes (the tenth commit's and residual 2) and a move inside the window (residual 4) are
-        reachable through the doors. Since the fourteenth commit rename's record write is a compare-and-swap on `name`
-        (_update_reg_if_holds; the comment above the write): a rename landing whole between another rename's door read
-        and its record write, to ANY name, is refused at that write (RenameRefused, one log line, nothing written) and
-        never reaches this compensation. What reaches it: a names write that raised after a record write that landed
-        over the name the door read, so the other caller, if any, read its door AFTER this rename's record write and
-        passed its own compare on this rename's unlanded name (residuals 1, 2 and 3, and the move of residual 4), or
-        wrote nothing (the control). Those shapes read as they did before the compare-and-swap.
+        written. The same-name concurrent shapes are therefore reachable today only by a direct caller of be.rename, a
+        public backend method with its own contract; the different-name shapes and a move inside the window (residuals
+        4, 5 and 6) are reachable through the doors. What reaches this compensation since the hold: a names write that
+        raised after a record write that landed over the name the door read, with no rename able to write between the
+        two. The compare then puts every key back (the control, nothing logged), stands down on the names file's
+        evidence (residual 4, or a same-name rename that landed whole between the door's names read and its record
+        read, so this rename's compare passed on the name it wanted), or finds a key another writer holds (a hand
+        outside the kernel: every writer in this process takes the lock this runs under) and says what stands.
 
         Returns (verdict, stands). "landed": stood down, `stands` the keys with the values the record holds.
         "compared": the compare-and-swap ran, `stands` the keys another writer holds with their values ({} when every
@@ -19133,7 +19231,8 @@ class SdkBackend:
 
         WRITERS of the record's `name`: spawn and fork (the row's creation), resume (its full rewrite keeps the name it
         read), promote_thread (the breakout's name, under _reg_lock), rename (the step's RMW, a compare-and-swap on the
-        door-time name through _update_reg_if_holds since the fourteenth commit) and this compensation.
+        door-time name through _update_reg_if_holds since the fourteenth commit, under the same hold as its names write
+        and live set since the fifteenth) and this compensation.
         WRITERS of `renameNote`: rename (stamped beside the name when prior turns exist), _deliver_rename_ping (spent
         to None once the ping is provably queued, and since the fourteenth commit only while the record still holds the
         note it delivered) and this compensation (dropped while it still holds the failed pick). READERS of `name`: SdkSession.__init__ (the live name at connect), resume (`kept`), fork_children,
@@ -19142,13 +19241,14 @@ class SdkBackend:
         deliver_lost_wakeups; kernel.py reads the row for its listings. READER of `renameNote`: _deliver_rename_ping.
         The names file (write_name: spawn, fork, promote_thread, rename, _finish_move, which carries the file's name
         when the file reads and the record's when it does not; kernel.py's _set_session_color, _set_session_emoji and
-        _set_palette rewrite it with the name it holds, and its _set_name only for a dead tab no backend runs) and the live `name` (SdkSession.__init__, promote_thread, rename) are the other two stores; rename
-        writes them after the record and a raise from write_name leaves both as they were, so neither is a restore
-        site. READERS of the names file's name: rename (the door read) and this compensation (the distinguisher);
+        _set_palette rewrite it with the name it holds, and its _set_name only for a dead tab no backend runs) and the
+        live `name` (SdkSession.__init__, promote_thread, rename) are the other two stores; rename writes them after the
+        record, inside the same hold of _reg_lock since the fifteenth commit, and a raise from write_name leaves both as
+        they were, so neither is a restore site. READERS of the names file's name: rename (the door read) and this compensation (the distinguisher);
         _finish_move and write_name (their rewrites carry the fields they read); kernel.py's _names_snapshot and
         _names_parts (the roster every listing reads), _sdk_transcript_path, _boundary_clear_notices,
         _name_color_by_name and _producer_sig (its mtime: a new name is re-pushed); bin/romp's restart audit row."""
-        with self._reg_lock:
+        with (contextlib.nullcontext() if held else self._reg_lock):
             reg = read_reg(self.state_dir, sid)
             if reg is None:
                 if _reg_absent_for_write(_reg_path(self.state_dir, sid)):
@@ -21891,13 +21991,39 @@ class SdkBackend:
                     due_shots.append(c)
             if not due_shots:
                 continue
-            keep = [c for c in crons if c not in due_shots]
-            try:                                  # strip FIRST — a send failure must not re-fire forever;
-                self._update_reg(sid, sessionCrons=keep)   # the loss is logged loudly below instead
+            # THE STRIP IS DERIVED FROM THE LOCKED READ (fork PR #813, round 6 of the review, fifteenth commit, 2026-09-21;
+            # the round's own verifiers' fourth pass on the fourteenth commit). The scan above read the record outside _reg_lock, and until this
+            # commit the strip wrote the scan's list minus the due shots, so a one-shot the session's scheduling-tool hook
+            # armed between the scan and the strip was written over (the record's mirror of the arm gone, no log line, and
+            # a later process recycle could never fire it), and a Stop-hook rewrite in the window was undone the same way.
+            # The strip now removes, under the lock, the due shots the record STILL holds and keeps whatever else the
+            # record holds at the write. A due shot the hooks rewrote or cancelled meanwhile is not there to strip, so it
+            # is not delivered this pass (a rewritten one is read afresh and delivered on the next; a cancelled one never),
+            # and one log line says so; the unreadable record that _update_reg answered False for, which this drain never
+            # read (it delivered over an unstripped record, to deliver again on the next pass), is a log line too.
+            still = []
+
+            def strip(rec):
+                cur = rec.get("sessionCrons") or []
+                still[:] = [c for c in due_shots if c in cur]
+                if not still:
+                    return None
+                return {"sessionCrons": [c for c in cur if c not in still]}
+            try:                                  # strip FIRST: a send failure must not re-fire forever;
+                verdict = self._update_reg_derived(sid, strip)   # the loss is logged loudly below instead
             except Exception as e:
                 self._log("lost-wakeup (%s): reg strip failed, not delivering: %s" % (reg.get("name") or sid[:13], e))
                 continue
-            for c in due_shots:
+            if verdict != "written":
+                self._log("lost-wakeup (%s): %s, so nothing was stripped and nothing is delivered this pass; a one-shot "
+                          "still recorded and due is delivered on the next"
+                          % (reg.get("name") or sid[:13],
+                             "the record would not read" if verdict == "unreadable"
+                             else "the armed set moved under this pass's scan (the due one-shot%s it read %s no longer "
+                             "recorded)" % (("s", "are") if len(due_shots) > 1 else ("", "is"))),
+                          problem=(verdict == "unreadable"))
+                continue
+            for c in still:
                 ok = False
                 try:
                     ok = bool(self.send(sid, c.get("prompt") or ""))
@@ -22595,7 +22721,7 @@ class SdkBackend:
                 token.landed = True                # the step's own write, and only once it landed
             return True
 
-    def _update_reg_if_holds(self, sid: str, expect: dict, fields: dict):
+    def _update_reg_if_holds(self, sid: str, expect: dict, fields: dict, held: bool = False):
         """The reg row's COMPARE-AND-SWAP (fork PR #813, round 6 of the review, fourteenth commit, 2026-09-21): `fields` are
         written only while the record still holds, for every key of `expect`, the value the caller read at its door,
         compared and written under _reg_lock in one read-modify-write; the shape _update_reg's only_if_none,
@@ -22609,8 +22735,13 @@ class SdkBackend:
         read found one never builds a fresh row here). ("unreadable", None): it exists and would not read, the writers'
         one rule (a stderr line and no write, never gutting the row). Callers: rename (expecting its door-time `name`)
         and _deliver_rename_ping (expecting the `renameNote` it delivered); each says in its own words what a non-written
-        verdict means for its caller. Every write here is write_reg's, so the registry revision moves with it."""
-        with self._reg_lock:
+        verdict means for its caller. Every write here is write_reg's, so the registry revision moves with it. `held`
+        (the fifteenth commit): the caller already holds _reg_lock and this compares and writes inside that hold; rename
+        passes it, since its names write and live set follow this write under the same hold, so no record write lands
+        between the compare and the stores that publish it. A caller passing `held` without the lock would be an
+        unlocked write; the executed pin (tests/test_sdk_rename_ping.py, RenameRecordWriteIsACompareAndSwap) reads the
+        lock's state at the write."""
+        with (contextlib.nullcontext() if held else self._reg_lock):
             reg = read_reg(self.state_dir, sid)
             if reg is None:
                 if _reg_absent_for_write(_reg_path(self.state_dir, sid)):
@@ -22625,6 +22756,39 @@ class SdkBackend:
             reg.update(fields)
             write_reg(self.state_dir, sid, reg)
             return "written", replaced
+
+    def _update_reg_derived(self, sid: str, derive) -> str:
+        """The reg row's read-modify-write whose FIELDS ARE DERIVED FROM THE LOCKED READ (fork PR #813, round 6 of the
+        review, fifteenth commit, 2026-09-21; the round's own verifiers' fourth pass on the fourteenth commit): `derive(reg)` runs under _reg_lock
+        against the record as it reads at the write and returns the fields to write, or None for nothing to write. For a
+        LIST field several threads rebuild whole (`sessionCrons`: the session thread's Stop hook and scheduling-tool hook,
+        and the kernel thread's lost-wakeup drain, deliver_lost_wakeups), a rebuild from a read taken OUTSIDE the lock is
+        the class the fourteenth commit's compare-and-swap refuses on `name`: the write lands over a rebuild another
+        thread landed inside the window, and that thread's write is undone under its own success. The verifiers' drive:
+        a one-shot the tool hook armed between the drain's scan and its strip was gone from the record after the strip,
+        with no log line, and the record's mirror of the arm, the one thing a later process recycle can fire it from, was
+        lost; in the other order the hook's stale rebuild put a stripped and delivered one-shot back, to be delivered
+        again on the next pass. Deriving under the lock makes the read and the write one hold, so nothing lands between
+        them; every writer of the field goes through this, so the pair is closed from both sides. Returns "written",
+        "unchanged" (derive answered None: the record already reads as the caller wants, or what it meant to strip is no
+        longer there) or "unreadable" (the record exists and would not read: the writers' one rule, a stderr line and no
+        write, never gutting the row; the caller says in its own words what it did not record). An absent record derives
+        from {sid}, as _update_reg builds one: the hooks' read_reg_for_rmw base for a fresh session was {} and the first
+        arm may be the record's first write. Every write here is write_reg's, so the registry revision moves with it."""
+        with self._reg_lock:
+            reg = read_reg(self.state_dir, sid)
+            if reg is None:
+                if not _reg_absent_for_write(_reg_path(self.state_dir, sid)):
+                    sys.stderr.write("update_reg: %s unreadable; skipping a derived write rather than gutting the reg\n"
+                                     % sid[:8])
+                    return "unreadable"
+                reg = {"sid": sid}
+            fields = derive(reg)
+            if not fields:
+                return "unchanged"
+            reg.update(fields)
+            write_reg(self.state_dir, sid, reg)
+            return "written"
 
     def _reg_for_flip(self, sid: str):
         """The RMW base for a VISIBILITY FLIP (kill/resume/promote) when the disk read fails but

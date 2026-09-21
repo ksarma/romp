@@ -22,11 +22,14 @@ whose arming generation is still alive belongs to the CLI, always; one whose gen
 never fire CLI-side, so the kernel delivers its prompt at due. Ownership is exact — no grace windows,
 no inflight guessing (review of #769, 2026-08-28). Synthetic fixtures only."""
 import asyncio
+import contextlib
+import io
 import os
 import tempfile
 import time
 import unittest
 from romp_load import load_source
+from unittest import mock
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -317,6 +320,147 @@ class LostWakeupDelivery(_Backend):
         self.assertEqual([c["id"] for c in rec], ["cli-42"], "one entry, the CLI's id")
         self.assertAlmostEqual(rec[0]["dueEpoch"], time.time() + 300, delta=30,
                                msg="…wearing the toolhook's exact due date")
+
+
+class ArmedSetWritersDeriveFromTheLockedRead(_Backend):
+    """sessionCrons has FOUR writers on two threads (fork PR #813, round 6 of the review, fifteenth commit, 2026-09-21; the
+    round's own verifiers' fourth pass on the fourteenth commit): the session thread's Stop hook and scheduling-tool hook, and the kernel thread's
+    lost-wakeup drain (deliver_lost_wakeups). Each rebuilt the whole list from a read taken OUTSIDE _reg_lock (the hooks'
+    read_reg_for_rmw; the drain's list_regs scan) and wrote it under the lock, so a write landing between another writer's
+    read and its write was undone under that writer's success: a one-shot the tool hook armed between the drain's scan
+    and its strip was gone from the record after the strip, with no log line (the record's mirror of the arm, the one
+    thing a later process recycle can fire it from, lost); in the other order a hook's stale rebuild put a stripped and
+    delivered one-shot back, to be delivered again on the next pass. Every writer now derives its list from the record as
+    it reads UNDER the lock (SdkBackend._update_reg_derived), so the read and the write are one hold and nothing lands
+    between them. Synthetic fixtures; the module's placeholder sid."""
+
+    GONE = "gen-dead"
+
+    def _due_shot(self, ident="cccc3333", prompt="Reply with exactly: wakeup-fired"):
+        now = time.time()
+        due = time.localtime(now - 300)
+        return {"id": ident, "cron": "%d %d * * *" % (due[4], due[3]), "prompt": prompt, "kind": "", "recurring": False,
+                "armedAt": now - 900, "dueEpoch": now - 300, "procGen": self.GONE}
+
+    def test_an_arm_recorded_between_the_drains_scan_and_its_strip_survives_the_strip(self):
+        # THE DEFECT: the drain scanned the record (a due one-shot of a gone generation), the session's scheduling-tool hook
+        # then armed a new wakeup, and the drain's strip wrote the scan's list minus the due shot, with no log line: the arm
+        # was gone from the record. Now the strip removes the due shot from the record as it reads under the lock and keeps
+        # the arm; the due prompt is delivered once.
+        shot = self._due_shot()
+        self._reg(sessionCrons=[shot], sessionCronsAt=int(time.time() - 900))
+        s = sb.SdkSession(self.be, sb.read_reg(self.d, SID))       # a fresh generation: the shot's is gone
+        sent = []
+        self.be.send = lambda sid, text: sent.append((sid, text)) or True
+        real = sb.list_regs
+
+        def scan_then_arm(state_dir):
+            rows = real(state_dir)
+            asyncio.run(s._sched_tool_hook({"tool_name": "ScheduleWakeup",
+                                            "tool_input": {"delaySeconds": 600, "prompt": "later"}}, None, None))
+            return rows
+        with mock.patch.object(sb, "list_regs", scan_then_arm):
+            self.assertEqual(self.be.deliver_lost_wakeups(), 1)
+        self.assertEqual(sent, [(SID, "Reply with exactly: wakeup-fired")], "the due one-shot was delivered")
+        rec = (sb.read_reg(self.d, SID) or {}).get("sessionCrons")
+        self.assertEqual([(c.get("prompt"), c.get("src")) for c in rec], [("later", "toolhook")],
+                         "the arm the hook recorded inside the drain's window survives the strip; the due shot is gone "
+                         "(red before the fifteenth commit: [])")
+        self.assertEqual([m for m in self.logs if "lost-wakeup" in m and "nothing was stripped" in m], [],
+                         "the strip found its shot: %r" % (self.logs,))
+
+    def test_a_due_one_shot_the_hooks_rewrote_inside_the_window_is_left_for_the_next_pass(self):
+        # the Stop hook of the fresh generation rewrites the due entry (the CLI's report carries it with another kind; the
+        # merge keeps its first-record fields) between the drain's scan and its strip. The strip finds no entry equal to the
+        # one it scanned, writes nothing, delivers nothing this pass and says so once; the next pass reads the rewritten
+        # entry, still due and of a gone generation, and delivers it. Before the fifteenth commit the strip wrote the stale
+        # list minus the due shot, so the rewritten entry was lost AND the prompt delivered in the same pass.
+        shot = self._due_shot()
+        self._reg(sessionCrons=[shot], sessionCronsAt=int(time.time() - 900))
+        s = sb.SdkSession(self.be, sb.read_reg(self.d, SID))
+        sent = []
+        self.be.send = lambda sid, text: sent.append((sid, text)) or True
+        real = sb.list_regs
+
+        def scan_then_rewrite(state_dir):
+            rows = real(state_dir)
+            asyncio.run(s._stop_hook({"session_crons": [{"id": shot["id"], "schedule": shot["cron"], "prompt": shot["prompt"],
+                                                          "kind": "loop", "recurring": False}]}, None, None))
+            return rows
+        with mock.patch.object(sb, "list_regs", scan_then_rewrite):
+            self.assertEqual(self.be.deliver_lost_wakeups(), 0, "nothing delivered this pass")
+        self.assertEqual(sent, [])
+        rec = (sb.read_reg(self.d, SID) or {}).get("sessionCrons")
+        self.assertEqual([(c.get("id"), c.get("kind"), c.get("procGen")) for c in rec], [(shot["id"], "loop", self.GONE)],
+                         "the rewritten entry stands (red before the fifteenth commit: [], the prompt delivered)")
+        moved = [m for m in self.logs if "lost-wakeup" in m and "nothing was stripped" in m]
+        self.assertEqual(len(moved), 1, "one log line says the armed set moved under the scan: %r" % (self.logs,))
+        self.assertIn("next", moved[0])
+        self.assertEqual(self.be.deliver_lost_wakeups(), 1, "the next pass delivers it")
+        self.assertEqual(sent, [(SID, shot["prompt"])])
+        self.assertEqual((sb.read_reg(self.d, SID) or {}).get("sessionCrons"), [], "and strips it")
+
+    def test_the_hooks_rebuild_the_armed_set_from_the_record_as_it_reads_under_the_lock(self):
+        # THE OTHER HALF OF THE PAIR, by a differential read: a writer landing just before the hook's sessionCrons write is
+        # modelled by read_reg patched to answer, on a read made under _reg_lock while the record's armed set on disk is
+        # still the empty one the test wrote, the record plus one more one-shot (a gone generation's, absent from the
+        # payload). The condition is the FIELD's state, not which read: once the hook's own write of the field has landed
+        # the injection stops, so a later locked write in the same hook (the Stop hook writes lastStopAt after its cron
+        # block) cannot persist the entry on the code's behalf, and a rebuild that reads the record with the lock free
+        # (the fourteenth commit's read_reg_for_rmw, or a derive fed an unlocked read) meets no injection at all: `fired`
+        # then stays empty and the pin is red on that first. A rebuild from the unlocked read writes the list without the
+        # entry (red before the fifteenth commit: _update_reg's locked read written over by `reg.update`); a rebuild from
+        # the locked read keeps it. Both hooks, each over a fresh record.
+        extra = {"id": "xxxx9999", "cron": "", "prompt": "the write that landed first", "kind": "", "recurring": False,
+                 "armedAt": 1.0, "dueEpoch": time.time() + 600, "procGen": self.GONE, "src": "toolhook"}
+        be, real, fired = self.be, sb.read_reg, []
+
+        def read_reg(state_dir, sid):
+            reg = real(state_dir, sid)
+            if reg is not None and be._reg_lock.locked() and not (reg.get("sessionCrons") or []):
+                fired.append(True)
+                reg = dict(reg, sessionCrons=[extra])
+            return reg
+        drives = (
+            ("the Stop hook", lambda s: asyncio.run(s._stop_hook({"session_crons": [
+                {"id": "aaaa1111", "schedule": "50 * * * *", "prompt": "tick", "kind": "cron", "recurring": True}]}, None, None))),
+            ("the scheduling-tool hook", lambda s: asyncio.run(s._sched_tool_hook(
+                {"tool_name": "CronCreate", "tool_input": {"name": "bbbb2222", "schedule": "5 * * * *", "prompt": "p"}}, None, None))),
+        )
+        for label, drive in drives:
+            with self.subTest(label):
+                self._reg(sessionCrons=[])
+                s = sb.SdkSession(self.be, sb.read_reg(self.d, SID))
+                del fired[:]
+                with mock.patch.object(sb, "read_reg", read_reg):
+                    drive(s)
+                self.assertEqual(fired, [True], "%s read the record under the lock before writing the field, once" % label)
+                ids = sorted(c.get("id") for c in (sb.read_reg(self.d, SID) or {}).get("sessionCrons") or [])
+                self.assertIn("xxxx9999", ids, "%s kept the one-shot the locked read held: %r" % (label, ids))
+                self.assertEqual(len(ids), 2, "%s wrote its own entry beside it: %r" % (label, ids))
+
+    def test_a_record_that_will_not_read_at_the_strip_delivers_nothing_and_says_so(self):
+        # the record is corrupted between the scan and the strip. Until the fifteenth commit the strip's False (the
+        # writers' skip) was never read and the prompt was delivered over an unstripped record, to be delivered again by
+        # the next pass that could read it; now nothing is delivered and one problem line says the record would not read.
+        shot = self._due_shot()
+        self._reg(sessionCrons=[shot], sessionCronsAt=int(time.time() - 900))
+        regp = sb._reg_path(self.d, SID)
+        sent = []
+        self.be.send = lambda sid, text: sent.append((sid, text)) or True
+        real = sb.list_regs
+
+        def scan_then_corrupt(state_dir):
+            rows = real(state_dir)
+            regp.write_bytes(b'{"sid": "trunca')
+            return rows
+        with mock.patch.object(sb, "list_regs", scan_then_corrupt), contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(self.be.deliver_lost_wakeups(), 0)
+        self.assertEqual(sent, [], "nothing delivered over a record that could not be stripped (red before: delivered)")
+        self.assertEqual(regp.read_bytes(), b'{"sid": "trunca', "nothing written over the unreadable record")
+        self.assertIn("unreadable", err.getvalue(), "the writers' one rule: a stderr line and no write")
+        lines = [m for m in self.logs if "lost-wakeup" in m and "would not read" in m]
+        self.assertEqual(len(lines), 1, "one log line names the unreadable record: %r" % (self.logs,))
 
 
 class ProducerRunsTheSweep(unittest.TestCase):

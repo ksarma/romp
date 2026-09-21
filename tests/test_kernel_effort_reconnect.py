@@ -275,16 +275,21 @@ class EffortReconnect(unittest.TestCase):
         # property, from the syntax tree (the callee and the keywords present) and by execution (every record write
         # during the setter made inside _update_reg with _reg_lock held). Five of the six spellings stay as they
         # were; rename's was re-keyed at round 6's fourteenth commit (fork PR #813) to the compare-and-swap its record
-        # write became (_update_reg_if_holds: the same lock, the write conditional on the door-time name), and its
-        # executed pin is tests/test_sdk_rename_ping.py's RenameRecordWriteIsACompareAndSwap (every record write of a
-        # rename is that helper's, made with _reg_lock held, and it lands). Executed behaviour behind the others:
+        # write became (_update_reg_if_holds: the same lock, the write conditional on the door-time name), and again at
+        # the fifteenth (held=True: rename takes _reg_lock itself and holds it from that write through its names write
+        # and live set, so the helper compares and writes inside the caller's hold); its executed pin is
+        # tests/test_sdk_rename_ping.py's RenameRecordWriteIsACompareAndSwap (every record write of a rename is that
+        # helper's, made with _reg_lock held, and it lands) and, for the hold's span, that module's
+        # test_the_record_write_the_names_write_and_the_live_set_are_made_under_one_hold_of_the_lock. Executed behaviour
+        # behind the others:
         # set_model's snapshot-and-write in one lock hold is
         # tests/test_sdk_backend.py's test_a_defaults_or_reg_read_taken_outside_the_store_lock_never_feeds_the_revert.
         for pin in ('self._update_reg(sid, effort=value, effortPending=True)',
                     'self._update_reg(sid, mode=mode)',
                     'self._update_reg(sid, fast=(value == "on"), liveFast=value)',
-                    'self._update_reg_if_holds(sid, {"name": reg.get("name")}, fields)',   # rename's record write; the
-                    #   rename ping rides the same write when owed (2026-08-24/25)
+                    'self._update_reg_if_holds(sid, {"name": reg.get("name")}, fields, held=True)',   # rename's record
+                    #   write, inside rename's own hold (fork PR #813, round 6, fifteenth commit); the rename ping rides the
+                    #   same write when owed (2026-08-24/25)
                     'self._update_reg(sid, model=value, modelPending=pending)',   # the live model write
                     'self._update_reg(sid, model=value, liveModel=_alias_label(value), modelPending=False)'):
             self.assertIn(pin, BACKEND_SRC)

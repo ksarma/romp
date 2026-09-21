@@ -311,8 +311,17 @@ class ConcurrentRenameInsideAFailingWindow(unittest.TestCase):
     verifiers' drive; reachable through the rename door, which claims each name apart). The record write is a compare-and-
     swap on the door-time name now (_update_reg_if_holds): a record whose name moved refuses the rename (RenameRefused,
     the sentence naming the pick that landed, one log line, nothing written, no compensation), and what a failed publish
-    puts back is what the write itself replaced, read in the same locked hold. Synthetic: placeholder sid, demo names,
-    a one-line transcript."""
+    puts back is what the write itself replaced, read in the same locked hold. THE HOLD (the fifteenth commit, the round's
+    own verifiers' fourth pass on the fourteenth commit): the compare-and-swap left the names write and the live set outside the lock, so a rename B
+    whose door read was A's LANDED record write passed its own compare while A was inside its names write, landed whole
+    and answered True, and then A's names write and live set landed over B's: the record beta, the names file (the roster
+    every listing reads) and the live name alpha, both callers told applied, nothing logged (the verifiers' drive). rename
+    now holds _reg_lock from its compare-and-swap through its names write and live set, and through the compensation when
+    the names write raises, so a rename arriving inside another's window WAITS on the hold: it lands after a rename that
+    published, and is refused after one that put the record back (its door read was the unlanded write; the sentence
+    names the name that stands). The tenth and twelfth commits' drives, B landing whole while A is inside its names write,
+    are shapes this code no longer reaches; the two "waits" pins below replace them. Synthetic: placeholder sid, demo
+    names, a one-line transcript."""
 
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
@@ -522,94 +531,161 @@ class ConcurrentRenameInsideAFailingWindow(unittest.TestCase):
         self.assertEqual([m for m in self.logs if "refused" in m or "compensation failed" in m or "is not put back" in m], [],
                          "no other verdict is logged: %r" % (self.logs,))
 
-    def test_a_rename_landing_inside_a_failing_renames_window_stands_on_the_record(self):
-        # before the tenth commit: ('web', None, 'beta', 'beta') for the record's name and note, the names
-        # file and the live name, with no log line naming the loss
-        real = sb.write_name
-        a_in_names, b_done = threading.Event(), threading.Event()
+    def _b_arrives_while_a_holds(self, a_name, b_name, a_faults):
+        """Rename A to `a_name` on a second thread, held INSIDE its names write (write_name patched by thread identity) with
+        its record written and _reg_lock held; rename B to `b_name` starts on a third thread while A is held and is given
+        0.3 s; then A resumes (its names write raises when `a_faults`, else lands) and both are joined. B's door reads run
+        outside the lock and see A's record write; B's compare-and-swap then waits on the hold. Returns (A's outcome, B's
+        outcome, whether B was still running when A resumed, the record writes as (thread, name field) pairs, the names
+        writes as (thread, name) pairs, the four stores read while A was held). An outcome is the return value, or
+        (exception type name, the sentence for a RenameRefused and the errno otherwise). The 0.3 s is a bound on a
+        negative (B did not return), not the pin: the pin is the ORDER of the writes, A's before all of B's, which the
+        hold decides and a bare lock-free window inverts."""
+        real_write_name, real_write_reg = sb.write_name, sb.write_reg
+        a_in, go, holder, reg_writes, names_writes = threading.Event(), threading.Event(), {}, [], []
 
-        def write_name(state_dir, sid, name, *a, **k):
-            if name == "alpha":                                # rename A's write: hold until B has landed, then fault
-                a_in_names.set()
-                b_done.wait(10)
-                raise OSError(28, "No space left on device")
-            return real(state_dir, sid, name, *a, **k)        # rename B's write lands for real
+        def write_name(state_dir, sid, nm, *a, **k):
+            names_writes.append((threading.current_thread().name, nm))
+            if threading.current_thread() is holder.get("a"):
+                a_in.set()
+                go.wait(10)
+                if a_faults:
+                    raise OSError(28, "No space left on device")
+            return real_write_name(state_dir, sid, nm, *a, **k)
 
-        outcome = {}
-
-        def first():
-            try:
-                outcome["a"] = self.be.rename(SID, "alpha")
-            except BaseException as e:                         # noqa: BLE001 (the drive records whatever escapes)
-                outcome["a"] = (type(e).__name__, getattr(e, "errno", None))
-
-        t = threading.Thread(target=first, name="rename-a")
-        with mock.patch.object(sb, "write_name", write_name):
-            t.start()
-            self.assertTrue(a_in_names.wait(10), "rename A reached its names write with its record written")
-            self.assertEqual(sb.read_reg(self.root, SID).get("name"), "alpha", "the step's record write is on disk")
-            answered = self.be.rename(SID, "beta")            # the concurrent rename, told applied
-            b_done.set()
-            t.join(10)
-        self.assertFalse(t.is_alive(), "rename A returned")
-        reg = sb.read_reg(self.root, SID)
-        self.assertEqual((answered, outcome.get("a")), (True, ("OSError", 28)),
-                         "B was told applied; A still hears its raise")
-        self.assertEqual((reg.get("name"), reg.get("renameNote"), self.nf.read_text().split("\t")[0], self.live.name),
-                         ("beta", "beta", "beta", "beta"),
-                         "the record keeps the name and note B wrote: A's compensation put back nothing B holds")
-        stands = [m for m in self.logs if "rename" in m and "stands" in m]
-        self.assertEqual(len(stands), 1, "one log line names what stands: %r" % (self.logs,))
-        self.assertIn("beta", stands[0])
-        self.assertIn("alpha", stands[0])
-        self.assertNotIn("compensation failed", stands[0], "a stand-down is not a failed compensation")
-
-    def test_a_rename_to_the_same_name_landing_inside_a_failing_renames_window_stands_on_the_record(self):
-        # the twelfth commit's drive: rename B lands the SAME name (alpha) whole while rename A is inside its names
-        # write; A then faults. Before this commit: ('web', None, 'alpha', 'alpha') for the record's name and note, the
-        # names file and the live name, with no log line (the record held alpha, which is what A wrote too, so the compare
-        # by value put web back over B's landed rename under a false success). Now the record keeps B's alpha and note, A's
-        # caller still hears its raise, and one log line says the compensation stood down and why.
-        real = sb.write_name
-        a_in_names, b_done, holder = threading.Event(), threading.Event(), {}
-
-        def write_name(state_dir, sid, name, *a, **k):
-            if threading.current_thread() is holder.get("a"):    # rename A's write: hold until B has landed, then fault
-                a_in_names.set()
-                b_done.wait(10)
-                raise OSError(28, "No space left on device")
-            return real(state_dir, sid, name, *a, **k)           # rename B's write lands for real
+        def write_reg(state_dir, sid, reg):
+            reg_writes.append((threading.current_thread().name, reg.get("name")))
+            return real_write_reg(state_dir, sid, reg)
 
         outcome = {}
 
-        def first():
+        def run(key, name):
             try:
-                outcome["a"] = self.be.rename(SID, "alpha")
+                outcome[key] = self.be.rename(SID, name)
+            except sb.RenameRefused as e:
+                outcome[key] = ("RenameRefused", str(e))
             except BaseException as e:                            # noqa: BLE001 (the drive records whatever escapes)
-                outcome["a"] = (type(e).__name__, getattr(e, "errno", None))
+                outcome[key] = (type(e).__name__, getattr(e, "errno", None))
 
-        t = holder["a"] = threading.Thread(target=first, name="rename-a")
-        with mock.patch.object(sb, "write_name", write_name):
-            t.start()
-            self.assertTrue(a_in_names.wait(10), "rename A reached its names write with its record written")
-            self.assertEqual(sb.read_reg(self.root, SID).get("name"), "alpha", "the step's record write is on disk")
-            answered = self.be.rename(SID, "alpha")               # the concurrent rename to the SAME name, told applied
-            b_done.set()
-            t.join(10)
-        self.assertFalse(t.is_alive(), "rename A returned")
-        reg = sb.read_reg(self.root, SID)
-        self.assertEqual((answered, outcome.get("a")), (True, ("OSError", 28)),
-                         "B was told applied; A still hears its raise")
-        self.assertEqual((reg.get("name"), reg.get("renameNote"), self.nf.read_text().split("\t")[0], self.live.name),
-                         ("alpha", "alpha", "alpha", "alpha"),
-                         "the record keeps the name and note B landed: A's compensation stood down")
-        stood = [m for m in self.logs if "rename" in m and "stood down" in m]
-        self.assertEqual(len(stood), 1, "one log line says the compensation stood down: %r" % (self.logs,))
-        self.assertIn("another caller landed the same name", stood[0])
-        self.assertIn("alpha", stood[0])
-        self.assertEqual([m for m in self.logs if "compensation failed" in m or "would not read" in m
-                          or "is absent" in m or "is not put back" in m], [],
-                         "no other verdict is logged for a stand-down: %r" % (self.logs,))
+        ta = holder["a"] = threading.Thread(target=run, args=("a", a_name), name="rename-a")
+        tb = threading.Thread(target=run, args=("b", b_name), name="rename-b")
+        with mock.patch.object(sb, "write_name", write_name), mock.patch.object(sb, "write_reg", write_reg):
+            ta.start()
+            self.assertTrue(a_in.wait(10), "rename A reached its names write with its record written")
+            at_hold = self._stores()
+            tb.start()
+            tb.join(0.3)
+            b_waiting = tb.is_alive()
+            go.set()
+            ta.join(10)
+            tb.join(10)
+        self.assertFalse(ta.is_alive() or tb.is_alive(), "both renames returned")
+        return outcome.get("a"), outcome.get("b"), b_waiting, reg_writes, names_writes, at_hold
+
+    def test_a_rename_arriving_while_a_landing_rename_holds_the_lock_waits_and_lands_after_it(self):
+        # THE FIFTEENTH COMMIT'S DEFECT (the round's own verifiers' fourth pass on the fourteenth commit, F1): rename A to alpha has written its record
+        # and is inside its names write; rename B to beta arrives. At the fourteenth commit B's door read was A's LANDED
+        # record write, so B's compare-and-swap passed, B landed whole (record, names file, live name) and answered True,
+        # and then A's names write and live set landed over B's: the record read beta while the names file and the live
+        # name read alpha, both callers told applied, nothing logged. Now B waits on A's hold and lands after A has
+        # published: every store reads beta, A's writes all precede B's, both callers told the truth in turn.
+        a, b, b_waiting, reg_writes, names_writes, at_hold = self._b_arrives_while_a_holds("alpha", "beta", a_faults=False)
+        self.assertEqual(at_hold, ("alpha", "alpha", "web", "web"), "A's record write is on disk; its names write has not landed")
+        self.assertEqual((a, b), (True, True), "both told applied, in turn: %r" % ((a, b),))
+        self.assertEqual(self._stores(), ("beta", "beta", "beta", "beta"),
+                         "the later rename stands on every store (red before the fifteenth commit: the record beta, the names "
+                         "file and the live name alpha, both callers told applied)")
+        self.assertTrue(b_waiting, "B had not returned while A held the lock")
+        self.assertEqual(reg_writes, [("rename-a", "alpha"), ("rename-b", "beta")], "A's record write, then B's: %r" % (reg_writes,))
+        self.assertEqual(names_writes, [("rename-a", "alpha"), ("rename-b", "beta")],
+                         "A's names write landed before B's began: %r" % (names_writes,))
+        self.assertEqual([m for m in self.logs if "rename" in m], [], "nothing to log: %r" % (self.logs,))
+
+    def test_a_rename_arriving_while_a_failing_rename_holds_the_lock_waits_and_is_refused_after_the_put_back(self):
+        # the tenth commit's drive, re-pinned under the hold: rename A to alpha is inside its names write, which will fault;
+        # rename B to beta arrives. Until the fifteenth commit B landed whole inside A's window and A's compensation had to
+        # yield to it (the tenth commit's per-field compare; before that, B's rename was put back over under a false
+        # success). Now B's door read is A's record write, B waits on the hold, A's names write faults and A's compensation
+        # puts the record back INSIDE the hold, and B's compare-and-swap then finds the record holding web, not the alpha
+        # its door read: B is refused with a sentence naming its door read, the name that stands and its own pick, one log
+        # line says so, every store reads the door-time name, and nothing applies at a restart. Nobody was told a rename
+        # applied that did not.
+        a, b, b_waiting, reg_writes, names_writes, at_hold = self._b_arrives_while_a_holds("alpha", "beta", a_faults=True)
+        self.assertEqual(at_hold, ("alpha", "alpha", "web", "web"), "A's record write is on disk; its names write has not landed")
+        self.assertEqual(a, ("OSError", 28), "A hears its raise: %r" % (a,))
+        self.assertEqual(b[0] if isinstance(b, tuple) else b, "RenameRefused",
+                         "B is refused after A's put-back (red before the fifteenth commit: B told True inside A's window): %r" % (b,))
+        self.assertTrue(b_waiting, "B had not returned while A held the lock")
+        for word in ("'alpha'", "'web'", "'beta'"):
+            self.assertIn(word, b[1], "the sentence names B's door read, the name that stands and B's pick: %r" % (b[1],))
+        self.assertEqual(self._stores(), ("web", None, "web", "web"), "every store reads the door-time name")
+        self.assertEqual(reg_writes, [("rename-a", "alpha"), ("rename-a", "web")],
+                         "A's compare-and-swap and its put-back; B wrote no record: %r" % (reg_writes,))
+        self.assertEqual(names_writes, [("rename-a", "alpha")], "B never reached its names write: %r" % (names_writes,))
+        refused = [m for m in self.logs if "rename" in m and "refused" in m]
+        self.assertEqual(len(refused), 1, "one log line says B was refused: %r" % (self.logs,))
+        self.assertIn("'alpha'", refused[0])
+        self.assertIn("'web'", refused[0])
+        self.assertEqual([m for m in self.logs if "compensation" in m or "stood down" in m or "is not put back" in m], [],
+                         "A's compensation put every key back and logged nothing: %r" % (self.logs,))
+
+    def test_a_same_name_rename_arriving_while_a_failing_rename_holds_the_lock_waits_and_is_refused_after_the_put_back(self):
+        # the twelfth commit's drive, re-pinned under the hold: B wants the SAME name alpha. Until the fifteenth commit B
+        # landed whole inside A's window and A's compensation stood down on the names file's evidence (the twelfth commit;
+        # before it, web was put back over B's landed rename with no log line). Now B waits, and after A's put-back its
+        # compare-and-swap finds web where its door read alpha: refused, with the sentence naming both, and every store
+        # reads web. Through the rename door this shape needs a direct caller (the door answers a rename to the current
+        # name as a no-op), as the helper's docstring says.
+        a, b, b_waiting, reg_writes, names_writes, at_hold = self._b_arrives_while_a_holds("alpha", "alpha", a_faults=True)
+        self.assertEqual(at_hold, ("alpha", "alpha", "web", "web"))
+        self.assertEqual(a, ("OSError", 28), "A hears its raise: %r" % (a,))
+        self.assertEqual(b[0] if isinstance(b, tuple) else b, "RenameRefused",
+                         "B is refused after A's put-back (red before the fifteenth commit: B told True inside A's window): %r" % (b,))
+        self.assertTrue(b_waiting, "B had not returned while A held the lock")
+        self.assertIn("'alpha'", b[1])
+        self.assertIn("'web'", b[1])
+        self.assertEqual(self._stores(), ("web", None, "web", "web"), "every store reads the door-time name")
+        self.assertEqual(reg_writes, [("rename-a", "alpha"), ("rename-a", "web")], "B wrote no record: %r" % (reg_writes,))
+        self.assertEqual(names_writes, [("rename-a", "alpha")], "B never reached its names write: %r" % (names_writes,))
+        self.assertEqual(len([m for m in self.logs if "rename" in m and "refused" in m]), 1, "one refused line: %r" % (self.logs,))
+        self.assertEqual([m for m in self.logs if "stood down" in m or "compensation" in m], [],
+                         "no stand-down: nothing landed inside the window for the compensation to yield to: %r" % (self.logs,))
+
+    def test_the_record_write_the_names_write_and_the_live_set_are_made_under_one_hold_of_the_lock(self):
+        # the property by execution: with no other writer, the three stores move in order with _reg_lock held at each write
+        # (write_reg and write_name wrapped in the module, and a live object whose name setter reads the lock's state), and
+        # the hold is released when rename returns. Red before the fifteenth commit: the names write and the live set with
+        # the lock free.
+        events, real_wr, real_wn, be = [], sb.write_reg, sb.write_name, self.be
+
+        def write_reg(state_dir, sid, reg):
+            events.append(("record", reg.get("name"), be._reg_lock.locked()))
+            return real_wr(state_dir, sid, reg)
+
+        def write_name(state_dir, sid, nm, *a, **k):
+            events.append(("names", nm, be._reg_lock.locked()))
+            return real_wn(state_dir, sid, nm, *a, **k)
+
+        class _LiveRecording:
+            def __init__(me):
+                me._name = "web"
+
+            @property
+            def name(me):
+                return me._name
+
+            @name.setter
+            def name(me, v):
+                events.append(("live", v, be._reg_lock.locked()))
+                me._name = v
+        live = _LiveRecording()
+        self.be.sessions[SID] = live
+        with mock.patch.object(sb, "write_reg", write_reg), mock.patch.object(sb, "write_name", write_name):
+            self.assertTrue(self.be.rename(SID, "alpha"))
+        self.assertEqual(events, [("record", "alpha", True), ("names", "alpha", True), ("live", "alpha", True)],
+                         "the three stores move in this order with _reg_lock held at each: %r" % (events,))
+        self.assertFalse(self.be._reg_lock.locked(), "and the hold is released when rename returns")
+        self.assertEqual((live.name, self.nf.read_text().split("\t")[0]), ("alpha", "alpha"))
 
     def test_a_same_name_rename_landing_between_the_doors_reads_is_refused_at_the_record_write(self):
         # the thirteenth commit's drive, re-pinned at the fourteenth: rename A is held right after its door's RECORD read
