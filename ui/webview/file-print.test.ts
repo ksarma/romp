@@ -9,6 +9,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as crypto from "node:crypto";   // the census holds a text over 300 characters by its sha256 beside its first 80 characters (the round-8 ruling)
 import * as ts from "typescript";   // the census blanks file-view.ts's comments with the compiler's own read of them (the round-5 fix; writer-census.ts is the precedent, a runtime require of the test bundle)
 import { hideEdges } from "../test-dom-shim";   // every stand-in below that carries a tree edge (parentElement, children, childNodes, firstElementChild) hides it, the shared module's rule (ui/test-dom-shim.test.ts's ratchet)
 import { step, RESTING, DISABLED, armedWords, preparingWords, waitingWords, stalledWords, anywayWords, ANYWAY_TITLE, isPrintChord, isPrintKeys, settlePictures, collectPictures, bodyReady, rootKind, PRINT_SETTLE_MS, setPrintSettleMs, printSettleMs,
@@ -695,16 +696,21 @@ test("bodyReady reads the element children through `children`, else through `chi
 // entry, with or without `times`; a listed name declared twice in the entry's function, in a block, an unnamed callback or a
 // callback's parameter, is refused at every seat of the name whatever `times` says and whatever the second declaration
 // spells; two functions' entries with their declarations swapped are refused at both seats naming both declarations; and a
-// string, a comment or a property key (`q.p`) is no declaration. Two things stay keyed on TEXT, each reached only through the
-// author's own hand (a `times` written over same-named functions, or a declaration spelled exactly as the listed one whose
-// meaning changed underneath it): the `in` is the nearest named function's bare name, which two distinct function nodes can
-// share (`apply` is such a name in file-view.ts, textSizeControl's inner arrow and githubLinkAction's method), so their
-// same-spelled seats collapse to one key that reds the count unless the entry says `times`, and with `times` reads N seats
-// across the same-named functions held to equal declaration text rather than to one node; and the hold is on the
-// declaration's TEXT (its initializer's first 80 characters), so a same-spelled declaration whose `el` is rebound in the
-// function, two initializers that differ only past the 80th character, or a same-spelled declaration added inside the nested
-// named function an entry names while the enclosing function keeps the listed one (the binding moves inward, the reported
-// declaration text does not, and nothing refuses; the k4 plants below), pass under the listed text; and a receiver bound
+// string, a comment or a property key (`q.p`) is no declaration. Two things stay keyed on TEXT, each reached only through
+// the author's own hand (a `times` written over same-named functions, or a declaration spelled exactly as the listed one
+// whose meaning changed underneath it): the `in` is the nearest named function's bare name, which two distinct function
+// nodes can share (`apply` is such a name in file-view.ts, textSizeControl's inner arrow and githubLinkAction's method), so
+// their same-spelled seats collapse to one key that reds the count unless the entry says `times`, and with `times` reads N
+// seats across the same-named functions held to equal declaration text rather than to one node; and the hold is on the
+// declaration's TEXT, so a same-spelled declaration whose `el` is rebound in the function, or a same-spelled declaration
+// added inside the nested named function an entry names while the enclosing function keeps the listed one (the binding moves
+// inward, the reported declaration text does not, and nothing refuses), passes under the listed text: the plants k4 and k4'
+// below pass, k4'' with another text inside refuses naming both. The text held is the WHOLE of it (the initializer, a loop's
+// head, an unnamed callback's call, and the argument axis's hand-off and callee texts; a text over 300 characters is held as
+// its first 80 characters beside the sha256 of the whole, openFileView's `ctx` initializer the one such text in the tables
+// today), since a third road, the hold on the initializer's first 80 characters, let two initializers alike to there pass
+// under one listed text; the maintainer's round-8 ruling of 2026-09-21 closed it, and the plants m1, m1' and m2 below
+// execute the refusal, the pass under each whole text, and the hash form; and a receiver bound
 // by `let` or `var`, or a parameter written to, is REASSIGNABLE and its seat fails
 // unless the entry pins what the binding HOLDS (`holds`: the one expression every write to it in the file assigns), since
 // its declaration says nothing about what it holds at the seat (the round-6 review's correctness-5; the viewer's session
@@ -1280,6 +1286,12 @@ function seatSites(src: string): SecondRead {
   const sf = ts.createSourceFile("file-view.ts", src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const lineOf = (n: ts.Node): number => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
   const flat = (s: string): string => s.replace(/\s+/g, " ");
+  /** A text an entry is HELD to (a declaration's initializer, a loop's head, an unnamed callback's call, a hand-off's argument or
+   *  callee): the whole of it, so two texts that differ anywhere are two texts (the maintainer's round-8 ruling of 2026-09-21:
+   *  the hold was the first 80 characters, and two initializers alike to there passed under one listed text); a text over 300
+   *  characters is held as its first 80 characters beside the sha256 of the whole, so a reader sees where it starts and the
+   *  compare still reads all of it. The site texts in refusal messages (`text`) stay cut, being messages, never keys. */
+  const held = (s: string): string => s.length > 300 ? s.slice(0, 80) + " ... sha256:" + crypto.createHash("sha256").update(s).digest("hex") : s;
   const nameOfFn = (f: ts.Node): string | null => {
     if (ts.isFunctionDeclaration(f) && f.name) return f.name.text;
     if ((ts.isArrowFunction(f) || ts.isFunctionExpression(f)) && (ts.isVariableDeclaration(f.parent) || ts.isPropertyAssignment(f.parent)) && ts.isIdentifier(f.parent.name)) return f.parent.name.text;
@@ -1321,13 +1333,13 @@ function seatSites(src: string): SecondRead {
     if (ts.isParameter(d)) {
       const f = d.parent, name = nameOfFn(f);
       if (name) return "a parameter of " + name;
-      const handedTo = ts.isCallExpression(f.parent) ? flat(f.parent.expression.getText(sf)).slice(0, 80) : null;   // an unnamed callback: the call it is handed to says what fills the parameter
+      const handedTo = ts.isCallExpression(f.parent) ? held(flat(f.parent.expression.getText(sf))) : null;   // an unnamed callback: the call it is handed to says what fills the parameter
       return handedTo ? "a parameter of the callback handed to " + handedTo : "a parameter of an unnamed function at line " + lineOf(f);
     }
     if (ts.isVariableDeclaration(d)) {
       const list = d.parent as ts.VariableDeclarationList, kind = list.flags & ts.NodeFlags.Const ? "const" : list.flags & ts.NodeFlags.Let ? "let" : "var";
-      const loop = ts.isForOfStatement(list.parent) ? " of " + flat(list.parent.expression.getText(sf)).slice(0, 80) : ts.isForInStatement(list.parent) ? " in " + flat(list.parent.expression.getText(sf)).slice(0, 80) : "";
-      return kind + " " + flat(d.name.getText(sf)) + (d.initializer ? " = " + flat(d.initializer.getText(sf)).slice(0, 80) : loop);
+      const loop = ts.isForOfStatement(list.parent) ? " of " + held(flat(list.parent.expression.getText(sf))) : ts.isForInStatement(list.parent) ? " in " + held(flat(list.parent.expression.getText(sf))) : "";
+      return kind + " " + flat(d.name.getText(sf)) + (d.initializer ? " = " + held(flat(d.initializer.getText(sf))) : loop);
     }
     if (ts.isBindingElement(d)) { let p: ts.Node = d; while (p && !ts.isVariableDeclaration(p) && !ts.isParameter(p)) p = p.parent; return "a destructured binding of " + (p ? describe(p) : "an unknown declaration"); }
     if (ts.isFunctionDeclaration(d)) return "function " + d.name!.text;
@@ -1520,10 +1532,10 @@ function seatSites(src: string): SecondRead {
     if (ts.isArrayLiteralExpression(r)) { for (const e of r.elements) if (!ts.isOmittedExpression(e)) handedIn(n, e, (s) => spell("[ " + s + " ]"), foreign); return; }
     if (ts.isArrowFunction(r) && !ts.isBlock(r.body)) { handedIn(n, r.body, (s) => spell("() => " + s), foreign); return; }
     const h = nodeHanded(a);
-    if (h) { handedNodes.push({ line: lineOf(n), text: text(n), fn: fnOf(n), to: calleeText(n), arg: spell(flat(a.getText(sf)).slice(0, 80)), ...h }); return; }
+    if (h) { handedNodes.push({ line: lineOf(n), text: text(n), fn: fnOf(n), to: calleeText(n), arg: spell(held(flat(a.getText(sf)))), ...h }); return; }
     if (!foreign) return;
     const shape = elementShape(a);
-    if (shape) { const e = peel(a); if (ts.isIdentifier(e) && isBodyToken(e)) return; const b = ts.isIdentifier(e) ? { ...bindingOf(e), ...(shadowOf(e) ? { shadowed: shadowOf(e)! } : {}) } : {}; elementsHanded.push({ line: lineOf(n), text: text(n), fn: fnOf(n), to: calleeText(n), arg: spell(flat(a.getText(sf)).slice(0, 80)), member: shape, ...b }); }
+    if (shape) { const e = peel(a); if (ts.isIdentifier(e) && isBodyToken(e)) return; const b = ts.isIdentifier(e) ? { ...bindingOf(e), ...(shadowOf(e) ? { shadowed: shadowOf(e)! } : {}) } : {}; elementsHanded.push({ line: lineOf(n), text: text(n), fn: fnOf(n), to: calleeText(n), arg: spell(held(flat(a.getText(sf)))), member: shape, ...b }); }
   };
   let bodyWrites = 0;
   /** An argument as the seat key spells it: an object literal, an array literal or a function abbreviated, the rest as written. */
@@ -1599,7 +1611,7 @@ function seatSites(src: string): SecondRead {
     if (ts.isForStatement(p)) return p.condition === n || p.incrementor === n;
     return false;
   };
-  const calleeText = (n: ts.CallExpression | ts.NewExpression): string => (ts.isNewExpression(n) ? "new " : "") + (n.expression.kind === ts.SyntaxKind.ImportKeyword ? "import" : flat(strip(n.expression).getText(sf)).slice(0, 80));
+  const calleeText = (n: ts.CallExpression | ts.NewExpression): string => (ts.isNewExpression(n) ? "new " : "") + (n.expression.kind === ts.SyntaxKind.ImportKeyword ? "import" : held(flat(strip(n.expression).getText(sf))));
   /** A property key a destructuring reads a value under: a seating or site-read name is a hand-out, a computed key is refused. */
   const keyRead = (key: ts.PropertyName, at: ts.Node): void => {
     if (ts.isComputedPropertyName(key)) destructured.push({ line: lineOf(at), text: text(at) });
@@ -1701,9 +1713,9 @@ function seatSites(src: string): SecondRead {
 type SeatRead = { in: string; on: string; via: string; seats: string; is: string; decl?: string; holds?: string; times?: number; seatedBy?: string };
 const SEATS_READ_BY_HAND: SeatRead[] = [
   { in: "<module>", on: "Object", via: "entries", seats: "{bash, sh, shell, python, py, javascript, js, typescript, ts, json, xml, html, css, markdown, md, diff, yaml, yml}", is: "Object.entries over the highlighter's language table at module load, a literal record of grammars; each is registered with hljs; no element is touched", decl: "a global" },
-  { in: "textSizeControl", on: "trigger", via: "innerHTML =", seats: "ICON_ZOOM", is: "the zoom button, built here by el(); its glyph (ICON_ZOOM, a constant SVG string from icons.ts) goes inside it", decl: "const trigger = el(\"button\", \"fileview-btn fileview-icon fileview-zoom-btn\") as HTMLButtonElemen" },
+  { in: "textSizeControl", on: "trigger", via: "innerHTML =", seats: "ICON_ZOOM", is: "the zoom button, built here by el(); its glyph (ICON_ZOOM, a constant SVG string from icons.ts) goes inside it", decl: "const trigger = el(\"button\", \"fileview-btn fileview-icon fileview-zoom-btn\") as HTMLButtonElement" },
   { in: "textSizeControl", on: "menu", via: "appendChild", seats: "b", seatedBy: "b = const b of buttons", is: "the zoom flyout, built here by el(); a step button (b, built in the loop over the steps) goes inside it", decl: "const menu = el(\"div\", \"fileview-zoom-menu\")" },
-  { in: "textSizeControl", on: "wrap", via: "appendChild", seats: "trigger", seatedBy: "trigger = const trigger = el(\"button\", \"fileview-btn fileview-icon fileview-zoom-btn\") as HTMLButtonElemen", is: "the control's own span, built here by el() and seated in the bar's actions by the viewers (viewGroup, acts); the zoom button goes inside it", decl: "const wrap = el(\"span\", \"fileview-zoom\")" },
+  { in: "textSizeControl", on: "wrap", via: "appendChild", seats: "trigger", seatedBy: "trigger = const trigger = el(\"button\", \"fileview-btn fileview-icon fileview-zoom-btn\") as HTMLButtonElement", is: "the control's own span, built here by el() and seated in the bar's actions by the viewers (viewGroup, acts); the zoom button goes inside it", decl: "const wrap = el(\"span\", \"fileview-zoom\")" },
   { in: "textSizeControl", on: "wrap", via: "appendChild", seats: "menu", seatedBy: "menu = const menu = el(\"div\", \"fileview-zoom-menu\")", is: "the same span; the flyout goes inside it", decl: "const wrap = el(\"span\", \"fileview-zoom\")" },
   { in: "loaderEl", on: "load", via: "innerHTML =", seats: "'<img src=\"/media/romp-swirl-glyph.svg\" alt=\"\"><span>romp</span>' + '<i class=\"fileview-dot\"></i><i class=\"fileview-dot\"></i><i class=\"fileview-dot\"></i>'", is: "the loader this builder returns, div.fileview-load; its glyph markup (a literal string: the swirl img, the word, three dots) goes inside it", decl: "const load = el(\"div\", \"fileview-load\")" },
   { in: "apply", on: "unit", via: "replaceChildren", seats: "", is: "the action's own span (div.fileview-gh), built in its mount and returned to the viewer, which seats it in the bar; emptied when the kernel answers with no URL", decl: "const unit = el(\"span\", \"fileview-gh\")" },
@@ -1726,7 +1738,7 @@ const SEATS_READ_BY_HAND: SeatRead[] = [
   { in: "openFileView", on: "load", via: "innerHTML =", seats: "'<img src=\"/media/romp-swirl-glyph.svg\" alt=\"\"><span>romp</span>' + '<i class=\"fileview-dot\"></i><i class=\"fileview-dot\"></i><i class=\"fileview-dot\"></i>'", is: "the open's loader (a body root: body.appendChild(load) is resolved by the body's read); its glyph markup (a literal string) goes inside it", decl: "const load = el(\"div\", \"fileview-load\")" },
   { in: "openFileView", on: "main", via: "appendChild", seats: "body", seatedBy: "body = const body = el(\"div\", \"fileview-body\")", is: "the card's main column, the body's PARENT: the body itself is seated in it, so this seat is the body's, not a child in it", decl: "const main = el(\"div\", \"fileview-main\")" },
   { in: "aside", on: "main", via: "appendChild", seats: "node", seatedBy: "node = a parameter of aside; writes: none", is: "the same column, through the seam's aside hook: an action's aside (node, the element the action hands the hook) is seated beside the body, in main, not in the body", decl: "const main = el(\"div\", \"fileview-main\")" },
-  { in: "openFileView", on: "a", via: "mount", seats: "ctx", seatedBy: "ctx = const ctx = { path, sid: sid || null, todoId: opts?.todoId ?? null, body: () => body, mode: ", is: "a registered action's mount (the GitHub link, the Comments panel), handed the action context and returning the element the viewer then seats in the file group (fileGroup.appendChild(n), listed here); the mount seats nothing itself", decl: "const a of fileViewActions" },
+  { in: "openFileView", on: "a", via: "mount", seats: "ctx", seatedBy: "ctx = const ctx = { path, sid: sid || null, todoId: opts?.todoId ?? null, body: () => body, mode:  ... sha256:306d4d2acecf796e87372abbe8fcb5ee7eb39d67c4a9618585138f108505d0c9", is: "a registered action's mount (the GitHub link, the Comments panel), handed the action context and returning the element the viewer then seats in the file group (fileGroup.appendChild(n), listed here); the mount seats nothing itself", decl: "const a of fileViewActions" },
   { in: "openFileView", on: "fileGroup", via: "appendChild", seats: "n", seatedBy: "n = const n = a.mount(ctx)", is: "the same group; a registered action's mount result (n, the element a.mount(ctx) returned: the GitHub link's span, the Comments panel's button) goes in it", decl: "const fileGroup = el(\"span\", \"fileview-group fileview-group-file\")" },
   { in: "openFileView", on: "dl", via: "innerHTML =", seats: "ICON_DOWNLOAD", is: "the Download button in the file group; its glyph (ICON_DOWNLOAD, a constant SVG string) goes inside it", decl: "const dl = el(\"button\", \"fileview-btn\") as HTMLButtonElement" },
   { in: "openFileView", on: "fileGroup", via: "appendChild", seats: "dl", seatedBy: "dl = const dl = el(\"button\", \"fileview-btn\") as HTMLButtonElement", is: "the same group; the Download button goes in it", decl: "const fileGroup = el(\"span\", \"fileview-group fileview-group-file\")" },
@@ -2330,7 +2342,9 @@ test("the census refuses its unknown and derives its population, executed over m
   refusedMutant(seat('installFilePrint({ card: null, bar: null, body: () => body, typing: typingHere, onClose: (cb) => { closeHooks.push(cb); } });'), "the accessor moved into a callee's argument", ACCESSOR_ELSEWHERE);   // nulls for the card and the bar: the listed elements handed a second time would be their own refusals (the argument table is one entry per hand-off)
   assert.ok(VIEWER_SRC.includes("\n  const ctx: FileViewActionCtx = {\n"), "the sanctioned site is declared as the census expects");
   const ctxRenamed = census(VIEWER_SRC.replace("\n  const ctx: FileViewActionCtx = {\n", "\n  const actions: FileViewActionCtx = {\n"));
-  assert.deepEqual(ctxRenamed.refused.filter((r) => !ACCESSOR_ELSEWHERE.test(r)).map((r) => r.replace(/^line \d+: /, "")), ["the census passes the action-context accessor `body: () => body` inside the object literal declared `const ctx: FileViewActionCtx = {`, and the source declares no such literal: read the hand-out by hand again", "a.mount(ctx) seats `ctx` bound by `ctx = a global`, where SEATS_READ_BY_HAND read `ctx = const ctx = { path, sid: sid || null, todoId: opts?.todoId ?? null, body: () => body, mode: `: what is seated is not the binding read by hand (the entry names each seated bare name's declaration in `seatedBy`)"], "the ctx declaration renamed: the census holds the source to it, and the mount seated `ctx` is bound to no declaration now (the seated name's binding, the author's closing pass over the round-7 build)");
+  const ctxEntry = SEATS_READ_BY_HAND.find((e) => e.in === "openFileView" && e.on === "a" && e.via === "mount" && e.seats === "ctx")!;   // the mount's entry, its `seatedBy` the one home of the ctx declaration's held text (the round-8 fold: the initializer is over 300 characters, so the text is held as its first 80 characters beside the sha256 of the whole)
+  assert.match(ctxEntry.seatedBy!, /^ctx = const ctx = .{80} \.\.\. sha256:[0-9a-f]{64}$/, "the ctx entry's `seatedBy` holds the hashed form, the one live text over 300 characters");
+  assert.deepEqual(ctxRenamed.refused.filter((r) => !ACCESSOR_ELSEWHERE.test(r)).map((r) => r.replace(/^line \d+: /, "")), ["the census passes the action-context accessor `body: () => body` inside the object literal declared `const ctx: FileViewActionCtx = {`, and the source declares no such literal: read the hand-out by hand again", "a.mount(ctx) seats `ctx` bound by `ctx = a global`, where SEATS_READ_BY_HAND read `" + ctxEntry.seatedBy + "`: what is seated is not the binding read by hand (the entry names each seated bare name's declaration in `seatedBy`)"], "the ctx declaration renamed: the census holds the source to it, and the mount seated `ctx` is bound to no declaration now (the seated name's binding, the author's closing pass over the round-7 build)");
   assert.equal(ctxRenamed.refused.filter((r) => ACCESSOR_ELSEWHERE.test(r)).length, 1, "...and the live accessor is refused with its line, since its literal is no longer the declared one");
   // the table is read, not decorative: a live site whose entry is removed reds with its line, and an entry with no site reds
   const dropped = SEATS_READ_BY_HAND.find((e) => e.in === "mdBlock" && e.on === "box" && e.via === "replaceChildren" && e.seats.startsWith("...Array.from("))!;
@@ -2395,8 +2409,9 @@ test("the census refuses its unknown and derives its population, executed over m
 // name, receiver spelling, form, seated arguments) and the receiver is then resolved to its DECLARATION by the language's
 // scopes and held to the entry by the declaration's text and a per-function declaration count, so every name collision the
 // probe planted refused loud. The plants below keep all 13 of those failures loud, with two of the probe's passing plants
-// (b1', c2') and the k4 family, the text hold's third face; the header states the text-keyed residues.
-test("the seat table's receiver hold is by binding, not name, executed over functions planted at the end of file-view.ts: a listed name declared in two blocks of the entry's function is refused at both seats, whatever each declaration spells and with its own entry per block; a callback parameter of the name is refused at every seat of the name in the function; a same-named local in ANOTHER function is an unlisted seat there, never read under the listed function's entry, with or without `times`; two functions' entries with their declarations swapped are refused at both seats naming both declarations; one entry over two function nodes sharing a name reds the count; the probe's six other loud plants refuse as it recorded (two blocks spelled alike under `times`, a second block that never seats, a nested named arrow's own declaration unlisted and then wearing the outer text, an unnamed callback's declaration, a nested named function's parameter, a property key); the text hold's stated residue passes (a same-text declaration added inside the nested named function an entry names); and the header names the shared name the live tables use", () => {
+// (b1', c2') and the k4 family, the inward-move road the header states; the m1 and m2 plants execute the round-8 ruling's
+// fix, the whole text held (the 80-character road, closed).
+test("the seat table's receiver hold is by binding, not name, executed over functions planted at the end of file-view.ts: a listed name declared in two blocks of the entry's function is refused at both seats, whatever each declaration spells and with its own entry per block; a callback parameter of the name is refused at every seat of the name in the function; a same-named local in ANOTHER function is an unlisted seat there, never read under the listed function's entry, with or without `times`; two functions' entries with their declarations swapped are refused at both seats naming both declarations; one entry over two function nodes sharing a name reds the count; the probe's six other loud plants refuse as it recorded (two blocks spelled alike under `times`, a second block that never seats, a nested named arrow's own declaration unlisted and then wearing the outer text, an unnamed callback's declaration, a nested named function's parameter, a property key); the text hold's stated residue passes (a same-text declaration added inside the nested named function an entry names); two declarations alike through the initializer's 80th character and differing after are refused under one listed text and pass under each whole text, and a text over 300 characters is held by its hash (the maintainer's round-8 ruling of 2026-09-21); and the header names the shared name the live tables use", () => {
   const plant = (code: string): string => VIEWER_SRC + "\n" + code + "\n";
   const lineIn = (src: string, needle: string): number => { const i = src.indexOf(needle); assert.ok(i >= 0 && src.indexOf(needle, i + 1) < 0, needle + " is planted once"); return src.slice(0, i).split("\n").length; };
   assert.deepEqual(census(VIEWER_SRC).refused, [], "the unplanted file passes, so every refusal below is the plant's");
@@ -2476,13 +2491,34 @@ test("the seat table's receiver hold is by binding, not name, executed over func
   const re1 = census(e1, [...SEATS_READ_BY_HAND, P("probeE", D1, S1)]).refused;
   assert.equal(re1.length, 1, "e1: the `q.p` seat alone is refused: " + JSON.stringify(re1));
   assert.ok(re1[0].startsWith("line " + (lineIn(e1, "function probeE") + 2) + ": q.p.appendChild(" + S2 + ") seats `" + S2 + "` on `q.p` by appendChild in probeE, a seat the census has not read by hand"), "e1: refused as the member chain's unlisted seat, the bare `p` seat passing: " + re1[0]);
-  // the text hold's third face, stated in the header (the round-8 verifier's k4 family): an entry naming a nested named arrow
+  // the text hold's inward-move road, stated in the header (the round-8 verifier's k4 family): an entry naming a nested named arrow
   // whose `p` is the ENCLOSING function's declaration passes (k4) and stays green when the arrow gains a same-text declaration
   // of its own (k4'), the binding moving inward under the same reported text; another text inside is refused naming both (k4'')
   const k4 = (inner: string): string => plant('function probeK4(): void {\n  ' + D1 + ';\n  const inner4 = () => { ' + inner + 'p.appendChild(' + S1 + '); }; inner4();\n}');
   assert.deepEqual(census(k4(""), [...SEATS_READ_BY_HAND, P("inner4", D1, S1)]).refused, [], "k4: the enclosing function's declaration read through the nested named arrow passes");
   assert.deepEqual(census(k4(D1 + "; "), [...SEATS_READ_BY_HAND, P("inner4", D1, S1)]).refused, [], "k4': a same-text declaration added inside inner4 passes under the listed text, the residue the header states");
   assert.deepEqual(census(k4(D2 + "; "), [...SEATS_READ_BY_HAND, P("inner4", D1, S1)]).refused, ["line " + (lineIn(k4(D2 + "; "), "function probeK4") + 2) + ": p.appendChild(" + S1 + ") seats on `p` in inner4, bound to `" + D2 + "`, where SEATS_READ_BY_HAND read `" + D1 + "`: the receiver is not the one read by hand"], "k4'': another text inside inner4 is refused naming both declarations");
+  // the 80-character road, closed (the maintainer's round-8 ruling of 2026-09-21): two declarations alike through the initializer's
+  // 80th character and differing after, listed under one text cut at 80 (what the hold read before the ruling), are refused at
+  // both seats naming each whole declaration (m1); listed under their whole texts they pass (m1'); a text over 300 characters is
+  // held as its first 80 characters beside the sha256 of the whole, so two such declarations alike through the 80th are two
+  // holds, the sibling refused naming both hashed forms, and each passes under its own (m2)
+  const cut = (decl: string, n: number): string => decl.slice(0, "const p = ".length + n);
+  const L1 = 'const p = el("div", "fileview-probe-' + "x".repeat(60) + '-1")', L2 = 'const p = el("div", "fileview-probe-' + "x".repeat(60) + '-2")';
+  const T = cut(L1, 80);
+  assert.ok(L1 !== L2 && cut(L2, 80) === T && L1.length - "const p = ".length <= 300, "L1 and L2 are alike through the initializer's 80th character, differ after, and stay under the hash line");
+  const m1 = plant('function probeL1(): void {\n  ' + L1 + '; p.appendChild(' + S1 + ');\n}\nfunction probeL2(): void {\n  ' + L2 + '; p.appendChild(' + S2 + ');\n}');
+  assert.deepEqual(census(m1, [...SEATS_READ_BY_HAND, P("probeL1", T, S1), P("probeL2", T, S2)]).refused, [
+    "line " + (lineIn(m1, "function probeL1") + 1) + ": p.appendChild(" + S1 + ") seats on `p` in probeL1, bound to `" + L1 + "`, where SEATS_READ_BY_HAND read `" + T + "`: the receiver is not the one read by hand",
+    "line " + (lineIn(m1, "function probeL2") + 1) + ": p.appendChild(" + S2 + ") seats on `p` in probeL2, bound to `" + L2 + "`, where SEATS_READ_BY_HAND read `" + T + "`: the receiver is not the one read by hand",
+  ], "m1: two declarations alike through the 80th character, listed under the text cut there, are refused at both seats naming each whole declaration");
+  assert.deepEqual(census(m1, [...SEATS_READ_BY_HAND, P("probeL1", L1, S1), P("probeL2", L2, S2)]).refused, [], "m1': listed under their whole texts, both seats pass");
+  const H1 = 'const p = el("div", "fileview-probe-' + "x".repeat(300) + '-1")', H2 = 'const p = el("div", "fileview-probe-' + "x".repeat(300) + '-2")';
+  const hashed = (decl: string): string => cut(decl, 80) + " ... sha256:" + crypto.createHash("sha256").update(decl.slice("const p = ".length)).digest("hex");
+  assert.ok(cut(H1, 80) === cut(H2, 80) && hashed(H1) !== hashed(H2) && /^const p = .{80} \.\.\. sha256:[0-9a-f]{64}$/.test(hashed(H1)), "H1 and H2 are alike through the 80th character and their hashed forms differ in the hash alone");
+  const m2 = plant('function probeH1(): void {\n  ' + H1 + '; p.appendChild(' + S1 + ');\n}\nfunction probeH2(): void {\n  ' + H2 + '; p.appendChild(' + S2 + ');\n}');
+  assert.deepEqual(census(m2, [...SEATS_READ_BY_HAND, P("probeH1", hashed(H1), S1), P("probeH2", hashed(H1), S2)]).refused, ["line " + (lineIn(m2, "function probeH2") + 1) + ": p.appendChild(" + S2 + ") seats on `p` in probeH2, bound to `" + hashed(H2) + "`, where SEATS_READ_BY_HAND read `" + hashed(H1) + "`: the receiver is not the one read by hand"], "m2: over 300 characters, the sibling listed under the other's hashed form is refused naming both hashed forms");
+  assert.deepEqual(census(m2, [...SEATS_READ_BY_HAND, P("probeH1", hashed(H1), S1), P("probeH2", hashed(H2), S2)]).refused, [], "m2': each listed under its own hashed form, both seats pass");
   // the live file: the names the three tables use that more than one function node bears, and the header's example among them
   const sf = ts.createSourceFile("file-view.ts", VIEWER_SRC, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const nodesNamed = new Map<string, number>();
@@ -2492,10 +2528,13 @@ test("the seat table's receiver hold is by binding, not name, executed over func
   const used = new Set([...SEATS_READ_BY_HAND, ...ARGS_READ_BY_HAND, ...URL_WRITES_READ_BY_HAND].map((e) => e.in));
   const shared = [...nodesNamed].filter(([name, n]) => n > 1 && used.has(name)).map(([name]) => name).sort();
   assert.ok(shared.includes("apply"), "`apply` names more than one function node in file-view.ts and the tables use it (the shared names today: " + JSON.stringify(shared) + ")");
-  const header = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "file-print.test.ts"), "utf8").replace(/\n\/\/ /g, " ");
-  assert.ok(header.includes("THE RECEIVER'S HOLD IS BY BINDING, NOT NAME") && header.includes("`apply` is such a name in file-view.ts, textSizeControl's inner arrow and githubLinkAction's method") && header.includes("the hold is on the declaration's TEXT (its initializer's first 80 characters)"), "the census header states the binding hold and its two text-keyed residues");
+  const whole = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "file-print.test.ts"), "utf8");
+  const [h0, h1] = [whole.indexOf("// bodyReady classes a child it has never seen as UNKNOWN"), whole.indexOf("/** file-view.ts with its comments blanked")];   // the header block alone, as the record test reads it: a pin over the whole module is satisfied by its own literals (the round-8 fold's mutation found the old read so)
+  assert.ok(h0 >= 0 && h1 > h0, "the census header block is found between its two markers");
+  const header = whole.slice(h0, h1).replace(/\n\/\/ /g, " ");
+  assert.ok(header.includes("THE RECEIVER'S HOLD IS BY BINDING, NOT NAME") && header.includes("`apply` is such a name in file-view.ts, textSizeControl's inner arrow and githubLinkAction's method") && header.includes("the plants k4 and k4' below pass, k4'' with another text inside refuses naming both") && header.includes("a text over 300 characters is held as its first 80 characters beside the sha256 of the whole") && header.includes("the plants m1, m1' and m2 below execute the refusal, the pass under each whole text, and the hash form"), "the census header states the binding hold, its two text-keyed residues with the k4 plants by id, and the closed 80-character road with its plants");
   const P7 = sectionPart("P7. **", "**Derivations and their unknown cases.**");
-  assert.ok(P7.includes("the receiver's hold is by binding, not name (the maintainer's round-8 question, 2026-09-21") && P7.includes("two things stay keyed on text and are stated in the census header, the entry's `in`, a bare function name two function nodes can share"), "P7 states the answer and points at the header for the residues");
+  assert.ok(P7.includes("the receiver's hold is by binding, not name (the maintainer's round-8 question, 2026-09-21") && P7.includes("two things stay keyed on text and are stated in the census header, the entry's `in`, a bare function name two function nodes can share") && P7.includes("the census module's plants k4 and k4' pass, k4'' refuses") && P7.includes("holds the whole text (one over 300 characters as its first 80 characters beside the sha256 of the whole), the plants m1, m1' and m2 executing it"), "P7 states the answer, the two roads with the k4 plants by id, and the closed 80-character road with its fix");
 });
 
 test("disabled until the body is in: the driver's start, where a press (the button's or the chord's), an Escape, a choice, a prepare, a ready and a printed change nothing; the body arriving rests; the body going out from rest, armed, the wait or the print disarms and disables; the body's arrival elsewhere changes nothing", () => {

@@ -8742,8 +8742,14 @@ parameter, is refused at every seat of the name whatever `times` says, a same-na
 seat there, two functions' entries with their declarations swapped are refused at both seats naming both declarations, and a
 string, a comment and a property key are not declarations; two things stay keyed on text and are stated in the census
 header, the entry's `in`, a bare function name two function nodes can share (the probe counted ten such names over 260
-function nodes in file-view.ts, `apply` the one the tables use), reached only through an author-written `times`, and the
-declaration's 80-character text));
+function nodes in file-view.ts, `apply` the one the tables use), reached only through an author-written `times`, and a
+same-spelled declaration whose meaning changed underneath the listed text, the binding moving inward into the nested named
+function an entry names while the enclosing function keeps the listed one (the census module's plants k4 and k4' pass, k4''
+refuses, naming both declarations); a third road, the hold on the initializer's first 80 characters, under which two
+initializers alike to there passed as one listed text, is closed by the maintainer's round-8 ruling of 2026-09-21: the
+census holds the whole text (one over 300 characters as its first 80 characters beside the sha256 of the whole), the plants
+m1, m1' and m2 executing it, and the three table fields the cut had shortened were rewritten from the census's own
+refusals));
 and a receiver bound by `let` or `var`, or a parameter written to, is
 reassignable and fails unless the entry pins what every write to it assigns (`holds`; the round-6 review's correctness-5:
 the entry for the viewer's `let sess = null` pinned its declaration and nothing about what it held at the seat, and the
