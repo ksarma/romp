@@ -75,11 +75,12 @@ export function tailMutRow(sid: string, m: { removedTail: string[]; addedTail: s
  *  anchoring then moves the reader by the same amount with no pane write. `top`/`bot` = [before, after] heights.
  *  `sh`/`ch` are the scroller's heights read a frame later for the view shown in that frame; a row whose view was
  *  switched away before the frame has none (null, never another view's figures; PR E, the maintainer's round 1 addendum)
- *  and carries `view: "inactive"`: one fixed word, no host name, spread only when handed, admitted to the kernel's chat
- *  allowlist on the owner's approval (the owner 2026-09-21, who approved the field). A row with numbers and no marker is
- *  the shown view's. */
+ *  and carries `view: "inactive"`: one fixed word, no host name, spread only when handed that word (the parameter's type names
+ *  it at compile time and is gone at run time, so the guard holds it there: a value the type does not name mints nothing; the
+ *  kernel admits the key and checks no value), admitted to the kernel's chat allowlist on the owner's approval (the owner
+ *  2026-09-21, who approved the field). A row with numbers and no marker is the shown view's. */
 export function spacerRow(sid: string, topBefore: number, topAfter: number, botBefore: number, botAfter: number, sh: number | null = 0, ch: number | null = 0, view?: "inactive") {
-  return { sid, top: [topBefore, topAfter], bot: [botBefore, botAfter], dTop: topAfter - topBefore, dBot: botAfter - botBefore, sh, ch, ...(view ? { view } : {}) };
+  return { sid, top: [topBefore, topAfter], bot: [botBefore, botAfter], dTop: topAfter - topBefore, dBot: botAfter - botBefore, sh, ch, ...(view === "inactive" ? { view } : {}) };
 }
 
 /** The breadcrumb for one height change of the transcript's TAIL outside the append path (T262f, the user
