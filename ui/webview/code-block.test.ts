@@ -16,6 +16,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import hljs from "highlight.js/lib/core";
 import { hideEdges } from "../test-dom-shim";   // the stand-in's edges (parentElement, children) hide with the shared rule (ui/test-dom-shim.test.ts)
+import { codeOnly } from "../test-code-only";   // the comment stripper the mdBlock slice reads through (the compiler's ranges; file-view-seam.test.ts self-checks it)
 
 const UI = path.resolve(process.cwd(), "..", "ui", "webview");
 const read = (f: string) => fs.readFileSync(path.join(UI, f), "utf8");
@@ -293,8 +294,16 @@ test("render.ts and file-view.ts import the two functions from the module; rende
 });
 
 test("mdBlock: the raw text is captured before the highlight rewrite, a named registered language is highlighted (never guessed), then EVERY fence is wrapped and given Copy with the text the file holds", () => {
-  const fn = VIEW.slice(VIEW.indexOf("function mdBlock("), VIEW.indexOf("function imgBlock("));
-  const pass = fn.slice(fn.indexOf('box.querySelectorAll("pre code").forEach'));
+  // mdBlock's body with its comments stripped (codeOnly, ui/test-code-only.ts), so the index compares below read statements and a
+  // comment quoting a pinned line cannot satisfy one. The fence pass is the forEach over the sanitizer's body, `clean`, cut from its
+  // head to the `});` that closes it: since 2026-09-20 it runs there, before the figure chain and the adoption, because its rows
+  // re-parse markup and the chain must judge what the re-parse creates. WHERE it sits in mdBlock is file-view-seam.test.ts's pin, on
+  // the same stripped code; this test reads the pass's own shape: what it captures, highlights, wraps and hands Copy.
+  const fn = codeOnly(VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0]);
+  const passAt = fn.indexOf('clean.querySelectorAll("pre code").forEach((node) => {');
+  const passEnd = fn.indexOf("\n  });\n", passAt);
+  assert.ok(passAt >= 0 && passEnd > passAt, "the fence pass is the forEach over `clean`, closed at the function's own level");
+  const pass = fn.slice(passAt, passEnd + 7);
   assert.match(pass, /const raw = codeEl\.textContent \|\| "";/);
   assert.ok(pass.indexOf("const raw = codeEl.textContent") < pass.indexOf("codeEl.innerHTML = hljs.highlight(raw"), "raw first, then the rewrite highlights that same string");
   assert.match(pass, /if \(lang && hljs\.getLanguage\(lang\)\) \{/, "highlight only a named, registered language");
@@ -305,7 +314,7 @@ test("mdBlock: the raw text is captured before the highlight rewrite, a named re
   // statements, closing the forEach (a `}` before the wrap would also match the catch's, so the branch is read whole)
   const branchAt = pass.indexOf("if (lang && hljs.getLanguage(lang)) {");
   const branch = pass.slice(branchAt, pass.indexOf("\n    }\n", branchAt) + 7);
-  assert.match(branch, /^if \(lang && hljs\.getLanguage\(lang\)\) \{\n[\s\S]*\} catch \{ \/\* leave plain \*\/ \}\n    \}\n$/, "the language branch is read whole, head to its closing brace");
+  assert.match(branch, /^if \(lang && hljs\.getLanguage\(lang\)\) \{\n[\s\S]*\} catch \{\s*\}\n    \}\n$/, "the language branch is read whole, head to its closing brace (the catch leaves the fence plain: its body is a comment in the source, nothing on code-only)");
   assert.doesNotMatch(branch, /wrapCodeLines|addCopyBtn/, "the language branch highlights only: no rows, no Copy inside it");
   assert.match(pass, /\n    wrapCodeLines\(codeEl\);\n    if \(host\) addCopyBtn\(host, toCopy\);\n  \}\);/, "the rows and the Copy button are the callback's last statements, for every fence");
   // what Copy copies is the fence's text as the FILE holds it (fence-source.ts): the raw text is marked's, its leading tabs
