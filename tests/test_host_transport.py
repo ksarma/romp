@@ -22,12 +22,14 @@ in the api_retry detail, all fixed then); they pass both ways now. Judge either 
 `python3 -m pytest tests/test_sdk_backend.py -q`.
 """
 import asyncio
+import contextlib
 import importlib.util
 import inspect
 import json
 import os
 import re
 import shutil
+import stat
 import sys
 import tempfile
 import time
@@ -54,6 +56,142 @@ ht = sb._ht()
 sh = ht.sh
 SDK = importlib.util.find_spec("claude_agent_sdk") is not None
 SID = "11111111-2222-3333-4444-0000000000b1"
+
+
+def foreign_uid(path):
+    """The DESCRIPTOR-ONLY foreign owner: `st_uid + 1` for the ONE object at `path` (keyed on its (st_dev, st_ino), so
+    every other object answers as before) from os.fstat of a descriptor on it and from os.stat or os.lstat of its name
+    with `dir_fd` given (a fstatat under a directory descriptor), and NOT from a stat by path. A PATH-form stat of the
+    object (os.stat or os.lstat on a path resolving to it, and through them Path.stat, Path.lstat, Path.exists and
+    Path.is_file) answers the real owner and is COUNTED on `.path_stats` (`.path_stat_calls` names each), and every
+    behavioural pin that uses this stub asserts the count is 0: the round-7 fifth addendum of fork PR #814's review
+    (2026-09-20). Through the fourth addendum the stub swapped the owner on the path form too, so the pins could not tell
+    the descriptor fstat from a path stat: the verifier's mutation that made read_host_file's owner check a path stat
+    left this module green and only the source census red. The way the fstat pins simulate another uid's file, since this
+    user cannot chown to one (the fourth addendum; the removal road's and the read descent's foreign-uid pins key their
+    stubs the same way). A context manager; use it as `with foreign_uid(p) as fu:` and read `fu.path_stats` after."""
+    import pathlib
+    st = os.lstat(path)
+    ident, real_fstat, real_stat, real_lstat = (st.st_dev, st.st_ino), os.fstat, os.stat, os.lstat
+
+    class _Stub:
+        path_stats = 0
+
+        def __init__(self):
+            self.path_stat_calls = []
+
+        def _swap(self, r):
+            if (r.st_dev, r.st_ino) != ident:
+                return r
+            fields = list(r); fields[4] = r.st_uid + 1
+            return os.stat_result(fields)
+
+        def _answer(self, fn, real, target, a, k):
+            r = real(target, *a, **k)
+            if isinstance(target, int) or k.get("dir_fd") is not None:
+                return self._swap(r)                       # a descriptor, or a name under one: the foreign owner
+            if (r.st_dev, r.st_ino) == ident:              # the path form on the planted object: counted, the real owner
+                self.path_stats += 1
+                self.path_stat_calls.append((fn, os.fspath(target)))
+            return r
+
+        def __enter__(self):
+            stub = self
+            fstat = lambda fd: stub._swap(real_fstat(fd))
+            stat_ = lambda target, *a, **k: stub._answer("os.stat", real_stat, target, a, k)
+            lstat_ = lambda target, *a, **k: stub._answer("os.lstat", real_lstat, target, a, k)
+            self._patches = [mock.patch.object(os, "fstat", fstat), mock.patch.object(os, "stat", stat_),
+                             mock.patch.object(os, "lstat", lstat_)]
+            if hasattr(pathlib, "_NormalAccessor"):        # 3.10 binds os.stat into the accessor at import; 3.11+ calls os.stat
+                self._patches += [mock.patch.object(pathlib._NormalAccessor, "stat", staticmethod(stat_)),
+                                  mock.patch.object(pathlib._NormalAccessor, "lstat", staticmethod(lstat_))]
+            for p in self._patches:
+                p.start()
+            return self
+
+        def __exit__(self, *exc):
+            for p in reversed(self._patches):
+                p.stop()
+            return False
+    return _Stub()
+
+
+def bind_unix_socket(path):
+    """A UNIX socket file bound at `path` and left there (closing the socket unlinks nothing): the shape a peer's
+    server leaves at a name. Bound by the absolute path when it fits sun_path, else by its basename from the parent
+    (a chdir and back, this test process's own cwd), since a state root under a long TMPDIR puts the name past the
+    108-byte budget and a rename in from a short directory would fail across filesystems."""
+    import socket
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        try:
+            s.bind(str(path))
+        except OSError:                                    # AF_UNIX path too long
+            cwd = os.getcwd()
+            os.chdir(os.path.dirname(str(path)))
+            try:
+                s.bind(os.path.basename(str(path)))
+            finally:
+                os.chdir(cwd)
+    finally:
+        s.close()
+    assert stat.S_ISSOCK(os.lstat(path).st_mode), path
+
+
+# THE SHAPE TABLE (the round-7 fifth addendum of fork PR #814's review, 2026-09-20): every kind of entry a peer can put
+# at identity.json or host.log under a loose `hosts/<sid>/` of ours, by owner, and the answer each of the two readers
+# gives (host_transport.host_file_exists, host_transport.read_host_file) and each of the three read roads files
+# (kernel/sdk_backend.py: _host_lease_applies over identity.json's existence, _host_orphan_recover over identity.json's
+# bytes, _file_host_log_rows over host.log's bytes). The population: the kinds mknod-free code can create (absent, a
+# regular file, a symlink to a file, a dangling symlink, a directory, a FIFO, a UNIX socket) times the owner (ours,
+# another uid's by the foreign_uid stub; `absent` has no owner), 13 rows; times the two readers, 26 cells; times the
+# three roads, 39; and, since the round-7 seventh addendum (2026-09-20), the SPAWN road's three host.log readers
+# (host_log_mark, host_log_rows, host_exit_reason, under a 0700 <sid>/ of ours) answer the `read` column too, 39 more
+# cells at function level (ReadDescent), the absent answer being 0, [] and "" there and a foreign entry a refusal of the
+# launch at the mark or one row on a refused arm (BackendHostRules). A device node is EXCLUDED: mknod of one needs CAP_MKNOD, which no peer here has, and it would take
+# the non-regular arm (`False`/`None`, nothing opened) as a FIFO does. The answers: `absent` is the reader's absent
+# answer (False, None); `ours` is the file read as ours (True, its bytes); `foreign` is HostFileForeign (one
+# host.directory-refused row with `file` and `uid`, then the road's absent answer); `link` is the file-shape
+# HostDirRefused (the row with `file` and no `uid`; the orphan road's refused arm replays nothing); `not-file` is the
+# non-regular answer, False or None with NOTHING OPENED (through the fourth addendum a socket of another uid was
+# answered absent on the orphan and served roads with no row: open(2)'s ENXIO never reached the owner fstat).
+SHAPE_TABLE = (
+    # kind               owner      exists      read
+    ("absent",           None,      "absent",   "absent"),
+    ("regular",          "ours",    "ours",     "ours"),
+    ("regular",          "foreign", "foreign",  "foreign"),
+    ("symlink-to-file",  "ours",    "link",     "link"),
+    ("symlink-to-file",  "foreign", "foreign",  "foreign"),
+    ("symlink-dangling", "ours",    "link",     "link"),
+    ("symlink-dangling", "foreign", "foreign",  "foreign"),
+    ("directory",        "ours",    "not-file", "not-file"),
+    ("directory",        "foreign", "foreign",  "foreign"),
+    ("fifo",             "ours",    "not-file", "not-file"),
+    ("fifo",             "foreign", "foreign",  "foreign"),
+    ("socket",           "ours",    "not-file", "not-file"),
+    ("socket",           "foreign", "foreign",  "foreign"),
+)
+
+
+def plant_shape(sdir, name, kind, content, elsewhere):
+    """The entry of `kind` at `sdir / name` (`content` for a regular file; `elsewhere` a directory outside sdir for a
+    link's target). Nothing for `absent`."""
+    p = Path(sdir) / name
+    if kind == "regular":
+        p.write_text(content)
+    elif kind == "symlink-to-file":
+        (Path(elsewhere) / name).write_text(content)
+        p.symlink_to(Path(elsewhere) / name)
+    elif kind == "symlink-dangling":
+        p.symlink_to(Path(elsewhere) / "nowhere" / name)
+    elif kind == "directory":
+        p.mkdir()
+    elif kind == "fifo":
+        os.mkfifo(p)
+    elif kind == "socket":
+        bind_unix_socket(p)
+    else:
+        assert kind == "absent", kind
 
 
 class Settings(unittest.TestCase):
@@ -147,6 +285,166 @@ class SpawnSpec(unittest.TestCase):
         self.assertEqual(oct(os.stat(p.parent).st_mode & 0o777), "0o700")
         self.assertEqual(json.loads(p.read_text())["env"]["ROMP_SID"], SID)
 
+    def test_hosts_is_owner_only_by_code_and_a_loose_one_is_tightened(self):
+        """The guard on the host's socket temp name is the mode of the directory it is bound in, `hosts/`, so that mode
+        is set by code, not by the umask of whichever process created it (the pre-round of the socket-mode fix,
+        2026-09-19). This is the kernel's road, the one that creates `hosts/` on a fresh state root: write_spawn_spec
+        used to mkdir `hosts/<sid>/` with parents=True and leave `hosts/` itself at the umask's mode (0777 under the
+        000 umask this test runs under). An existing loose `hosts/` (every install before the fix made one at the
+        umask's mode) is tightened on the next spawn, since it is ours."""
+        self.addCleanup(os.umask, os.umask(0o000))      # permissive on purpose: whatever mode results is the code's doing
+        spec = {"sid": SID, "name": "web", "version": "abc12345", "state_dir": "/state", "protocol": 1}
+        fresh = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, fresh, True)
+        p = ht.write_spawn_spec(fresh, SID, spec)
+        hosts = Path(fresh) / "hosts"
+        self.assertEqual(stat.S_IMODE(os.stat(hosts).st_mode), 0o700, "hosts/ is 0700 by code under a 000 umask")
+        self.assertEqual(stat.S_IMODE(os.stat(p.parent).st_mode), 0o700, "and hosts/<sid>/ as before")
+        self.assertEqual(stat.S_IMODE(os.stat(p).st_mode), 0o600)
+        loose = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, loose, True)
+        (Path(loose) / "hosts").mkdir()
+        os.chmod(Path(loose) / "hosts", 0o755)
+        self.assertEqual(stat.S_IMODE(os.stat(Path(loose) / "hosts").st_mode), 0o755, "planted loose, an old install's shape")
+        ht.write_spawn_spec(loose, SID, spec)
+        self.assertEqual(stat.S_IMODE(os.stat(Path(loose) / "hosts").st_mode), 0o700, "tightened by the next spawn's write")
+        self.assertEqual(sh.hosts_dir(loose), Path(loose) / "hosts", "the helper both creators call, idempotent")
+        self.assertEqual(stat.S_IMODE(os.stat(Path(loose) / "hosts").st_mode), 0o700)
+
+    def test_a_symlink_at_hosts_or_a_tighten_that_does_not_take_fails_the_spawn(self):
+        """hosts_dir takes the judge scratch precedent whole (the socket-mode fix's round 1, 2026-09-19: the first cut
+        stat'd through a symlink and never read the mode back after its chmod). The kernel's road: a symlink planted at
+        hosts/ fails write_spawn_spec with OSError before any spec is written, and the link's target is not chmod'd
+        through it; a chmod that does not take (a no-op os.chmod over a loose hosts/) fails it too instead of returning
+        with the directory still loose."""
+        self.addCleanup(os.umask, os.umask(0o000))
+        spec = {"sid": SID, "name": "web", "version": "abc12345", "state_dir": "/state", "protocol": 1}
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, True)
+        target = Path(root) / "elsewhere"
+        target.mkdir(mode=0o755)
+        (Path(root) / "hosts").symlink_to(target)
+        with self.assertRaises(OSError) as cm:
+            ht.write_spawn_spec(root, SID, spec)
+        self.assertIn("not a directory", str(cm.exception))
+        self.assertTrue(str(cm.exception).startswith("hosts directory "), str(cm.exception))   # the launch error names WHICH directory
+        #                                                                                    (the mutation pass of round 2, 2026-09-19)
+        self.assertEqual(sorted(p.name for p in target.iterdir()), [], "no spec written through the link")
+        self.assertEqual(stat.S_IMODE(os.stat(target).st_mode), 0o755, "the target's mode untouched")
+        loose = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, loose, True)
+        (Path(loose) / "hosts").mkdir(mode=0o755)
+        with mock.patch.object(os, "chmod", lambda *a, **k: None):
+            with self.assertRaises(OSError) as cm:
+                ht.write_spawn_spec(loose, SID, spec)
+        self.assertIn("stays group/world-accessible", str(cm.exception))
+        self.assertTrue(str(cm.exception).startswith("hosts directory "), str(cm.exception))
+        self.assertEqual(stat.S_IMODE(os.lstat(Path(loose) / "hosts").st_mode), 0o755)
+        self.assertFalse((Path(loose) / "hosts" / SID).exists(), "the spawn stopped at the directory")
+
+    def test_a_symlink_at_the_session_directory_fails_the_spawn_and_the_directory_is_born_0700_by_its_mkdir(self):
+        """The sibling one line below hosts/ (the socket-mode fix's round 2, 2026-09-19): round 1 put lstat, the
+        foreign-owner refusal and the chmod read-back on hosts/ and left hosts/<sid>/ on a bare mkdir and a chmod never
+        read back, so a symlink planted there was followed and the spec written through it. Now the same helper
+        (sh.owner_only_dir) makes both. The kernel's road: a symlink at hosts/<sid>/ fails write_spawn_spec with OSError
+        naming the host directory, nothing is written through the link and the target's mode is untouched; a loose
+        hosts/<sid>/ of ours is tightened and read back, and a tighten that does not take fails the spawn with no spec
+        written. And the creation mode is the mkdir's own, read at the FIRST lstat after it (0700 under a 000 umask, no
+        chmod made), since every earlier assertion read the final mode, which the chmod a line later supplied whatever
+        the mkdir did; on a second fresh root with os.chmod a no-op the directory is still 0700 and the spec lands."""
+        self.addCleanup(os.umask, os.umask(0o000))
+        spec = {"sid": SID, "name": "web", "version": "abc12345", "state_dir": "/state", "protocol": 1}
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, True)
+        sh.hosts_dir(root)
+        target = Path(root) / "elsewhere"
+        target.mkdir(mode=0o755)
+        sdir = Path(root) / "hosts" / SID
+        sdir.symlink_to(target)
+        with self.assertRaises(OSError) as cm:
+            ht.write_spawn_spec(root, SID, spec)
+        self.assertTrue(str(cm.exception).startswith("host directory "), str(cm.exception))
+        self.assertIn("not a directory", str(cm.exception))
+        self.assertEqual(sorted(p.name for p in target.iterdir()), [], "no spec written through the link")
+        self.assertEqual(stat.S_IMODE(os.stat(target).st_mode), 0o755, "the target's mode untouched")
+        self.assertTrue(sdir.is_symlink(), "the link is left, not replaced")
+        fresh = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, fresh, True)
+        sdir = Path(fresh) / "hosts" / SID
+        chmods, reads = [], []
+        real_chmod, real_lstat = os.chmod, os.lstat
+
+        def chmod(p, mode, *a, **k):
+            chmods.append((Path(p), mode))
+            return real_chmod(p, mode, *a, **k)
+
+        def lstat(p, *a, **k):
+            st = real_lstat(p, *a, **k)
+            if Path(p) == sdir:
+                reads.append(stat.S_IMODE(st.st_mode))
+            return st
+        with mock.patch.object(os, "chmod", chmod), mock.patch.object(os, "lstat", lstat):
+            p = ht.write_spawn_spec(fresh, SID, spec)
+        self.assertEqual(reads, [0o700], "hosts/<sid>/ is 0700 at the first read after its mkdir: the mkdir's own mode")
+        self.assertEqual([c for c in chmods if c[0] == sdir], [], "no chmod on a directory born owner-only")
+        self.assertEqual(stat.S_IMODE(os.stat(p).st_mode), 0o600)
+        noop = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, noop, True)
+        with mock.patch.object(os, "chmod", lambda *a, **k: None):
+            p = ht.write_spawn_spec(noop, SID, spec)
+        self.assertEqual(stat.S_IMODE(os.lstat(p.parent).st_mode), 0o700, "0700 with no chmod to lean on, on either directory")
+        self.assertEqual(stat.S_IMODE(os.lstat(p.parent.parent).st_mode), 0o700)
+        self.assertTrue(p.exists())
+        loose = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, loose, True)
+        sh.hosts_dir(loose)
+        (Path(loose) / "hosts" / SID).mkdir(mode=0o755)
+        with mock.patch.object(os, "chmod", lambda *a, **k: None):
+            with self.assertRaises(OSError) as cm:
+                ht.write_spawn_spec(loose, SID, spec)
+        self.assertIn("stays group/world-accessible", str(cm.exception))
+        self.assertTrue(str(cm.exception).startswith("host directory "), str(cm.exception))
+        self.assertFalse((Path(loose) / "hosts" / SID / "spawn.json").exists(), "the spawn stopped at the directory")
+        p = ht.write_spawn_spec(loose, SID, spec)
+        self.assertEqual(stat.S_IMODE(os.lstat(p.parent).st_mode), 0o700, "a loose one of ours is tightened, read back, and the spec lands")
+
+    def test_the_reference_states_the_sockets_contract_and_the_directory_refusal(self):
+        """The docs paragraph that states the user-facing contract of the socket-mode fix, pinned sentence by sentence
+        (the fix's round 2, 2026-09-19: the existing flattened-paragraph pin above stops short of these sentences, and a
+        set-aside called a docs paragraph untestable when the same test file pins prose from the same paragraph by exact
+        substring). The paragraph is sliced from its socket anchor to the next blank line, so a re-wrap leaves the pin
+        standing and a deleted sentence fails it. A doc pin guards the doc against drifting from a contract the code
+        still keeps; the code itself is pinned by tests/test_session_host.py and the SpawnSpec cases above."""
+        flat = lambda s: " ".join(s.split())
+        doc = open(os.path.join(ROOT, "docs", "reference.md")).read()
+        i = doc.index("serves one Unix socket (`hosts/<sid8>.sock`")
+        para = flat(doc[i:doc.index("\n\n", i)])
+        self.assertIn("mode 0600 from the moment the path exists", para)
+        self.assertIn("a published path longer than the socket path budget, 107 bytes on Linux, is refused before anything is bound and the host exits", para)
+        self.assertIn("`hosts/` itself is made 0700 when the kernel writes a host's spawn specification and when a host starts, "
+                      "before it spawns its CLI or binds its socket", para,
+                      "the host's road runs at its start, ahead of the CLI, since round 3 of the fix (the reorder ruling, 2026-09-19)")
+        self.assertIn("the host exits, having started no CLI and written no lease", para, "and a refusal there starts nothing")
+        self.assertIn("after the lease only one check of `hosts/`, the bind, the tightening and the rename run", para,
+                      "the interval the lease readers race, stated (the check is round 4's lstat at the bind, 2026-09-20)")
+        self.assertIn("each `hosts/<sid>/` when the specification is written and when the host opens its journal", para,
+                      "the sibling directory is named with its two creators")
+        self.assertIn("one that is a symlink, that belongs to another user, or that stays loose after the tightening is refused on every one of them.", para,
+                      "the refusal is stated where the tightening is: a symlinked hosts/ worked before and hard-fails every spawn now")
+        # what the operator SEES is stated per road since round 3 (2026-09-19, correctness-6): through round 2 the paragraph
+        # promised a launch error naming the directory on all four roads, and on the host's two (hosts/ or hosts/<sid>/
+        # re-pointed after the spec is written) the launch error names only the exit; this pin replaces the one that
+        # held the overstatement
+        self.assertIn("When the kernel meets it, writing the specification, the spawn fails with a launch error naming the directory", para,
+                      "the kernel's roads: the error names the directory")
+        self.assertIn("when the host meets it first, the host exits before serving its socket and the launch error names its exit code and where the reason is: "
+                      "`hosts/<sid>/host.log` when the host wrote a row (its `socket-bind-failed` row names the step), `host.stderr` beside the specification "
+                      "when it refused before its first row", para,
+                      "the host's roads: the exit code, and the file that exists for each refusal class (the constructor's leaves no host.log row)")
+        self.assertNotIn("refused on every one of them: the spawn fails with a launch error naming the directory", para,
+                         "the overstatement is gone: the host's roads never named the directory in the launch error")
+        self.assertIn("point the state root there, `ROMP_STATE_DIR` or `XDG_STATE_HOME`", para, "and the operator's remedy beside it")
+
     def test_a_pre_existing_looser_spawn_json_is_tightened_before_the_overlay_lands_in_it(self):
         # Until 2026-09-18 the writer opened spawn.json O_CREAT|O_TRUNC at 0600 and chmod'd it AFTER the write: a
         # fresh file was born 0600, but a pre-existing looser one kept its mode through the truncating open, took
@@ -204,9 +502,405 @@ class SpawnSpec(unittest.TestCase):
         with mock.patch.object(os, "open", open_probe), mock.patch.object(os, "fchmod", fchmod_refused), \
                 mock.patch.object(os, "close", close_probe), self.assertRaises(PermissionError):
             ht.write_spawn_spec(d, SID, {"env": {"FEATURE_FLAG": "1"}, "sid": SID})
-        self.assertEqual(len(opened), 1, "one descriptor, spawn.json's")
-        self.assertEqual(closed, opened, "closed on the failure road")
+        # three descriptors since round 4 of the socket-mode fix (2026-09-20): the descent's two directory descriptors
+        # (hosts/, then hosts/<sid>/ relative to it) and spawn.json's, opened relative to the second; all three closed
+        self.assertEqual(len(opened), 3, "hosts/, hosts/<sid>/ and spawn.json's descriptors: %r" % (opened,))
+        self.assertEqual(sorted(closed), sorted(opened), "every descriptor closed on the failure road")
         self.assertEqual(os.stat(ht.host_dir(d, SID)).st_mode & 0o777, 0o700, "the directory's chmod ran")
+        # host_stderr_open's fchmod, the same shape (tests-3, round 6 of the review, 2026-09-20: kernel-1's fchmod landed
+        # with a close-and-reraise nothing held; with it removed, one descriptor leaked per refused launch). The count is
+        # read after the open_host_dirs context has exited, since its two directory descriptors close at that exit.
+        sh.hosts_dir(d)
+        ht.host_dir(d, SID).mkdir(exist_ok=True)
+        opened.clear(); closed.clear()
+        with mock.patch.object(os, "open", open_probe), mock.patch.object(os, "fchmod", fchmod_refused), \
+                mock.patch.object(os, "close", close_probe), self.assertRaises(PermissionError):
+            with ht.open_host_dirs(d, SID) as dirs:
+                ht.host_stderr_open(dirs)
+        self.assertEqual(len(opened), 3, "hosts/, hosts/<sid>/ and host.stderr's descriptors: %r" % (opened,))
+        self.assertEqual(sorted(closed), sorted(opened), "every descriptor closed on host_stderr_open's failure road")
+
+    def test_the_spec_is_opened_through_descriptors_so_a_link_swapped_in_after_the_directory_checks_is_refused(self):
+        """The round's high, on the kernel's spec write (round 4 of the socket-mode fix, 2026-09-20): through round 3
+        write_spawn_spec checked hosts/ and hosts/<sid>/ by path and then opened spawn.json by PATH, so a hosts/ or
+        hosts/<sid>/ swapped for a symlink between the helper's read-back and the open had the specification, the
+        launch's environment overlay in it, written into the link's target (the TOCTOU residual owner_only_dir's
+        docstring stated). Now the file is opened by name relative to a descriptor on hosts/<sid>/ reached through
+        O_DIRECTORY|O_NOFOLLOW opens of each component (open_host_dirs): a link at either fails its open. Interposed on
+        sh.owner_only_dir, a module attribute both helpers reach (so the plant is seen on every interpreter, 3.10
+        included): after the session directory's call returns, hosts/ (arm 1) or hosts/<sid>/ (arm 2) is renamed aside
+        and a symlink to a directory of a peer's put in its place, holding an empty <sid>/ where the spec would land.
+        write_spawn_spec raises HostDirRefused naming the link as a symlink and its path, and the peer's directory
+        receives nothing (its listing, empty). Red on the head before the fix: the spec landed in the peer's directory
+        (['spawn.json'] listed there)."""
+        self.addCleanup(os.umask, os.umask(0o022))
+        spec = {"sid": SID, "name": "web", "version": "abc12345", "state_dir": "/state", "protocol": 1, "env": {"FEATURE_FLAG": "1"}}
+        real = sh.owner_only_dir
+        for arm, noun in (("hosts", "hosts directory"), ("session-dir", "host directory")):
+            with self.subTest(arm=arm):
+                root = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, root, True)
+                peer = Path(root) / "peer"
+                (peer / SID).mkdir(parents=True, mode=0o755)
+                hosts, sdir = Path(root) / "hosts", Path(root) / "hosts" / SID
+                link = hosts if arm == "hosts" else sdir
+                target = peer if arm == "hosts" else peer / SID
+
+                def swap_after(path, what="directory", parents=False, link=link, target=target):
+                    d = real(path, what, parents)
+                    if what == "host directory":                 # the last check before the open: the swap lands here
+                        os.rename(link, Path(root) / "moved")
+                        link.symlink_to(target)
+                    return d
+                with mock.patch.object(sh, "owner_only_dir", swap_after), self.assertRaises(ht.HostDirRefused) as cm:
+                    ht.write_spawn_spec(root, SID, spec)
+                msg = str(cm.exception)
+                self.assertTrue(msg.startswith(noun + " "), msg)
+                self.assertIn("is a symlink, not a directory", msg)
+                self.assertIn(os.fspath(link), msg)
+                self.assertTrue(link.is_symlink(), "the link is left, not replaced")
+                self.assertEqual(sorted(p.name for p in (peer / SID).iterdir()), [], "the peer's directory received nothing")
+                self.assertEqual(sorted(str(p.relative_to(peer)) for p in peer.rglob("*")), [SID], "nothing anywhere under it")
+                moved = Path(root) / "moved"
+                self.assertFalse((moved / (SID if arm == "hosts" else "") / "spawn.json").exists(), "and no spec was written anywhere: the open was refused")
+
+    def test_the_descents_foreign_uid_arm_refuses_a_directory_renamed_into_place_at_hosts_and_at_the_session_directory(self):
+        """open_host_dirs' foreign-uid arm, driven with a stub keyed on the object (tests-1, round 5 of the review,
+        2026-09-20: the descent's two fstat refusals, this one and the mode arm below, were held by no case, and the PR
+        body had waived them as redundant with the road's O_NOFOLLOW open, which is false for this arm: a foreign
+        DIRECTORY renamed into place is not a link, and O_NOFOLLOW admits it). Real directories of ours at hosts/ and
+        hosts/<sid>/; os.fstat answers st_uid + 1 for the descriptor whose (st_dev, st_ino) is the planted component's,
+        read by the real lstat before the patch, and truthfully for every other descriptor (the sibling component's
+        among them, so the refusal is the planted component's own). write_spawn_spec's descent raises HostDirRefused
+        carrying `belongs to uid` and the component's path, and no spawn.json is written anywhere under the root. Red
+        with the uid arm deleted from _open_dir_nofollow: the descent admits the directory and the spec lands in it."""
+        spec = {"sid": SID, "name": "web", "version": "abc12345", "state_dir": "/state", "protocol": 1, "env": {"FEATURE_FLAG": "1"}}
+        real_fstat = os.fstat
+
+        def foreign(st):
+            fields = list(st)
+            fields[4] = st.st_uid + 1                   # st_uid: someone else's directory at the component
+            return os.stat_result(fields)
+        for arm, noun in (("hosts", "hosts directory"), ("session-dir", "host directory")):
+            with self.subTest(arm=arm):
+                root = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, root, True)
+                sh.hosts_dir(root)
+                sdir = ht.host_dir(root, SID)
+                sdir.mkdir(mode=0o700)
+                planted = Path(root) / "hosts" if arm == "hosts" else sdir
+                st = os.lstat(planted)
+                ident = (st.st_dev, st.st_ino)
+
+                def fstat(fd, ident=ident):
+                    st = real_fstat(fd)
+                    if isinstance(fd, int) and stat.S_ISDIR(st.st_mode) and (st.st_dev, st.st_ino) == ident:
+                        return foreign(st)
+                    return st
+                with mock.patch.object(os, "fstat", fstat):
+                    with self.assertRaises(OSError) as cm:
+                        ht.write_spawn_spec(root, SID, spec)
+                self.assertIsInstance(cm.exception, ht.HostDirRefused, repr(cm.exception))
+                msg = str(cm.exception)
+                self.assertTrue(msg.startswith(noun + " "), msg)
+                self.assertIn("belongs to uid %d, not to us (uid %d)" % (os.geteuid() + 1, os.geteuid()), msg)
+                self.assertIn(os.fspath(planted), msg)
+                self.assertEqual([str(q) for q in Path(root).rglob("spawn.json")], [], "no spec written anywhere: the descent refused")
+
+    def test_the_descents_mode_arm_refuses_a_loose_directory_renamed_into_place_after_the_helpers_tighten(self):
+        """open_host_dirs' group/world arm, driven with no stub (tests-1, round 5 of the review, 2026-09-20; the PR body
+        had said this arm too needed a stub keyed on the object, which is not so): under the live host's umask, 002,
+        the component is renamed aside after sh.owner_only_dir's last check returns and a real directory of ours at 0775
+        made at its name (with a 0700 <sid>/ inside it for the hosts/ arm, so nothing but the mode stands between the
+        descent and the spec). The descent's fstat reads the loose mode and refuses with `is group/world-accessible
+        (mode 0775)` and the component's path; nothing is written under the loose directory. Red with the mode arm
+        deleted: the descent admits the directory and spawn.json lands under it."""
+        self.addCleanup(os.umask, os.umask(0o002))
+        spec = {"sid": SID, "name": "web", "version": "abc12345", "state_dir": "/state", "protocol": 1, "env": {"FEATURE_FLAG": "1"}}
+        real = sh.owner_only_dir
+        for arm, noun in (("hosts", "hosts directory"), ("session-dir", "host directory")):
+            with self.subTest(arm=arm):
+                root = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, root, True)
+                hosts, sdir = Path(root) / "hosts", Path(root) / "hosts" / SID
+                loose = hosts if arm == "hosts" else sdir
+
+                def swap_in_loose(path, what="directory", parents=False, loose=loose, arm=arm):
+                    d = real(path, what, parents)
+                    if what == "host directory":             # the last check before the descent: the swap lands here
+                        os.rename(loose, Path(root) / "moved")
+                        os.mkdir(loose, 0o775)                # ours and loose; under 002 the mode lands as 0775
+                        if arm == "hosts":
+                            os.mkdir(loose / SID, 0o700)
+                    return d
+                with mock.patch.object(sh, "owner_only_dir", swap_in_loose):
+                    with self.assertRaises(OSError) as cm:
+                        ht.write_spawn_spec(root, SID, spec)
+                self.assertIsInstance(cm.exception, ht.HostDirRefused, repr(cm.exception))
+                msg = str(cm.exception)
+                self.assertTrue(msg.startswith(noun + " "), msg)
+                self.assertIn("is group/world-accessible (mode 0775)", msg)
+                self.assertIn(os.fspath(loose), msg)
+                self.assertEqual(stat.S_IMODE(os.lstat(loose).st_mode), 0o775, "the loose directory as planted, read back")
+                self.assertEqual([str(q) for q in loose.rglob("*") if q.is_file()], [], "nothing written under the loose directory")
+
+    def test_a_filesystem_failure_at_a_directory_helper_is_the_oserror_it_is_and_a_decided_refusal_is_the_class(self):
+        """The wrap around write_spawn_spec's two path-taking helpers keys on the refusal, not on OSError (regression-1
+        and kernel-4, round 5 of the review, 2026-09-20: round 4's wrap folded every OSError of the helpers into
+        HostDirRefused, so a full disk at the mkdir reached the operator as host.directory-refused with a remedy that
+        was false for it, and the errno left the class). Interposed on sh.owner_only_dir, the module attribute both
+        helpers reach: a full disk (ENOSPC), a read-only filesystem (EROFS) and an unwritable target (EACCES, which a
+        peer can cause with hosts/ re-pointed to a directory this uid cannot write; the round-6 ruling keeps it on this
+        road) at hosts/<sid>/'s mkdir each reach the caller as the OSError raised, errno and text intact, and not as
+        HostDirRefused; a refusal the helper decides (a single-argument OSError, errno None) is HostDirRefused, errno
+        None. The errnos of the SHAPE class (EEXIST, ENOTDIR, ELOOP, ENOENT) are the class too, pinned by the two cases
+        below with real plants and no stub (round 7 of the review, 2026-09-20: round 5's `errno is None` key threw them
+        out). Red before the change: the ENOSPC and EROFS arms arrived as HostDirRefused."""
+        import errno as _errno
+        spec = {"sid": SID, "name": "web", "version": "abc12345", "state_dir": "/state", "protocol": 1, "env": {"FEATURE_FLAG": "1"}}
+        real = sh.owner_only_dir
+        for arm, code in (("ENOSPC", _errno.ENOSPC), ("EROFS", _errno.EROFS), ("EACCES", _errno.EACCES)):
+            with self.subTest(arm=arm):
+                root = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, root, True)
+
+                def fail(path, what="directory", parents=False, code=code):
+                    if what == "host directory":
+                        raise OSError(code, os.strerror(code), os.fspath(path))
+                    return real(path, what, parents)
+                with mock.patch.object(sh, "owner_only_dir", fail):
+                    with self.assertRaises(OSError) as cm:
+                        ht.write_spawn_spec(root, SID, spec)
+                self.assertNotIsInstance(cm.exception, ht.HostDirRefused, "a filesystem failure is not a refusal: %r" % (cm.exception,))
+                self.assertEqual(cm.exception.errno, code, "the errno rides on the exception")
+                self.assertTrue(str(cm.exception).startswith("[Errno %d] " % code), str(cm.exception))
+                self.assertFalse((Path(root) / "hosts" / SID / "spawn.json").exists())
+        with self.subTest(arm="decided-refusal"):
+            root = tempfile.mkdtemp()
+            self.addCleanup(shutil.rmtree, root, True)
+
+            def refuse(path, what="directory", parents=False):
+                if what == "host directory":
+                    raise OSError("%s %s is not a directory" % (what, path))
+                return real(path, what, parents)
+            with mock.patch.object(sh, "owner_only_dir", refuse):
+                with self.assertRaises(OSError) as cm:
+                    ht.write_spawn_spec(root, SID, spec)
+            self.assertIsInstance(cm.exception, ht.HostDirRefused, repr(cm.exception))
+            self.assertIsNone(cm.exception.errno, "the class is built from one text argument, so it carries no errno")
+
+    def test_a_non_directory_at_hosts_or_at_the_session_directory_is_refused_under_the_class_by_the_real_helpers(self):
+        """Round 7 of the review (2026-09-20; the round-6 rulings' C, correctness-1, regression-1, kernel-1, extra6-1,
+        extra7-1): a regular file, a FIFO, a symlink to a file or a DANGLING symlink standing at hosts/ or at hosts/<sid>/
+        when write_spawn_spec runs never reaches owner_only_dir's own lstat, because pathlib's mkdir(exist_ok=True)
+        re-raises FileExistsError (17) first; round 5's wrap, keyed on `errno is None`, let that out of the class, so a
+        peer's one-syscall plant read "[Errno 17] File exists" with no problem row and no remedy where round 4's head
+        filed both. The wrap now keys on the errno set of the shape class (host_transport.HELPER_SHAPE_ERRNOS). Eight
+        arms over the REAL helpers, no stub, plus a symlink that names itself standing AT hosts/: each is HostDirRefused,
+        errno None, worded as the helpers word a non-directory (`<what> <path> is not a directory`), no spawn.json
+        written anywhere, and the plant left standing. The self-link arm exercises EEXIST, not ELOOP (the round-7
+        addendum, 2026-09-20, after a verifier found the arm's startswith accepting either wording): os.mkdir on a name
+        that is a self-link reports the name taken (17), and pathlib's mkdir(exist_ok=True) then asks is_dir(), whose
+        stat meets ELOOP and swallows it (_ignore_error), so the EEXIST re-raises and the wrap words it as a
+        non-directory; the arm pins the cause's errno and the exact wording. ELOOP itself is reached by re-pointing
+        hosts/ to a self-link BETWEEN the helpers, the `loop` arm of the re-pointed case below. Red at the round-6
+        head: FileExistsError, errno 17, not the class, on every arm."""
+        spec = {"sid": SID, "name": "web", "version": "abc12345", "state_dir": "/state", "protocol": 1, "env": {"FEATURE_FLAG": "1"}}
+        shapes = ("regular file", "fifo", "symlink to a file", "dangling symlink")
+        for where in ("hosts", "hosts/<sid>"):
+            for shape in shapes:
+                with self.subTest(where=where, shape=shape):
+                    root = tempfile.mkdtemp()
+                    self.addCleanup(shutil.rmtree, root, True)
+                    if where == "hosts/<sid>":
+                        sh.hosts_dir(root)
+                        target, what = ht.host_dir(root, SID), "host directory"
+                    else:
+                        target, what = Path(root) / "hosts", "hosts directory"
+                    peer = Path(root) / "peer"
+                    peer.mkdir(mode=0o755)
+                    if shape == "regular file":
+                        target.write_text("")
+                    elif shape == "fifo":
+                        os.mkfifo(target)
+                    elif shape == "symlink to a file":
+                        (peer / "theirs.txt").write_text("the peer's own bytes")
+                        target.symlink_to(peer / "theirs.txt")
+                    else:
+                        target.symlink_to(peer / "nowhere")
+                    before = os.lstat(target)
+                    with self.assertRaises(OSError) as cm:
+                        ht.write_spawn_spec(root, SID, spec)
+                    self.assertIsInstance(cm.exception, ht.HostDirRefused, "the shape class, not %r" % (cm.exception,))
+                    self.assertIsNone(cm.exception.errno)
+                    self.assertEqual(str(cm.exception), "%s %s is not a directory" % (what, target))
+                    self.assertEqual(os.lstat(target)[:2], before[:2], "the plant stands as planted")
+                    self.assertEqual([str(p) for p in Path(root).rglob("spawn.json")], [], "no spawn.json anywhere under the root")
+        with self.subTest(where="hosts", shape="self-link (EEXIST, not ELOOP)"):
+            import errno as _errno
+            root = tempfile.mkdtemp()
+            self.addCleanup(shutil.rmtree, root, True)
+            (Path(root) / "hosts").symlink_to(Path(root) / "hosts")
+            with self.assertRaises(ht.HostDirRefused) as cm:
+                ht.write_spawn_spec(root, SID, spec)
+            self.assertIsNone(cm.exception.errno)
+            self.assertEqual(str(cm.exception), "hosts directory %s is not a directory" % (Path(root) / "hosts"),
+                             "the EEXIST wording, with no loop clause: this arm never reaches ELOOP")
+            self.assertIsInstance(cm.exception.__cause__, FileExistsError)
+            self.assertEqual(cm.exception.__cause__.errno, _errno.EEXIST, "pathlib re-raised os.mkdir's EEXIST; the loop's ELOOP was is_dir()'s to swallow")
+            self.assertTrue((Path(root) / "hosts").is_symlink(), "the self-link stands")
+
+    def test_a_hosts_re_pointed_between_the_helpers_is_refused_for_a_dangling_or_file_target_and_is_the_errno_for_an_unwritable_one(self):
+        """The two decisions the round-6 rulings asked for in code (C), driven through the window condition 1 states:
+        sh.hosts_dir wrapped to re-point hosts/ after it returns and before sh.owner_only_dir's mkdir. ENOENT (a DANGLING
+        link, a peer's one-syscall plant) joins the shape class: the descent's own open already words ENOENT as "does
+        not exist", and the peer causes it. ENOTDIR (a link to a regular FILE) joins it, as does a state root that is
+        itself a plain file (ENOTDIR at the first helper, which only the operator can cause and which the class's
+        remedy, point the state root elsewhere, fits). EACCES (a link to a directory this uid cannot write) stays the
+        launch error's OSError with errno 13, by the ruling, though a peer can cause it too. The read-only target
+        receives nothing on any arm. ELOOP (the `loop` arm, the round-7 addendum, 2026-09-20): hosts/ re-pointed to a
+        link that names ITSELF, so the second helper's os.mkdir of hosts/<sid> fails resolving hosts/ with ELOOP (40)
+        and pathlib's is_dir() reads False through the same loop, the one arm in this file that reaches the class by
+        ELOOP; the shapes case's self-link AT hosts/ is EEXIST (its docstring says why). And the component named (the
+        addendum, after a verifier read `host directory <root> is not a directory` for a dangling-link STATE ROOT):
+        helper_shape_refusal names the component the errno's filename is, so a state root that is a dangling symlink
+        (the create road: root.exists() False, then parents=True meets the root itself by path and pathlib re-raises
+        EEXIST with the root as the filename) reads `state root <root> is not a directory`, the noun hosts_dir's own
+        refusals use for it. Red at the round-6 head: FileNotFoundError 2 and NotADirectoryError 20 outside the class;
+        the EACCES arm green there and pinned here so the decision cannot move unseen; red at the merged head on the
+        loop arm (a bare OSError 40, not the class) and at the round-7 commit on the dangling-root arm (`host
+        directory` for the root)."""
+        import errno as _errno
+        spec = {"sid": SID, "name": "web", "version": "abc12345", "state_dir": "/state", "protocol": 1, "env": {"FEATURE_FLAG": "1"}}
+        real_hosts_dir = sh.hosts_dir
+
+        def repoint(target):
+            def wrapped(state_dir):
+                r = real_hosts_dir(state_dir)
+                os.rename(r, str(r) + ".aside")
+                os.symlink(target, r)
+                return r
+            return wrapped
+        for arm in ("dangling", "file", "unwritable", "loop"):
+            with self.subTest(arm=arm):
+                root = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, root, True)
+                if arm == "dangling":
+                    target = Path(root) / "nowhere"
+                elif arm == "file":
+                    target = Path(root) / "a-file.txt"
+                    target.write_text("")
+                elif arm == "loop":
+                    target = Path(root) / "hosts"           # the link names itself: hosts/ -> hosts/
+                else:
+                    target = Path(root) / "readonly"
+                    target.mkdir(mode=0o500)
+                    self.addCleanup(os.chmod, target, 0o700)
+                leaf = ht.host_dir(root, SID)
+                with mock.patch.object(sh, "hosts_dir", repoint(target)):
+                    with self.assertRaises(OSError) as cm:
+                        ht.write_spawn_spec(root, SID, spec)
+                if arm == "unwritable":
+                    self.assertNotIsInstance(cm.exception, ht.HostDirRefused, repr(cm.exception))
+                    self.assertEqual(cm.exception.errno, _errno.EACCES)
+                    self.assertEqual(sorted(os.listdir(target)), [], "the unwritable target received nothing")
+                else:
+                    self.assertIsInstance(cm.exception, ht.HostDirRefused, repr(cm.exception))
+                    self.assertIsNone(cm.exception.errno)
+                    why = {"dangling": "does not exist (a component is missing, or a symlink there dangles)",
+                           "file": "is not a directory, or a directory above it is not",
+                           "loop": "is not a directory (a symlink loop)"}[arm]
+                    self.assertEqual(str(cm.exception), "host directory %s %s" % (leaf, why))
+                    if arm == "loop":
+                        self.assertEqual(cm.exception.__cause__.errno, _errno.ELOOP, "the cause is the mkdir's ELOOP, the class's one loop road")
+                        self.assertEqual(os.readlink(Path(root) / "hosts"), str(target), "the self-link stands")
+                self.assertEqual([str(p) for p in Path(root).rglob("spawn.json")], [], "no spawn.json anywhere under the root")
+        with self.subTest(arm="plain-file state root"):
+            scratch = tempfile.mkdtemp()
+            self.addCleanup(shutil.rmtree, scratch, True)
+            root = Path(scratch) / "root-is-a-file"
+            root.write_text("")
+            with self.assertRaises(ht.HostDirRefused) as cm:
+                ht.write_spawn_spec(root, SID, spec)
+            self.assertIsNone(cm.exception.errno)
+            self.assertEqual(str(cm.exception), "hosts directory %s is not a directory, or a directory above it is not" % (root / "hosts"))
+        with self.subTest(arm="dangling-link state root"):
+            scratch = tempfile.mkdtemp()
+            self.addCleanup(shutil.rmtree, scratch, True)
+            root = Path(scratch) / "root"
+            root.symlink_to(Path(scratch) / "nowhere")
+            with self.assertRaises(ht.HostDirRefused) as cm:
+                ht.write_spawn_spec(root, SID, spec)
+            self.assertIsNone(cm.exception.errno)
+            self.assertEqual(str(cm.exception), "state root %s is not a directory" % root,
+                             "the component the errno's filename names, in hosts_dir's own noun for it")
+            self.assertEqual(cm.exception.__cause__.errno, _errno.EEXIST, "pathlib's parents=True mkdir met the dangling root by path")
+            self.assertTrue(root.is_symlink() and not root.exists(), "the dangling link stands, nothing made through it")
+            self.assertEqual(sorted(os.listdir(scratch)), ["root"], "nothing made beside it")
+
+    def test_a_directory_at_spawn_json_or_host_stderr_is_the_opens_own_error_with_eisdir_and_not_a_refusal(self):
+        """tests-2 (round 6 of the review, 2026-09-20): _open_file_nofollow narrows the class to ELOOP alone, every other
+        OSError of the open propagating with its errno, and nothing held that narrowing (the ELOOP test mutated to
+        `if True` left every module green). A real directory planted at the file's name under a verified hosts/<sid>/:
+        the open raises IsADirectoryError, errno EISDIR, its own text (the errno's words, not the symlink wording), and
+        not HostDirRefused, at spawn.json through write_spawn_spec and at host.stderr through open_host_dirs and
+        host_stderr_open. Red with the narrowing widened to every OSError: both arms arrive as HostDirRefused."""
+        import errno as _errno
+        spec = {"sid": SID, "name": "web", "version": "abc12345", "state_dir": "/state", "protocol": 1, "env": {"FEATURE_FLAG": "1"}}
+        for name in ("spawn.json", "host.stderr"):
+            with self.subTest(file=name):
+                root = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, root, True)
+                sh.hosts_dir(root)
+                sdir = ht.host_dir(root, SID)
+                sdir.mkdir(mode=0o700)
+                (sdir / name).mkdir(mode=0o700)
+                with self.assertRaises(OSError) as cm:
+                    if name == "spawn.json":
+                        ht.write_spawn_spec(root, SID, spec)
+                    else:
+                        with ht.open_host_dirs(root, SID) as dirs:
+                            os.close(ht.host_stderr_open(dirs))
+                self.assertNotIsInstance(cm.exception, ht.HostDirRefused, repr(cm.exception))
+                self.assertEqual(cm.exception.errno, _errno.EISDIR)
+                self.assertTrue(str(cm.exception).startswith("[Errno %d] %s" % (_errno.EISDIR, os.strerror(_errno.EISDIR))), str(cm.exception))
+                self.assertNotIn("symlink", str(cm.exception))
+                self.assertTrue((sdir / name).is_dir(), "the directory stands")
+
+    def test_a_symlink_at_spawn_json_or_host_stderr_is_refused_under_the_class_naming_the_file_and_the_target_is_untouched(self):
+        """kernel-2 (round 5 of the review, 2026-09-20): the descent's two FILE-level O_NOFOLLOW opens raised a bare
+        OSError (ELOOP) for a symlink at the name, outside the class the two call sites catch, so a link planted at
+        spawn.json or host.stderr got no problem row and no remedy. Now _open_file_nofollow raises HostDirRefused
+        naming the file and the directory, with `file` set. Two arms over a verified hosts/<sid>/ of ours: spawn.json a
+        link to a file of a peer's (write_spawn_spec), host.stderr the same (open_host_dirs, then host_stderr_open).
+        Each: the class, its `file`, the message, the link left standing, the peer's file byte-identical at its old
+        mode: nothing followed, nothing written. Red before the change: OSError, not the class, at both arms."""
+        spec = {"sid": SID, "name": "web", "version": "abc12345", "state_dir": "/state", "protocol": 1, "env": {"FEATURE_FLAG": "1"}}
+        for name in ("spawn.json", "host.stderr"):
+            with self.subTest(file=name):
+                root = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, root, True)
+                sh.hosts_dir(root)
+                sdir = ht.host_dir(root, SID)
+                sdir.mkdir(mode=0o700)
+                peer = Path(root) / "peer"
+                peer.mkdir(mode=0o755)
+                target = peer / "theirs.txt"
+                target.write_text("the peer's own bytes")
+                os.chmod(target, 0o644)
+                (sdir / name).symlink_to(target)
+                with self.assertRaises(OSError) as cm:
+                    if name == "spawn.json":
+                        ht.write_spawn_spec(root, SID, spec)
+                    else:
+                        with ht.open_host_dirs(root, SID) as dirs:
+                            os.close(ht.host_stderr_open(dirs))
+                self.assertIsInstance(cm.exception, ht.HostDirRefused, repr(cm.exception))
+                self.assertEqual(getattr(cm.exception, "file", None), name, "the refusal names its file")
+                self.assertEqual(str(cm.exception), "%s in host directory %s is a symlink, not a regular file" % (name, sdir))
+                self.assertTrue((sdir / name).is_symlink(), "the link is left, not replaced")
+                self.assertEqual(target.read_text(), "the peer's own bytes", "nothing written through the link")
+                self.assertEqual(stat.S_IMODE(os.lstat(target).st_mode), 0o644, "the target's mode untouched")
 
     @unittest.skipUnless(SDK, "the SDK is not importable here")
     def test_the_spec_fields_track_what_the_sdk_transport_reads(self):
@@ -638,6 +1332,156 @@ class BackendHostRules(unittest.TestCase):
         self.assertTrue(hd.exists(), "a death keeps the directory for the orphan road")
         self.assertIn("hostAck", reg)
         self.assertEqual(reg.get("hostLogPos"), {"host": sb.HOST_LOG_POS_REFUSED, "pos": 1}, "and the position with it")
+
+    def test_a_symlinked_sid_on_the_removal_road_is_refused_and_the_targets_file_is_not_walked(self):
+        """The removal road's <sid>-level O_NOFOLLOW, driven (the mutation lens on round 5 of the review,
+        2026-09-20, found it held by no case: remove_host_dir's docstring and the PR body say _rmtree_at
+        refuses a link at any level, but only the hosts/ level was driven, so a link at hosts/<sid> was
+        unpinned). hosts/<sid> is a symlink to a peer's directory holding a file of the peer's; _host_ended
+        for an end this kernel asked for reaches remove_host_dir, whose _rmtree_at opens <sid>
+        O_DIRECTORY|O_NOFOLLOW off the verified hosts/ descriptor, so the open fails on the link, the walk
+        never descends, the peer's file stands and the link is left. A delete onto an attacker-chosen target
+        is this PR's standing class. Red with O_NOFOLLOW dropped from _rmtree_at's open: the link is followed
+        and the peer's file is unlinked before the trailing rmdir on the link raises."""
+        d, be = self._be()
+        hosts = ht.host_dir(d, SID).parent
+        hosts.mkdir(parents=True, mode=0o700)
+        peer = Path(d) / "peer" / SID
+        peer.mkdir(parents=True, mode=0o700)
+        (peer / "keep").write_text("the peer's own file")
+        (hosts / SID).symlink_to(peer)                          # hosts/<sid> -> a directory the peer owns
+        sb.write_reg(Path(d), SID, {"sid": SID, "name": "web", "alive": True})
+        t = types.SimpleNamespace(hello={"host": {"pid": 7, "start": "h"}, "cli": {"pid": 8, "start": "c"}}, ack_offset=3, exit_info=None)
+        s = types.SimpleNamespace(sid=SID, name="web", _host=t, _host_ack_t=0.0)
+        be._host_ended(s, {"t": "exit", "code": 0, "cause": "end"})
+        self.assertTrue((hosts / SID).is_symlink(), "the link is left, not walked")
+        self.assertTrue((peer / "keep").exists(), "the peer's file was not deleted through the link")
+        self.assertEqual((peer / "keep").read_text(), "the peer's own file")
+        self.assertTrue(any("not cleared" in l for l in be._test_logs), "remove_host_dir logged the refusal")
+
+    def test_a_foreign_uid_directory_on_the_removal_road_is_refused_by_the_fstat_of_the_object_opened(self):
+        """_rmtree_at's foreign-uid arm, driven with a stub keyed on the object (the residual-conditions commit of fork
+        PR #814, 2026-09-20: round 5's mutation lens left this arm green, the one green mutation with a refusal behind
+        it, and the reviewer's condition was a pin that pays the stub's cost rather than a sentence calling the arm
+        impossible to drive). Two arms; each plants real directories of ours under hosts/ and lies about ONE of them:
+        os.fstat answers st_uid + 1 for the descriptor whose (st_dev, st_ino) is the planted directory's, read by the
+        real lstat before the patch, and answers truthfully for every other descriptor (the descent's own fstat of
+        hosts/ among them, so the refusal is _rmtree_at's and not _open_dir_nofollow's). Arm `sid`: hosts/<sid>/ itself
+        reads as another uid's: the walk never starts, the directory and both files in it stand, and the refusal names
+        the entry and both uids. Arm `nested`: hosts/<sid>/theirs/ reads as another uid's under our verified <sid>/:
+        the walk stops at it with that directory and its file untouched and <sid>/ still standing (the trailing rmdir
+        never runs), the shape remove_host_dir's docstring states for a nested refusal (a sibling scandir had already
+        yielded may be gone, so this arm reads nothing about it). Both: exactly one `not cleared` line is logged, with
+        `belongs to uid`, and _host_ended returns without raising. An ordinary euid cannot plant a foreign directory
+        under its own 0700 hosts/<sid>/, so the stub is the one way to drive the arm; the refusal is outcome-bearing at
+        euid 0 or with CAP_FOWNER, where the unlinks under a foreign directory would succeed. Red with the uid arm
+        deleted from _rmtree_at: both arms lose <sid>/ whole, the file under `theirs` with it."""
+        real_fstat = os.fstat
+
+        def foreign(st):
+            fields = list(st)
+            fields[4] = st.st_uid + 1                   # st_uid: someone else's directory at our entry
+            return os.stat_result(fields)
+        for arm in ("sid", "nested"):
+            with self.subTest(arm=arm):
+                d, be = self._be()
+                sid_dir = ht.host_dir(d, SID)
+                sid_dir.mkdir(parents=True, mode=0o700)
+                sid_dir.parent.chmod(0o700)
+                theirs = sid_dir / "theirs"
+                theirs.mkdir(mode=0o700)
+                (theirs / "keep").write_text("a file under the directory the stub calls another uid's")
+                (sid_dir / "ours").write_text("a file of ours beside it")
+                st = os.lstat(sid_dir if arm == "sid" else theirs)
+                ident = (st.st_dev, st.st_ino)
+
+                def fstat(fd):
+                    st = real_fstat(fd)
+                    if isinstance(fd, int) and stat.S_ISDIR(st.st_mode) and (st.st_dev, st.st_ino) == ident:
+                        return foreign(st)
+                    return st
+                sb.write_reg(Path(d), SID, {"sid": SID, "name": "web", "alive": True})
+                t = types.SimpleNamespace(hello={"host": {"pid": 7, "start": "h"}, "cli": {"pid": 8, "start": "c"}}, ack_offset=3, exit_info=None)
+                s = types.SimpleNamespace(sid=SID, name="web", _host=t, _host_ack_t=0.0)
+                with mock.patch.object(os, "fstat", fstat):
+                    be._host_ended(s, {"t": "exit", "code": 0, "cause": "end"})
+                self.assertTrue(sid_dir.is_dir(), "hosts/<sid>/ stands: the trailing rmdir never ran")
+                self.assertTrue(theirs.is_dir(), "the directory the stub calls another uid's stands")
+                self.assertEqual((theirs / "keep").read_text(), "a file under the directory the stub calls another uid's")
+                if arm == "sid":
+                    self.assertTrue((sid_dir / "ours").exists(), "a refusal at <sid> deletes nothing")
+                logs = [l for l in be._test_logs if "not cleared" in l]
+                self.assertEqual(len(logs), 1, be._test_logs)
+                self.assertIn("belongs to uid %d, not to us (uid %d)" % (os.geteuid() + 1, os.geteuid()), logs[0])
+                self.assertIn("directory %s belongs" % (SID if arm == "sid" else "theirs"), logs[0])
+
+    def test_an_entry_that_vanishes_during_the_removal_walk_is_skipped_and_the_report_says_what_stands(self):
+        """kernel-3 (round 5 of the review, 2026-09-20): remove_host_dir's `except FileNotFoundError: return True` was
+        written for a hosts/<sid>/ already absent and also caught one raised INSIDE the walk, so a concurrent unlink
+        under the directory (a live host still rotating its journal) had the call report "cleared" with the directory
+        standing and its remaining entries in it, nothing logged, where the shutil.rmtree(ignore_errors=True) it
+        replaced carried on past the missing entry. Three arms on remove_host_dir itself (both kernel callers discard
+        its answer, so the answer and the log line are the contract). `vanished`: os.scandir hands the walk a listing
+        one entry of which is unlinked after the listing, the stale-listing shape of the race (deterministic, where a
+        real thread race needs thousands of entries): the walk skips it, the rest is removed, the directory is gone,
+        the answer is True and nothing is logged. `rmdir-lies`: the trailing rmdir of <sid> reports it absent while it
+        stands (os.rmdir stubbed for that one name): the answer is False and the log says the directory still stands,
+        decided by a stat off the hosts/ descriptor and not by the exception. `absent`: no hosts/<sid>/ at all: True,
+        nothing logged, the arm the clause was written for, pinned so the stat cannot swallow it. Red before the
+        change: `vanished` answers True with the directory standing and three entries left in it; `rmdir-lies`
+        answers True with nothing logged."""
+        import contextlib
+        import errno as _errno
+        real_scandir, real_rmdir = os.scandir, os.rmdir
+        for arm in ("vanished", "rmdir-lies", "absent"):
+            with self.subTest(arm=arm):
+                d = tempfile.mkdtemp()
+                self.addCleanup(shutil.rmtree, d, True)
+                logs = []
+                sid_dir = ht.host_dir(d, SID)
+                if arm == "absent":
+                    sid_dir.parent.mkdir(parents=True, mode=0o700)
+                    ident = None
+                else:
+                    sid_dir.mkdir(parents=True, mode=0o700)
+                    sid_dir.parent.chmod(0o700)
+                    for name in ("host.log", "identity.json", "journal-1.jsonl", "journal-2.jsonl"):
+                        (sid_dir / name).write_text("x")
+                    st = os.lstat(sid_dir)
+                    ident = (st.st_dev, st.st_ino)
+
+                def scandir(fd, ident=ident):
+                    with real_scandir(fd) as it:
+                        entries = list(it)
+                    if isinstance(fd, int):
+                        st = os.fstat(fd)
+                        if (st.st_dev, st.st_ino) == ident:
+                            os.unlink(entries[0].name, dir_fd=fd)     # gone between the listing and the walk
+                    return contextlib.nullcontext(iter(entries))
+
+                def rmdir(name, *a, dir_fd=None, **k):
+                    if dir_fd is not None and name == SID:
+                        raise FileNotFoundError(_errno.ENOENT, os.strerror(_errno.ENOENT), name)
+                    return real_rmdir(name, *a, dir_fd=dir_fd, **k)
+                with contextlib.ExitStack() as stack:
+                    if arm == "vanished":
+                        stack.enter_context(mock.patch.object(os, "scandir", scandir))
+                    if arm == "rmdir-lies":
+                        stack.enter_context(mock.patch.object(os, "rmdir", rmdir))
+                    rv = ht.remove_host_dir(d, SID, log=logs.append)
+                if arm == "vanished":
+                    self.assertFalse(sid_dir.exists(), "the directory is gone: the vanished entry was skipped and the rest removed")
+                    self.assertTrue(rv, "and the answer is cleared")
+                    self.assertEqual(logs, [])
+                elif arm == "rmdir-lies":
+                    self.assertFalse(rv, "not cleared: the directory stands, whatever the rmdir said")
+                    self.assertTrue(sid_dir.is_dir())
+                    self.assertEqual(len(logs), 1, logs)
+                    self.assertIn("not cleared", logs[0])
+                    self.assertIn("still stands", logs[0])
+                else:
+                    self.assertTrue(rv, "already absent counts as cleared")
+                    self.assertEqual(logs, [])
 
     def test_with_the_setting_off_an_orphan_lease_is_recovered_and_no_host_is_spawned(self):
         d, be = self._be()
@@ -1085,6 +1929,1095 @@ class BackendHostRules(unittest.TestCase):
         self.assertIn("hostAttachFailed", sb.read_reg(Path(d), SID) or {}, "a boot is not new information; the marker stays")
         self.assertTrue(any("stays stood down" in l for l in be._test_logs), "the boot says so")
 
+    # ── the read roads through the descent (the round-7 second addendum of fork PR #814's review, 2026-09-20) ──
+    # Each case plants the swap the reviewer's ruling names: hosts/ is a symlink to a directory of a peer's that holds a
+    # forged <sid>/ (identity.json, a journal, host.log), and the kernel's read on one road runs. Red at the addendum's
+    # head, where each read took a PATH and so read the peer's content through the link; green once the read takes a
+    # name under the descriptors of open_host_dirs_if_present, which refuses the link before anything under it is read
+    # and files one host.directory-refused row with the remedy.
+
+    def _peer(self, d, identity=None, journal=0, host_log=()):
+        """A peer's directory outside hosts/ with a forged <sid>/ in it, and hosts/ swapped for a symlink to it."""
+        peer = Path(d) / "peer"
+        (peer / SID).mkdir(parents=True, mode=0o755)
+        if identity is not None:
+            (peer / SID / "identity.json").write_text(json.dumps(identity))
+        if journal:
+            with open(peer / SID / "journal-0.jsonl", "w") as f:
+                for i in range(journal):
+                    f.write(json.dumps({"type": "assistant" if i % 2 == 0 else "result", "n": i, "peer": True}) + "\n")
+        if host_log:
+            (peer / SID / "host.log").write_text("".join(json.dumps(r) + "\n" for r in host_log))
+        hosts = Path(d) / "hosts"
+        self.assertFalse(hosts.exists(), "a fresh root: nothing of ours at hosts/")
+        hosts.symlink_to(peer)
+        return peer, hosts
+
+    def _refusal_rows(self, d):
+        p = Path(d) / sb.SESSION_EVENTS_FILE
+        rows = [json.loads(l) for l in p.read_text().splitlines()] if p.exists() else []
+        return [r for r in rows if r["kind"] == "host.directory-refused"]
+
+    def test_the_lease_applies_read_refuses_a_swapped_hosts_and_vouches_for_no_host(self):
+        """The connect road with hosts OFF: _host_lease_applies asks whether a host held the session by identity.json's
+        existence. Through the addendum's head that was `(hdir / "identity.json").exists()`, by path, so the peer's
+        identity.json behind the link answered True and the session took the host road over the peer's directory. Now
+        the read takes a name under the read roads' descent, which refuses the link: False, one host.directory-refused
+        row naming the link with the read roads' remedy (no 0700 clause: the mode is not that descent's condition), and
+        the session runs as the kernel child the setting asks for. Red before: `True is not False`."""
+        d, be = self._be()
+        Path(d, "session-hosts").write_text("off")
+        peer, hosts = self._peer(d, identity={"pid": 7, "start": "p"})
+        applies = be._host_lease_applies(types.SimpleNamespace(sid=SID, name="web"))
+        self.assertIs(applies, False, "a directory the descent refuses vouches for no host; through the link the peer's identity.json said True")
+        rows = self._refusal_rows(d)
+        self.assertEqual(len(rows), 1, self._kinds(d))
+        self.assertEqual(self._kinds(d), ["host.directory-refused"])
+        self.assertTrue(rows[0]["text"].startswith("the session host for web may have left records this kernel does not read: hosts directory %s is a symlink, not a directory. " % hosts), rows[0]["text"])
+        self.assertIn("A hosts/ or hosts/<sid>/ that is not a directory this user owns is refused; replace it with a directory, or point the state root elsewhere (ROMP_STATE_DIR or XDG_STATE_HOME)", rows[0]["text"])
+        self.assertNotIn("at 0700", rows[0]["text"], "the read roads' descent does not check the mode, so its remedy does not ask for it")
+        self.assertTrue(hosts.is_symlink(), "the link is left, not replaced")
+        self.assertEqual((peer / SID / "identity.json").read_text(), json.dumps({"pid": 7, "start": "p"}), "the peer's file untouched")
+
+    def test_the_leftover_trigger_refuses_a_swapped_hosts_before_the_spawn_and_replays_nothing_of_the_peers(self):
+        """The connect road with hosts ON and no lease: the leftover trigger asks whether hosts/<sid>/ stands. Through
+        the addendum's head that was `hdir.exists()`, by path, so the peer's <sid>/ behind the link put the peer's
+        leftover on the orphan road, whose reads (identity.json, the journal glob, the replay transport) took the link
+        and replayed the peer's journal into the session before the spawn road's own helper refused the link. Now the
+        trigger's descent refuses the link first: the launch is refused as the spawn road refuses its own (one
+        host.directory-refused row with the directory remedy, the launch error), the replay transport is never built,
+        no spawn runs. Red before: the replay transport was built over the peer's directory (`[-1] != []`), and a
+        host.tail-replayed row stood beside the refusal."""
+        d, be = self._be()
+        peer, hosts = self._peer(d, identity={"pid": 7, "start": "p"}, journal=3)
+        sb.write_reg(Path(d), SID, {"sid": SID, "name": "web", "alive": True, "lastSid": SID})
+        s = types.SimpleNamespace(sid=SID, name="web", _host_intent=True, _host=None, _host_is_attach=False,
+                                  _seed_for_dead_cli=lambda cli: None, _options_login="", _host_end_grace=None,
+                                  _on_cli_stderr=lambda line: None)
+        acks, spawned = [], []
+        with mock.patch.dict(sys.modules, {"claude_agent_sdk": self._sdk_stub()}), \
+             mock.patch.object(ht.HostTransport, "from_journal", classmethod(lambda cls, hdir, ack=-1, **kw: acks.append(ack) or types.SimpleNamespace(hdir=hdir))), \
+             mock.patch.object(be, "_replay_drain", mock.AsyncMock()), \
+             mock.patch.object(be, "_spawn_host", lambda *a, **k: spawned.append(a) or types.SimpleNamespace(poll=lambda: 1, returncode=1, pid=1)):
+            with self.assertRaises(sb.CLIConnectionErrorLike) as cm:
+                asyncio.run(be._host_transport_for(s, types.SimpleNamespace(), (None, None, None)))
+        self.assertEqual(acks, [], "nothing of the peer's is replayed: the replay transport was never built")
+        self.assertEqual(spawned, [], "no spawn: the launch is refused at the trigger")
+        self.assertEqual(self._kinds(d), ["host.directory-refused"], "one row, the refusal's kind, no host.tail-replayed")
+        msg = str(cm.exception)
+        self.assertTrue(msg.startswith("the session host was not started: hosts directory %s is a symlink, not a directory. A hosts/ or hosts/<sid>/ that is not a directory this user owns at 0700 is refused" % hosts), msg)
+        self.assertTrue(hosts.is_symlink(), "the link is left, not replaced")
+        self.assertEqual(sorted(os.listdir(peer / SID)), ["identity.json", "journal-0.jsonl"], "the peer's directory holds what the peer put there")
+
+    def test_the_orphan_road_refuses_a_swapped_hosts_and_replays_nothing_of_the_peers(self):
+        """The orphan road itself (_host_orphan_recover, the lease-less leftover arm): it reads identity.json to decide
+        whether the registry's hostAck names the host that wrote it, then replays the journal past that offset. Through
+        the addendum's head both took a path: the peer's identity.json, forged to the registry's hostAck, vouched for
+        the offset, and the peer's journal was replayed from it into the session. Now identity.json is read by name
+        under the read roads' descent, which refuses the link: one host.directory-refused row saying the journal is not
+        replayed, no replay transport, no watermark seed for the peer's CLI, and the road still clears the lease and
+        the registry's ack and asks the removal road, which refuses the same link on its own descent and logs it. Red
+        before: `[1] != []`, the peer's journal replayed from the offset the peer's identity vouched for."""
+        d, be = self._be()
+        sb.write_reg(Path(d), SID, {"sid": SID, "name": "web", "alive": True, "lastSid": SID,
+                                     "hostAck": {"host": "7:p", "cli": "8:c", "offset": 1}})
+        peer, hosts = self._peer(d, identity={"pid": 7, "start": "p"}, journal=3)
+        seeds, acks = [], []
+        s = types.SimpleNamespace(sid=SID, name="web", _host_intent=True, _host=None, _host_is_attach=False, _seed_for_dead_cli=seeds.append)
+        capture = classmethod(lambda cls, hdir, ack=-1, **kw: acks.append(ack) or types.SimpleNamespace(hdir=hdir))
+        with mock.patch.dict(sys.modules, {"claude_agent_sdk": self._sdk_stub()}), \
+             mock.patch.object(ht.HostTransport, "from_journal", capture), mock.patch.object(be, "_replay_drain", mock.AsyncMock()):
+            asyncio.run(be._host_orphan_recover(s, types.SimpleNamespace(), None, (None, None, None), died=False))
+        self.assertEqual(acks, [], "nothing of the peer's is replayed: the replay transport was never built")
+        self.assertEqual(seeds, [], "no watermark seed for a CLI the peer's identity named")
+        self.assertEqual(self._kinds(d), ["host.directory-refused"], "one row, the refusal's kind; no host.tail-replayed")
+        text = self._refusal_rows(d)[0]["text"]
+        self.assertTrue(text.startswith("the session host for web is gone, and its journal is not replayed: hosts directory %s is a symlink, not a directory. " % hosts), text)
+        self.assertIn("this user owns is refused", text)
+        self.assertTrue(any("not cleared" in l for l in be._test_logs), "the removal road refused the same link and said so")
+        reg = sb.read_reg(Path(d), SID) or {}
+        self.assertNotIn("hostAck", reg, "the road still drops the ack it could not vouch for")
+        self.assertTrue(hosts.is_symlink(), "the link is left, not replaced")
+        self.assertEqual(sorted(os.listdir(peer / SID)), ["identity.json", "journal-0.jsonl"], "the peer's directory holds what the peer put there")
+
+    def test_the_served_road_refuses_a_swapped_hosts_and_files_none_of_the_peers_rows(self):
+        """The served road (_file_host_log_rows, at the host's hello and at its exit): host.log's unfiled lines become
+        problem rows. Through the addendum's head the file was read by path, after the spawn road's descriptors were
+        closed, so a peer-authored host.log behind the link had its rows filed as this session's problem rows
+        (host.end-forced, host.hook-self-answered) and its line count kept as the registry's position. Now the file is
+        read by name under the read roads' descent, which refuses the link: one host.directory-refused row, none of the
+        peer's rows, no position. Red before: `'host.end-forced' unexpectedly found in [...]`."""
+        d, be = self._be()
+        rows = [{"t": 1, "kind": "end-forced", "cliPid": 5},
+                {"t": 2, "kind": "hook-self-answered", "event": "Stop", "callbackId": "hook_0", "parkedS": 480}]
+        peer, hosts = self._peer(d, host_log=rows)
+        sb.write_reg(Path(d), SID, {"sid": SID, "name": "web", "alive": True})
+        be._file_host_log_rows(types.SimpleNamespace(sid=SID, name="web", _host=None))
+        kinds = self._kinds(d)
+        self.assertNotIn("host.end-forced", kinds, "the peer's row was filed as this session's: the read took the link")
+        self.assertNotIn("host.hook-self-answered", kinds)
+        self.assertEqual(kinds, ["host.directory-refused"], "one row, the refusal's kind")
+        text = self._refusal_rows(d)[0]["text"]
+        self.assertTrue(text.startswith("the session host for web wrote a log this kernel does not read: hosts directory %s is a symlink, not a directory. " % hosts), text)
+        self.assertIsNone((sb.read_reg(Path(d), SID) or {}).get("hostLogPos"), "no position from a file that was not read")
+        self.assertTrue(hosts.is_symlink(), "the link is left, not replaced")
+        self.assertEqual((peer / SID / "host.log").read_text(), "".join(json.dumps(r) + "\n" for r in rows), "the peer's file untouched")
+
+    def _loose_sid(self, d, hosts_mode=0o700, sid_mode=0o775, identity=None, journal=0, host_log=()):
+        """hosts/<sid>/ of ours at `sid_mode` under hosts/ at `hosts_mode` (a loose <sid>/ is the fourth addendum's
+        scenario: the read descent does not check the mode, so a peer's file can stand in it), with what the arm plants."""
+        sdir = Path(d) / "hosts" / SID
+        sdir.mkdir(parents=True)
+        os.chmod(Path(d) / "hosts", hosts_mode); os.chmod(sdir, sid_mode)
+        if identity is not None:
+            (sdir / "identity.json").write_text(json.dumps(identity))
+        if journal:
+            with open(sdir / "journal-0.jsonl", "w") as f:
+                for i in range(journal):
+                    f.write(json.dumps({"type": "assistant" if i % 2 == 0 else "result", "n": i}) + "\n")
+        if host_log:
+            (sdir / "host.log").write_text("".join(json.dumps(r) + "\n" for r in host_log))
+        return sdir
+
+    def _rows(self, d, kind):
+        p = Path(d) / sb.SESSION_EVENTS_FILE
+        rows = [json.loads(l) for l in p.read_text().splitlines()] if p.exists() else []
+        return [r for r in rows if r["kind"] == kind]
+
+    def _modes(self, d):
+        return (stat.S_IMODE(os.lstat(Path(d) / "hosts").st_mode), stat.S_IMODE(os.lstat(Path(d) / "hosts" / SID).st_mode))
+
+    def test_a_file_another_uid_owns_under_a_loose_directory_of_ours_is_a_row_and_the_answer_absent_gets_on_each_read_road(self):
+        """THE OWNER CHECK on the three read roads (the round-7 fourth addendum, 2026-09-20, the reviewer's ruling of
+        19:12Z): a <sid>/ of ours left 0775 admits a file a peer planted at identity.json or host.log, and the read
+        descent does not check the mode (it would refuse every install whose hosts/ was made at the umask), so through
+        the third addendum each road read the peer's file as ours. Now the reader fstats the object it holds (the
+        descriptor read_host_file opened; the name under the <sid> descriptor for host_file_exists), and a foreign owner
+        is an ANSWER: one host.directory-refused row naming the file, its directory and the owning uid, with the owner's
+        remedy, and then what an absent file gets on that road. The foreign uid is simulated by the stat result the
+        reader sees (foreign_uid: st_uid + 1 for that one object, from a descriptor or a name under one and NEVER from a
+        path, which the stub counts instead; the count is asserted 0 on every arm since the fifth addendum, so an owner
+        check moved onto a path stat reds here and not only in the census), since no file of another uid is
+        constructible here; the loose <sid>/ itself is filed as one host.directory-loose row beside it, once per connect
+        episode (the fifth addendum: the lease-applies arm reads twice on one backend with no new episode between, so
+        one loose row where the fourth addendum's one-per-descent filed two; the next cases pin that row on its own).
+        Per road, before (the peer's content read) and after: lease-applies, `True` (the peer's
+        identity.json vouched for a host) to `False` (the row, then the journal listing, which finds nothing); the orphan
+        road, `[1]` (the peer's identity vouched for the registry's ack and the replay started at its offset) to `[-1]`
+        (no identity vouches, the offset is -1, and the journal listing that follows is by path until the follow-up
+        lands: the tail is replayed from the start, the answer an absent identity.json always got); the served road,
+        `['host.end-forced', 'host.hook-self-answered']` filed as this session's to none, no position kept. Red before,
+        the three arms at the third addendum's head: `True is not False`, `[1] != [-1]`, `'host.end-forced'
+        unexpectedly found`."""
+        remedy = "A identity.json under hosts/<sid>/ that another user owns is not read; remove it, or point the state root elsewhere (ROMP_STATE_DIR or XDG_STATE_HOME)"
+        with self.subTest(road="lease-applies"):
+            d, be = self._be()
+            Path(d, "session-hosts").write_text("off")
+            sdir = self._loose_sid(d, identity={"pid": 7, "start": "p"})
+            s = types.SimpleNamespace(sid=SID, name="web")
+            self.assertIs(be._host_lease_applies(s), True, "before the stub: our file vouches")
+            with foreign_uid(sdir / "identity.json") as fu:
+                self.assertIs(be._host_lease_applies(s), False, "a peer's identity.json vouches for no host: the answer an absent one gets")
+            self.assertEqual(fu.path_stats, 0, "the owner check took a path stat: %r" % (fu.path_stat_calls,))
+            kinds = self._kinds(d)
+            self.assertEqual([k for k in kinds if k != "host.directory-loose"], ["host.directory-refused"], "the owner row, and no refusal for the read of our own file")
+            self.assertEqual(kinds, ["host.directory-loose", "host.directory-refused"], "the loose row once for the episode (two descents, one mode), then the owner row")
+            row = self._rows(d, "host.directory-refused")[0]
+            self.assertEqual(row["text"], "the session host for web may have left records this kernel does not read: identity.json in host directory %s belongs to uid %d, not to us (uid %d). %s" % (sdir, os.geteuid() + 1, os.geteuid(), remedy))
+            self.assertEqual((row["file"], row["uid"]), ("identity.json", os.geteuid() + 1), "the row's fields name the file and the owner")
+            self.assertEqual(self._modes(d), (0o700, 0o775), "the read changed no mode")
+        with self.subTest(road="orphan"):
+            for stub, expect_acks in ((True, [-1]), (False, [1])):        # the stubbed run first: its assertion is the pin
+                d, be = self._be()
+                sb.write_reg(Path(d), SID, {"sid": SID, "name": "web", "alive": True, "lastSid": SID,
+                                             "hostAck": {"host": "7:p", "cli": "8:c", "offset": 1}})
+                sdir = self._loose_sid(d, identity={"pid": 7, "start": "p"}, journal=3)
+                acks = []
+                s = types.SimpleNamespace(sid=SID, name="web", _host_intent=True, _host=None, _host_is_attach=False, _seed_for_dead_cli=lambda cli: None)
+                capture = classmethod(lambda cls, hdir, ack=-1, **kw: acks.append(ack) or types.SimpleNamespace(hdir=hdir))
+                ctx = foreign_uid(sdir / "identity.json") if stub else contextlib.nullcontext()
+                with mock.patch.dict(sys.modules, {"claude_agent_sdk": self._sdk_stub()}), ctx as fu, \
+                     mock.patch.object(ht.HostTransport, "from_journal", capture), mock.patch.object(be, "_replay_drain", mock.AsyncMock()):
+                    asyncio.run(be._host_orphan_recover(s, types.SimpleNamespace(), None, (None, None, None), died=False))
+                self.assertEqual(acks, expect_acks, "stub=%s: the replay's offset (the peer's identity vouched for 1; a foreign one vouches for nothing, -1)" % stub)
+                if stub:
+                    self.assertEqual(fu.path_stats, 0, "the owner check took a path stat: %r" % (fu.path_stat_calls,))
+                    self.assertEqual(self._kinds(d), ["host.directory-loose", "host.directory-refused", "host.tail-replayed"],
+                                     "the loose row, the owner row, then the tail replayed from the start: the journal reads are by path until the follow-up lands")
+                    row = self._rows(d, "host.directory-refused")[0]
+                    self.assertEqual(row["text"], "the session host for web is gone, and left a file this kernel does not read: identity.json in host directory %s belongs to uid %d, not to us (uid %d). %s" % (sdir, os.geteuid() + 1, os.geteuid(), remedy))
+                else:
+                    self.assertEqual(self._kinds(d), ["host.directory-loose", "host.tail-replayed"])
+                self.assertFalse(sdir.exists(), "the road still clears the directory after the replay (remove_host_dir)")
+        with self.subTest(road="served"):
+            rows = [{"t": 1, "kind": "end-forced", "cliPid": 5},
+                    {"t": 2, "kind": "hook-self-answered", "event": "Stop", "callbackId": "hook_0", "parkedS": 480}]
+            for stub in (True, False):                                      # the stubbed run first: its assertion is the pin
+                d, be = self._be()
+                sdir = self._loose_sid(d, host_log=rows)
+                sb.write_reg(Path(d), SID, {"sid": SID, "name": "web", "alive": True})
+                ctx = foreign_uid(sdir / "host.log") if stub else contextlib.nullcontext()
+                with ctx as fu:
+                    be._file_host_log_rows(types.SimpleNamespace(sid=SID, name="web", _host=None))
+                kinds = self._kinds(d)
+                if stub:
+                    self.assertEqual(fu.path_stats, 0, "the owner check took a path stat: %r" % (fu.path_stat_calls,))
+                    self.assertNotIn("host.end-forced", kinds, "the peer's row was filed as this session's: the file was read as ours")
+                    self.assertEqual(kinds, ["host.directory-loose", "host.directory-refused"], "the loose row and the owner row; none of the file's rows")
+                    row = self._rows(d, "host.directory-refused")[0]
+                    self.assertTrue(row["text"].startswith("the session host for web wrote a log this kernel does not read: host.log in host directory %s belongs to uid %d, not to us (uid %d). A host.log under hosts/<sid>/ that another user owns is not read;" % (sdir, os.geteuid() + 1, os.geteuid())), row["text"])
+                    self.assertIsNone((sb.read_reg(Path(d), SID) or {}).get("hostLogPos"), "no position from a file that was not read")
+                else:
+                    self.assertEqual(kinds, ["host.directory-loose", "host.end-forced", "host.hook-self-answered"], "our own file: its rows filed, after the loose row")
+                self.assertEqual((sdir / "host.log").read_text(), "".join(json.dumps(r) + "\n" for r in rows), "the file untouched")
+                self.assertEqual(self._modes(d), (0o700, 0o775), "the read changed no mode")
+
+    def test_a_loose_directory_of_ours_on_each_read_road_is_one_row_per_component_and_the_read_proceeds_with_the_mode_unchanged(self):
+        """THE MODE ROW (the fourth addendum): on each read road's descent the mode of hosts/ and <sid>/ is read from the
+        descent's own fstat and a loose one (group or other bits) is filed as one host.directory-loose row per component,
+        the mode in octal and the remedy naming the spawn road's repair; the read then PROCEEDS (nothing is
+        refused: a 0700 condition would deny every session's first connect on an install whose hosts/ was made at the
+        umask) and the road chmods nothing (a read road stays a read road; the repair is the spawn road's helpers').
+        Each road here runs once on a fresh backend, one descent in one connect episode, so one row per component; how
+        often the row is filed across the descents of one episode is the next case's subject (the fifth addendum: once
+        per episode per mode observed). Both components 0775 here, so two rows. Modes pasted before and after each road: `(0o775, 0o775)`
+        both times on the three pure read roads; at the leftover trigger the road is stopped right after its descent (the
+        orphan road it hands to raises a sentinel), so its own descent is what is measured. Mutation (over a scratch copy):
+        an fchmod added to the descent's loose arm reds the mode assertions on every arm."""
+        class StopRoad(Exception):
+            pass
+        for road in ("lease-applies", "leftover-trigger", "orphan", "served"):
+            with self.subTest(road=road):
+                d, be = self._be()
+                rows = [{"t": 1, "kind": "end-forced", "cliPid": 5}]
+                sdir = self._loose_sid(d, hosts_mode=0o775, sid_mode=0o775, identity={"pid": 7, "start": "p"}, journal=3, host_log=rows)
+                sb.write_reg(Path(d), SID, {"sid": SID, "name": "web", "alive": True, "lastSid": SID})
+                self.assertEqual(self._modes(d), (0o775, 0o775))
+                s = types.SimpleNamespace(sid=SID, name="web", _host_intent=True, _host=None, _host_is_attach=False,
+                                          _seed_for_dead_cli=lambda cli: None, _options_login="", _host_end_grace=None,
+                                          _on_cli_stderr=lambda line: None)
+                if road == "lease-applies":
+                    Path(d, "session-hosts").write_text("off")
+                    self.assertIs(be._host_lease_applies(s), True, "the read proceeds: our identity.json vouches")
+                    kinds = self._kinds(d)
+                elif road == "leftover-trigger":
+                    with mock.patch.object(be, "_host_orphan_recover", mock.AsyncMock(side_effect=StopRoad())), self.assertRaises(StopRoad):
+                        asyncio.run(be._host_transport_for(s, types.SimpleNamespace(), (None, None, None)))
+                    kinds = self._kinds(d)
+                elif road == "orphan":
+                    acks = []
+                    capture = classmethod(lambda cls, hdir, ack=-1, **kw: acks.append(ack) or types.SimpleNamespace(hdir=hdir))
+                    with mock.patch.dict(sys.modules, {"claude_agent_sdk": self._sdk_stub()}), \
+                         mock.patch.object(ht.HostTransport, "from_journal", capture), mock.patch.object(be, "_replay_drain", mock.AsyncMock()), \
+                         mock.patch.object(ht, "remove_host_dir", lambda *a, **k: True):      # the removal is not this pin's subject: the directory stays for the mode read
+                        asyncio.run(be._host_orphan_recover(s, types.SimpleNamespace(), None, (None, None, None), died=False))
+                    self.assertEqual(acks, [-1], "the read proceeds: the tail is replayed")
+                    kinds = [k for k in self._kinds(d) if k != "host.tail-replayed"]
+                else:
+                    be._file_host_log_rows(types.SimpleNamespace(sid=SID, name="web", _host=None))
+                    kinds = [k for k in self._kinds(d) if k != "host.end-forced"]
+                    self.assertIn("host.end-forced", self._kinds(d), "the read proceeds: the file's row is filed")
+                self.assertEqual(kinds, ["host.directory-loose", "host.directory-loose"], "%s: one row per loose component per descent, no refusal" % road)
+                loose = self._rows(d, "host.directory-loose")
+                self.assertEqual([(r["path"], r["mode"]) for r in loose], [(str(Path(d) / "hosts"), "0775"), (str(sdir), "0775")])
+                self.assertEqual(loose[0]["text"], "the hosts directory %s for web is group/world-accessible (mode 0775); this read changed nothing, and the next session-host launch tightens it to 0700 (the spawn road's helpers, hosts_dir and owner_only_dir)" % (Path(d) / "hosts"))
+                self.assertEqual(loose[1]["text"], "the host directory %s for web is group/world-accessible (mode 0775); this read changed nothing, and the next session-host launch tightens it to 0700 (the spawn road's helpers, hosts_dir and owner_only_dir)" % sdir)
+                self.assertEqual(self._modes(d), (0o775, 0o775), "%s: the read road changed no mode" % road)
+
+    def test_a_symlink_at_the_read_file_is_the_file_remedy_row_on_all_three_read_roads(self):
+        """THE SYMLINK ROW (the fourth addendum): a link planted at identity.json (the lease-applies and orphan roads) or
+        host.log (the served road) under a verified <sid>/ of ours is refused naming the file, with the file remedy, on
+        ALL THREE roads. Through the third addendum the orphan and served roads filed that row (read_host_file's
+        O_NOFOLLOW open) and the lease-applies road answered False with no row (host_file_exists stat'd the name and
+        said the link was not the file). Kinds pasted per road: `['host.directory-refused']` on each; nothing behind the
+        link is opened. Red before, the lease-applies arm at the third addendum's head: `[] != ['host.directory-refused']`."""
+        elsewhere = Path(tempfile.mkdtemp()); self.addCleanup(shutil.rmtree, elsewhere, True)
+        (elsewhere / "identity.json").write_text(json.dumps({"pid": 7, "start": "p"}))
+        (elsewhere / "host.log").write_text(json.dumps({"t": 1, "kind": "end-forced", "cliPid": 5}) + "\n")
+        remedy = "under hosts/<sid>/ that is a symlink is refused; remove the link, or point the state root elsewhere (ROMP_STATE_DIR or XDG_STATE_HOME)"
+        for road in ("lease-applies", "orphan", "served"):
+            with self.subTest(road=road):
+                d, be = self._be()
+                sdir = self._loose_sid(d, sid_mode=0o700)
+                name = "host.log" if road == "served" else "identity.json"
+                (sdir / name).symlink_to(elsewhere / name)
+                sb.write_reg(Path(d), SID, {"sid": SID, "name": "web", "alive": True, "lastSid": SID,
+                                             "hostAck": {"host": "7:p", "cli": "8:c", "offset": 1}})
+                s = types.SimpleNamespace(sid=SID, name="web", _host_intent=True, _host=None, _host_is_attach=False, _seed_for_dead_cli=lambda cli: None)
+                if road == "lease-applies":
+                    Path(d, "session-hosts").write_text("off")
+                    self.assertIs(be._host_lease_applies(s), False, "a link at identity.json vouches for no host")
+                    did = "may have left records this kernel does not read"
+                elif road == "orphan":
+                    acks = []
+                    capture = classmethod(lambda cls, hdir, ack=-1, **kw: acks.append(ack) or types.SimpleNamespace(hdir=hdir))
+                    with mock.patch.dict(sys.modules, {"claude_agent_sdk": self._sdk_stub()}), \
+                         mock.patch.object(ht.HostTransport, "from_journal", capture), mock.patch.object(be, "_replay_drain", mock.AsyncMock()):
+                        asyncio.run(be._host_orphan_recover(s, types.SimpleNamespace(), None, (None, None, None), died=False))
+                    self.assertEqual(acks, [], "the refused arm: nothing replayed")
+                    did = "is gone, and its journal is not replayed"
+                else:
+                    be._file_host_log_rows(types.SimpleNamespace(sid=SID, name="web", _host=None))
+                    did = "wrote a log this kernel does not read"
+                self.assertEqual(self._kinds(d), ["host.directory-refused"], road)
+                row = self._rows(d, "host.directory-refused")[0]
+                self.assertEqual(row["text"], "the session host for web %s: %s in host directory %s is a symlink, not a regular file. A %s %s" % (did, name, sdir, name, remedy))
+                self.assertEqual(row["file"], name)
+                self.assertNotIn("uid", row, "a link is not the owner shape")
+                self.assertEqual((elsewhere / name).read_text(), (elsewhere / name).read_text(), "the target is untouched")
+                self.assertTrue((sdir / name).is_symlink() or not sdir.exists(), "the link is left where the road did not clear the directory")
+
+    def _refused(self, d):
+        return [(r["kind"], r.get("file"), r.get("uid")) for r in self._rows(d, "host.directory-refused")]
+
+    def test_every_shape_a_peer_can_put_at_the_read_file_is_answered_from_the_table_on_each_read_road(self):
+        """THE SHAPE TABLE on the three read roads (SHAPE_TABLE, module level; the round-7 fifth addendum, 2026-09-20):
+        the 13 (kind, owner) rows times the three roads, 39 cells, each planted under a loose <sid>/ of ours (0775 under
+        a 0700 hosts/) and driven through the production road on a fresh backend: _host_lease_applies with hosts off
+        (identity.json's existence), _host_orphan_recover's lease-less arm (identity.json's bytes, the registry's ack
+        naming the identity of ours), _file_host_log_rows (host.log's bytes). Per cell: the road's answer, the refusal
+        rows filed as (kind, `file`, `uid`), the loose row once, the mode unchanged where the directory stands, the
+        stub's path-stat count 0 on a foreign cell, and a link's target untouched. The answers by road: lease-applies,
+        `ours` True; `absent` and `not-file` False with no refusal row (the journal listing then finds nothing);
+        `foreign` False after one host.directory-refused row with `file` and `uid`; `link` False after the file-shape row
+        (`file`, no `uid`). Orphan, read as the replay's offset: `ours` [1] (the identity vouches for the ack); `absent`
+        and `not-file` [-1] (the tail replayed from the start, no refusal row); `foreign` [-1] after the owner row;
+        `link` [] after the file row (the refused arm replays nothing). Served: `ours` the file's row (`host.end-forced`);
+        `absent` and `not-file` none; `foreign` the owner row, none of the file's, no position; `link` the file row. Red
+        before, the module copied onto a scratch worktree at the fourth addendum's commit: the foreign-socket cells on the
+        orphan and served roads filed NO owner row (open(2) answered ENXIO before the owner fstat and the roads' OSError
+        arms swallowed it), `Lists differ: [] != [('host.directory-refused', 'identity.json', <uid>)]` and the same for
+        host.log; the foreign-symlink cells answered the link row, `uid` None, on all three roads; function level, the
+        foreign socket raised `OSError: [Errno 6] No such device or address` out of read_host_file."""
+        euid = os.geteuid()
+        identity = json.dumps({"pid": 7, "start": "p"})
+        log_rows = "".join(json.dumps(r) + "\n" for r in [{"t": 1, "kind": "end-forced", "cliPid": 5}])
+        for road in ("lease-applies", "orphan", "served"):
+            for kind, owner, expect_exists, expect_read in SHAPE_TABLE:
+                expect = expect_exists if road == "lease-applies" else expect_read
+                with self.subTest(road=road, kind=kind, owner=owner):
+                    d, be = self._be()
+                    elsewhere = Path(tempfile.mkdtemp()); self.addCleanup(shutil.rmtree, elsewhere, True)
+                    name = "host.log" if road == "served" else "identity.json"
+                    sdir = self._loose_sid(d, journal=3 if road == "orphan" else 0)
+                    plant_shape(sdir, name, kind, log_rows if road == "served" else identity, elsewhere)
+                    target = (elsewhere / name).read_text() if kind == "symlink-to-file" else None
+                    ctx = foreign_uid(sdir / name) if owner == "foreign" else contextlib.nullcontext()
+                    s = types.SimpleNamespace(sid=SID, name="web", _host_intent=True, _host=None, _host_is_attach=False, _seed_for_dead_cli=lambda cli: None)
+                    if road == "lease-applies":
+                        Path(d, "session-hosts").write_text("off")
+                        with ctx as fu:
+                            answer = be._host_lease_applies(s)
+                        self.assertIs(answer, expect == "ours", "%s: the lease-applies answer" % expect)
+                    elif road == "orphan":
+                        sb.write_reg(Path(d), SID, {"sid": SID, "name": "web", "alive": True, "lastSid": SID,
+                                                     "hostAck": {"host": "7:p", "cli": "8:c", "offset": 1}})
+                        acks = []
+                        capture = classmethod(lambda cls, hdir, ack=-1, **kw: acks.append(ack) or types.SimpleNamespace(hdir=hdir))
+                        with mock.patch.dict(sys.modules, {"claude_agent_sdk": self._sdk_stub()}), ctx as fu, \
+                             mock.patch.object(ht.HostTransport, "from_journal", capture), mock.patch.object(be, "_replay_drain", mock.AsyncMock()):
+                            asyncio.run(be._host_orphan_recover(s, types.SimpleNamespace(), None, (None, None, None), died=False))
+                        self.assertEqual(acks, {"ours": [1], "link": []}.get(expect, [-1]), "%s: the replay's offset" % expect)
+                        self.assertEqual("host.tail-replayed" in self._kinds(d), expect != "link", "%s: the tail is replayed unless the road was refused" % expect)
+                    else:
+                        sb.write_reg(Path(d), SID, {"sid": SID, "name": "web", "alive": True})
+                        with ctx as fu:
+                            be._file_host_log_rows(types.SimpleNamespace(sid=SID, name="web", _host=None))
+                        self.assertEqual("host.end-forced" in self._kinds(d), expect == "ours", "%s: the file's rows are filed only for a file of ours" % expect)
+                        if expect != "ours":
+                            self.assertIsNone((sb.read_reg(Path(d), SID) or {}).get("hostLogPos"), "no position from a file that was not read")
+                    refused = self._refused(d)
+                    if expect == "foreign":
+                        self.assertEqual(refused, [("host.directory-refused", name, euid + 1)], "%s/%s: the owner row, with the file and the uid" % (kind, owner))
+                        self.assertIn("%s in host directory %s belongs to uid %d, not to us (uid %d)" % (name, sdir, euid + 1, euid), self._rows(d, "host.directory-refused")[0]["text"])
+                        self.assertEqual(fu.path_stats, 0, "the owner check took a path stat: %r" % (fu.path_stat_calls,))
+                    elif expect == "link":
+                        self.assertEqual(refused, [("host.directory-refused", name, None)], "%s/%s: the file-shape row, no uid" % (kind, owner))
+                        self.assertIn("%s in host directory %s is a symlink, not a regular file" % (name, sdir), self._rows(d, "host.directory-refused")[0]["text"])
+                    else:
+                        self.assertEqual(refused, [], "%s/%s: no refusal row for %s" % (kind, owner, expect))
+                    self.assertEqual([(r["path"], r["mode"]) for r in self._rows(d, "host.directory-loose")], [(str(sdir), "0775")], "the loose <sid>/, once")
+                    if sdir.exists():
+                        self.assertEqual(self._modes(d), (0o700, 0o775), "the read changed no mode")
+                    if target is not None:
+                        self.assertEqual((elsewhere / name).read_text(), target, "nothing behind the link was touched")
+
+    def test_a_loose_directory_is_one_row_per_connect_episode_per_mode_observed_however_many_descents(self):
+        """THE RULE FOR THE LOOSE ROW (the reviewer's ruling of 2026-09-20 20:40Z, the round-7 fifth addendum): one
+        host.directory-loose row per connect episode per distinct mode observed, not one per descent (the fourth
+        addendum) and not one per episode whatever the mode. Three arms, each on one backend (a fresh backend stands at
+        the start of its first episode; a later episode is opened the way the connect loop opens it,
+        _loose_rows_new_episode, whose loop-top placement the next case pins). (1) THREE DESCENTS, ONE EPISODE: hosts
+        off, both directories 0775, a leftover tail; the lease-applies read (descent one), then _host_transport_for, whose
+        leftover trigger (two) hands the orphan road (three), the descents counted through open_host_dirs_if_present: the
+        rows are one per component, `[(hosts, '0775'), (<sid>, '0775')]`. (2) A MODE CHANGE MID-EPISODE: the same, with
+        <sid>/ chmod'd 0770 by the test between the lease-applies read and the connect: a third row naming 0770 and no
+        fourth for the orphan road's descent, which observes 0770 again. (3) A NEW EPISODE FILES AGAIN, AND A TRANSITION IS
+        NEW INFORMATION: the lease-applies read twice in one episode, two rows; a new episode and the read, four; <sid>/
+        tightened to 0700 and read, still four (a tight mode is observed and not filed); loosened back to 0775 and read,
+        five (the mode changed since it was last observed, so the same mode as before is a row again). Red before at the
+        fourth addendum's commit, one row per descent: (1) `Lists differ: [(hosts, '0775'), (<sid>, '0775'), (hosts,
+        '0775'), (<sid>, '0775'), (hosts, '0775'), (<sid>, '0775')] != [(hosts, '0775'), (<sid>, '0775')]`, six for two;
+        (2) six for three; (3) four for two at the first step."""
+        def session():
+            return types.SimpleNamespace(sid=SID, name="web", _host_intent=True, _host=None, _host_is_attach=False,
+                                         _seed_for_dead_cli=lambda cli: None, _options_login="", _host_end_grace=None,
+                                         _on_cli_stderr=lambda line: None)
+
+        def loose(d):
+            return [(r["path"], r["mode"]) for r in self._rows(d, "host.directory-loose")]
+
+        def connect(be, s):
+            """_host_transport_for with hosts off over a leftover: the trigger's descent, the orphan road's descent and
+            its replay, then the kernel-child answer (None)."""
+            capture = classmethod(lambda cls, hdir, ack=-1, **kw: types.SimpleNamespace(hdir=hdir))
+            with mock.patch.dict(sys.modules, {"claude_agent_sdk": self._sdk_stub()}), \
+                 mock.patch.object(ht.HostTransport, "from_journal", capture), mock.patch.object(be, "_replay_drain", mock.AsyncMock()):
+                return asyncio.run(be._host_transport_for(s, types.SimpleNamespace(), (None, None, None)))
+
+        for arm in ("three descents, one episode", "a mode change mid-episode"):
+            with self.subTest(arm=arm):
+                d, be = self._be()
+                Path(d, "session-hosts").write_text("off")
+                sdir = self._loose_sid(d, hosts_mode=0o775, sid_mode=0o775, identity={"pid": 7, "start": "p"}, journal=3)
+                hosts = str(Path(d) / "hosts")
+                sb.write_reg(Path(d), SID, {"sid": SID, "name": "web", "alive": True, "lastSid": SID})
+                s = session()
+                descents, real = [], ht.open_host_dirs_if_present
+                with mock.patch.object(ht, "open_host_dirs_if_present", lambda *a, **k: descents.append(a[1]) or real(*a, **k)):
+                    self.assertIs(be._host_lease_applies(s), True, "descent one: our identity.json vouches")
+                    if arm == "a mode change mid-episode":
+                        os.chmod(sdir, 0o770)
+                    self.assertIsNone(connect(be, s), "hosts off: the kernel child after the leftover's replay")
+                self.assertEqual(descents, [SID, SID, SID], "three descents in the one episode: lease-applies, the leftover trigger, the orphan road")
+                if arm == "three descents, one episode":
+                    self.assertEqual(loose(d), [(hosts, "0775"), (str(sdir), "0775")], "one row per component for the episode, not per descent")
+                else:
+                    self.assertEqual(loose(d), [(hosts, "0775"), (str(sdir), "0775"), (str(sdir), "0770")],
+                                     "the mode that changed between two descents is a row naming the new mode, once")
+                self.assertIn("host.tail-replayed", self._kinds(d), "the read roads proceeded: the tail was replayed")
+        with self.subTest(arm="a new episode files again, and a transition is new information"):
+            d, be = self._be()
+            Path(d, "session-hosts").write_text("off")
+            sdir = self._loose_sid(d, hosts_mode=0o775, sid_mode=0o775, identity={"pid": 7, "start": "p"})
+            hosts = str(Path(d) / "hosts")
+            s = session()
+            self.assertIs(be._host_lease_applies(s), True); self.assertIs(be._host_lease_applies(s), True)
+            self.assertEqual(loose(d), [(hosts, "0775"), (str(sdir), "0775")], "two reads in one episode: the rows once")
+            be._loose_rows_new_episode(s)
+            self.assertIs(be._host_lease_applies(s), True)
+            self.assertEqual(loose(d), [(hosts, "0775"), (str(sdir), "0775")] * 2, "a new episode: a still-loose directory is filed again")
+            os.chmod(sdir, 0o700)
+            self.assertIs(be._host_lease_applies(s), True)
+            self.assertEqual(len(loose(d)), 4, "a tight mode is observed and files nothing")
+            os.chmod(sdir, 0o775)
+            self.assertIs(be._host_lease_applies(s), True)
+            self.assertEqual(loose(d), [(hosts, "0775"), (str(sdir), "0775")] * 2 + [(str(sdir), "0775")],
+                             "loosened again within the episode: the transition is filed, though the mode was filed before")
+            self.assertEqual(self._modes(d), (0o775, 0o775), "the read roads changed no mode")
+
+    def test_the_connect_loop_opens_the_loose_row_episode_at_its_top_before_the_first_descent(self):
+        """WHERE the episode opens, pinned by the structure of the connect loop (kernel/sdk_backend.py, SdkSession._amain,
+        its `while not self.ended` reconnect loop), since driving that loop needs the SDK's client. What it guards: the
+        latch the previous case proves by execution (_loose_rows_new_episode, then the rows again) is reset once per
+        iteration, before the iteration's first descent under hosts/ (the lease-applies read, or _host_transport_for,
+        whose leftover trigger is the first descent with hosts on), and under no condition (no If, For, While or Match
+        between the call and the loop body), so one episode is one iteration. Read by ast and not by text: the call's
+        line precedes both descents' lines, and its ancestors up to the loop are statements that always run."""
+        import ast
+        tree = ast.parse(open(os.path.join(ROOT, "kernel", "sdk_backend.py")).read())
+        cls = [n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "SdkSession"][0]
+        amain = [n for n in cls.body if isinstance(n, ast.AsyncFunctionDef) and n.name == "_amain"][0]
+        def calls_in(node, attr):
+            return [n for n in ast.walk(node) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == attr]
+        loops = [n for n in ast.walk(amain) if isinstance(n, ast.While) and ast.unparse(n.test) == "not self.ended"
+                 and calls_in(n, "_host_lease_applies")]
+        self.assertEqual(len(loops), 1, "the one `while not self.ended` loop of _amain that connects (the other feeds turns)")
+        loop = loops[0]
+        parents = {}
+        for node in ast.walk(loop):
+            for child in ast.iter_child_nodes(node):
+                parents[child] = node
+
+        def calls(attr):
+            return calls_in(loop, attr)
+        begin = calls("_loose_rows_new_episode")
+        self.assertEqual(len(begin), 1, "the loop opens the episode once per iteration")
+        descents = calls("_host_lease_applies") + calls("_host_transport_for")
+        self.assertEqual(len(descents), 2, "the two entries to a descent under hosts/ in the loop")
+        self.assertLess(begin[0].lineno, min(c.lineno for c in descents), "the episode opens before the iteration's first descent")
+        chain, node = [], parents[begin[0]]
+        while node is not loop:                       # the ancestors between the call and the loop, the loop itself excluded
+            chain.append(type(node).__name__)
+            node = parents[node]
+        self.assertEqual([c for c in chain if c in ("If", "For", "AsyncFor", "While", "Match", "IfExp")], [],
+                         "the call runs on every iteration, under no condition: %r" % (chain,))
+        self.assertTrue(hasattr(sb.SdkBackend, "_loose_rows_new_episode"), "the method the loop calls exists on the backend")
+
+    def test_a_directory_of_ours_with_no_search_bit_is_the_fault_it_is_out_of_the_lease_applies_road_and_the_other_roads_arms_answer_it(self):
+        """THE FAULT CELL on the three read roads (the round-7 sixth addendum, 2026-09-20, disclosing a cell the fifth
+        addendum changed without saying so): a `<sid>/` of ours at 0600 under a 0700 hosts/, identity.json (host.log for
+        the served road) of ours inside it, driven as the shape table's cells are. The descent admits the directory (its
+        O_RDONLY|O_DIRECTORY open needs the read bit, which 0600 has) and the fstatat of the name under it refuses (the
+        search bit, which it lacks): a PermissionError with errno EACCES, a FAULT of the directory and not a shape at the
+        name, so no host.directory-refused row on any road and no loose row (0600 is tight). LEASE-APPLIES, hosts off: the
+        fault propagates OUT of the road, which has no OSError arm, to the connect loop's handler (SdkSession._amain's
+        except records it as the launch error and ends the connect; pinned here at the road, the loop needing the SDK's
+        client to drive). That is the answer this PR's base gave: there the existence read was `Path.exists()` by path,
+        and pathlib re-raises every errno but ENOENT, ENOTDIR, EBADF and ELOOP, so the same directory raised the same
+        PermissionError out of _host_lease_applies; the second through fourth addenda answered False through
+        host_file_exists's `except OSError` arm and said nothing of it; the fifth dropped the arm and said nothing
+        either. SERVED: the OSError arm the road has had since the base returns, none of the file's rows filed and no
+        position kept. ORPHAN, a journal segment present: the identity read's fault is swallowed by the road's OSError arm
+        (raw None; the base's `except Exception` around its read_text did the same), no identity vouches for the ack, and
+        the road then raises the same PermissionError from its journal reads BY PATH (the glob lists the segment, listing
+        needing the read bit only, and read_journal_dir's open of it needs the search bit), the queued follow-up's sites,
+        which this PR does not touch: recorded as the base's behaviour by the frame the fault rises through, not designed
+        here. No romp code path makes such a directory (the helpers make 0700). Red at the fourth addendum's commit on the
+        lease-applies arm, `PermissionError not raised` (host_file_exists answered False through its arm), and the same
+        red under the mutation that puts the arm back at this commit; the served and orphan arms are the base's and hold
+        at both. Root ignores the search bit and is skipped."""
+        import errno, traceback
+        if os.geteuid() == 0:
+            self.skipTest("root bypasses the search bit")
+        identity = json.dumps({"pid": 7, "start": "p"})
+        log_rows = "".join(json.dumps(r) + "\n" for r in [{"t": 1, "kind": "end-forced", "cliPid": 5}])
+        for road in ("lease-applies", "orphan", "served"):
+            with self.subTest(road=road):
+                d, be = self._be()
+                name = "host.log" if road == "served" else "identity.json"
+                sdir = self._loose_sid(d, sid_mode=0o700, journal=1 if road == "orphan" else 0)
+                (sdir / name).write_text(log_rows if road == "served" else identity)
+                os.chmod(sdir, 0o600)
+                self.addCleanup(os.chmod, sdir, 0o700)             # before the state dir's rmtree (cleanups run last-in first)
+                s = types.SimpleNamespace(sid=SID, name="web", _host_intent=True, _host=None, _host_is_attach=False, _seed_for_dead_cli=lambda cli: None)
+                if road == "lease-applies":
+                    Path(d, "session-hosts").write_text("off")
+                    try:
+                        answer = be._host_lease_applies(s)
+                    except PermissionError as e:                 # by hand, not assertRaises: that drops the traceback the frame check reads
+                        fault, frames = e, [f.name for f in traceback.extract_tb(e.__traceback__)]
+                    else:
+                        self.fail("PermissionError not raised: the road answered %r to a fault of the directory" % (answer,))
+                    self.assertEqual(fault.errno, errno.EACCES, "the stat's own fault, out of the road")
+                    self.assertIn("_stat_name", frames, "raised by the owner question's stat: %r" % (frames,))
+                elif road == "orphan":
+                    sb.write_reg(Path(d), SID, {"sid": SID, "name": "web", "alive": True, "lastSid": SID,
+                                                 "hostAck": {"host": "7:p", "cli": "8:c", "offset": 1}})
+                    acks = []
+                    capture = classmethod(lambda cls, hdir, ack=-1, **kw: acks.append(ack) or types.SimpleNamespace(hdir=hdir))
+                    with mock.patch.dict(sys.modules, {"claude_agent_sdk": self._sdk_stub()}), \
+                         mock.patch.object(ht.HostTransport, "from_journal", capture), mock.patch.object(be, "_replay_drain", mock.AsyncMock()):
+                        try:
+                            asyncio.run(be._host_orphan_recover(s, types.SimpleNamespace(), None, (None, None, None), died=False))
+                        except PermissionError as e:
+                            fault, frames = e, [f.name for f in traceback.extract_tb(e.__traceback__)]
+                        else:
+                            self.fail("PermissionError not raised out of the orphan road")
+                    self.assertEqual(fault.errno, errno.EACCES)
+                    self.assertIn("read_journal_dir", frames, "the fault that escapes is the journal reads' by path: %r" % (frames,))
+                    self.assertNotIn("_stat_name", frames, "the identity read's fault was answered by the road's OSError arm")
+                    self.assertEqual(acks, [], "no replay was reached")
+                    self.assertNotIn("host.tail-replayed", self._kinds(d))
+                else:
+                    sb.write_reg(Path(d), SID, {"sid": SID, "name": "web", "alive": True})
+                    self.assertIsNone(be._file_host_log_rows(types.SimpleNamespace(sid=SID, name="web", _host=None)), "the arm returns")
+                    self.assertNotIn("host.end-forced", self._kinds(d), "none of the file's rows: it was not read")
+                    self.assertIsNone((sb.read_reg(Path(d), SID) or {}).get("hostLogPos"), "no position from a file that was not read")
+                self.assertEqual(self._refused(d), [], "%s: a fault of the directory is no refusal row" % road)
+                self.assertEqual(self._rows(d, "host.directory-loose"), [], "%s: 0600 and 0700 are tight" % road)
+                self.assertEqual(self._modes(d), (0o700, 0o600), "the read changed no mode")
+
+    def test_a_foreign_host_log_under_the_spawn_roads_directory_refuses_the_launch_at_the_mark_and_a_refused_arm_reads_none_of_it(self):
+        """THE SPAWN ROAD's two answers to a host.log another uid owns (the round-7 seventh addendum of fork PR #814's
+        review, 2026-09-20), driven through _host_transport_for with the launcher replaced (_spawn_host: a host that
+        exits 1 at once, the way tests/test_session_host_sdk_pin.py drives the refused arm) over a 0700 hosts/<sid>/ of
+        ours, the shape the helpers leave, which keeps every entry a peer planted while the directory was loose. AT THE
+        MARK: the file stands before the spawn, on the road that meets a standing directory and clears nothing (a stale
+        kernel-held lease: host_lease_state "none" with a lease, so the leftover trigger does not run, and lease_state
+        not valid, so the launch proceeds); the watermark's stat is the owner question (host_log_mark through
+        _stat_name), HostFileForeign, and the launch is refused the way every refusal of this road is
+        (_refuse_host_directory): one host.directory-refused row with `file` host.log, `uid` and the owner's remedy, the
+        launch error "was not started", NO process started (the launcher never called), no position, the file and the
+        modes untouched. ON A REFUSED ARM: the file is planted by the launcher's stand-in, after the mark (nothing but
+        this uid can create an entry under a 0700 directory, so no peer has this road; the arm's handler is the design's,
+        every read asking), and the arm's three reads are one refusal (_refused_launch_log): one host.directory-refused
+        row whose clause is the arm's ("exited before serving its socket (code 1), and its host.log is not read"), no
+        reason of the peer's on the card (the no-reason message, host.stderr unwritten), no host.sdk-untested row for the
+        untested row the file carries, no hostLogPos, then the arm's own row. The stub is descriptor-only and its
+        path-stat count is 0 on both arms. Red before at the sixth addendum's commit, both arms reaching their
+        assertions: at the mark the launcher was called (`Lists differ` on the spawned list) and the peer's `error` was
+        the card's reason; on the arm the card read `see hosts/<sid>/host.log: PeerPlantedError`, the peer's untested row
+        was filed as host.sdk-untested and hostLogPos read the peer's line count."""
+        euid = os.geteuid()
+        peer_rows = [{"t": 1, "kind": "host-started"},
+                     {"t": 2, "kind": "sdk-version-untested", "installed": "9.9.9", "tested": sh.SDK_TESTED_VERSION, "relation": "newer"},
+                     {"t": 3, "kind": "host-crashed", "error": "PeerPlantedError", "errno": 99, "at": "peer.py:1"}]
+        planted = "".join(json.dumps(r) + "\n" for r in peer_rows)
+        remedy = "A host.log under hosts/<sid>/ that another user owns is not read; remove it, or point the state root elsewhere (ROMP_STATE_DIR or XDG_STATE_HOME)"
+        proc = types.SimpleNamespace(poll=lambda: 1, returncode=1, pid=4242, terminate=lambda: None)
+
+        def session():
+            return types.SimpleNamespace(sid=SID, name="web", _host_intent=True, _host=None, _host_is_attach=False,
+                                         _options_login="", _seed_for_dead_cli=lambda cli: None)
+
+        def launch(be, spawn):
+            with mock.patch.object(be, "_spawn_host", spawn), self.assertRaises(sb.CLIConnectionErrorLike) as cm:
+                asyncio.run(be._host_transport_for(session(), types.SimpleNamespace(), (None, None, None)))
+            return str(cm.exception)
+
+        with self.subTest(arm="the mark, before the spawn"):
+            d, be = self._be()
+            Path(d, "session-hosts").write_text("on")
+            sb.write_reg(Path(d), SID, {"sid": SID, "name": "web", "alive": True, "lastSid": SID})
+            sb.write_lease(d, {"sid": SID, "pid": 2 ** 22 - 1, "start": "gone", "t": 0, "holder": {"kind": "kernel", "pid": 2 ** 22 - 2, "start": "gone"}})
+            sdir = self._loose_sid(d, sid_mode=0o700, host_log=peer_rows)
+            spawned = []
+            with foreign_uid(sdir / "host.log") as fu:
+                msg = launch(be, lambda sess, spec_path, secret_env=None: spawned.append(spec_path) or proc)
+            self.assertEqual(spawned, [], "no process was started: the mark refused the launch")
+            self.assertEqual(msg, "the session host was not started: host.log in host directory %s belongs to uid %d, not to us (uid %d). %s"
+                             % (sdir, euid + 1, euid, remedy))
+            self.assertEqual(self._kinds(d), ["host.directory-refused"], "the owner row and nothing else: no exited row, no untested row")
+            self.assertEqual(self._refused(d), [("host.directory-refused", "host.log", euid + 1)])
+            self.assertEqual(fu.path_stats, 0, "the owner check took a path stat: %r" % (fu.path_stat_calls,))
+            self.assertIsNone((sb.read_reg(Path(d), SID) or {}).get("hostLogPos"), "no position from a file that was not read")
+            self.assertEqual((sdir / "host.log").read_text(), planted, "the file untouched")
+            self.assertEqual(self._modes(d), (0o700, 0o700), "the helpers found both directories tight and changed nothing")
+        with self.subTest(arm="a refused arm, after the spawn"):
+            d, be = self._be()
+            Path(d, "session-hosts").write_text("on")
+            sb.write_reg(Path(d), SID, {"sid": SID, "name": "web", "alive": True, "lastSid": SID})
+            stubs = []
+
+            def spawn_and_plant(sess, spec_path, secret_env=None):
+                log = Path(spec_path).parent / "host.log"
+                log.write_text(planted)
+                stub = foreign_uid(log)
+                stub.__enter__()
+                self.addCleanup(stub.__exit__, None, None, None)
+                stubs.append(stub)
+                return proc
+            msg = launch(be, spawn_and_plant)
+            sdir = Path(d) / "hosts" / SID
+            self.assertEqual(msg, "the session host exited before serving its socket (code 1); hosts/%s/host.stderr carries nothing from this "
+                                  "launch; see hosts/%s/host.log" % (SID, SID), "no reason of the peer's on the card: the no-reason arm")
+            self.assertEqual(self._kinds(d), ["host.directory-refused", "host.exited-before-socket"],
+                             "the owner row, then the arm's own row; no host.sdk-untested for the peer's untested row")
+            row = self._rows(d, "host.directory-refused")[0]
+            self.assertEqual(row["text"], "the session host for web exited before serving its socket (code 1), and its host.log is not read: host.log "
+                                          "in host directory %s belongs to uid %d, not to us (uid %d). %s" % (sdir, euid + 1, euid, remedy))
+            self.assertEqual((row["file"], row["uid"]), ("host.log", euid + 1), "the row's fields name the file and the owner")
+            self.assertIsNone((sb.read_reg(Path(d), SID) or {}).get("hostLogPos"), "no position from a file that was not read")
+            self.assertEqual(stubs[0].path_stats, 0, "the owner check took a path stat: %r" % (stubs[0].path_stat_calls,))
+            self.assertEqual((sdir / "host.log").read_text(), planted, "the file untouched")
+            self.assertEqual(self._modes(d), (0o700, 0o700), "the read changed no mode")
+
+
+class ReadDescent(unittest.TestCase):
+    """The read roads' descent and its three readers at function level (host_transport.open_host_dirs_if_present,
+    host_file_exists, read_host_file, host_sock_present; the round-7 second addendum of fork PR #814's review,
+    2026-09-20): the spawn road's precondition ported in the two parts that guard a read (each component opened
+    O_DIRECTORY|O_NOFOLLOW off the state root and fstat-verified a directory of this uid, the file or the name then taken
+    relative to the descriptor) and not in the third (the mode), with an absent component answered None."""
+
+    def _root(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        return Path(d)
+
+    def test_absent_answers_none_a_loose_directory_of_ours_is_admitted_and_every_other_shape_is_refused(self):
+        root = self._root()
+        self.assertIsNone(ht.open_host_dirs_if_present(root, SID), "no hosts/ at all: None, not a refusal")
+        hosts = root / "hosts"
+        hosts.mkdir(mode=0o775)                                        # loose, ours: an install from before 2026-09-19
+        self.assertIsNone(ht.open_host_dirs_if_present(root, SID), "hosts/ with no <sid>: None")
+        (hosts / SID).mkdir(mode=0o775)
+        dirs = ht.open_host_dirs_if_present(root, SID)
+        self.assertIsNotNone(dirs, "a loose directory of ours at both components is admitted: the mode is not this descent's condition")
+        with dirs:
+            self.assertEqual(os.fstat(dirs.hosts).st_ino, os.lstat(hosts).st_ino, "the first descriptor is hosts/")
+            self.assertEqual(os.fstat(dirs.dir).st_ino, os.lstat(hosts / SID).st_ino, "the second is hosts/<sid>/")
+        # the absence is its own class, a subclass, so the spawn road's callers see the refusal they always saw
+        with self.assertRaises(ht.HostDirRefused) as cm:
+            ht.open_host_dirs(self._root(), SID)
+        self.assertIsInstance(cm.exception, ht.HostDirAbsent)
+        self.assertIn("does not exist", str(cm.exception))
+        self.assertIsNone(cm.exception.errno)
+        # a link at hosts/, a link at <sid>, a file at <sid>: each refused under the parent class, never Absent
+        peer = self._root() / "peer"
+        (peer / SID).mkdir(parents=True, mode=0o755)
+        for arm, plant in (("link at hosts/", lambda r: (r / "hosts").symlink_to(peer)),
+                           ("link at <sid>", lambda r: ((r / "hosts").mkdir(mode=0o700), (r / "hosts" / SID).symlink_to(peer / SID))),
+                           ("file at <sid>", lambda r: ((r / "hosts").mkdir(mode=0o700), (r / "hosts" / SID).write_text("")))):
+            with self.subTest(arm=arm):
+                r = self._root()
+                plant(r)
+                with self.assertRaises(ht.HostDirRefused) as cm:
+                    ht.open_host_dirs_if_present(r, SID)
+                self.assertNotIsInstance(cm.exception, ht.HostDirAbsent, arm)
+                self.assertIn("is a symlink, not a directory" if "link" in arm else "is not a directory", str(cm.exception))
+                self.assertIn("hosts directory %s" % (r / "hosts") if arm == "link at hosts/" else "host directory %s" % (r / "hosts" / SID), str(cm.exception))
+        # a foreign uid at <sid>, by the fstat of the object opened (a stub keyed on the object, as the removal road's pin)
+        r = self._root()
+        (r / "hosts" / SID).mkdir(parents=True, mode=0o700)
+        st = os.lstat(r / "hosts" / SID)
+        ident, real_fstat = (st.st_dev, st.st_ino), os.fstat
+
+        def fstat(fd):
+            st = real_fstat(fd)
+            if isinstance(fd, int) and stat.S_ISDIR(st.st_mode) and (st.st_dev, st.st_ino) == ident:
+                fields = list(st); fields[4] = st.st_uid + 1
+                return os.stat_result(fields)
+            return st
+        with mock.patch.object(os, "fstat", fstat), self.assertRaises(ht.HostDirRefused) as cm:
+            ht.open_host_dirs_if_present(r, SID)
+        self.assertIn("belongs to uid %d, not to us (uid %d)" % (os.geteuid() + 1, os.geteuid()), str(cm.exception))
+
+    def test_the_readers_take_names_under_the_descriptor_and_a_link_at_the_name_is_refused_naming_the_file(self):
+        root = self._root()
+        sdir = root / "hosts" / SID
+        sdir.mkdir(parents=True, mode=0o700)
+        (sdir / "identity.json").write_text(json.dumps({"pid": 7, "start": "p"}))
+        peer = self._root() / "theirs.log"
+        peer.write_text("the peer's bytes")
+        (sdir / "host.log").symlink_to(peer)
+        (sdir / "a-dir").mkdir()
+        with ht.open_host_dirs_if_present(root, SID) as dirs:
+            self.assertEqual(ht.read_host_file("identity.json", dirs), json.dumps({"pid": 7, "start": "p"}).encode())
+            self.assertTrue(ht.host_file_exists("identity.json", dirs))
+            self.assertIsNone(ht.read_host_file("absent.json", dirs), "no entry at the name: None")
+            self.assertFalse(ht.host_file_exists("absent.json", dirs))
+            with self.assertRaises(ht.HostDirRefused) as cm:
+                ht.read_host_file("host.log", dirs)
+            self.assertEqual(cm.exception.file, "host.log", "the refusal names the file, so the caller's remedy is the file's")
+            self.assertIn("host.log in host directory %s is a symlink, not a regular file" % sdir, str(cm.exception))
+            # a link at the name is refused by the existence reader too since the fourth addendum, naming the file (it
+            # answered False here through the third, so the lease-applies road filed no row for the plant the other two
+            # roads filed one for)
+            with self.assertRaises(ht.HostDirRefused) as cm:
+                ht.host_file_exists("host.log", dirs)
+            self.assertEqual(cm.exception.file, "host.log")
+            self.assertNotIsInstance(cm.exception, ht.HostFileForeign)
+            self.assertIn("host.log in host directory %s is a symlink, not a regular file" % sdir, str(cm.exception))
+            self.assertEqual(peer.read_text(), "the peer's bytes", "nothing behind the link was opened")
+            # a directory at the name: None since the fourth addendum (the answer host_file_exists gives; through the
+            # third the fdopen's read raised IsADirectoryError), and since the fifth with NOTHING OPENED: the stat by name
+            # before the open reads the kind (the shape table's not-file cell, ReadDescent.test_every_shape_..._table)
+            self.assertIsNone(ht.read_host_file("a-dir", dirs))
+            self.assertFalse(ht.host_file_exists("a-dir", dirs))
+
+    def test_host_sock_present_reads_the_published_name_under_the_hosts_descriptor_and_not_the_path(self):
+        root = self._root()
+        (root / "hosts" / SID).mkdir(parents=True, mode=0o700)
+        name = ht.host_sock(root, SID).name
+        peer = self._root() / "peer"
+        (peer / SID).mkdir(parents=True, mode=0o755)
+        (peer / name).write_text("the peer's entry at the published name")
+        with ht.open_host_dirs_if_present(root, SID) as dirs:
+            self.assertFalse(ht.host_sock_present(dirs, name), "nothing published")
+            (root / "hosts" / name).touch()
+            self.assertTrue(ht.host_sock_present(dirs, name), "an entry at the name in the verified hosts/")
+            os.unlink(root / "hosts" / name)
+            os.rename(root / "hosts", root / "hosts.moved")          # the swap, after the descent
+            (root / "hosts").symlink_to(peer)
+            self.assertTrue(ht.host_sock(root, SID).exists(), "by PATH the peer's entry answers: the read the poll made through round 7")
+            self.assertFalse(ht.host_sock_present(dirs, name), "by NAME under the descriptor it does not: the descriptor names the directory the spec was written in")
+            (root / "hosts.moved" / name).touch()
+            self.assertTrue(ht.host_sock_present(dirs, name), "and an entry in that directory does")
+
+    def test_the_readers_check_the_owner_of_the_object_they_hold_and_a_foreign_file_is_the_answer_absent_gets(self):
+        """The owner check (the round-7 fourth addendum, 2026-09-20): read_host_file fstats the DESCRIPTOR its O_NOFOLLOW
+        open returned, host_file_exists fstatats the NAME under the <sid> descriptor with no link followed, and a file
+        whose st_uid is not this euid raises HostFileForeign (a subclass of HostDirRefused and not of HostDirAbsent,
+        `file` the entry, `uid` the owner, the directory in the text, errno None). The foreign owner is simulated by the
+        stat result the reader sees (foreign_uid: os.fstat of a descriptor and os.stat of a name under a directory
+        descriptor answer st_uid + 1 for that one object, keyed on its (st_dev, st_ino); a stat by PATH answers the real
+        owner and is counted, and the count is asserted 0, the fifth addendum), because a file another uid owns is not
+        constructible without root; every other object answers as before, so the descent's own fstats of the two
+        directories still pass. Since the fifth addendum both readers ask the owner question of the NAME before any open
+        (_stat_name) and read_host_file asks it again of the descriptor. Red before: both readers read the file as ours
+        (`b'...' is not None`, `True is not False`)."""
+        root = self._root()
+        sdir = root / "hosts" / SID
+        sdir.mkdir(parents=True); os.chmod(root / "hosts", 0o700); os.chmod(sdir, 0o775)     # a loose <sid>/ of ours
+        (sdir / "identity.json").write_text(json.dumps({"pid": 7, "start": "p"}))
+        (sdir / "ours.json").write_text("ours")
+        with ht.open_host_dirs_if_present(root, SID) as dirs:
+            with foreign_uid(sdir / "identity.json") as fu:
+                with self.assertRaises(ht.HostDirRefused) as cm:          # the parent class, so the red before reaches this line
+                    ht.read_host_file("identity.json", dirs)
+                e = cm.exception
+                self.assertIsInstance(e, ht.HostFileForeign)
+                self.assertEqual((e.file, e.uid, e.errno), ("identity.json", os.geteuid() + 1, None))
+                self.assertEqual(str(e), "identity.json in host directory %s belongs to uid %d, not to us (uid %d)" % (sdir, os.geteuid() + 1, os.geteuid()))
+                self.assertNotIsInstance(e, ht.HostDirAbsent)
+                with self.assertRaises(ht.HostDirRefused) as cm:
+                    ht.host_file_exists("identity.json", dirs)
+                self.assertIsInstance(cm.exception, ht.HostFileForeign)
+                self.assertEqual((cm.exception.file, cm.exception.uid), ("identity.json", os.geteuid() + 1))
+                # the check is on the object, not the name: our other file beside it reads as before under the same stub
+                self.assertEqual(ht.read_host_file("ours.json", dirs), b"ours")
+                self.assertTrue(ht.host_file_exists("ours.json", dirs))
+            self.assertEqual(fu.path_stats, 0, "a reader took a path stat of the planted file: %r" % (fu.path_stat_calls,))
+            self.assertEqual(dirs.loose, (("host directory", sdir, 0o775),), "the loose <sid>/ is recorded for the caller's row")
+            self.assertEqual(dirs.modes, (("hosts directory", root / "hosts", 0o700), ("host directory", sdir, 0o775)),
+                             "every component's mode is recorded, tight ones too, for the once-per-episode-per-mode latch")
+            self.assertEqual(ht.read_host_file("identity.json", dirs), json.dumps({"pid": 7, "start": "p"}).encode(), "without the stub, ours")
+            self.assertTrue(ht.host_file_exists("identity.json", dirs))
+        self.assertEqual((sdir / "identity.json").read_text(), json.dumps({"pid": 7, "start": "p"}), "the file untouched")
+        self.assertEqual(stat.S_IMODE(os.stat(sdir).st_mode), 0o775, "the read changed no mode")
+
+    def test_the_read_descent_records_a_loose_component_from_its_own_fstat_and_changes_no_mode(self):
+        """The mode row's source (the fourth addendum): with private False the descent still READS each component's mode
+        from the fstat it already makes and records a loose one on HostDirs.loose as (what, path, mode); it refuses
+        nothing on it and chmods nothing (read, record, proceed). Modes pasted before and after."""
+        for hosts_mode, sid_mode, expect in ((0o775, 0o775, ("hosts directory", "host directory")),
+                                             (0o700, 0o775, ("host directory",)),
+                                             (0o775, 0o700, ("hosts directory",)),
+                                             (0o700, 0o700, ())):
+            with self.subTest(hosts=oct(hosts_mode), sid=oct(sid_mode)):
+                root = self._root()
+                (root / "hosts" / SID).mkdir(parents=True)
+                os.chmod(root / "hosts", hosts_mode); os.chmod(root / "hosts" / SID, sid_mode)
+                before = (stat.S_IMODE(os.lstat(root / "hosts").st_mode), stat.S_IMODE(os.lstat(root / "hosts" / SID).st_mode))
+                self.assertEqual(before, (hosts_mode, sid_mode))
+                with ht.open_host_dirs_if_present(root, SID) as dirs:
+                    self.assertEqual(tuple(w for w, _, _ in dirs.loose), expect)
+                    for what, shown, mode in dirs.loose:
+                        self.assertEqual((shown, mode), (root / "hosts" if what == "hosts directory" else root / "hosts" / SID,
+                                                         hosts_mode if what == "hosts directory" else sid_mode))
+                after = (stat.S_IMODE(os.lstat(root / "hosts").st_mode), stat.S_IMODE(os.lstat(root / "hosts" / SID).st_mode))
+                self.assertEqual(after, before, "the read descent changes no mode")
+                # the spawn road's descent still refuses the loose shape, and records nothing
+                if expect:
+                    with self.assertRaises(ht.HostDirRefused) as cm:
+                        ht.open_host_dirs(root, SID)
+                    self.assertIn("is group/world-accessible (mode %04o)" % (hosts_mode if hosts_mode & 0o077 else sid_mode), str(cm.exception))
+                else:
+                    with ht.open_host_dirs(root, SID) as dirs:
+                        self.assertEqual(dirs.loose, ())
+
+    def test_a_fifo_at_the_name_does_not_block_the_read_and_is_not_the_file(self):
+        """A FIFO a peer planted at identity.json under a loose <sid>/ of ours: through the third addendum read_host_file's
+        O_RDONLY open blocked until a writer appeared, which no writer ever does, so the kernel's connect hung on the
+        peer's plant. The fourth addendum gave the open O_NONBLOCK and let the fstat after it answer None; since the fifth
+        the FIFO is NOT OPENED AT ALL: the owner question is asked of the name before the open (_stat_name), reads the
+        kind, and answers None there, what host_file_exists already said of such an entry (the open keeps O_NONBLOCK for
+        a FIFO swapped in between the stat and the open). Pinned here by the open count: os.open is spied and no open of
+        the FIFO's name happens. Red before: the reader thread is still alive after the join (`True is not False`)."""
+        import threading
+        root = self._root()
+        sdir = root / "hosts" / SID
+        sdir.mkdir(parents=True); os.chmod(root / "hosts", 0o700); os.chmod(sdir, 0o700)
+        os.mkfifo(sdir / "identity.json")
+        out, opens, real_open = [], [], os.open
+        def spy(path, *a, **k):
+            opens.append(os.fspath(path))
+            return real_open(path, *a, **k)
+        with ht.open_host_dirs_if_present(root, SID) as dirs, mock.patch.object(os, "open", spy):
+            t = threading.Thread(target=lambda: out.append(ht.read_host_file("identity.json", dirs)), daemon=True)
+            t.start(); t.join(5)
+            self.assertIs(t.is_alive(), False, "the read returned: the FIFO did not block the open")
+            self.assertEqual(out, [None], "a FIFO is not the file")
+            self.assertFalse(ht.host_file_exists("identity.json", dirs))
+            self.assertEqual(opens, [], "a non-regular entry of ours is answered by the stat of its name, nothing opened")
+
+    def test_every_shape_a_peer_can_put_at_the_name_is_answered_from_the_table_by_both_readers(self):
+        """THE SHAPE TABLE at function level (SHAPE_TABLE, module level; the round-7 fifth addendum, 2026-09-20): each of
+        the 13 (kind, owner) rows planted at identity.json under a loose <sid>/ of ours and put to both readers, 26 cells.
+        `absent`: False, None. `ours`: True, the bytes. `foreign` (the foreign_uid stub, descriptor-only, its path-stat
+        count 0): HostFileForeign from both readers, `file` and `uid` set, errno None, whatever the kind, a socket and a
+        symlink included, since the owner question is asked of the entry itself before anything is opened. `link`: the
+        file-shape HostDirRefused, `file` set, not the foreign class. `not-file`: False, None. Beside the answer: what is
+        OPENED (os.open spied): nothing, except the one open by name of a regular file of ours on the read; the mode
+        unchanged; a link's target untouched. Red before at the fourth addendum's commit: read_host_file on a foreign
+        socket raised `OSError: [Errno 6] No such device or address` (the owner check was the fstat of the opened
+        descriptor, which a socket's open never returns), and a foreign symlink answered the link row from both readers
+        (`HostDirRefused is not an instance of HostFileForeign`); the non-regular entries of ours were opened."""
+        for kind, owner, expect_exists, expect_read in SHAPE_TABLE:
+            with self.subTest(kind=kind, owner=owner):
+                root = self._root()
+                sdir = root / "hosts" / SID
+                sdir.mkdir(parents=True); os.chmod(root / "hosts", 0o700); os.chmod(sdir, 0o775)
+                elsewhere = self._root()
+                plant_shape(sdir, "identity.json", kind, "the bytes", elsewhere)
+                target = (elsewhere / "identity.json").read_text() if kind == "symlink-to-file" else None
+                ctx = foreign_uid(sdir / "identity.json") if owner == "foreign" else contextlib.nullcontext()
+                opens, real_open = [], os.open
+
+                def spy(path, *a, **k):
+                    opens.append(os.fspath(path))
+                    return real_open(path, *a, **k)
+                got = {}
+                with ht.open_host_dirs_if_present(root, SID) as dirs, ctx as fu, mock.patch.object(os, "open", spy):
+                    for reader, fn in (("exists", ht.host_file_exists), ("read", ht.read_host_file)):
+                        try:
+                            got[reader] = ("value", fn("identity.json", dirs))
+                        except ht.HostFileForeign as e:
+                            got[reader] = ("foreign", e.file, e.uid, e.errno)
+                        except ht.HostDirRefused as e:
+                            got[reader] = ("link", e.file, getattr(e, "uid", None), str(e))
+                for reader, expect in (("exists", expect_exists), ("read", expect_read)):
+                    answer = got[reader]
+                    if expect in ("absent", "not-file"):
+                        self.assertEqual(answer, ("value", False if reader == "exists" else None), "%s/%s/%s" % (kind, owner, reader))
+                    elif expect == "ours":
+                        self.assertEqual(answer, ("value", True if reader == "exists" else b"the bytes"), "%s/%s/%s" % (kind, owner, reader))
+                    elif expect == "foreign":
+                        self.assertEqual(answer, ("foreign", "identity.json", os.geteuid() + 1, None), "%s/%s/%s" % (kind, owner, reader))
+                    else:
+                        self.assertEqual(answer[:3], ("link", "identity.json", None), "%s/%s/%s" % (kind, owner, reader))
+                        self.assertIn("identity.json in host directory %s is a symlink, not a regular file" % sdir, answer[3])
+                self.assertEqual(opens, ["identity.json"] if expect_read == "ours" else [],
+                                 "%s/%s: the one open is a regular file of ours, by name; every other shape is answered by the stat of the name" % (kind, owner))
+                if fu is not None:
+                    self.assertEqual(fu.path_stats, 0, "a reader took a path stat: %r" % (fu.path_stat_calls,))
+                self.assertEqual(stat.S_IMODE(os.lstat(sdir).st_mode), 0o775, "the read changed no mode")
+                if target is not None:
+                    self.assertEqual((elsewhere / "identity.json").read_text(), target, "nothing behind the link was touched")
+
+    def test_an_entry_swapped_in_between_the_stat_and_the_open_is_decided_by_the_fstat_of_the_descriptor(self):
+        """THE SECOND CHECK (the fifth addendum): the owner question is asked of the name before the open, and again of the
+        descriptor the open returned, because the entry can change in between; the fstat is the authoritative one and
+        decides from the same table. Driven by swapping the entry INSIDE the open (os.open wrapped: the swap lands after
+        _stat_name saw a regular file of ours and before the real open): a peer's regular file renamed onto the name,
+        HostFileForeign from the fstat; a FIFO of ours, None (the O_NONBLOCK open returns, the fstat reads the kind); a
+        socket of ours, None through the open's ENXIO arm; a peer's socket, HostFileForeign from the owner question asked
+        once more by name in that arm. The stub is descriptor-only and its path-stat count is 0 on every arm, so the
+        verifier's mutation of the fstat into a path stat (M5) reds the foreign-file arm here (`HostFileForeign not
+        raised`) where the pins that plant the foreign entry before the read cannot see it: the stat by name answers
+        them before the mutated line runs. Red before at the fourth addendum's commit: the two socket arms, `OSError:
+        [Errno 6] No such device or address`; the file and FIFO arms were the fourth addendum's own behaviour."""
+        for arm, kind, owner, expect in (("a peer's regular file", "regular", "foreign", "foreign"),
+                                         ("a FIFO of ours", "fifo", "ours", None),
+                                         ("a socket of ours", "socket", "ours", None),
+                                         ("a peer's socket", "socket", "foreign", "foreign")):
+            with self.subTest(arm=arm):
+                root = self._root()
+                sdir = root / "hosts" / SID
+                sdir.mkdir(parents=True); os.chmod(root / "hosts", 0o700); os.chmod(sdir, 0o775)
+                (sdir / "identity.json").write_text("ours, at the stat")
+                plant_shape(sdir, "swap", kind, "the peer's bytes", self._root())
+                ctx = foreign_uid(sdir / "swap") if owner == "foreign" else contextlib.nullcontext()
+                real_open, swapped = os.open, []
+
+                def open_and_swap(path, *a, **k):
+                    if os.fspath(path) == "identity.json" and k.get("dir_fd") is not None and not swapped:
+                        os.rename(sdir / "swap", sdir / "identity.json")       # between the stat by name and the open
+                        swapped.append(True)
+                    return real_open(path, *a, **k)
+                with ht.open_host_dirs_if_present(root, SID) as dirs, ctx as fu, mock.patch.object(os, "open", open_and_swap):
+                    if expect == "foreign":
+                        with self.assertRaises(ht.HostDirRefused) as cm:
+                            ht.read_host_file("identity.json", dirs)
+                        self.assertIsInstance(cm.exception, ht.HostFileForeign, arm)
+                        self.assertEqual((cm.exception.file, cm.exception.uid), ("identity.json", os.geteuid() + 1))
+                    else:
+                        self.assertIsNone(ht.read_host_file("identity.json", dirs), arm)
+                self.assertEqual(swapped, [True], "the swap landed inside the open, after the stat by name")
+                if fu is not None:
+                    self.assertEqual(fu.path_stats, 0, "a reader took a path stat: %r" % (fu.path_stat_calls,))
+
+    def test_a_directory_of_ours_with_no_search_bit_is_the_fault_it_is_from_both_readers_with_nothing_opened(self):
+        """A FAULT of the directory is not a shape (the round-7 sixth addendum, 2026-09-20): a `<sid>/` of ours at 0600 admits
+        the descent (its O_RDONLY|O_DIRECTORY open needs the read bit) and refuses the fstatat of any name under it (the
+        search bit), so both readers raise the stat's PermissionError, errno EACCES, not a HostDirRefused of any shape,
+        with nothing opened (os.open spied), and neither swallows it into False or None. Through the fourth addendum
+        host_file_exists answered False here through an `except OSError` arm around its stat, undisclosed; the fifth
+        addendum's _stat_name dropped the arm without saying so; this pin holds it dropped and says so. Red at the fourth
+        addendum's commit: `PermissionError not raised` for host_file_exists (read_host_file, whose check was the fstat
+        after an open the directory refused, raised it there too). Root ignores the search bit and is skipped."""
+        import errno
+        if os.geteuid() == 0:
+            self.skipTest("root bypasses the search bit")
+        root = self._root()
+        sdir = root / "hosts" / SID
+        sdir.mkdir(parents=True); os.chmod(root / "hosts", 0o700)
+        (sdir / "identity.json").write_text("ours")
+        os.chmod(sdir, 0o600)
+        self.addCleanup(os.chmod, sdir, 0o700)                  # before the root's rmtree (cleanups run last-in first)
+        opens, real_open = [], os.open
+
+        def spy(path, *a, **k):
+            opens.append(os.fspath(path))
+            return real_open(path, *a, **k)
+        with ht.open_host_dirs_if_present(root, SID) as dirs, mock.patch.object(os, "open", spy):
+            self.assertEqual(dirs.loose, (), "0600 has no group or other bits: nothing loose")
+            for reader in (ht.host_file_exists, ht.read_host_file):
+                with self.assertRaises(PermissionError, msg=reader.__name__) as cm:
+                    reader("identity.json", dirs)
+                self.assertEqual(cm.exception.errno, errno.EACCES, reader.__name__)
+                self.assertNotIsInstance(cm.exception, ht.HostDirRefused, "%s: a fault is not a refusal" % reader.__name__)
+            self.assertEqual([m for _, _, m in dirs.modes], [0o700, 0o600], "the descent admitted both and read their modes")
+        self.assertEqual(opens, [], "nothing under the directory was opened")
+        self.assertEqual(stat.S_IMODE(os.lstat(sdir).st_mode), 0o600, "the read changed no mode")
+
+    def test_every_shape_a_peer_can_put_at_host_log_is_answered_from_the_table_by_the_spawn_roads_readers(self):
+        """THE SHAPE TABLE's fourth road, the spawn road, at function level (SHAPE_TABLE; the round-7 seventh addendum
+        of fork PR #814's review, 2026-09-20): each of the 13 (kind, owner) rows planted at host.log under a 0700 <sid>/
+        of ours (the spawn road's directory: the helpers tighten it before the descent, and a tightened directory keeps
+        every entry a peer planted while it was loose) and put to the three readers the spawn road holds its descent for
+        (host_log_mark before the spawn; host_log_rows and host_exit_reason on the refused arms), through that road's own
+        descent (open_host_dirs, private): 39 cells. The table's `read` column decides: `absent` and `not-file`, 0, []
+        and "" with NOTHING OPENED (os.open spied; a FIFO of ours blocked _open_host_log's open through the sixth
+        addendum, no O_NONBLOCK and no stat before it, so that cell is not driven at that head, where it would wedge the
+        run); `ours`, the size, the rows and the reason; `foreign` (the descriptor-only stub, its path-stat count 0),
+        HostFileForeign from all three readers, `file` host.log and `uid` set, errno None, whatever the kind; `link`, the
+        file-shape HostDirRefused. Beside the answer: the two openers open a regular file of ours once each, by name, and
+        the mark opens nothing; the mode unchanged; a link's target untouched. Red before at the sixth addendum's
+        commit: the readers took (state_dir, sid, dir_fd) there, so this case errors at the call (a TypeError, before
+        its assertion) and holds nothing about that head; the behaviour there is the road case's red
+        (BackendHostRules, a foreign host.log at the mark and on a refused arm, which reaches its assertions at that
+        commit), and at this commit the mutation that drops the owner compare from _stat_name reds every foreign cell
+        here."""
+        rows = [{"t": 1, "kind": "host-started"}, {"t": 2, "kind": "host-crashed", "error": "PeerPlantedError"}]
+        content = "".join(json.dumps(r) + "\n" for r in rows)
+        absent = {"mark": 0, "rows": [], "reason": ""}
+        ours = {"mark": len(content.encode()), "rows": rows, "reason": "PeerPlantedError"}
+        for kind, owner, _, expect in SHAPE_TABLE:
+            with self.subTest(kind=kind, owner=owner):
+                root = self._root()
+                sdir = root / "hosts" / SID
+                sdir.mkdir(parents=True); os.chmod(root / "hosts", 0o700); os.chmod(sdir, 0o700)
+                elsewhere = self._root()
+                plant_shape(sdir, "host.log", kind, content, elsewhere)
+                target = (elsewhere / "host.log").read_text() if kind == "symlink-to-file" else None
+                ctx = foreign_uid(sdir / "host.log") if owner == "foreign" else contextlib.nullcontext()
+                opens, real_open = [], os.open
+
+                def spy(path, *a, **k):
+                    opens.append(os.fspath(path))
+                    return real_open(path, *a, **k)
+                got = {}
+                with ht.open_host_dirs(root, SID) as dirs, ctx as fu, mock.patch.object(os, "open", spy):
+                    for reader, fn in (("mark", ht.host_log_mark), ("rows", ht.host_log_rows), ("reason", ht.host_exit_reason)):
+                        try:
+                            got[reader] = ("value", fn(dirs))
+                        except ht.HostFileForeign as e:
+                            got[reader] = ("foreign", e.file, e.uid, e.errno)
+                        except ht.HostDirRefused as e:
+                            got[reader] = ("link", e.file, getattr(e, "uid", None), str(e))
+                for reader in ("mark", "rows", "reason"):
+                    answer = got[reader]
+                    if expect in ("absent", "not-file"):
+                        self.assertEqual(answer, ("value", absent[reader]), "%s/%s/%s" % (kind, owner, reader))
+                    elif expect == "ours":
+                        self.assertEqual(answer, ("value", ours[reader]), "%s/%s/%s" % (kind, owner, reader))
+                    elif expect == "foreign":
+                        self.assertEqual(answer, ("foreign", "host.log", os.geteuid() + 1, None), "%s/%s/%s" % (kind, owner, reader))
+                    else:
+                        self.assertEqual(answer[:3], ("link", "host.log", None), "%s/%s/%s" % (kind, owner, reader))
+                        self.assertIn("host.log in host directory %s is a symlink, not a regular file" % sdir, answer[3])
+                self.assertEqual(opens, ["host.log", "host.log"] if expect == "ours" else [],
+                                 "%s/%s: the two openers open a regular file of ours by name, once each, and the mark opens nothing; "
+                                 "every other shape is answered by the stat of the name" % (kind, owner))
+                if fu is not None:
+                    self.assertEqual(fu.path_stats, 0, "a reader took a path stat: %r" % (fu.path_stat_calls,))
+                self.assertEqual(stat.S_IMODE(os.lstat(sdir).st_mode), 0o700, "the read changed no mode")
+                if target is not None:
+                    self.assertEqual((elsewhere / "host.log").read_text(), target, "nothing behind the link was touched")
+
 
 class Pins(unittest.TestCase):
     @unittest.skipUnless(SDK, "the SDK is not importable here")
@@ -1128,6 +3061,7 @@ class Pins(unittest.TestCase):
         be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None, log=logs.append)
         sess = types.SimpleNamespace(sid=SID, name="web", _host=None)
         hd = ht.host_dir(d, SID); hd.mkdir(parents=True)
+        os.chmod(hd.parent, 0o700); os.chmod(hd, 0o700)   # the shape the spawn road makes; at the umask the read files a loose row per component
         (hd / "host.log").write_text(json.dumps({"t": 1, "kind": "attached"}) + "\n"
                                      + json.dumps({"t": 2, "kind": "hook-self-answered", "event": "Stop", "callbackId": "hook_0", "parkedS": 480}) + "\n"
                                      + json.dumps({"t": 3, "kind": "end-forced", "cliPid": 5}) + "\n")

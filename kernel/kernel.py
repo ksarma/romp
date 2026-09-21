@@ -2312,7 +2312,7 @@ def _thread_kind(name):
     constant names the kernel gives its threads; _THREAD_KIND_PREFIXES, the kinds spelled "<kind>:<payload>"; and the fixed
     forms), or "other" for every name outside it. A registered constant name (pusher, jobs, index, ws-send, ...) is its own
     kind; a name with the convention's separator keeps the part before it when that part is a registered prefix (sdk,
-    sdk-intr, codex, end-host, port-up, peer, romp-refused-mark); Python's default "Thread-N" and "Thread-N (target)" are
+    sdk-intr, codex, end-host, sdk-slot, port-up, peer, romp-refused-mark); Python's default "Thread-N" and "Thread-N (target)" are
     "thread", except the HTTP server's "Thread-N (process_request_thread)", which is "handler" (the target function is the
     row's own fourth frame, so the word loses nothing the row does not carry); MainThread is "main"; a default
     "ThreadPoolExecutor-K_N" is "pool"; a judge pool's worker, "judge-<tier>_N" (judge.py's _TimedPool names its workers after
@@ -2526,6 +2526,7 @@ _THREAD_KIND_PREFIXES = frozenset((  # the kinds spelled "<kind>:<payload>" (_TH
     "sdk", "sdk-intr",               # a host) never reaches the sample; peer is the postal service's, a separate process the census
     "codex", "end-host",             # walks all the same
     "port-up", "romp-refused-mark", "peer",
+    "sdk-slot",                      # the relaunch slot's waiter (sdk_backend.py _take_relaunch_slot, 2026-09-18): one per session waiting for a boot slot
 ))
 _THREAD_KIND_FIXED = frozenset(("main", "handler", "thread", "pool"))   # the words _thread_kind's fixed rules make: MainThread,
 #                                                                        the HTTP server's request threads, Python's default names
@@ -22458,10 +22459,18 @@ def _auth_avail():
     refuses it with the same reason). key = an apiKeyHelper is configured in Claude Code's settings (read,
     never run; romp holds no key: see _auth_key_present). acct = the login's display name
     (_claude_account_label), so 'Login' can say WHICH account it means. default = what a fresh session
-    would use absent an explicit pick: the remembered pick when this box can bill it, else the side that
-    exists, in BOTH directions (the user 2026-09-08: a remembered login pick on a box with no login falls
-    to the key, exactly as a remembered key pick on a helper-less box already fell to the login). The
-    reason sentences are credentials.py's, one vocabulary for every surface."""
+    would use absent an explicit pick, the rule the LAUNCH follows (round 1 of the review, 2026-09-18): the
+    machine's EXPLICIT default (sdk-defaults.json `auth` beside `authExplicit`, the Set default billing
+    submenu) when this box can bill it, else the side that exists (the helper rule), in BOTH directions (the
+    user 2026-09-08, who wanted the fall both ways: a login default on a box with no login falls to the key,
+    exactly as a key default on a helper-less box falls to the login; the value read is the explicit default
+    since round 1 of the review, 2026-09-18). A per-session pick's flag-less write preselects
+    nothing: read here and in the spawn's seed, one pick on one session preselected the picker and seeded every
+    later pick-less spawn with a pick of its own, and changing only one of the two readers would have left the
+    picker and the spawn disagreeing, so both read the explicit default. The picker's row sends its selection
+    as the create's `auth` (render.ts pickerAuthChoice), so a session created from the picker carries the
+    preselected default as a pick of its OWN, while one created with no pick follows the default. The reason
+    sentences are credentials.py's, one vocabulary for every surface."""
     key = _auth_key_present()
     d = {}
     try:
@@ -22474,13 +22483,14 @@ def _auth_avail():
     except jd._cred.CredentialError:
         managed = False                        # the settings cannot be read just now: cannot tell, so not "managed"
     # a signed-in account, or an account file that cannot be read just now (cannot tell is never "no login",
-    # review 2026-09-09: a remembered login pick must not fall to the key on a read failure)
+    # review 2026-09-09: an explicit login default must not fall to the key on a read failure)
     login_ok = (bool(_claude_account()) or _claude_account_state() == "unreadable") and not managed
     logins = _login_choices(login_ok, managed)
-    default = d.get("auth") if d.get("auth") in ("login", "key") else ("key" if key else "login")
-    # a remembered pick of a STORED login (T346) stands as "login:<id>" while that login is usable; otherwise
-    # it falls through the machine-login rules below like any remembered login pick
-    dlid = _reg_login(d) if (default == "login" and d.get("auth") == "login") else ""
+    explicit = bool(d.get("authExplicit")) and d.get("auth") in ("login", "key")   # the launch's gate (_explicit_default)
+    default = d.get("auth") if explicit else ("key" if key else "login")
+    # an explicit default of a STORED login (T346) stands as "login:<id>" while that login is usable; otherwise
+    # it falls through the machine-login rules below like any explicit login default
+    dlid = _reg_login(d) if (explicit and default == "login") else ""
     if dlid:
         stored = next((row for row in logins if row.get("id") == dlid), None)
         if stored and stored.get("available"):
@@ -22493,7 +22503,7 @@ def _auth_avail():
            "acct": _claude_account_label(), "default": default, "logins": logins,
            # T380: the default is EXPLICIT (set in the Billing flyout's Default group) or the helper rule; the
            # group marks Automatic otherwise and its sub-line says which
-           "defaultExplicit": bool(d.get("authExplicit")) and d.get("auth") in ("login", "key")}
+           "defaultExplicit": explicit}
     if not login_ok:
         out["loginWhy"] = jd._cred.WHY_MANAGED_HELPER if managed else jd._cred.WHY_NO_LOGIN
     if not key:
@@ -22503,9 +22513,10 @@ def _auth_avail():
 
 def _auth_avail_status():
     """_auth_avail's availability half for the per-session status payload: {login, key, loginWhy?, keyWhy?,
-    default} — no acct (authAcct rides beside it); `default` is the machine's seed, carried since T380 so the
+    default}, with no acct (authAcct rides beside it); `default` is the machine default, carried since T380 so the
     tab menu's Billing flyout can mark it in its "Default for this machine" group (a live session has its own
-    pick; the default is what a NEW one, or one with no pick, launches on). Computed ONCE per
+    pick; the default is what a NEW one, or one with no pick, launches on: the explicit default when this box can
+    bill it, else the helper rule, the same read _auth_avail makes for the new-session picker). Computed ONCE per
     pusher cycle (the cycle's _live_scope memo, the same idiom as its liveness snapshot): build_session asks
     for it per session per push, and each answer re-read sdk-defaults.json and both operator settings files
     (review 2026-09-09). Outside a cycle (a connect push on a handler thread, a test) it computes fresh."""
@@ -23882,7 +23893,9 @@ def _drive(msg, client):
         # the machine's DEFAULT billing (T380, the user 2026-09-12): the seed every new session and every
         # session with no pick of its own launches on ("auto" = the helper rule again). Written on THIS kernel
         # (the op routes to the session's owning host, so a remote session's flyout sets that host's default);
-        # no session's own pick is touched, so nothing reconnects. LOUD on refusal, the same reason vocabulary as
+        # no session's own pick is written, and every session following the default whose CLI runs on the other
+        # side is asked to reconnect, as a per-session pick asks (the backend's _reconnect_default_followers, the
+        # user 2026-09-18). LOUD on refusal, the same reason vocabulary as
         # a per-session pick; a backend that keeps no machine default (Codex) is refused by name, never a raise
         # swallowed inside the drive (review). A STORED login ("login:<id>") is a machine default too since
         # 2026-09-14 (the user: the Set default billing submenu offers every billing the picks do); the backend's
@@ -24749,9 +24762,10 @@ class Sessions:
                                 "authLogin": st.get("authLogin", ""),
                                 "authLabel": st.get("authLabel", ""),
                                 "authLoginLive": st.get("authLoginLive"),   # the init's evidence of which login answered
-                                # whether `auth` is an explicit pick (picker, gear, a remembered pick) rather
-                                # than the seeded default (the fork's wire field; no UI reader since the
-                                # billing label retired for T346's ladders, a later kernel cleanup)
+                                # whether `auth` is this session's own pick (picker, gear) or the machine's EXPLICIT
+                                # default seeded at its spawn, never another session's remembered pick (since
+                                # 2026-09-18), rather than the box's unpicked rule (the fork's wire field; no UI reader
+                                # since the billing label retired for T346's ladders, a later kernel cleanup)
                                 "authPicked": bool(st.get("authPicked")),
                                 # the explicit pick this box cannot bill ("login"|"key"|""): the launch
                                 # fell to the other side, the Billing menu says so (2026-09-08)
@@ -37996,10 +38010,7 @@ def _chat_postal_relevant(ev):
 #                        d_type, and the stats made in another process by any git child a signature forks (the set
 #                        is pinned by execution in tests/test_chat_build_sig_inputs.py; a fork's wall lands on the
 #                        row of the part that forked it, its CPU on no row, since RUSAGE_THREAD excludes a child).
-#                        A strace over the harness's signatures (a review probe recorded in a review-round commit,
-#                        2026-09-19, with no command kept) found fd fstats from open(), scandir() and the pipes to git
-#                        children beside the counted path stats, every path stat in the count: a reading, not
-#                        recomputed by a test. Per signature:
+#                        Per signature:
 #                        stats / (pre + post + thread), and the same denominator for the three read counts
 #   namesReads           raw names-registry file reads inside a signature (_sdk_transcript_path, _names_parts
 #                        with no snapshot)
@@ -38059,22 +38070,35 @@ def _stat_counting_install():
     constant evaluated before this module loads (tempfile has no gate that runs: on 3.12 its copy sits in an import
     fallback that shutil's presence skips); 3.13's shutil asserts `func is os.lstat` against the current os.lstat (the
     wrapper on both sides); and 3.14's pathlib asks about utime, setxattr, chmod and chflags, not stat. What still
-    differs from the builtin, derived by running every observation a probe could name on the wrapper and on the builtin
-    captured before this module loaded (2026-09-19, on 3.12 and 3.13, which agree): the type (a Python function, not
-    builtin_function_or_method: inspect.isbuiltin False and isfunction True, repr and pydoc's header say function, dis
-    and inspect.getfile work, and the function attributes __code__, __globals__, __closure__, __defaults__,
-    __kwdefaults__, __dict__, __annotations__ and __get__ exist where __self__ and __text_signature__ do not); __get__
-    makes the wrapper a descriptor, so as a CLASS attribute it binds as a method and hands the instance in as `path`,
-    which is why the accessor and the globber above receive a staticmethod; inspect.signature with follow_wrapped=False
-    and inspect.getfullargspec read (path, *a, **kw) (signature's default follows __wrapped__ and reads the builtin's);
-    the TypeError text on a missing argument (a wrong keyword or an extra positional argument raises the builtin's own
-    text, since the wrapper passes both through); one more frame on a traceback through it, a Python call event to a
-    tracer or profiler, and one more level of recursion depth; mock's autospec builds a function-shaped mock where the
-    builtin's is a MagicMock; pickling by name resolves to posix.stat, the wrapper (the builtin kept in __wrapped__ no
-    longer pickles, since posix.stat names another object); the capability sets are one member larger wherever the
-    builtin was a member; and identity, since `is` against a reference taken before this module loaded is False.
-    functools.wraps carries __name__, __qualname__, __module__, __doc__ and sets __wrapped__ to the builtin, so those
-    five read the same."""
+    differs from the builtin, derived by running the same observations on the wrapper and on the builtin it holds in
+    __wrapped__, both in one process (the list is checked by tests/test_kernel_delta_send.py's WrapperDifferential test,
+    which runs the differential on the interpreter under test and reds on a difference this docstring does not name; the
+    set is not constant over the interpreters the suite runs, since 3.10 and 3.11 lack __type_params__ and __annotate__
+    arrives with 3.14): the type (a Python function, not builtin_function_or_method: inspect.isbuiltin False and
+    isfunction True, repr and pydoc's header say function, dis and inspect.getfile work, and the function attributes
+    __code__, __globals__, __closure__, __defaults__, __kwdefaults__, __dict__, __annotations__, __builtins__, __get__
+    and, from 3.12, __type_params__ and, from 3.14, __annotate__ exist where __self__ and __text_signature__ do not, so
+    vars() and dir() read more on the wrapper, vars() raising TypeError on the builtin); the wrapper is mutable (an
+    attribute can be set on it and __name__ reassigned, where the builtin
+    raises AttributeError); sys.getsizeof reads larger, and gc.get_referents reaches its code, its globals (this
+    module's namespace, so any holder of os.stat keeps this module reachable) and its closure, where the builtin's
+    referents are the posix module and its name; __get__ makes the wrapper a descriptor, so as a CLASS attribute it
+    binds as a method and hands the instance in as `path`, which is why the accessor and the globber above receive a
+    staticmethod; inspect.signature with follow_wrapped=False and inspect.getfullargspec read (path, *a, **kw), and
+    Signature.bind puts a keyword into kw (signature's default follows __wrapped__ and reads the builtin's); the
+    TypeError text on a missing argument and on a path given both by position and by name (the wrapper's own "got
+    multiple values for argument 'path'"; a wrong keyword or an extra positional argument raises the builtin's own text,
+    since the wrapper passes both through); one more frame on a traceback through it, a Python call event to a tracer or
+    profiler, and one more level of recursion depth; mock's autospec builds a function-shaped mock where the builtin's
+    is a MagicMock; pickling by name resolves to posix.stat, the wrapper (the builtin kept in __wrapped__ no longer
+    pickles, since posix.stat names another object), the same name unpickles in a process that never loaded this module
+    to the uncounted builtin, so a pickle handed to a spawn-method child names the builtin there unless that child
+    loaded this module first, and __reduce__ inverts the direction (the builtin's returns its name, the wrapper's raises
+    TypeError); each capability set holds the wrapper beside every builtin it held (one more member where one builtin
+    was a member, two where both were, supports_dir_fd from 3.13); and identity, since `is` against a reference taken
+    before this module loaded is False. functools.wraps carries __name__, __qualname__, __module__ and __doc__, so
+    those four read the same; __wrapped__, which wraps sets, and __annotations__, which the builtin lacks, are
+    differences, present on the wrapper alone."""
     tl = getattr(os.stat, "_romp_sig_counting", None)
     if tl is not None:
         return tl
@@ -44359,8 +44383,9 @@ def build_session(sid, now, live_map=None, path_override=None, tail_cap_t=None, 
                   # renders it when it disagrees with the intent above (a key found via apiKeyHelper
                   # bills the key while `auth` still reads login; the user 2026-08-15)
                   "authLive": tm.get("authLive", ""),
-                  # whether `auth` above is an EXPLICIT pick (picker, gear, a remembered pick) rather than
-                  # the box default: the Billing row words a disagreement as "picked, but the CLI
+                  # whether `auth` above is this session's own pick (picker, gear) or the machine's EXPLICIT default
+                  # seeded at its spawn, never another session's remembered pick (since 2026-09-18), rather than
+                  # the box's unpicked rule: the Billing row words a disagreement as "picked, but the CLI
                   # reports" only for a pick; an unpicked session shows the CLI's side plainly
                   "authPicked": bool(tm.get("authPicked")),
                   # whether this machine offers BOTH choices. No longer a gate (the user 2026-09-08: the
@@ -48499,7 +48524,8 @@ def _claude_login_display():
 
 
 def _reg_login(d):
-    """The stored login a reg or the remembered defaults name under `authLogin`, "" when none or junk."""
+    """The stored login a reg or sdk-defaults.json (the explicit default's id beside `auth` login, or the last
+    pick's record) names under `authLogin`, "" when none or junk."""
     v = (d or {}).get("authLogin") if isinstance(d, dict) else None
     return v if isinstance(v, str) and lg.ID_RE.match(v) else ""
 
@@ -55398,6 +55424,8 @@ def _delta_keyer(kind):
             if not isinstance(it, dict):
                 return None
             v = it.get(field)
+            if v is not None and not isinstance(v, str):   # a key field the two languages spell apart (str(1.0) "1.0", String(1.0) "1"): refused at the source, so _delta_parts sends the slot whole for every receiver (2026-09-19)
+                raise ValueError("%s key field %r is a %s, not a str" % (kind, field, type(v).__name__))
             return None if v is None or v == "" else prefix + str(v)   # "" would spell a lane's bare-prefix marker
         return key
     if kind.startswith("bykeys:"):
@@ -55830,8 +55858,15 @@ def _send_chat(c, m, ms, change_from, led_changed):
 # now gets a {type:"feedDelta"} instead: the cards that changed (by itemId), the itemIds that left, the same
 # for ledgers (by sid), and the small top-level fields whole when any of them changed. Nothing changed →
 # nothing sent, exactly as before. A client that has not announced, or has not yet received a full frame on
-# this socket, gets the full {type:"feed"} frame — the legacy path, kept for every consumer that reads it
-# (the VS Code extension's pipes, federation's remote sockets, older bundles). Full frames
+# this socket, gets the full {type:"feed"} frame: the legacy path, kept for the consumers that dial without
+# ?delta=1 too (a bundle before the cap, its local socket; a relay dialed by a dashboard bundle before 2026-09-15;
+# the VS Code extension before 2026-09-16), with its 60 s repost of the unchanged frame. Federation's remote
+# sockets announce the cap since 2026-09-18 (federation.ts REMOTE_DIAL_CAPS; the relay forwards the dial's query
+# whole, so the cap is read at accept like a page's). A client that dials ?delta=1 and no cap is served through the
+# view-delta SLOT path instead (_send_slot: a keyed full frame, then patches; a clock-only patch of about 100 bytes
+# on an idle board), not this path or its repost: the VS Code extension's pipes (client=ext&delta=1 since
+# 2026-09-16, reassembled by their own ViewDeltas) and a relay dialed by a dashboard bundle from 2026-09-15 to
+# 2026-09-18. Full frames
 # still carry each card's `trgb`; deltas never do (an older bundle reads it, a delta client colours from `t`).
 #
 # The parts below are computed ONCE per build and shared by every client (the 2026-08-10 CPU discipline):
@@ -56704,7 +56739,9 @@ def _send_feed_now(c):
     actually goes out: a frame the per-client dedup swallowed changes nothing the client holds.
 
     Two delta protocols meet here as in _push. A page that announced `?delta=1` but not FEED_DELTA_CAP (a
-    pre-2026-09-05 Outline tab — the page announces the cap since then — or any ?delta=1 page without it)
+    pre-2026-09-05 Outline tab, since the page announces the cap; any ?delta=1 page without it; the VS Code
+    extension's pipes, client=ext&delta=1 since 2026-09-16; a relay dialed by a dashboard bundle before
+    federation.ts announced the cap on its remote dial, 2026-09-18)
     takes the view-delta slot path, so it is served THROUGH _send_slot: the frame goes out
     keyed and becomes the slot's held base (dstate["feed"]), and the connect push that follows it (_push_one,
     for the ledgers only that push attaches) finds the base and sends a delta. Served through _send_client
@@ -77245,8 +77282,10 @@ class Handler(BaseHTTPRequestHandler):
                     # missing, so the old check took it as a yes and created a session that could never
                     # run — silently, which is the whole failure (the user 2026-07-28).
                     if _sdk_ready():
-                        # auth ('login'|'key') is the picker's per-session billing pick; anything else
-                        # (older clients, no pick) means the remembered/ambient default (spawn's seed).
+                        # auth ('login'|'key'|'login:<id>') is the picker's per-session billing pick; anything else
+                        # (older clients, no pick) means the machine default: the explicit one, which spawn seeds,
+                        # else the helper rule the session follows (a remembered per-session pick seeds nothing
+                        # since 2026-09-18).
                         a = msg.get("auth")
                         # the picker's Tags row (prefilled from the active tab, editable) rides `tags`;
                         # `parent` is accepted for API symmetry with /new — applied before the first
@@ -77702,9 +77741,13 @@ class Handler(BaseHTTPRequestHandler):
         # Waiting on you pages — see _shim's `caps`); READY_GATE_CAP is the hold below. Announced on the URL
         # rather than in a first message because it has to be known before the first frame (the `ready`-time
         # frame is the delta stream's base) and it has to survive every reconnect without the bundle
-        # re-announcing. Anything that does not announce — the VS Code extension's pipes (its Outline pipe
-        # among them), federation's remote sockets, an older bundle — keeps receiving the full {type:"feed"}
-        # frame it always did.
+        # re-announcing. A client that announces nothing and dials no ?delta=1 keeps receiving the full {type:"feed"}
+        # frame it always did (a bundle before the cap; a relay dialed by a dashboard bundle before 2026-09-15; the
+        # VS Code extension before 2026-09-16); one that dials ?delta=1 without the cap is served the feed as
+        # view-delta slot patches instead (_send_slot): the VS Code extension's pipes (client=ext&delta=1 since
+        # 2026-09-16, its Outline pipe among them, reassembled by their own ViewDeltas) and a relay dialed by a
+        # dashboard bundle from 2026-09-15 to 2026-09-18. Federation's remote sockets announce it since 2026-09-18
+        # (federation.ts REMOTE_DIAL_CAPS; the relay forwards the dial's query whole, so it is read here like a page's).
         caps = (q.get("caps") or [""])[0]
         reconnect = (q.get("reconnect") or [""])[0] == "1"   # the shim's own statement: this page opened a socket before and its bundle has said ready, with no ready waiting in its queue
         skeleton = (q.get("skeleton") or [""])[0] == "1" and app == "chat"   # the shell's statement (the chat split, 2026-09-11): a later column, a VIEW of the one session its active hint names; a chat socket's alone (round two of PR 1661: the term is meaningless for a feed or a timeline client)
