@@ -147,19 +147,25 @@ def _git(*args):
 def added_lines(diff):
     """{file: [(line number in the new side, line)]} for every line a unified diff with no context lines adds; a deleted or a
     binary file adds none, a renamed file's lines are under its new path, and a removed line moves the new side's numbering
-    not at all. The header of a file is the `+++` line after its `---` line, so an added line that begins with two plus signs
-    is a line and not a header."""
-    out, rel, ln, after_old = {}, None, 0, False
+    not at all. A file's header runs from its `diff --git` line to its first hunk header, and its path is the `+++` line
+    inside that header (`/dev/null` for a deleted file); a hunk's content lines begin with a sign, so no content line opens a
+    header, and an added line beginning with two plus signs, even one directly after a removed line beginning with two minus
+    signs, is a line and not a header (the author's fixer pass after the maintainer's round 6, guard-2: the reader had taken any
+    `+++ ` line after a `--- ` line as a header, so a removed comment and an added one in a language whose comment marker is two
+    minus signs moved the hunk's later lines under a phantom path and dropped the added one)."""
+    out, rel, ln, in_header = {}, None, 0, False
     for raw in diff.split("\n"):
-        if after_old and raw.startswith("+++ "):
-            new = raw[4:]
-            rel = None if new == "/dev/null" else (new[2:] if new.startswith("b/") else new)
-            after_old = False
+        if raw.startswith("diff --git "):
+            rel, in_header = None, True
             continue
-        after_old = raw.startswith("--- ")
         m = HUNK.match(raw)
         if m:
-            ln = int(m.group(1))
+            ln, in_header = int(m.group(1)), False
+            continue
+        if in_header:
+            if raw.startswith("+++ "):
+                new = raw[4:]
+                rel = None if new == "/dev/null" else (new[2:] if new.startswith("b/") else new)
             continue
         if rel is None or not raw.startswith("+"):
             continue
@@ -241,7 +247,10 @@ class RoundLabels(unittest.TestCase):
 
     def test_the_diff_reader_numbers_added_lines_in_the_new_side(self):
         """The reader over `git diff -U0`: two files, a hunk after removed lines (the new side's numbering does not move for
-        them), a second hunk, a deleted file (nothing added), a header-shaped added line, and a renamed file under its new path."""
+        them), a second hunk, a deleted file (nothing added), a header-shaped added line, a renamed file under its new path, and a
+        removed line beginning with two minus signs directly before an added line beginning with two plus signs (a comment
+        rewritten in a language whose comment marker is two minus signs: both are content, and the hunk after them stays the
+        file's)."""
         diff = "\n".join([
             "diff --git a/x.py b/x.py", "index 1..2 100644", "--- a/x.py", "+++ b/x.py",
             "@@ -3,2 +3 @@", "-gone one", "-gone two", "+kept three",
@@ -249,9 +258,13 @@ class RoundLabels(unittest.TestCase):
             "diff --git a/d.py b/d.py", "deleted file mode 100644", "index 3..0", "--- a/d.py", "+++ /dev/null",
             "@@ -1,2 +0,0 @@", "-was", "-here",
             "diff --git a/old.md b/new.md", "similarity index 90%", "rename from old.md", "rename to new.md", "index 4..5 100644",
-            "--- a/old.md", "+++ b/new.md", "@@ -1 +1 @@", "-a", "+b", ""])
+            "--- a/old.md", "+++ b/new.md", "@@ -1 +1 @@", "-a", "+b",
+            "diff --git a/q.sql b/q.sql", "index 6..7 100644", "--- a/q.sql", "+++ b/q.sql",
+            "@@ -4 +4 @@", "--- the old comment", "+++ the new comment",
+            "@@ -9 +9 @@", "+after it", ""])
         self.assertEqual(added_lines(diff), {"x.py": [(3, "kept three"), (9, "++ a line beginning with two plus signs"), (10, "ten"), (11, "eleven")],
-                                             "new.md": [(1, "b")]})
+                                             "new.md": [(1, "b")],
+                                             "q.sql": [(4, "++ the new comment"), (9, "after it")]})
 
     def test_the_form_space(self):
         """The classifier over the shapes the branch wrote and the shapes it refuses; the probes are assembled at run time
