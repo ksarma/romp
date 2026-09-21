@@ -334,8 +334,9 @@ for (const [name, src] of BUILDERS) {
 // arrived as a backdrop click and closed the sheet with the answer (the author's pass after the maintainer's round 1,
 // composition-2; the browser legs and tests/test_reply_sheet_served.py drive the real pull in each engine). The drag is
 // known by its events: the press began on the answer box and at the click the box's inline height is not what it was at
-// the press (resize: vertical writes it as the grip moves); the record holds those two facts. It is spent by the click
-// that ends the press, and a new press starts it over. What a dismiss DOES (close with no save) is untouched: the filed
+// the press (resize: vertical writes it as the grip moves); the record holds those two facts and is the LAST press:
+// every press rewrites it, and every click an engine dispatches follows a press, so the click line only reads it (a
+// reset on the click line was dead: dropping it changed no leg). What a dismiss DOES (close with no save) is untouched: the filed
 // discard item's. Run here against shim nodes with the three lines sliced out of each builder
 for (const [name, src] of BUILDERS) {
   test(`${name}: the backdrop's click dismisses, except the click that ends a drag of the answer box's grip`, () => {
@@ -355,18 +356,24 @@ for (const [name, src] of BUILDERS) {
     // the click at the overlay (Chromium and WebKit: the common ancestor of the press and the release)
     press(input); input.style.height = "148px"; click(overlay);
     assert.equal(closed, 1, "the click that ends a grip drag is not a dismissal: the sheet stands (before the guard it closed with the answer in Chromium and WebKit)");
-    // the record is spent by that click: the next tap on the backdrop dismisses
+    // the next press rewrites the record: a tap on the backdrop after the drag dismisses
     press(overlay); click(overlay);
-    assert.equal(closed, 2, "the record is read once, by the click that ended the drag: a tap on the backdrop after it dismisses");
-    // Firefox retargets the drag's click to the textarea: not the overlay, so nothing to dismiss, and the record is spent there too
+    assert.equal(closed, 2, "the record is the last press: a tap on the backdrop after the drag dismisses");
+    // Firefox retargets the drag's click to the textarea: not the overlay, so nothing to dismiss
     press(input); input.style.height = "200px"; click(input);
     assert.equal(closed, 2, "a click on the textarea is never a dismissal");
     press(overlay); click(overlay);
-    assert.equal(closed, 3, "and the record it spent does not reach the next tap on the backdrop");
-    // a press on the box whose click never came (released over another frame, no click in this document): the next press starts over
+    assert.equal(closed, 3, "and the drag's record does not reach the next tap on the backdrop");
+    // a press on the box whose click never came (released over another frame, no click in this document): the next press rewrites it
     press(input); input.style.height = "230px";
     press(overlay); click(overlay);
-    assert.equal(closed, 4, "a new press starts the record over: a press on the box without a click leaves nothing behind for the next tap");
+    assert.equal(closed, 4, "a new press rewrites the record: a press on the box without a click leaves nothing behind for the next tap");
+    // a press that began on the box and did not change its height (the caret placed, a selection dragged out of the box): not a
+    // drag of the grip, so its click at the overlay dismisses as before; widening the rule to any press that began on the box is
+    // the maintainer's call (the author's pass after the maintainer's round 1, an observation for round 2), so this pins the
+    // rule as answered and not more
+    press(input); click(overlay);
+    assert.equal(closed, 5, "a press on the box that did not resize it is not a drag of the grip: its click at the overlay dismisses, as the rule is scoped");
   });
 }
 

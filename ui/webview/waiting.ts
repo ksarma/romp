@@ -360,13 +360,14 @@ function showReply(sid: string, todoId: string, todoText: string, todoDetail = "
   // box's bottom edge (the box at its cap cannot grow with the answer box, so the pointer leaves it) arrived as a backdrop
   // click and closed the sheet with the answer (the author's pass after the maintainer's round 1, composition-2). The
   // drag is known by its events, never a timer: the press began on the answer box, and at the click the box's inline
-  // height is not what it was at the press (resize: vertical writes it as the grip moves). The record is read once, by the
-  // click that ends the press, and a new press starts it over; Firefox retargets that click to the textarea, so there the
-  // road never reached this handler. What a dismiss DOES (close with no save) is the filed discard item's, untouched here.
-  // reply-sheet-keyboard.test.ts executes these three lines out of each builder and pins the two builders' equal
-  const press = { on: false, at: "" };   // the last press: whether it began on the answer box, and the box's inline height then; spent by the click that ends it
+  // height is not what it was at the press (resize: vertical writes it as the grip moves). The record is the LAST press:
+  // every press rewrites it, and every click an engine dispatches follows a press, so the click line only reads it (a
+  // reset there was dead: a mutation dropping it changed no leg). Firefox retargets that click to the textarea, so there
+  // the road never reached this handler. What a dismiss DOES (close with no save) is the filed discard item's, untouched
+  // here. reply-sheet-keyboard.test.ts executes these three lines out of each builder and pins the two builders' equal
+  const press = { on: false, at: "" };   // the last press: whether it began on the answer box, and the box's inline height then
   overlay.addEventListener("pointerdown", (e) => { press.on = e.target === input; press.at = input.style.height; });
-  overlay.addEventListener("click", (e) => { const drag = press.on && input.style.height !== press.at; press.on = false; if (e.target === overlay && !drag) close(); });
+  overlay.addEventListener("click", (e) => { if (e.target === overlay && !(press.on && input.style.height !== press.at)) close(); });
   box.append(h, d); if (chip) box.appendChild(chip); if (lchip) box.appendChild(lchip); if (dd) box.appendChild(dd); box.append(input, actions);
   actions.append(cancel, send);
   overlay.appendChild(box);
