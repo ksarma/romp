@@ -333,6 +333,7 @@ line	tests/test_return_from_background_served.py	    # tests-1 (review round 3, 
 line	tests/test_return_from_background_served.py	    # ui/webview/skeleton-tabs-wiring.test.ts. The ACTIVE tab is the transcript-less `docs` (review round 3, extra9-1), chosen to leave
 line	tests/test_review_round_labels.py	        # the rebind case (the reviewer's round-6 finding extra9-1): raising REVIEWER_ROUNDS as the docstring directs keeps the
 line	tests/test_review_round_labels.py	"review round 2 closeout" is pass 2, the closeout before the reviewer's round 2. A "verdict 1" beside such a label
+line	tests/test_review_round_labels.py	REVIEWER_ROUNDS = 6   # the highest-numbered ruling the reviewer has filed on the lazy-panes PR when this was written: the reviewer's round 6, 2026-09-21
 line	tests/test_review_round_labels.py	ROUNDS VERSUS PASSES, per form (the PR body's convention paragraph is the other copy of this gloss). "review round 1"
 line	tests/test_review_round_labels.py	on pass 3 whose lift fix landed alone ahead of the reviewer's round 3, and "verdict 1" is that report's numbering, not
 line	tests/test_review_round_labels.py	the reviewer's round 2, pass 4 the reviewer's round 3, and the finding ids beside them are that round's fixlist's);
