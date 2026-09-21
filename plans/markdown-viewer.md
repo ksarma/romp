@@ -8169,7 +8169,7 @@ maintainer's notes). In that numbering rounds 1 to 6 are the delta rounds, each 
 file review's landing round, its fixlist carrying its own ids (fresh-N, rules-N, regression-N, tests-N and extra-N with a
 digit before the hyphen), none of the author's family; round 8 read the whole PR again at the head that carried the fixes
 for round 7 and the author's verification of them, the landing round's second read, and its fixlist shares several ids with
-round 7's (correctness-1, fresh-1, tests-1, tests-2, regression-1, extra6-1, extra7-1, extra8-1, extra8-2 and extra8-3
+round 7's (fresh-1, fresh-2, tests-1, tests-2, regression-1, extra6-1, extra7-1, extra8-1, extra8-2 and extra8-3
 stand in both), so a record cites such a finding by its round's number and never as the landing round's alone; round 9 is
 the round after it, which reads the fixes for round 8. The author's own verification after a round's fixes, by a verifier of the
 author's, is named the author's closing pass after that round, never a round of either review, and its findings carry the
@@ -8670,7 +8670,8 @@ opened from a figure, by the control and by the plain click, takes no Recent row
 reader's block, a Forward step onto the picture mints its row, and a link's open still takes its row).
 The browser legs named here skip at launch in the Test step of the job that gates a landing, which runs before that job
 installs Chromium (the gate-before-adoption section's Tests paragraph states that job's shape and
-tools/markdown-viewer-plan-gate-adopt.test.mjs holds it), so none of them runs where landing is gated; what gates the
+tools/markdown-viewer-plan-gate-adopt.test.mjs holds it), so none of their browser scenarios runs where landing is gated
+(a source pin in a leg runs there without a browser); what gates the
 follow-on there is its source pins, the node modules beside each leg in that Test step, and the pytest modules it added
 or re-aimed, tests/test_guide_trail_chords_and_figure_button.py and tests/test_guide_files_failures.py, in the pytest job,
 and the road that runs the legs with a browser where landing is gated is the shared roster of browser legs,
@@ -8678,10 +8679,11 @@ vscode-extension/ci-browser-legs.txt, one compiled bundle path per line, read by
 install, a change of its own that this branch does not carry, so this follow-on's legs join the roster once both are in
 the tree; tools/markdown-viewer-plan-linknav.test.mjs derives the legs from the tree, as the browser modules whose own
 text names this follow-on, holds each to a launch through real-viewer-leg.ts's inBrowser, the shared helper a roster's
-switch reaches, and reads the tree for the roster, its exclusions file (vscode-extension/ci-browser-legs-excluded.txt)
-and that step: where the tree carries none of the three it holds this sentence, where it carries all three it holds every
-leg to a roster line outside the exclusions and the roster's own tree test to exist, and a tree with some of the three it
-refuses, naming them (the file review's round 8, extra8-2: the legs were the feature's evidence and none of them ran where
+switch reaches, and reads the tree for the roster, its exclusions file (vscode-extension/ci-browser-legs-excluded.txt),
+that step in the vscode-extension job and the switch (ROMP_BROWSER_LEGS_REQUIRE, reached by inBrowser through
+ui/webview/browser-legs-require.ts): where the tree carries none of the four it holds this sentence, where it carries all
+four it holds every leg to a roster line outside the exclusions and the roster's own tree test to exist, and a tree with
+some of the four it refuses, naming them (the file review's round 8, extra8-2: the legs were the feature's evidence and none of them ran where
 landing is gated, the gating run's log showing every browser scenario of theirs as SKIP). Sixteen standing suites were re-aimed, not undone:
 ui/webview/file-view-text-size.test.ts (its real-module bar leg at 380, 420, 480 and 600 px in the chat and feed modals
 reads the group hidden on a fresh open and, once a link is followed, measures the two glyphs among the actions, case 8), ui/webview/file-view.test.ts and ui/webview/file-view-links.test.ts
