@@ -909,7 +909,15 @@ class NamesFilePublicationsUnderTheLocks(unittest.TestCase):
     carried stale; the kernel hands its lock to the backend at construction and every backend write of the file holds
     it (_publish_name). Driven with real threads: the writer held inside write_name by thread identity, the rename
     started on a third thread and given 0.3 s (a bound on a negative, not the pin: the pin is the ORDER of the writes,
-    which the hold decides), then released. Synthetic: placeholder sid, demo names, a one-line transcript."""
+    which the hold decides), then released. Synthetic: placeholder sid, demo names, a one-line transcript.
+    THE SEVENTEENTH COMMIT (the round's own verifiers' sixth pass) brings fork under the same hold (its record write and
+    its names publish were two holds, the publish after the first, and a rename of the new sid landing between them was
+    undone on the roster under a True) and pins the source-of-truth rule as stated: the record's name and cwd where it
+    holds them, else the file's (a rename over a cwd-less record cleared the file's cwd; a move over a nameless record
+    published the sid), and the record's cwd over a names file that disagrees, the pin the non-red mutation (a rename
+    carrying the file's cwd) needed."""
+
+    CHILD = "dddddddd-1111-2222-3333-444444444444"   # the sid a fork mints; a rename of it inside the fork's window
 
     class _Live:
         def __init__(self):
@@ -1204,6 +1212,131 @@ class NamesFilePublicationsUnderTheLocks(unittest.TestCase):
         self.assertEqual(self._names(), ["web", self.new, "#112233", "#ffffff"],
                          "the record's name and the new cwd (red before the sixteenth commit: 'stale' carried from the file)")
         self.assertEqual((sb.read_reg(self.root, SID) or {}).get("cwd"), self.new)
+
+    def test_a_rename_arriving_at_a_forks_names_publish_waits_and_lands_after_it(self):
+        # THE VERIFIERS' DRIVE (FORK_AT_PUBLISH_ENTRY_RENAME_ARRIVES, the sixth pass). fork has written the child's record
+        # under _reg_lock and is at _publish_name's ENTRY, before the names lock; a rename of the child to alpha arrives
+        # (the rename door takes a raw sid with no roster check, and the backend owns a sid by its record's existence, so
+        # the sid is renameable the moment the record exists). At the sixteenth commit the publish ran after the record
+        # write's hold was released: the rename landed whole in that window (its door read the child's record, its
+        # compare-and-swap passed on 'child', it wrote the record and the names file and answered True) and the fork's
+        # publish then wrote 'child' over the roster: the record ('alpha', 'alpha'), the names file 'child', both callers
+        # told success, nothing logged. Now the fork's record write and its names publish are one hold, so the rename
+        # waits and lands after: every store alpha with the fork's cwd and colours riding, the fork's names write before
+        # the rename's, each under both locks. Held at the publish's ENTRY and not inside write_name: inside it the names
+        # lock already made the rename's names write wait, which is why the sixteenth commit's harness saw no window here.
+        real_wn, real_wr, real_pub, be = sb.write_name, sb.write_reg, self.be._publish_name, self.be
+        w_in, go, holder, reg_writes, names_writes, outcome = threading.Event(), threading.Event(), {}, [], [], {}
+
+        def publish(sid, *a, **k):
+            if threading.current_thread() is holder.get("w"):
+                w_in.set()
+                go.wait(10)
+            return real_pub(sid, *a, **k)
+
+        def write_name(state_dir, sid, nm, *a, **k):
+            names_writes.append((threading.current_thread().name, sid[:4], nm, be._reg_lock.locked(), self._names_locked(be)))
+            return real_wn(state_dir, sid, nm, *a, **k)
+
+        def write_reg(state_dir, sid, reg):
+            reg_writes.append((threading.current_thread().name, sid[:4], reg.get("name")))
+            return real_wr(state_dir, sid, reg)
+
+        def run(key, fn):
+            try:
+                outcome[key] = fn()
+            except BaseException as e:                            # noqa: BLE001 (the drive records whatever escapes)
+                outcome[key] = (type(e).__name__, str(e))
+        tw = holder["w"] = threading.Thread(target=run, name="writer",
+                                            args=("w", lambda: self.be.fork("child", SID, "", "#112233", "#ffffff", sid=self.CHILD)))
+        tb = threading.Thread(target=run, args=("b", lambda: self.be.rename(self.CHILD, "alpha")), name="rename-b")
+        self.be._publish_name = publish
+        child_nf = self.root / "names" / self.CHILD
+        with mock.patch.object(sb, "write_name", write_name), mock.patch.object(sb, "write_reg", write_reg):
+            tw.start()
+            self.assertTrue(w_in.wait(10), "the fork reached its names publish")
+            at_hold = ((sb.read_reg(self.root, self.CHILD) or {}).get("name"), child_nf.exists())
+            tb.start()
+            tb.join(0.3)
+            b_waiting = tb.is_alive()
+            go.set()
+            tw.join(10)
+            tb.join(10)
+        self.assertFalse(tw.is_alive() or tb.is_alive(), "both returned")
+        self.assertEqual(at_hold, ("child", False), "the fork's record is on disk; its names entry is not yet published")
+        self.assertEqual((outcome.get("w"), outcome.get("b")), (self.CHILD, True),
+                         "the fork returned its sid and the rename was told applied: %r" % (outcome,))
+        reg = sb.read_reg(self.root, self.CHILD)
+        names = child_nf.read_text().rstrip("\n").split("\t")
+        self.assertEqual((reg.get("name"), reg.get("renameNote"), names), ("alpha", "alpha", ["alpha", self.cwd, "#112233", "#ffffff"]),
+                         "the later rename stands on the record AND the roster, the fork's cwd and colours riding (red before the "
+                         "seventeenth commit: the roster read 'child' under the rename's True)")
+        self.assertTrue(b_waiting, "the rename had not returned while the fork held the lock (red before the seventeenth "
+                                   "commit: it landed whole inside the fork's window)")
+        self.assertEqual(reg_writes, [("writer", "dddd", "child"), ("rename-b", "dddd", "alpha")],
+                         "the fork's record write, then the rename's: %r" % (reg_writes,))
+        self.assertEqual([(t, n) for t, _s, n, _r, _nl in names_writes], [("writer", "child"), ("rename-b", "alpha")],
+                         "the fork's names write landed before the rename's began: %r" % (names_writes,))
+        self.assertEqual([(r, nl) for _t, _s, _n, r, nl in names_writes], [(True, True), (True, True)],
+                         "each names write made with _reg_lock and the names lock held: %r" % (names_writes,))
+        self.assertEqual([m for m in self.logs if "rename" in m], [], "nothing lost, nothing to log: %r" % (self.logs,))
+
+    def test_a_move_over_a_record_with_no_name_carries_the_files_name(self):
+        # F16-2 (the sixth pass), a shape the sixteenth commit changed: _finish_move publishes the record's name, and over
+        # a record that HAS none it put the sid in for it. Two records with no name: the file removed before the finish
+        # (a hand outside the kernel between move()'s door, which refuses an absent record, and the finish;
+        # _update_reg_dropping recreates the sid plus the cwd and movedFrom) and a record that reads with no name key (the
+        # shape _update_reg's absent-record recreation mints). Until the seventeenth commit the roster read the sid over
+        # the file's 'web' with the new cwd, the move's caller told success and nothing said. Now a record with no name
+        # passes None and the file's own name is carried with the new cwd: the record is the source of truth where it
+        # holds a value, never the source of a clear. The recreation itself stays silent, as every record RMW's is.
+        for label, prepare in (("absent", lambda: sb._reg_path(self.root, SID).unlink()),
+                               ("nameless", lambda: sb.write_reg(self.root, SID, {"sid": SID, "cwd": self.cwd, "lastSid": SID}))):
+            with self.subTest(record=label):
+                self.nf.write_text("web\t%s\t#112233\t#ffffff\n" % self.cwd)
+                prepare()
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    self.be._finish_move(None, SID, self.cwd, self.new)
+                reg = sb.read_reg(self.root, SID) or {}
+                self.assertEqual(self._names(), ["web", self.new, "#112233", "#ffffff"],
+                                 "the file's own name with the new cwd (red before the seventeenth commit: the sid stood in for the name)")
+                self.assertEqual((reg.get("cwd"), "name" in reg, (reg.get("movedFrom") or {}).get("cwd")), (self.new, False, self.cwd),
+                                 "the record carries the move and no name: %r" % (reg,))
+                self.assertEqual(err.getvalue(), "", "no unreadable line: the record was absent or nameless, not unreadable")
+                self.assertEqual(len([m for m in self.logs if "moved" in m]), 1, "the move's own line: %r" % (self.logs,))
+                del self.logs[:]
+
+    def test_a_rename_over_a_record_without_a_cwd_carries_the_files_cwd(self):
+        # F16-3 (the sixth pass), a shape the sixteenth commit changed: rename's names write takes the cwd from the record
+        # as its compare-and-swap read it, and over a record with no `cwd` key (the absent-record recreations of
+        # _update_reg and _update_reg_derived mint the sid plus the fields they write; spawn, fork and resume always set
+        # one) it passed an empty string, write_name's explicit clear, so the names file lost the cwd it held under the
+        # rename's True with nothing logged. Now a record with no cwd passes None and the file's cwd is carried.
+        sb.write_reg(self.root, SID, {"sid": SID, "name": "web", "lastSid": SID})
+        self.assertTrue(self.be.rename(SID, "alpha"))
+        self.assertEqual(self._names(), ["alpha", self.cwd, "#112233", "#ffffff"],
+                         "the file's cwd carried (red before the seventeenth commit: cleared to an empty string)")
+        self.assertEqual(((sb.read_reg(self.root, SID) or {}).get("name"), self.live.name), ("alpha", "alpha"))
+        self.assertEqual([m for m in self.logs if "rename" in m], [], "nothing lost, nothing to log: %r" % (self.logs,))
+
+    def test_a_rename_and_a_promote_publish_the_records_cwd_over_the_files(self):
+        # THE SOURCE OF TRUTH FOR THE CWD, by execution (F16-4, the sixth pass: the sixteenth commit's pins all had the
+        # record and the file agreeing on the cwd, so a rename publishing the FILE's cwd, or a promote passing none,
+        # stayed green under every one of them). The rule as stated and pinned: the record's cwd where the record holds
+        # one (this test), else the file's (the test above). A rename over a names file whose cwd is stale against the
+        # record's publishes the record's; a promote of a thread, which has no names file, publishes the record's cwd
+        # (nothing on the file to carry: a publish passing None would leave the roster's cwd empty).
+        sb.write_reg(self.root, SID, {"sid": SID, "name": "web", "cwd": self.new, "lastSid": SID})   # the file still reads the old cwd
+        self.assertTrue(self.be.rename(SID, "alpha"))
+        self.assertEqual(self._names(), ["alpha", self.new, "#112233", "#ffffff"],
+                         "the record's cwd over the file's stale one (a rename carrying the file's cwd leaves the old one here)")
+        self.nf.unlink()                                          # a thread has no names file
+        sb.write_reg(self.root, SID, {"sid": SID, "name": "web", "cwd": self.cwd, "lastSid": SID, "threadOf": self.live.thread_of})
+        self.assertTrue(self.be.promote_thread(SID, "promoted", "#445566", "#000000"))
+        self.assertEqual(self._names(), ["promoted", self.cwd, "#445566", "#000000"],
+                         "the record's cwd on the breakout's row (a promote passing no cwd leaves it empty)")
+        self.assertEqual([m for m in self.logs if "rename" in m], [], "nothing lost, nothing to log: %r" % (self.logs,))
 
     def test_the_constructor_wires_the_names_lock_the_kernel_hands_it(self):
         # the wiring, by execution: a backend built with names_lock=<lock> holds THAT lock at its names write

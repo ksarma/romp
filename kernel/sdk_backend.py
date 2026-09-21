@@ -17032,12 +17032,26 @@ class SdkBackend:
             if env:
                 reg["env"] = env   # per-session env inherits like model/auth — it is that
                 #   conversation, continued elsewhere (a copy: the two regs diverge independently)
-        self._write_reg_locked(sid, reg)
-        # the names/ entry LAST — it is the discoverability trigger (discover() iterates names/), and
-        # everything above must exist before any judge pass can see the session. A comment thread never
-        # writes it: promote_thread() does, after the kernel seeds the judge stores.
-        if not thread_of:
-            self._publish_name(sid, name, cwd, bg, fg)
+        # THE RECORD WRITE AND THE NAMES WRITE ARE ONE HOLD OF _reg_lock (fork PR #813, round 6 of the review, seventeenth
+        # commit, 2026-09-21; the round's own verifiers' sixth pass): until this commit the record went in under the lock
+        # and the names entry was published after the hold was released, and a rename of the new sid landing in that
+        # window (the rename door takes a raw sid with no roster check, and the backend owns a sid by its record's
+        # existence, so the sid is renameable the moment the record exists: the rename's door read this record, its
+        # compare-and-swap passed, it wrote the record and the names file and answered True) was written over on the
+        # names file by this fork's late publish, both callers told success, nothing logged, the record holding the
+        # rename's name and the roster this fork's (the verifiers' drive). The sixteenth commit's table called this site
+        # creation, on the names file's absence; the record precedes the names write, and the record is what makes the sid
+        # a rename's target. Under one hold a rename whose door read this record waits until the names entry has been
+        # published and lands after it: promote_thread's shape, with write_reg called directly (the lock is not
+        # re-entrant). spawn stays as it is: its names entry precedes its record, so a rename inside its window finds no
+        # record and refuses, and one after its record write finds the names entry already published.
+        with self._reg_lock:
+            write_reg(self.state_dir, sid, reg)
+            # the names/ entry LAST: it is the discoverability trigger (discover() iterates names/), and
+            # everything above must exist before any judge pass can see the session. A comment thread never
+            # writes it: promote_thread() does, after the kernel seeds the judge stores.
+            if not thread_of:
+                self._publish_name(sid, name, cwd, bg, fg)
         append_state(self.state_dir, sid, "waiting")
         self._poke()
         return sid
@@ -17063,7 +17077,11 @@ class SdkBackend:
         the live name by this promote's late writes, both callers told success, nothing logged, and the record (the
         store a restart applies) disagreed with the roster every listing reads (the verifiers' drive). Under the hold a
         rename whose door read this record waits, and lands after this promote has published on every store. The
-        colour is picked before the hold (a palette read, no store)."""
+        colour is picked before the hold (a palette read, no store). The names write carries the record's cwd where the
+        record has one and passes None where it has none, so write_name carries the file's (fork PR #813, round 6 of the
+        review, seventeenth commit, 2026-09-21; the round's own verifiers' sixth pass; the rule rename and _finish_move
+        follow: the record is the source of truth for a field where it holds one and never the source of a clear; a
+        thread has no names file, so the carried value is the empty string there either way)."""
         if not bg:
             bg, fg = pick_identity_color(sid, self.state_dir)
         with self._reg_lock:                       # the threadOf pop is a listing-visibility flip
@@ -17073,7 +17091,7 @@ class SdkBackend:
             reg.pop("threadOf", None)
             reg["name"] = name
             write_reg(self.state_dir, sid, reg)
-            self._publish_name(sid, name, str(reg.get("cwd") or ""), bg, fg)
+            self._publish_name(sid, name, reg.get("cwd") or None, bg, fg)
             s = self.sessions.get(sid)
             if s:
                 s.name = name
@@ -18628,6 +18646,14 @@ class SdkBackend:
         # emoji from the file at the write, and the write runs under the names lock (_publish_name) that every one of
         # those writers holds across its own read and publish; residuals 4 and 5 in _revert_rename_record's docstring
         # are closed by that.
+        # THE RECORD'S CWD WHERE IT HAS ONE, ELSE THE FILE'S (fork PR #813, round 6 of the review, seventeenth commit,
+        # 2026-09-21; the round's own verifiers' sixth pass): a record with no `cwd` key (the absent-record recreations of
+        # _update_reg and _update_reg_derived mint the sid plus the fields they write; spawn, fork and resume always set a
+        # cwd) passes None, so write_name carries the file's cwd, where the sixteenth commit passed an empty string, the
+        # explicit clear, and the names file lost the cwd it held under the rename's True with nothing logged (the
+        # verifiers' drive: the names line read alpha with an empty cwd). The record is the source of truth for a field
+        # where it holds one, and never the source of a clear; the pin holds both halves (a stale file cwd under a record
+        # that has one reads the record's; a record with none leaves the file's).
         refusal = failure = comp = None
         with self._reg_lock:
             verdict, replaced, row = self._update_reg_if_holds(sid, {"name": reg.get("name")}, fields, held=True)
@@ -18662,7 +18688,7 @@ class SdkBackend:
                 # then passed on the name it wanted); the compensation stands down and logs that, instead of putting
                 # the door-time name back over a landed rename under a false success.
                 try:
-                    self._publish_name(sid, new_name, str(row.get("cwd") or ""))
+                    self._publish_name(sid, new_name, row.get("cwd") or None)
                 except BaseException as exc:                         # noqa: BLE001 (re-raised below, outside the hold)
                     failure = exc
                     try:
@@ -18882,13 +18908,20 @@ class SdkBackend:
         (the verifiers' drive). Now a rename whose door read this record waits for the hold, and the names file reads
         the record's name and the new cwd when the hold is released. A record that will not read at the write is
         skipped and said (_update_reg_dropping's stderr line, the writers' one rule); the names file then carries its
-        own name with the new cwd, the fact the CLI's ok established, under the same locks."""
+        own name with the new cwd, the fact the CLI's ok established, under the same locks. The name is the record's
+        where the record HAS one (fork PR #813, round 6 of the review, seventeenth commit, 2026-09-21; the round's own
+        verifiers' sixth pass): a record recreated at this write from nothing (the file gone between move()'s door, which
+        refuses an absent record, and this finish: a hand outside the kernel, since nothing in the kernel unlinks one;
+        _update_reg_dropping mints the sid plus the fields it writes) or one that reads with no name key passes None, so
+        the file's own name is carried, where the sixteenth commit put the sid in for it and the roster read the sid over
+        the file's name under the move's success with nothing said (the verifiers' drive). The recreation itself stays
+        silent, as every record RMW's is; nothing another writer landed is undone by it."""
         if s is not None:
             s.cwd = new
         with self._reg_lock:
             reg = self._update_reg_dropping(sid, ("cwdPending",), held=True, cwd=new,
                                             movedFrom={"cwd": old, "t": int(time.time())})
-            self._publish_name(sid, str(reg.get("name") or sid) if reg is not None else None, new)
+            self._publish_name(sid, (reg or {}).get("name") or None, new)
         moved = relocate_transcripts(old, new, known_fsids(self.state_dir, sid, reg or {}), log=self._log)
         self._log("sdk %s: moved %r -> %r (%d prior transcript file(s) followed)"
                   % (sid[:8], old, new, len(moved)))
@@ -19207,8 +19240,12 @@ class SdkBackend:
         (1) CLOSED for renames. Another caller whose record write of the same name had landed and whose names write had
         not yet landed at this locked read was indistinguishable from this rename's own record write and was put back
         over. No rename's record write lands during this rename's hold now, and every other writer of `name` in this
-        process (promote_thread, resume, spawn and fork) writes the record under this lock too, so no writer is between
-        its record write and its names write while this compensation reads.
+        process (promote_thread, resume, spawn and fork) writes the record under this lock too, and promote_thread's and
+        fork's names writes sit inside that hold (fork's since the seventeenth commit: until then its names publish
+        followed the hold, and a rename of the new sid landing between the two was undone on the roster under a True;
+        spawn publishes its names entry before its record, so a rename inside its window finds no record and refuses;
+        resume writes no names entry), so no writer is between its record write and its names write while this
+        compensation reads.
         (2) CLOSED. Two faulting renames to DIFFERENT names (the round's own verifiers' third pass): the second's door-time
         `before` was the first's record write, not yet landed and later put back, and the order of the two compensations
         decided which name, told to no caller as applied, stayed on the record. The second's compare now runs after the
@@ -19288,12 +19325,13 @@ class SdkBackend:
         _queue_behind_stand_down, move, read_picks, follow_default_auth, set_auth_guarded, ensure_scheduled and
         deliver_lost_wakeups; kernel.py reads the row for its listings. READER of `renameNote`: _deliver_rename_ping.
         The names file (write_name through _publish_name, under the names lock: spawn, fork, promote_thread, rename and
-        _finish_move, each with the record's name and cwd and the file's colours and emoji at the write; kernel.py's
+        _finish_move, each with the record's name and cwd where the record holds them, else the file's (the seventeenth
+        commit), and the file's colours and emoji at the write; kernel.py's
         _set_session_color, _set_session_emoji and _set_palette rewrite it with the name it holds under the same lock,
         and its _set_name only for a dead tab no backend runs) and the live `name` (SdkSession.__init__, promote_thread,
         rename) are the other two stores; rename and promote_thread write them after the record, inside the same hold of
-        _reg_lock (rename since the fifteenth commit, promote_thread and _finish_move's names write since the sixteenth),
-        and a raise from write_name leaves both as they were, so neither is a restore site. READERS of the names file's name: rename (the door read) and this compensation (the distinguisher);
+        _reg_lock (rename since the fifteenth commit, promote_thread and _finish_move's names write since the sixteenth,
+        fork's since the seventeenth), and a raise from write_name leaves both as they were, so neither is a restore site. READERS of the names file's name: rename (the door read) and this compensation (the distinguisher);
         _finish_move and write_name (their rewrites carry the fields they read); kernel.py's _names_snapshot and
         _names_parts (the roster every listing reads), _sdk_transcript_path, _boundary_clear_notices,
         _name_color_by_name and _producer_sig (its mtime: a new name is re-pushed); bin/romp's restart audit row."""
@@ -22872,12 +22910,18 @@ class SdkBackend:
         round's own verifiers' fifth pass): write_name's read of the fields the caller does not pass (None: the file's
         value at the write) and its publish are one hold of _names_lock, the lock the kernel's four writers of the file
         (_set_session_color, _set_session_emoji, _set_palette, _set_name) hold across their own read-edit-publish when the
-        kernel built this backend with its _NAMES_LOCK. The backend's five writers call this: spawn and fork with the new
-        row's name and cwd and the colour picked for it; promote_thread with the breakout's name and colour and the
-        record's cwd, inside the hold of _reg_lock its record write takes; rename with its name and the cwd the record
-        holds at its compare-and-swap, inside that hold; _finish_move with the record's name and the new cwd, inside its
-        record write's hold. None of them passes a field it does not own, so the file's colours and emoji (which have no
-        other home) are read here, under the lock, at the write. Until this commit promote_thread's and _finish_move's
+        kernel built this backend with its _NAMES_LOCK. The backend's five writers call this: spawn with the new row's
+        name and cwd and the colour picked for it, before its record exists; fork with the same, inside the hold of
+        _reg_lock its record write takes (the seventeenth commit; until then after that hold, the window the verifiers'
+        drive renamed the new sid in); promote_thread with the breakout's name and colour and the record's cwd, inside
+        the hold of _reg_lock its record write takes; rename with its name and the cwd the record holds at its
+        compare-and-swap, inside that hold; _finish_move with the record's name and the new cwd, inside its record
+        write's hold. None of them passes a field it does not own, so the file's colours and emoji (which have no other
+        home) are read here, under the lock, at the write. A field the record LACKS is passed as None too (fork PR #813,
+        round 6 of the review, seventeenth commit, 2026-09-21; the round's own verifiers' sixth pass): the record is the
+        source of truth for the name and the cwd where it holds them and never the source of a clear, so a rename over a
+        record with no cwd carries the file's cwd (the sixteenth commit passed an empty string, the explicit clear) and
+        a move over a record with no name carries the file's name (the sid stood in for it). Until the sixteenth commit promote_thread's and _finish_move's
         names writes ran outside any lock and carried a name or cwd read earlier, so a rename landing in the window was
         undone on the roster every listing reads while its caller was told True (the verifiers' drives: a promote's late
         names write over a rename; a move's names rewrite over a rename), and the kernel's colour writers and the
