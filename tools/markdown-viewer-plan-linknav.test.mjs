@@ -522,8 +522,15 @@ test('the re-aimed sentence: its count is the number of pre-existing test module
 
 // ── the browser legs and the job that gates a landing (the file review's round 8, extra8-2) ────────────────────────────
 
-/** The follow-on's browser legs, derived from the tree: the `*-browser.test.ts` modules under ui/webview whose own text names the
- *  follow-on (claimants, above). Two derivations must agree: the Tests paragraph's list of browser modules is the same set. */
+/** The follow-on's browser legs, derived from the tree BY NAME: the `*-browser.test.ts` modules under ui/webview whose own text
+ *  names the follow-on (claimants, above). A name, not the property that makes a module a browser leg (a call of the shared
+ *  launcher's inBrowser through any binding, or a playwright package named), which PR 887's census reads off each module's tree
+ *  with the compiler (vscode-extension/scripts/browser-legs-census.mjs, executed by the census test beside it under ui/webview
+ *  in the vscode-extension job); this module runs in CI's Shell job with no compiler and reads no property, a spelling read here
+ *  being a second definition, so once that census lands it is the one definition and this derivation stays a name. The plan's
+ *  disclosure says so and names the modules of the follow-on's diff the property reaches and the name does not,
+ *  ui/webview/file-trail.test.ts and ui/webview/file-view-text-size.test.ts, which nothing here holds (the file review's round
+ *  10, extra6-1 and extra6-2). Two derivations must agree: the Tests paragraph's list of browser modules is the same set. */
 const browserLegs = () => claimants(['ui', 'webview'], /-browser\.test\.ts$/);
 /** A leg's source with its comments removed by their line shape, for the route checks below: a line whose text starts with `//`
  *  goes, and a block comment opened at a line's start goes through the line that closes it. The tools job runs this module with
@@ -685,7 +692,7 @@ const DISCLOSURE_CLAUSES = [
   ['a change of its own that this branch does not carry', 'that the roster is not this branch\'s to add'],
 ];
 
-test('the follow-on\'s browser legs and the job that gates a landing, a two-state pin over the shared convention: the legs are derived from the tree and each launches through real-viewer-leg.ts\'s inBrowser, the helper a roster\'s switch reaches, read comment-stripped under any launch spelling; where the tree carries the roster, the exclusions, the step directly after the Chromium install in the vscode-extension job and the helper\'s switch (state A) every leg is a roster line and no exclusions line and the roster\'s tree test exists, and the Tests paragraph no longer says none of their browser scenarios runs where landing is gated; where it carries none of the four (state B) the Tests paragraph discloses that the legs skip in the gating job\'s Test step, what gates the follow-on there and the roster by name as the road, with no count of the legs in any wording; a tree with some of the four is refused, naming them; behind L6\'s gate every browser leg the delta adds or modifies is among the derived legs', (t) => {
+test('the follow-on\'s browser legs and the job that gates a landing, a two-state pin over the shared convention: the legs are derived by name from the tree (the -browser.test.ts modules whose own text names the follow-on; the property-keyed definition of a browser leg is PR 887\'s compiler census, once it lands) and each launches through real-viewer-leg.ts\'s inBrowser, the helper a roster\'s switch reaches, read comment-stripped under any launch spelling; where the tree carries the roster, the exclusions, the step directly after the Chromium install in the vscode-extension job and the helper\'s switch (state A) every leg is a roster line and no exclusions line and the roster\'s tree test exists, and the Tests paragraph no longer says none of their browser scenarios runs where landing is gated; where it carries none of the four (state B) the Tests paragraph discloses that the legs skip in the gating job\'s Test step, what gates the follow-on there and the roster by name as the road, with no count of the legs in any wording; a tree with some of the four is refused, naming them; behind L6\'s gate every browser leg the delta adds or modifies is among the derived legs', (t) => {
   const legs = browserLegs();
   assert.ok(legs.length > 0, 'browser legs naming the follow-on are on disk');
   const tests = section.slice(section.indexOf('**Tests.**'));

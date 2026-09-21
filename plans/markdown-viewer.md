@@ -8672,14 +8672,26 @@ The browser legs named here skip at launch in the Test step of the job that gate
 installs Chromium (the gate-before-adoption section's Tests paragraph states that job's shape and
 tools/markdown-viewer-plan-gate-adopt.test.mjs holds it), so none of their browser scenarios runs where landing is gated
 (a source pin in a leg runs there without a browser); what gates the
-follow-on there is its source pins, the node modules beside each leg in that Test step, and the pytest modules it added
+follow-on there is its source pins, the node modules beside each leg in that Test step (their node cases; a browser
+scenario inside a node module, ui/webview/file-view-text-size.test.ts's bar case and ui/webview/file-trail.test.ts's
+Reload case, skips there as the legs do), and the pytest modules it added
 or re-aimed, tests/test_guide_trail_chords_and_figure_button.py and tests/test_guide_files_failures.py, in the pytest job,
 and the road that runs the legs with a browser where landing is gated is the shared roster of browser legs,
 vscode-extension/ci-browser-legs.txt, one compiled bundle path per line, read by a step of that job after its Chromium
 install, a change of its own that this branch does not carry, so this follow-on's legs join the roster once both are in
-the tree; tools/markdown-viewer-plan-linknav.test.mjs derives the legs from the tree, as the browser modules whose own
-text names this follow-on, holds each to a launch through real-viewer-leg.ts's inBrowser, the shared helper a roster's
-switch reaches, and reads the tree for the roster, its exclusions file (vscode-extension/ci-browser-legs-excluded.txt),
+the tree; tools/markdown-viewer-plan-linknav.test.mjs derives the legs BY NAME, the modules under ui/webview whose file name
+carries the suffix -browser before .test.ts and whose own text names this follow-on, a name and not the property that makes a module a browser leg
+(that property, a call of the shared launcher's inBrowser through any binding or a playwright package named, is what the
+census of browser legs PR 887 brings reads off each module's tree with the compiler,
+vscode-extension/scripts/browser-legs-census.mjs executed by the census test beside it under ui/webview in the
+vscode-extension job, and that census is the one definition of a browser leg once it lands: the compiler is installed
+in that job alone, and a spelling read in the Shell job would be a second definition; the modules of this follow-on's
+diff that the property reaches and the name does not, which this pin therefore holds to nothing, are
+ui/webview/file-trail.test.ts, whose Reload case launches through the shared helper, and
+ui/webview/file-view-text-size.test.ts, whose bar case launches through a harness of its own; the file review's round
+10, extra6-1 and extra6-2: the disclosure had said the legs were derived from the tree as the browser modules naming
+the follow-on, which was the name's set and not the property's), holds each to a launch through real-viewer-leg.ts's
+inBrowser, the shared helper a roster's switch reaches, and reads the tree for the roster, its exclusions file (vscode-extension/ci-browser-legs-excluded.txt),
 that step in the vscode-extension job and the switch (ROMP_BROWSER_LEGS_REQUIRE, reached by inBrowser through
 ui/webview/browser-legs-require.ts): where the tree carries none of the four it holds this sentence, where it carries all
 four it holds every leg to a roster line outside the exclusions and the roster's own tree test to exist, and a tree with
