@@ -2728,23 +2728,35 @@ def number_word_sites(source=None):
     scope it is read in to the module's declarations of NUMBER_WORDS, through any chain of names bound to a bare name
     (WORDS = NUMBER_WORDS; WORDS[n]); a name of the same spelling bound in a function is another binding and no site;
     a receiver that is not a name (an attribute, a call) and a table handed through a call's parameter are not read,
-    which the pin's message states. `source` is a synthetic module's text for a test; None reads this module. A module
-    that binds no NUMBER_WORDS at module level raises: the sites would be derived against nothing."""
+    which the pin's message states. A cyclic alias pair (A = B; B = A, code that raises NameError when run, so no real
+    module carries one) is walked once, by the seen set, and is no site; the walk is bounded by the tree's count of
+    names and raises past it, naming the names it visited, so a lost guard is a named failure and not a hang (this
+    pass found the guard load-bearing for termination and pinned by nothing). `source` is a synthetic module's text
+    for a test; None reads this module. A module that binds no NUMBER_WORDS at module level raises: the sites would be
+    derived against nothing."""
     tree = ast.parse(inspect.getsource(sys.modules[__name__]) if source is None else source)
     bindings = Bindings.of(tree)
     table = bindings.declarations("NUMBER_WORDS")
     if not table:
         raise AssertionError("the module binds no NUMBER_WORDS at module level: the sites would be derived against nothing")
     sites = []
+    # every step of a walk pops a pair made from one Name node of the tree, and the seen set admits each pair once, so a
+    # walk that takes more steps than the tree has Names is looping over a cycle the guard no longer breaks
+    bound = sum(1 for n in ast.walk(tree) if isinstance(n, ast.Name)) + 1
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name)):
             continue
-        todo, seen, hit = [(node.value.id, bindings.scope_of(node.value))], set(), False
+        todo, seen, hit, steps = [(node.value.id, bindings.scope_of(node.value))], set(), False, 0
         while todo and not hit:
             name, scope = todo.pop()
             if (name, id(scope)) in seen:
                 continue
             seen.add((name, id(scope)))
+            steps += 1
+            if steps > bound:
+                raise AssertionError("the alias walk from %s at line %d took %d steps, more than the tree's %d names, so it is looping: "
+                                     "a cyclic alias pair is walked once by the seen set and is no site; the names visited: %r"
+                                     % (node.value.id, node.lineno, steps, bound - 1, sorted({n for n, _ in seen})))
             for declaration in scope.resolve(name)[0]:
                 if any(declaration.node is entry.node for entry in table):
                     hit = True
@@ -2999,8 +3011,10 @@ class TheStatedLimitIsWorded(unittest.TestCase):
         table by the binding, sits inside number_word, so no count is spelled past the ceiling check (the round-8
         review found the three tree-count sites indexing the table bare). The derivation is proven over a synthetic
         module first: the helper's own site, a bare site in another def, a site through two aliases and a
-        module-level site are the sites; a local of the same spelling and another table's subscript are not; a module
-        with no NUMBER_WORDS raises."""
+        module-level site are the sites; a local of the same spelling, another table's subscript and a subscript of a
+        cyclic alias pair (walked once by the seen set; with the guard gone the walk's step bound raises, naming the
+        names, so this pin reds instead of hanging, the gap this pass found) are not; a module with no NUMBER_WORDS
+        raises."""
         synthetic = textwrap.dedent('''\
             NUMBER_WORDS = ("zero", "one")
             WORDS = NUMBER_WORDS
@@ -3028,12 +3042,19 @@ class TheStatedLimitIsWorded(unittest.TestCase):
                 return OTHER[n]
 
 
+            def cyclic(n):
+                A = B
+                B = A
+                return A[n]
+
+
             FIRST = NUMBER_WORDS[0]
             ''')
-        self.assertEqual(number_word_sites(synthetic), [(6, "number_word"), (10, "bare"), (15, "aliased"), (27, None)],
+        self.assertEqual(number_word_sites(synthetic), [(6, "number_word"), (10, "bare"), (15, "aliased"), (33, None)],
                          "number_word_sites does not key on the binding: the helper's own site, the bare site, the site "
                          "through two aliases and the module-level one are the sites, as (line, enclosing def); the "
-                         "local of the same spelling and the other table are not")
+                         "local of the same spelling, the other table and the cyclic alias pair (walked once, by the seen "
+                         "set; a walk past the tree's name count raises instead) are not")
         with self.assertRaisesRegex(AssertionError, "binds no NUMBER_WORDS"):
             number_word_sites("X = 1\n")
         sites = number_word_sites()
