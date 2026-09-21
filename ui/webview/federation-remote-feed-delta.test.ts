@@ -1241,8 +1241,15 @@ test("the local bound's stated reason is a choice, not a missing event: no copy 
     "docs/read-side.md": fs.readFileSync(path.join(root, "docs", "read-side.md"), "utf8"),
     "the ledger entry": fs.readFileSync(path.join(root, "upstream", "2026-09-19-relay-dial-page-caps-ws-bytes-by-host.md"), "utf8"),
   };
+  // each copy is read as prose across its line breaks, a comment marker stripped at each break, so a copy of the premise wrapped
+  // over two lines is the same statement as one on a line (the author's fixer pass after the maintainer's round 6, text-4: the
+  // pin had read the raw text, and federation.ts's own mention of the earlier wording sat across a break where the regex could
+  // not see it, so the pin held by the wrap and not by the property)
+  const prose = (t: string) => t.replace(/\n\s*(?:\/\/\s*|\*\s*)?/g, " ");
+  assert.match(prose("// the earlier text: a dial this manager never\n  // sees it"), /a dial this manager never sees/, "the rig: the prose reader joins a wrapped comment");
   for (const [name, text] of Object.entries(copies)) {
-    assert.doesNotMatch(text, /(a dial (this|the) manager never sees|sees no dial|no dial event)/, name + " states the premise the shim's own code refutes");
+    const hit = prose(text).match(/(a dial (this|the) manager never sees|sees no dial|no dial event)/);
+    assert.equal(hit === null ? null : hit[0], null, name + " states the premise the shim's own code refutes, on one line or across a line break");
   }
   assert.match(copies["federation.ts"], /in-band \{type:"wsup"\} frame that reaches inbound\(\)/, "federation.ts names the event that exists and says the reset on it is unhandled by choice");
   assert.match(copies["docs/read-side.md"], /by choice: the\s+shim redials the local socket in-page and announces the reopen/, "the docs state the choice");
