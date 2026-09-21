@@ -27,9 +27,21 @@ the constructor's parameters, and reds on a member the table does not classify. 
 3.13 maintenance releases (a `</script` ends the element only before whitespace, `/` or `>`; a comment closes at `-->` or
 `--!>`); the shapes this module's unit cases pin read the same under 3.10, 3.11, 3.12, 3.13 and 3.14, and the eight served
 pages gave byte-identical spans, scripts and rules under each at round 8. Refuses a script or style element the page never
-closes, and a self-closing `<script/>` or `<style/>` (a start tag to HTML). A `<template>` or `<noscript>` container is not
-tracked: a style or script element inside one is read as live, though a scripting browser applies neither (no served page
-carries either container; disclosed, not closed, the fixer pass of round 8).
+closes, and a self-closing `<script/>` or `<style/>` (a start tag to HTML). Containers (round 9, 2026-09-20, the maintainer's
+round 5 ruling): the reader keeps a stack of the open elements (its own: a start tag pushes, a void element and a self-closing
+foreign element do not, an end tag pops to its nearest open match, no implied end tags and no foreign-content breakout, so the
+stack can only over-report an ancestor, never lose one) and REFUSES a tracked element (script, style, link, meta) whose stack
+holds a container whose content HTML does not parse as this reader parses the element (REFUSED_CONTAINERS): inside `<svg>` and
+`<math>` both engines parse a script's or style's content as MARKUP, not raw text, and an svg `<link>` loads nothing; a
+`<template>`'s content is inert; a `<noscript>`'s is text to a scripting browser; `<title>`, `<textarea>`, `<iframe>`, `<noembed>`,
+`<noframes>`, `<xmp>` and `<plaintext>` are text to HTML and to a tokenizer release that knows the set, and a start tag to one that
+does not, so the outcome under any release is a refusal or no element, never a live read. The round-8 roster (`<template>` and
+`<noscript>`, "no served page carries either") is gone: it omitted `<svg>`, which two served pages carry as live markup, and the
+justification is a CENSUS now, derived over every page the kernel's GET dispatch serves (tests/test_served_pins_read_elements.py:
+the containers each tracked element sits under, and the pages carrying each container), red when a tracked element sits under
+a refused container or a new refused container appears on a page (the reader refuses first; the census states the figures).
+The stack's one-sided error is disclosed: a `<style>` in HTML content after a breakout tag closed the svg (`<svg><b>...`) is
+refused here where HTML would read it, a loud over-refusal, never a silent over-read.
 
 Attribute compares (round 9, 2026-09-20): every value this module compares is compared as HTML compares that attribute, and the
 population is every compare of an `attr()` value in this file plus the tokenizer's own name handling; the rows are in
@@ -115,10 +127,11 @@ from collections import namedtuple
 from html.parser import HTMLParser
 
 Rule = namedtuple("Rule", "index at selector declarations decls")
-# a live script, style or link element: absolute offsets of the element and of its content (a link has none: content_start,
-# content_end and end coincide at the end of its tag), and its attributes as the tokenizer read them, (name, value) pairs with
-# the name lower-cased and the value unquoted (None for a bare attribute)
-Element = namedtuple("Element", "kind start content_start content_end end attrs")
+# a live script, style, link or meta element: absolute offsets of the element and of its content (a link or meta has none:
+# content_start, content_end and end coincide at the end of its tag), its attributes as the tokenizer read them, (name, value)
+# pairs with the name lower-cased and the value unquoted (None for a bare attribute), and `stack`, the names of the elements open
+# at its start tag, outermost first (the reader's own stack, round 9, 2026-09-20: the container census reads it)
+Element = namedtuple("Element", "kind start content_start content_end end attrs stack")
 
 _VAR = re.compile(r"var\(\s*(--[\w-]+)", re.I)
 # HTML's and CSS's whitespace: space, tab, LF, FF, CR (five characters; str.strip and str.split read Unicode whitespace, a wider set)
@@ -198,8 +211,14 @@ TOKENIZER_SURFACE = {
 }
 # the element sets html.parser reads as text, by version: CDATA (RAWTEXT to HTML) and RCDATA; a script or style element inside one is
 # text to HTML and to a tokenizer that knows the set, and a start tag to one that does not (3.10 knows script and style alone), so the
-# reader treats them as containers whose content it does not read (the container census), so the outcome is never a live read
+# reader refuses a tracked element under any of them (REFUSED_CONTAINERS) and the outcome is a refusal or no element, never a live read
 TOKENIZER_TEXT_ELEMENTS = {"script", "style", "xmp", "iframe", "noembed", "noframes", "textarea", "title", "plaintext", "noscript"}
+# the containers whose content HTML does not parse as this reader parses a tracked element (round 9, 2026-09-20): foreign content
+# (svg, math: markup where the reader reads raw text; an svg link loads nothing), inert content (template), text to a scripting
+# browser (noscript), and the text elements above other than script and style
+REFUSED_CONTAINERS = frozenset({"svg", "math", "template", "noscript"}) | (frozenset(TOKENIZER_TEXT_ELEMENTS) - {"script", "style"})
+# HTML's void elements: a start tag with no end tag and no content, never pushed on the container stack
+_VOID = frozenset({"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"})
 
 
 class _Elements(HTMLParser):
@@ -215,6 +234,7 @@ class _Elements(HTMLParser):
     def __init__(self, html):
         super().__init__(convert_charrefs=False)
         self.html, self.elements, self.comments, self.open, self.pending = html, [], [], None, None
+        self.stack, self.tags = [], {}   # the open elements (outermost first) and a count of every start tag, for the container census
         self.starts = [0] + [m.end() for m in re.finditer("\n", html)]
         self.feed(html)
         self.close()
@@ -232,7 +252,15 @@ class _Elements(HTMLParser):
 
     def _void(self, kind, pos, attrs):
         end = pos + len(self.get_starttag_text())
-        self.elements.append(Element(kind, pos, end, end, end, tuple(attrs)))
+        self.elements.append(Element(kind, pos, end, end, end, tuple(attrs), tuple(self.stack)))
+
+    def _container(self, tag, pos):
+        # round 9 (2026-09-20): a tracked element under a container whose content HTML does not parse as this reader parses the
+        # element refuses (the module docstring names each); the stack can only over-report an ancestor, so this refuses too much,
+        # never too little
+        held = [c for c in self.stack if c in REFUSED_CONTAINERS]
+        assert not held, "a <%s> at offset %d inside <%s>: HTML does not parse its content as this reader does (%s), so the element is refused rather than read" % (
+            tag, pos, held[-1], "foreign content, parsed as markup" if held[-1] in ("svg", "math") else "inert or text content")
 
     def _ascii_names(self, pos, names):
         # round 9 (2026-09-20): HTML lower-cases tag and attribute names over ASCII, the tokenizer over Unicode, and the two part on
@@ -244,18 +272,27 @@ class _Elements(HTMLParser):
         pos = self._pos()
         self._event(pos)
         self._ascii_names(pos, _raw_names(self.get_starttag_text()))
+        self.tags[tag] = self.tags.get(tag, 0) + 1
+        if tag in ("script", "style", "link", "meta"):
+            self._container(tag, pos)
         if tag in ("script", "style"):
-            self.open = (tag, pos, pos + len(self.get_starttag_text()), tuple(attrs))
+            self.open = (tag, pos, pos + len(self.get_starttag_text()), tuple(attrs), tuple(self.stack))
         elif tag in ("link", "meta"):
             self._void(tag, pos, attrs)
+        if tag not in _VOID:
+            self.stack.append(tag)
 
     def handle_startendtag(self, tag, attrs):
         pos = self._pos()
         self._event(pos)
         self._ascii_names(pos, _raw_names(self.get_starttag_text()))
+        self.tags[tag] = self.tags.get(tag, 0) + 1
         assert tag not in ("script", "style"), "a self-closing <%s/> at offset %d is a start tag to HTML; this reader refuses it" % (tag, pos)
         if tag in ("link", "meta"):
+            self._container(tag, pos)
             self._void(tag, pos, attrs)
+        if tag in REFUSED_CONTAINERS - {"svg", "math"}:   # HTML ignores the self-closing flag on an HTML element (it honours it on a foreign one)
+            self.stack.append(tag)
 
     def handle_endtag(self, tag):
         pos = self._pos()
@@ -263,9 +300,12 @@ class _Elements(HTMLParser):
         self._ascii_names(pos, _raw_names(self.html[pos + 1:self.html.index(">", pos) + 1]))   # `</name ...>`: the raw name after `</`
         if tag in ("script", "style"):
             assert self.open is not None and self.open[0] == tag, "a </%s> at offset %d with no open %s element" % (tag, pos, tag)
-            kind, start, content_start, attrs = self.open
-            self.elements.append(Element(kind, start, content_start, pos, self.html.index(">", pos) + 1, attrs))
+            kind, start, content_start, attrs, stack = self.open
+            self.elements.append(Element(kind, start, content_start, pos, self.html.index(">", pos) + 1, attrs, stack))
             self.open = None
+        if tag in self.stack:   # pop to the nearest open match; an end tag with no open match is ignored, as HTML ignores it
+            while self.stack.pop() != tag:
+                pass
 
     def handle_comment(self, data):
         pos = self._pos()
@@ -305,6 +345,12 @@ class _Elements(HTMLParser):
 def elements(html):
     """Every live script, style, link and meta element of a page, as Element records in document order (parsed once per page text)."""
     return tuple(_Elements(html).elements)
+
+
+def tag_counts(html):
+    """{tag: count} of every start tag the tokenizer read as live markup (outside script and style content and comments), for the
+    container census (round 9, 2026-09-20)."""
+    return dict(_Elements(html).tags)
 
 
 def meta_content(html, name):

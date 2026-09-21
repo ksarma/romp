@@ -322,6 +322,47 @@ class ParsedSheetReads(unittest.TestCase):
         # the DOCTYPE is a declaration HTML reads as its own token, to the first `>`, and nothing inside it: an event, no span
         page = "<!DOCTYPE html><style>#a{top:0}</style>"
         self.assertEqual(([r.selector for r in served_css.rules(page)], served_css.html_comment_spans(page)), (["#a"], []))
+        # inside foreign content HTML does read a CDATA section as text; this reader refuses the container itself (below), so the
+        # section is never reached there as a live read
+        with self.assertRaises(AssertionError):
+            served_css.rules("<svg><![CDATA[ <style>#a{top:0}</style> ]]></svg>")
+
+    def test_a_tracked_element_under_a_container_html_parses_otherwise_refuses(self):
+        # round 9 (2026-09-20), the maintainer's round 5 ruling: the reader read a script's or style's content as raw text everywhere,
+        # and inside <svg> both engines parse it as MARKUP, so the extent was wrong there; the round-8 roster of untracked containers
+        # named template and noscript, justified by "no served page carries either", and omitted svg, which two served pages carry.
+        # The reader refuses a tracked element under any container whose content HTML does not parse as the reader does (the set in
+        # served_css.REFUSED_CONTAINERS, each named in the docstring); the roster is a derived census now
+        # (tests/test_served_pins_read_elements.py). Each case here read as live before (or, for the text elements, depends on the
+        # tokenizer release: a refusal or no element, never a live read)
+        for page in ("<svg><style>#a{top:0}</style></svg>", "<svg><script>var a=1;</script></svg>", "<math><style>#a{top:0}</style></math>",
+                     "<svg><link rel=stylesheet href=x.css></svg>", "<svg><meta name=viewport content=x></svg>",
+                     "<template><style>#a{top:0}</style></template>", "<template/><style>#a{top:0}</style>",
+                     "<noscript><style>#a{top:0}</style></noscript>", "<div><svg><g><style>#a{top:0}</style></g></svg></div>"):
+            with self.assertRaises(AssertionError, msg=page) as cm:
+                served_css.elements(page)
+            self.assertIn("HTML does not parse its content as this reader does", str(cm.exception), page)
+        # the container closed, the element after it is live (the stack pops to the match); a self-closing svg is empty to HTML
+        for page in ("<svg></svg><style>#a{top:0}</style>", "<svg/><style>#a{top:0}</style>", "<div><svg><g></g></svg></div><style>#a{top:0}</style>",
+                     "<template></template><style>#a{top:0}</style>"):
+            self.assertEqual([r.selector for r in served_css.rules(page)], ["#a"], page)
+        # the text elements: a tokenizer release that knows the set reads the inner style as text (no element); one that does not
+        # (3.10 knows script and style alone) hands the reader a start tag under the container, refused. Never a live rule
+        for page in ("<title><style>#a{top:0}</style></title>", "<textarea><style>#a{top:0}</style></textarea>", "<iframe><style>#a{top:0}</style></iframe>",
+                     "<xmp><style>#a{top:0}</style></xmp>", "<plaintext><style>#a{top:0}</style>"):
+            try:
+                self.assertEqual(served_css.rules(page), [], page)
+            except AssertionError as e:
+                self.assertIn("HTML does not parse its content as this reader does", str(e), page)
+        # the stack's one-sided error, disclosed: HTML's breakout tags (<b>, <p>, <div> and the rest) close the svg, so HTML reads
+        # this style as HTML content; the reader keeps the svg open and refuses, too much and never too little
+        with self.assertRaises(AssertionError):
+            served_css.rules("<svg><b>x</b><style>#a{top:0}</style></svg>")
+        # the stack an element carries, outermost first, and the tag counts the census reads
+        page = "<html><head><meta name=x content=y><link rel=icon href=i></head><body><div><style>#a{top:0}</style></div><svg></svg></body></html>"
+        self.assertEqual([(e.kind, e.stack) for e in served_css.elements(page)],
+                         [("meta", ("html", "head")), ("link", ("html", "head")), ("style", ("html", "body", "div"))])
+        self.assertEqual(served_css.tag_counts(page), {"html": 1, "head": 1, "meta": 1, "link": 1, "body": 1, "div": 1, "style": 1, "svg": 1})
 
     def test_the_tokenizers_handler_surface_is_enumerated_by_the_module(self):
         # round 9 (2026-09-20): the module's account of what html.parser hands it is DERIVED from the class, not kept by hand (the
@@ -341,6 +382,8 @@ class ParsedSheetReads(unittest.TestCase):
         text_sets = set(getattr(HTMLParser, "CDATA_CONTENT_ELEMENTS", ())) | set(getattr(HTMLParser, "RCDATA_CONTENT_ELEMENTS", ()))
         self.assertTrue(text_sets >= {"script", "style"}, text_sets)
         self.assertEqual(sorted(text_sets - served_css.TOKENIZER_TEXT_ELEMENTS), [], "an element the tokenizer reads as text that the module does not name")
+        self.assertEqual(sorted(served_css.TOKENIZER_TEXT_ELEMENTS - {"script", "style"} - served_css.REFUSED_CONTAINERS), [],
+                         "every text element but script and style is a refused container for a tracked element")
         params = sorted(inspect.signature(HTMLParser.__init__).parameters)
         self.assertEqual(sorted(set(params) - {"self", "convert_charrefs", "scripting"}), [], "a constructor parameter the module has not considered: %r" % (params,))
 

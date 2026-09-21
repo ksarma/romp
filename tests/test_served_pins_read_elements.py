@@ -1052,6 +1052,41 @@ def test_module_level():
         self.assertTrue(all(not road[r[0]] for r in off), "every remaining raw markup read is in a module not on the parser road: %d reads in %d modules"
                         % (len(off), len({r[0] for r in off})))
 
+    def test_no_tracked_element_sits_under_a_container_the_reader_does_not_read(self):
+        # round 9 (2026-09-20), the maintainer's round 5 ruling: the reader's roster of untracked containers (template, noscript)
+        # justified itself with "no served page carries either" and omitted svg, which served pages do carry as live markup and
+        # inside which both engines parse a style's or script's content as markup. The reader refuses a tracked element under such
+        # a container now (served_css.REFUSED_CONTAINERS), and the justification is this census, DERIVED over every page the
+        # kernel's GET dispatch serves (route_getters, the markup kind), never listed by hand: the containers each tracked element
+        # sits under (the reader's own stack, one-sided: it can over-report an ancestor, never lose one) and the pages carrying each
+        # refused container as a live start tag. The figures are asserted where they carry the argument: at least one served page
+        # carries svg as live markup (so the refusal is exercised against the live case, not a hypothetical one), and no tracked
+        # element sits under any refused container (the reader would have refused first; this states it as a count). A new refused
+        # container on a page reds here by the reader's refusal at parse, and a new container of any kind under a tracked element
+        # joins the roster this census derives.
+        routes = route_getters()
+        pages_ = sorted({g for g in routes.values() if getter_kind(g) == "markup"})
+        self.assertGreaterEqual(len(pages_), 8, "the served pages, from the route table: %r" % (pages_,))
+        texts = pages()
+        under, carrying, roster = [], {c: [] for c in sorted(served_css.REFUSED_CONTAINERS)}, set()
+        for g in pages_:
+            page = texts[g]
+            els = served_css.elements(page)   # parses, or the reader has refused a tracked element under a refused container
+            self.assertTrue([e for e in els if e.kind in ("script", "style")], "%s carries script or style elements" % g)
+            for e in els:
+                roster |= set(e.stack)
+                under += [(g, e.kind, c) for c in e.stack if c in served_css.REFUSED_CONTAINERS]
+            counts = served_css.tag_counts(page)
+            for c in carrying:
+                if counts.get(c):
+                    carrying[c].append((g, counts[c]))
+        self.assertEqual(under, [], "a tracked element under a refused container")
+        self.assertTrue(carrying["svg"], "at least one served page carries <svg> as live markup, the case the roster omitted: %r" % (carrying,))
+        self.assertGreaterEqual(len(carrying["svg"]), 2, "the pages carrying svg markup (two at round 9): %r" % (carrying["svg"],))
+        self.assertEqual([c for c in ("math", "template", "noscript") if carrying[c]], [], "no served page carries these today: %r" % (carrying,))
+        self.assertTrue({"html", "head", "body"} <= roster, "the containers tracked elements sit under, derived: %r" % (sorted(roster),))
+        self.assertEqual(sorted(roster & served_css.REFUSED_CONTAINERS), [], "the derived roster holds no refused container: %r" % (sorted(roster),))
+
     def test_the_reader_census_reads_the_forms_it_claims(self):
         # the reader census is a derivation, so its form space is pinned on a synthetic module holding one site of every form in
         # READER_FORMS, each named here, never inferred from the suite: the parser road inline and through an imported name, an
