@@ -109,18 +109,21 @@ class _StampClearForcing:
     passes green when the bound runs out (the round 1 review, 2026-09-21). Leaving the block releases both holds
     whatever the path, since __exit__ sets the two events before it restores the functions, so a test that raises
     inside the block strands no sender thread in a hold; a wait released that way is recorded as not by the event.
-    Release recipe, executed 2026-09-21 on CPython 3.12 and on 3.14t (free-threaded) in a scratch copy: give
-    test_c3f's forcing hold_s=10.0, so the shared body's wait for the second ping fails at its 3.0 s bound while
-    the sender is parked in the stamp hold. As shipped the case fails at that wait alone and tearDown is green;
-    with the two set() calls removed from __exit__, tearDown's outlived-thread assertion reds too, naming the
-    ws-send thread that _connect records; with that recording removed as well, tearDown is blind and green
-    again."""
+    Two more events and two more stamps let a test read that release as an event rather than infer it from a
+    bound: `parked` is set as a hold begins its wait, `released` as a hold's wait returns, whatever released it,
+    after the record of that hold is complete; `at["exit"]` is stamped in __exit__ before the two sets, and
+    `at["hold_returned"]` as a hold returns unreleased by its event, the two releases that stamp tells apart (the
+    exit's, within milliseconds of `at["exit"]`; the bound's, about hold_s later). A hold released by its event
+    leaves `at` with the two write stamps alone, which test_c3g's keyset assertion reads. The release on exit
+    is exercised by test_c3h at a bound that can show a parked sender; its docstring carries the recipe and the
+    counts."""
     HOLD_S = 1.0
 
     def __init__(self, module, order, ping=2, hold_s=HOLD_S):
         assert order in ("late", "early"), order
         self.km, self.order, self.ping, self.hold_s = module, order, ping, hold_s
         self.cleared, self.stamped = threading.Event(), threading.Event()
+        self.parked, self.released = threading.Event(), threading.Event()   # a hold began its wait; a hold's wait returned
         self.armed, self.holds, self.at, self.exited = False, [], {}, False
 
     @property
@@ -132,8 +135,12 @@ class _StampClearForcing:
         self.armed = True
 
     def _wait(self, name, ev):
+        self.parked.set()                                # the thread is at the hold (a test that releases a parked thread waits for this first)
         ok = ev.wait(self.hold_s) and not self.exited    # a release from __exit__ is not the event's
+        if not ok:
+            self.at["hold_returned"] = time.perf_counter_ns()   # unreleased by its event: against at["exit"], the exit's release or the bound's expiry
         self.holds.append((name, ok))
+        self.released.set()                              # after the record, so a reader this wakes finds the hold recorded
         return ok
 
     def __enter__(self):
@@ -191,7 +198,8 @@ class _StampClearForcing:
 
     def __exit__(self, *a):
         self.exited = True                          # then release both holds, whatever the path: a test that raises
-        self.cleared.set(); self.stamped.set()      # inside the block must not strand a sender thread in a hold
+        self.at["exit"] = time.perf_counter_ns()    # inside the block must not strand a sender thread in a hold
+        self.cleared.set(); self.stamped.set()      # (test_c3h reads this stamp against the hold's return)
         self.km._ws_sender, self.km._note_ws_inbound = self._saved
 
 
@@ -326,9 +334,13 @@ class PhantomPanesAreDropped(unittest.TestCase):
         call by the holder, and the free-threaded build needs neither. The free-threaded CI cell, two vCPUs running
         four threads, did preempt this thread there once, the red this wait answers). Suppressing the late
         stamp would leave a ping on the wire never judged, so the obvious kernel fix introduces a real defect where
-        the test fix introduces none. The body is _a_dispatch_return_gets_a_fresh_window, shared with the two cases
-        that run it under _StampClearForcing: test_c3f is the guard of the wait (deleting it reds there), test_c3g
-        the early order's committed selection; test_c3c runs the late order on purpose."""
+        the test fix introduces none. This is the ordinary-path case: the body, _a_dispatch_return_gets_a_fresh_window,
+        runs unforced here, in whatever order the scheduler gives the threads, and is shared with the two cases that
+        run it under _StampClearForcing. The wait line in that helper, `self.assertTrue(self._settle(lambda:
+        len(peer.pings) == 2), ...)`, the line before the clear, is guarded by test_c3f and not by this case: deleting
+        it reds test_c3f and leaves this case green, since unforced the stamp lands about a hundred microseconds after
+        this thread has passed the assertion. test_c3g is the early order's committed selection; test_c3c runs the
+        late order on purpose."""
         self._a_dispatch_return_gets_a_fresh_window()
 
     def _a_dispatch_return_gets_a_fresh_window(self):
@@ -405,6 +417,12 @@ class PhantomPanesAreDropped(unittest.TestCase):
         expires at its bound (HOLD_S, 1.0 s, inside _settle's 3.0 s), the clear's return then finds the stamp point
         already passed, and the late order is unreachable from the fixed body. The assertions read that from the
         instrument's record, hold by hold, so the pass is the expiry the fixed body makes certain, about a second long.
+        Two halves, two kinds of assertion. The helper's `self.assertIsNone(client["pingAt"])` is the product
+        assertion: it establishes that the outcome was right, no ping outstanding after the clear, the value CI saw
+        absent. This case's two assertIn over forcing.holds are the instrument's assertions: they establish that the
+        forcing happened as the fixed body dictates, the stamp hold expired at its bound because the clear came after
+        the stamp point, and the clear's return was released by the stamp point, not by its bound. A red in the first
+        is the flake back; a red in the second is the instrument not having forced what this case claims it forced.
         Mutation recipe: in _a_dispatch_return_gets_a_fresh_window delete the wait,
         `self.assertTrue(self._settle(lambda: len(peer.pings) == 2), ...)`, the line before the clear. The clear then
         runs while the second ping is still held, releases the hold, the stamp lands after the clear, and the shared
@@ -413,8 +431,9 @@ class PhantomPanesAreDropped(unittest.TestCase):
         the assertion: the reason the guard is a separate case over a shared body), and test_c3g stays green (its
         hold waits for the stamp point, which the unfixed order still reaches). Executed 2026-09-21 in a scratch copy
         on CPython 3.12 and on 3.14t (free-threaded): this case red 3 of 3 on each, test_c3 green 3 of 3 on each,
-        and the module once on each with this case the only red (1 failed, 13 passed); as shipped, the module green
-        5 of 5 on each and this case 3 of 3 alone on each."""
+        and the module once on each with this case the only red (1 failed, 13 passed; once more per interpreter in
+        the round's follow-up, with test_c3h present: 1 failed, 14 passed); as shipped, the module green 5 of 5 on
+        each and this case 3 of 3 alone on each."""
         with _StampClearForcing(km, "late") as forcing:
             forcing.arm()                                           # the body's first _note_ws_inbound call is the clear: the peer sends no pong
             self._a_dispatch_return_gets_a_fresh_window()
@@ -430,15 +449,68 @@ class PhantomPanesAreDropped(unittest.TestCase):
         late order on purpose with the forcing satisfied. Here the clear's hold finds the stamp point already passed,
         because the wait for the second ping ordered the stamp before the clear, and the trace shows that order. This
         is NOT a guard of the wait: with the wait deleted the clear's hold waits for the stamp point instead, the
-        forcing is satisfied, and the case stays green (executed 2026-09-21 in the scratch copy of test_c3f's recipe:
-        green once on CPython 3.12 and once on 3.14t (free-threaded), inside the module runs that red test_c3f
-        alone)."""
+        forcing is satisfied, and the case stays green under the wait-deletion mutation (executed 2026-09-21 in
+        scratch copies of test_c3f's recipe, once per interpreter in the round and once more per interpreter in its
+        follow-up: green 2 of 2 on CPython 3.12 and 2 of 2 on 3.14t (free-threaded), inside the module runs that red
+        test_c3f alone)."""
         with _StampClearForcing(km, "early") as forcing:
             forcing.arm()
             self._a_dispatch_return_gets_a_fresh_window()
             self.assertTrue(forcing.forced, "the events, not the bound, ordered the two writes: %r" % (forcing.holds,))
             self.assertEqual(set(forcing.at), {"stamp", "clear"}, "both moments were traced: %r" % (forcing.at,))
             self.assertLess(forcing.at["stamp"], forcing.at["clear"], "the stamp point passed before the clear: %r" % (forcing.at,))
+
+    def test_c3h_a_test_that_raises_inside_the_forcing_leaves_no_sender_parked(self):
+        """The instrument's release on exit, exercised at a bound that can show a parked sender (2026-09-21, the round
+        1 review's follow-up). __exit__ sets the two events before it restores the functions, so a test that raises
+        inside the block strands no sender thread in a hold. At the shipped bound that release could never show: a
+        1.0 s hold expires before tearDown's 3.0 s join finds the thread, so a parked sender looks released whether
+        the exit freed it or the bound ran out. This case raises the bound to 10 s, so the release is the only thing
+        that lets the thread go inside the test's time. Under the late order the real sender parks in the queue proxy
+        before the second ping's stamp, waiting for a clear that never comes: the case raises a test-local exception
+        before any clear, and asserts on the EVENT rather than on a wait that cannot tell its release from its expiry
+        (the defect the whole change is about): `released`, with a 30 s bound behind it, three times the hold, whose
+        red says the sender was never released; then the hold's return within half the hold of `at["exit"]`, whose red
+        says the bound expired and the exit released nothing. Half, not the whole hold, because the hold begins before
+        the exit, so the bound's expiry lands within microseconds of hold_s after the exit, on either side of it; the
+        exit's release lands within milliseconds; half the hold separates the two by seconds. The record must also read as the
+        exit's release: `exited` True and the stamp hold recorded as not released by its event. The peer then receives
+        the second ping, a bounded wait accepted only because the release is already proven by the event above.
+        Mutation recipe: in a scratch copy of the module, remove the two .set() calls from __exit__. The case then reds
+        at the elapsed assertion, `released AFTER the bound expired, not by the exit`, about 10 s in, the 10 s hold
+        expiring with the exit having released nothing; tearDown is green there, since by the time it joins the
+        expired hold has already freed the sender (a parked sender shows at the join only when a case leaves the
+        block with hold time left, which this case does not, as it waits for the return first). Executed 2026-09-21
+        in a scratch copy over an archive of the head, kernel byte-identical: red once on CPython 3.12 and once on
+        3.14t (free-threaded) at that assertion, the hold returned 10.000052 s and 10.000175 s after the exit (52 and
+        175 microseconds past the whole hold, which is why the threshold is half of it), the other 14 cases green and
+        no error at teardown. As shipped, green 3 of 3 alone per interpreter, well under a second each (the hold
+        returned 92 and 23 microseconds after the exit in one traced run per interpreter), and inside the module's
+        5 of 5 per interpreter."""
+        class Deliberate(Exception):
+            """The test-local failure inside the block; assertRaises names it so no other error passes as it."""
+        with self.assertRaises(Deliberate):
+            with _StampClearForcing(km, "late", hold_s=10.0) as forcing:
+                client, peer, handler = self._connect(pongs=False)
+                t0 = self.clock[0]
+                client["inRead"] = False
+                km._keepalive_all(now=t0)
+                self.assertTrue(self._settle(lambda: client["pingAt"] == t0))
+                self.clock[0] = t0 + 3 * km.WS_DEAD_S
+                km._keepalive_all(now=self.clock[0])                # the second ping is queued; the real sender parks before its stamp
+                self.assertTrue(forcing.parked.wait(3.0), "the sender never reached the hold, so there was nothing to release: %r" % (forcing.holds,))
+                forcing.arm()                                       # where test_c3c stands before its clear; here the block ends instead
+                raise Deliberate("the test fails inside the block, before any clear")
+        ok = forcing.released.wait(30.0)
+        self.assertTrue(ok, "the parked sender was NEVER released: 30 s passed with the hold still parked (the exit did not release it and the 10 s bound did not expire either)")
+        elapsed = (forcing.at["hold_returned"] - forcing.at["exit"]) / 1e9
+        self.assertLess(elapsed, forcing.hold_s / 2, "the hold returned %.3f s after the exit, past half its %.1f s bound: released AFTER the bound expired, not by the exit" % (elapsed, forcing.hold_s))
+        self.assertTrue(forcing.exited)
+        self.assertIn(("the stamp held for the clear", False), forcing.holds, "the hold was released by the exit, not by its event: %r" % (forcing.holds,))
+        # The product-side consequence: the released sender goes on to send the held ping. A bounded wait is acceptable
+        # here ONLY because the release itself is already proven above by the event and the elapsed time; this line
+        # adds what the release led to, not whether it happened.
+        self.assertTrue(self._settle(lambda: len(peer.pings) == 2), "the released sender never delivered the second ping")
 
     def test_c4_a_peer_still_draining_its_backlog_is_alive_and_one_that_stopped_acknowledging_is_not(self):
         client, peer, handler = self._connect(pongs=False)
