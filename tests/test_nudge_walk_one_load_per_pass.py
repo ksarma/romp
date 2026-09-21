@@ -129,7 +129,9 @@ since its real body is a writer).
 
 Two provenances are named in this module, never by one word. The reviewer's rounds carry a number: review round 1 ruled
 twelve findings, round 2 fourteen, round 3 nine, round 4 seventeen, round 5 seventeen, round 6 thirteen (one refuted), round 7 eighteen
-(one refuted), and "the round-N fixes" are the changes that answer round N's rulings. The
+(one refuted). "The round-N fixes" are the changes the Review round N paragraph records: through round 6, the changes that answer
+round N's rulings; the round-7 fixes answer the standard the reviewer set in round 6 and were read by round 7, and the round-8 fixes
+answer round 7's rulings, so from round 7 the number is the round that reads the fixes. The
 build's own passes carry a role and never a number: the build's verifier pass after the round-1 fixes, the build's verifier
 pass after the round-2 fixes, and the consolidation pass, the build's pass between the round-2 fixes and the reviewer's round
 3, in which three lenses read the head, the reviewer ruled on what they found (the reviewer's rulings on the pre-emption,
@@ -654,9 +656,10 @@ door witness's thirteen cases run outside any pass, twelve calling the door once
 seventeen calls over fourteen cases, thirteen under _drive and one each before the window in the three priming cases and after it in
 the refuse case, the figures the sentence carried until the round-8 fixes (no assertion read it; the profile at that head is the state); the case
 count's 'reads against N' copies, one each in the paragraphs of the consolidation pass and rounds 4, 5 and 6, sat in fragments the
-split at '3.12' left with no head label, so a stale copy was green wherever it stood; the copies are removed and the Docs case reads
-this paragraph whole by a census of its figures, so a stale copy written into this paragraph reds it naming the clause (1 failed, 38
-passed) while the same copy in a historical paragraph leaves the module green by design (39 passed). The axis statements, the
+split at '3.12' left with no head label, so a stale copy was green wherever it stood; the copies are removed and the Docs case read
+this paragraph whole by a census of its figures at that head, so a stale copy written into it red the case naming the clause (1
+failed, 38 passed) while the same copy in a historical paragraph left the module green by design (39 passed); the census reads the
+current head's paragraph alone since, and a copy written into this paragraph is green by the same design. The axis statements, the
 standard's second clause: the round wrote a labelled Derives and Bounds sentence into the docstrings of module-level readers, of the
 harness with its cleanup and its pass, and of witness and pin classes and cases, prose no assertion read (of this module's docstrings
 the Docs case reads the module's own alone; a Bounds sentence made false and a Derives clause negated each left the module green, 39
@@ -785,11 +788,12 @@ each); a type alias in the door, traced and on no node-class list, red the both-
 (39 passed). The finder's append sites (extra9-2): the finder case derived the forms the finder reports from the third element of
 every tuple appended to out and read a computed label as nothing; every out.append in the finder's def is held to a literal tuple of
 more than two elements whose third is a string constant and, this pass, every use of out in that def to its binding, an append or a
-read in the return, so a row added through extend or an augmented assignment is refused rather than unread. The states, each green
-before its fix: a fourth branch on a node class the module and the samples spell nowhere, its label computed, reds the shape line
-naming the append (1 failed, 38 passed); the getattr branch's tuple pre-built and appended by name reds the same line (1 failed, 38
-passed); a branch adding its row through out.extend, and one through an augmented assignment, each red the uses line naming the site
-(1 failed, 38 passed each). The sentence pass (extra4-1, extra7-1, extra8-2, extra8-3, regression-2, extra9-1, extra4-3, extra7-2
+read in the return, so a row added through extend or an augmented assignment is refused rather than unread. The states: a fourth
+branch on a node class the module and the samples spell nowhere, its label computed, green before its fix, reds the shape line naming
+the append (1 failed, 38 passed); the getattr branch's tuple pre-built and appended by name, red at the forms line with a false cause
+before, a lost branch, reds the shape line naming the append since (1 failed, 38 passed); a branch adding its row through out.extend,
+and one through an augmented assignment, each green before the uses line, red it naming the site (1 failed, 38 passed each). The
+sentence pass (extra4-1, extra7-1, extra8-2, extra8-3, regression-2, extra9-1, extra4-3, extra7-2
 and extra5-2, with the prep's one stronger sentence and its residue comment): the first paragraph's word-spelled counts of this
 module's own populations and its copy of the alias control's figure are deleted, the round-7 paragraph's copies with them;
 _class_attributes' first sentence and Derives clause say what the code reads and its Bounds clause names the residue; _line_trace's
@@ -798,7 +802,10 @@ universal is withdrawn and the two roster rows and two test classes that carried
 clean line is said to have been pinned by that head's Docs case. Nothing red before: the four counts and the copy rewritten to false
 values, and two sentences negated, each left the module green, which is why they are deleted or narrowed and not pinned. This pass
 deleted two more copies, this paragraph's list of the reading rows the axis pin derives and _traversal_references' count of the
-module's own traversal sites, each green with its value changed. The axis
+module's own traversal sites, each green with its value changed, and narrowed three sentences to true: the finder case's states
+above, one of which was red before its fix; the round-7 paragraph's census clause, present tense for a read the Docs case makes of
+the current head's paragraph alone since that paragraph went historical (a stale copy written into it leaves the module green, 40
+passed); and the first paragraph's definition of the round-N fixes, numbered by the round that reads them since round 7. The axis
 pin (extra4-3, extra7-2 and extra5-2, the reviewer's second instruction): which docstrings carried a Derives and a Bounds sentence
 was a hand-kept population on an axis the module computes, and the round-7 paragraph's universal was false for two roster rows; the
 fifth case of TheWalkersRefuseAStrangerByExecution derives the hand-written rosters of this module from its own AST, every
