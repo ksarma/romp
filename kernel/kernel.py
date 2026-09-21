@@ -69860,8 +69860,13 @@ function panPx(vv){return Math.round(vv.offsetTop||0);}
 // document element has no clientHeight, a node stub, a real standards-mode document always has one), never the coarse road's
 // h = round(vv.height*scale): with the keyboard up that h is the band, L less the keyboard, a height no zoom pans over, and
 // h(1 - 1/s) would understate the share by the keyboard's height times (1 - 1/s). Round 8 had derived the cut below from "an 844
-// px layout viewport" while the coarse road passed its h of 460 to it, so the two roads took the cut at two heights.
-function zoomPx(vv,L){return Math.round(L*(1-1/(vv.scale||1)));}
+// px layout viewport" while the coarse road passed its h of 460 to it, so the two roads took the cut at two heights. The
+// derivation's DOMAIN is a scale of 1 or more, the premise that the visual viewport lies inside the layout viewport; below 1 (a
+// zoom-out, or a pinch-out bounce, whether iOS reports one unverified) the visual viewport is the taller and its top can only sit at
+// or above the layout viewport's, so a pure zoom-out pans nothing downward and its share is 0, never the negative L(1 - 1/s) (the
+// author's fixer pass after round 9: the helper had returned the negative share and kbPx below published the reading PLUS it, 94 px
+// at scale 0.9 with no keyboard, stored as the hold).
+function zoomPx(vv,L){return Math.max(0,Math.round(L*(1-1/(vv.scale||1))));}
 // [fork] round 8 (2026-09-20): the pinch CUT, derived from the measured road's own rounding (it had been the literal 1.01, with no
 // derivation anywhere and no cell driven inside (1, 1.01)): the scale at which a zoom's own share first rounds to a pixel,
 // L(1 - 1/s) = 0.5, s = L/(L - 0.5), 1.0006 over an 844 px layout viewport, on both roads at the layout viewport (round 9). Below it
@@ -69876,15 +69881,24 @@ function zoomPx(vv,L){return Math.round(L*(1-1/(vv.scale||1)));}
 function pinched(vv,L){return !(L>0&&(vv.scale||1)<L/(L-0.5));}
 // [fork] round 9 (2026-09-20): the pan a pure zoom CANNOT explain, the keyboard's: the measured pixels less the zoom's share in
 // pixels, never below 0. Below the cut the share is no pixel and this is panPx itself, the one reading the 0px road's no-pan test
-// shares (round 8); at or above it the error against the keyboard's own pan is one-sided (the share may have been smaller than its
-// bound) and at most the share, 8 px at 1.01 over 844, where standing down cost the whole keyboard pan, about 80 px. Under a real
+// shares (round 8); at or above it the error against the keyboard's own pan is bounded by the share (the zoom may have panned less
+// than its bound, 8 px at 1.01 over 844, where standing down cost the whole keyboard pan, about 80 px) plus the two roundings: the
+// published value is an integer from panPx and zoomPx, each at most half a pixel off, so it lies within the share plus one pixel
+// BELOW the keyboard's own pan and one pixel ABOVE it, never one-sided (the author's fixer pass after round 9: a reading of 86.5 at a
+// share of 2.49 publishes 85, a pixel above a keyboard pan of 84.01 when the zoom panned its whole share; a reading of 84 at a share
+// of 16.55 publishes 67, 17 below a keyboard pan of 84 when the zoom panned nothing; an engine's float32 report adds an ulp). Under a real
 // pinch a keyboard's pan of 83 lies inside the share (422 at scale 2 over 844), so the measured road does not run and the hold road
 // publishes the pan of the keyboard the hold was measured with; a visual viewport dragged lower under that pinch than a pure zoom
 // could put it publishes the excess. The share's bound rests on the visual viewport lying inside the layout viewport (inside
 // below): a report it does not fit, the stale one a rotation leaves until the visual viewport re-reports, is outside the derivation
-// and takes the hold road, whose clamp binds at 0 there.
+// and takes the hold road, whose clamp binds at 0 there. inside compares the report's bottom edge ROUNDED to the pixel, the rounding
+// this road reads at: the engines hand over float32 values, and a visual viewport flush at the layout viewport's bottom (offsetTop +
+// height = L, the deep pan with the keyboard up) can sum to L plus an ulp in doubles (3e-5 over 844), which an exact test read as
+// outside and sent to the hold road, 0 with no hold where the excess arm publishes 277 (the author's fixer pass after round 9, scale
+// 1.3856); a report whose bottom overshoots by less than the half pixel that rounds away is inside to the pixel, and the stale
+// report (654 over) is not.
 function kbPx(vv,L){return Math.max(0,panPx(vv)-zoomPx(vv,L));}
-function inside(vv,L){return (vv.offsetTop||0)+(vv.height||0)<=L;}
+function inside(vv,L){return Math.round((vv.offsetTop||0)+(vv.height||0))<=L;}
 function fit(){try{var vv=window.visualViewport;
 var coarse=window.matchMedia&&matchMedia('(pointer: coarse)').matches;
 var h=(!coarse||!vv)?window.innerHeight:Math.round(vv.height*(vv.scale||1));

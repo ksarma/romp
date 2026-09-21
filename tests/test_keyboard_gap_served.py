@@ -241,7 +241,7 @@ class KeyboardGap(unittest.TestCase):
         self.assertEqual(_px(lz["appTop"]), 84 - round(share), where + "the keyboard's pan less the zoom's share, not the hold (0): %r" % (lz,))
         lz_band_bottom = 83.7 + 506.48
         self.assertAlmostEqual(lz_band_bottom - lz["composerBottom"], rest_gap, delta=share + 1,
-                               msg=where + "the composer keeps its distance from the band's bottom to within the zoom's share, no band: %r" % (lz,))
+                               msg=where + "the composer keeps its distance from the band's bottom to within the zoom's share plus the rounding pixel (the derived bound), no band: %r" % (lz,))
         self.assertAlmostEqual(lz_back["composerBottom"], rest["composerBottom"], delta=0.5, msg=where + "%r" % (lz_back,))
         # the visual viewport at the layout viewport's bottom with the keyboard up (round 3, 2026-09-19): the band is 336..844,
         # the fixed bottom:0 bar is inside it, and the fixed body, at the pan, ends where the bar does. The bar's box decides:

@@ -698,12 +698,12 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         # test_kernel_mobile.MobileFitExecutes.
         self.assertIn("\nvar lastPan=0;\n", self.js)
         self.assertIn("\nfunction panPx(vv){return Math.round(vv.offsetTop||0);}\n", self.js, "the one reading of the pan, declared before fit()")
-        self.assertIn("\nfunction zoomPx(vv,L){return Math.round(L*(1-1/(vv.scale||1)));}\n", self.js,
-                      "a pure zoom's share of the reading in pixels, over the layout viewport L (round 9, 2026-09-20), declared before fit()")
+        self.assertIn("\nfunction zoomPx(vv,L){return Math.max(0,Math.round(L*(1-1/(vv.scale||1))));}\n", self.js,
+                      "a pure zoom's share of the reading in pixels, over the layout viewport L (round 9, 2026-09-20), never negative below scale 1 (the fixer pass), declared before fit()")
         self.assertIn("\nfunction pinched(vv,L){return !(L>0&&(vv.scale||1)<L/(L-0.5));}\n", self.js,
                       "the pinch cut, derived from the measured road's rounding (round 8, 2026-09-20), at the layout viewport (round 9), declared before fit()")
-        self.assertIn("\nfunction kbPx(vv,L){return Math.max(0,panPx(vv)-zoomPx(vv,L));}\nfunction inside(vv,L){return (vv.offsetTop||0)+(vv.height||0)<=L;}\nfunction fit(){", self.js,
-                      "the pan a pure zoom cannot explain, and the premise its bound rests on (round 9, 2026-09-20), declared before fit()")
+        self.assertIn("\nfunction kbPx(vv,L){return Math.max(0,panPx(vv)-zoomPx(vv,L));}\nfunction inside(vv,L){return Math.round((vv.offsetTop||0)+(vv.height||0))<=L;}\nfunction fit(){", self.js,
+                      "the pan a pure zoom cannot explain, and the premise its bound rests on, the report's bottom edge to the pixel (round 9, 2026-09-20; the fixer pass), declared before fit()")
         self.assertNotIn("1.01", served_css.js_code(self.js), "the cut is derived, not a literal (the code, comments blanked: the derivation's comment names the old literal)")
         self.assertIn("if(!coarse||!vv){if(!vv||(!pinched(vv,L)&&!(panPx(vv)>0)))lastPan=0;document.documentElement.style.setProperty('--app-top','0px');}", self.js)
         self.assertNotIn("vv.offsetTop>0", self.js, "the 0px road reads the shared rounding, never the raw offsetTop")

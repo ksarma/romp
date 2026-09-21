@@ -670,6 +670,39 @@ visualViewport.offsetTop = 500; fire(VV, 'scroll'); flush();
 out.kbUnderZoomDragged = { appTop: appTop(), appH: appH() };
 visualViewport.offsetTop = 83; fire(VV, 'scroll'); flush();
 out.kbUnderZoomDraggedBack = { appTop: appTop(), appH: appH() };
+// the author's fixer pass after round 9: the bound's SHAPE and the derivation's DOMAIN, by execution. (a) The published value is an
+// integer from two roundings (panPx and zoomPx), so it lies within the share plus a pixel BELOW the keyboard's own pan and a pixel
+// ABOVE it, never one-sided: a reading of 86.5 at scale 1.002959 (share 2.49 px, 2 in pixels) publishes 85 (87 less 2), a pixel above
+// a keyboard pan of 84.01 if the zoom panned its whole share; a reading of 84 at scale 1.02 (share 16.55, 17 in pixels) publishes 67,
+// 17 below a keyboard pan of 84 if the zoom panned nothing, more than the share. Each cell starts from rest (the hold 0)
+visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+visualViewport.scale = 1.002959; visualViewport.height = 458.64; visualViewport.offsetTop = 86.5; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.roundedUp = { appTop: appTop(), appH: appH(), offsetTop: 86.5, zoomShare: 844 * (1 - 1 / 1.002959) };
+visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+visualViewport.scale = 1.02; visualViewport.height = 450.98; visualViewport.offsetTop = 84; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.roundedDown = { appTop: appTop(), appH: appH(), offsetTop: 84, zoomShare: 844 * (1 - 1 / 1.02) };
+// (b) a scale BELOW 1 (a zoom-out, or a pinch-out bounce; whether iOS reports one is unverified): the visual viewport is the taller
+// and its top sits at or above the layout viewport's, so a pure zoom-out's share is 0, never the negative L(1 - 1/s). With no
+// keyboard nothing is published and the hold stays 0 (the head kernel published 94 at scale 0.9 and stored it); the centred
+// report, a negative offsetTop, the same; a keyboard's pan under it is published whole (the share is 0 below scale 1)
+visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+visualViewport.scale = 0.9; visualViewport.height = 937.78; visualViewport.offsetTop = 0; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.zoomOutNoKb = { appTop: appTop(), appH: appH() };
+visualViewport.offsetTop = -46.89; fire(VV, 'scroll'); flush();
+out.zoomOutCentred = { appTop: appTop(), appH: appH() };
+visualViewport.scale = 2; visualViewport.height = 230; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.zoomOutHold = appTop();   // the hold road under a real pinch publishes the hold: what the zoom-out cells left in it
+visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+visualViewport.scale = 0.9; visualViewport.height = 511.11; visualViewport.offsetTop = 84; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+out.zoomOutKb = { appTop: appTop(), appH: appH() };
+// (c) the premise test to the pixel: a visual viewport FLUSH at the layout viewport's bottom with the keyboard up under a real pinch,
+// its two values as an engine hands them over (float32, Math.fround), sums to L plus an ulp in doubles; an exact offsetTop + height
+// <= L read it as outside the layout viewport and sent it to the hold road (0px with no hold), where the excess arm publishes the
+// keyboard's pan: 512 less the share's 235, 277
+visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+{ const s = 1.38562, h = Math.fround(460 / s), ot = Math.fround(844 - 460 / s);
+  visualViewport.scale = s; visualViewport.height = h; visualViewport.offsetTop = ot; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
+  out.flushBottomFloat32 = { appTop: appTop(), appH: appH(), offsetTop: ot, height: h, sumMinusL: ot + h - 844, zoomShare: 844 * (1 - 1 / s) }; }
 visualViewport.scale = 1; visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
 visualViewport.height = 460; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
 // round 4 (2026-09-20): a height report the run REFUSES (h 0) publishes no pan either. The pan belongs to the height it was
@@ -846,7 +879,7 @@ flip('zoomedTop', { height: 422, offsetTop: 0, scale: 2 });     // zoomed with t
 flip('zoomPan', { height: 422, offsetTop: 200, scale: 2 });     // a zoom pan with the keyboard gone: the hold stands
 out.flips = flips;
 // round 8 (2026-09-20, the fixer pass): the fine road with NO layout height (h 0: innerHeight 0 and the document element's
-// clientHeight 0, LAYOUT.h null). The cut h/(h - 0.5) is undefined there and pinched() counts the report as a pinch, so the hold
+// clientHeight 0, LAYOUT.h null). The cut L/(L - 0.5) is undefined there and pinched() counts the report as a pinch, so the hold
 // stands where a resting visual viewport at h 844 (the atRest flip) clears it; the --app-h write is skipped (h 0) and --app-top
 // is written 0px. A cell on the helper's third outcome: the item-1 kernel cleared the hold here and nothing drove it
 visualViewport.scale = 1; visualViewport.height = 460; visualViewport.offsetTop = 83; fire(VV, 'resize'); fire(VV, 'scroll'); flush();
@@ -1209,8 +1242,9 @@ class MobileFitExecutes(unittest.TestCase):
         # road publishes 0px: a keyboard raised while a light zoom held left the band under the composer bare, the defect D1 exists to
         # close. The measured road publishes the pan a pure zoom cannot explain, the measured pixels less the zoom's share L(1 - 1/s)
         # in pixels (kbPx in kernel.py, derived beside it): 81px here (84 less 3), never 0, and the error against the keyboard's own
-        # pan is one-sided and at most the share. The share is derived from the driven scale, so the bound the cell checks is the
-        # cell's own arithmetic, not a figure copied from the kernel.
+        # pan is bounded by the share plus the two roundings (a pixel below, a pixel above; the fixer pass: it had read one-sided and at
+        # most the share, and the two roundings deny both, the cells below). The share is derived from the driven scale, so the bound
+        # the cell checks is the cell's own arithmetic, not a figure copied from the kernel.
         r = self.out["kbUpLightZoomNoHold"]
         px = lambda v: int(v[:-2])
         self.assertEqual(self.out["restBeforeLightZoom"], "0px", "the hold is 0: the measured road stored 0 at rest")
@@ -1218,12 +1252,52 @@ class MobileFitExecutes(unittest.TestCase):
         self.assertTrue(0 < share <= 8, "a light zoom's share, between a pixel and the 8 px of the old 1.01 literal: %r" % (r,))
         self.assertEqual({k: r[k] for k in ("appTop", "appH")}, {"appTop": "%dpx" % (84 - share), "appH": "460px"},
                          "the keyboard's pan less the zoom's share, not the hold (0): %r" % (r,))
-        self.assertTrue(83 - share <= px(r["appTop"]) <= 84, "within the zoom's share of the keyboard's pan, one-sided: %r" % (r,))
+        # the keyboard's own pan is the reading (83.7) less whatever part the zoom took, in [83.7 - share, 83.7]; the derived bound puts
+        # the published integer within the share plus a pixel below it and a pixel above it (two roundings; the fixer pass)
+        lo, hi = 83.7 - r["zoomShare"], 83.7
+        self.assertTrue(lo - r["zoomShare"] - 1 <= px(r["appTop"]) <= hi + 1, "within the share plus a pixel of the keyboard's own pan: %r" % (r,))
         # the two states that must not regress with it
         self.assertEqual(self.out["zoomDeepestNoHold"], {"appTop": "0px", "appH": "844px"}, "a real pinch at the deepest pan a pure zoom can reach: the share is tight, nothing is published")
         self.assertEqual(self.out["kbUnderZoomNoHold"], {"appTop": "0px", "appH": "460px"}, "a keyboard under a real pinch with no hold: its pan is inside the zoom's share, the hold (0) is published")
         self.assertEqual(self.out["kbUnderZoomDragged"], {"appTop": "78px", "appH": "460px"}, "dragged below the zoom's share under the pinch: the excess is a keyboard's and is published")
         self.assertEqual(self.out["kbUnderZoomDraggedBack"], {"appTop": "78px", "appH": "460px"}, "the excess became the hold")
+
+    def test_the_published_pan_lies_within_the_share_plus_a_pixel_below_and_a_pixel_above_the_keyboards_own(self):
+        # the author's fixer pass after round 9 (unruled): the kernel's, the harness's and the body's statement of the bound had read
+        # "one-sided and at most the share", and the formula rounds twice (panPx, zoomPx), each at most half a pixel off, so the
+        # published integer lies within the share plus a pixel BELOW the keyboard's own pan and a pixel ABOVE it. Both sides driven:
+        # a reading of 86.5 at a share of 2.49 publishes 85 (87 less 2), above a keyboard pan of 84.01 (the zoom panned its whole
+        # share) by 0.99; a reading of 84 at a share of 16.55 publishes 67 (84 less 17), below a keyboard pan of 84 (the zoom panned
+        # nothing) by 17, more than the share. A single rounding of the unrounded difference would publish 84 in the first cell and
+        # break the reading the 0px road shares below the cut (kbPx equals panPx there only with the share rounded on its own)
+        up, down = self.out["roundedUp"], self.out["roundedDown"]
+        px = lambda v: int(v[:-2])
+        self.assertEqual((round(up["zoomShare"]), round(down["zoomShare"])), (2, 17), "the shares in pixels, from the driven scales: %r %r" % (up, down))
+        self.assertEqual({k: up[k] for k in ("appTop", "appH")}, {"appTop": "85px", "appH": "460px"}, "87 less 2: %r" % (up,))
+        kb_low = up["offsetTop"] - up["zoomShare"]   # the keyboard's own pan when the zoom panned its whole share
+        self.assertGreater(px(up["appTop"]), kb_low, "the published pan exceeds the keyboard's own: the error is not one-sided: %r" % (up,))
+        self.assertLessEqual(px(up["appTop"]) - kb_low, 1, "and by at most a pixel: %r" % (up,))
+        self.assertEqual({k: down[k] for k in ("appTop", "appH")}, {"appTop": "67px", "appH": "460px"}, "84 less 17: %r" % (down,))
+        short = down["offsetTop"] - px(down["appTop"])   # below the keyboard's own pan when the zoom panned nothing
+        self.assertGreater(short, down["zoomShare"], "the published pan falls short of the keyboard's own by more than the share: %r" % (down,))
+        self.assertLessEqual(short, down["zoomShare"] + 1, "and by at most the share plus a pixel: %r" % (down,))
+
+    def test_a_scale_below_one_has_no_share_and_a_flush_report_is_inside_to_the_pixel(self):
+        # the author's fixer pass after round 9 (unruled), two cells on the derivation's premises. (b) Its domain is a scale of 1 or
+        # more; below 1 the visual viewport is the taller and a pure zoom-out pans nothing downward, so the share is 0: the head kernel
+        # returned the negative L(1 - 1/s) and published the reading PLUS it, 94px at scale 0.9 with no keyboard, stored as the hold.
+        # Nothing is published, the hold stays 0, and a keyboard's pan under a zoom-out is published whole. (c) The premise test
+        # (inside) compares the report's bottom edge to the pixel: float32 values flush at the layout viewport's bottom sum to L plus
+        # an ulp in doubles, which an exact test read as outside, so a keyboard flush at the bottom under a real pinch fell to the hold
+        # road and published 0 where the excess arm publishes 277 (512 less the share's 235)
+        self.assertEqual(self.out["zoomOutNoKb"], {"appTop": "0px", "appH": "844px"}, "a zoom-out with no keyboard publishes no pan (the head: 94px)")
+        self.assertEqual(self.out["zoomOutCentred"], {"appTop": "0px", "appH": "844px"}, "the centred report (a negative offsetTop) the same")
+        self.assertEqual(self.out["zoomOutHold"], "0px", "the hold stayed 0 through the zoom-out cells")
+        self.assertEqual(self.out["zoomOutKb"], {"appTop": "84px", "appH": "460px"}, "a keyboard's pan under a zoom-out is published whole: the share is 0")
+        f = self.out["flushBottomFloat32"]
+        self.assertTrue(0 < f["sumMinusL"] < 0.5, "the premise of the cell: the float32 report's bottom edge sums past L by an ulp, under the half pixel: %r" % (f,))
+        self.assertEqual({k: f[k] for k in ("appTop", "appH")}, {"appTop": "%dpx" % (round(f["offsetTop"]) - round(f["zoomShare"])), "appH": "460px"},
+                         "the reading less the share, 277, not the hold (0): the report is inside to the pixel: %r" % (f,))
 
     def test_the_clamp_reads_the_layout_viewport_in_both_engine_models_and_binds_only_below_zero(self):
         # round 7 (2026-09-20). The clamp had read window.innerHeight as the layout viewport's height, which holds in Chromium
