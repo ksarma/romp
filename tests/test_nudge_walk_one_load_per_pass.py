@@ -796,7 +796,9 @@ _class_attributes' first sentence and Derives clause say what the code reads and
 Bounds conclusion ends at its premise; the seven figures the round-7 close took on pre-fix or first-pin trees are dropped; the axis
 universal is withdrawn and the two roster rows and two test classes that carried no sentence are named; the round-4 paragraph's
 clean line is said to have been pinned by that head's Docs case. Nothing red before: the four counts and the copy rewritten to false
-values, and two sentences negated, each left the module green, which is why they are deleted or narrowed and not pinned. The axis
+values, and two sentences negated, each left the module green, which is why they are deleted or narrowed and not pinned. This pass
+deleted two more copies, this paragraph's list of the reading rows the axis pin derives and _traversal_references' count of the
+module's own traversal sites, each green with its value changed. The axis
 pin (extra4-3, extra7-2 and extra5-2, the reviewer's second instruction): which docstrings carried a Derives and a Bounds sentence
 was a hand-kept population on an axis the module computes, and the round-7 paragraph's universal was false for two roster rows; the
 fifth case of TheWalkersRefuseAStrangerByExecution derives the hand-written rosters of this module from its own AST, every
@@ -805,10 +807,10 @@ call over one, walks each roster
 row's def through _walk for the rosters it reads by Name, in its body or its argument defaults, and holds every reading row to a
 docstring carrying a Bounds sentence, the text from the last 'Bounds:' to the end, that spells each roster it reads, so the sentence
 and the code agree on what the row bounds (the pin reads the label and the spelling, not the truth of the sentence, and a roster
-read through a helper the row calls is outside it). At this head the reading rows are _traversal_references, _loader_births,
-_census_floor and _grammar_positions; the pin demanded two edits, _TRAVERSAL spelled in _traversal_references' Bounds sentence and
-a Bounds sentence for _grammar_positions naming _GRAMMAR_CORPUS and _AST_ABSTRACT, the corpus bounding what each position's record
-holds and not which positions are listed; no Derives sentence is written for it or for _door_regions, which reads no roster. The
+read through a helper the row calls is outside it). The pin demanded two edits, _TRAVERSAL spelled in _traversal_references'
+Bounds sentence and a Bounds sentence for _grammar_positions naming _GRAMMAR_CORPUS and _AST_ABSTRACT, the corpus bounding what
+each position's record holds and not which positions are listed; no Derives sentence is written for it or for _door_regions, which
+reads no roster. The
 states: the case alone on the tree before those edits red naming _grammar_positions, whose docstring carried no Bounds sentence,
 and, with that sentence written, naming _traversal_references and _TRAVERSAL, the Docs count pin red beside it on both trees, a
 case added and the docstring's count not yet moved; since, the 'Bounds:' label removed from _census_floor's docstring reds the
@@ -1136,7 +1138,7 @@ def _traversal_references(tree):
     first cut keyed the attribute and getattr forms on the names the ast module was imported under, an open set of roads to the
     module, and a verifier of the round-4 fixes walked a tree through each of the four roads above with the pin green (the list
     shape the round's ruling names, one more time); the four names are the closed set, so the forms key on them alone, which is
-    clean today: the module spells a traversal attribute at four sites, each inside _walk or exempt. `owner` is the enclosing
+    clean today: each traversal reference of this module sits inside _walk or in an exempt row. `owner` is the enclosing
     top-level def, `Class.method` for a method, `Class` for a class body, `<module>` otherwise, found by walking each module-body
     def's subtree (through _walk, as every reader here walks). Keyed on four names, the finder is wrong in both directions: an
     innocent use of a listed name needs a _WALK_EXEMPT row (the parent maps in _loader_births and _census_floor list a walked node's
