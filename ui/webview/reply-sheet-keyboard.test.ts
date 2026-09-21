@@ -110,7 +110,7 @@ function world() {
 }
 
 for (const [name, src] of BUILDERS) {
-  test(`${name}: kb-tight follows this window's height — on under 480px at open and on every resize, off again with the room back`, () => {
+  test(`${name}: kb-tight follows this window's height: on under 480px at open and on every resize, off again with the room back`, () => {
     const w = world();
     w.win.innerHeight = 420;   // the keyboard already up when Reply is tapped
     const f = fold(name, src, w.overlay, w.win);
@@ -330,11 +330,11 @@ test("the detail is the part that gives way: it shrinks (a scroll container's fl
   assert.doesNotMatch(r, /min-height: 0;/, "no zero floor beside the real one: the later declaration in a block wins, and the executed legs pin the floor, not this string");
   assert.match(r, /max-height: 12em;/, "the cap at rest: 12em of the detail's own font, about eight and a half of its lines at line-height 1.4 (the browser legs pin the height at 900px to 12 times the computed font size); with the keyboard up the flex shrink and the two-line floor govern, not this. A 35dvh arm stood beside it in round 1 as the keyboard-up cap and never bound (177.8px against 134px at 508; under about 383px the shrink is already below both), so it is gone");
   assert.doesNotMatch(r, /dvh/, "no viewport arm presented as the keyboard's mechanism: the keyboard case is the shrink and the floor, measured by execution");
-  assert.match(r, /overflow-y: auto;/, "the rest of the detail is a scroll away, never clipped; live by execution in the browser legs (the detail's scrollTop moves) and here read with comments stripped, so commenting it out reds both");
+  assert.match(r, /overflow-y: auto;/, "the rest of the detail is a scroll away, never clipped. This spelling pin ALONE guards the declaration: since overflow-x: hidden stands beside it, either half alone makes the detail a scroll container (CSS Overflow: a visible half beside a non-visible half computes to auto, measured in Chromium, Firefox and WebKit), so commenting this one out changes nothing an engine can read and only this pin reds; the browser legs' scrollTop pin guards the PAIR, and reds once both halves are gone");
   assert.match(r, /overscroll-behavior: contain;/, "a swipe past its end does not scroll the box or the page under it (#pinned-notes's rule)");
   assert.match(r, /overflow-y: auto; overflow-x: hidden; overflow-wrap: anywhere;/, "no sideways scroller: a scroll container's overflow-x computes to auto, and an unbreakable token made the detail scroll sideways (measured in WebKit at 390x508); overflow-wrap: anywhere breaks the token as .pn-detail and .ut-reply-quote do, overflow-x: hidden is #pinned-notes's companion (the browser legs pin the widest line of such a token inside the detail's own right edge, in three engines)");
   assert.match(rule("#pinned-notes"), /max-height: min\(11em, 30vh\); overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain;/, "the precedent this follows");
-  assert.match(rule(".ut-detail.open"), /^\.ut-detail\.open \{ display: block; \}$/, "the base rule stays: display block, no flex or cap of its own — the fix is scoped to this dialog");
+  assert.match(rule(".ut-detail.open"), /^\.ut-detail\.open \{ display: block; \}$/, "the base rule stays: display block, no flex or cap of its own; the fix is scoped to this dialog");
 });
 
 test("a short window pins the sheet to the top under the picker's 12px frame, on this overlay's OWN selector; nothing hides or reorders", () => {

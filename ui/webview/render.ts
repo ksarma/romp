@@ -10848,7 +10848,7 @@ function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDe
   const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
   // THE KEYBOARD (the user 2026-09-19, a phone screenshot: the detail filled the sheet and the answer box was one squeezed
   // line). The shell sizes this iframe to the VISIBLE height, so the on-screen keyboard opening or closing lands here as
-  // this window's own resize — the picker's fold (kbFit in showPicker), on this overlay: short window → kb-tight, and
+  // this window's own resize: the picker's fold (kbFit in showPicker), on this overlay: short window → kb-tight, and
   // styles.css pins the sheet to the top under a 12px frame and lets the box scroll (#ut-reply-prompt.kb-tight, the
   // .picker-overlay.kb-tight rules the class shares). The same resize re-runs grow: the answer's cap is the room the
   // box has left, and the keyboard opening or closing changes the room. Gone with the modal: close() drops it, and it

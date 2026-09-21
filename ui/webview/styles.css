@@ -2978,8 +2978,10 @@ a.ut-link:hover { filter: brightness(1.12); text-decoration: none; }
    has already taken the detail below both; the maintainer's round 1 ruling). A scroll container's overflow-x
    computes to auto once overflow-y is set, so an unbreakable token (a long identifier, a bare path with no link) made
    the detail a sideways scroller; overflow-wrap: anywhere breaks the token as .pn-detail and .ut-reply-quote already
-   do, and overflow-x: hidden is #pinned-notes's companion declaration, inert once every token breaks and kept so a
-   token the wrap cannot break is clipped rather than scrolled sideways. And a short window (the
+   do, and overflow-x: hidden is #pinned-notes's companion declaration, kept so a token the wrap cannot break is
+   clipped rather than scrolled sideways; it is not inert: a non-visible overflow on either axis makes the element a
+   scroll container on both (a visible half beside it computes to auto), so it also keeps the detail scrolling
+   should overflow-y ever go, which is why only a spelling pin guards that declaration on its own. And a short window (the
    keyboard up; both builders toggle kb-tight on this window's own resize, as the picker does) pins the sheet to the
    top under the picker's 12px frame so the buttons sit above the keyboard. The picker's kb-tight rules on
    .picker-overlay reach this overlay through the class it shares (the dvh cap, overflow-y auto on the box).
