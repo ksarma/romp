@@ -13278,6 +13278,8 @@ class SdkBackend:
         self._host_recently_ended: dict = {}   # sid -> host identity this kernel asked to end (its lease removal races a reconnect)
         self._loose_filed: dict = {}       # sid -> {path: mode} the read roads' descents observed this connect episode (the
         #                                    host.directory-loose latch, _file_loose_directory_rows; cleared by _loose_rows_new_episode)
+        self._refused_filed: dict = {}     # sid -> {the refusal texts filed this connect episode} (the host.directory-refused
+        #                                    latch, _refused_directory_row: once per episode per observed state; cleared with the above)
         self._lease_thread = None          # the heartbeat, started at the first lease, ends when none are held
         self.thread_wake_model = None      # kernel-installed: model_id -> replacement or None, consulted
         #                                    ONLY when a comment THREAD is explicitly woken (T223 rider) —
@@ -13848,16 +13850,24 @@ class SdkBackend:
                 # a symlink at identity.json: the file remedy, and no host this kernel can vouch for
                 self._refused_directory_row(sess, e, "may have left records this kernel does not read", mode_checked=False)
                 return False
-        hdir = ht.host_dir(self.state_dir, sess.sid)
-        # FOLLOW-UP, one item, "the journal reads descend by descriptor" (the general notes' small-asks file, filed
-        # 2026-09-20 by the round-7 fourth addendum; through the third addendum this site read UNCONVERTED): the journal
-        # listing is a GLOB over the directory, by path; its descriptor form is a scandir off the <sid> descriptor with a
-        # name match (the shape _rmtree_at has). The item's five sites are this glob, _host_orphan_recover's, and
-        # sh.read_journal_dir's glob, gaps.json read and segment open, one change. Reached only after the descent above
-        # verified hosts/<sid>/ as a directory of ours; a re-point landing between that descent and this line is read
-        # here, and a journal file a peer planted under a loose <sid>/ of ours is listed here with no owner check until
-        # the item lands.
-        return any(hdir.glob("journal-*.jsonl"))
+            # The journal listing OFF THE SAME DESCRIPTOR (host_transport.journal_segments; the fork PR that follows
+            # #814, 2026-09-21, one of the item's five sites; the design is stated at host_transport.read_journal_dir).
+            # Through #814 this was `hdir.glob("journal-*.jsonl")`, by PATH, after the descent above had verified
+            # hosts/<sid>/ as a directory of ours: a re-point of <sid> landing between the descent and the glob was
+            # listed through the link, and a segment a peer planted under a loose <sid>/ of ours vouched for a host
+            # with no owner check. Now each name of a segment's shape is put the owner question under the held
+            # descriptor: a segment of ours answers True; a peer's, of any kind, is one row (the owner's remedy, the
+            # journal file named) and does not count, so with nothing else the answer is False, as for a foreign
+            # identity.json above; a link of ours at a segment's name is the file-shape row and False, as a link at
+            # identity.json is; a directory, a FIFO or a socket of ours at such a name is not a segment, nothing opened.
+            # A fault of the directory (EACCES on a <sid>/ of ours with no search bit) propagates, as the identity read's
+            # does above.
+            skipped = lambda e: self._refused_directory_row(sess, e, "may have left records this kernel does not read", mode_checked=False)
+            try:
+                return bool(ht.journal_segments(dirs, skipped))
+            except ht.HostDirRefused as e:
+                self._refused_directory_row(sess, e, "may have left records this kernel does not read", mode_checked=False)
+                return False
 
     def _kernel_identity(self) -> dict:
         h = self._lease_holder()
@@ -14027,7 +14037,8 @@ class SdkBackend:
                 self._refuse_host_directory(sess, e)
             except OSError as e:
                 # the launcher's other failures (round 7 of the review, kernel-2 and tests-1, 2026-09-20): an errno from its
-                # descent, from the host.stderr open (EISDIR for a directory at the name, ENOSPC, EMFILE), from the fchmod
+                # descent, from the host.stderr open (ENOSPC, EMFILE; a directory at the name is a refusal naming the kind
+                # since the fork PR that follows #814, not EISDIR), from the fchmod
                 # after it (EPERM), or from Popen itself (a launcher that cannot be started), each the launch error with
                 # its errno. Through round 6 this site caught HostDirRefused alone, so any of those propagated bare to
                 # _record_launch_error and the card read the PREVIOUS CLI's stale stderr tail, with no row and no errno,
@@ -14151,7 +14162,11 @@ class SdkBackend:
         """A hosts/ or hosts/<sid>/ the spawn road will not write under (host_transport.HostDirRefused, from
         write_spawn_spec's two directory guards, the road's own descent or the launcher's), or a symlink standing at
         spawn.json or host.stderr under a verified hosts/<sid>/ (the same class with `file` set; kernel-2, round 5 of
-        the review, 2026-09-20: through round 4 those two opens raised a bare OSError past this filing): filed the way
+        the review, 2026-09-20: through round 4 those two opens raised a bare OSError past this filing), or, since the
+        fork PR that follows #814 (2026-09-21), an entry at either name that is not a regular file of ours: another
+        uid's, of any kind (HostFileForeign, the owner's remedy), or a directory, a FIFO or a socket of ours (`kind`
+        set, the kind's remedy), each refused before anything is opened by the write side's shape question
+        (host_transport._open_host_file_for_write; through #814 a FIFO there blocked the launch inside the event loop): filed the way
         the host's prelude refusals are, one problem row with the reason and the remedy worded for the shape (a
         directory's, or a file's), then the launch error the registry keeps (CLIConnectionErrorLike:
         _record_launch_error persists it without a stale stderr tail, and it survives a kernel restart, recoverable at
@@ -14183,15 +14198,42 @@ class SdkBackend:
         host.log (`e.file`), the owner's when it names a file another uid owns (host_transport.HostFileForeign, `e.uid`
         beside `e.file`; the round-7 fourth addendum, 2026-09-20: the read roads' owner check on the object they hold,
         the row naming the file, its directory and the owning uid, in the text and as the `file` and `uid` fields), else
-        the directory's. `mode_checked` is False on the read roads, whose descent verifies a directory of this uid at
-        each component and not its mode (open_host_dirs_if_present says why), so their remedy does not ask for 0700.
-        One row per call, which is one per refusal met, the footing every filing here has: a refusal ends its road, and
-        the read roads' answer-shaped refusal (a foreign file, answered as absent after the row) is met once per read.
-        Returns `said` for the caller's launch error, when it raises one."""
+        the directory's, or, since the fork PR that follows #814 (2026-09-21), the kind's when the refusal names a
+        directory, a FIFO or a socket of ours at spawn.json or host.stderr (`e.kind` beside `e.file`, the write side's
+        shape question, host_transport._open_host_file_for_write). `mode_checked` is False on the read roads, whose
+        descent verifies a directory of this uid at each component and not its mode (open_host_dirs_if_present says
+        why), so their remedy does not ask for 0700. Returns `said` for the caller's launch error, when it raises one.
+        THE RULE FOR HOW OFTEN (the reviewer's property of 2026-09-21 03:54Z, built by the fork PR that follows #814,
+        mirroring the loose row's latch): ONE ROW PER CONNECT EPISODE PER OBSERVED STATE, not one per road that observes
+        it. Through #814 the footing was one row per call, one per refusal met, on the argument that a refusal ends
+        its road; that argument holds for a refusal of the descent and fails for the answer-shaped ones, which the
+        road proceeds past: one hosts-off connect over a foreign identity.json with a journal beside it filed the
+        owner row twice, from the lease-applies read and again from the orphan road it handed to, one fact seen twice,
+        and the journal reads by descriptor would have filed a foreign segment from the listing, the tail check and
+        the replay. WHICH CASE APPLIES, derived from what the row carries: its text is three parts, the road's clause (`did`), the reason with its path (the
+        refusal's own text: the entry or component, its directory, its owner or its shape, composed by the descent and
+        the readers from the observation alone) and the remedy (worded per shape, the same on every road); the fields
+        are `file`, `uid` and `fileKind` (the entry's kind when a non-regular entry of ours was refused). The reason
+        and the remedy are functions of the observed state and carry no road; the clause differs per road but words the
+        same consequence of the same observation (the file is not read, the journal is not replayed, the launch is not
+        started), so the row's content does not DISTINGUISH the roads in the reviewer's sense, and the main case holds:
+        the first road to observe a state files it, with its clause, and every later observation of the same state in
+        the episode files nothing. The latch key is the reason text (`str(e)`, the observation: which entry or
+        component, in which directory, owned by whom or of what shape), per sid, held in self._refused_filed and cleared
+        with the loose latch at the connect loop's top (_loose_rows_new_episode), so a new episode files a standing
+        refusal again and a changed observation (another uid at the name, another file, another shape) is a new row in
+        the same episode. The spawn road's refusals pass through the same latch and lose nothing: `said` is still
+        returned for the launch error, and a refusal of the spawn road ends its iteration, so a second observation in
+        its episode does not arise. Pinned by execution in tests/test_host_transport.py (BackendHostRules: the hosts-off
+        episode files the owner row once; a new episode again; another uid or another file again)."""
         uid = getattr(e, "uid", None)
+        kind = getattr(e, "kind", None)
         if uid is not None:
             remedy = ("A %s under hosts/<sid>/ that another user owns is not read; remove it, or point the state root "
                       "elsewhere (ROMP_STATE_DIR or XDG_STATE_HOME)" % e.file)
+        elif kind:
+            remedy = ("A %s under hosts/<sid>/ that is a %s, not a regular file, is refused; remove it, or point the state root "
+                      "elsewhere (ROMP_STATE_DIR or XDG_STATE_HOME)" % (e.file, kind))
         elif getattr(e, "file", None):
             remedy = ("A %s under hosts/<sid>/ that is a symlink is refused; remove the link, or point the state root "
                       "elsewhere (ROMP_STATE_DIR or XDG_STATE_HOME)" % e.file)
@@ -14200,19 +14242,26 @@ class SdkBackend:
                       "replace it with a directory, or point the state root elsewhere (ROMP_STATE_DIR or XDG_STATE_HOME)"
                       % (" at 0700" if mode_checked else ""))
         said = "%s: %s. %s" % (did, e, remedy)
+        seen = self._refused_filed.setdefault(sess.sid, set())
+        if str(e) in seen:                       # this state was filed this episode (from this road or another): no second row
+            return said
+        seen.add(str(e))
         problem_row(self.state_dir, "the session host for %s %s" % (sess.name, said), "host.directory-refused",
-                    sid=sess.sid, name=sess.name, log=self._log, file=getattr(e, "file", None), uid=uid)
+                    sid=sess.sid, name=sess.name, log=self._log, file=getattr(e, "file", None), uid=uid, fileKind=kind)
         return said
 
     def _loose_rows_new_episode(self, sess) -> None:
-        """A new connect episode for `sess`'s host.directory-loose rows: what _file_loose_directory_rows observed in the
-        previous one is forgotten, so a directory still loose at the next connect is filed again. Called at the top of
+        """A new connect episode for `sess`'s host.directory-loose rows AND its host.directory-refused rows: what
+        _file_loose_directory_rows and _refused_directory_row observed in the previous one is forgotten, so a directory
+        still loose, or a foreign file still standing, at the next connect is filed again (the refused latch since the
+        fork PR that follows #814, 2026-09-21; the loose latch since the round-7 fifth addendum). Called at the top of
         each iteration of the connect loop (SdkSession._amain, before the iteration's first descent under hosts/: the
         lease-applies read with hosts off, the leftover trigger inside _host_transport_for with hosts on) and nowhere
         else: the served road's reads at the host's hello and at its exit belong to the connect that spawned or attached
         the host, and a lease pre-read opens no episode. The round-7 fifth addendum of the review (2026-09-20, the
         reviewer's ruling of 20:40Z)."""
         self._loose_filed.pop(sess.sid, None)
+        self._refused_filed.pop(sess.sid, None)
 
     def _file_loose_directory_rows(self, sess, dirs) -> None:
         """THE RULE: one host.directory-loose problem row PER CONNECT EPISODE PER DISTINCT MODE OBSERVED, for each
@@ -14230,9 +14279,11 @@ class SdkBackend:
         information: the latch holds the mode last observed, not last filed, so a directory tightened and loosened again
         within one episode is filed again), and the next connect episode files a still-loose directory again
         (_loose_rows_new_episode, at the connect loop's top), so an install whose hosts/ stays loose with hosts off says
-        so once per connect. The refusal rows carry no such latch because they need none: a refusal ends its road, so
-        _refused_directory_row's one row per call is one per episode by construction; a loose component ends nothing,
-        which is why the latch lives here (self._loose_filed, keyed on the sid, then the path, holding the mode). What the
+        so once per connect. The refusal rows carry the same latch since the fork PR that follows #814 (2026-09-21,
+        _refused_directory_row: once per episode per observed state, keyed on the refusal's text); through #814 they
+        carried none on the argument that a refusal ends its road, which the answer-shaped refusals (a foreign file,
+        answered as absent) do not. This latch lives here (self._loose_filed, keyed on the sid, then the path, holding
+        the mode) because a loose component ends nothing. What the
         roads do NOT do: refuse on the mode (a denial of service on every install whose hosts/ was made at the umask
         before 2026-09-19, until the first spawn after the fix repairs it) or repair it (a read road stays a read road;
         the chmod is the spawn road's helpers', sh.hosts_dir and sh.owner_only_dir, which the remedy names). A loose
@@ -14256,8 +14307,10 @@ class SdkBackend:
     def _spawn_road_failed(self, sess, e, what: str) -> None:
         """A filesystem failure on the spawn road that is not a refusal: an OSError whose errno is outside the shape
         class write_spawn_spec files under HostDirRefused (a full disk or a read-only filesystem at a directory's mkdir,
-        a hosts/ re-pointed to a directory this uid cannot write, EISDIR for a directory standing at spawn.json or
-        host.stderr, EPERM from the fchmod of either, and, on the launcher's arm, Popen's own OSError), raised as the
+        a hosts/ re-pointed to a directory this uid cannot write, EACCES for a file of ours at spawn.json or host.stderr
+        with no write bit, EPERM from the fchmod of either, and, on the launcher's arm, Popen's own OSError; a directory
+        at either name was EISDIR here through #814 and is a refusal naming the kind since the fork PR that follows it,
+        host_transport._open_host_file_for_write), raised as the
         launch error under its own text, errno and path included, with no directory remedy and under no refusal kind.
         Three arms hand here, `what` naming the one that failed (round 7 of the review, correctness-4 and kernel-3,
         2026-09-20: through round 6 the line said the specification could not be written on the descent arm too, where
@@ -14343,7 +14396,6 @@ class SdkBackend:
         session's own receive loop), then the host's directory and lease are cleared. hostAck is trusted only
         when it names THIS host (the identity the host wrote at its start)."""
         ht = _ht()
-        hdir = ht.host_dir(self.state_dir, sess.sid)
         if died:
             problem_row(self.state_dir, "the session host for %s died; its CLI finishes its turn, then the session resumes from "
                         "the transcript after the journal is replayed" % sess.name, "host.died", sid=sess.sid, name=sess.name, log=self._log)
@@ -14376,81 +14428,104 @@ class SdkBackend:
         # name reached neither through the fourth addendum, open(2) answering ENXIO first, and the OSError arm below
         # answered it absent with no row) is one row naming the file and the owner and then the answer an absent
         # identity.json gets, raw None: no identity vouches for the registry's ack, the offset is -1, and the journal
-        # reads below still run by path, so a journal file the same peer planted is read until the follow-up lands; a
-        # directory, a FIFO or a socket of ours at the name is not the file, raw None, nothing opened. The OSError arm
-        # below is for a fault of the filesystem or the process (EACCES, EMFILE, EIO), not for a shape at the name: the
-        # readers answer every shape from their table before it is reached.
-        ident, refused, raw = None, None, None
+        # reads below run off the same descriptor with the same question asked of each file (since the fork PR that
+        # follows #814; through #814 they ran by path, so a journal file the same peer planted was read); a directory,
+        # a FIFO or a socket of ours at the name is not the file, raw None, nothing opened. The OSError arm below is
+        # for a fault of the filesystem or the process (EACCES, EMFILE, EIO), not for a shape at the name: the readers
+        # answer every shape from their table before it is reached. THE DESCRIPTOR IS HELD from the descent to the end
+        # of the replay (closed in the finally below), so the tail check and the replay read the directory the descent
+        # verified and never a path a re-pointed <sid> would redirect.
+        ident, refused, raw, dirs = None, None, None, None
         try:
             dirs = ht.open_host_dirs_if_present(self.state_dir, sess.sid)
             if dirs is not None:
-                with dirs:
-                    self._file_loose_directory_rows(sess, dirs)
-                    try:
-                        raw = ht.read_host_file("identity.json", dirs)
-                    except ht.HostFileForeign as e:
-                        self._refused_directory_row(sess, e, "is gone, and left a file this kernel does not read", mode_checked=False)
-                        raw = None
+                self._file_loose_directory_rows(sess, dirs)
+                try:
+                    raw = ht.read_host_file("identity.json", dirs)
+                except ht.HostFileForeign as e:
+                    self._refused_directory_row(sess, e, "is gone, and left a file this kernel does not read", mode_checked=False)
+                    raw = None
         except ht.HostDirRefused as e:
             refused = e
             self._refused_directory_row(sess, e, "is gone, and its journal is not replayed", mode_checked=False)
         except OSError:
             raw = None
-        if raw is not None:
-            try:
-                ident = json.loads(raw)
-                ident = "%s:%s" % (ident.get("pid"), ident.get("start"))
-            except Exception:
-                ident = None
-        offset = int(ack.get("offset", -1)) if (ack and ident and str(ack.get("host") or "") == ident) else -1
-        if refused is not None:
-            has_tail = False
-        else:
-            # FOLLOW-UP, one item, "the journal reads descend by descriptor" (the general notes' small-asks file, filed
-            # 2026-09-20 by the round-7 fourth addendum; through the third addendum these sites read UNCONVERTED): the
-            # journal listing here is a GLOB over the directory, and sh.read_journal_dir (kernel/session_host.py) lists the
-            # segments with the same glob and opens gaps.json and each segment by the paths it yields, here for the tail's
-            # existence and below, through HostTransport.from_journal, for the replay itself. The item's five sites are
-            # this glob, _host_lease_applies's, and read_journal_dir's three reads, one change: a scandir off the <sid>
-            # descriptor with a name match and opens by name under it (the shape _rmtree_at has), read_journal_dir
-            # rewritten to take the descriptor with its two callers. Reached only after the descent above verified
-            # hosts/<sid>/ as a directory of ours; a re-point landing between that descent and these reads is read
-            # through the link, and a journal file a peer planted under a loose <sid>/ of ours is read here with no
-            # owner check until the item lands.
-            has_tail = any(True for _ in ht.sh.read_journal_dir(hdir, offset + 1)) if any(hdir.glob("journal-*.jsonl")) else False
-        if not died and refused is None:
-            if has_tail:
-                # a row only when there IS a tail: a failed spawn's leftovers (an empty journal, an identity, no
-                # lease) are cleared quietly (the commit-8 review's item 4)
-                append_session_event(self.state_dir, "host.tail-replayed", sid=sess.sid, name=sess.name)
-                self._log("host (%s): the host ended unattended; replaying the journal's tail before resuming" % sess.name)
+        try:
+            if raw is not None:
+                try:
+                    ident = json.loads(raw)
+                    ident = "%s:%s" % (ident.get("pid"), ident.get("start"))
+                except Exception:
+                    ident = None
+            offset = int(ack.get("offset", -1)) if (ack and ident and str(ack.get("host") or "") == ident) else -1
+            # The journal BY DESCRIPTOR (host_transport.journal_has_tail here, read_journal_dir through the replay
+            # transport below; the fork PR that follows #814, 2026-09-21, two of the item's five sites; the design is
+            # stated at read_journal_dir). Through #814 the tail's existence was `hdir.glob("journal-*.jsonl")` and the
+            # tail itself sh.read_journal_dir over the directory PATH, after the descent above had verified the
+            # directory: a re-point of <sid> landing between them was read through the link, and a journal file a peer
+            # planted under a loose <sid>/ of ours was replayed with no owner check. Now the segments are listed off the
+            # held <sid> descriptor and each file is put the owner question by name under it: a peer's segment or
+            # gaps.json is one row (`skipped`: the owner's remedy, the file named) and is not read, the tail being what
+            # the segments of ours hold; a link of ours at a segment's name or at gaps.json is the file-shape row and
+            # the road is REFUSED, nothing replayed, as a link at identity.json refuses it (`refused` set: no
+            # host.tail-replayed row, the lease and the ack still go, the removal road refuses its own object); a
+            # directory, a FIFO or a socket of ours at such a name is not a segment, nothing opened. The replay transport
+            # takes the same descriptor and the same callback for a file that changed between this check and its read.
+            # A fault of the directory (EACCES on a <sid>/ of ours with no search bit) propagates out of the listing's
+            # owner question, as the base's by-path open of a segment under such a directory did.
+            skipped = lambda e: self._refused_directory_row(sess, e, "is gone, and left a file this kernel does not read", mode_checked=False)
+            if refused is not None or dirs is None:
+                has_tail = False
             else:
-                self._log("host (%s): clearing a host directory with nothing past the acknowledged offset" % sess.name)
-        if has_tail:
-            from claude_agent_sdk import ClaudeSDKClient
-            # the tail's result rows carry the DEAD CLI's cumulative total_cost_usd and drain through the same result
-            # branch as a live turn, BEFORE the connect's seed runs (that seed follows the client handshake): seed
-            # the watermarks for that process first, from the registry's costState when it names it, else nothing
-            # is folded for the first replayed result (T354 review, M7: the dead lifetime folded as one turn)
-            cli = ""
-            if isinstance(lease, dict) and lease.get("pid") and lease.get("start"):
-                cli = "%s:%s" % (lease.get("pid"), lease.get("start"))
-            elif ack and ident and str(ack.get("host") or "") == ident:
-                cli = str(ack.get("cli") or "")
-            sess._seed_for_dead_cli(cli)
-            replay = ht.HostTransport.from_journal(hdir, ack=offset)
-            prev_host = getattr(sess, "_host", None)
-            sess._host = replay          # the session's transport for the drain (round five of 1450's review): the spend
-            #                              fold reads the replay's tags through sess._host, and with it None every replayed
-            #                              result read as live and a dead host's tail re-billed the dead CLI's spend
-            try:
-                async with ClaudeSDKClient(options=opts, transport=replay) as client:
-                    await self._replay_drain(sess, client, msg_classes)
-            except Exception as e:
-                self._log("host (%s): orphan journal replay ended on %s" % (sess.name, type(e).__name__))
-            finally:
-                sess._host = prev_host
-            self._log("host (%s): replayed the orphan journal from offset %d" % (sess.name, offset + 1))
+                try:
+                    has_tail = ht.journal_has_tail(dirs, offset + 1, skipped)
+                except ht.HostDirRefused as e:
+                    refused = e
+                    self._refused_directory_row(sess, e, "is gone, and its journal is not replayed", mode_checked=False)
+                    has_tail = False
+            if not died and refused is None:
+                if has_tail:
+                    # a row only when there IS a tail: a failed spawn's leftovers (an empty journal, an identity, no
+                    # lease) are cleared quietly (the commit-8 review's item 4)
+                    append_session_event(self.state_dir, "host.tail-replayed", sid=sess.sid, name=sess.name)
+                    self._log("host (%s): the host ended unattended; replaying the journal's tail before resuming" % sess.name)
+                else:
+                    self._log("host (%s): clearing a host directory with nothing past the acknowledged offset" % sess.name)
+            if has_tail:
+                from claude_agent_sdk import ClaudeSDKClient
+                # the tail's result rows carry the DEAD CLI's cumulative total_cost_usd and drain through the same result
+                # branch as a live turn, BEFORE the connect's seed runs (that seed follows the client handshake): seed
+                # the watermarks for that process first, from the registry's costState when it names it, else nothing
+                # is folded for the first replayed result (T354 review, M7: the dead lifetime folded as one turn)
+                cli = ""
+                if isinstance(lease, dict) and lease.get("pid") and lease.get("start"):
+                    cli = "%s:%s" % (lease.get("pid"), lease.get("start"))
+                elif ack and ident and str(ack.get("host") or "") == ident:
+                    cli = str(ack.get("cli") or "")
+                sess._seed_for_dead_cli(cli)
+                # the replay's own refusals (a file that changed since the tail check): a peer's file is `skipped`'s row; a
+                # link of ours ends the replay after the row saying so
+                def refused_in_replay(e, sess=sess):
+                    if isinstance(e, ht.HostFileForeign):
+                        skipped(e)
+                    else:
+                        self._refused_directory_row(sess, e, "is gone, and the rest of its journal is not replayed", mode_checked=False)
+                replay = ht.HostTransport.from_journal(dirs, ack=offset, on_refused=refused_in_replay)
+                prev_host = getattr(sess, "_host", None)
+                sess._host = replay          # the session's transport for the drain (round five of 1450's review): the spend
+                #                              fold reads the replay's tags through sess._host, and with it None every replayed
+                #                              result read as live and a dead host's tail re-billed the dead CLI's spend
+                try:
+                    async with ClaudeSDKClient(options=opts, transport=replay) as client:
+                        await self._replay_drain(sess, client, msg_classes)
+                except Exception as e:
+                    self._log("host (%s): orphan journal replay ended on %s" % (sess.name, type(e).__name__))
+                finally:
+                    sess._host = prev_host
+                self._log("host (%s): replayed the orphan journal from offset %d" % (sess.name, offset + 1))
+        finally:
+            if dirs is not None:
+                dirs.close()
         remove_lease(self.state_dir, sess.sid)
         # through the descent, never by path (round 4 of the review, 2026-09-20): with hosts/ swapped for a symlink to a
         # peer's directory, this rmtree deleted the peer's <sid>/ through the link on the leftover arm of every session
@@ -14622,8 +14697,9 @@ class SdkBackend:
         descriptor), and a refusal at the first of them, HostFileForeign for an entry another uid owns at the name, of
         any kind, or the file-shape refusal for a link of ours, is ONE host.directory-refused row (_refused_directory_row:
         the owner's or the file's remedy, `did` the arm's clause) and the absent file's answers for all three: no
-        reason, no untested row, no position, none of the file read. The reads after the refused one are not made,
-        which keeps the row at one per refusal met, the footing every filing here has (a refusal ends its road). The
+        reason, no untested row, no position, none of the file read. The reads after the refused one are not made, so
+        the refusal is met once here; the row's own footing is _refused_directory_row's, once per connect episode per
+        observed state (the fork PR that follows #814). The
         arms' handler is the design's, every read under hosts/<sid>/ asking, and not a road a peer has: the mark
         (host_log_mark, before the spawn) refuses the launch on a foreign host.log, and once the helpers have tightened
         <sid>/ to 0700 a create, a rename or an unlink in it is checked against the directory's own mode, a held
