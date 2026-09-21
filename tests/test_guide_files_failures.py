@@ -252,8 +252,8 @@ class TheViewerDoesIt(unittest.TestCase):
         # ui/webview/file-view-place-blocks.test.ts (readPlace over a top-level figure wearing the control reads the figure, at the
         # root and nested in a wrapper), ui/webview/anchor-map.test.ts (the control at the box's top level is no block's node, and
         # the caption beside a labelled control maps) and ui/webview/md-config-figure-gate-place.test.ts (the place beside a
-        # glyph-only and a labelled control), each red under its predicate's or entry's removal (the file review's landing round,
-        # correctness-1 with extra9-1)
+        # glyph-only and a labelled control), each red under its predicate's or entry's removal (the file review's landing round's second
+        # read, correctness-1 with extra9-1)
         self.assertRegex(_read("ui", "webview", "anchor-map.ts"), re.compile(r'^  "fv-figerr",', re.M))
         self.assertRegex(_read("ui", "webview", "reader-place.ts"), re.compile(r'^const CONTROL_CLASSES = \[.*"fv-figerr".*\];$', re.M))
         for sheet in ("styles.css", "feed.css"):

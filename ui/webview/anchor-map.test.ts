@@ -1296,7 +1296,7 @@ test("Rendered: a figure's Open the picture control (button.fv-figopen, the img'
   assert.equal(ctrl3.parentNode, p, "the control stands where it was"); assert.equal(ctrl3.childNodes.length, 1);
 });
 
-test("Rendered: the Open the picture control carrying a text node of its own beside the img inside a paragraph: the caption still maps to its own offsets and paints, the control's text skipped as the fence's Copy button's is (the file review's landing round, extra9-1: the executed case of anchor-map.ts's fv-figopen entry, which the glyph-only control above cannot red on; without the entry the walk reads the label as the paragraph's text and refuses the block as not matching the file)", () => {
+test("Rendered: the Open the picture control carrying a text node of its own beside the img inside a paragraph: the caption still maps to its own offsets and paints, the control's text skipped as the fence's Copy button's is (the file review's landing round's second read, extra9-1: the executed case of anchor-map.ts's fv-figopen entry, which the glyph-only control above cannot red on; without the entry the walk reads the label as the paragraph's text and refuses the block as not matching the file)", () => {
   const caption = "The caption says what the plot showed.";
   const src = "# Report\n\nBefore the figure.\n\n![p95 latency](figs/plot.png) " + caption + "\n\nAfter the figure.\n";
   const { box } = buildRendered(src);

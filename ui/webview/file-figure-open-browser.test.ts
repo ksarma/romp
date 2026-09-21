@@ -283,7 +283,7 @@ test("in a browser, the Comments panel open on a fine pointer: the regions layer
     assert.equal(await base(page), "report.md", "the plain click offered a comment and opened nothing");
     // a Ctrl-click on the picture, on this fine pointer under the open panel: the overlay takes the press whatever the modifier
     // (file-comments-regions.ts reads none), so no tab opens and the offer stands; the /file tab is the closed panel's and the
-    // coarse pointer's (the leg below), and the guide's clause says so (the file review's landing round, fresh-1)
+    // coarse pointer's (the leg below), and the guide's clause says so (the file review's landing round's second read, fresh-1)
     await page.keyboard.down("Control"); await page.mouse.click(img.left + img.width * 0.3, img.top + img.height * 0.6); await page.keyboard.up("Control");   // mouse.click takes no modifiers option: the key is held around it
     await frames(page, 2);
     assert.deepEqual(await opened(page), [], "the Ctrl-click on the picture under the open panel on a fine pointer opens no tab");

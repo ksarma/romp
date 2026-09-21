@@ -444,7 +444,7 @@ const stripWs = (s: string): string => s.replace(/\s+/g, "");
  *  author typed, whose TeX the parse of the block's source reads too, so the texts agree and the pairing holds. The last
  *  two, a figure's companions, stand at a level BESIDE a block's element without being it or holding it, and are left out
  *  of the structural read too (blockElementsOf), as the map's pairing leaves them out (isFigureCompanion); the other five
- *  are or hold a block's element and stay in it (the file review's landing round, correctness-1: counted as a box of the
+ *  are or hold a block's element and stay in it (the file review's landing round's second read, correctness-1: counted as a box of the
  *  level, a top-level control's bottom above the edge sent the search past the figure to the paragraph after it). The
  *  control's entry here is inert while the control has no text node of its own (noteText reads nothing from a glyph,
  *  listed or not; its title and aria-label are attributes): md-config-figure-gate-place.test.ts's labelled scene is what

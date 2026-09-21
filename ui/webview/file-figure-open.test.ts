@@ -107,7 +107,7 @@ test("SOURCE-TEXT pins of the two text-read control lists (anchor-map.ts's CONTR
   assert.match(ANCHOR, /const isFigureCompanion = \(n: DNode\): boolean => hasClass\(n, "fv-figerr"\) \|\| hasClass\(n, "fv-figopen"\);/, "the two companions of a figure");
   assert.match(ANCHOR, /const holdsContent = \(n: DNode\): boolean => isElement\(n\) \? !blankMark\(n\) && !isFigureCompanion\(n\) : isText\(n\) && stripWs\(n\.data\) !== "";/, "left out of the top-level nodes, as the label is");
   assert.doesNotMatch(ANCHOR, /isFigureLabel/, "the label-only predicate is gone: one predicate for both");
-  // reader-place.ts: the count word compared to the list's own length, never to a literal (the file review's landing round, extra6-3:
+  // reader-place.ts: the count word compared to the list's own length, never to a literal (the file review's landing round's second read, extra6-3:
   // a literal "seven" stayed green under an eighth entry). The list is read off its own line, a statement at column 0, so a comment
   // quoting it elsewhere is not what is counted.
   const list = /^const CONTROL_CLASSES = \[([^\]]*)\];$/m.exec(READER);
@@ -129,7 +129,7 @@ test("the sheets: the control rests transparent over the figure's corner with a 
     const print = css.slice(css.indexOf("\n@media print {"), css.indexOf("\n}", css.indexOf("\n@media print {")));
     assert.doesNotMatch(print, /fv-figopen/, name + ": the print block names it nowhere");
     // the closed set: outside `@media screen` exactly the rest, the hover background and the float twins, and every other rule
-    // line under screen (the file review's landing round, fresh-4: the guard before it matched two opacity spellings, so a
+    // line under screen (the file review's landing round's second read, fresh-4: the guard before it matched two opacity spellings, so a
     // reveal spelled any other way outside screen passed it); a trailing comment is stripped (the no-hover line carries one)
     const heads = css.split("\n").filter((l) => /fv-figopen/.test(l) && /\{/.test(l) && !/^\s/.test(l) && !l.startsWith("/*")).map((l) => l.replace(/\s*\/\*.*\*\/\s*$/, ""));
     assert.deepEqual(heads.filter((l) => !l.startsWith("@media screen")), [

@@ -1402,7 +1402,7 @@ test("the inertness premise, held where CI runs: MD_PURIFY is its six-key litera
 // every module those modules name in an import the compiler parses (an import declaration under any clause: a named import, a
 // type-only one, a namespace or default import, a side-effect import; an `export ... from`; an `import x = require()`; and a
 // dynamic `import()` or `require()` of a string literal), under any quote and across any line break, a specifier that is not a
-// string literal refused with its file and line (the file review's landing round, tests-1 with extra5-1, extra7-1 and extra7-2:
+// string literal refused with its file and line (the file review's landing round's second read, tests-1 with extra5-1, extra7-1 and extra7-2:
 // the regex resolver before it read a double-quoted specifier at a line's start alone, so a single-quoted import in any reached
 // module dropped that module and its whole closure from the judged set with nothing red, and its binding reader read
 // `import ... from` lines alone, so file-view.ts's require-bound gclock was outside the method-call guard), transitively, and
@@ -1518,7 +1518,7 @@ test("no re-parse after the adoption: mdBlock's post-adoption region and every m
   assert.deepEqual(called, ["keepVideoShape", "linkHref", "resolveDocRelative", "linkMarkdownAnchors", "addFigureControls", "linkifyFileText"], "the passes after the adoption call these and nothing else (a new call widens this list first)");
   // a pass written as a method call on an imported binding (`ns.pass(box)`, `hljs.highlight(...)`) is no bare call, so the list
   // above would not see it: every binding file-view.ts imports, under any form and from any source (the compiler's tree, so a
-  // require-bound one, gclock, and a clause wrapped over lines are in the set; the file review's landing round, extra7-1), is
+  // require-bound one, gclock, and a clause wrapped over lines are in the set; the file review's landing round's second read, extra7-1), is
   // asserted absent as the object of a method call in the region and in every reached local (the fork PR review's round-2
   // verification named this blind spot, 2026-09-20)
   /** Every binding a module imports, by the compiler's tree: a default, a namespace, a named one (as renamed), an
@@ -1547,7 +1547,7 @@ test("no re-parse after the adoption: mdBlock's post-adoption region and every m
   assert.deepEqual([...bindingsOf(bindingForms, "x.ts")].sort(), ["a", "b", "c", "e", "f", "g", "h", "i", "j", "k", "l", "m"], "the binding reader sees every binding form, under any quote and across a line break (a form it missed would leave a method call on that binding unguarded)");
   /** The imported bindings `text` calls a method on (`ns.pass(box)`): the shape the bare-call list above cannot see. */
   const methodCallsIn = (text: string): string[] => [...bindings].filter((b) => new RegExp("\\b" + b + "\\.\\w+\\(").test(text)).sort();
-  assert.deepEqual(methodCallsIn("gclock.learnAll(box); hljs.highlight(raw, { language: lang }); linkifyFileText(box);"), ["gclock", "hljs"], "the guard, driven: a method call on the require-bound binding and on the default import is seen, a bare call is not (the file review's landing round, extra7-1: `gclock.learnAll(box)` planted after the adoption had left this test green, gclock being outside the binding set)");
+  assert.deepEqual(methodCallsIn("gclock.learnAll(box); hljs.highlight(raw, { language: lang }); linkifyFileText(box);"), ["gclock", "hljs"], "the guard, driven: a method call on the require-bound binding and on the default import is seen, a bare call is not (the file review's landing round's second read, extra7-1: `gclock.learnAll(box)` planted after the adoption had left this test green, gclock being outside the binding set)");
   for (const b of bindings) assert.doesNotMatch(after, new RegExp("\\b" + b + "\\.\\w+\\("), "no method call on the imported binding `" + b + "` after the adoption: a pass in that form would hide from the callee list above");
   /** file-view.ts's named imports from `./`: the binding to the module, for resolving a bare call (the compiler's tree, so any
    *  quote and any line break; a type-only clause included, as the reader before it took `import type {`). */
@@ -1568,7 +1568,7 @@ test("no re-parse after the adoption: mdBlock's post-adoption region and every m
    *  any quote and across any line break; each as a path relative to ui/webview (`x` to `x.ts`, a suffix kept as written), the
    *  npm packages apart. A specifier that is not a string literal (a template, with or without a substitution, a variable, an
    *  expression) REFUSES with the file, the form and the line, on the safe side: a module the walk cannot name is a module it
-   *  cannot judge (the file review's landing round, tests-1, extra5-1, extra7-1, extra7-2). */
+   *  cannot judge (the file review's landing round's second read, tests-1, extra5-1, extra7-1, extra7-2). */
   const importTargets = (src: string, from: string): { local: string[]; packages: string[] } => {
     const local = new Set<string>(), packages = new Set<string>();
     const sf = ts.createSourceFile(from, src, ts.ScriptTarget.Latest, true, from.endsWith(".js") ? ts.ScriptKind.JS : ts.ScriptKind.TS);

@@ -8170,7 +8170,14 @@ rules-N, regression-N, tests-N and extra-N with a digit before the hyphen), none
 own verification after the landing round's fixes is named the author's closing pass after the file review's landing
 round; its findings' ids (census-N, and records-N of the family above) stand in its commits and in the notes outside the
 repo, and the records here name the pass alone, since the attribution module reads a pass's name to the digits of the
-round it followed and the landing round has none. A record naming a
+round it followed and the landing round has none. The maintainer's second read of the whole PR, at the head that
+carried the landing round's fixes and their closing pass, is named the file review's landing round's second read, with
+no number either; its fixlist keeps its own ids in the landing round's families, and the two fixlists share several ids
+(correctness-1, fresh-1, tests-1, tests-2, regression-1, extra6-1, extra7-1, extra8-1, extra8-2 and extra8-3 stand in
+both), so a record citing a finding of the second read names the second read and never the landing round alone. The
+author's own verification after the second read's fixes is named the author's closing pass after the file review's
+landing round's second read; as with the pass after the landing round, its ids stand in its commits and in the notes
+outside the repo, and the records here name the pass alone. A record naming a
 round names the review it belongs to first (ui/webview/linknav-records-attribution.test.ts holds this, in every checkout,
 over every unit of the files the branch created and over every unit in the tree that names the file review, names the
 author's closing pass, or carries an id of the author's family, a phrase outside the created files judged where the review
@@ -8488,7 +8495,7 @@ body's second click listener, beside the links', since file-view-links.test.ts p
 order and the two act on disjoint targets): a plain click on the control or on the bare figure opens it as above; a
 Cmd/Ctrl-click on a LOCAL picture, where the press reaches the picture (the Comments panel closed, or the pointer
 coarse: with the panel open on a fine pointer the layer's overlay below takes the press, modified or not, and offers a
-comment, while the control opens at any time; the file review's landing round, fresh-1), opens the kernel's /file URL
+comment, while the control opens at any time; the file review's landing round's second read, fresh-1), opens the kernel's /file URL
 in a tab, as a PDF's modified click does (`openFileTab`; a blocked popup falls through to the viewer), and stops
 before the row as a link's modified click does; the figure's own click
 yields to a figure inside a link (the author's link, through the links listener; and an anchor with an href that listener
@@ -8584,7 +8591,7 @@ the contract said the same; the claim was false, and the follow-on is a privacy 
 (open point 11). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui/webview, docs, plans, tools,
 upstream or tests alone, save one file under .github/workflows, ci.yml, whose step the file review's landing round's
-extra8-2 asked for (45 files, the ledger entry's where line; run 2026-09-21 at the head that carries the fixes for the
+second read, extra8-2, asked for (45 files, the ledger entry's where line; run 2026-09-21 at the head that carries the fixes for the
 file review's landing round's second read, where the merge-base is 5e5ee79ed, the fork's main merged into the branch
 before landing, and the listing is the branch's whole delta over it; the run at 7f8684caf, the head that read took, one
 commit after that merge, listed 42 from the same merge-base, before three files joined the delta in the read's fixes,
@@ -8666,7 +8673,7 @@ and tools/markdown-viewer-plan-gate-adopt.test.mjs holds it), and run in the ste
 `ROMP_FILEVIEW_BROWSER_REQUIRE`, where a runner without the browser turns the job red rather than green with the coverage
 gone; tools/markdown-viewer-plan-linknav.test.mjs derives those legs from the tree, as the browser modules whose own text
 names this follow-on, and holds the step's run line to them and the step's place after the install and after the Test step
-(the file review's landing round, extra8-2: the legs were the feature's evidence and none of them ran where landing is
+(the file review's landing round's second read, extra8-2: the legs were the feature's evidence and none of them ran where landing is
 gated, the gating run's log showing every browser scenario of theirs as SKIP). Sixteen standing suites were re-aimed, not undone:
 ui/webview/file-view-text-size.test.ts (its real-module bar leg at 380, 420, 480 and 600 px in the chat and feed modals
 reads the group hidden on a fresh open and, once a link is followed, measures the two glyphs among the actions, case 8), ui/webview/file-view.test.ts and ui/webview/file-view-links.test.ts
@@ -8679,7 +8686,7 @@ order, the capture phase first, since the trail's listener is an open's newest r
 removal carries the capture flag its add did), ui/webview/md-url-view.test.ts (the local-file mode's sibling link opens
 through openFromViewer with a push, and the door's shape: the tag set, the host's opener called, the tag cleared in a
 finally) and tests/test_guide_files_failures.py (re-aimed twice: first to hold both walks' control lists' seventh entry,
-fv-figopen, the figure's other text-free neighbour, then in the file review's landing round, correctness-1, to name the
+fv-figopen, the figure's other text-free neighbour, then in the file review's landing round's second read, correctness-1, to name the
 executed cases of the control's exclusion in that pin's place, since a pin on a list's membership stayed green while the
 structural read ignored both lists and Python cannot execute readPlace), and in the sweep after the review ui/webview/pdf-new-tab.test.ts (its count
 of the gesture reads inside openFileView, which held the links' two, counts the links' two and the figure's four as two

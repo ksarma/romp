@@ -898,7 +898,7 @@ function failedFigureLabel(img: FakeElement): FakeElement {
 const FIG = '<img src="figs/plot.png" alt="fig">';
 const FIG_RIGHT = '<img src="figs/plot.png" alt="fig" align="right">';
 
-test("readPlace, Rendered: a top-level html-block figure wearing the Open the picture control (the control's box ends above the edge while the figure's ends below it) reads as the figure, at the same box as without the control, at the root's level and nested in an html wrapper (the file review's landing round, correctness-1: the control was in the text read's list and not in the structural read's, so the level's search landed on the control, took its bottom for a box above the edge and read the paragraph after the figure)", () => {
+test("readPlace, Rendered: a top-level html-block figure wearing the Open the picture control (the control's box ends above the edge while the figure's ends below it) reads as the figure, at the same box as without the control, at the root's level and nested in an html wrapper (the file review's landing round's second read, correctness-1: the control was in the text read's list and not in the structural read's, so the level's search landed on the control, took its bottom for a box above the edge and read the paragraph after the figure)", () => {
   const placeIn = (body: FakeElement, doc: string) => { const p = readPlace(H(body), doc); assert.ok(p, "a place"); return [doc.slice(p!.start, p!.end), p!.top, p!.height]; };
   // the root's level: the bare <img> is a top-level element between two paragraphs, the reader 100px into it
   const doc = "# Report\n\n" + PARA(1) + "\n\n" + FIG + "\n\n" + PARA(2) + "\n\n" + PARA(3) + "\n";

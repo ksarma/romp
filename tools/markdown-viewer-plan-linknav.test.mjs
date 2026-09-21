@@ -29,7 +29,7 @@
 // the plan's Tests paragraph stating it once with the checkouts, as a rule over those checks whose count is derived (every
 // check this module keys on the delta runs through one door, `gated`, which records it, and the attribution module exports
 // the count of its own; the sentence's number word is held to the sum, and each check is named in it: the file review's
-// landing round, extra6-1, the sentence had named two of three and its pin held the bytes, so a widened, truer sentence
+// landing round's second read, extra6-1, the sentence had named two of three and its pin held the bytes, so a widened, truer sentence
 // was red), and this module holding the two CI jobs that run the tools and the UI tests to a
 // checkout with no fetch-depth: 0, so a change there names the plan's sentence; the gate itself is a pure function over git's
 // answers, gateOf, pinned in all four cells, this module's own path asserted to exist in the tree, and the running shape and
@@ -295,7 +295,7 @@ test('L3: the control\'s words are the viewer\'s literal, quoted by the section 
     assert.ok(css.includes('\n' + REVEAL + '\n'), name + ': the reveal under screen');
     assert.ok(css.includes('\n' + NOHOVER), name + ': no hover keeps it visible, under screen');
     // the closed set: outside `@media screen` exactly the rest, the hover background and the float twins, none a reveal, and every
-    // other rule line under screen (the file review's landing round, fresh-4: the guard before it matched two opacity spellings,
+    // other rule line under screen (the file review's landing round's second read, fresh-4: the guard before it matched two opacity spellings,
     // so a reveal spelled any other way outside screen passed it)
     assert.deepEqual(lines[name].filter((l) => !l.startsWith('@media screen')), [REST, HOVER_BG, LEFT, RIGHT], name + ': the rule lines outside `@media screen` are exactly the rest, the hover background and the float twins; any other line there is a reveal outside screen');
     assert.deepEqual(lines[name].filter((l) => l.startsWith('@media screen')), [REVEAL, NOHOVER], name + ': the rule lines under screen are the reveal and the no-hover rule');
@@ -482,7 +482,7 @@ test('the re-aimed sentence: its count is the number of pre-existing test module
   }, '; the re-aimed count is held to the sentence\'s own list alone here');
 });
 
-// ── the browser legs in the job that gates a landing (the file review's landing round, extra8-2) ─────────────────────
+// ── the browser legs in the job that gates a landing (the file review's landing round's second read, extra8-2) ─────────────────────
 
 /** The follow-on's browser legs, derived from the tree: the `*-browser.test.ts` modules under ui/webview whose own text names the
  *  follow-on (claimants, above). Two derivations must agree: the Tests paragraph's list of browser modules is the same set. */
@@ -594,7 +594,7 @@ test('L6\'s gate (the file review\'s round 5, tests-7): a pure function over git
 
 // ── the stand-down sentence, held to the checks that stand down ────────────────────────────────────
 
-test('the plan\'s stand-down sentence is a rule over the checks keyed on the delta since the merge-base, and its count is derived: the number word equals the checks this module ran through `gated` plus the attribution module\'s exported count, each check is named in it, and it says they run in no checkout that gates landing and in none after the merge; deltaOf over this repository is called through `gated` alone, and every held-off diagnostic names its check (the file review\'s landing round, extra6-1: the sentence had named two of three and its pin held the bytes, so the short enumeration could never go red)', () => {
+test('the plan\'s stand-down sentence is a rule over the checks keyed on the delta since the merge-base, and its count is derived: the number word equals the checks this module ran through `gated` plus the attribution module\'s exported count, each check is named in it, and it says they run in no checkout that gates landing and in none after the merge; deltaOf over this repository is called through `gated` alone, and every held-off diagnostic names its check (the file review\'s landing round\'s second read, extra6-1: the sentence had named two of three and its pin held the bytes, so the short enumeration could never go red)', () => {
   const own = read(...THIS_MODULE.split('/'));
   assert.equal((own.match(/deltaOf\(REPO, /g) || []).length, 1, 'deltaOf over the repository is called in gated alone, so GATED_RAN is every check this module keys on the delta');
   assert.equal((own.match(/\bgated\(t, [A-Z0-9_]+_CHECK, /g) || []).length, GATED_RAN.size, 'every gated call in this module ran before this test (a check declared and not run is red here): ' + [...GATED_RAN].join('; '));
