@@ -3,7 +3,7 @@ title: A subagents tree is validated once per pusher cycle and once per jobs pas
 status: candidate
 where: kernel/kernel.py (_SUBAGENT_TREES_GEN, _subagent_scope_open, _subagent_scope_close, _subagent_scope, _subagent_scope_hold, _subagent_tree, _subagent_trees_forget, _subagent_tree_memo_report, _dir_stamp, _awaiting_nest, _agent_launch_ids, _pusher_cycle, _jobs_cycle, the /perf memos docstring); docs/reference.md (the memos.subagentTree paragraph); tests/test_subagent_tree_stamps_per_cycle.py (new)
 added: 2026-09-19
-pr:
+pr: 882
 tier: fix
 offered:
 closed:
