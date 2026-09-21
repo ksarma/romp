@@ -13,35 +13,55 @@ maintainer's round N" with N the ruling's number; the author's own work is "pass
 head", the head after the author's pass P.
 
 This module is the ratchet. A numbered round ("round N", "round-N", "Round N's", "round N of PR 857", "round #N", "rounds N
-and M") is a credit to the maintainer, so it is refused unless spelled "the maintainer's round N" (or "the maintainer's rounds
-N and M", every number of the list judged) with N in MAINTAINER_ROUNDS. MAINTAINER_ROUNDS is a constant of this TREE: the
-rulings the maintainer had filed on PR 857 when this pass began, derived 2026-09-21, and the author raises it in the same
-change that first credits a new round, so a credit to a round no ruling exists for reds on every machine until the ruling
-exists and the constant says so. It is read from NOTHING outside the repository. The maintainer's round 6 found the earlier
-module reading the reviewer's notes directory for the set, so the same committed tree got two verdicts (the set widened on
-the one machine that holds the rulings and stayed at the constant everywhere else), and a verdict that depends on the machine
-is no property of the repository; test_the_module_reads_nothing_outside_the_tree pins that over this module's own source (no
-environment read, no home or absolute path, every file read joined on ROOT).
+and M", "rounds N to M", "rounds N-M") is a credit to the maintainer, so it is refused unless spelled "the maintainer's round
+N" (or "the maintainer's rounds N and M", "rounds N to M", every number of the list or range judged) with N in
+MAINTAINER_ROUNDS. MAINTAINER_ROUNDS is a constant of this TREE: the rulings the maintainer had filed on PR 857 when this pass
+began, derived 2026-09-21, and the author raises it in the same change that first credits a new round, so a credit to a round
+no ruling exists for reds on every machine until the ruling exists and the constant says so. It is read from NOTHING outside
+the repository. The maintainer's round 6 found the earlier module reading the reviewer's notes directory for the set, so the
+same committed tree got two verdicts (the set widened on the one machine that holds the rulings and stayed at the constant
+everywhere else), and a verdict that depends on the machine is no property of the repository;
+test_the_module_reads_nothing_outside_the_tree pins that over this module's own source by RESOLUTION and not by a list of
+spellings (pass 11's fixer pass: the earlier pin refused four attribute names and one absolute-path shape, and `from os import
+environ`, `getattr(os, "environ")`, `os.getcwd()`, a `..` constant and a drive-letter constant passed it): the import table is
+closed (IMPORTS, module-level `import x` alone, no from-import and no alias), every read on os, the one module of the table
+that reaches the environment, the home and the working directory, is one of OS_MEMBERS (held equal both ways, so a read the
+module does not make today is refused by construction), no reflective or file primitive is called but the one open() in
+_read, whose path joins on ROOT, and no string constant is an absolute path, a home path, a `..` step or a drive letter.
 
 THE POPULATION is derived from the tree: the modules the glob FAMILY_GLOB names under this directory (the sibling pin's own
 spelling, tests/test_federated_linkdrop_driver_bound.py's ledger pin; a family module named otherwise escapes both, so the
 population is spelling-keyed and says so) plus the ledger entry ENTRY, read whole, since every line of them is the branch's
-own. A cell reads the sibling pin's glob from that pin's source and runs it, holding the two populations equal, so a family
-module the sibling sees and this census does not is a red; a glob that reads nothing, a missing entry or this module outside
-its own population is a stated refusal, never an empty census.
+own. family() REFUSES, with the derivation named, a glob that reads no module, a file of the population that is not in the
+tree, and this module outside its own population, and every cell reads the population through it, so a selected run of any
+one cell gets the same stated refusal (pass 11's fixer pass: the census cell over an empty module population passed on the
+entry's one credited mention, and a missing file was a bare FileNotFoundError in two cells); _read refuses a file that is not
+in the tree the same way, and sibling_glob returns the reason when the pin's file or function is not found. A cell reads the
+sibling pin's glob from that pin's source and runs it, holding the two populations equal, so a family module the sibling sees
+and this census does not is a red.
 
 THE FORM SPACE. offences() reads the WHOLE text of each file, so a mention wrapped across a line break (the qualifier ending one
 line and the number starting the next, a comment marker between) is one mention, reported at the line its number sits on (a
 wrapped credit in the driver-bound module was invisible to the earlier module's line-by-line read). Between the word and the
-number the separator may be nothing, spaces, hyphens, a newline, a comment marker (`#`, `//`) or a hash, and the plural takes
-a list ("rounds N and M", "rounds N to M", each number judged). Every spelling of the word in the family is CLASSIFIED by
-forms(): a numbered form by its plural and its separator, an unnumbered one (Python's round(), "rounds=40", "a typing round",
-"the two-round convergence bound", "in its second round", "around") not read, and a form the classifier cannot place, a number
-glued to a letter or an underscore, refused. The form-space cell enumerates the family's own forms and requires every numbered
-form class it uses to be one of FORM_CLASSES, each of which has a red and a green probe assembled at run time from
-MAINTAINER_ROUNDS (this module is in its own population and reads itself, so no probe is spelled). No file of the family quotes
-a ruling sentence that carries a numbered round today, so the rule has no quotation exemption (an exemption nothing fires would
-be untested); a quote added later takes the maintainer's form or is paraphrased.
+number the separator may be nothing, spaces, hyphens, a newline, a comment marker (`#`, `//`) or a hash; the plural takes a
+list or a range ("rounds N and M", "rounds N to M", "rounds N-M", an en dash, a slash, "through": each number judged, and a
+range's endpoints stand for it, since MAINTAINER_ROUNDS is contiguous from 1). Every spelling of the word in the family is
+CLASSIFIED by forms(): a numbered form by its plural and its separator; an unnumbered one (Python's round(), the
+keyword-argument spelling "rounds=40", "a typing round", "the two-round convergence bound", "in its second round", "around",
+a word between the word and a number as in "a round of 3 drives": the census reads spellings of the word, not sentences) not
+read; and a form the classifier cannot place REFUSED, keyed on what it did not resolve (pass 11's fixer pass: a hyphenated
+range "rounds N-M" was read as "rounds N" with M dropped, and a colon between the word and the number was read as unnumbered):
+a number glued to a letter or an underscore, a further number after a run the list did not consume ("rounds N; M"), a plural
+that names one number ("rounds N"), and punctuation or markup between the word and a number ("round: N", "round (N)",
+"round **N**", "round `N`"), the one exemption being the keyword-argument spelling, the word glued to `=` (the family's
+`rounds=40` and `rounds=1`; no probe is spelled with a digit in this docstring, since the module reads itself). The `rN` path stems of the builder's scratch
+directories outside the repository (`r6-margin/lab-head2.log`, `r10/lab-ci9.log`) name the author's pipeline's rounds and are
+not the word, so they are not read (the record's "r4 unused by the family" was wrong: the served module carries them as
+paths). The form-space cell enumerates the family's own forms and requires every numbered form class it uses to be one of
+FORM_CLASSES, each of which has a red and a green probe assembled at run time from MAINTAINER_ROUNDS (this module is in its
+own population and reads itself, so no probe is spelled). No file of the family quotes a ruling sentence that carries a
+numbered round today, so the rule has no quotation exemption (an exemption nothing fires would be untested); a quote added
+later takes the maintainer's form or is paraphrased.
 """
 import ast
 import glob
@@ -58,18 +78,28 @@ MAINTAINER_ROUNDS = frozenset({1, 2, 3, 4, 5, 6})
 FAMILY_GLOB = "test_federated_linkdrop*.py"   # the sibling pin's spelling, held equal to it by test_the_population_is_the_trees_and_the_sibling_pins
 ENTRY = "upstream/2026-09-19-tests-federated-linkdrop-served.md"
 SIBLING_PIN = ("tests/test_federated_linkdrop_driver_bound.py", "test_the_ledger_entry_names_every_module_of_this_family")
+# the tree-only pin: the closed import table of this module, and every read it makes on os (a read outside this tuple, environ,
+# getenv, getcwd, expanduser, is refused by construction, not by a list of the names to refuse)
+IMPORTS = ("ast", "glob", "os", "re", "unittest")
+OS_MEMBERS = ("path.dirname", "path.isfile", "path.join", "path.realpath", "path.relpath", "sep")
+PRIMITIVES = ("open", "getattr", "setattr", "delattr", "hasattr", "__import__", "eval", "exec", "compile", "vars", "globals", "locals")
 
 # the word, then what follows it: a separator (nothing, spaces, hyphens, a newline, a comment marker, a hash), a number, an
-# optional list continuation, and the character after the last digit (a letter or an underscore glued to it makes the form
-# unclassifiable); the qualifier's gaps take the same wrap
+# optional list or range continuation (each number judged), and the character after the last digit (a letter or an underscore
+# glued to it makes the form unclassifiable); the qualifier's gaps take the same wrap
 WORD = re.compile(r"\bround(?P<plural>s?)", re.I)
-NUMBERED = re.compile(r"(?P<sep>[-\s#/]*)(?P<num>\d+)(?P<list>(?:\s*(?:,|and|to|or|&)\s*#?\d+)*)(?P<tail>[A-Za-z_]?)")
+NUMBERED = re.compile(r"(?P<sep>[-\s#/]*)(?P<num>\d+)(?P<list>(?:\s*(?:,|and|to|or|&|through|thru|[-–/])\s*#?\d+)*)(?P<tail>[A-Za-z_]?)")
+# after the last digit the list consumed: a run of punctuation and spaces (no letter, no newline) and then a digit is a
+# continuation the list did not resolve; after the word with no number read: the same run and then a digit is punctuation or
+# markup between the word and a number, unclassifiable unless the run is the keyword-argument spelling's `=`
+CONTINUATION = re.compile(r"[^\w\n]{1,6}\d")
 GAP = r"[\s#/]*"
 CREDIT = re.compile(r"\bthe" + GAP + r"maintainer's" + GAP + r"round(?P<plural>s?)(?P<sep>[-\s#/]*)(?P<num>\d+)", re.I)
 # the numbered form classes this census reads, by (plural, separator kind), each with the separator its probes are spelled
 # with; the form-space cell requires every class the family uses to be one of these, and a red and a green probe per class
 FORM_CLASSES = {(False, "none"): "", (False, "space"): " ", (False, "hyphen"): "-", (False, "hash"): " #",
                 (False, "wrap"): "\n    # ", (True, "space"): " ", (True, "wrap"): "\n"}
+UNCLASSIFIABLE = "a form the census cannot classify (%s): write \"the maintainer's round N\" or the author's \"pass P\""
 
 
 def sep_kind(sep):
@@ -84,20 +114,41 @@ def sep_kind(sep):
     return "space" if sep else "none"
 
 
+def _classify(text, w):
+    """One occurrence `w` of the word in `text`: (kind, the match of NUMBERED or None, the numbers, why unclassifiable). Kind is
+    "numbered" (every number of the list or range read), "unnumbered" (no number follows: not read) or "unclassifiable" (a
+    number the census cannot place, refused with the reason)."""
+    n = NUMBERED.match(text, w.end())
+    if n is None:
+        gap = CONTINUATION.match(text, w.end())
+        if gap is not None and gap.group()[:-1] != "=":
+            return "unclassifiable", None, [], "punctuation or markup between the word and a number: %r" % text[w.start():gap.end()]
+        return "unnumbered", None, [], None
+    nums = [int(n.group("num"))] + [int(x) for x in re.findall(r"\d+", n.group("list"))]
+    if n.group("tail"):
+        return "unclassifiable", n, nums, "a number glued to a letter or an underscore: %r" % text[w.start():n.end()]
+    if CONTINUATION.match(text, n.end("list")) is not None:
+        return "unclassifiable", n, nums, "a further number after a run the list did not consume: %r" % text[w.start():CONTINUATION.match(text, n.end("list")).end()]
+    if w.group("plural") and len(nums) == 1:
+        return "unclassifiable", n, nums, "a plural that names one number: %r" % text[w.start():n.end("list")]
+    return "numbered", n, nums, None
+
+
 def forms(text):
     """Every occurrence of the word in `text`, classified: (line, spelled, kind, numbers) with kind "numbered" (the numbers of
-    the mention, a list's every number), "unnumbered" (no number follows: not read) or "unclassifiable" (a number glued to a
-    letter or an underscore: refused, since the census cannot say whether it is a credit)."""
+    the mention, a list's or a range's every number), "unnumbered" (no number follows: not read) or "unclassifiable" (a number
+    the census cannot place: refused, since it cannot say whether the form is a credit or which rounds it names)."""
     out = []
     for w in WORD.finditer(text):
-        n = NUMBERED.match(text, w.end())
-        if n is None:
-            out.append((text.count("\n", 0, w.start()) + 1, text[w.start():w.end()], "unnumbered", []))
-        elif n.group("tail"):
-            out.append((text.count("\n", 0, n.start("num")) + 1, text[w.start():n.end()], "unclassifiable", []))
+        kind, n, nums, _ = _classify(text, w)
+        if kind == "unnumbered":
+            out.append((text.count("\n", 0, w.start()) + 1, text[w.start():w.end()], kind, []))
+        elif n is None:
+            out.append((text.count("\n", 0, w.start()) + 1, text[w.start():w.end()], kind, []))
+        elif kind == "unclassifiable":
+            out.append((text.count("\n", 0, n.start("num")) + 1, text[w.start():n.end()], kind, []))
         else:
-            nums = [int(n.group("num"))] + [int(x) for x in re.findall(r"\d+", n.group("list"))]
-            out.append((text.count("\n", 0, n.start("num")) + 1, text[w.start():n.end("list")], "numbered", nums))
+            out.append((text.count("\n", 0, n.start("num")) + 1, text[w.start():n.end("list")], kind, nums))
     return out
 
 
@@ -115,45 +166,69 @@ def mentions(text):
 
 def offences(text, allowed=MAINTAINER_ROUNDS):
     """(line number, the mention, why) for every numbered round in `text` that is not "the maintainer's round N" (or a credited
-    list) with every N in `allowed`, and for every form the classifier cannot place. Read over the whole text: a credit split
-    by a line break is one credit."""
+    list or range) with every N in `allowed`, and for every form the classifier cannot place. Read over the whole text: a
+    credit split by a line break is one credit."""
     credited = {m.start("num") for m in CREDIT.finditer(text)}
     out = []
     for w in WORD.finditer(text):
-        n = NUMBERED.match(text, w.end())
-        if n is None:
+        kind, n, nums, why = _classify(text, w)
+        if kind == "unnumbered":
             continue
-        line = text.count("\n", 0, n.start("num")) + 1
+        line = text.count("\n", 0, w.start() if n is None else n.start("num")) + 1
+        if kind == "unclassifiable":
+            out.append((line, text[w.start():n.end()] if n is not None else text[w.start():w.end()], UNCLASSIFIABLE % why))
+            continue
         spelled = text[w.start():n.end("list")]
-        if n.group("tail"):
-            out.append((line, text[w.start():n.end()], "a form the census cannot classify (a number glued to a letter): write \"the maintainer's round N\" or the author's \"pass P\""))
-        elif n.start("num") not in credited:
+        if n.start("num") not in credited:
             out.append((line, spelled, "a numbered round is a credit to the maintainer: write \"the maintainer's round N\" for a ruled "
                                        "round, or the author's \"pass P\" / \"the pass-P head\" for the author's own work"))
         else:
-            unruled = [x for x in [int(n.group("num"))] + [int(x) for x in re.findall(r"\d+", n.group("list"))] if x not in allowed]
+            unruled = [x for x in nums if x not in allowed]
             if unruled:
                 out.append((line, spelled, "no ruling exists for that maintainer round (%s); the rulings are the maintainer's rounds %s"
                             % (", ".join(str(x) for x in unruled), ", ".join(str(x) for x in sorted(allowed)))))
     return out
 
 
-def family():
-    """(the family's files, relative to ROOT; how they were derived): the tree glob plus the ledger entry."""
-    modules = sorted(os.path.relpath(p, ROOT) for p in glob.glob(os.path.join(HERE, FAMILY_GLOB)))
-    return modules + [ENTRY], "the glob tests/%s over the tree, plus the ledger entry %s" % (FAMILY_GLOB, ENTRY)
+def family(here=HERE, root=ROOT):
+    """(the family's files, relative to `root`; how they were derived): the tree glob over `here` plus the ledger entry. REFUSES
+    (an AssertionError naming the derivation) a glob that reads no module, a file of the population that is not in the tree,
+    and this module outside its own population, so every cell that reads the population gets the one stated refusal, a
+    selected run of one cell included, and no cell judges an empty or a partial population (the census over the entry alone
+    would pass on its one credited mention). `here` and `root` are parameters so the refusals are pinned over a directory of
+    the tree that holds no family module; the cells read the tree's own."""
+    how = "the glob tests/%s over the tree, plus the ledger entry %s" % (FAMILY_GLOB, ENTRY)
+    modules = sorted(os.path.relpath(p, root) for p in glob.glob(os.path.join(here, FAMILY_GLOB)))
+    if not modules:
+        raise AssertionError("the glob read no module of the family (%s): a broken glob or a moved directory is not a clean tree" % how)
+    files = modules + [ENTRY]
+    missing = [f for f in files if not os.path.isfile(os.path.join(root, f))]
+    if missing:
+        raise AssertionError("a file of the population is not in the tree (%s): %r" % (how, missing))
+    me = os.path.relpath(os.path.realpath(__file__), root)
+    if me not in modules:
+        raise AssertionError("this module is outside its own population (%s), so its probes could not be assembled at run time: %r" % (how, modules))
+    return files, how
 
 
-def _read(rel):
-    with open(os.path.join(ROOT, rel), encoding="utf-8") as f:
+def _read(rel, root=ROOT):
+    """The text of a file of the tree by its path relative to `root` (the one open() of this module, its path joined on the
+    root), or a stated refusal naming the file when it is not there."""
+    if not os.path.isfile(os.path.join(root, rel)):
+        raise AssertionError("%s is not in the tree (read relative to the repository root)" % rel)
+    with open(os.path.join(root, rel), encoding="utf-8") as f:
         return f.read()
 
 
-def sibling_glob():
+def sibling_glob(pin=SIBLING_PIN, root=ROOT):
     """The glob pattern the sibling pin passes to glob.glob(os.path.join(HERE, <pattern>)), read from its source by ast, or
-    None with the reason when the pin or its glob is not found (the cell refuses then, naming what it could not read)."""
-    rel, name = SIBLING_PIN
-    tree = ast.parse(_read(rel))
+    None with the reason when the pin's file, the function or its glob is not found (the cell refuses then, naming what it
+    could not read)."""
+    rel, name = pin
+    try:
+        tree = ast.parse(_read(rel, root))
+    except AssertionError as e:
+        return None, str(e)
     fn = next((n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == name), None)
     if fn is None:
         return None, "%s holds no function %s" % (rel, name)
@@ -165,54 +240,109 @@ def sibling_glob():
     return patterns[0], "read from %s.%s" % (rel, name)
 
 
+def _os_chains(tree):
+    """Every attribute chain of `tree` rooted at the name os, outermost only, as "path.join": the reads the tree-only pin
+    holds equal to OS_MEMBERS."""
+    parents = {c: p for p in ast.walk(tree) for c in ast.iter_child_nodes(p)}
+    out = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Attribute) and not (isinstance(parents.get(n), ast.Attribute) and parents[n].value is n):
+            parts, q = [], n
+            while isinstance(q, ast.Attribute):
+                parts.append(q.attr)
+                q = q.value
+            if isinstance(q, ast.Name) and q.id == "os":
+                out.add(".".join(reversed(parts)))
+    return out
+
+
 class RoundLabels(unittest.TestCase):
     maxDiff = None
 
     def test_the_ruled_rounds_are_tree_resident_and_contiguous_from_one(self):
         """MAINTAINER_ROUNDS is non-empty, contiguous from 1 and the only source of the legal set (the cells that take its
-        bounds check it first, never max() over an empty set)."""
+        bounds check it first, never max() over an empty set); a range's endpoints stand for the range because of this."""
         self.assertTrue(MAINTAINER_ROUNDS, "MAINTAINER_ROUNDS is empty: the tree records no ruling at all")
         self.assertEqual(sorted(MAINTAINER_ROUNDS), list(range(1, max(MAINTAINER_ROUNDS) + 1)), "the rulings are numbered contiguously from 1: %r" % (sorted(MAINTAINER_ROUNDS),))
 
     def test_the_module_reads_nothing_outside_the_tree(self):
-        """The same committed tree gets one verdict on every machine: this module's own source, by ast, reads no environment
-        variable, expands no home path, holds no constant that is an absolute or a home path, and opens files through _read alone,
-        which joins on ROOT. The earlier module's notes-directory read (the maintainer's round 6) is what this refuses."""
+        """The same committed tree gets one verdict on every machine, pinned over this module's own source by RESOLUTION over
+        a closed import table (the maintainer's round 6 found the earlier module reading the reviewer's notes directory; pass
+        11's fixer pass found the first pin keyed on four attribute names and one path shape): the imports are exactly IMPORTS,
+        module-level `import x` with no from-import, no alias and none inside a function or a class, so no name reaches a
+        module outside the table; every attribute chain rooted at os, the one module of the table that reaches the
+        environment, the home and the working directory, is one of OS_MEMBERS and every member of OS_MEMBERS is read, so a read
+        the module does not make today (environ, getenv, getcwd, expanduser, expandvars) is refused by construction; no
+        reflective primitive and no file primitive is called (getattr, __import__, eval, exec and kin) but exactly one open(),
+        inside _read, whose path is os.path.join(ROOT, ...); and no string constant is an absolute path, a home path, a `..`
+        step or a drive letter. What the pin does not check, stated: the standard library's own reads (glob and re read no
+        environment; os.path.realpath follows symlinks of the tree itself), and code that arrives by a road the table forbids
+        is refused at the import, not read."""
         tree = ast.parse(_read(os.path.relpath(os.path.realpath(__file__), ROOT)))
-        attrs = sorted({n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute) and n.attr in ("environ", "getenv", "expanduser", "expandvars")})
-        self.assertEqual(attrs, [], "an environment or home-path read in the census module: the legal set and the population come from the tree alone: %r" % (attrs,))
+        imports = [n for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom))]
+        self.assertEqual([n.lineno for n in imports if isinstance(n, ast.ImportFrom)], [], "a from-import in the census module: a name bound past the import table is a road the pin cannot resolve")
+        self.assertEqual([n.lineno for n in imports if n not in tree.body], [], "an import inside a function or a class: every import is module-level, so the table below is the whole table")
+        self.assertEqual([a.asname for n in imports for a in n.names if a.asname], [], "an import under another name: the reads below resolve the module by its own name")
+        self.assertEqual(sorted(a.name for n in imports for a in n.names), sorted(IMPORTS), "the census module's import table is exactly IMPORTS: a module outside it may read the environment, the home or the working directory")
+        chains = _os_chains(tree)
+        self.assertEqual(sorted(chains - set(OS_MEMBERS)), [], "a read on os this module does not make today (the environment, the home, the working directory are all outside OS_MEMBERS): %r" % (sorted(chains - set(OS_MEMBERS)),))
+        self.assertEqual(sorted(set(OS_MEMBERS) - chains), [], "a member of OS_MEMBERS no longer read: the tuple is held equal to the module's reads both ways")
+        calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in PRIMITIVES]
+        self.assertEqual([(n.func.id, n.lineno) for n in calls if n.func.id != "open"], [], "a reflective primitive in the census module (a name reached by a string is a read the pin cannot resolve)")
+        read = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_read")
+        inside = [n for n in ast.walk(read) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "open"]
+        self.assertEqual([n.lineno for n in calls if n.func.id == "open"], [n.lineno for n in inside], "every file the census reads goes through _read: open() at lines %r" % ([n.lineno for n in calls if n.func.id == "open"],))
+        self.assertEqual(len(inside), 1, "_read holds exactly one open()")
+        arg = inside[0].args[0]
+        self.assertTrue(isinstance(arg, ast.Call) and ast.unparse(arg.func) == "os.path.join" and arg.args and isinstance(arg.args[0], ast.Name) and arg.args[0].id == "root",
+                        "_read opens os.path.join(root, ...), the root ROOT by default, so every path is joined on the tree: %s" % ast.unparse(arg))
+        default = read.args.defaults[-1] if read.args.defaults else None
+        self.assertTrue(isinstance(default, ast.Name) and default.id == "ROOT", "_read's root defaults to ROOT: %s" % (ast.unparse(default) if default is not None else None))
         home = os.sep + "home" + os.sep
         paths = sorted({n.value for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str) and len(n.value) > 1
-                        and (n.value[0] in (os.sep, "~") or home in n.value)})
-        self.assertEqual(paths, [], "an absolute or home path in the census module: %r" % (paths,))
-        opens = [n.lineno for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "open"]
-        self.assertEqual(len(opens), 1, "every file the census reads goes through _read, which joins on ROOT: open() at lines %r" % (opens,))
+                        and (n.value[0] in (os.sep, "~") or home in n.value or re.search(r"(^|[\\/])\.\.([\\/]|$)", n.value) or re.match(r"[A-Za-z]:[\\/]", n.value))})
+        self.assertEqual(paths, [], "an absolute path, a home path, a `..` step or a drive letter in the census module: %r" % (paths,))
 
     def test_the_population_is_the_trees_and_the_sibling_pins(self):
-        """The population is derived by FAMILY_GLOB plus the entry; every file exists; this module is in its own population; and
-        the sibling ledger pin's glob, read from its source, is the same spelling and yields the same modules, so the two
-        populations cannot disagree silently. A glob that reads no module is a refusal, never a clean census."""
+        """The population is derived by FAMILY_GLOB plus the entry through family(), which refuses an empty or a partial one
+        with the derivation named; the sibling ledger pin's glob, read from its source, is the same spelling and yields the
+        same modules, so the two populations cannot disagree silently. Then the refusals themselves, by execution: family()
+        over a directory of the tree that holds no family module, over a root under which the entry is missing, _read over a
+        file that is not there, and sibling_glob over a pin whose file is missing, each a stated refusal naming what it could
+        not read, never a bare exception or an empty census."""
         files, how = family()
         modules = [f for f in files if f != ENTRY]
-        self.assertTrue(modules, "the glob read no module of the family (%s): a broken glob or a moved directory is not a clean tree" % how)
-        missing = [f for f in files if not os.path.isfile(os.path.join(ROOT, f))]
-        self.assertEqual(missing, [], "a file of the population is not in the tree (%s): %r" % (how, missing))
-        self.assertIn(os.path.relpath(os.path.realpath(__file__), ROOT), modules, "this module is in its own population, so its probes must be assembled at run time: %r" % (modules,))
         pattern, source = sibling_glob()
         self.assertIsNotNone(pattern, "the sibling pin's glob could not be read, so the two populations cannot be held equal: %s" % source)
         self.assertEqual(pattern, FAMILY_GLOB, "the sibling pin (%s) globs %r while this census globs %r: the two populations are keyed on different spellings" % (source, pattern, FAMILY_GLOB))
         sibling = sorted(os.path.relpath(p, ROOT) for p in glob.glob(os.path.join(HERE, pattern)))
         self.assertEqual(sibling, modules, "the sibling pin's glob and this census's population differ: %r" % (sorted(set(sibling) ^ set(modules)),))
+        with self.assertRaises(AssertionError) as none:
+            family(here=os.path.join(ROOT, "upstream"))
+        self.assertIn("read no module of the family", str(none.exception))
+        with self.assertRaises(AssertionError) as partial:
+            family(here=HERE, root=HERE)
+        self.assertIn("is not in the tree", str(partial.exception))
+        self.assertIn(ENTRY, str(partial.exception))
+        with self.assertRaises(AssertionError) as gone:
+            _read("upstream/no-such-entry.md")
+        self.assertEqual(str(gone.exception), "upstream/no-such-entry.md is not in the tree (read relative to the repository root)")
+        self.assertEqual(sibling_glob(pin=("tests/no_such_module.py", SIBLING_PIN[1])), (None, "tests/no_such_module.py is not in the tree (read relative to the repository root)"))
+        self.assertEqual(sibling_glob(pin=(SIBLING_PIN[0], "no_such_function"))[0], None)
 
     def test_no_mention_credits_a_round_the_maintainer_never_held(self):
+        """Every numbered round of the family is a credit in the maintainer's form to a round in MAINTAINER_ROUNDS, and every
+        form is classifiable. The guard against a vacuous census counts the MODULES' mentions, not the entry's (the entry
+        carries one credit, which is what satisfied the guard over an empty module population before family() refused it)."""
         files, how = family()
         bad, seen, counted = [], 0, {}
         for rel in files:
             text = _read(rel)
             counted[rel] = len(mentions(text))
-            seen += counted[rel]
+            if rel != ENTRY:
+                seen += counted[rel]
             bad += ["%s:%d: %r (%s)" % (rel, ln, label, why) for ln, label, why in offences(text)]
-        self.assertGreater(seen, 0, "the census read no numbered round at all over %s: the pattern or the population is broken (%r)" % (how, counted))
+        self.assertGreater(seen, 0, "the census read no numbered round in any module over %s: the pattern or the population is broken (%r)" % (how, counted))
         self.assertEqual(bad, [], "a numbered round that is not a ruled maintainer round (the maintainer's rounds %s, from MAINTAINER_ROUNDS; the population from %s); write "
                                   "the author's pass (\"pass P\", \"pass P's fixer pass\", \"the pass-P head\") or \"the maintainer's round N\" for a round a ruling exists "
                                   "for, and raise MAINTAINER_ROUNDS in the change that first credits a new ruling:\n%s"
@@ -223,8 +353,9 @@ class RoundLabels(unittest.TestCase):
         enumerated by forms() and each numbered one is a FORM_CLASSES class (a spelling outside the enumeration is a refusal,
         not a silent read), no form is unclassifiable, and every class has red probes (uncredited at a ruled round, a credit one
         past the set) and green probes (a credit at the highest and the lowest ruled round), assembled at run time from
-        MAINTAINER_ROUNDS because this module reads itself. Then the wrapped shapes, the plural list, the unnumbered spellings,
-        an unclassifiable form, and the refusal reasons told apart."""
+        MAINTAINER_ROUNDS because this module reads itself. Then the wrapped shapes, the plural list and the ranges (every
+        number judged), the forms refused as unresolved (a continuation the list did not consume, a plural naming one number,
+        punctuation between the word and a number), the unnumbered spellings, and the refusal reasons told apart."""
         self.assertTrue(MAINTAINER_ROUNDS, "MAINTAINER_ROUNDS is empty: no probe can be assembled (the derivation cell states the cause)")
         hi, lo = max(MAINTAINER_ROUNDS), min(MAINTAINER_ROUNDS)
         R, M = "round", "the maintainer's"
@@ -243,11 +374,12 @@ class RoundLabels(unittest.TestCase):
         for (plural, kind), sep in FORM_CLASSES.items():
             word = R + ("s" if plural else "")
             with self.subTest(form="%s%s<N>" % (word, sep.replace("\n", "<newline>"))):
-                tail = (" and %d" % lo) if plural else ""
-                red = ["%s%s%d%s" % (word, sep, hi + 1, tail), "%s %s%s%d%s" % (M, word, sep, hi + 1, tail), "the %s%s%d head" % (word, sep, hi),
-                       "(%s%s%d, tests-1)" % (word, sep, lo), "%s %s%s%d and %d" % (M, word, sep, lo, hi + 1)]
-                green = ["%s %s%s%d%s" % (M, word, sep, hi, tail), "%s %s%s%d%s" % (M, word, sep, lo, tail), "%s %s%s%d's tests-3" % (M, word, sep, lo),
-                         "(%s %s%s%d)" % (M, word, sep, hi), "The %s %s%s%d ruled" % (M[4:], word, sep, hi)]
+                # a plural probe carries a list (a plural naming one number is unclassifiable, refused below): after hi the list adds lo, after lo it adds hi
+                tail, tail_lo = ((" and %d" % lo), (" and %d" % hi)) if plural else ("", "")
+                red = ["%s%s%d%s" % (word, sep, hi + 1, tail), "%s %s%s%d%s" % (M, word, sep, hi + 1, tail), "the %s%s%d%s head" % (word, sep, hi, tail),
+                       "(%s%s%d%s, tests-1)" % (word, sep, lo, tail_lo), "%s %s%s%d and %d" % (M, word, sep, lo, hi + 1)]
+                green = ["%s %s%s%d%s" % (M, word, sep, hi, tail), "%s %s%s%d%s" % (M, word, sep, lo, tail_lo), "%s %s%s%d%s's tests-3" % (M, word, sep, lo, tail_lo),
+                         "(%s %s%s%d%s)" % (M, word, sep, hi, tail), "The %s %s%s%d%s ruled" % (M[4:], word, sep, hi, tail)]
                 self.assertEqual([s for s in red if not offences(s)], [], "a refused form read as clean")
                 self.assertEqual([s for s in green if offences(s)], [], "an allowed form read as an offence")
         # the wrapped shapes: the qualifier and the number split by a line break, a comment marker on the next line
@@ -255,14 +387,26 @@ class RoundLabels(unittest.TestCase):
         self.assertEqual(offences("# ... (the\n    # maintainer's %s %d found it" % (R, hi)), [], "a credit wrapped at the qualifier, a comment marker between, is one credit")
         self.assertEqual([ln for ln, _, _ in offences("a\nb\n# the %s\n# %d head" % (R, hi + 1))], [4], "a wrapped uncredited round is an offence at the line its number sits on")
         self.assertEqual([ln for ln, _, _ in offences("%s %s\n%d\n" % (M, R, hi + 1))], [2], "a wrapped credit to an unruled round is an offence at the number's line")
-        # the plural list: every number judged
+        # the plural list and the ranges: every number judged, a range's endpoints standing for it
         self.assertEqual(len(offences("%s %ss %d and %d" % (M, R, lo, hi + 1))), 1, "a credited list with one unruled number is one offence")
         self.assertEqual(offences("%s %ss %d to %d" % (M, R, lo, hi)), [], "a credited range inside the set is clean")
         self.assertEqual(len(offences("%ss %d and %d were held" % (R, lo, hi))), 1, "an uncredited list is one offence, at the list")
-        # the unnumbered spellings are not read
-        for s in ("%ss=40" % R, "in 1 %ss" % R, "a typing %s" % R, "the two-%s convergence bound" % R, "in its second %s" % R, "_commands_a%s_the_recorder" % R,
+        for rng in ("%d-%d", "%d–%d", "%d/%d", "%d through %d", "%d thru %d", "%d, %d"):
+            with self.subTest(range=rng):
+                self.assertIn("no ruling exists for that maintainer round (%d)" % (hi + 1), offences("%s %ss %s" % (M, R, rng % (lo, hi + 1)))[0][2],
+                              "a credited range one past the set is an offence naming the number past it (pass 11's fixer pass: the range's second number was dropped unread)")
+                self.assertEqual(offences("%s %ss %s" % (M, R, rng % (lo, hi))), [], "a credited range inside the set is clean")
+                self.assertEqual(forms("%ss %s" % (R, rng % (lo, hi)))[0][3], [lo, hi], "every number of the range is read")
+        # the forms refused as unresolved: a continuation the list did not consume, a plural naming one number, punctuation or markup before the number
+        for s in ("%ss %d; %d" % (R, lo, hi + 1), "%s %d: %d findings" % (R, hi, hi + 1), "%s %ss %d" % (M, R, hi), "%ss %d" % (R, hi),
+                  "%s: %d" % (R, hi + 1), "%s %s: %d" % (M, R, hi + 1), "%s (%d)" % (R, hi + 1), "%s **%d**" % (R, hi + 1), "%s `%d`" % (R, hi + 1), '%s "%d"' % (R, hi + 1), "%s.%d" % (R, hi)):
+            with self.subTest(unresolved=s):
+                self.assertEqual([k for _, _, k, _ in forms(s)], ["unclassifiable"], "a form the census did not resolve is unclassifiable, never numbered or unread: %r" % (s,))
+                self.assertIn("cannot classify", offences(s)[0][2])
+        # the unnumbered spellings are not read (the keyword-argument spelling and the rN path stems among them, stated in the docstring)
+        for s in ("%ss=40" % R, "%ss=1" % R, "in 1 %ss" % R, "a typing %s" % R, "the two-%s convergence bound" % R, "in its second %s" % R, "_commands_a%s_the_recorder" % R,
                   "%s(t_dead - t0, 2)" % R, "spaces-a%s-dots" % R, "rulings-r1.md", "the boot a%s it" % R, "each %s of planting" % R, "a typing %s\n# visits" % R,
-                  "%s_labels" % R, "the %s-trip" % R, "the %s's own" % R):
+                  "%s_labels" % R, "the %s-trip" % R, "the %s's own" % R, "a %s of 3 drives" % R, "r6-margin/lab-head2.log", "r10/lab-ci9.log", "%s_labels.py:66" % R):
             self.assertEqual(offences(s), [], "an unnumbered use read as an offence: %r" % (s,))
             self.assertEqual(mentions(s), [], "an unnumbered use read as a mention: %r" % (s,))
         # an unclassifiable form is refused, never silently unread
