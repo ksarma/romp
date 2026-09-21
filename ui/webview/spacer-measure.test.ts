@@ -531,36 +531,77 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   assert.match(keep, /if \(!landed && !\(under && restoreScrollAnchor\(content, v, under\)\)\) untakeMeasure\(v, figures\);/, "the double miss puts the captured row back over the take instead of writing nothing (the maintainer's round 2 ruling), and with that row gone too gives the take back (the maintainer's round 3 ruling B)");
   const calls = (RENDER.match(/(?<![\w.])applyMeasure\(v\)/g) || []).length;
   assert.equal(calls, 4, "four takers: syncViewInner, the window build, landActive and keepPlaceAcrossWindow (" + calls + "); the frame-end take asks for the first");
-  // the census of callers, derived from the tree and keyed on the CALLER, not on a spelling (review round 2): every window build outside
-  // the definition names whether its caller anchors (a seventh argument that is the flag it was handed, true, or the fill's own predicate)
-  // and sits in one of the functions the multiset names (a multiset, so an eighth build hard-coded inside syncViewInner reds too); every
-  // syncView call either passes its keep's own predicate (appendActive's `stick || !!anchor`, the toggle's `!!anchor`, the fill's
-  // `keepVisible || pointBefore != null`) or is one of the non-anchoring callers named here, which take nothing; and neither name is
-  // handed on as a bare reference (a value passed on could reach a caller neither census reads). appendActive has no harness of its
-  // own, so its line is pinned here as well; scroll-to-anchor-roads.test.ts and land-active-keep.test.ts execute the roads behind the
-  // flagged builds and the land.
+  // The censuses over the take rule's callers, each keyed on the PROPERTY it guards and read from the compiler's syntax tree, never from a
+  // list of spellings (the maintainer's round 3 ruling E: the round-2 censuses read raw text, keyed a build's flag on membership in a
+  // three-spelling set, attributed a call to the nearest preceding `function name(` by textual position, and stripped comments from one
+  // scan of three). The axis of each, with the thing it refuses and the spelling it is indifferent to (the mutations note executes both):
+  // 1. the anchoring flag per caller: every renderWindowItems and syncView call, paired as (owner, flag kind). The owner is the nearest
+  //    NAMED enclosing function (a declaration, a method or a named function expression, else the variable or property an anonymous
+  //    function is assigned to), walking out past anonymous callbacks, the rule writer-census.ts reads writeScroll's callers by. The flag
+  //    kind is a constant (`true`, `false`, absent or `undefined`), the paint's own parameter handed on (`anchored`), or the caller's own
+  //    predicate (any other expression), whose SEMANTICS the caller's harness executes (fill-in-place, append-active-keep,
+  //    toolgroup-toggle-keep, scroll-to-anchor-roads). Refuses a constant where the road owes a predicate (`true` at the fill's build lies
+  //    about a road that does not always anchor; `false` at its fallback takes nothing where a row is put back) and a build or sync added
+  //    anywhere, syncViewInner included (a multiset); indifferent to the predicate's spelling (`pointBefore != null || keepVisible` is the
+  //    same kind) and to layout (a call split across lines or moved into a callback of the same owner).
+  // 2. the owner by lexical scope: a build moved into an arrow assigned to `plantedFill` inside fillInPlace's text is plantedFill's, not
+  //    fillInPlace's (the textual walk said fillInPlace); a wrapper function is a call the census reads, under the wrapper's name.
+  // 3. no bare reference: an identifier that is not a callee and not the definition's name (`const rwi = renderWindowItems`) would hand the
+  //    function to a caller neither census reads; a comment or a string naming a call is not an identifier, so a doc comment quoting a call
+  //    is not a call (the raw scans counted one).
+  // 4. the untake sites by owner: every reader of the take state whose road can end unanchored gives the take back before its raw write
+  //    (the maintainer's round 3 ruling B), a multiset over the same owners; a site removed, or added to a reader not on the list, reds.
+  // appendActive's sync line is pinned by text as well: the flag's spelling is what its harness models.
   assert.match(RENDER, /const anchor = !stick && v \? captureScrollAnchor\(content, v\) : null;\n\s*const figures = v \? figuresBefore\(v\) : null;[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*syncView\(activeId, stick, stick \|\| !!anchor\);/, "appendActive's sync is flagged by its follow or the anchor it captured, never by atBottom alone, and the figures are read before it for the raw road's untake (append-active-keep.test.ts executes the roads)");
-  const lines = RENDER.split("\n").map((l, i) => [i + 1, l] as const);
-  const fnOf = (line: number) => { for (let i = line - 1; i >= 0; i--) { const m = /^function (\w+)\(/.exec(RENDER.split("\n")[i]); if (m) return m[1]; } return ""; };
-  const builds = RENDER.match(/(?<![\w.])renderWindowItems\(v, s, items, [^\n]*?\);/g) || [];
-  assert.equal(builds.length, (RENDER.match(/(?<![\w.])renderWindowItems\(/g) || []).length - 1, "every call site has the (v, s, items, …) shape (the definition excluded)");
-  assert.ok(builds.length >= 7, "the census is not empty: " + builds.length);
-  for (const b of builds) assert.match(b, /, (?:anchored|true|keepVisible \|\| pointBefore != null)\);$/, "a build names whether its caller anchors: " + b);
-  const buildLines = lines.filter(([, l]) => /(?<![\w.])renderWindowItems\(v, s, items, /.test(l));
-  assert.equal(buildLines.length, builds.length, "one build call per line");
-  assert.deepEqual(buildLines.map(([n]) => fnOf(n)).sort(), ["fillInPlace", "fillInPlace", "landNearestMoment", "scrollToAnchor", "syncViewInner", "syncViewInner", "virtualizeToViewport"].sort(),
-    "the window builds by caller, a multiset: the fill's two (the land and its re-window), the moment's, the deep link's, the seam's first build and rebuild, the re-window's; a build added anywhere, syncViewInner included, changes it");
-  const bare = (name: string) => (code(RENDER).match(new RegExp("(?<![\\w.$])" + name + "(?![\\w$(])", "g")) || []).length;
-  assert.equal(bare("renderWindowItems"), 0, "renderWindowItems is never handed on as a bare reference (every use is a call the census reads)");
-  assert.equal(bare("syncView"), 0, "syncView is never handed on as a bare reference either");
-  const syncs = lines.filter(([, l]) => /(?<![\w.])syncView\(/.test(l) && !/function syncView\(/.test(l));
-  assert.ok(syncs.length >= 7, "the syncView census is not empty: " + syncs.length);
-  const flagless = syncs.filter(([, l]) => !/syncView\(\w+, stick, stick \|\| !!anchor\)/.test(l) && !/syncView\(\w+, undefined, !!anchor\)/.test(l) && !/syncView\(\w+, undefined, keepVisible \|\| pointBefore != null\)/.test(l));
-  assert.deepEqual(flagless.map(([n]) => fnOf(n)).sort(), ["reviveFailedLocal", "runPrebuild", "showActive", "showActive"].sort(),
-    "the flagless syncView callers are the non-anchoring ones: the placeholder re-render, the hidden prebuild and the switch's two builds (landActive and keepPlaceAcrossWindow land them)");
-  assert.deepEqual(syncs.filter((x) => !flagless.includes(x)).map(([n]) => fnOf(n)).sort(), ["appendActive", "fillInPlace", "toggleToolGroup"].sort(),
-    "…and three pass their keep's own predicate: appendActive (its follow or its anchor), the toggle (its anchor) and the fill's no-unit fallback (a row or a point in hand), by caller");
-  assert.equal(syncs.length - flagless.length, 3, "three flagged syncs");
+  const sf = ts.createSourceFile("render.ts", RENDER, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const nameOf = (fn: ts.SignatureDeclaration): string | null => {
+    if ((ts.isFunctionDeclaration(fn) || ts.isMethodDeclaration(fn) || ts.isFunctionExpression(fn)) && fn.name) return fn.name.getText(sf);
+    const p = fn.parent;
+    if (p && ts.isVariableDeclaration(p) && ts.isIdentifier(p.name)) return p.name.text;
+    if (p && (ts.isPropertyAssignment(p) || ts.isPropertyDeclaration(p))) return p.name.getText(sf);
+    return null;
+  };
+  const ownerOf = (n: ts.Node): string => { for (let p: ts.Node | undefined = n.parent; p; p = p.parent) { if (ts.isFunctionLike(p)) { const nm = nameOf(p); if (nm) return nm; } } return "<module>"; };
+  const flagKind = (arg: ts.Expression | undefined): string => {
+    if (!arg) return "absent";
+    if (arg.kind === ts.SyntaxKind.TrueKeyword) return "true";
+    if (arg.kind === ts.SyntaxKind.FalseKeyword) return "false";
+    if (ts.isIdentifier(arg) && arg.text === "undefined") return "absent";
+    if (ts.isIdentifier(arg) && arg.text === "anchored") return "handed on";
+    return "predicate";
+  };
+  const NAMES = new Set(["renderWindowItems", "syncView", "untakeMeasure"]);
+  const censusCalls: ts.CallExpression[] = [], refs: ts.Identifier[] = [];
+  const visit = (n: ts.Node): void => {
+    if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && NAMES.has(n.expression.text)) censusCalls.push(n);
+    else if (ts.isIdentifier(n) && NAMES.has(n.text) && !(ts.isCallExpression(n.parent) && n.parent.expression === n) && !(ts.isFunctionDeclaration(n.parent) && n.parent.name === n)) refs.push(n);
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  const pairs = (name: string, argAt: number): string[] => censusCalls.filter((c) => (c.expression as ts.Identifier).text === name).map((c) => ownerOf(c) + ": " + flagKind(c.arguments[argAt])).sort();
+  assert.ok(censusCalls.length >= 24, "the censuses are not empty: " + censusCalls.length + " calls");
+  assert.deepEqual(pairs("renderWindowItems", 6), [
+    "fillInPlace: predicate",          // the fill's land: a row or a point to put back (fill-in-place.test.ts executes the three roads and the raw roads' untake)
+    "fillInPlace: true",               // the re-window around the point: the point is put back by its turn, or the take is given back
+    "landNearestMoment: true",         // the moment's row is landed below; its one caller, landActive, took before it
+    "scrollToAnchor: true",            // landOn or the keep-offset re-land puts the target under the reader, or the take is given back on a miss (scroll-to-anchor-roads.test.ts)
+    "syncViewInner: handed on",        // the first build or rewind: the paint's own flag, from its caller
+    "syncViewInner: handed on",        // the rebuild: the same
+    "virtualizeToViewport: true",      // the bottom or the focus unit's offset is written, or the take is given back
+  ].sort(), "the window builds by owner and the kind of flag each hands: a constant where the road owes a predicate, an owner not on the list, or a build added anywhere reds");
+  assert.deepEqual(pairs("syncView", 2), [
+    "appendActive: predicate",         // its follow or the anchor its restore holds (append-active-keep.test.ts)
+    "fillInPlace: predicate",          // the no-unit fallback: the same predicate as the fill's build (fill-in-place.test.ts)
+    "reviveFailedLocal: absent",       // the placeholder re-render anchors nothing
+    "runPrebuild: absent",             // the hidden prebuild anchors nothing
+    "showActive: absent",              // the switch's build: landActive and keepPlaceAcrossWindow land it
+    "showActive: absent",              // the deferred build: the same
+    "toggleToolGroup: predicate",      // whether a row was captured (toolgroup-toggle-keep.test.ts)
+  ].sort(), "the syncView calls by owner and the kind of flag each hands");
+  assert.deepEqual(refs.map((r) => r.text + " in " + ownerOf(r)), [], "neither renderWindowItems, syncView nor untakeMeasure is handed on as a bare reference (an identifier that is not a callee; comments and strings are not identifiers)");
+  assert.deepEqual(censusCalls.filter((c) => (c.expression as ts.Identifier).text === "untakeMeasure").map((c) => ownerOf(c)).sort(),
+    ["appendActive", "fillInPlace", "fillInPlace", "keepPlaceAcrossWindow", "landActive", "landNearestMoment", "scrollToAnchor", "scrollToAnchor", "toggleToolGroup", "virtualizeToViewport"].sort(),
+    "the take is given back at every road that can end unanchored: appendActive's raw write, the fill's two raw roads, the keep's double miss, landActive's land-saved after a take, the moment's miss, scrollToAnchor's two misses, the toggle's raw write, the re-window's lost focus unit");
   // every reset that clears the average clears the parked figures with it (forgetAverage), and none clears the figure bare
   assert.match(RENDER, /function forgetAverage\(v: View\): void \{\s*\n\s*v\.avgTurnH = undefined; v\.measured = undefined;\s*\n\}/);
   assert.equal((RENDER.match(/\bavgTurnH = undefined/g) || []).length, 1, "the one bare clear is the helper's");
