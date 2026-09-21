@@ -169,10 +169,28 @@ and per-machine, from this trust level).
 By default the kernel opens one connection of its own to a host other than the
 model provider: it fetches a public model-pricing table
 (`raw.githubusercontent.com/.../model_prices_and_context_window.json`) when
-the Token usage view opens and the table it holds is more than six hours old,
-with no credential. The response is parsed strictly as numeric pricing. The
-kernel's other connections, and the programs it runs that connect on their
-own, are listed below.
+the Token usage view opens and this kernel has made no fetch attempt yet, or
+its last attempt is more than six hours old, with no credential. The kernel
+stamps the attempt before the fetch runs, so a fetch that fails or lands
+nothing holds the six hours like one that landed, and the first open of the
+view after a start always fetches. The response is parsed strictly as numeric
+pricing. The kernel's other connections, and the programs it runs that connect
+on their own, are listed below. The list is derived from the code by
+`python3 scripts/network-inventory.py`, run from the repository root: the
+script walks kernel/, cli/, postal/, bin/, hooks/, ui/, vscode-extension/src
+and the install scripts for every site that opens a connection or starts a
+program, compares what it finds with the counts committed beside it in
+`scripts/network-inventory-expected.json`, and exits 1 naming any site it
+cannot place, any count that differs, any HTTP or socket client it does not
+know and any row of its table that names no site; the test suite runs it
+(`tests/test_price_feed_census.py`). Four classes of outbound activity the
+scan cannot derive are named and counted in its table rather than left out: an
+external program the kernel starts whose far end its arguments do not show (a
+shell, node, perl or python, or git with a subcommand the code does not spell
+out); a program whose text is supplied at run time (a watch predicate, the
+apiKeyHelper or a login's token command); a browser request whose URL is
+computed at run time; and the loads the browser makes on its own for what a
+page inserts (an image, a frame, a script, a link).
 
 `ROMP_PRICE_FEED=off` in the kernel's environment (`service.env` for the
 installed service, then a manager restart) stops that fetch: the Token usage
@@ -189,31 +207,53 @@ the Models API catalog refresh, on the apiKeyHelper's key or else the
 stops it; with neither credential it sends nothing), and, when an apiKeyHelper
 is configured, the fast-mode probe on that key at every key-billed session
 connect and, for the judges, once per judge process and again after a fast
-refusal. By default the kernel also runs programs that
-connect on their own: `git ls-remote` against the release remote for the
-release check, and for the drift check on a clone that tracks main
+refusal. By default the kernel also runs programs that connect on their own:
+`git ls-remote` against the release remote, at boot and then every six hours
+for the release check, on a clone whose VERSION file names a release, and
+every five minutes for the drift check, on a checkout on branch main, in
+update mode auto, or with a machine attached or remembered
 (`ROMP_UPDATE_CHECK=off`, or the gear's update mode off, stops both);
 `git ls-remote --heads origin` in a viewed file's checkout when its branch has
 no local tracking ref; the session CLIs and the judge CLIs, which talk to
-their providers on the session's or the call's billing; and one `npm install`
-when a bundle rebuild fails at boot. Every other connection opens once you set
-it up: an attached machine (ssh commands and tunnels to it, and everything
-over them), a PR watch (`gh`) or a watch predicate a session registered, a
-subscribed phone (web push, encrypted end to end), the apiKeyHelper or
-stored-login command you configured, an update taken from the banner or by the
-auto mode (`git fetch`, then for a release `install.sh` with pip and npm), and
-the pictures a viewed file loads in the browser from the hosts on the gear's
-Pictures from the web in files list. Installing by hand (`bootstrap.sh`,
-`install.sh`) fetches from GitHub, PyPI and the npm registry, and
+their providers on the session's or the call's billing; one `npm install`
+when a bundle rebuild fails at boot; and, in the browser rather than the
+kernel, the pictures a viewed markdown file loads from the hosts on the gear's
+Pictures from the web in files list, which starts as github.com, its image and
+asset hosts, localhost and 127.0.0.1 (a figure from any other host makes no
+request until you click it; removing a host from the list stops its loads).
+
+The other connections open when something sets them up, you or a session you
+are running: an attached machine (ssh commands to it and tunnels to it, and
+everything over them, a Pull of its checkout included); a PR watch
+(`gh pr view` on a cadence, registered with `romp watch-pr`, which asks `gh`
+for the repository's name when given no `--repo`); a watch predicate, which a
+session registers on its own (`romp watch`, POST `/watch`; no setting of yours
+gates it), after which the kernel runs the registered text through `/bin/sh`
+on the cadence the registration names (no faster than every 15 seconds, every
+60 by default) until it exits 0, its bound (24 hours by default) or a cancel,
+re-armed at boot, and what the command itself sends is not romp's; a
+subscribed phone (web push, encrypted end to end); the apiKeyHelper or
+stored-login command you configured; and an update taken from the banner or
+by the auto mode (`git fetch`, then for a release `install.sh` with pip and
+npm; the editor extension's update prompt runs the same `install.sh` on your
+click). Installing by hand (`bootstrap.sh`, `install.sh`) fetches from GitHub,
+PyPI (and bootstrap.pypa.io for get-pip.py when the python lacks ensurepip;
+`ROMP_NO_GET_PIP=1` skips that fetch) and the npm registry, and
 `bin/romp-codex-setup`, run by hand for Codex sessions, fetches the Codex SDK
 from PyPI and the pinned Codex CLI from GitHub.
 
 What those programs send is theirs, not the kernel's: a session's own CLI, the
 judges' CLIs, a watch predicate, the API key helper, a login's token program,
-`gh`, `git`, `ssh`, `npm` and the browser open connections of their own. romp
-sends no telemetry. Session text goes only to the model provider the session
-or the judge call is billed to and, encrypted end to end, to the push service
-of a phone you subscribed.
+`gh`, `git`, `ssh`, `npm` and the browser open connections of their own, and
+the census lists such a site by the program it starts, never by where that
+program connects. romp sends no telemetry: the kernel's own requests to hosts
+other than the machines you attach are the four named above: the price table,
+the catalog refresh, the fast-mode probe and web push. Session text goes to
+the model provider the session or the judge call is billed to; over your own
+ssh tunnels to a machine you attached (the text you send a session there, the
+session listings, views and file bodies relayed back, and the postal mail
+between the two machines' buses); and, encrypted end to end, to the push
+service of a phone you subscribed.
 
 ## Reporting a vulnerability
 

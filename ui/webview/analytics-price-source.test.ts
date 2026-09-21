@@ -27,16 +27,19 @@ const note = (pf: unknown): string => {
   return gear.raPriceNote(pf);
 };
 
-test("live feed: the line names the feed and the fetch's age in plain words, minutes then hours", () => {
+test("live feed: the line names the feed and the fetch's age in the shell's age words (now, then minutes, hours, days)", () => {
+  // the words are api-health-merge.ts agoWords', the helper the API-health popup's as-of uses, bound in gear.js as raAgo
+  // (the second round of the review of PR 878: a copy of the helper here said 720 hours ago where the popup says 30 days
+  // ago); analytics-price-source-states.test.ts runs the line against the helper at every boundary
   assert.equal(note({ off: false, source: "feed", ageS: 240, fetchedAt: 1_700_000_000, rows: 6, lastError: null }), "prices: live feed, fetched 4 minutes ago");
-  assert.equal(note({ source: "feed", ageS: 30 }), "prices: live feed, fetched just now", "under a minute");
-  assert.equal(note({ source: "feed", ageS: 0 }), "prices: live feed, fetched just now",
+  assert.equal(note({ source: "feed", ageS: 30 }), "prices: live feed, fetched now", "under 45 s: the popup's word");
+  assert.equal(note({ source: "feed", ageS: 0 }), "prices: live feed, fetched now",
     "zero, what a read in the second the fetch landed carries (the kernel's ageS is now minus fetchedAt on one clock): the age is said whenever the block has a number, and 0 is a number, not an absence");
   assert.equal(note({ source: "feed", ageS: 60 }), "prices: live feed, fetched 1 minute ago", "singular");
-  assert.equal(note({ source: "feed", ageS: 3599 }), "prices: live feed, fetched 59 minutes ago", "whole minutes up to the hour");
+  assert.equal(note({ source: "feed", ageS: 3_569 }), "prices: live feed, fetched 59 minutes ago", "rounded minutes up to the hour");
   assert.equal(note({ source: "feed", ageS: 3600 }), "prices: live feed, fetched 1 hour ago", "singular hour");
   assert.equal(note({ source: "feed", ageS: 7_200 }), "prices: live feed, fetched 2 hours ago");
-  assert.equal(note({ source: "feed", ageS: 90_000 }), "prices: live feed, fetched 25 hours ago", "hours keep counting; the feed's TTL is six, a cache kept under the switch can be older");
+  assert.equal(note({ source: "feed", ageS: 90_000 }), "prices: live feed, fetched 1 day ago", "a day past 24 h, as the popup would say it; the feed's TTL is six hours, a cache kept under the switch can be older");
   assert.equal(note({ source: "feed" }), "prices: live feed", "no age in the block (an older kernel's shape): the source alone, never a made-up age");
   // a cache kept while the switch is on still prices from the feed, and the line says the feed, with its age, and
   // why no refresh will come: the user stopped the traffic, not the data (analytics-price-source-states.test.ts
@@ -157,13 +160,52 @@ test("executed: the node is placed right after the footnote, ahead of anything t
 });
 
 test("wired: raRender places the line from the payload's block in both metrics, and every clearing road clears it", () => {
-  // the render's last statement, after the footnote's text is set, so the footnote's own content stands beside it
-  assert.match(GEAR, /session \$ estimated from token prices; fast mode draws more than shown'\) : ''\);\n(?:\s*\/\/[^\n]*\n)*\s*raPriceLine\(raPriceNote\(d\.priceFeed\)\); \}/,
-    "the footnote's content is kept and the price line follows it, keyed on the payload's block alone (no metric guard: the block's presence decides)");
-  // the loading repaint, the no-data return and a failed /analytics read leave no line behind
-  assert.ok(GEAR.includes("raNote.textContent = ''; raPriceLine(''); return; }"), "loading");
-  assert.ok(GEAR.includes("raChart.innerHTML = '<div class=ra-empty>no data</div>'; raPriceLine(''); return; }"), "no data");
-  assert.ok(GEAR.includes("raNote.textContent = ''; raPriceLine(''); }); }"), "the fetch's catch");
+  // EXECUTED over the repo's DOM stand-in: the render block (raPrice, raPriceLine and raRender, lifted from initGear with the
+  // closure names it reads passed in as stubs) is driven with a synthetic payload, so the wiring is proved by the node it
+  // leaves rather than by a regex over the footnote's copy (the second round of the review of PR 878: the one pin on this
+  // wiring embedded the footnote's estimate sentence, so an edit to that sentence, nothing to do with the price line, went
+  // red here). The kernel-side facts behind the block are pinned by tests/test_price_feed_off.py; raPriceNote is the real export.
+  const start = GEAR.indexOf("  var raPrice = null;"), end = GEAR.indexOf("  function raFetch() {");
+  assert.ok(start > 0 && end > start, "raPrice, raPriceLine and raRender sit together ahead of raFetch inside initGear; re-anchor if the block moved");
+  const make = nodeFactory();
+  const panel = make("div"), footnote = make("div");
+  panel.appendChild(footnote);
+  Object.defineProperty(footnote, "nextSibling", { get: () => panel.children[panel.children.indexOf(footnote) + 1] || null });
+  const raState: any = { loading: false, data: null, group: "judge", periodLabel: "24 hours", window: 86400 };
+  let cost = false;
+  const stubs: Record<string, unknown> = {
+    document: { createElement: make }, raState, raChart: make("div"), raLegend: make("div"), raNote: footnote,
+    raCost: () => cost, raVal: (s: any) => (s.in || 0) + (s.out || 0), raSegments: () => [], raDate: () => "", raWhen: () => "",
+    raEsc: (s: string) => s, fmtTok: () => "", fmtUsd: () => "", raFmt: () => "", raPriceNote: gear.raPriceNote,
+  };
+  const api = new Function(...Object.keys(stubs), GEAR.slice(start, end) + "\nreturn { render: raRender, node: function () { return raPrice; } };")(...Object.values(stubs)) as
+    { render: () => void; node: () => any };
+  const line = () => { const n = api.node(); return n ? n.textContent : null; };
+  raState.data = { sessions: { in: 10, out: 5, cost: 0.5 }, priceFeed: { off: true, source: "defaults", reason: "off", fetchedAt: null, ageS: null, rows: 0, lastError: null } };
+  api.render();
+  assert.equal(line(), "prices: built-in defaults; live feed off (ROMP_PRICE_FEED=off)", "a payload with the block: the line is its wording, from the payload's block alone (no metric guard)");
+  assert.equal(panel.children[1], api.node(), "placed right after the footnote");
+  assert.ok(footnote.textContent.length > 0, "the footnote's own content stands beside it");
+  cost = true; api.render();
+  assert.equal(line(), "prices: built-in defaults; live feed off (ROMP_PRICE_FEED=off)", "the cost metric too: the block's presence decides");
+  raState.data = { sessions: { in: 10, out: 5 }, priceFeed: { source: "feed", ageS: 240 } };
+  api.render();
+  assert.equal(line(), "prices: live feed, fetched 4 minutes ago", "a re-render with a new block updates the one node");
+  assert.equal(panel.children.length, 2, "one node across re-renders");
+  raState.loading = true; api.render();
+  assert.equal(api.node(), null, "the loading repaint clears the line");
+  raState.loading = false; raState.data = null; api.render();
+  assert.equal(api.node(), null, "the no-data return clears the line");
+  raState.data = { sessions: { in: 1, out: 1 } }; api.render();
+  assert.equal(api.node(), null, "a payload without the block (an older kernel) leaves no node");
+  // the failed /analytics read's catch lives in raFetch, outside the lifted block: pinned as source text (the two roads above are executed)
+  assert.ok(GEAR.includes("raNote.textContent = ''; raPriceLine(''); }); }"), "the fetch's catch clears the line too");
+  // WHERE the call lives, anchored on the call alone and never on the footnote's copy: the render's last statement, after the
+  // footnote's text is set. This guards only the call's place; the executed assertions above prove what raPriceLine produces.
+  const render = GEAR.slice(start, end);
+  const call = render.indexOf("raPriceLine(raPriceNote(d.priceFeed)); }"), note = render.indexOf("raNote.textContent = (fromTxt ?");
+  assert.ok(call > 0 && note > 0 && call > note,
+    "raRender calls raPriceLine(raPriceNote(d.priceFeed)) as its last statement, after the raNote.textContent assignment (a pin on where the call lives; the executed cases above prove what it produces)");
   // no static node in the markup: the line's node is minted with its text and removed with it
   assert.ok(GEAR.includes("'<div id=ra-note class=ra-note></div>' +\n  '</div></div>';"), "the footnote stays the panel's last markup child");
   assert.ok(!GEAR.includes("id=ra-price class=ra-price"), "no empty #ra-price in the markup");

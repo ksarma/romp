@@ -28,13 +28,27 @@ corrected sentence and names the executed guard (tests/test_price_feed_off.py AP
 are red over a git archive of the reviewed head d1026b768 at their first doc assertion (the subsection there says
 "With the variable set" and "a rate the row omits keeps the table's.") and green at the tree.
 
+The second round of that review (2026-09-21) corrected three more claims. The subsection said the modal's line ENDS with
+the unrecognised clause, ends with the override count and ends with the skipped-rows clause, three claims that cannot all
+hold: gear.js raPriceNote pushes the clauses in one order (the unrecognised clause, the override count, the skipped rows,
+then the whole-file clause, on both sources), so only the last slot ends the line. The doc now says where each clause
+sits, and TheLineClausesSitWhereGearJsPutsThem pins the words to that push order by index on both branches (the executed
+proof is ui/webview/analytics-price-source-states.test.ts). The override merge no longer coerces a rate that is present
+and not a JSON number (`float(x or 0)` priced null, an empty string, a list, an object or false at zero per token and
+true at a dollar per token, with the block reading a clean override): such a row is rejected into the per-row path, and
+ThePartialRowRule's anchor moved to the merge's new shape (the table's rate only when the KEY is absent). The trigger
+sentence, which the reference had right, gained a pin on the TTL compare and the stamp before the thread start, so the
+reference and SECURITY.md move together.
+
 Text only: the behaviour is pinned in tests/test_price_feed_off.py (the kernel) and
 ui/webview/analytics-price-source.test.ts (the view). The doc and the sources are read as files; nothing loads
 romp code, so no state root is minted. Every case asserts the doc's text FIRST, so a run over a tree without
 the subsection fails at that assertion and never at a slice or a missing symbol.
 """
+import ast
 import os
 import re
+import textwrap
 import unittest
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -68,6 +82,12 @@ def _paragraph(doc, opening):
 def _pydef(src, name):
     """The text of top-level `def name(...)` up to the next top-level def or class; "" when absent."""
     m = re.search(r"^def " + re.escape(name) + r"\(.*?(?=^(?:def|class) |\Z)", src, re.S | re.M)
+    return m.group(0) if m else ""
+
+
+def _jsdef(src, name):
+    """The text of top-level `function name(...) {` up to its closing brace at column 0; "" when absent."""
+    m = re.search(r"^function " + re.escape(name) + r"\(.*?^\}", src, re.S | re.M)
     return m.group(0) if m else ""
 
 
@@ -110,6 +130,23 @@ OMITS_EXACT = "the row is matched by its exact id and inherits nothing"
 OLD_OMITS = "and a rate the row omits keeps the table's."
 BASE_EXACT = "base = prices.get(k, {})"
 PARTIAL_GUARD = "tests/test_price_feed_off.py APartialOverrideRow.test_an_omitted_rate_keeps_the_tables_only_for_an_id_the_table_names"
+# the merge's read of a row's rate (the second round of the review of PR 878): the table's rate only when the KEY is
+# absent, and a present value accepted only as a JSON number, never coerced
+INHERIT = "v[kk] if kk in v else base.get(kk, 0)"
+TYPE_CHECK = "isinstance(raw, bool) or not isinstance(raw, (int, float))"
+REJECT_NUMBER = 'raise ValueError("a rate that is not a number")'
+OLD_INHERIT = "v.get(kk, base.get(kk, 0))"
+# where each clause of the modal's line sits (the second round): the words, and gear.js raPriceNote's push order behind them
+UNREC_SITS = "after the source and before the override count"
+OVR_SITS = "after the source (and after the unrecognised clause when there is one) and before the skipped-rows clause when there is one"
+FEED_PUSHES = ("tails.push(unrec)", "tails.push(ovr)", "tails.push(rej)", "tails.push(badFile)")
+DEFAULTS_TAILS = ("(unrec ? '; ' + unrec : '')", "(ovr ? '; ' + ovr : '')", "(rej ? '; ' + rej : '')", "(badFile ? '; ' + badFile : '')")
+ENDS_CLAUSE = "1 row of model-prices.json could not be read and was skipped (the rest of the file applies)"
+# the trigger (the reference's wording, now SECURITY.md's too), and the kernel's compare, stamp and thread start behind it
+TRIGGER = "when the modal opens and the last fetch attempt is more than six hours old, or there has been none"
+TTL_CHECK = 'if now - _price_cache["t"] < PRICE_TTL:'
+TTL_STAMP = '_price_cache["t"] = now'
+THREAD_START = "threading.Thread(target=work"
 
 
 class _Pins(unittest.TestCase):
@@ -284,8 +321,84 @@ class ThePartialRowRule(_Pins):
         self.assertQuoted(BASE_EXACT, prices, where, "the base is the exact id's row, never _price_for's fallback; executed in %s" % PARTIAL_GUARD)
         self.assertNotIn("_price_for(", prices, "%s resolves the base by the exact id: a fallback here is the contract change the "
                          "doc's sentence, this pin and %s must follow" % (where, PARTIAL_GUARD))
-        self.assertQuoted("v.get(kk, base.get(kk, 0))", prices, where,
-                          "a rate the row omits reads the base row's, which is the table's for an id it names and empty otherwise")
+        self.assertQuoted(INHERIT, prices, where,
+                          "a rate the row omits (the KEY absent) reads the base row's, which is the table's for an id it names and "
+                          "empty otherwise; a present value is read as it is, so the type check below sees it")
+        self.assertNotIn(OLD_INHERIT, prices, "%s: `.get(kk, ...)` read a present null as absent, and `or 0` coerced it "
+                         "(the second round of the review of PR 878)" % where)
+
+    def test_a_present_rate_that_is_not_a_number_is_a_skipped_row_never_a_coerced_one(self):
+        # the second round of the review of PR 878: `float(v.get(kk, base.get(kk, 0)) or 0)` priced a row whose rate was
+        # null, "", [], {} or false at zero per token and true at a dollar per token while the block read a clean
+        # override; the doc states the predicate that ships, and the kernel raises into the per-row reject path
+        self.assertSection()
+        flat = _flat(SECTION)
+        self.assertQuoted("a rate whose key is present is accepted only as a JSON number, an int or a float and never a bool", flat, self.DOC)
+        self.assertQuoted("a null, a string (a numeric one too), a list, an object, `true` or `false` where a rate belongs makes that "
+                          "row a skipped row, never a rate of zero or one", flat, self.DOC)
+        prices = _pydef(KERNEL, "_model_prices")
+        self.assertTrue(prices, "kernel/kernel.py defines _model_prices at the top level")
+        where = "kernel/kernel.py _model_prices"
+        self.assertQuoted(TYPE_CHECK, prices, where, "a bool first (it is an int to isinstance), then anything not an int or a float")
+        self.assertQuoted(REJECT_NUMBER, prices, where, "raised inside the row's try, so the row lands in the reject path that "
+                          "already exists; executed in tests/test_price_feed_off.py TheOverrideFileIsSaid (seven shapes and the "
+                          "absent-key control)")
+        self.assertLess(prices.find(TYPE_CHECK), prices.find(REJECT_NUMBER), "%s: the check, then the raise" % where)
+        # by ast, since the docstring names the old expression: no float() of an `or` expression is left in the merge
+        coerced = [n for n in ast.walk(ast.parse(textwrap.dedent(prices)))
+                   if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "float"
+                   and n.args and isinstance(n.args[0], ast.BoolOp)]
+        self.assertEqual(coerced, [], "%s: a float() of an `or` expression is the coercion the round removed" % where)
+
+
+class TheLineClausesSitWhereGearJsPutsThem(_Pins):
+    """The subsection says where each clause of the modal's price line sits, and gear.js raPriceNote puts it there (the
+    second round of the review of PR 878: three sentences each said the line ENDS with a different clause). Red over an
+    archive of that round's head at the first doc assertion of each case (the subsection there says "the line ends" of
+    the unrecognised clause and of the override count); green at the tree. The rendered order is executed in
+    ui/webview/analytics-price-source-states.test.ts."""
+    DOC = "docs/reference.md (The price feed)"
+
+    def test_the_doc_says_where_each_clause_sits_and_only_the_last_slot_ends_the_line(self):
+        self.assertSection()
+        flat = _flat(SECTION)
+        self.assertQuoted("(the line carries `; %s` %s" % (UNREC_CLAUSE, UNREC_SITS), flat, self.DOC,
+                          "the unrecognised clause: after the source, before the override count")
+        self.assertQuoted("the line carries `; 1 row overridden by model-prices.json`, whichever table it names, %s" % OVR_SITS,
+                          flat, self.DOC, "the override count: after the source and the unrecognised clause, before the skipped rows")
+        self.assertNotIn("the line ends `; %s`" % UNREC_CLAUSE, flat, "%s: the unrecognised clause ends the line only when no row "
+                         "is counted or skipped" % self.DOC)
+        self.assertNotIn("the line ends `; 1 row overridden", flat, "%s: the override count ends the line only when no row is "
+                         "skipped" % self.DOC)
+        ends = re.findall(r"ends `; ([^`]*)`", flat)
+        self.assertEqual(ends, [ENDS_CLAUSE], "%s: one clause is said to end the line, the skipped rows', the last slot on both "
+                         "branches (the whole-file clause takes that slot instead and is said so, not as a second 'ends')" % self.DOC)
+        note = _jsdef(GEAR, "raPriceNote")
+        self.assertTrue(note, "ui/webview/gear.js defines raPriceNote at the top level")
+        where = "ui/webview/gear.js raPriceNote"
+        for seq, branch in ((FEED_PUSHES, "the feed branch's pushes"), (DEFAULTS_TAILS, "the defaults branch's tail")):
+            at = [note.find(s) for s in seq]
+            for s, i in zip(seq, at):
+                self.assertGreaterEqual(i, 0, "%s does not carry %r" % (where, s))
+            self.assertEqual(at, sorted(at), "%s: %s run unrecognised, override count, skipped rows, whole file, the order the "
+                             "doc's 'after' and 'before' describe: %r" % (where, branch, list(zip(seq, at))))
+        self.assertLess(note.find("'prices: live feed'"), note.find(FEED_PUSHES[0]), "%s: the source comes first" % where)
+        self.assertLess(note.find("'prices: built-in defaults'"), note.find(DEFAULTS_TAILS[0]), "%s: the source comes first" % where)
+
+    def test_the_trigger_is_the_last_attempt_and_the_kernel_stamps_it_before_the_fetch(self):
+        # the reference had this right; pinned so SECURITY.md (tests/test_security_price_feed.py) and this document move
+        # together: the compare reads the stamp of the last ATTEMPT, written before the worker thread starts
+        self.assertSection()
+        self.assertQuoted(TRIGGER, _flat(SECTION), self.DOC)
+        refresh = _pydef(KERNEL, "_refresh_remote_prices")
+        self.assertTrue(refresh, "kernel/kernel.py defines _refresh_remote_prices at the top level")
+        where = "kernel/kernel.py _refresh_remote_prices"
+        for needle in (TTL_CHECK, TTL_STAMP, THREAD_START):
+            self.assertQuoted(needle, refresh, where)
+        self.assertLess(refresh.find(TTL_CHECK), refresh.find(TTL_STAMP), "%s: the check, then the stamp" % where)
+        self.assertLess(refresh.find(TTL_STAMP), refresh.find(THREAD_START), "%s: the stamp before the thread start, so a fetch "
+                        "that fails or lands nothing has stamped the attempt (the doc's 'last fetch attempt')" % where)
+        self.assertQuoted('_price_cache = {"t": 0', KERNEL, "kernel/kernel.py", "no attempt yet reads as a stale one: the first open fetches")
 
 
 class TheAnalyticsParagraphPointsAtTheLine(_Pins):

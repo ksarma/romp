@@ -1,24 +1,92 @@
 #!/usr/bin/env python3
-"""Census of romp's outbound network activity: every site that opens a connection or starts a program that may open one, over
-kernel/, cli/, postal/, bin/, ui/, vscode-extension/src, hooks/ and the install scripts, each with its road from the table below. Run from
-the repository root: python3 scripts/network-inventory.py [root]. Exit 1 when a site has no road, so a new road is a loud line, never a
-silent absence. Standard library only. A program the kernel starts (ssh, git, gh, npm, the session CLIs, the operator's helper, a watch
-predicate) may open connections this scan cannot see: such sites are listed by program, and RUNTIME-SUPPLIED marks an argv the code does not spell out."""
-import ast, os, re, sys
-ROOT = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else ".")
-NET = {"urllib.request.urlopen": "urlopen", "urllib.request.Request": "Request", "http.client.HTTPConnection": "HTTPConnection",
+"""Census of romp's outbound network activity: every site that opens a connection or starts a program that may open one,
+over kernel/, cli/, postal/, bin/, hooks/, ui/, vscode-extension/src, the install scripts and the one program the kernel runs
+from tools/, each with its road from the table below. Run from the repository root:
+
+    python3 scripts/network-inventory.py [root]            the sites, one line each, then the summary and the gates
+    python3 scripts/network-inventory.py --table [root]    the road table the ledger entry and SECURITY.md are written from
+    python3 scripts/network-inventory.py --write-expected  rewrite scripts/network-inventory-expected.json from a clean run
+
+Standard library only. The script exits 1, naming the reason, on: a site with no road (UNCLASSIFIED); a row naming no site
+(STALE ROW); no sites at all (a broken scan or moved roots); a declared root that is missing (SCOPE); a Python file that does
+not parse (PARSE); an import the census does not know (IMPORT); a road with no table entry or a table entry with no road
+(TABLE); and any figure that differs from the committed counts in scripts/network-inventory-expected.json (COUNTS): the
+totals, the counts by kind, by class, by road and by row key. So a scan that finds fewer sites than the committed count, a
+file the walk stopped opening, or a second site inside a function that already has a row is a loud line, not a clean report.
+tests/test_price_feed_census.py runs this script over the tree and over mutated copies of it, so the guarantee is the suite's.
+
+The walk is recursive over every declared root (os.walk; __pycache__, node_modules, symlinks and files whose name carries
+.test. are skipped) and the kind of a file is its extension (.py, .js, .mjs, .cjs, .sh) or its shebang (python, node, sh):
+hooks/ takes every hook whatever its extension, and ui/ and vscode-extension/src are read for the browser and editor kinds
+only (a fixture of another kind below them, such as a CRLF Python sample, is skipped by kind and counted as skipped).
+scripts/ and the rest of tools/ are the maintainers' release, review and bench tooling that nothing under the runtime trees
+runs; the one program the kernel starts from tools/ is named in NAMED, and a string constant naming those directories from
+the runtime trees is a gate (PROGRAM), so a second such program takes a place here or fails the run.
+
+A row is keyed on file plus enclosing function (a Python site) or file plus tool (a shell or JavaScript line); the committed
+count per row key is the guard for a second site inside a function that already has a row, and the listing names the new
+line. Four classes of outbound activity this scan cannot derive are named in the table and counted on every run:
+  external-program: a program the kernel starts whose far end is not derivable from the argv here: a shell or an interpreter
+    as argv[0] (sh, bash, node, perl, python, sys.executable), shell=True, git with a subcommand the code does not spell out,
+    or an argv the code does not spell out (RUNTIME-SUPPLIED marks it). Each such site takes an explicit row with its reason
+    and is never set aside as local, whatever road its row names.
+  runtime-program: the external programs whose text is supplied at run time (the watch predicate, the operator's helper).
+  browser-computed-url: a fetch in the browser or editor code whose first argument is computed at run time. A fetch is local
+    only when its argument is a relative literal or a kernel-URL helper call (ku, kernelUrl, fileUrl, sliceUrl); an absolute
+    literal needs a row; a computed argument is counted here and listed.
+  browser-dom-loads: the browser DOM's own loads (img, iframe, script, link and anchor src, srcset and href writes, setAttribute
+    of those, HTML templates carrying them, window.open), counted by pattern over the browser and editor code; the viewer's
+    and the chat's rendered-markdown insertions have no line of their own and are not counted, so the browser-figures road
+    is named from the gate's host-list read and the retry probe, not from a request.
+A program the kernel starts (ssh, git, gh, npm, the session CLIs, the operator's helper, a watch predicate) may open
+connections this scan cannot see: such a site is listed by program, on a road that says so."""
+import ast
+import json
+import os
+import re
+import sys
+
+EXPECTED = os.path.join("scripts", "network-inventory-expected.json")
+PY_ROOTS = ("kernel", "cli", "postal", "bin", "hooks")     # every kind by extension or shebang, recursively
+JS_ROOTS = ("ui", "vscode-extension/src")                   # the browser and editor kinds only, recursively
+NAMED = ("bootstrap.sh", "install.sh", "vscode-extension/install.sh", "tools/file-comments-host.mjs")
+SKIP_DIRS = ("__pycache__", "node_modules")
+
+NET = {"urllib.request.urlopen": "urlopen", "urllib.request.Request": "Request", "urllib.request.urlretrieve": "urlretrieve",
+       "urllib.request.build_opener": "build_opener", "http.client.HTTPConnection": "HTTPConnection",
        "http.client.HTTPSConnection": "HTTPSConnection", "socket.create_connection": "create_connection", "ssl.wrap_socket": "wrap_socket",
-       "smtplib.SMTP": "smtplib", "ClaudeSDKClient": "sdk-client", "claude_agent_sdk.ClaudeSDKClient": "sdk-client",
-       "sdk.ClaudeSDKClient": "sdk-client", "CodexClient": "sdk-client", "openai_codex.client.CodexClient": "sdk-client", "SubprocessCLITransport": "sdk-transport"}
+       "asyncio.open_connection": "open_connection", "asyncio.open_unix_connection": "open_unix_connection",
+       "anyio.connect_tcp": "connect_tcp", "anyio.connect_unix": "connect_unix", "smtplib.SMTP": "smtplib",
+       "ClaudeSDKClient": "sdk-client", "claude_agent_sdk.ClaudeSDKClient": "sdk-client", "sdk.ClaudeSDKClient": "sdk-client",
+       "CodexClient": "sdk-client", "openai_codex.client.CodexClient": "sdk-client", "SubprocessCLITransport": "sdk-transport"}
 SUB = {"subprocess." + n: n for n in ("run", "Popen", "check_output", "check_call", "call", "getoutput", "getstatusoutput")}
 SUB.update({"os." + n: "os." + n for n in ("system", "popen", "execv", "execve", "execvp", "execvpe", "execl", "execlp", "spawnv", "spawnvp",
             "spawnl", "spawnlp", "posix_spawn", "posix_spawnp")})
-SUB.update({"asyncio.create_subprocess_exec": "create_subprocess_exec", "asyncio.create_subprocess_shell": "create_subprocess_shell", "webbrowser.open": "webbrowser.open"})
-LOCAL_TOOLS = {"ps", "scutil", "systemctl", "journalctl", "systemd-run", "osascript", "notify-send", "xdg-open", "open", "zenity", "node", "perl", "sh"}
-LOCAL_GIT = {"rev-parse", "status", "log", "show", "diff", "symbolic-ref", "merge-base", "rev-list", "checkout", "merge", "remote", "ls-files", "describe", "tag"}
-# The table: "file:function" (a Python site) or "file:tool" (a shell or JS line) -> road. Every function with a site that reaches
-# another machine is named here, and so is every loopback or local-program site the default rules (LOCAL_TOOLS, LOCAL_GIT, a
-# python interpreter as argv[0]) cannot place. A site with no row fails the run.
+SUB.update({"asyncio.create_subprocess_exec": "create_subprocess_exec", "asyncio.create_subprocess_shell": "create_subprocess_shell",
+            "webbrowser.open": "webbrowser.open"})
+# The default rules place a row-less command site only when its program is a fixed literal with no network use of its own.
+LOCAL_TOOLS = {"ps", "scutil", "systemctl", "journalctl", "systemd-run", "osascript", "notify-send", "xdg-open", "open", "zenity"}
+LOCAL_GIT = {"rev-parse", "status", "log", "show", "diff", "symbolic-ref", "merge-base", "rev-list", "merge", "ls-files", "describe", "tag"}
+# A shell or an interpreter runs a program text this scan does not read: never local by default, and the external-program class.
+INTERPRETERS = {"sh", "bash", "dash", "zsh", "env", "node", "perl", "ruby", "python", "python3", "sys.executable"}
+KERNEL_URL_HELPERS = ("ku", "kernelUrl", "fileUrl", "sliceUrl")
+# Every top-level module the scoped Python files import. A module outside this set fails the run (IMPORT): a new HTTP or
+# socket client is then itself the loud line, and takes its primitives into NET or SUB, or a note here that it opens nothing.
+KNOWN_IMPORTS = set("""
+__future__ abc anyio argparse array ast asyncio base64 bisect calendar claude_agent_sdk collections concurrent contextlib copy
+cryptography ctypes datetime difflib email errno fcntl functools gc glob gzip hashlib hmac http importlib inspect itertools json
+math openai_codex os pathlib pickle platform pty queue random re resource secrets select selectors shlex shutil signal smtplib
+socket socketserver ssl stat statistics struct subprocess sys tempfile termios threading time traceback tracemalloc unicodedata
+urllib uuid warnings weakref webbrowser zlib zoneinfo
+perf_export perf_public spend_repair
+""".split())   # the last three are cli/ siblings imported by name; a relative import resolves inside the scanned tree
+# The one program the kernel starts from a directory outside the runtime trees; a string constant naming tools/ or scripts/
+# from the runtime trees that is not one of these fails the run (PROGRAM).
+KNOWN_PROGRAM_REFS = {"file-comments-host.mjs"}   # kernel/kernel.py _FILE_COMMENTS_HOST = ROOT / "tools" / "file-comments-host.mjs"
+
+# The table: "file:function" (a Python site) or "file:tool" (a shell or JavaScript line) -> road. Every function with a site that
+# reaches another machine is named here, and so is every loopback or local-program site the default rules cannot place, and every
+# external-program site whatever its road. A site with no row fails the run.
 T = {}
 def _t(road, *keys):
     for k in keys: T[k] = road
@@ -44,25 +112,203 @@ _t("local-manager", K + "_manager_kernels", K + "_restart_this_kernel", "bin/rom
 _t("local-kernel", P + "_kernel_sessions_checked", P + "_kernel_post", P + "_kernel_get", P + "_kernel_up", P + "_seed_peers_from_kernel", "cli/perf_export.py:read_kernel.get",
    "cli/restart_metrics.py:kernel_live", "cli/update.py:_kernel", "cli/update.py:_get", "cli/update.py:_post", "cli/version.py:_probe_kernel", "bin/romp:curl",
    "bin/romp-service:curl", "hooks/romp-wake.sh:curl", "hooks/romp-usertodo-context.sh:curl", "vscode-extension/src/extension.ts:http.get",
-   "vscode-extension/src/extension.ts:WebSocket", "ui/webview/federation.ts:WebSocket", "ui/webview:fetch")
+   "vscode-extension/src/extension.ts:WebSocket", "ui/webview/federation.ts:WebSocket")   # a browser fetch is placed by its URL, never by a row
+_t("local-git", K + "_release_remote")   # a bare `git remote`: the list of remote names from .git/config, no subcommand that fetches
 _t("local-program", K + "_port_open", K + "_primary_addr", K + "_rebuild_dist", K + "_open_folder", K + "_open_file", K + "_run_dialog", K + "_system_notify",
    K + "_run_bounded", K + "_git_out", S + "interpreter_tag", S + "cli_scope_supported", S + "proc_start", S + "SdkBackend._session_cli_pid", S + "SdkBackend._end_cli_tree",
    S + "SdkBackend._stop_leftover_scopes", S + "SdkBackend._boot_reconcile", S + "SdkBackend._oom_killed_scope", S + "SdkBackend._scope_journal",
-   S + "SdkBackend._host_orphan_recover", J + "_serve_fault", K + "main", "vscode-extension/src/extension.ts:execFile", "ui/romp-timeline-view.js:execFile")
+   S + "SdkBackend._host_orphan_recover", J + "_serve_fault", K + "main", "vscode-extension/src/extension.ts:execFile", "ui/romp-timeline-view.js:execFile",
+   "kernel/host_transport.py:HostTransport.connect")   # the SDK transport's connection to a session host's Unix socket
+# _serve_fault: a test-only fault route runs `sh -c echo`, a fixed literal that prints and opens nothing (external-program by class)
 _t("browser-figures", "ui/webview/figure-gate.ts:figureHosts", "ui/webview/preview.ts:Image")
 _t("install-bootstrap", "bootstrap.sh:curl", "bootstrap.sh:git clone", "bootstrap.sh:git fetch", "bootstrap.sh:git pull")
 _t("install-sdk-setup", "bin/romp-sdk-setup:curl", "bin/romp-sdk-setup:wget", "bin/romp-sdk-setup:pip install")
 _t("install-ext", "vscode-extension/install.sh:npm install", "vscode-extension/src/extension.ts:install.sh")
 _t("install-codex-setup", "bin/romp-codex-setup:pip install", "kernel/codex_runtime.py:install_runtime")
 LOCAL_ROADS = {"local-bus", "local-manager", "local-kernel", "local-program", "local-git"}
-sites, bad = [], []
-def emit(f, line, prim, head, fn, road):
-    sites.append((f, line, prim, head, fn, road or "UNCLASSIFIED")); bad.extend([] if road else ["%s:%d" % (f, line)])
+RUNTIME_ROADS = {"predicate-watch", "api-key-helper"}   # the program text itself arrives at run time
+CLASSES = ("external-program", "runtime-program", "browser-computed-url", "browser-dom-loads")
+
+# The table's prose columns, one entry per road in the order the ledger entry prints them; the where column is derived from the
+# sites on every run, so a hand-written member cannot survive here. Text: the repository's privacy documentation.
+ROADS = [
+ ("price-feed", "price feed (kernel-request)",
+  "an open of the Token usage view (`_token_analytics` with refresh) when the last fetch attempt is older than `PRICE_TTL`, six hours, or there has been none this kernel life; never at boot; nothing re-arms it",
+  "GET of the public LiteLLM price table on raw.githubusercontent.com, no credential", "`ROMP_PRICE_FEED=off`"),
+ ("model-catalog", "model catalog refresh (kernel-request)",
+  "through `_refresh_model_catalog`, from `_model_catalog_boot` and `_note_unknown_model`: the first boot with no catalog cache file; after that once per unknown `claude-*` model id per kernel life (a set path or a pick names an id the merged list lacks); single-flight, up to ten pages",
+  "GET `/v1/models` on api.anthropic.com (`ROMP_MODELS_URL` overrides) with the apiKeyHelper's key, else the `ANTHROPIC_AUTH_TOKEN` bearer claimed at startup; a box with neither sends nothing",
+  "`ROMP_MODEL_CATALOG=off`"),
+ ("fast-org-probe", "fast-mode organisation probe (kernel-request)",
+  "through `key_fast_org_env` and `helper_fast_org_env`, from `SdkSession._options` (every connect compose) and kernel/judge.py `_fast_org_env`: every key-billed connect of a session (a launch, a resume, a reconnect, the reconnect a fast toggle makes) when the operator's apiKeyHelper is configured and the project's own settings name no other helper: the fetch runs first and the memo spares only a failed one; the judges ask once per judge process (the kernel, or the `romp-judge --serve` child when `STATE/judges-process` reads on) for a key-billed call whose tier's Fast-mode box is on with a fast-capable (Opus family) model, and ask again after any CLI fast refusal drops the memo",
+  "GET `/api/claude_code_penguin_mode` on api.anthropic.com (`ANTHROPIC_BASE_URL`) with the helper's key, three-second bound",
+  "none of its own: no helper, no probe; a login-billed session, no probe"),
+ ("web-push", "web push (kernel-request)",
+  "through `_push_send_one` and `_push_notify` (a card needing you, a completion, a turn end, a relayed peer event) and the `/push/test` route: every notification event while `push-subscriptions.json` holds a row, one POST per subscription; a 404 or 410 removes the row",
+  "an aes128gcm-encrypted payload (title, body, routing) to each subscription's endpoint, the push service of the subscribed phone or browser (Apple, Google, Mozilla), signed with the kernel's own VAPID key; the service sees ciphertext",
+  "none in the environment; unsubscribe on the device (the bell), which removes the row"),
+ ("release-check", "release check (kernel-runs-a-command)",
+  "through `_update_check` and `_update_check_loop`: at boot and every six hours (`_UPDATE_CHECK_EVERY_S`) on a clone with a VERSION file, in update modes ask (the default) and auto; re-armed at every boot",
+  "`git ls-remote --tags <release remote>`: `upstream` when the clone has one, else `origin`, GitHub for a bootstrap install; git's own credential if the remote needs one",
+  "`ROMP_UPDATE_CHECK=off`, or the gear's update mode off"),
+ ("drift-check", "main drift check (kernel-runs-a-command)",
+  "through `_main_drift_check` and `_update_check_loop`, behind the audience gate `_main_channel_verdict`: every 300 s (`_MAIN_CHECK_EVERY_S`) when the clone is main-tracking: on branch main, or update mode auto, or with an attached or remembered machine; re-armed at boot",
+  "`git ls-remote <release remote> refs/heads/main`", "`ROMP_UPDATE_CHECK=off`, or update mode off"),
+ ("self-update", "self-update to a release (kernel-runs-a-command)",
+  "a bash script: the update banner's Update click, or update mode auto when a newer release tag is found, once per tag",
+  "`git fetch <release remote> refs/tags/<tag>`, then `./install.sh`, which runs bin/romp-sdk-setup (pip against PyPI or pip's configured index; get-pip.py from bootstrap.pypa.io when the python lacks ensurepip) and vscode-extension/install.sh (`npm install` against the npm registry) unless `ROMP_NO_SDK` or `ROMP_NO_EXT` is set; then a restart request to the manager on the loopback",
+  "update mode ask (the default) runs it only on a click; `ROMP_UPDATE_CHECK=off` stops the discovery"),
+ ("main-converge", "main converge (kernel-runs-a-command)",
+  "kind pull: the drift banner's Update click, or update mode auto, on a main-tracking clone whose main moved",
+  "`git fetch <release remote> main`; the rest is local (status, merge-base, checkout, `node esbuild.js`, a restart request to the manager)",
+  "update mode off, or ask (a click only); `ROMP_UPDATE_CHECK=off`"),
+ ("pr-watch", "PR watch (kernel-runs-a-command)",
+  "through `_pr_watch_tick` in the tunnel supervisor pass: per registered row (`romp watch-pr`, POST `/watch-pr`) every 60 s (`PR_WATCH_EVERY`; 90 s while checks run), re-armed at boot from `pr-watches.json`, retired on merge, close or three consecutive gh failures; a failed check holds the watch and keeps polling",
+  "`gh pr view <n> --repo <owner/repo> --json state,statusCheckRollup` to GitHub's API on gh's own token",
+  "none: no registration, no poll; a cancel retires the row"),
+ ("watch-pr-registration", "watch-pr registration (a romp CLI verb a session or the user runs, not the kernel)",
+  "the `watch-pr` verb: `romp watch-pr` given no `--repo`, once per registration",
+  "`gh repo view --json nameWithOwner` to GitHub's API on gh's own token", "none; `--repo` skips the call"),
+ ("file-viewer-ls-remote", "file viewer origin check (kernel-runs-a-command)",
+  "through `_origin_has_branch` and `_file_github_link`: a viewer open of a file in a git checkout whose current branch has no local tracking ref under origin; a no is remembered while the clone's refspec tracks the branch, until the ref appears; anything else is asked again per open; three-second bound; every credential prompt closed",
+  "`git ls-remote --heads origin refs/heads/<branch>` to the checkout's origin (GitHub for a GitHub-hosted file); a configured credential helper may answer, askpass is refused",
+  "none"),
+ ("predicate-watch", "predicate watch (kernel-runs-a-command)",
+  "through `_watch_tick` in the supervisor pass: per registered row (`romp watch`, POST `/watch`) every `every` seconds (floor 15, default 60) until exit 0, the timeout (24 h by default; a longer caller bound stands, a shorter one re-arms through the default) or a cancel; re-armed at boot from `watches.json`; each run bounded to 45 s",
+  "whatever the registered command sends: it runs as `/bin/sh <scratch file holding the text>`, so the program is RUNTIME-SUPPLIED and this scan sees the shell and nothing else",
+  "none"),
+ ("ssh-tunnel", "ssh tunnels and everything over them (kernel-runs-a-command, and kernel-request over the forward)",
+  "`_spawn_tunnel` (`_tunnel_argv`) on an attach (the dashboard or `romp`), re-attach at boot from `remotes.json`, a redial of a dead ssh on a backoff ladder, every tunnel dropped and redialed on a route change; over the forward the supervisor polls each attached host's kernel every 15 s (`SUPERVISOR_PASS_S`; 0.25 s while a row is in transition), and the browser's `/remote/<host>/` requests and websocket are relayed over it on demand",
+  "`ssh -N -T` (BatchMode, no multiplexing) with `-L` forwards to the remote kernel and bus, plus `-R` forwards for a check-in; over it HTTP to the remote kernel with that machine's own serve token, and the postal peering",
+  "none in the environment; detach the host"),
+ ("ssh-one-shot", "one-shot ssh commands on an attached host (kernel-runs-a-command)",
+  "an attach and the boot re-attach (the serve-token read; the kernel-port probe and the remote start when that kernel is down), a dial's death (the reachability probe), the Update, Pull and Restart actions on a remote row (clone discovery, the push, the guarded apply, the guarded restart), an automatic push of this machine's build when the gear's auto-update remotes is on (off by default), and a remote session's folder click (a terminal running `ssh -t`)",
+  "one ssh command per call on the attached host (a `cat` of its serve-token file, a `/dev/tcp` port probe, `nohup romp-serve`, `git rev-parse` and `git status` in its clone, a reset-and-restart script), and `git push --force` of the committed HEAD to a scratch ref in the remote clone over `GIT_SSH_COMMAND`",
+  "none; the automatic push is a gear setting, off by default"),
+ ("git-to-attached", "git fetch from an attached checkout (kernel-runs-a-command)",
+  "the Pull action on a remote row (`/tunnels/pull`, the sync-pull action)",
+  "`git fetch <host>:<remote clone dir> HEAD` over ssh, then a local fast-forward", "none"),
+ ("npm-install-retry", "npm install retry at boot (kernel-runs-a-command)",
+  "at boot when the served bundles are older than their sources, `node_modules` exists and the `node esbuild.js` build fails: one `npm install --no-audit --no-fund`, then one rebuild",
+  "package downloads from npm's configured registry", "none (`ROMP_EXT_DEV_BUILD` changes the build profile only; no `node_modules`, no build)"),
+ ("api-key-helper", "the operator's own commands: the apiKeyHelper and a stored login's token command (kernel-runs-a-command)",
+  "through `helper_key` (callers kernel/kernel.py `_models_api_credential`, kernel/sdk_backend.py `helper_fast_org_env`, kernel/judge.py `_fast_org_env`) and through kernel/logins.py `token_value` (callers kernel/sdk_backend.py `SdkSession._options`, kernel/judge.py `_judge_env`): the helper, from Claude Code's managed or user settings (never a project's), runs through `/bin/sh` whenever the kernel needs the key and its memo is past the TTL (`CLAUDE_CODE_API_KEY_HELPER_TTL_MS`, five minutes by default): the catalog refresh and the fast-mode probe, so at key-billed connects and the judges' once-per-process ask; a stored login's token command runs with no memo at every launch, resume or reconnect of a session billed to that login and at every judge call billed to it, on the login-billed side",
+  "whatever those programs send (a password manager's or a vault's read), on their own credentials, from a whitelisted environment, stdin closed, stderr discarded",
+  "none of romp's: no helper configured and no stored login, nothing runs"),
+ ("session-cli", "the session CLIs (session-or-judge-cli)",
+  "`SessionHost._spawn` (the SDK's `SubprocessCLITransport`, a class outside this tree) and `PipeCliTransport.connect` (the SDK-less test transport); `SdkBackend._spawn_host` (bin/romp-session-host) and `SdkSession._amain` (`ClaudeSDKClient`; with hosts off the SDK spawns the CLI in the kernel process); `_aprobe_commands` (the slash-command probe) and `_login_start` (the login flow); `CodexBackend._get_client` (`CodexClient`, the `codex app-server`): a session's launch, resume and reconnect (hosts on by default: one host process per session starts the CLI); the composer's slash-command list for a cwd not probed in 300 s starts a CLI with no prompt; the Billing flyout's login action starts the CLI's OAuth flow; a Codex session's first use starts one app-server per backend",
+  "the sessions' own model calls to Anthropic (or `ANTHROPIC_BASE_URL`) on the session's billing (the machine's login, a stored login's token, or the key the CLI resolves through the apiKeyHelper), plus whatever the CLI does on its own; a Codex session's calls to OpenAI on its login",
+  "none: running them is what romp is for"),
+ ("judge-cli", "the judges' CLI (session-or-judge-cli)",
+  "`_judge_run_impl` (`perl` alarm around `claude -p`, or `codex exec`); `_JudgeChild._start` (`bin/romp-judge --serve`, the judges' process when `STATE/judges-process` reads on): every judge call (triage, index, distill and the rest) on session activity, one CLI run per call",
+  "the judge prompt (session excerpts) to Anthropic on the call's billing (the machine's login tokens, a stored login's token, or the key the CLI resolves through the apiKeyHelper), or to OpenAI through `codex exec` when `STATE/judge-engine` reads codex",
+  "none in the environment; the engine setting picks the CLI"),
+ ("bus-peers", "the postal bus to peer buses (bus-request)",
+  "through `_peer_exchange_once` and `_peer_loop`: one long-poll exchange per up peer, re-issued as each returns (backoff to 30 s on errors), while the kernel reports the peer's tunnel up",
+  "POST `/peer-exchange` (mail relays, presence) to the peer's bus through the tunnel's local forward, with the peer machine's serve token",
+  "`ROMP_POSTAL_PEERS=0` (the legacy singleton mode, where the bus is reached over an `-R` forward instead)"),
+ ("browser-figures", "a viewed file's pictures from the web (browser)",
+  "a viewed markdown file's pictures and clips whose host is on the gear's Pictures from the web in files list load when the file opens (the default list, ui/webview/settings.ts `FIGURE_HOSTS_DEFAULT`: github.com, raw.githubusercontent.com and the other GitHub image and asset hosts, localhost, 127.0.0.1); a figure from another host loads on one click; the viewer's retry (`probeMdImgUrl`) probes a failed figure's URL",
+  "GET of the figure's URL from the browser showing the dashboard, with that browser's own cookies for the host; the loads themselves are DOM insertions this scan cannot see (the browser-dom-loads row), so this road is named from the gate's host-list read and the retry probe, not from a request",
+  "the setting (remove the hosts)"),
+ ("install-bootstrap", "bootstrap.sh (install-time-by-hand)",
+  "by hand: the documented one-liner, and re-runs",
+  "`curl` of bootstrap.sh from raw.githubusercontent.com (the one-liner itself), `git clone` of the repository (`ROMP_REPO`; github.com by default), on an existing clone `git fetch --tags origin` then `git pull --ff-only`, then `./install.sh`",
+  "none"),
+ ("install-sdk-setup", "bin/romp-sdk-setup (install-time-by-hand; also run by the kernel's self-update through install.sh)",
+  "the `fetch` helper and the pip lines; install.sh runs it unless `ROMP_NO_SDK=1`: by hand at install, and at the kernel's self-update",
+  "get-pip.py from bootstrap.pypa.io only when the python lacks ensurepip (`ROMP_GET_PIP_URL` overrides); `pip install --upgrade pip`, `pip install claude-agent-sdk==<pin>`, `pip install --upgrade cryptography` from pip's configured index, PyPI by default",
+  "`ROMP_NO_SDK=1` skips the script; `ROMP_NO_GET_PIP=1` skips the bootstrap fetch"),
+ ("install-ext", "vscode-extension/install.sh (install-time-by-hand; also run by the kernel's self-update and by the editor extension's update prompt)",
+  "`npm install`; install.sh runs it unless `ROMP_NO_EXT=1`; the editor extension's `runInstall` (`execFile bash`): by hand at install; the kernel's self-update; the editor extension's update prompt, on the user's click",
+  "`npm install` against npm's configured registry; then a local `node esbuild.js` and a local `code --install-extension`",
+  "`ROMP_NO_EXT=1` for install.sh"),
+ ("install-codex-setup", "bin/romp-codex-setup (install-time-by-hand)",
+  "the setup script, and kernel/codex_runtime.py `install_runtime`, which the setup runs as a script (the kernel only looks the runtime up: kernel/codex_backend.py `runtime_path`; `ensure_codex_sdk` installs nothing): by hand",
+  "`pip --isolated install openai-codex==<pin>` from PyPI (no get-pip fetch: the script refuses an unverified bootstrap); the pinned Codex CLI wheel from github.com's release downloads, hash-checked, with `--no-index`",
+  "none"),
+]
+LOCAL_ROW = ("local, set aside and counted (local)",
+  "each a connection to this machine or a fixed program with no network use of its own: the kernel to the manager, the postal bus and itself; the bus, bin/romp's curls, cli/*, the installed hooks, the VS Code extension and the manager to the kernel on 127.0.0.1; the browser's fetch and websocket to the kernel's own origin (a relative URL or a kernel-URL helper); the SDK transport's connection to a session host's Unix socket; git read-only queries, ps, scutil and the systemd tools spelled out in the argv; and `_primary_addr`'s UDP connect to TEST-NET-1, which sends no packet. A program on a local road whose far end this scan cannot derive is counted in the external-program row, never here",
+  "as the kernel, the CLIs and the browser run", "nothing leaves the machine", "not applicable")
+CLASS_ROWS = {
+ "external-program": ("an external program the kernel starts, far end not derivable here (not derivable by this scan)",
+  "as the roads above run: every site of this class sits on a road by an explicit row with its reason, and is never set aside as local",
+  "whatever the program sends: a shell, node, perl or python runs a program text this scan does not read; `shell=True` runs the configured command; git with a subcommand the code does not spell out and an argv the code does not spell out (RUNTIME-SUPPLIED) name their program at run time",
+  "the road's own switch; none for the class"),
+ "runtime-program": ("a program supplied at run time (not derivable by this scan)",
+  "as the predicate watch and the operator's own commands rows run",
+  "whatever the registered text sends: the predicate as `/bin/sh <scratch file holding the text>`, the helper or token command through the shell",
+  "none"),
+ "browser-computed-url": ("a browser request whose URL is computed at run time (not derivable by this scan)",
+  "as the dashboard runs: a fetch whose first argument is a variable; at this head each reads a kernel URL by its binding (a `same-origin` mode, a `fileUrl` or `kernelUrl` result), which the scan cannot derive from the line",
+  "to the URL the variable holds at run time; the kernel's own origin at this head by reading the bindings",
+  "not applicable"),
+ "browser-dom-loads": ("the browser DOM's own loads (not derivable by this scan)",
+  "as the dashboard and the editor views render: an element loads its URL when the attribute lands; the viewer's and the chat's rendered-markdown insertions load their figures with no attribute line at all and are not counted",
+  "to the URL written: kernel URLs (`fileUrl`, `mediaSrc`, `/media`), object URLs and editor webview URIs, and for a viewed file's figures the hosts the browser-figures road names",
+  "the figure-host setting for figures; not applicable otherwise"),
+}
+
+SH = [("curl", r"\bcurl\s"), ("wget", r"\bwget\s"), ("git clone", r"\bgit (?:-C \S+ )?clone\b"), ("git fetch", r"\bgit (?:-C \S+ )?fetch\b"),
+      ("git pull", r"\bgit (?:-C \S+ )?pull\b"), ("git push", r"\bgit (?:-C \S+ )?push\b"), ("git ls-remote", r"\bgit (?:-C \S+ )?ls-remote\b"),
+      ("npm install", r"\bnpm (?:install|ci)\b"), ("pip install", r"\bpip\S*\"? (?:--isolated )?install\b"),
+      ("gh", r"\bgh (?:pr|repo|api|release|run|issue|auth)\b"), ("ssh", r"\bssh\s+\S")]
+JS = [("fetch", r"\bfetch\("), ("WebSocket", r"new WebSocket\("), ("EventSource", r"new EventSource\("), ("Image", r"new Image\("), ("http.get", r"\bhttps?\.get\("),
+      ("http.request", r"\bhttps?\.request\("), ("execFile", r"\bexecFile\("), ("spawn", r"\bspawn\("), ("figureHosts", r"loadSettings\(\)\.figureHosts")]
+DOM = [("attribute write", r"\.(?:src|srcset|href)\s*=[^=]"), ("setAttribute", r"setAttribute\(\s*[\"'](?:src|srcset|href)[\"']"),
+       ("template", r"<(?:img|script|iframe|link|source|video|audio|a|embed|object)\b[^>]*\b(?:src|srcset|href)="), ("window.open", r"window\.open\(")]
+
+
+class Site(object):
+    __slots__ = ("file", "line", "prim", "head", "fn", "road", "cls", "kind")
+    def __init__(self, file, line, prim, head, fn, road, cls, kind):
+        self.file, self.line, self.prim, self.head, self.fn, self.road, self.cls, self.kind = file, line, prim, head, fn, road, cls, kind
+    def key(self):
+        return "%s:%s" % (self.file, self.fn if self.fn != "-" else self.prim)
+    def tuple(self):
+        return (self.file, self.line, self.prim, self.head, self.fn, self.road or "", self.cls or "")
+
+
+class Result(object):
+    def __init__(self):
+        self.sites, self.dom, self.problems, self.files, self.skipped = [], [], [], [], 0
+    def emit(self, *a):
+        self.sites.append(Site(*a))
+
+
+def _fetch_arg(line):
+    """The first argument of the first fetch( on the line, up to its top-level comma or the closing paren."""
+    text = line[line.index("fetch(") + 6:]; depth, out = 0, []
+    for ch in text:
+        if ch in "([{": depth += 1
+        elif ch in ")]}":
+            if depth == 0: break
+            depth -= 1
+        elif ch == "," and depth == 0: break
+        out.append(ch)
+    return "".join(out).strip()
+
+
+def _fetch_class(arg):
+    """'local' (a relative literal, or a kernel-URL helper call), 'absolute' (a literal with a scheme or a host), or 'computed'."""
+    if re.match(r"^(?:%s)\(" % "|".join(KERNEL_URL_HELPERS), arg): return "local"
+    if arg[:1] in ("'", '"', "`"):
+        body = arg[1:arg.find(arg[0], 1)] if arg.find(arg[0], 1) > 0 else arg[1:]
+        if body.startswith("//") or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", body): return "absolute"
+        if body.startswith("${"): return "computed"
+        return "local"
+    return "computed"
+
 
 class Scan(ast.NodeVisitor):
-    def __init__(self, rel): self.rel, self.stack, self.alias, self.consts, self.binds = rel, [], {}, {}, []
-    def visit_Import(self, n): self.alias.update({a.asname or a.name: a.name for a in n.names})
-    def visit_ImportFrom(self, n): self.alias.update({a.asname or a.name: (n.module or "") + "." + a.name for a in n.names})
+    def __init__(self, rel, res):
+        self.rel, self.res, self.stack, self.alias, self.consts, self.binds, self.imports = rel, res, [], {}, {}, [], []
+    def visit_Import(self, n):
+        self.alias.update({a.asname or a.name: a.name for a in n.names}); self.imports.extend((a.name.split(".")[0], n.lineno) for a in n.names)
+    def visit_ImportFrom(self, n):
+        self.alias.update({a.asname or a.name: (n.module or "") + "." + a.name for a in n.names})
+        if n.level == 0 and n.module: self.imports.append((n.module.split(".")[0], n.lineno))
     def dotted(self, n):
         if isinstance(n, ast.Name): return self.alias.get(n.id, n.id)
         if isinstance(n, ast.Attribute):
@@ -70,10 +316,30 @@ class Scan(ast.NodeVisitor):
     def prim(self, n):
         if isinstance(n, ast.BoolOp): return next((p for p in map(self.prim, n.values) if p), None)
         d = self.dotted(n); return SUB.get(d) or NET.get(d)
+    def bind(self, name, value):
+        if isinstance(value, ast.Call) and self.dotted(value.func) == "socket.socket": self.binds[-1][name] = "SOCKET"
+        elif self.prim(value): self.binds[-1][name] = self.prim(value)
     def visit_Assign(self, n):
         if len(n.targets) == 1 and isinstance(n.targets[0], ast.Name):
             if not self.stack: self.consts[n.targets[0].id] = n.value
-            elif self.prim(n.value): self.binds[-1][n.targets[0].id] = self.prim(n.value)
+            else: self.bind(n.targets[0].id, n.value)
+        self.generic_visit(n)
+    def visit_With(self, n):
+        if self.stack:
+            for it in n.items:
+                if isinstance(it.optional_vars, ast.Name): self.bind(it.optional_vars.id, it.context_expr)
+        self.generic_visit(n)
+    visit_AsyncWith = visit_With
+    def program_ref(self, n, value):
+        if os.path.basename(value) not in KNOWN_PROGRAM_REFS:
+            self.res.problems.append("PROGRAM %s:%d names %r: a program under that directory is outside the declared scope; add it to NAMED "
+                                     "and KNOWN_PROGRAM_REFS, or state here why it is not a program the kernel runs" % (self.rel, n.lineno, value))
+    def visit_Constant(self, n):   # a program path spelled as one string: "tools/x.mjs"
+        if isinstance(n.value, str) and re.match(r"^(?:tools|scripts)/.*\.(?:py|mjs|cjs|js|sh)$", n.value): self.program_ref(n, n.value)
+    def visit_BinOp(self, n):   # a program path built with pathlib: ROOT / "tools" / "x.mjs"
+        if (isinstance(n.op, ast.Div) and isinstance(n.right, ast.Constant) and isinstance(n.right.value, str) and isinstance(n.left, ast.BinOp)
+                and isinstance(n.left.right, ast.Constant) and n.left.right.value in ("tools", "scripts")):
+            self.program_ref(n, n.left.right.value + "/" + n.right.value)
         self.generic_visit(n)
     def enter(self, n):
         b = {}
@@ -84,66 +350,238 @@ class Scan(ast.NodeVisitor):
         self.stack.append(n.name); self.binds.append(b); self.generic_visit(n); self.binds.pop(); self.stack.pop()
     visit_FunctionDef = visit_AsyncFunctionDef = visit_ClassDef = enter
     def argv(self, c):
-        """(argv[0] as text, git subcommand or '') for a command call: a literal, a module constant, or RUNTIME-SUPPLIED(expr)."""
-        kw = {k.arg: k.value for k in c.keywords}; a = c.args[0] if c.args else kw.get("args"); sub = ""
+        """(argv[0] as text, git subcommand or '', the literal after argv[0] or '') for a command call: a literal, a module constant
+        (a string, or a list whose first element is read), sys.executable, or RUNTIME-SUPPLIED(expr) when the code does not spell it out."""
+        kw = {k.arg: k.value for k in c.keywords}; a = c.args[0] if c.args else kw.get("args"); sub, follow = "", ""
         while isinstance(a, ast.BinOp): a = a.left
+        if isinstance(a, ast.Name) and a.id in self.consts: a = self.consts[a.id]
         if isinstance(a, (ast.List, ast.Tuple)) and a.elts:
             lits = [e.value for e in a.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)]
             if lits and lits[0] == "git": sub = next((v for v in lits[1:] if not v.startswith("-")), "")
+            if len(a.elts) > 1 and isinstance(a.elts[1], ast.Constant) and isinstance(a.elts[1].value, str): follow = a.elts[1].value
             a = a.elts[0]
-        if isinstance(a, ast.Name) and a.id in self.consts: a = self.consts[a.id]
-        if isinstance(a, ast.Constant) and isinstance(a.value, str): return a.value, sub
+            if isinstance(a, ast.Name) and a.id in self.consts: a = self.consts[a.id]
+        if isinstance(a, ast.Attribute) and isinstance(a.value, ast.Name) and a.value.id == "sys" and a.attr == "executable": return "sys.executable", sub, follow
+        if isinstance(a, ast.Constant) and isinstance(a.value, str): return a.value, sub, follow
         if isinstance(a, ast.Call) and getattr(a.func, "attr", "") == "get" and a.args and isinstance(a.args[0], ast.Constant):
-            return "%s or %s" % (a.args[0].value, ast.unparse(a.args[1]) if len(a.args) > 1 else "''"), sub   # SSH_BIN = os.environ.get(..., "ssh")
-        return "RUNTIME-SUPPLIED(%s)" % (ast.unparse(a)[:48] if a is not None else ""), sub
+            return "%s or %s" % (a.args[0].value, ast.unparse(a.args[1]) if len(a.args) > 1 else "''"), sub, follow   # SSH_BIN = os.environ.get(..., "ssh")
+        return "RUNTIME-SUPPLIED(%s)" % (ast.unparse(a)[:48] if a is not None else ""), sub, follow
     def visit_Call(self, n):
         d = self.dotted(n.func); p = SUB.get(d) or NET.get(d)
-        if not p and isinstance(n.func, ast.Name) and self.binds and n.func.id in self.binds[-1]: p = self.binds[-1][n.func.id] + " via " + n.func.id
-        if not p and getattr(n.func, "attr", "") in ("connect", "connect_ex") and n.args and isinstance(n.args[0], ast.Tuple): p = "socket." + n.func.attr
+        if not p and isinstance(n.func, ast.Name) and self.binds and self.binds[-1].get(n.func.id, "SOCKET") != "SOCKET":
+            p = self.binds[-1][n.func.id] + " via " + n.func.id
+        if not p and getattr(n.func, "attr", "") in ("connect", "connect_ex") and n.args:
+            bound = isinstance(n.func.value, ast.Name) and self.binds and self.binds[-1].get(n.func.value.id) == "SOCKET"
+            if bound or isinstance(n.args[0], ast.Tuple): p = "socket." + n.func.attr
         if p:
-            fn = ".".join(self.stack) or "<module>"; road = T.get(self.rel + ":" + fn); head, sub = "", ""
+            fn = ".".join(self.stack) or "<module>"; road = T.get(self.rel + ":" + fn); head, sub, cls = "", "", None
             if p.split(" ")[0] in SUB.values():
-                head, sub = self.argv(n)
-                if any(k.arg == "shell" and getattr(k.value, "value", None) is True for k in n.keywords): head += " SHELL"
-                if road is None and ((head == "git" and sub in LOCAL_GIT) or head in LOCAL_TOOLS or head.startswith("RUNTIME-SUPPLIED(sys.executable")):
+                head, sub, follow = self.argv(n)
+                shell = any(k.arg == "shell" and getattr(k.value, "value", None) is True for k in n.keywords)
+                base = os.path.basename(head) if not head.startswith("RUNTIME-SUPPLIED") else head
+                interp = base in INTERPRETERS or base.startswith("python")
+                external = interp or shell or head.startswith("RUNTIME-SUPPLIED") or (head == "git" and not sub)
+                if shell: head += " SHELL"
+                if interp and follow.startswith("-"): head += " " + follow
+                if external: cls = "runtime-program" if road in RUNTIME_ROADS else "external-program"
+                elif road is None and ((head == "git" and sub in LOCAL_GIT) or head in LOCAL_TOOLS):
                     road = "local-git" if head == "git" else "local-program"
             elif n.args: head = ast.unparse(n.args[0])[:60]
-            emit(self.rel, n.lineno, p, (head + " " + sub).strip(), fn, road)
+            self.res.emit(self.rel, n.lineno, p, (head + " " + sub).strip(), fn, road, cls, "py")
         self.generic_visit(n)
 
-def py_files():
-    for d in ("kernel", "cli", "postal", "bin"):
-        for n in sorted(os.listdir(os.path.join(ROOT, d))):
-            f = os.path.join(ROOT, d, n)
-            if os.path.islink(f) or not os.path.isfile(f) or n.endswith((".md", ".pyc")): continue
-            with open(f, "rb") as fh: first = fh.readline()
-            if n.endswith(".py") or b"python" in first: yield f, "py"
-            elif b"node" in first or b"sh" in first: yield f, "js" if b"node" in first else "sh"
-SH = [("curl", r"\bcurl\s"), ("wget", r"\bwget\s"), ("git clone", r"\bgit (?:-C \S+ )?clone\b"), ("git fetch", r"\bgit (?:-C \S+ )?fetch\b"),
-      ("git pull", r"\bgit (?:-C \S+ )?pull\b"), ("git push", r"\bgit (?:-C \S+ )?push\b"), ("git ls-remote", r"\bgit (?:-C \S+ )?ls-remote\b"),
-      ("npm install", r"\bnpm (?:install|ci)\b"), ("pip install", r"\bpip\S*\"? (?:--isolated )?install\b"), ("gh", r"\bgh (?:pr|repo|api)\b"), ("ssh", r"\bssh\s+-")]
-JS = [("fetch", r"\bfetch\("), ("WebSocket", r"new WebSocket\("), ("EventSource", r"new EventSource\("), ("Image", r"new Image\("), ("http.get", r"\bhttps?\.get\("),
-      ("http.request", r"\bhttps?\.request\("), ("execFile", r"\bexecFile\("), ("spawn", r"\bspawn\("), ("figureHosts", r"loadSettings\(\)\.figureHosts")]
-def line_scan(rel, tools, comment):
-    for i, ln in enumerate(open(os.path.join(ROOT, rel), encoding="utf-8", errors="replace"), 1):
-        s = ln.strip()
-        if s.startswith(comment) or s.startswith(("echo ", "print(")): continue   # a printed remedy is not a request
-        for tool, rx in tools:
-            if re.search(rx, ln):
-                road = T.get("%s:%s" % (rel, tool)) or (T.get("ui/webview:fetch") if rel.startswith("ui/") and tool == "fetch" else None)
-                if tool == "execFile" and 'execFile("bash"' in ln: tool, road = "install.sh", T.get(rel + ":install.sh")
-                emit(rel, i, tool, s[:70], "-", road)
-for f, kind in py_files():
-    rel = os.path.relpath(f, ROOT)
-    Scan(rel).visit(ast.parse(open(f, encoding="utf-8").read())) if kind == "py" else line_scan(rel, JS if kind == "js" else SH, ("//",) if kind == "js" else ("#",))
-for rel in ("bootstrap.sh", "install.sh", "vscode-extension/install.sh") + tuple("hooks/" + n for n in sorted(os.listdir(os.path.join(ROOT, "hooks"))) if n.endswith(".sh")):
-    line_scan(rel, SH, ("#",))
-for ln in open(os.path.join(ROOT, "bootstrap.sh")):   # the documented one-liner: the user's own curl of this script is a road too
-    if ln.startswith("#") and "curl" in ln and "bootstrap.sh | bash" in ln: emit("bootstrap.sh", 3, "curl (the documented one-liner)", ln.strip("# \n")[:70], "-", T["bootstrap.sh:curl"])
-for d in ("ui/webview", "ui", "vscode-extension/src"):
-    for n in sorted(os.listdir(os.path.join(ROOT, d))):
-        if n.endswith((".ts", ".js")) and not n.endswith(".test.ts") and os.path.isfile(os.path.join(ROOT, d, n)): line_scan(d + "/" + n, JS, ("//", "*", "/*"))
-for f, line, prim, head, fn, road in sorted(sites): print("%s:%d  %s  %s  in %s  -> %s" % (f, line, prim, head, fn, road))
-roads, local = {r for *_, r in sites}, sum(1 for *_, r in sites if r in LOCAL_ROADS)
-print("--- %d sites, %d roads (%d of them local), %d local sites set aside, %d unclassified" % (len(sites), len(roads), len(roads & LOCAL_ROADS), local, len(bad)))
-if bad: print("UNCLASSIFIED: " + " ".join(bad)); sys.exit(1)
+
+def kind_of(path, name, under_js):
+    if ".test." in name: return None
+    if under_js: return "js" if name.endswith((".ts", ".js", ".mjs", ".cjs")) else None
+    if name.endswith(".py"): return "py"
+    if name.endswith((".js", ".mjs", ".cjs")): return "js"
+    if name.endswith(".sh"): return "sh"
+    if "." in name: return None
+    with open(path, "rb") as fh: first = fh.readline()
+    if not first.startswith(b"#!"): return None
+    return "py" if b"python" in first else "js" if b"node" in first else "sh" if b"sh" in first else None
+
+
+def walk(root, res):
+    """Every file of a scanned kind under the declared roots, recursively, and the named files; (relative path, kind)."""
+    for base, under_js in [(d, False) for d in PY_ROOTS] + [(d, True) for d in JS_ROOTS]:
+        top = os.path.join(root, base)
+        if not os.path.isdir(top):
+            res.problems.append("SCOPE the declared root %s/ is missing under %s" % (base, root)); continue
+        for dp, dns, fns in os.walk(top):
+            dns[:] = sorted(d for d in dns if d not in SKIP_DIRS and not os.path.islink(os.path.join(dp, d)))
+            for n in sorted(fns):
+                f = os.path.join(dp, n)
+                if os.path.islink(f) or not os.path.isfile(f): continue
+                k = kind_of(f, n, under_js)
+                if k: yield os.path.relpath(f, root), k
+                else: res.skipped += 1
+    for rel in NAMED:
+        if not os.path.isfile(os.path.join(root, rel)): res.problems.append("SCOPE the named file %s is missing under %s" % (rel, root)); continue
+        yield rel, "js" if rel.endswith((".js", ".mjs", ".cjs")) else "sh"
+
+
+def line_scan(root, rel, kind, res):
+    tools, comment = (JS, ("//", "*", "/*")) if kind == "js" else (SH, ("#",))
+    dom = kind == "js" and rel.startswith(tuple(d + "/" for d in JS_ROOTS))
+    with open(os.path.join(root, rel), encoding="utf-8", errors="replace") as fh:
+        for i, ln in enumerate(fh, 1):
+            s = ln.strip()
+            if s.startswith(comment) or s.startswith(("echo ", "print(")): continue   # a printed remedy is not a request
+            for tool, rx in tools:
+                if re.search(rx, ln):
+                    road, cls, head = T.get("%s:%s" % (rel, tool)), None, s[:70]
+                    if tool == "fetch":   # placed by its URL: the argument is what the listing shows
+                        arg = _fetch_arg(ln); fc = _fetch_class(arg); head = "fetch(%s)" % arg[:60]
+                        if fc == "local": road = "local-kernel"
+                        elif fc == "computed": cls = "browser-computed-url"
+                    if tool == "execFile" and 'execFile("bash"' in ln: tool, road = "install.sh", T.get(rel + ":install.sh")
+                    res.emit(rel, i, tool, head, "-", road, cls, kind)
+            if dom:
+                for name, rx in DOM:
+                    if re.search(rx, ln): res.dom.append((rel, i, name, s[:70])); break
+
+
+def scan(root):
+    res = Result()
+    for rel, kind in walk(root, res):
+        res.files.append(rel)
+        if kind != "py": line_scan(root, rel, kind, res); continue
+        with open(os.path.join(root, rel), encoding="utf-8") as fh: src = fh.read()
+        try: tree = ast.parse(src)
+        except SyntaxError as e:
+            res.problems.append("PARSE %s:%s does not parse (%s)" % (rel, e.lineno, e.msg)); continue
+        sc = Scan(rel, res); sc.visit(tree)
+        for mod, line in sc.imports:
+            if mod not in KNOWN_IMPORTS:
+                res.problems.append("IMPORT %s:%d imports %s, a module the census does not know: a client that opens connections takes its "
+                                    "primitives into NET or SUB; either way add it to KNOWN_IMPORTS with the reason" % (rel, line, mod))
+    if "bootstrap.sh" in res.files:
+        with open(os.path.join(root, "bootstrap.sh"), encoding="utf-8", errors="replace") as fh:
+            for ln in fh:   # the documented one-liner: the user's own curl of this script is a road too
+                if ln.startswith("#") and "curl" in ln and "bootstrap.sh | bash" in ln:
+                    res.emit("bootstrap.sh", 3, "curl", "the documented one-liner: " + ln.strip("# \n")[:50], "-", T["bootstrap.sh:curl"], None, "sh")
+    res.sites.sort(key=Site.tuple)
+    return res
+
+
+def figures(res):
+    """The committed counts: every figure a run is compared against."""
+    per_road, per_key, classes, kinds = {}, {}, dict.fromkeys(CLASSES, 0), {"py": 0, "js": 0, "sh": 0}
+    for s in res.sites:
+        kinds[s.kind] += 1; per_key[s.key()] = per_key.get(s.key(), 0) + 1
+        if s.road: per_road[s.road] = per_road.get(s.road, 0) + 1
+        if s.cls: classes[s.cls] += 1
+    classes["browser-dom-loads"] = len(res.dom)
+    roads = set(per_road)
+    return {"sites": len(res.sites), "roads": len(roads), "local_roads": len(roads & LOCAL_ROADS),
+            "local_sites": sum(1 for s in res.sites if s.road in LOCAL_ROADS and s.cls is None),
+            "kinds": kinds, "classes": classes, "per_road": per_road, "per_key": per_key}
+
+
+def problems(root, res, fig, expected):
+    out = list(res.problems)
+    if not res.sites: out.append("NO SITES found: the scan is broken or the roots moved")
+    bad = ["%s:%d" % (s.file, s.line) for s in res.sites if s.road is None and s.cls != "browser-computed-url"]
+    if bad: out.append("UNCLASSIFIED " + " ".join(bad) + ": a site with no road; add a row to T with its reason (an external program is never local by "
+                       "default), and a new road reaches SECURITY.md's Network access section and the ledger entry's table (--table) too")
+    keys = {s.key() for s in res.sites}
+    for k in sorted(set(T) - keys): out.append("STALE ROW %s names no site: drop it from T (a row for a site that is gone is never a pass)" % k)
+    table = {r[0] for r in ROADS}; roads = set(fig["per_road"])
+    for r in sorted(roads - table - LOCAL_ROADS): out.append("TABLE the road %s has sites and no ROADS entry (its trigger, what it sends and its switch; "
+                                                             "SECURITY.md's Network access section and the ledger's table follow from it)" % r)
+    for r in sorted(table - roads): out.append("TABLE ROADS names %s, a road with no site" % r)
+    for r in sorted(set(T.values()) - table - LOCAL_ROADS): out.append("TABLE the row road %s has no ROADS entry" % r)
+    if expected is None:
+        out.append("COUNTS %s is missing: run --write-expected on a clean tree and commit it" % EXPECTED)
+    else:
+        for name in ("sites", "roads", "local_roads", "local_sites"):
+            if expected.get(name) != fig[name]: out.append("COUNTS %s: the committed count is %s, this run found %s" % (name, expected.get(name), fig[name]))
+        for group in ("kinds", "classes", "per_road", "per_key"):
+            e, f = expected.get(group) or {}, fig[group]
+            for k in sorted(set(e) | set(f)):
+                if e.get(k) != f.get(k): out.append("COUNTS %s %s: the committed count is %s, this run found %s" % (group, k, e.get(k), f.get(k)))
+    return out
+
+
+def render_sites(res, fig, out):
+    for s in res.sites:
+        tag = s.road or ("(%s)" % s.cls if s.cls == "browser-computed-url" else "UNCLASSIFIED")
+        if s.cls and tag != "(%s)" % s.cls: tag += " [%s]" % s.cls
+        out.write("%s:%d  %s  %s  in %s  -> %s\n" % (s.file, s.line, s.prim, s.head, s.fn, tag))
+    for rel, i, name, s in res.dom: out.write("%s:%d  dom-load  %s  %s  -> (browser-dom-loads)\n" % (rel, i, name, s))
+    c = fig["classes"]
+    out.write("--- %d sites, %d roads (%d of them local), %d local sites set aside, %d unclassified; %d external-program, %d runtime-program, "
+              "%d browser-computed-url, %d browser-dom-loads; %d files scanned, %d skipped by kind\n"
+              % (fig["sites"], fig["roads"], fig["local_roads"], fig["local_sites"],
+                 sum(1 for s in res.sites if s.road is None and s.cls != "browser-computed-url"), c["external-program"], c["runtime-program"],
+                 c["browser-computed-url"], c["browser-dom-loads"], len(res.files), res.skipped))
+
+
+def _where(sites):
+    by = {}
+    for s in sites: by.setdefault(s.file, set()).add(s.fn if s.fn != "-" else "(%s)" % s.prim)
+    cells = []
+    for f in sorted(by):
+        fns = sorted(x for x in by[f] if not x.startswith("(")); tools = sorted(x[1:-1] for x in by[f] if x.startswith("("))
+        cells.append(f + (" " + ", ".join("`%s`" % x for x in fns) if fns else "") + (" (" + ", ".join("`%s`" % x for x in tools) + ")" if tools else ""))
+    return "; ".join(cells)
+
+
+def _programs(sites):
+    by = {}
+    for s in sites:
+        head = s.head.split(" SHELL")[0]
+        label = ("an argv the code does not spell out" if head.startswith("RUNTIME-SUPPLIED") else "`git` with a subcommand the code does not spell out"
+                 if head == "git" else "`%s` with `shell=True`" % head if " SHELL" in s.head else "`%s`" % head)
+        by[label] = by.get(label, 0) + 1
+    return ", ".join("%s %d" % (k, by[k]) for k in sorted(by, key=lambda k: (-by[k], k)))
+
+
+def render_table(res, fig, out):
+    out.write("| road | where | trigger and cadence | what is sent and to where | off switch |\n|---|---|---|---|---|\n")
+    for road, label, trigger, sent, off in ROADS:
+        out.write("| %s | %s | %s | %s | %s |\n" % (label, _where([s for s in res.sites if s.road == road]), trigger, sent, off))
+    local = [s for s in res.sites if s.road in LOCAL_ROADS and s.cls is None]
+    counts = ", ".join("%s %d" % (r, sum(1 for s in local if s.road == r)) for r in sorted(LOCAL_ROADS))
+    out.write("| %s | %d sites on the %d local roads (%s), %s | %s | %s | %s |\n" % (LOCAL_ROW[0], len(local), fig["local_roads"], counts, LOCAL_ROW[1], LOCAL_ROW[2], LOCAL_ROW[3], LOCAL_ROW[4]))
+    ext = [s for s in res.sites if s.cls == "external-program"]; rt = [s for s in res.sites if s.cls == "runtime-program"]
+    comp = [s for s in res.sites if s.cls == "browser-computed-url"]
+    files = sorted({rel for rel, _i, _n, _s in res.dom}); kinds = {}
+    for _rel, _i, name, _s in res.dom: kinds[name] = kinds.get(name, 0) + 1
+    where = {"external-program": "%d sites, by program: %s" % (len(ext), _programs(ext)),
+             "runtime-program": _where(rt) + " (%d sites)" % len(rt),
+             "browser-computed-url": "%d sites: %s" % (len(comp), "; ".join("%s `%s`" % (s.file, s.head) for s in comp)),
+             "browser-dom-loads": "%d lines in %d files under %s (%s)" % (len(res.dom), len(files), " and ".join(JS_ROOTS), ", ".join("%s %d" % (k, kinds[k]) for k in sorted(kinds)))}
+    for cls in CLASSES:
+        label, trigger, sent, off = CLASS_ROWS[cls]
+        out.write("| %s | %s | %s | %s | %s |\n" % (label, where[cls], trigger, sent, off))
+
+
+def main(argv):
+    args = [a for a in argv if not a.startswith("--")]; flags = {a for a in argv if a.startswith("--")}
+    unknown = flags - {"--table", "--write-expected"}
+    if unknown or len(args) > 1:
+        sys.stderr.write("usage: network-inventory.py [--table | --write-expected] [root]\n"); return 2
+    root = os.path.abspath(args[0] if args else ".")
+    res = scan(root); fig = figures(res)
+    path = os.path.join(root, EXPECTED); expected = None
+    if os.path.isfile(path):
+        with open(path, encoding="utf-8") as fh: expected = json.load(fh)
+    probs = problems(root, res, fig, expected)
+    if "--write-expected" in flags:
+        hard = [p for p in probs if not p.startswith("COUNTS")]
+        if hard:
+            sys.stdout.write("\n".join(hard) + "\nnot written: %s (the run is not clean)\n" % EXPECTED); return 1
+        with open(path, "w", encoding="utf-8") as fh: json.dump(fig, fh, indent=1, sort_keys=True); fh.write("\n")
+        sys.stdout.write("wrote %s: %d sites, %d roads\n" % (EXPECTED, fig["sites"], fig["roads"])); return 0
+    if "--table" in flags: render_table(res, fig, sys.stdout)
+    else: render_sites(res, fig, sys.stdout)
+    if probs:
+        (sys.stderr if "--table" in flags else sys.stdout).write("\n".join(probs) + "\n"); return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

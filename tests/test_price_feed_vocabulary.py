@@ -9,7 +9,12 @@ words an unknown reason as the source alone and an unknown source as no line at 
 So a rename on one side that carries its own pin, the shape an upstream fold takes, left every test green while the
 line lost its why or vanished. This module reads both files and holds the two vocabularies to one set: every source
 and every reason the kernel can emit is a literal the view tests for, and the view tests for no literal the kernel
-cannot emit; every field the view reads from the block is a key the kernel's status dict carries.
+cannot emit; every field the view reads from the block is a key the kernel's status dict carries; and every key the
+status dict carries is a field the view reads, or one named in VIEW_EXEMPT with the reason the view leaves it unworded
+(the review of PR 878, round 2: the key check ran one way, view minus kernel, so `overrideFault` rode the block unread and
+a model-prices.json discarded whole rendered the clean line). This module holds no age wording: the fetch age's words
+are the shell's one helper's, pinned by execution in ui/webview/analytics-price-source-states.test.ts, and the kernel's
+stderr age by tests/test_price_feed_off.py.
 
 Text only: the sources are read as files, nothing loads romp code, so no state root is minted. The kernel side is
 read as code (an ast walk over the status function's assignments and its return), never as text: the chain tests
@@ -109,6 +114,15 @@ def view_keys(note):
     return set(re.findall(r"\bpf\.(\w+)", note))
 
 
+# The keys of the block the view deliberately leaves unworded, each with its reason. Every other key _price_feed_status
+# returns has to be read in raPriceNote as pf.<key>, so a key the kernel adds is worded, or named here with why not, at
+# authoring time; an entry the view has since started reading, or the kernel has since dropped, is stale and fails too.
+VIEW_EXEMPT = {
+    "attemptedAt": "an epoch on the kernel's clock; the view words the attempt through `reason` (inflight), never a raw epoch",
+    "fetchedAt": "an epoch; superseded on the view side by `ageS`, the kernel's now minus fetchedAt on one clock",
+}
+
+
 class TheTwoSidesAreFound(unittest.TestCase):
     """The anchors: each extractor finds the code it reads, so an empty set on either side is a moved anchor to
     re-pin here, never a pass."""
@@ -144,6 +158,24 @@ class TheVocabularyIsOneSet(unittest.TestCase):
                          "raPriceNote reads %s from the block and _price_feed_status emits no such key: the clause keyed on it can "
                          "never render. Add the key to the status dict, or drop the read" % sorted(missing))
 
+    def test_every_key_the_kernel_emits_is_read_by_the_view_or_exempt_by_name(self):
+        """The other direction: a key the kernel emits that the view words nowhere, which the check above cannot see by
+        construction (the review of PR 878, round 2: `overrideFault` rode the block unread, and a model-prices.json the
+        kernel discarded whole rendered the line a clean file renders). The exemptions are declared with their reasons,
+        so a new key is worded in raPriceNote or named in VIEW_EXEMPT at authoring time, never left silent."""
+        unread = kernel_keys(STATUS) - view_keys(NOTE)
+        unworded = sorted(unread - set(VIEW_EXEMPT))
+        self.assertEqual(unworded, [],
+                         "_price_feed_status emits %s and raPriceNote reads no such field: the block carries a fact the modal never "
+                         "words. Word it in raPriceNote (a pf.<key> read), or add it to VIEW_EXEMPT with the reason the view leaves "
+                         "it out" % unworded)
+        stale = sorted(set(VIEW_EXEMPT) - unread)
+        self.assertEqual(stale, [],
+                         "VIEW_EXEMPT names %s, which the view now reads or the kernel no longer emits: drop the stale exemption" % stale)
+        for key, reason in VIEW_EXEMPT.items():
+            with self.subTest(key=key):
+                self.assertTrue(reason.strip(), "an exemption carries its reason")
+
 
 class TheExtractionIsLive(unittest.TestCase):
     """A pin that read the docstring, or nothing, would report the same set with the code renamed. Rename one word in a
@@ -172,6 +204,12 @@ class TheExtractionIsLive(unittest.TestCase):
         renamed = STATUS.replace('"rows":', '"matched":')
         self.assertNotEqual(renamed, STATUS, "the status returns a `\"rows\":` key; re-anchor if it moved")
         self.assertIn("rows", view_keys(NOTE) - kernel_keys(renamed), "the view reads rows, so the renamed key is a missing one")
+
+    def test_a_kernel_key_the_view_stops_reading_is_read(self):
+        self.assertTrue("pf.overrideFault" in NOTE, "the formatter reads `pf.overrideFault`; re-anchor if it moved")
+        renamed = NOTE.replace("pf.overrideFault", "pf.overrideKind")
+        self.assertEqual(sorted((kernel_keys(STATUS) - view_keys(renamed)) - set(VIEW_EXEMPT)), ["overrideFault"],
+                         "a key the view no longer reads is the two-way pin's unworded key, and the exempt keys stay out of it")
 
 
 if __name__ == "__main__":

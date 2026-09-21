@@ -317,6 +317,14 @@ test("one tooltip per settings row: the Account row's live status is NOT a secon
   assert.ok(GEAR_CSS.includes("#rsettings .rs-row:has(.rs-mixed:hover) .rs-sub { display: none; }"), "the mixed mark's title stands alone");
 });
 
+test("the Token usage line's fetch age is the shell's one age helper, bound and not copied (the review of PR 878, round 2)", () => {
+  // a copy of agoWords in this file said 720 hours ago where the API-health popup says 30 days ago; the line binds the
+  // helper itself, so the two surfaces cannot drift (analytics-price-source-states.test.ts runs the line against
+  // agoWords by execution at every boundary; this pin is on WHERE the words come from)
+  assert.ok(GEAR.includes("var raAgo = require('./api-health-merge.ts').agoWords;"), "raAgo is the shared helper under the modal's name");
+  assert.doesNotMatch(GEAR, /function raAgo\(/, "no age function of the gear's own");
+});
+
 test("the analytics legend swatch matches its bar (PR #886 review: they split in classic)", () => {
   // the sessions BAR moved to var(--text-faint, #7d8590) while the legend swatch stayed a literal —
   // dark resolves --text-faint to #6e7681, so bar and legend no longer agreed in classic

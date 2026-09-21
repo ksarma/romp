@@ -26,6 +26,17 @@ naming the executed cases in tests/test_price_feed_off.py TheOverrideFileIsSaid.
 (the head before the re-ruling) at the first doc assertion (the paragraph there says the row "voids that row and every
 row after it"); green at the tree.
 
+The second round of that review (2026-09-21) moved three of the pinned sentences. The override sentence said the line
+ENDS with the count where gear.js puts the skipped-rows clause after it: it now says where the count sits. The row rule
+gained the class the round found coerced rather than rejected (a rate present and not a JSON number, a numeric string
+included, priced at zero or one per token by `float(x or 0)`): the kernel raises into the per-row path and the doc says
+so, with the kernel's row line naming three classes. The stderr sentence was unconditional where both fault lines sit
+under `if refresh:`, the cost view's road (the spend ceiling's check and /version merge with refresh=False and write
+nothing): the doc conditions it the way the off line's sentence is, says the block carries the class and the count
+whether or not the view was opened, and the pin reads the guard by ast. The whole-file clause the view gained this
+round (`overrideFault` 'file' in the skipped rows' slot) is quoted the way the row clause is. Red over an archive of that
+round's head at the first doc assertion (the old sentences); green at the tree.
+
 Text only, the tests/test_reference_price_feed.py precedent: the doc and the kernel are read as files, nothing
 loads romp code, and no state root is minted. A pin keyed on where the code lives says in its message what it
 guards and names the executed test that proves the behaviour. Every case asserts the doc's text FIRST, so a run
@@ -107,7 +118,10 @@ EXECUTED = "tests/test_price_feed_off.py"
 # the override sentence, as the round worded it, and the clause it replaced
 COUNTS = "a row that changes or adds a model's rates counts"
 NOT_COUNTED = "a row equal to the table's row for that model does not, so the count says what the file changed, not whether it was read"
-ONE_COUNTED = "With one counted row in the file, the line ends `; 1 row overridden by model-prices.json`"
+ONE_COUNTED = ("With one counted row in the file, the line carries `; 1 row overridden by model-prices.json`, whichever table it "
+               "names, after the source (and after the unrecognised clause when there is one) and before the skipped-rows clause "
+               "when there is one")
+OLD_ENDS_COUNT = "the line ends `; 1 row overridden"   # gear.js pushes the skipped-rows clause after the count (round 2)
 OLD_CLAUSE = "with one row in the file, the line ends"
 # the cache sentence, as the round worded it
 LIFETIME = "in memory until the next restart or the next fetch that lands"
@@ -122,24 +136,35 @@ ASSIGN = '_price_cache["remote"] = out'
 LANDED_NEXT = '_price_feed["fetchedAt"] = now'
 FAIL_CLASS = "_price_feed_error_class(e)"
 # the unreadable-row sentence (the review of PR 878, re-ruled 2026-09-21), and the kernel's shape behind each clause
-SKIPPED = ("A row the kernel cannot read (not an object, or a rate that is not a finite number) is skipped and every other row "
-           "applies, wherever in the file the bad row sits")
+SKIPPED = ("A row the kernel cannot read (not an object, a rate that is not a number, or a rate that is not a finite number) is "
+           "skipped and every other row applies, wherever in the file the bad row sits")
+NOT_A_NUMBER = ("a rate whose key is present is accepted only as a JSON number, an int or a float and never a bool, so a null, a "
+                "string (a numeric one too), a list, an object, `true` or `false` where a rate belongs makes that row a skipped "
+                "row, never a rate of zero or one")
+OLD_TWO_CLASSES = "(not an object, or a rate that is not a finite number)"   # the round-2 predicate names three
 OLD_VOIDS = "voids that row and every row after it"   # the first round's consequence, gone from the doc with the re-ruling
 WHOLE = "a file it cannot read or parse as a JSON object is ignored whole"
-SAID_ONCE = ("The kernel says so once per kernel life on its stderr, for the file and for each skipped row, naming the row's key "
-             "there and nowhere else")
+SAID_ONCE = ("The kernel says so on its stderr the first time the cost view prices with the file in that state (the spend "
+             "ceiling's check and `/version` price with the same file and write no line): once per kernel life for the file, and "
+             "once per kernel life for each skipped row, naming the row's key there and nowhere else")
+OLD_UNCONDITIONAL = "The kernel says so once per kernel life on its stderr, for the file"   # written only on the cost view's road
+WHETHER_OPENED = "Whether or not the view was opened, the `priceFeed` block carries the class as `overrideFault`"
 CLASSED = ("`priceFeed` block carries the class as `overrideFault` (`row` or `file`, else null) and the number of skipped rows "
            "as `overrideRowsRejected`, never the file's text or its path")
 VIEW_CLAUSE = "`; 1 row of model-prices.json could not be read and was skipped (the rest of the file applies)`"
+FILE_CLAUSE_TEXT = "model-prices.json could not be read as a JSON object and was ignored (none of it applies)"
+FILE_CLAUSE = "with the file ignored whole, that last slot carries `; %s` instead" % FILE_CLAUSE_TEXT
 FAULT_KEY = '"overrideFault": merged.fault'
 COUNT_KEY = '"overrideRowsRejected": merged.rejected'
 FAULT_CLASSES = {"row", "file"}   # the two classes the doc names, each assigned to the merged table's `fault`
 REJECT_OBJECT = 'raise ValueError("a row that is not an object")'
 REJECT_FINITE = 'raise ValueError("a rate that is not a finite number")'
+REJECT_NUMBER = 'raise ValueError("a rate that is not a number")'
+FILE_SETS_NO_ROWS = 'cfg, prices.fault = None, "file"'   # the file class leaves no row to read, so the two classes are exclusive
 FILE_LATCH = '_price_feed_first("overrideFileSaid")'
 ROW_LATCH = '_price_feed_first("overrideRowsSaid", k)'
-ROW_HEAD = ("price feed: the row %s in model-prices.json could not be read (not an object, or a rate that is not a finite "
-            "number), so that row is skipped and the rest of the file applies")
+ROW_HEAD = ("price feed: the row %s in model-prices.json could not be read (not an object, a rate that is not a number, or a "
+            "rate that is not finite), so that row is skipped and the rest of the file applies")
 FILE_HEAD = "price feed: model-prices.json could not be read as a JSON object, so the file is ignored whole"
 
 
@@ -156,6 +181,8 @@ def _fault_lines(src):
     except (SyntaxError, ValueError, IndexError, AttributeError):
         return {}
 GEAR_CLAUSE = "' of model-prices.json could not be read and '"
+GEAR_FILE_CLAUSE = "'%s'" % FILE_CLAUSE_TEXT
+GEAR_FILE_KEY = "pf.overrideFault === 'file'"
 GEAR = _read("ui", "webview", "gear.js")
 OVERRIDE_CASES = ("tests/test_price_feed_off.py TheOverrideFileIsSaid (a bad row first, in the middle or last is skipped alone with "
                   "the same table, count and line; two bad rows are two lines and a count of 2; each fault class is said once on "
@@ -207,6 +234,8 @@ class TheOverrideCountIsOfRowsThatChange(_Pins):
         self.assertNotIn(OLD_CLAUSE, flat,
                          "%s: 'with one row in the file, the line ends ...' was false for a row equal to the table's row for "
                          "its model (overrides 0, no tail); the example is conditioned on a counted row now" % DOC)
+        self.assertNotIn(OLD_ENDS_COUNT, flat, "%s: the count ends the line only when no row is skipped; the doc says where it "
+                         "sits (round 2, pinned to gear.js's order in tests/test_reference_price_feed.py)" % DOC)
 
 
 class TheCachedRowsLiveUntilARestartOrTheNextLandedFetch(_Pins):
@@ -257,10 +286,16 @@ class AnUnreadableRowOrFileIsSaid(_Pins):
         flat = _flat(SECTION)
         self.assertQuoted(SKIPPED, flat, DOC, "one try wraps each row, so the rows around a rejected one are kept, wherever it sits")
         self.assertNotIn(OLD_VOIDS, flat, "%s: the first round's consequence, whose reach depended on the bad row's position" % DOC)
+        self.assertNotIn(OLD_TWO_CLASSES, flat, "%s: the predicate names the third class, a rate present and not a number" % DOC)
+        self.assertQuoted(NOT_A_NUMBER, flat, DOC, "the predicate as the kernel applies it: present, then a JSON number and never a bool")
         self.assertQuoted(WHOLE, flat, DOC)
-        self.assertQuoted(SAID_ONCE, flat, DOC, "one latch per fault class, the row's keyed by row")
+        self.assertQuoted(SAID_ONCE, flat, DOC, "one latch per fault class, the row's keyed by row, on the cost view's road")
+        self.assertNotIn(OLD_UNCONDITIONAL, flat, "%s: the lines are written under `if refresh:`, the cost view's road; a kernel "
+                         "whose Token usage view never prices with the file in that state writes nothing (round 2)" % DOC)
+        self.assertQuoted(WHETHER_OPENED, flat, DOC, "the block's class and count come from every merge, opened or not")
         self.assertQuoted(CLASSED, flat, DOC, "a class and a count, since the block rides the auth-exempt /version")
         self.assertQuoted(VIEW_CLAUSE, flat, DOC, "the modal's clause, quoted as the doc quotes the override count's")
+        self.assertQuoted(FILE_CLAUSE, flat, DOC, "the whole-file clause, in the same slot, quoted the same way (round 2)")
         status = _pydef(KERNEL, "_price_feed_status")
         self.assertTrue(status, "kernel/kernel.py defines _price_feed_status at the top level")
         self.assertQuoted(FAULT_KEY, status, "kernel/kernel.py _price_feed_status",
@@ -284,6 +319,45 @@ class AnUnreadableRowOrFileIsSaid(_Pins):
         self.assertEqual(lines["file"], FILE_HEAD, "the stderr line for an unreadable file states the consequence the doc states")
         self.assertQuoted(GEAR_CLAUSE, GEAR, "ui/webview/gear.js raPriceNote", "the clause the doc quotes, keyed on the block's count; "
                           "executed in ui/webview/analytics-price-source-states.test.ts")
+        self.assertQuoted(GEAR_FILE_CLAUSE, GEAR, "ui/webview/gear.js raPriceNote", "the whole-file clause the doc quotes, as fixed text")
+        self.assertQuoted(GEAR_FILE_KEY, GEAR, "ui/webview/gear.js raPriceNote", "keyed on the block's class alone, never the path")
+        self.assertEqual(KERNEL.count(FILE_SETS_NO_ROWS), 2,
+                         "kernel/kernel.py _model_prices: the file class is assigned with cfg set to None in the same statement (an "
+                         "unreadable file, a file that is not an object), so no row is read and the row class is never assigned "
+                         "beside it: the doc's 'one class or the other, never both'; executed in %s" % EXECUTED)
+
+    def test_the_fault_lines_are_written_on_the_cost_views_road_alone_and_the_block_is_from_every_merge(self):
+        """The doc conditions the stderr sentence the way the off line's is (round 2): both fault lines sit under `if refresh:`
+        in _model_prices, the cost view's road, while _price_feed_status merges with refresh=False and carries the class and
+        the count from that merge, so /version says the class whether or not the view was opened. Read by ast: every call of
+        _price_feed_line in the def is inside an If whose test is the name `refresh`."""
+        self.assertSection()
+        flat = _flat(SECTION)
+        self.assertQuoted(SAID_ONCE, flat, DOC)
+        self.assertQuoted(WHETHER_OPENED, flat, DOC)
+        prices = _pydef(KERNEL, "_model_prices")
+        self.assertTrue(prices, "kernel/kernel.py defines _model_prices at the top level")
+        where = "kernel/kernel.py _model_prices"
+        tree = ast.parse(textwrap.dedent(prices))
+        def _calls(node):
+            return [n for n in ast.walk(node) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "_price_feed_line"]
+        every = _calls(tree)
+        self.assertEqual(len(every), 2, "%s writes two fault lines, the file's and the row's" % where)
+        guarded = []
+        for n in ast.walk(tree):
+            if isinstance(n, ast.If) and isinstance(n.test, ast.Name) and n.test.id == "refresh":
+                guarded.extend(_calls(n))
+        self.assertEqual(len(guarded), len(every),
+                         "%s: %d of %d fault lines sit under `if refresh:`; every one must, since that is the cost view's road (the "
+                         "doc's 'the first time the cost view prices with the file in that state') and the spend guard and the status "
+                         "pass refresh=False; a line outside the guard is written by every merge" % (where, len(guarded), len(every)))
+        status = _pydef(KERNEL, "_price_feed_status")
+        self.assertQuoted("_model_prices(now, refresh=False)", status, "kernel/kernel.py _price_feed_status",
+                          "the block's class and count come from a merge that writes no line, so /version carries them whether or "
+                          "not the view was opened")
+        self.assertQuoted(FAULT_KEY, status, "kernel/kernel.py _price_feed_status")
+        self.assertQuoted(COUNT_KEY, status, "kernel/kernel.py _price_feed_status")
+        self.assertGreaterEqual(KERNEL.count("_model_prices(int(now), refresh=False)"), 2, "the spend ceiling's two roads price with refresh=False (T350)")
 
     def test_the_consequence_the_doc_states_is_the_codes_one_try_around_each_row(self):
         """The doc's 'skipped and every other row applies' is a try INSIDE the loop whose handler continues: a try around the
@@ -296,6 +370,7 @@ class AnUnreadableRowOrFileIsSaid(_Pins):
         self.assertTrue(prices, "kernel/kernel.py defines _model_prices at the top level")
         where = "kernel/kernel.py _model_prices"
         self.assertQuoted(REJECT_OBJECT, prices, where, "a row that is not an object is rejected")
+        self.assertQuoted(REJECT_NUMBER, prices, where, "a rate that is present and not a JSON number is rejected (round 2)")
         self.assertQuoted(REJECT_FINITE, prices, where, "a rate that is not a finite number is rejected")
         tree = ast.parse(textwrap.dedent(prices))
         loops = [n for n in ast.walk(tree) if isinstance(n, ast.For) and any(isinstance(b, ast.Try) for b in n.body)]

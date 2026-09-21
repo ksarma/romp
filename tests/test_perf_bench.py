@@ -1268,7 +1268,8 @@ class InProcessChecks(unittest.TestCase):
         keys = {k: "planted-" + k.lower() for k in self.pb.KEY_SOURCE_ENV}
         keys["OP_SESSION_testaccount"] = "planted-op-session"
         planted = {"ANTHROPIC_BASE_URL": "http://127.0.0.1:1", "ROMP_MANAGER_PORT": "7432",
-                   "ROMP_MANAGER_PID": "1", "ROMP_STATE_DIR": other, "TMUX": "planted", "ROMP_MODEL_CATALOG": "on", **keys}
+                   "ROMP_MANAGER_PID": "1", "ROMP_STATE_DIR": other, "TMUX": "planted", "ROMP_MODEL_CATALOG": "on",
+                   "ROMP_PRICE_FEED": "on", **keys}
         with mock.patch.dict(os.environ, planted):
             changes = self.pb.prepare_env(state, claude, private)
             env = dict(os.environ)
@@ -1282,6 +1283,8 @@ class InProcessChecks(unittest.TestCase):
         self.assertEqual(env["ROMP_STATE_DIR"], state)
         self.assertEqual(env["XDG_STATE_HOME"], os.path.dirname(state))
         self.assertEqual(env["ROMP_MODEL_CATALOG"], "off")
+        self.assertEqual(env["ROMP_PRICE_FEED"], "off", "no fetch of the public price table: the runner's floor never reaches a kernel "
+                         "imported from a shell (the review of PR 878, round 2)")
         self.assertEqual(env["ROMP_CLI_SCOPE"], "0")
         self.assertEqual(env["ROMP_CLAUDE_BIN"], "/bin/false")
         self.assertEqual(env["ROMP_KERNEL_NO_OPEN"], "1")
@@ -1289,7 +1292,7 @@ class InProcessChecks(unittest.TestCase):
         self.assertTrue(env["ROMP_SERVICE_ENV_FILE"].startswith(private + os.sep) and not os.path.exists(env["ROMP_SERVICE_ENV_FILE"]))
         self.assertEqual(env["ROMP_SERVICE_ENV"], env["ROMP_SERVICE_ENV_FILE"])
         for c in ("unset ANTHROPIC_API_KEY", "unset ANTHROPIC_BASE_URL", "unset ROMP_MANAGER_PID", "unset TMUX", "unset ROMP_STATE_DIR",
-                  "set ROMP_MANAGER_PORT", "set ROMP_MODEL_CATALOG", "set ROMP_CLI_SCOPE", "set ROMP_CLAUDE_BIN",
+                  "set ROMP_MANAGER_PORT", "set ROMP_MODEL_CATALOG", "set ROMP_PRICE_FEED", "set ROMP_CLI_SCOPE", "set ROMP_CLAUDE_BIN",
                   "set ROMP_SERVICE_ENV_FILE", "set ROMP_STATE_DIR", "set XDG_STATE_HOME", "set CLAUDE_CONFIG_DIR"):
             self.assertIn(c, changes)
 

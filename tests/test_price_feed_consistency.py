@@ -271,25 +271,71 @@ class TheBlockDescribesTheTableThatPricedTheDollars(OneSession):
 
 
 class OneSnapshot(H.PriceFeedCase):
-    """_price_feed_status and the worker's landing take one lock: a read sees a landing whole or not at all."""
+    """_price_feed_status and the worker's landing take one lock: a read sees a landing whole or not at all.
+
+    Each case pins the exclusion by the EVENT it consists of, never by a wall-clock wait (the review of PR 878, round 2:
+    the pins waited a fixed second and asserted that nothing had happened, so their red needed the other thread to be
+    fast, and a broken lock passed them whenever it was slow). LockShim stands in for km._price_feed_lock for the case:
+    every acquire goes to the real lock, and the shim records which named thread ASKED for it (an event set before the
+    acquire can block) and which thread is INSIDE it (the owner, set once the real acquire returns). A case waits for
+    the ask, reads the owner and the cache at that moment, and only then releases the thread that holds the lock: the
+    worker asking while the reader holds it, or the reader asking while the worker holds it, is the exclusion, observed.
+    Both pins prove themselves by mutation at this head (kernel/kernel.py in a scratch copy): the lock taken out of the
+    status's snapshot leaves the owner empty as the reader enters its merge, and the reader never asks; taken out of the
+    landing, the landing goes through before the worker's first ask (its stderr line's status read), so the cache is
+    empty at that ask in the first case, and the worker holds nothing between its writes in the second."""
+
+    WORKER = "price-refresh"   # the refresh worker's thread name (kernel/kernel.py _refresh_remote_prices)
+
+    class LockShim:
+        """The stand-in: `asked[name]` fires when the thread of that name asks for the lock, before the acquire can block;
+        `owner` is the name of the thread inside the lock, None when nobody is. A thread not named at construction passes
+        through unrecorded (the main thread's own transitions)."""
+
+        def __init__(self, real, names):
+            self.real, self.owner = real, None
+            self.asked = {name: threading.Event() for name in names}
+
+        def __enter__(self):
+            name = threading.current_thread().name
+            if name in self.asked:
+                self.asked[name].set()
+            self.real.__enter__()
+            self.owner = name
+            return self
+
+        def __exit__(self, *exc):
+            self.owner = None
+            return self.real.__exit__(*exc)
+
+    def _shim(self):
+        shim = self.LockShim(km._price_feed_lock, (READER, self.WORKER))
+        km._price_feed_lock = shim
+        self.addCleanup(setattr, km, "_price_feed_lock", shim.real)
+        return shim
 
     def test_a_landing_waits_for_a_read_that_is_inside_the_status(self):
         """Six rows cached; the TTL re-attempt lands nothing usable (the feed renamed its ids) while a reader is
         inside the status's own merge (PRICE_CONFIG.read_text, the open() that releases the GIL). The reader used
         to resume onto the landed counts: source feed from the old cache, rows and matched 0 from the new landing,
-        overrides 6 from a merge over a cache the block's rows no longer were. The landing waits."""
+        overrides 6 from a merge over a cache the block's rows no longer were. The landing waits: the reader is the
+        lock's owner as it enters the merge, the worker asks for the lock once the fetch returns, and at that ask the
+        cache still holds the six rows and the worker is alive, so the landing is the one blocked; the reader is then
+        released, and its snapshot is the old table whole. Mutation-proved at this head (the class docstring)."""
         self.body = json.dumps(FULL).encode()
         self._analytics()
         self.assertEqual(len(km._price_cache["remote"]), 6)
         self.body = json.dumps(RENAMED).encode()
         self.gate = threading.Event()
         self.addCleanup(self.gate.set)
-        entered, release = threading.Event(), threading.Event()
+        entered, release, owner_at_entry = threading.Event(), threading.Event(), []
         self.addCleanup(release.set)
+        shim = self._shim()
 
         class Park(type(km.PRICE_CONFIG)):
             def read_text(self, *a, **k):
                 if threading.current_thread().name == READER:
+                    owner_at_entry.append(shim.owner)              # who is inside the lock as the reader enters its merge
                     entered.set()
                     release.wait(5)
                 return super().read_text(*a, **k)
@@ -297,7 +343,7 @@ class OneSnapshot(H.PriceFeedCase):
         with redirect_stderr(err):
             km._refresh_remote_prices(NOW + TTL)                   # the re-attempt's worker parks inside urlopen
             deadline = time.time() + 5
-            while len(self.calls) < 2 and time.time() < deadline:
+            while len(self.calls) < 2 and time.time() < deadline:  # the recorder's call is the event; the deadline only bounds the wait
                 time.sleep(0.005)
             self.assertEqual(len(self.calls), 2, "the worker is inside the fetch")
             km.PRICE_CONFIG = Park(str(km.PRICE_CONFIG))            # the harness restores the path
@@ -305,16 +351,18 @@ class OneSnapshot(H.PriceFeedCase):
             rt = threading.Thread(target=lambda: box.__setitem__("st", km._price_feed_status(NOW + TTL)), name=READER)
             rt.start()
             self.assertTrue(entered.wait(5), "the reader is inside the status's merge")
-            self.gate.set()                                        # the worker returns from the fetch and tries to land
-            deadline = time.time() + 1.0
-            while time.time() < deadline and _alive() and km._price_cache["remote"]:
-                time.sleep(0.01)                                   # a landing that CAN happen happens within microseconds
-            rows_while_read = len(km._price_cache["remote"])
+            self.assertEqual(owner_at_entry, [READER], "the reader holds _price_feed_lock as it enters the merge: the status's "
+                             "snapshot is taken under the lock")
+            self.gate.set()                                        # the worker returns from the fetch and asks to land
+            self.assertTrue(shim.asked[self.WORKER].wait(5), "the worker asked for _price_feed_lock to land: the landing takes the lock")
+            rows_at_ask, owner_at_ask, alive_at_ask = len(km._price_cache["remote"]), shim.owner, _alive()
             release.set()
             rt.join(5)
             self._join()
         st = box["st"]
-        self.assertEqual(rows_while_read, 6, "the landing waited for the read: the cache the reader holds is the cache it counts")
+        self.assertEqual((rows_at_ask, owner_at_ask, alive_at_ask), (6, READER, True),
+                         "the landing waited for the read: at the worker's ask the reader still held the lock, the worker was alive "
+                         "and blocked on it, and the cache the reader holds is the cache it counts")
         self.assertEqual((st["source"], st["rows"], st["matched"], st["overrides"], st["fetchedAt"]), ("feed", 6, 6, 0, NOW),
                          "one snapshot: the six rows, their counts, no override, the fetch that landed them")
         settled = km._price_feed_status(NOW + TTL)
@@ -323,15 +371,19 @@ class OneSnapshot(H.PriceFeedCase):
         self.assertEqual(err.getvalue().count("price feed: fetch landed with no usable row (0 signed to a built-in id, none parsed); "), 1)
 
     def test_a_read_waits_for_a_landing_that_has_published_its_rows_and_not_yet_their_counts(self):
-        """The worker parked between its cache publish and its fetchedAt write. A reader started there used to read
-        source feed from the new rows with rows 0 and no fetch time from the old fields (`live feed for 0 of 6
-        models` in the modal). The reader waits for the landing to finish."""
-        entered, release = threading.Event(), threading.Event()
+        """The worker parked between its cache publish and its fetchedAt write, holding the lock. A reader started
+        there used to read source feed from the new rows with rows 0 and no fetch time from the old fields (`live
+        feed for 0 of 6 models` in the modal). The reader waits for the landing to finish: the worker is the lock's
+        owner between its writes, the reader asks for the lock and has taken no snapshot at that ask, and once the
+        worker is released the reader's snapshot is the landing whole. Mutation-proved at this head (the class
+        docstring)."""
+        entered, release, worker = threading.Event(), threading.Event(), self.WORKER
         self.addCleanup(release.set)
+        shim = self._shim()
 
         class Hooked(dict):
             def __setitem__(self, k, v):
-                if k == "fetchedAt" and threading.current_thread().name == "price-refresh":
+                if k == "fetchedAt" and threading.current_thread().name == worker:
                     entered.set()
                     release.wait(5)
                 dict.__setitem__(self, k, v)
@@ -343,15 +395,18 @@ class OneSnapshot(H.PriceFeedCase):
             km._refresh_remote_prices(NOW)
             self.assertTrue(entered.wait(5), "the worker reached its fetchedAt write")
             self.assertEqual(len(km._price_cache["remote"]), 6, "the cache is published: the worker is between its writes")
+            self.assertEqual(shim.owner, worker, "and the worker holds _price_feed_lock across them: the landing is under the lock")
             box = {}
             rt = threading.Thread(target=lambda: box.__setitem__("st", km._price_feed_status(NOW)), name=READER)
             rt.start()
-            rt.join(1.0)
-            waited = rt.is_alive()
+            self.assertTrue(shim.asked[READER].wait(5), "the reader asked for _price_feed_lock: the status reads under the lock")
+            owner_at_ask, snapshot_at_ask = shim.owner, "st" in box
             release.set()
             self._join()
             rt.join(5)
-        self.assertTrue(waited, "the read waited for the landing to finish instead of reading between its writes")
+        self.assertEqual((owner_at_ask, snapshot_at_ask), (worker, False),
+                         "the read waited for the landing to finish instead of reading between its writes: at the reader's ask the "
+                         "worker still held the lock and no snapshot had been taken")
         st = box["st"]
         self.assertEqual((st["source"], st["rows"], st["matched"], st["fetchedAt"], st["ageS"], st["lastError"]),
                          ("feed", 6, 6, NOW, 0, None), "the landing, whole")

@@ -1126,12 +1126,12 @@ yes. The gear reports a machine that is missing node or the comment tools.
   included, leaves the feed on, and the kernel says so: one line on its stderr
   naming the value the first time it would have fetched, and the line under
   the footnote and `/version`'s `priceFeed` block say the variable is set to a
-  value that is not off (the line ends
-  `; ROMP_PRICE_FEED is set to a value that is not off, so the feed stays on (only off turns it off)`,
-  and the block carries the fact as the boolean `unrecognised`; the value
-  itself is in the kernel's log and nowhere else). With the variable set to
-  `off`, the table is the built-in defaults and the modal says so: the line
-  under its footnote reads
+  value that is not off (the line carries
+  `; ROMP_PRICE_FEED is set to a value that is not off, so the feed stays on (only off turns it off)`
+  after the source and before the override count, and the block carries the
+  fact as the boolean `unrecognised`; the value itself is in the kernel's log
+  and nowhere else). With the variable set to `off`, the table is the built-in
+  defaults and the modal says so: the line under its footnote reads
   `prices: built-in defaults; live feed off (ROMP_PRICE_FEED=off)`, `/version`
   carries a `priceFeed` block that says the same beside `modelCatalog`, and
   the kernel logs one line, naming the variable, the first time it would have
@@ -1149,17 +1149,28 @@ yes. The gear reports a machine that is missing node or the comment tools.
   effect: a row that changes or adds a model's rates counts; a row equal to
   the table's row for that model does not, so the count says what the file
   changed, not whether it was read. With one counted row in the file, the line
-  ends `; 1 row overridden by model-prices.json`, whichever table it names. A
-  row the kernel cannot read (not an object, or a rate that is not a finite
-  number) is skipped and every other row applies, wherever in the file the bad
-  row sits; a file it cannot read or parse as a JSON object is ignored whole.
-  The kernel says so once per kernel life on its stderr, for the file and for
-  each skipped row, naming the row's key there and nowhere else. The
-  `priceFeed` block carries the class as `overrideFault` (`row` or `file`, else
-  null) and the number of skipped rows as `overrideRowsRejected`, never the
-  file's text or its path, and with one skipped row the line under the
-  footnote ends
-  `; 1 row of model-prices.json could not be read and was skipped (the rest of the file applies)`.
+  carries `; 1 row overridden by model-prices.json`, whichever table it names,
+  after the source (and after the unrecognised clause when there is one) and
+  before the skipped-rows clause when there is one. A row the kernel cannot
+  read (not an object, a rate that is not a number, or a rate that is not a
+  finite number) is skipped and every other row applies, wherever in the file
+  the bad row sits: a rate whose key is present is accepted only as a JSON
+  number, an int or a float and never a bool, so a null, a string (a numeric
+  one too), a list, an object, `true` or `false` where a rate belongs makes
+  that row a skipped row, never a rate of zero or one; a file it cannot read or
+  parse as a JSON object is ignored whole. The kernel says so on its stderr the
+  first time the cost view prices with the file in that state (the spend
+  ceiling's check and `/version` price with the same file and write no line):
+  once per kernel life for the file, and once per kernel life for each skipped
+  row, naming the row's key there and nowhere else. Whether or not the view was
+  opened, the `priceFeed` block carries the class as `overrideFault` (`row` or
+  `file`, else null) and the number of skipped rows as `overrideRowsRejected`,
+  never the file's text or its path, and with one skipped row the line under
+  the footnote ends
+  `; 1 row of model-prices.json could not be read and was skipped (the rest of the file applies)`;
+  with the file ignored whole, that last slot carries
+  `; model-prices.json could not be read as a JSON object and was ignored (none of it applies)`
+  instead (the kernel reports one class or the other, never both).
 
 ### Fast mode for the judges
 

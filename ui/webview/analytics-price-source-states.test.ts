@@ -16,9 +16,17 @@
 // - rows of model-prices.json the kernel could not read are skipped alone and the rest of the file applies (that
 //   review's re-ruling, 2026-09-21: the round's shape voided every row after a bad one, a reach that depended on the
 //   row's position), and the line says how many from the kernel's count `overrideRowsRejected`, last, after the
-//   override count, and never a key (the block rides the auth-exempt /version; the kernel's log names each row once).
+//   override count, and never a key (the block rides the auth-exempt /version; the kernel's log names each row once);
+// - a model-prices.json the kernel could not read as a JSON object is ignored whole, and the line says so from the
+//   kernel's class `overrideFault` ('file'), in the skipped rows' slot and as fixed text (the second round of that
+//   review: the line worded the skipped rows and never the whole-file fault, so a file discarded whole read as a clean
+//   one); 'row' keeps the count clause, and any other value words nothing;
+// - the fetch age is the shell's one age helper's words (api-health-merge.ts agoWords: now under 45 s, then rounded
+//   minutes, rounded hours under 24 h, rounded days), so the line says 30 days ago where the API-health popup does
+//   (that round: a copy of the helper here counted hours without end and said just now where the popup says now).
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import { agoWords } from "./api-health-merge";
 
 const gear = require("./gear.js");
 const note = (pf: unknown): string => {
@@ -55,8 +63,8 @@ test("the feed's rows after a failed refresh: the age says when they landed and 
     "prices: live feed, fetched 6 hours ago; the last refresh failed (HTTPError: HTTP 500)",
     "the kernel keeps the rows when a refresh fails and records the failure; both are said");
   assert.equal(note({ source: "feed", ageS: 612_000, lastError: "URLError: ConnectionRefusedError: errno 111 (Connection refused)" }),
-    "prices: live feed, fetched 170 hours ago; the last refresh failed (URLError: ConnectionRefusedError: errno 111 (Connection refused))",
-    "a week of failed refreshes on a dead host: the failure is on the line, not only in the kernel's log");
+    "prices: live feed, fetched 7 days ago; the last refresh failed (URLError: ConnectionRefusedError: errno 111 (Connection refused))",
+    "a week of failed refreshes on a dead host: the failure is on the line, not only in the kernel's log, and the age is said in days as the API-health popup would say it");
   assert.equal(note({ source: "feed", lastError: "HTTPError: HTTP 500" }), "prices: live feed; the last refresh failed (HTTPError: HTTP 500)",
     "no age in the block: the failure is still said");
   assert.equal(note({ off: true, source: "feed", ageS: 7_200, lastError: "HTTPError: HTTP 500" }),
@@ -67,7 +75,7 @@ test("the feed's rows after a failed refresh: the age says when they landed and 
 
 test("a feed that matched some of the table's ids prices those and no more, and the line says which share", () => {
   assert.equal(note({ off: false, source: "feed", reason: null, fetchedAt: 1_781_100_000, ageS: 0, lastError: null, rows: 1, known: 6 }),
-    "prices: live feed for 1 of 6 models, fetched just now; built-in defaults for the rest",
+    "prices: live feed for 1 of 6 models, fetched now; built-in defaults for the rest",
     "one built-in id matched: the other five are priced from the defaults, and the line does not call the table live");
   assert.equal(note({ source: "feed", ageS: 240, rows: 5, known: 6 }),
     "prices: live feed for 5 of 6 models, fetched 4 minutes ago; built-in defaults for the rest");
@@ -99,7 +107,7 @@ test("review round 2: rows the feed had for known models that could not be read 
   // so once, at the fetch); the modal says it while those rows serve, so a schema move at the feed for one model is not
   // read as a feed that never priced it
   assert.equal(note({ off: false, source: "feed", reason: null, fetchedAt: 1_781_100_000, ageS: 1, lastError: null, rows: 1, matched: 2, known: 6 }),
-    "prices: live feed for 1 of 6 models, fetched just now; built-in defaults for the rest; the feed's rows for 1 known model could not be read");
+    "prices: live feed for 1 of 6 models, fetched now; built-in defaults for the rest; the feed's rows for 1 known model could not be read");
   assert.equal(note({ source: "feed", ageS: 240, rows: 3, matched: 5, known: 6 }),
     "prices: live feed for 3 of 6 models, fetched 4 minutes ago; built-in defaults for the rest; the feed's rows for 2 known models could not be read", "plural");
   assert.equal(note({ source: "feed", ageS: 240, rows: 1, matched: 1, known: 6 }),
@@ -190,4 +198,75 @@ test("a count of zero, no count, or a count that is not a number says nothing ab
   const withKey = note({ source: "defaults", reason: "off", overrideRowsRejected: 1, rejectedKeys: ["claude-opus-4-8"] });
   assert.equal(withKey, "prices: built-in defaults; live feed off (ROMP_PRICE_FEED=off); " + SKIPPED_1);
   assert.ok(!withKey.includes("opus"), "no key of the file is on the line");
+});
+
+// A model-prices.json the kernel could not read as a JSON object (a syntax error, a top-level list) is ignored whole, the
+// kernel's class `overrideFault` 'file' (the second round of that review, 2026-09-21: the line worded the skipped rows
+// and never this, so a file discarded whole rendered the clean line byte for byte, the worse fault the silent one).
+// Fixed text in the skipped rows' slot, distinct from the row clause, which says the rest applies; never the path or the
+// file's text. The kernel emits one class or the other (a file that did not parse has no rows to skip), so the two
+// clauses never share a line.
+const FILE_IGNORED = "model-prices.json could not be read as a JSON object and was ignored (none of it applies)";
+
+test("a model-prices.json ignored whole: the line says so on either source, last, in the skipped rows' slot, and echoes nothing of the file", () => {
+  assert.equal(note({ off: true, source: "defaults", reason: "off", overrides: 0, overrideFault: "file", overrideRowsRejected: 0 }),
+    "prices: built-in defaults; live feed off (ROMP_PRICE_FEED=off); " + FILE_IGNORED,
+    "the feed-off box the reference sends to the file, and the file did not parse: the reader is told none of it took");
+  assert.equal(note({ source: "feed", ageS: 240, overrides: 0, overrideFault: "file", overrideRowsRejected: 0 }),
+    "prices: live feed, fetched 4 minutes ago; " + FILE_IGNORED, "the feed line: the same slot");
+  assert.equal(note({ unrecognised: true, source: "defaults", reason: "failed", lastError: "HTTPError: HTTP 500", overrideFault: "file" }),
+    "prices: built-in defaults; the feed could not be fetched (HTTPError: HTTP 500); " + UNREC + "; " + FILE_IGNORED,
+    "after the reason and the switch clause; no count of rows in effect, since none is");
+  assert.equal(note({ off: true, source: "feed", ageS: 600, rows: 1, matched: 2, known: 6, overrideFault: "file" }),
+    "prices: live feed for 1 of 6 models, fetched 10 minutes ago; built-in defaults for the rest; the feed's rows for 1 known model could not be read; refresh off (ROMP_PRICE_FEED=off); " + FILE_IGNORED,
+    "every tail keeps its order: the share, the unread feed rows, the refresh's state, then the file");
+  // NOT a shape the kernel emits (a file ignored whole puts no row in effect): the slot alone is pinned, after the count
+  assert.equal(note({ source: "defaults", reason: "off", overrides: 2, overrideFault: "file" }),
+    "prices: built-in defaults; live feed off (ROMP_PRICE_FEED=off); 2 rows overridden by model-prices.json; " + FILE_IGNORED,
+    "a deliberately foreign block: the clause sits where the skipped rows would, after the override count");
+  // no kernel puts the file's text or its path in the block; a block that did would not be echoed: the clause is fixed
+  // text keyed on the class, and reads no other key for it
+  const withText = note({ source: "defaults", reason: "off", overrideFault: "file", overrideText: "[1, 2", overridePath: "/somewhere/model-prices.json" });
+  assert.equal(withText, "prices: built-in defaults; live feed off (ROMP_PRICE_FEED=off); " + FILE_IGNORED);
+  assert.ok(!withText.includes("[1") && !withText.includes("/somewhere"), "nothing of the file, and no path, is on the line");
+  assert.equal(FILE_IGNORED.indexOf(";"), -1, "the clause holds no semicolon of its own: the line's tails are semicolon-joined, and one clause reads as one");
+  assert.ok(!FILE_IGNORED.includes("/") && !FILE_IGNORED.includes("~"), "the file is named by its name alone, as the row clause names it");
+});
+
+test("the row class keeps the count clause and no file clause; an absent, null or foreign class words nothing new", () => {
+  // a guard, green before the clause landed and after: it pins what the clause must not change
+  const row = note({ off: true, source: "defaults", reason: "off", overrides: 2, overrideFault: "row", overrideRowsRejected: 1 });
+  assert.equal(row, "prices: built-in defaults; live feed off (ROMP_PRICE_FEED=off); 2 rows overridden by model-prices.json; " + SKIPPED_1,
+    "'row': the count says what was skipped, and the rest of the file applies");
+  assert.ok(!row.includes("ignored"), "no file clause under the row class");
+  for (const pf of [{ source: "feed", ageS: 240 }, { source: "defaults", reason: "off", overrides: 1 }, { source: "defaults", reason: "unfetched" },
+    { source: "defaults", reason: "off", overrides: 2, overrideRowsRejected: 1 }])
+    assert.equal(note({ ...pf, overrideFault: null }), note(pf), "an older kernel's block, with no such key, and a current kernel's null read the same: " + JSON.stringify(pf));
+  for (const v of ["FILE", "whole", "rows", 1, true, ["file"], { file: true }])
+    assert.equal(note({ source: "defaults", reason: "off", overrideFault: v }), "prices: built-in defaults; live feed off (ROMP_PRICE_FEED=off)",
+      "a class this view does not know says nothing rather than something false: " + JSON.stringify(v));
+});
+
+// The fetch age (the second round of that review): the line's words are the shell's one age helper's, api-health-merge.ts
+// agoWords, the words the API-health popup's as-of uses, so a stamp reads the same on both surfaces: now under 45 s, then
+// the rounded minute, the rounded hour under 24 h, then the rounded day. A copy of the helper here floored instead of
+// rounding, said just now under a minute, and counted hours without end (720 hours ago for the popup's 30 days ago).
+test("the fetch age is the shell's age words: now under 45 s, rounded minutes, rounded hours under a day, then days", () => {
+  assert.equal(note({ source: "feed", ageS: 0 }), "prices: live feed, fetched now", "the second the fetch landed");
+  assert.equal(note({ source: "feed", ageS: 44 }), "prices: live feed, fetched now", "under 45 s");
+  assert.equal(note({ source: "feed", ageS: 45 }), "prices: live feed, fetched 1 minute ago", "45 s rounds to the minute");
+  assert.equal(note({ source: "feed", ageS: 89 }), "prices: live feed, fetched 1 minute ago");
+  assert.equal(note({ source: "feed", ageS: 90 }), "prices: live feed, fetched 2 minutes ago", "rounded, not floored");
+  assert.equal(note({ source: "feed", ageS: 3_570 }), "prices: live feed, fetched 1 hour ago", "59.5 minutes rounds to 60, which is the hour");
+  assert.equal(note({ source: "feed", ageS: 3_600 }), "prices: live feed, fetched 1 hour ago");
+  assert.equal(note({ source: "feed", ageS: 82_800 }), "prices: live feed, fetched 23 hours ago");
+  assert.equal(note({ source: "feed", ageS: 86_400 }), "prices: live feed, fetched 1 day ago",
+    "the day arm: the feed's TTL is six hours, and a cache kept under the switch or through failed refreshes can be days old");
+  assert.equal(note({ source: "feed", ageS: 90_000 }), "prices: live feed, fetched 1 day ago", "25 hours is a day, not 25 hours");
+  assert.equal(note({ source: "feed", ageS: 2_592_000 }), "prices: live feed, fetched 30 days ago", "what the API-health popup says of the same stamp");
+  // the same helper, by execution: the line's words are agoWords' for every age, the boundaries included
+  const ages = [0, 1, 44, 45, 59, 60, 89, 90, 599, 600, 3_570, 3_599, 3_600, 5_400, 21_600, 82_800, 84_600, 86_400, 90_000, 129_600, 612_000, 2_592_000];
+  assert.ok(ages.length > 20, "the boundary set is populated");
+  for (const s of ages)
+    assert.equal(note({ source: "feed", ageS: s }), "prices: live feed, fetched " + agoWords(s), "one helper, at " + s + " s");
 });

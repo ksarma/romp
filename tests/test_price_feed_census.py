@@ -22,9 +22,32 @@ is the path of nested defs and classes (the worker is `_refresh_remote_prices.wo
 Text only: kernel/kernel.py is read as a file and parsed, nothing loads romp code, so no state root is minted
 (tests/test_price_feed_vocabulary.py's shape). tests/test_price_feed_off.py executes the switch at the one site this
 module counts (OffSwitch, GuardRoad); tests/test_stage_marks.py's census keys on the worker's inner def name.
+
+The second half of this module (round 2 of the review, 2026-09-21) runs scripts/network-inventory.py, the census of
+every outbound primitive over the runtime trees that SECURITY.md's Network access section and the ledger entry's road
+table are derived from. Until this round nothing ran it: its guarantee held only when a person typed the command, its
+only gate was an unclassified site (a scan that lost a third of its sites exited 0), its walk was flat, it filed a
+shell, node or perl child and every browser fetch as local by spelling, and a second site inside a function that
+already had a row folded into that row. The script now exits 1 on a missing root, a file that does not parse, an
+unknown import, no sites, an unclassified site, a stale row, a road with no table entry, and any figure that differs
+from the committed counts (scripts/network-inventory-expected.json); it walks its roots recursively, classes a program
+whose far end its argv does not derive as external-program (never set aside), places a browser fetch by its URL, names
+the four classes it cannot see in its --table output, and prints the ledger's table from the sites. The classes below
+run it by subprocess with the repository's python: over the tree (clean, against the committed counts), over a copy of
+the scanned scope with one mutation at a time (each red the round reproduced or named, now a pin), over two tiny roots
+(no sites; a missing root), and --table against the block the ledger entry carries between its two marker lines. The
+script loads no romp code and neither does this module, so no state root is minted here either; the copy lives under
+the run's temp root (tests/__init__.py's hook removes it, and tearDownModule does too).
 """
 import ast
+import difflib
+import json
 import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -230,6 +253,472 @@ def _token_analytics(now, window):
         with self.assertRaises(AssertionError) as cm:
             _Pins("assertClassified").assertClassified(c["false"], REFRESH_FALSE_CALLERS, "calls _model_prices with refresh=False", "")
         self.assertIn("stale row", str(cm.exception))
+
+
+# ---- the census script, run from the suite ------------------------------------------------------------------------------
+
+INVENTORY = os.path.join("scripts", "network-inventory.py")
+EXPECTED = os.path.join("scripts", "network-inventory-expected.json")
+SCOPE_DIRS = ("kernel", "cli", "postal", "bin", "hooks", "ui", "vscode-extension/src")   # the script's declared roots
+SCOPE_FILES = ("bootstrap.sh", "install.sh", "vscode-extension/install.sh", "tools/file-comments-host.mjs", INVENTORY, EXPECTED)
+LEDGER = os.path.join("upstream", "2026-09-20-price-feed-off.md")
+BEGIN, END = "<!-- network-inventory: table begin -->", "<!-- network-inventory: table end -->"
+SUMMARY = re.compile(r"^--- (?P<sites>\d+) sites, (?P<roads>\d+) roads \((?P<local_roads>\d+) of them local\), (?P<local_sites>\d+) local sites "
+                     r"set aside, (?P<unclassified>\d+) unclassified; (?P<external>\d+) external-program, (?P<runtime>\d+) runtime-program, "
+                     r"(?P<computed>\d+) browser-computed-url, (?P<dom>\d+) browser-dom-loads; (?P<files>\d+) files scanned, (?P<skipped>\d+) skipped by kind$", re.M)
+FEED_LITERAL = "https://TESTHOST/prices.json"   # a synthetic URL: the bypass the census must catch spells the host as a literal
+SITE_LINE = re.compile(r"^\S+:\d+  ")
+
+
+def inventory(root, *flags):
+    """Run <root>/scripts/network-inventory.py over root with the repository's python: (exit code, stdout, stderr)."""
+    p = subprocess.run([sys.executable, os.path.join(root, INVENTORY)] + list(flags) + [root], capture_output=True, text=True, timeout=120)
+    return p.returncode, p.stdout, p.stderr
+
+
+_TREE = {}
+
+
+def tree_run(*flags):
+    """The tree's own run, once per process and shared by the cases: the tree is never mutated."""
+    if flags not in _TREE:
+        _TREE[flags] = inventory(ROOT, *flags)
+    return _TREE[flags]
+
+
+def summary(out):
+    m = SUMMARY.search(out)
+    return {k: int(v) for k, v in m.groupdict().items()} if m else None
+
+
+def unclassified(out):
+    """The file:line tokens the UNCLASSIFIED line names, as a set."""
+    for ln in out.splitlines():
+        if ln.startswith("UNCLASSIFIED "):
+            return set(ln.split(": ", 1)[0].split()[1:])
+    return set()
+
+
+def gates(out):
+    """The run's output without the site lines: the summary and the gate lines, for a failure message."""
+    return "\n".join(ln for ln in out.splitlines() if not SITE_LINE.match(ln))
+
+
+_COPY = []
+
+
+def scope_copy():
+    """One copy of the scanned scope per process (the declared roots, the named files, the script and its counts), made on
+    first use under the run's temp root; every mutation a case makes is restored by that case's cleanup."""
+    if not _COPY:
+        root = tempfile.mkdtemp(prefix="census-scope-")
+        for d in SCOPE_DIRS:
+            shutil.copytree(os.path.join(ROOT, d), os.path.join(root, d), symlinks=True, ignore=shutil.ignore_patterns("__pycache__", "node_modules"))
+        for f in SCOPE_FILES:
+            os.makedirs(os.path.dirname(os.path.join(root, f)), exist_ok=True)
+            if f == EXPECTED and not os.path.isfile(os.path.join(ROOT, f)):
+                continue   # a tree without the committed counts: the script's own COUNTS gate reports the absence
+            shutil.copy2(os.path.join(ROOT, f), os.path.join(root, f))
+        _COPY.append(root)
+    return _COPY[0]
+
+
+def tearDownModule():
+    for root in _COPY:
+        shutil.rmtree(root, ignore_errors=True)
+    del _COPY[:]
+
+
+class _Scope(unittest.TestCase):
+    """Mutations over the scope copy, each undone by cleanup, and the assertions the copy's runs share."""
+
+    def plant(self, rel, text):
+        """Write (or overwrite) rel under the copy; a new file is removed again, an existing one restored."""
+        path = os.path.join(scope_copy(), rel)
+        existed = os.path.exists(path)
+        old = None
+        if existed:
+            with open(path, encoding="utf-8") as f:
+                old = f.read()
+        made = []
+        d = os.path.dirname(path)
+        while not os.path.isdir(d):
+            made.append(d)
+            d = os.path.dirname(d)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+
+        def restore():
+            if existed:
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(old)
+            else:
+                os.remove(path)
+                for m in made:
+                    os.rmdir(m)
+        self.addCleanup(restore)
+        return path
+
+    def append(self, rel, text):
+        with open(os.path.join(scope_copy(), rel), encoding="utf-8") as f:
+            old = f.read()
+        return self.plant(rel, old + ("" if old.endswith("\n") else "\n") + text)
+
+    def replace(self, rel, old, new):
+        with open(os.path.join(scope_copy(), rel), encoding="utf-8") as f:
+            text = f.read()
+        self.assertEqual(text.count(old), 1, "the mutation's anchor %r occurs once in %s" % (old[:60], rel))
+        return self.plant(rel, text.replace(old, new))
+
+    def move(self, rel, to):
+        root = scope_copy()
+        src, dst = os.path.join(root, rel), os.path.join(root, to)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        os.rename(src, dst)
+
+        def restore():
+            os.rename(dst, src)
+            d = os.path.dirname(dst)
+            while d != root and not os.listdir(d):
+                os.rmdir(d)
+                d = os.path.dirname(d)
+        self.addCleanup(restore)
+
+    def lines(self, path):
+        with open(path, encoding="utf-8") as f:
+            return f.read().splitlines()
+
+    def assertRefused(self, rc, out, *needles):
+        self.assertNotEqual(rc, 0, "the run must exit non-zero:\n" + gates(out))
+        for n in needles:
+            self.assertIn(n, out, "the run must name %r:\n%s" % (n, gates(out)))
+
+    def assertClean(self, rc, out):
+        self.assertEqual(rc, 0, "the run must exit 0:\n" + gates(out))
+        got = summary(out)
+        self.assertIsNotNone(got, "the summary line has the committed shape (the totals, the class counts, the files):\n" + gates(out))
+        self.assertEqual(got["unclassified"], 0)
+
+    def assertListed(self, out, pattern, msg=""):
+        """A site line matching the pattern is in the run's listing (the failure quotes the lines of that file, not the run)."""
+        if not re.search(pattern, out, re.M):
+            head = pattern.split(":")[0].replace("\\", "")
+            self.fail("no listed line matches %r%s\n%s\n%s" % (pattern, (": " + msg) if msg else "", gates(out),
+                      "\n".join(ln for ln in out.splitlines() if ln.startswith(head))))
+
+
+def _expected():
+    with open(os.path.join(ROOT, EXPECTED), encoding="utf-8") as f:
+        return json.load(f)
+
+
+class TheCensusRunsFromTheSuite(_Scope):
+    """The instrument is run by the suite (and so by CI's Python job), against counts committed beside it."""
+
+    def test_the_tree_runs_clean_against_the_committed_counts(self):
+        self.assertTrue(os.path.isfile(os.path.join(ROOT, EXPECTED)), "%s exists: the committed counts the run is compared against "
+                        "(python3 %s --write-expected on a clean tree writes it)" % (EXPECTED, INVENTORY))
+        expected = _expected()
+        rc, out, err = tree_run()
+        self.assertClean(rc, out)
+        got = summary(out)
+        self.assertIsNotNone(got, "the summary line has the committed shape")
+        for name in ("sites", "roads", "local_roads", "local_sites"):
+            self.assertEqual(got[name], expected[name], name)
+        self.assertEqual((got["external"], got["runtime"], got["computed"], got["dom"]),
+                         tuple(expected["classes"][c] for c in ("external-program", "runtime-program", "browser-computed-url", "browser-dom-loads")))
+        self.assertGreater(got["sites"], 200, "a floor: the scan opened the runtime trees")
+        self.assertEqual(sum(expected["per_road"].values()) + got["computed"], got["sites"], "every site has a road or is the computed-URL class")
+        self.assertEqual(sum(expected["per_key"].values()), got["sites"], "the committed row-key counts sum to the sites")
+
+    def test_the_copy_runs_clean_like_the_tree(self):
+        """The control for every mutation case below: the copy alone reads as the tree does."""
+        rc, out, _ = inventory(scope_copy())
+        self.assertEqual(rc, 0, "the run must exit 0:\n" + gates(out))
+        rc2, out2, _ = tree_run()
+        line = lambda text: re.sub(r"; \d+ files scanned.*$", "", next(ln for ln in text.splitlines() if ln.startswith("--- ")))
+        self.assertEqual(line(out), line(out2), "the copy's summary is the tree's (a copy that reads differently is a broken copy, not a pin)")
+
+    def test_the_committed_counts_are_the_scripts_own_output(self):
+        """--write-expected on the clean copy writes what the tree carries: the file has one author, the script."""
+        self.plant(EXPECTED, "{}\n")
+        rc, out, _ = inventory(scope_copy(), "--write-expected")
+        self.assertEqual(rc, 0, gates(out))
+        with open(os.path.join(scope_copy(), EXPECTED), encoding="utf-8") as f:
+            written = json.load(f)
+        self.assertEqual(written, _expected(), "the committed counts are stale: run python3 %s --write-expected and commit the diff" % INVENTORY)
+
+    def test_a_scan_that_loses_a_file_is_refused_naming_the_figure(self):
+        """The round's reproduction: kernel/kernel.py one directory down. The flat walk of the earlier script found 165 sites
+        where it had found 266 and exited 0; now the moved file is scanned where it sits, so every row keyed on its old path
+        is stale, every site under the new path has no row, and the row-key counts differ."""
+        self.move("kernel/kernel.py", "kernel/sub/kernel.py")
+        rc, out, _ = inventory(scope_copy())
+        self.assertRefused(rc, out, "STALE ROW kernel/kernel.py:_refresh_remote_prices.work",
+                           "COUNTS per_key kernel/kernel.py:_refresh_remote_prices.work: the committed count is 1, this run found None",
+                           "UNCLASSIFIED")
+        self.assertTrue(any(t.startswith("kernel/sub/kernel.py:") for t in unclassified(out)), "the moved file's sites are found and named at their new path")
+
+    def test_a_scan_that_loses_sites_is_refused_on_the_total(self):
+        """A file gone (emptied, not moved): the total is the loud figure, beside the stale rows."""
+        self.plant("kernel/kernel.py", "")
+        rc, out, _ = inventory(scope_copy())
+        self.assertRefused(rc, out, "STALE ROW kernel/kernel.py:_refresh_remote_prices.work")
+        expected = _expected()
+        lost = sum(v for k, v in expected["per_key"].items() if k.startswith("kernel/kernel.py:"))
+        self.assertGreater(lost, 90, "kernel/kernel.py carries a third of the sites: the figure the round measured")
+        self.assertRefused(rc, out, "COUNTS sites: the committed count is %d, this run found %d" % (expected["sites"], expected["sites"] - lost))
+
+    def test_write_expected_is_refused_while_any_other_gate_fails(self):
+        self.move("kernel/kernel.py", "kernel/sub/kernel.py")
+        path = os.path.join(scope_copy(), EXPECTED)
+        before = None
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8") as f:
+                before = f.read()
+        rc, out, _ = inventory(scope_copy(), "--write-expected")
+        self.assertRefused(rc, out, "not written: " + EXPECTED, "STALE ROW")
+        after = None
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8") as f:
+                after = f.read()
+        self.assertEqual(after, before, "the counts file is untouched by a refused write")
+
+    def test_no_sites_and_a_missing_root_are_each_refused_by_name(self):
+        for missing in (None, "kernel"):
+            tiny = tempfile.mkdtemp(prefix="census-tiny-")
+            for d in SCOPE_DIRS:
+                if d != missing:
+                    os.makedirs(os.path.join(tiny, d))
+            os.makedirs(os.path.join(tiny, "scripts"))
+            shutil.copy2(os.path.join(ROOT, INVENTORY), os.path.join(tiny, INVENTORY))
+            rc, out, _ = inventory(tiny)
+            self.assertRefused(rc, out, "NO SITES found", "SCOPE the named file bootstrap.sh is missing", "COUNTS %s is missing" % EXPECTED)
+            if missing:
+                self.assertIn("SCOPE the declared root kernel/ is missing", gates(out))
+            else:
+                self.assertNotIn("declared root", gates(out))
+
+
+class TheWalkIsRecursiveOverTheDeclaredScope(_Scope):
+    """The declared scope and the walk are held equal by execution: a file below a root and a hook of any kind are opened."""
+
+    def test_a_site_one_directory_down_is_found(self):
+        self.plant("kernel/sub/extra.py", "import urllib.request\n\ndef _warm():\n    return urllib.request.urlopen(%r, timeout=4)\n" % FEED_LITERAL)
+        rc, out, _ = inventory(scope_copy())
+        self.assertRefused(rc, out, "UNCLASSIFIED")
+        self.assertIn("kernel/sub/extra.py:4", unclassified(out))
+
+    def test_every_hook_is_scanned_whatever_its_extension_and_a_fixture_of_another_kind_is_not(self):
+        # a node hook (the one in the tree, hooks/romp-track-bash-guard.mjs, is read: a site appended to it is named), a new
+        # shell hook with the ordinary ssh spelling, and a Python fixture below the webview root, which is skipped by kind
+        self.append("hooks/romp-track-bash-guard.mjs", "fetch(%r);\n" % FEED_LITERAL)
+        self.plant("hooks/probe.sh", "#!/usr/bin/env bash\nssh TESTHOST uptime\n")
+        self.plant("ui/webview/anchor-map-fixtures/probe.py", "import urllib.request\nurllib.request.urlopen(%r)\n" % FEED_LITERAL)
+        rc, out, _ = inventory(scope_copy())
+        self.assertRefused(rc, out, "UNCLASSIFIED")
+        named = unclassified(out)
+        self.assertIn("hooks/probe.sh:2", named, "ssh <host> <command> in a shell hook is a site")
+        self.assertTrue(any(t.startswith("hooks/romp-track-bash-guard.mjs:") for t in named), "the node hook is scanned: %r" % named)
+        self.assertFalse(any("anchor-map-fixtures" in t for t in named), "ui/ is read for the browser kinds only")
+        self.assertFalse([ln for ln in out.splitlines() if ln.startswith("PARSE")], "the fixture directory's Python is not parsed:\n" + gates(out))
+
+    def test_a_program_the_kernel_runs_from_an_unscanned_directory_is_a_gate(self):
+        self.append("kernel/credentials.py", '\n_PROBE_HOST = "tools/probe-host.mjs"\n')
+        rc, out, _ = inventory(scope_copy())
+        self.assertRefused(rc, out, "PROGRAM kernel/credentials.py:", "names 'tools/probe-host.mjs'")
+
+
+MUTANT_PROGRAMS = '''
+
+def _probe_sh():
+    return subprocess.run(["sh", "-c", "true"], check=False)
+
+def _probe_node():
+    return subprocess.run(["node", "-e", "1"], check=False)
+
+def _probe_python():
+    return subprocess.run([sys.executable, "-m", "pip", "download", "x"], check=False)
+
+def _probe_argv(argv):
+    return subprocess.Popen(argv)
+
+def _probe_git_remote():
+    return subprocess.run(["git", "remote", "update"], check=False)
+
+def _probe_ps():
+    return subprocess.run(["ps", "-o", "pid="], check=False)
+'''
+
+
+class AnExternalProgramIsNeverLocalByDefault(_Scope):
+    """A shell, an interpreter, the running python, an argv the code does not spell out and a git subcommand that can fetch
+    are not placed by any default rule: each needs a row. A fixed literal of a local tool still is, and the committed row-key
+    count catches it as a new key."""
+
+    def test_each_spelling_needs_a_row_and_a_fixed_local_tool_is_a_new_key(self):
+        lines = self.lines(self.append("kernel/credentials.py", MUTANT_PROGRAMS))
+        at = {name: next(i + 2 for i, ln in enumerate(lines) if ln.startswith("def %s(" % name))
+              for name in ("_probe_sh", "_probe_node", "_probe_python", "_probe_argv", "_probe_git_remote", "_probe_ps")}
+        rc, out, _ = inventory(scope_copy())
+        self.assertRefused(rc, out, "UNCLASSIFIED")
+        named = unclassified(out)
+        for name in ("_probe_sh", "_probe_node", "_probe_python", "_probe_argv", "_probe_git_remote"):
+            self.assertIn("kernel/credentials.py:%d" % at[name], named, "%s is unclassified without a row" % name)
+        self.assertNotIn("kernel/credentials.py:%d" % at["_probe_ps"], named, "a fixed literal of a local tool is placed by the default rule")
+        self.assertRefused(rc, out, "COUNTS per_key kernel/credentials.py:_probe_ps: the committed count is None, this run found 1")
+        for name in ("_probe_sh", "_probe_node", "_probe_python", "_probe_argv"):
+            self.assertListed(out, r"kernel/credentials\.py:%d  .*  in %s  -> UNCLASSIFIED \[external-program\]" % (at[name], name),
+                             "the site is listed in its class, so the table's count moves with it")
+
+    def test_the_class_members_are_listed_with_their_road_and_not_set_aside(self):
+        rc, out, _ = tree_run()
+        self.assertEqual(rc, 0, "the run must exit 0:\n" + gates(out))
+        self.assertListed(out, r"kernel/judge\.py:\d+  run  sh -c  in _serve_fault  -> local-program \[external-program\]",
+                         "a shell on a local road keeps its row and is marked as the class")
+        self.assertListed(out, r"kernel/kernel\.py:\d+  run  /bin/sh  in _watch_run  -> predicate-watch \[runtime-program\]")
+        self.assertListed(out, r"kernel/credentials\.py:\d+  run  RUNTIME-SUPPLIED\(cmd\) SHELL  in run_helper  -> api-key-helper \[runtime-program\]")
+        self.assertClean(rc, out)
+        rows = [ln for ln in out.splitlines() if SITE_LINE.match(ln) and "  dom-load  " not in ln]
+        local_roads = ("local-bus", "local-manager", "local-kernel", "local-program", "local-git")
+        tails = [ln.rsplit("-> ", 1)[1] for ln in rows]
+        set_aside = sum(1 for t in tails if t.split(" ")[0] in local_roads and "[" not in t)
+        self.assertEqual(summary(out)["local_sites"], set_aside, "the local count excludes every classed site")
+        self.assertEqual(summary(out)["external"], sum(1 for t in tails if t.endswith("[external-program]")))
+        self.assertEqual(summary(out)["runtime"], sum(1 for t in tails if t.endswith("[runtime-program]")))
+
+
+class TheBrowserFetchIsClassifiedByItsUrl(_Scope):
+    """A fetch under ui/ is local only by its argument: a relative literal or a kernel-URL helper. An absolute literal needs
+    a row; a computed argument is the named class, whose committed count moves."""
+
+    def test_an_absolute_literal_needs_a_row_a_helper_is_local_and_a_variable_is_the_class(self):
+        n = len(self.lines(self.append("ui/webview/strip.ts", '\nexport function probeFetches(u: string): void {\n  void fetch("https://TESTHOST/x");\n'
+                                       '  void fetch(kernelUrl("/probe"));\n  void fetch("/probe");\n  void fetch(u);\n}\n')))
+        absolute, helper, relative, computed = n - 4, n - 3, n - 2, n - 1
+        rc, out, _ = inventory(scope_copy())
+        self.assertRefused(rc, out, "UNCLASSIFIED")
+        named = unclassified(out)
+        self.assertIn("ui/webview/strip.ts:%d" % absolute, named, "a literal to another host is a road and needs a row")
+        for line in (helper, relative, computed):
+            self.assertNotIn("ui/webview/strip.ts:%d" % line, named)
+        self.assertListed(out, r"ui/webview/strip\.ts:%d  fetch  fetch\(kernelUrl\(\"/probe\"\)\)  in -  -> local-kernel" % helper)
+        self.assertListed(out, r"ui/webview/strip\.ts:%d  fetch  fetch\(\"/probe\"\)  in -  -> local-kernel" % relative)
+        self.assertListed(out, r"ui/webview/strip\.ts:%d  fetch  fetch\(u\)  in -  -> \(browser-computed-url\)" % computed)
+        expected = _expected()
+        self.assertRefused(rc, out, "COUNTS classes browser-computed-url: the committed count is %d, this run found %d"
+                           % (expected["classes"]["browser-computed-url"], expected["classes"]["browser-computed-url"] + 1),
+                           "COUNTS per_key ui/webview/strip.ts:fetch: the committed count is %d, this run found %d"   # the four new lines share the key
+                           % (expected["per_key"]["ui/webview/strip.ts:fetch"], expected["per_key"]["ui/webview/strip.ts:fetch"] + 4))
+
+    def test_the_copy_image_handler_reads_a_computed_url_and_is_not_a_browser_figures_site(self):
+        """extra8-4 by execution: the lightbox's re-fetch reads the shown img's src (the kernel's own file URL by its binding),
+        so it sits in the computed-URL class, not on the browser-figures road and not local by path."""
+        rc, out, _ = tree_run()
+        self.assertEqual(rc, 0, "the run must exit 0:\n" + gates(out))
+        self.assertListed(out, r"ui/webview/preview\.ts:\d+  fetch  fetch\(src\)  in -  -> \(browser-computed-url\)")
+        figures = [ln for ln in out.splitlines() if ln.endswith("-> browser-figures")]
+        self.assertEqual(sorted(ln.split("  ")[1] for ln in figures), ["Image", "figureHosts"], figures)
+
+
+class ThePrimitiveListIsKeptHonest(_Scope):
+    """NET is a closed list, so the import side is the gate: a module the census does not know fails the run; and the
+    primitives the round named beyond the list (a bound socket's connect, asyncio's connections) are sites."""
+
+    def test_an_unknown_import_is_the_loud_line(self):
+        n = len(self.lines(self.append("kernel/credentials.py", "\nimport httpx\n")))
+        rc, out, _ = inventory(scope_copy())
+        self.assertRefused(rc, out, "IMPORT kernel/credentials.py:%d imports httpx" % n)
+
+    def test_a_known_import_is_not(self):
+        self.append("kernel/credentials.py", "\nimport json as _probe_json\n")
+        rc, out, _ = inventory(scope_copy())
+        self.assertFalse([ln for ln in out.splitlines() if ln.startswith("IMPORT")], gates(out))
+
+    def test_a_bound_sockets_connect_and_an_asyncio_connection_are_sites(self):
+        n = len(self.lines(self.append("kernel/credentials.py", '\nimport asyncio, socket\n\ndef _probe_sock(addr):\n    s = socket.socket()\n    s.connect(addr)\n\n'
+                                       'async def _probe_aio():\n    return await asyncio.open_connection("TESTHOST", 443)\n')))
+        rc, out, _ = inventory(scope_copy())
+        self.assertRefused(rc, out, "UNCLASSIFIED")
+        named = unclassified(out)
+        self.assertIn("kernel/credentials.py:%d" % (n - 3), named, "s.connect(addr) on a socket bound in the function")
+        self.assertIn("kernel/credentials.py:%d" % n, named, "asyncio.open_connection")
+
+
+class ASecondSiteInsideARowedFunctionIsRed(_Scope):
+    """The table is keyed on file and function; the committed count per key is the guard for a second site inside a rowed
+    function, a stale row is its own gate, and the table's road list is held equal to the rows' roads."""
+
+    def test_a_second_urlopen_inside_the_workers_function_is_named_by_its_key(self):
+        anchor = "                with urllib.request.urlopen(PRICE_FEED_URL, timeout=4) as r:\n"
+        self.replace("kernel/kernel.py", anchor, "                urllib.request.urlopen(%r, timeout=4)\n" % FEED_LITERAL + anchor)
+        rc, out, _ = inventory(scope_copy())
+        self.assertRefused(rc, out, "COUNTS per_key kernel/kernel.py:_refresh_remote_prices.work: the committed count is 1, this run found 2")
+        self.assertFalse(unclassified(out), "the second site takes the row; the count is what names it: %r" % unclassified(out))
+        self.assertEqual(len(re.findall(r"kernel/kernel\.py:\d+  urlopen  .*  in _refresh_remote_prices\.work  -> price-feed", out)), 2,
+                         "both sites are listed, so the new line is readable")
+
+    def test_a_fetch_of_the_feeds_url_spelled_as_a_literal_in_a_new_function_is_unclassified(self):
+        """correctness-3: the module's first half keys on the NAME PRICE_FEED_URL; this run keys on the primitive."""
+        n = len(self.lines(self.append("kernel/kernel.py", "\n\ndef _warm_prices():\n    import urllib.request\n    return urllib.request.urlopen(%r, timeout=4)\n" % FEED_LITERAL)))
+        rc, out, _ = inventory(scope_copy())
+        self.assertRefused(rc, out, "UNCLASSIFIED")
+        self.assertIn("kernel/kernel.py:%d" % n, unclassified(out))
+
+    def test_a_row_naming_no_site_is_stale(self):
+        self.replace(INVENTORY, '_t("price-feed", K + "_refresh_remote_prices.work")', '_t("price-feed", K + "_refresh_remote_prices.work", K + "_no_such_function")')
+        rc, out, _ = inventory(scope_copy())
+        self.assertRefused(rc, out, "STALE ROW kernel/kernel.py:_no_such_function names no site")
+
+    def test_the_tables_roads_and_the_rows_roads_are_one_set(self):
+        self.replace(INVENTORY, '("price-feed", "price feed (kernel-request)",', '("price-feed-x", "price feed (kernel-request)",')
+        rc, out, _ = inventory(scope_copy())
+        self.assertRefused(rc, out, "TABLE the road price-feed has sites and no ROADS entry", "TABLE ROADS names price-feed-x, a road with no site")
+
+
+class TheTableIsTheLedgers(_Scope):
+    """--table prints the ledger's table from the sites: one row per road, the local row, one row per class this scan cannot
+    see; and the ledger entry carries exactly that output between its two marker lines, so a hand-written cell cannot survive."""
+
+    def test_the_table_has_a_row_per_road_the_local_row_and_the_four_classes(self):
+        rc, table, err = tree_run("--table")
+        self.assertEqual(rc, 0, err[-1500:])
+        expected = _expected()
+        lines = table.strip().splitlines()
+        self.assertEqual(lines[0], "| road | where | trigger and cadence | what is sent and to where | off switch |")
+        self.assertEqual(lines[1], "|---|---|---|---|---|")
+        rows = lines[2:]
+        self.assertEqual(len(rows), expected["roads"] - expected["local_roads"] + 1 + 4)
+        for r in rows:
+            self.assertEqual(len(r.split(" | ")), 5, r[:120])
+        self.assertTrue(rows[-5].startswith("| local, set aside and counted (local) | %d sites on the %d local roads" % (expected["local_sites"], expected["local_roads"])))
+        self.assertIn("| an external program the kernel starts, far end not derivable here (not derivable by this scan) | %d sites, by program:" % expected["classes"]["external-program"], table)
+        self.assertIn("| a browser request whose URL is computed at run time (not derivable by this scan) | %d sites:" % expected["classes"]["browser-computed-url"], table)
+        self.assertIn("| the browser DOM's own loads (not derivable by this scan) | %d lines in" % expected["classes"]["browser-dom-loads"], table)
+        self.assertIn("| a program supplied at run time (not derivable by this scan) | kernel/credentials.py `run_helper`; kernel/kernel.py `_watch_run` (2 sites) |", table)
+        browser = next(r for r in rows if r.startswith("| a viewed file's pictures from the web (browser) |"))
+        self.assertIn("| ui/webview/figure-gate.ts (`figureHosts`); ui/webview/preview.ts (`Image`) |", browser, "the where cell is derived from the sites")
+        self.assertNotIn("Copy image", browser, "extra8-4: the lightbox re-fetch reads the kernel's own file URL and is not a member")
+        for cell in table.splitlines():
+            self.assertNotIn(chr(0x2014), cell)
+            self.assertNotIn(chr(0x2013), cell)
+
+    def test_the_ledger_carries_the_scripts_table_between_its_markers(self):
+        if not os.path.isdir(os.path.join(ROOT, "upstream")):
+            self.skipTest("no upstream/ ledger in this tree (the ledger is the fork's)")
+        path = os.path.join(ROOT, LEDGER)
+        self.assertTrue(os.path.isfile(path), "the ledger entry %s exists" % LEDGER)
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        self.assertTrue(BEGIN in text, "%s carries the marker line %s (run python3 %s --table and paste its output between the two markers)" % (LEDGER, BEGIN, INVENTORY))
+        self.assertTrue(END in text, "%s carries the marker line %s" % (LEDGER, END))
+        block = text.split(BEGIN, 1)[1].split(END, 1)[0].strip()
+        rc, table, err = tree_run("--table")
+        self.assertEqual(rc, 0, err[-1500:])
+        if block != table.strip():
+            diff = "\n".join(list(difflib.unified_diff(block.splitlines(), table.strip().splitlines(), "the ledger's block", "--table", lineterm=""))[:40])
+            self.fail("the ledger's table is not the script's output; regenerate the block with python3 %s --table:\n%s" % (INVENTORY, diff))
 
 
 if __name__ == "__main__":

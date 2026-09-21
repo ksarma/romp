@@ -28,6 +28,7 @@ var SW = require('./status-widgets.ts');   // the status line's widgets (T409): 
 var TW = require('./tab-widgets.ts');   // the tab-title widgets (T379): the registry the Tab widgets section's rows render from, the strip's own module
 var SC = require('./status-controls.ts');   // the status line's controls (T415 part two): the preview draws them through the line's own renderer, over a demo status
 var LS = require('./landing-settle.ts');   // gestureEvidence: the chat's rule for telling the user's scroll from the browser's own (the section ask ends only on input, T379 follow-up)
+var raAgo = require('./api-health-merge.ts').agoWords;   // the Token usage line's fetch age in words: the one helper the shell's API-health popup uses for its as-of (T316), now under 45 s, then rounded minutes, rounded hours under 24 h, rounded days, so the line says 30 days ago where the popup does (the review of PR 878, round 2: a copy of its own here counted hours without end)
 function kb() { return (typeof window !== 'undefined' && window.__rompKernelBase) || ''; }
 function ku(path) {
   var tok = (typeof window !== 'undefined' && window.__rompKernelToken) || '';
@@ -2245,7 +2246,13 @@ function initGear(post, opts) {
 // `overrideRowsRejected` counts the rows of model-prices.json the kernel could not read (the re-ruling of that review,
 // 2026-09-21: such a row is skipped alone and every other row applies, where the round's shape voided every row after
 // it): the line says so last, after the override count, as a count and never the keys (the block rides /version; the
-// kernel's own log names each row once). A block without a newer key (an older kernel) is worded as the older shape.
+// kernel's own log names each row once). `overrideFault` is the kernel's class for that file: 'row' when rows were
+// skipped (the count says how many), 'file' when the file could not be read as a JSON object and was ignored, so none
+// of it applies: the line says that in the same slot, as fixed text, never the path or the file's text (the second
+// round of that review: the line worded the skipped rows and not the whole-file fault, so a file discarded whole read
+// as a clean one, the worse fault silent on the surface the user looks at). A block without a newer key (an older
+// kernel) is worded as the older shape. The fetch age is worded by the shell's one age helper (api-health-merge.ts
+// agoWords, bound as raAgo above), so the line and the API-health popup say days past 24 h alike.
 // tests/test_price_feed_vocabulary.py holds these words and the kernel's to one set.
 function raPriceNote(pf) {
   if (!pf || typeof pf !== 'object') return '';
@@ -2264,6 +2271,12 @@ function raPriceNote(pf) {
   var rej = typeof pf.overrideRowsRejected === 'number' && pf.overrideRowsRejected > 0
     ? pf.overrideRowsRejected + (pf.overrideRowsRejected === 1 ? ' row' : ' rows') + ' of model-prices.json could not be read and '
       + (pf.overrideRowsRejected === 1 ? 'was' : 'were') + ' skipped (the rest of the file applies)' : '';
+  // the whole file could not be read as a JSON object and was ignored (the kernel's `overrideFault` 'file'; under 'row'
+  // the count above says what was skipped, and the kernel emits one class or the other): said in the skipped rows' slot,
+  // as fixed text, so a file discarded whole never reads as a clean one; never the path or the file's text (a block
+  // without the key, an older kernel, says nothing)
+  var badFile = pf.overrideFault === 'file'
+    ? 'model-prices.json could not be read as a JSON object and was ignored (none of it applies)' : '';
   if (pf.source === 'feed') {
     // fewer matched than the table knows: the rest are priced from the built-in defaults, and the line says so instead
     // of calling the whole table live (a block without `known`, an older kernel, is the plain line)
@@ -2282,6 +2295,7 @@ function raPriceNote(pf) {
     if (unrec) tails.push(unrec);
     if (ovr) tails.push(ovr);
     if (rej) tails.push(rej);
+    if (badFile) tails.push(badFile);
     return line + (tails.length ? '; ' + tails.join('; ') : '');
   }
   if (pf.source !== 'defaults') return '';
@@ -2296,13 +2310,7 @@ function raPriceNote(pf) {
     : pf.reason === 'unfetched' ? 'nothing fetched from the feed yet'
     : '';
   return 'prices: built-in defaults' + (why ? '; ' + why : '') + (unrec ? '; ' + unrec : '') + (ovr ? '; ' + ovr : '')
-    + (rej ? '; ' + rej : '');
-}
-function raAgo(s) {   // an age in seconds as plain words: 'just now' under a minute, then whole minutes, then whole hours
-  s = Math.max(0, Math.floor(Number(s) || 0));
-  if (s < 60) return 'just now';
-  var m = Math.floor(s / 60); if (m < 60) return m + (m === 1 ? ' minute ago' : ' minutes ago');
-  var h = Math.floor(m / 60); return h + (h === 1 ? ' hour ago' : ' hours ago');
+    + (rej ? '; ' + rej : '') + (badFile ? '; ' + badFile : '');
 }
 
 module.exports = { initGear, raPriceNote };

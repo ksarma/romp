@@ -2,7 +2,9 @@
 """The suite-wide price-feed floor (tests/conftest.py, 2026-09-20), the runner's half of "no test kernel fetches
 the price feed"; the lab kernels' half is tests/test_ship_reship_served.py kernel_env, pinned by LabKernelEnv there.
 The runner's floor has two halves of its own, and each has a pin here: the per-test re-assert (conftest's autouse
-fixture) by execution, in PriceFeedFloor, and the import-time assignment (conftest's module-level statement, the
+fixture) by execution, in PriceFeedFloor (one self-contained case that pops the switch and runs the fixture function itself,
+so the re-assert is executed in whatever worker the case lands in: the review of PR 878, round 2, found the earlier two
+cases armed only by their ordering inside one process), and the import-time assignment (conftest's module-level statement, the
 half that covers collection and module-import time) on conftest's SOURCE, in TheFloorsAreOnConftestsSource, the
 shape tests/test_cli_scope_floor.py uses. An assertion inside a test body cannot tell the two halves apart (the
 fixture has already set the value when the body runs), so a review of PR 878 found the import-time line unpinned:
@@ -23,8 +25,11 @@ variable in setUp to drive the fetch against a recorder, and a module-level pop 
 rest of a serial run. Synthetic throughout; the kernel is loaded only to prove the refresh is inert under the
 floor."""
 import ast
+import importlib.util
+import inspect
 import io
 import os
+import sys
 import tempfile
 import threading
 import unittest
@@ -51,18 +56,54 @@ km.jd.STATE.mkdir(parents=True, exist_ok=True)
 NOW = 1781100000   # a synthetic clock
 
 
+def _conftest():
+    """tests/conftest.py as a module: the one pytest already loaded for this run when there is one (found by its file, so
+    its import-time statements run once and their floors are not re-minted inside a case), else imported by path under
+    a private name (a bare unittest run, where nothing else would load it)."""
+    for mod in list(sys.modules.values()):
+        if os.path.realpath(getattr(mod, "__file__", None) or "") == os.path.realpath(CONFTEST):
+            return mod
+    spec = importlib.util.spec_from_file_location("romp_tests_conftest_by_path", CONFTEST)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _fixture_function(mod, name):
+    """The generator function under pytest's fixture definition `mod.<name>`: pytest 8.4 and later wrap it in a
+    FixtureFunctionDefinition that follows the __wrapped__ convention (inspect.unwrap reaches the function); older pytest
+    kept the function itself. Verified at pytest 9.1.1. A wrapping this does not know is a failure by name, never a pass."""
+    obj = getattr(mod, name)
+    fn = inspect.unwrap(obj) if hasattr(obj, "__wrapped__") else obj
+    if not inspect.isgeneratorfunction(fn):
+        raise AssertionError("tests/conftest.py %s is wrapped in a shape this module cannot unwrap: %r" % (name, type(obj)))
+    return fn
+
+
 class PriceFeedFloor(unittest.TestCase):
-    """Ordered on purpose (unittest runs methods by name): the first test pops the switch the way the feed
-    suite's setUp does; the second proves the per-test re-assert put it back before the next test ran, and
-    that the refresh does nothing under it."""
+    """The per-test re-assert by execution, in one self-contained case: it pops the switch the way the feed suite's
+    setUp does, runs conftest's own autouse fixture function (tests/conftest.py _no_price_feed_fetch, reached through
+    the module pytest loaded and unwrapped from pytest's fixture definition), asserts the switch is back to off, and
+    then proves the refresh is inert under it. The class had two cases ordered by name, the first popping and the
+    second reading the value back: a pin armed only by the ordering inside one process, since under pytest-xdist's
+    load distribution (the suite's documented runner) the two land in different workers, and the second then asserted
+    that a variable nobody had popped was still set, which passed whether or not the fixture existed (the review of
+    PR 878, round 2). Running the fixture inside the case executes the re-assert in whatever worker the case lands
+    in. Proved by mutation at this head: the fixture's assignment deleted in a scratch copy of conftest.py reds this
+    case naming the variable (the source pin below reds too, for its own reason)."""
 
-    def test_1_a_test_may_pop_the_switch(self):
-        self.assertEqual(os.environ.get("ROMP_PRICE_FEED"), "off", "conftest's import-time floor")
-        os.environ.pop("ROMP_PRICE_FEED", None)
-
-    def test_2_the_floor_is_back_and_the_refresh_is_inert(self):
+    def test_the_fixture_puts_a_popped_switch_back_and_the_refresh_is_inert_under_it(self):
+        self.assertEqual(os.environ.get("ROMP_PRICE_FEED"), "off", "conftest's floor holds as the case begins")
+        self.addCleanup(lambda: os.environ.__setitem__("ROMP_PRICE_FEED", "off"))   # the floor is never left down, whatever fails
+        os.environ.pop("ROMP_PRICE_FEED", None)                    # what tests/test_price_feed_off.py's setUp does
+        self.assertIsNone(os.environ.get("ROMP_PRICE_FEED"), "popped: the fixture, not this case, has to put it back")
+        fixture = _fixture_function(_conftest(), "_no_price_feed_fetch")()   # the fixture's body: its assignment, then its yield
+        self.addCleanup(lambda: next(fixture, None))               # run it out, what pytest does at the item's teardown
+        next(fixture)
         self.assertEqual(os.environ.get("ROMP_PRICE_FEED"), "off",
-                         "conftest's per-test re-assert must restore the switch a test popped")
+                         "tests/conftest.py's autouse fixture _no_price_feed_fetch must set ROMP_PRICE_FEED back to off: a test that "
+                         "pops the switch to drive its fetch against a recorder would otherwise leave the floor down for every test "
+                         "after it in its worker")
         saved_t = km._price_cache["t"]
         self.addCleanup(lambda: km._price_cache.update(t=saved_t))
         km._price_cache["t"] = 0                                   # as stale as a cache gets: a fetch, but for the floor

@@ -52402,18 +52402,24 @@ DEFAULT_MODEL_PRICES = {   # $/token: input, output, cache write (5m), cache rea
 _price_cache = {"t": 0, "remote": {}}   # remote feed prices, refreshed on a TTL in the background
 # The feed's STATUS beside its cache (the _catalog_status idiom, lock included: `_catalog_lock`): when a fetch was
 # last attempted and last landed (the attempt's clock, the one the TTL stamp uses, so the age and the TTL agree),
-# how many built-in ids the feed's rows signed to (`matched`) and how many of those parsed into the cache (`rows`;
-# the two differ when the feed's schema moved under the parser), why the last fetch failed (a reason CLASS, never
-# the response body: /version is auth-exempt), whether one is in flight, and whether the off line has been written
-# this kernel life. The cost view (/analytics `priceFeed`) and /version read it through _price_feed_status, so a
-# table served from the built-in defaults is a visible fact where the user looks, never a figure that reads as
-# live. The block IS a compound: the view pairs `source` with `rows` and `known` (the share a partial feed priced),
-# `reason` with `matched`, and the feed line with `lastError`, so a landing has to be seen whole or not at all. The
-# worker publishes the cache and these fields under _price_feed_lock, every other multi-key transition (an attempt
-# starting, a failure recorded) takes it too, and _price_feed_status reads the cache, the fields and the merge it
-# counts overrides from under the same lock, so a read between two of the worker's writes, or a landing between two
-# of the reader's, cannot happen (review round 2: such reads rendered `live feed for 0 of 6 models` and `the feed's
-# rows for 6 known models could not be read`). The say-once latches (`offSaid` for the off line, `unrecognisedSaid`
+# how many built-in ids the feed's rows signed to (`matched`; the block's `rows`, how many of those parsed into the
+# cache, is that cache's own length, computed in _price_feed_status and kept nowhere else: a copy kept here was
+# written under the lock and read by nothing, the review of PR 878, round 2), why the last fetch failed (a reason
+# CLASS, never the response body: /version is auth-exempt), which flight is in the air (`inflight`, the flight's
+# token, 0 when none; `flights` counts the attempts this kernel life and mints the token), and whether the off line
+# has been written this kernel life. The cost view (/analytics `priceFeed`) and /version read it through
+# _price_feed_status, so a table served from the built-in defaults is a visible fact where the user looks, never a
+# figure that reads as live. The block IS a compound: the view pairs `source` with `rows` and `known` (the share a
+# partial feed priced), `reason` with `matched`, and the feed line with `lastError`, so a landing has to be seen
+# whole or not at all. The worker publishes the cache and these fields under _price_feed_lock, every other
+# multi-key transition takes it too (the TTL check, its stamp and the attempt's fields are ONE transition, so one
+# caller per TTL window proceeds and one request leaves for one stale cache; a failure recorded; the end of a
+# flight, which clears `inflight` only while the token is still that flight's), and _price_feed_status reads the
+# cache, the fields and the merge it counts overrides from under the same lock, so a read between two of the
+# worker's writes, or a landing between two of the reader's, cannot happen (review round 2: such reads rendered
+# `live feed for 0 of 6 models` and `the feed's rows for 6 known models could not be read`; the review of PR 878,
+# round 2: the TTL check and its stamp stood one statement above the lock, and two cost-view builds arriving
+# together each started a worker). The say-once latches (`offSaid` for the off line, `unrecognisedSaid`
 # for a switch value that is not off, `overrideFileSaid` for an override file the kernel could not read as a JSON
 # object, and `overrideRowsSaid`, the keys of the override rows it has already named) take the lock too: each is a
 # read-modify-write (test, then set), which the torn-read argument for a lone store does not cover, and two cost-view
@@ -52423,7 +52429,7 @@ _price_cache = {"t": 0, "remote": {}}   # remote feed prices, refreshed on a TTL
 # KEY, a frozenset replaced under the lock, so every bad row is named once and a row that goes bad later is named
 # too. _price_feed_first is the one test-and-set, and the line is written OUTSIDE the lock (_price_feed_line
 # re-enters it through _price_feed_status). There is no cache FILE: this is process memory and dies with the kernel.
-_price_feed = {"fetchedAt": None, "attemptedAt": None, "lastError": None, "rows": 0, "matched": 0, "inflight": False,
+_price_feed = {"fetchedAt": None, "attemptedAt": None, "lastError": None, "matched": 0, "inflight": 0, "flights": 0,
                "offSaid": False, "unrecognisedSaid": False, "overrideFileSaid": False, "overrideRowsSaid": frozenset()}
 _price_feed_lock = threading.Lock()
 # OpenSSL 3.0's verify-error table: the strings X509_verify_cert_error_string returns for verify codes 1 to 94, copied
@@ -52631,10 +52637,11 @@ def _price_feed_status(now=None, prices=None):
     so, never the value itself (an environment value is arbitrary text and /version is auth-exempt). `overrideFault`
     is the class of what the merge could not read in the user's PRICE_CONFIG, None when the file is absent or read
     whole, "file" when it exists and could not be read or parsed as a JSON object (ignored whole), "row" when a row
-    was rejected (not an object, or a rate that is not a finite number: that row alone is skipped and every other
-    row applies, wherever in the file it sits), and `overrideRowsRejected` counts the rows so skipped, 0 when none:
-    a count and never the keys, since the block rides the auth-exempt /version and the file's keys are the user's
-    own text (the kernel's log names each once, _model_prices). Both travel with the merged table (_PriceTable), so
+    was rejected (not an object, a rate that is not a number, or a rate that is not finite: that row alone is skipped
+    and every other row applies, wherever in the file it sits), and `overrideRowsRejected` counts the rows so
+    skipped, 0 when none: a count and never the keys, since the block rides the auth-exempt /version and the file's
+    keys are the user's own text (the kernel's log names each once, _model_prices). Both travel with the merged
+    table (_PriceTable), so
     they are the facts of the very merge the overrides are counted from, and a class and a count, never the file's
     text or its path (the review of PR 878: a bad row voided itself and every later row while the block counted the
     rows before it and stderr said nothing; its re-ruling of 2026-09-21: the void made a file's fate depend on the
@@ -52683,7 +52690,10 @@ def _price_feed_line(now, head):
     st = _price_feed_status(now)
     if st["source"] == "feed":
         a = st["ageS"]
-        age = None if a is None else ("%d s" % a if a < 60 else "%d min" % (a // 60) if a < 3600 else "%d h" % (a // 3600))
+        age = None if a is None else ("%d s" % a if a < 60 else "%d min" % (a // 60) if a < 3600
+                                      else "%d h" % (a // 3600) if a < 86400 else "%d d" % (a // 86400))
+        #   the day arm at 24 h (review round 2): the log and the modal's line, which words the age through the webview's
+        #   one age helper, agree on the unit past a day
         partial = st["rows"] < st["known"]
         served = ("the feed rows in memory" + (" for %d of %d models" % (st["rows"], st["known"]) if partial else "")
                   + (", fetched %s ago" % age if age is not None else "")
@@ -52736,7 +52746,16 @@ def _refresh_remote_prices(now):
     (through repr, clipped, so padding, case and a trailing character show: this is the kernel's own log) and that
     only off turns the feed off; the status carries the boolean, never the value (the review of PR 878: a misspelt
     switch read as unset on every surface and the request went out). Each say-once latch is a test-and-set under
-    _price_feed_lock (_price_feed_first) and its line is written outside the lock. A feed row whose rate is not a
+    _price_feed_lock (_price_feed_first) and its line is written outside the lock. The TTL check (the read of
+    `_price_cache["t"]`) and its stamp are a read-modify-write too, and they take the lock WITH the attempt's fields
+    (attemptedAt and the flight token), one transition, so exactly one caller per TTL window proceeds: standing one
+    statement above the lock, the check let two cost-view builds arriving together both pass it and each start a
+    worker, two requests to the feed's host and two fetch lines inside one window, against the bound this docstring
+    states (the review of PR 878, round 2). `inflight` is the flight's TOKEN, the attempt counter's value minted
+    under the lock (`flights`), and the worker's finally, its failure arm and the no-worker arm clear it under the
+    lock only while it is still theirs, so the first of two flights to end never clears the mark of one still in
+    the air (the mark was a shared boolean, and the finally cleared it outside the lock for both); the thread start
+    and every line write stay outside the lock. A feed row whose rate is not a
     finite number (JSON NaN or Infinity, which json.loads accepts) is a row the parser REJECTS, counted in
     `matched` and never cached: cached, it priced a session's cost as NaN and the /analytics body would not parse
     in the browser while the status read live feed."""
@@ -52749,12 +52768,14 @@ def _refresh_remote_prices(now):
             value = repr(os.environ.get("ROMP_PRICE_FEED") or "")
             _price_feed_line(now, "price feed: ROMP_PRICE_FEED is set to %s, which is not off, so the feed stays on"
                              % _price_feed_clip(value))
-    if now - _price_cache["t"] < PRICE_TTL:
-        return
-    _price_cache["t"] = now                          # stamp first so a slow/failing fetch isn't hammered
-    with _price_feed_lock:                           # one transition: a payload built while it runs reads "inflight" with
-        _price_feed["attemptedAt"] = now             # this attempt's stamp, never one without the other
-        _price_feed["inflight"] = True
+    with _price_feed_lock:                           # the TTL check, its stamp and the attempt's fields: ONE transition under
+        if now - _price_cache["t"] < PRICE_TTL:      # the lock, so exactly one caller per TTL window proceeds (two builds
+            return                                   # arriving together both passed a check made outside it, round 2)
+        _price_cache["t"] = now                      # stamp first so a slow/failing fetch isn't hammered
+        _price_feed["attemptedAt"] = now             # a payload built while the fetch runs reads "inflight" with this
+        _price_feed["flights"] += 1                  # attempt's stamp, never one without the other
+        flight = _price_feed["flights"]              # this flight's token: only this flight clears the mark it sets
+        _price_feed["inflight"] = flight
     want = {_price_sig(k): k for k in DEFAULT_MODEL_PRICES if _price_sig(k)}
 
     def work():
@@ -52764,10 +52785,12 @@ def _refresh_remote_prices(now):
                 with urllib.request.urlopen(PRICE_FEED_URL, timeout=4) as r:
                     feed = json.loads(r.read().decode("utf-8", "replace"))
             except Exception as e:
-                with _price_feed_lock:               # the failure and the end of the flight, seen together (the finally
-                    _price_feed["lastError"] = _price_feed_error_class(e)   # below then re-clears an already clear mark)
-                    _price_feed["inflight"] = False
-                _price_feed_line(now, "price feed: fetch failed (%s)" % _price_feed["lastError"])
+                reason = _price_feed_error_class(e)
+                with _price_feed_lock:               # the failure and the end of the flight, seen together; a later
+                    _price_feed["lastError"] = reason              # flight's mark stands
+                    if _price_feed["inflight"] == flight:
+                        _price_feed["inflight"] = 0
+                _price_feed_line(now, "price feed: fetch failed (%s)" % reason)
                 return
             out, matched = {}, set()
             for k, v in (feed.items() if isinstance(feed, dict) else []):
@@ -52791,7 +52814,6 @@ def _refresh_remote_prices(now):
                 changed = out != _price_cache["remote"]
                 _price_cache["remote"] = out
                 _price_feed["fetchedAt"] = now       # the attempt's clock, the TTL stamp's, so age and TTL agree
-                _price_feed["rows"] = len(out)
                 _price_feed["matched"] = len(matched)
                 _price_feed["lastError"] = None
                 if changed:                          # the table moved: a memoized /analytics payload's figures are the old
@@ -52804,13 +52826,16 @@ def _refresh_remote_prices(now):
                                  "built-in id, %d parsed)" % (len(matched) - len(out), "" if len(matched) - len(out) == 1
                                                             else "s", len(matched), len(out)))
         finally:
-            _price_feed["inflight"] = False
+            with _price_feed_lock:                   # the end of THIS flight, under the lock: a later flight's mark stands
+                if _price_feed["inflight"] == flight:
+                    _price_feed["inflight"] = 0
 
     try:
         threading.Thread(target=work, name="price-refresh", daemon=True).start()
     except Exception as e:                           # the worker never ran, so its finally never will: say it here, and
         with _price_feed_lock:                       # leave nothing reading "inflight" for the TTL's six hours
-            _price_feed["inflight"] = False
+            if _price_feed["inflight"] == flight:
+                _price_feed["inflight"] = 0
             _price_feed["lastError"] = _price_feed_error_class(e)
         _price_feed_line(now, "price feed: fetch failed (%s), the worker thread did not start" % _price_feed["lastError"])
 
@@ -52819,9 +52844,10 @@ class _PriceTable(dict):
     """The merged $/token map _model_prices returns: a plain dict to every reader, carrying beside its rows the two
     facts about the user's override file the rows cannot carry. `fault`: None when PRICE_CONFIG is absent or was read
     whole, "file" when it exists and could not be read or parsed as a JSON object (the file is ignored whole), "row"
-    when a row was rejected (a row that is not an object, or a rate that is not a finite number: that row alone is
-    skipped and every other row applies, since one try wraps each ROW and not the loop). `rejected`: how many rows
-    were so skipped, 0 when none. Both travel with the table they describe, the way the priceFeed block travels with
+    when a row was rejected (a row that is not an object, a rate that is not a number, or a rate that is not finite:
+    that row alone is skipped and every other row applies, since one try wraps each ROW and not the loop).
+    `rejected`: how many rows were so skipped, 0 when none. Both travel with the table they describe, the way the
+    priceFeed block travels with
     the payload it priced, so _price_feed_status reports the fault and the count of the very merge it counts
     overrides from and never a class or a count read at another moment."""
     fault = None
@@ -52831,8 +52857,8 @@ class _PriceTable(dict):
 _PRICE_OVERRIDE_FAULT_LINES = {   # the head of the stderr line for each fault class, the consequence stated: the file's
     #                               once per kernel life, a row's once per kernel life PER ROW, the row's key by repr
     #                               through _price_feed_clip in the %s (the kernel's own log; the block carries a count)
-    "row": "price feed: the row %s in model-prices.json could not be read (not an object, or a rate that is not a "
-           "finite number), so that row is skipped and the rest of the file applies",
+    "row": "price feed: the row %s in model-prices.json could not be read (not an object, a rate that is not a number, "
+           "or a rate that is not finite), so that row is skipped and the rest of the file applies",
     "file": "price feed: model-prices.json could not be read as a JSON object, so the file is ignored whole",
 }
 
@@ -52842,8 +52868,9 @@ def _model_prices(now=None, refresh=True):
     (the default) lets a stale feed cache kick its background fetch; the spend guard passes False, since it runs on
     the pusher's path in every kernel (a hermetic test kernel included) and must never start a network fetch: it
     merges whatever the cost view's last refresh left in the cache (T350). The override file's rows are read under
-    one try EACH: a row the kernel cannot read (not an object, or a rate that is not a finite number: JSON NaN and
-    Infinity parse) is skipped alone and every other row applies, so the same bad row placed first, in the middle or
+    one try EACH: a row the kernel cannot read (not an object; a rate that is not a number: JSON null, a string, a
+    list, an object or a bool where a number belongs; a rate that is not finite: JSON NaN and Infinity, which
+    parse) is skipped alone and every other row applies, so the same bad row placed first, in the middle or
     last yields the same table, the same count and the same line (the review of PR 878's re-ruling, 2026-09-21:
     the base skipped a non-object row without a word, and the round's one try around the whole loop voided every
     row after the bad one, a blast radius that depended on the row's position; neither is a rule); a file that
@@ -52855,9 +52882,13 @@ def _model_prices(now=None, refresh=True):
     row once per kernel life by its key (`overrideRowsSaid`, the keys named so far; the key by repr, clipped, the
     shape the unrecognised line gives the switch's value, and the kernel's own log the one surface that carries
     it), one latch per class so the first fault of either class never silences the other's, every latch a
-    test-and-set under the lock (_price_feed_first) and every line written outside it. A rate the row omits keeps
-    the table's for an id the table names (`base` is that id's row), and is zero for any other id: the merge
-    resolves `base` by the exact id, never through _price_for's signature or family fallback."""
+    test-and-set under the lock (_price_feed_first) and every line written outside it. A rate the row omits (the KEY
+    absent) keeps the table's for an id the table names (`base` is that id's row), and is zero for any other id: the
+    merge resolves `base` by the exact id, never through _price_for's signature or family fallback. A rate the row
+    carries is accepted only as a JSON number, an int or a float and never a bool: present and null, a string (a
+    numeric one too), a list, an object, false or true is a rejected row, never a coerced one (the review of PR 878,
+    round 2: `float(x or 0)` priced such a row at zero per token, or at one dollar per token for true, while the
+    block read a clean override and stderr said nothing)."""
     if now is None:
         now = int(time.time())
     if refresh:
@@ -52879,7 +52910,12 @@ def _model_prices(now=None, refresh=True):
             if not isinstance(v, dict):                  # and the loop goes on, so the table, the count and the line are
                 raise ValueError("a row that is not an object")   # the same wherever in the file the bad row sits
             base = prices.get(k, {})
-            row = {kk: float(v.get(kk, base.get(kk, 0)) or 0) for kk in ("in", "out", "cache_w", "cache_r")}
+            row = {}
+            for kk in ("in", "out", "cache_w", "cache_r"):
+                raw = v[kk] if kk in v else base.get(kk, 0)   # the table's rate only when the KEY is absent
+                if isinstance(raw, bool) or not isinstance(raw, (int, float)):   # present and not a JSON number (null, a
+                    raise ValueError("a rate that is not a number")             # string, a list, an object, a bool): rejected
+                row[kk] = float(raw)
             if not all(math.isfinite(x) for x in row.values()):
                 raise ValueError("a rate that is not a finite number")
         except Exception:

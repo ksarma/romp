@@ -19,7 +19,12 @@ the kernel cannot read is classed in the block (`overrideFault`) and said once (
 row that omits a rate inherits is pinned (APartialOverrideRow). The review's re-ruling (2026-09-21) changed two of
 those: a row the kernel cannot read is skipped ALONE, wherever it sits, counted in the block (`overrideRowsRejected`)
 and named once per kernel life on stderr by its key, and the override file's two fault classes latch separately
-(TheOverrideFileIsSaid, SayOnceLatches).
+(TheOverrideFileIsSaid, SayOnceLatches). Round 2 of the review (2026-09-21) added: an override rate that is PRESENT and
+not a JSON number (null, a string, a list, an object, a bool) is a rejected row like the other two classes, never a rate
+coerced to 0.0 or 1.0 (TheOverrideFileIsSaid); the TTL check and its stamp take _price_feed_lock with the attempt's
+fields, so two builds arriving together start ONE request, and the in-flight mark is a per-flight token that only its
+own flight clears (OneFlightPerWindow); the stderr tail's age has a day arm (LiveFeed); and the status dict's keys are
+the harness's reset keys, with the dead `rows` field gone (TheFeedDictIsWhatTheHarnessResets).
 
 Hermetic: urllib.request.urlopen is replaced by a recorder (the worker imports urllib inside `work`, so the
 module attribute is what it calls) that answers the feed's url alone and refuses any other request with a canned
@@ -69,14 +74,15 @@ FEED = {
 }
 OFF_LINE = "price feed: off (ROMP_PRICE_FEED=off)"
 FAIL_LINE = "price feed: fetch failed ("
-FEED_RESET = {"fetchedAt": None, "attemptedAt": None, "lastError": None, "rows": 0, "matched": 0, "inflight": False,
+FEED_RESET = {"fetchedAt": None, "attemptedAt": None, "lastError": None, "matched": 0, "inflight": 0, "flights": 0,
               "offSaid": False, "unrecognisedSaid": False, "overrideFileSaid": False, "overrideRowsSaid": frozenset()}
+#   the kernel's literal has exactly these keys (TheFeedDictIsWhatTheHarnessResets); `inflight` is the flight's token, 0 when none
 UNRECOGNISED_LINE = "price feed: ROMP_PRICE_FEED is set to "   # the head of the said-but-on line, up to the value's repr
 SERVED_DEFAULTS = "the cost view prices tokens from the built-in defaults"   # the lines' tail with nothing cached and no override
 FOREIGN_REFUSED = "the price feed harness refuses requests that are not the feed: "   # the recorder's URLError reason, then the url
 # the override file's two fault lines: the row's takes the row's key by repr (the kernel clips it to 40 characters)
-ROW_LINE = ("price feed: the row %s in model-prices.json could not be read (not an object, or a rate that is not a finite "
-            "number), so that row is skipped and the rest of the file applies")
+ROW_LINE = ("price feed: the row %s in model-prices.json could not be read (not an object, a rate that is not a number, or a "
+            "rate that is not finite), so that row is skipped and the rest of the file applies")
 FILE_LINE = "price feed: model-prices.json could not be read as a JSON object, so the file is ignored whole"
 
 
@@ -367,8 +373,13 @@ class OffSwitch(PriceFeedCase):
         # check (the first attempt, which always fetches, is the one that says it): the review of PR 878's contract
         self.assertIsInstance(body[1], ast.If)
         self.assertEqual(ast.unparse(body[1].test), "_price_feed_unrecognised()", "second: the value that is not off, said")
-        self.assertIsInstance(body[2], ast.If)
-        self.assertIn("PRICE_TTL", ast.unparse(body[2].test), "third: the TTL check")
+        # third: the gate, ONE transition under the lock (the TTL check, its stamp and the attempt's fields; round 2 of the
+        # review found the check and the stamp one statement above the lock, and two builds arriving together both passed)
+        self.assertIsInstance(body[2], ast.With, "third: the with block over the lock that holds the TTL check")
+        self.assertEqual([ast.unparse(i.context_expr) for i in body[2].items], ["_price_feed_lock"])
+        self.assertIsInstance(body[2].body[0], ast.If, "the TTL check is the lock block's first statement")
+        self.assertIn("PRICE_TTL", ast.unparse(body[2].body[0].test), "the TTL check")
+        self.assertIsInstance(body[2].body[0].body[0], ast.Return, "a fresh cache returns inside the lock: nothing stamped")
 
 
 class SayOnceLatches(PriceFeedCase):
@@ -440,6 +451,138 @@ class SayOnceLatches(PriceFeedCase):
         count, log = self._race("overrideRowsSaid", "off", ROW_LINE % "'note'", target=km._model_prices)
         self.assertEqual(count, 1, "one line per kernel life per row, whatever arrives together:\n" + log)
         self.assertEqual(km._price_feed["overrideRowsSaid"], frozenset({"note"}), "the latch holds the row's key")
+
+
+class _PerCallGate:
+    """What the recorder parks on when a case needs each fetch on its OWN event: the n-th caller of wait parks on the
+    n-th event (a caller beyond `n` on the last), and `entered[i]` says the i-th caller is inside the fetch. The
+    harness's `self.gate` is any object with wait(timeout)."""
+
+    def __init__(self, n):
+        self.events = [threading.Event() for _ in range(n)]
+        self.entered = [threading.Event() for _ in range(n)]
+        self._n, self._lock = 0, threading.Lock()
+
+    def wait(self, timeout):
+        with self._lock:
+            i = min(self._n, len(self.events) - 1)
+            self._n += 1
+        self.entered[i].set()
+        return self.events[i].wait(timeout)
+
+    def release_all(self):
+        for e in self.events:
+            e.set()
+
+
+class OneFlightPerWindow(PriceFeedCase):
+    """The TTL check (the read of `_price_cache["t"]`) and its stamp are a read-modify-write, and since round 2 of the
+    review of PR 878 they take _price_feed_lock with the attempt's fields (attemptedAt and the flight token) as ONE
+    transition, so exactly one caller per TTL window proceeds. Before it the check stood one statement above the
+    lock: two cost-view builds arriving together both read the stale stamp, both stamped and each started a worker,
+    two requests to the feed's host and two fetch lines inside one window, against the bound _refresh_remote_prices's
+    docstring states. Staged the way SayOnceLatches stages a latch, on the read of "t" instead: the first of two
+    attempt threads captures the stamp's value and parks; the park ends on an EVENT, the second thread's read of "t"
+    (both passed the check: the shape before the fix) or the second thread's ask for the lock the first holds (the
+    fixed shape, where the second cannot reach the read until the first is done), never a wall-clock second alone,
+    and the wait's return is asserted, so a park that ran out is a failure and not a pass. SayOnceLatches's not-off
+    race does not see the gate: its first thread holds the lock through the latch park, so the second blocks before
+    the check. The second pin is the token: the in-flight mark was a shared boolean the worker's finally cleared for
+    every flight, outside the lock, so the first of two flights to end cleared the mark of one still in the air; the
+    mark is the flight's own token now, cleared under the lock only while it is still that flight's."""
+
+    PREFIX = "price-feed-gate-"
+
+    def test_two_builds_arriving_together_start_one_request_and_write_one_line(self):
+        """Red over the 84b27dd39 archive (the check-then-stamp predates the PR; no lock and no fetch line exist there, so
+        the request count is the assertion that reds: 2 where 1 is expected) and over 3ddaf64d8 (2 requests, 2 lines);
+        green at the tree on CPython 3.12 and free-threaded 3.14. The lock shim installs only where the kernel has the
+        lock, so at the base the second read is the one release edge, the edge that fires there and at the head anyway."""
+        self.raise_with = urllib.error.URLError(ConnectionRefusedError(111, "Connection refused"))   # each fetch fails and says so
+        first_read, release, ended, asks = threading.Event(), threading.Event(), [], []
+        prefix = self.PREFIX
+
+        class Parked(dict):
+            def __getitem__(self, k):
+                v = dict.__getitem__(self, k)                      # captured BEFORE parking: the check's own value
+                if k == "t" and threading.current_thread().name.startswith(prefix):
+                    if not first_read.is_set():
+                        first_read.set()
+                        ended.append(release.wait(5))              # the second read, or the second ask for the lock
+                    else:
+                        release.set()
+                return v
+        real_cache = km._price_cache
+        km._price_cache = Parked(real_cache)
+        self.addCleanup(setattr, km, "_price_cache", real_cache)   # LIFO: restored before the harness refills the real dict
+        real_lock = getattr(km, "_price_feed_lock", None)          # absent at the base archive: the second read is the one edge
+
+        class Shim:
+            def __enter__(self):
+                if threading.current_thread().name.startswith(prefix):
+                    asks.append(1)
+                    if len(asks) >= 2:
+                        release.set()                              # the second attempt asks for the lock the first holds
+                return real_lock.__enter__()
+
+            def __exit__(self, *exc):
+                return real_lock.__exit__(*exc)
+        if real_lock is not None:
+            km._price_feed_lock = Shim()
+            self.addCleanup(setattr, km, "_price_feed_lock", real_lock)
+        threads = [threading.Thread(target=km._refresh_remote_prices, args=(NOW,), name=prefix + str(i)) for i in (1, 2)]
+        err = io.StringIO()
+        with redirect_stderr(err):
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(5)
+            self._join()
+        log = err.getvalue()
+        self.assertFalse(any(t.is_alive() for t in threads), "both attempts finished")
+        self.assertTrue(first_read.is_set(), "the gate saw the first read of the stamp")
+        self.assertEqual(ended, [True],
+                         "the park ended on its event (the second read, or the second ask for the lock), not by running out")
+        self.assertEqual(len(self.calls), 1,
+                         "two builds arriving together at a stale cache start ONE request; %d left" % len(self.calls))
+        self.assertEqual(log.count(FAIL_LINE), 1, "and one fetch line inside the window:\n" + log)
+        self.assertEqual(km._price_cache["t"], NOW, "stamped once, at the attempt")
+        st = km._price_feed_status(NOW)
+        self.assertEqual((st["reason"], st["attemptedAt"]), ("failed", NOW), "the one flight failed and said so")
+
+    def test_the_first_flight_to_end_leaves_a_later_flights_mark_standing(self):
+        """Two flights one TTL apart, both parked inside the fetch; the first is released and lands while the second is
+        still in the air. The mark then still says a flight is in the air (the second's token), and clears when the
+        second ends. Red over the 3ddaf64d8 archive at the first mark assertion (the finally cleared a shared boolean
+        for both). The field is the subject: on every surface a landed or failed result outranks a fetch in flight
+        (the reason chain in _price_feed_status), so the mark's truth shows there only for a kernel with no result yet."""
+        gates = _PerCallGate(2)
+        self.gate = gates                                          # the recorder parks each fetch on its own event
+        self.addCleanup(gates.release_all)
+        before = set(threading.enumerate())
+        with redirect_stderr(io.StringIO()):
+            km._refresh_remote_prices(NOW)                         # flight 1
+            first = [t for t in threading.enumerate() if t not in before and t.name == "price-refresh"]
+            self.assertEqual(len(first), 1, "flight 1 started one worker")
+            self.assertTrue(gates.entered[0].wait(5), "flight 1 is inside the fetch")
+            km._refresh_remote_prices(NOW + km.PRICE_TTL)          # flight 2: the TTL passed, a new attempt
+            second = [t for t in threading.enumerate() if t not in before and t.name == "price-refresh" and t not in first]
+            self.assertEqual(len(second), 1, "flight 2 started one worker")
+            self.assertTrue(gates.entered[1].wait(5), "flight 2 is inside the fetch")
+            self.assertEqual(len(self.calls), 2)
+            gates.events[0].set()                                  # flight 1 lands while flight 2 is still in the air
+            first[0].join(5)
+            self.assertFalse(first[0].is_alive(), "flight 1 ended")
+            mark_while_second_flies = km._price_feed["inflight"]
+            gates.events[1].set()
+            second[0].join(5)
+            self._join()
+        self.assertTrue(mark_while_second_flies, "flight 1 ended while flight 2 was in the air: the mark still says so (the "
+                        "second flight's token), not the cleared value flight 1's end used to leave for both")
+        self.assertFalse(km._price_feed["inflight"], "flight 2 ended: the mark is clear")
+        st = km._price_feed_status(NOW + km.PRICE_TTL)
+        self.assertEqual((st["source"], st["rows"], st["fetchedAt"]), ("feed", 1, NOW + km.PRICE_TTL),
+                         "both landed; the later one is the table")
 
 
 class GuardRoad(PriceFeedCase):
@@ -832,6 +975,25 @@ class LiveFeed(PriceFeedCase):
                       "for the rest, not a fixed phrase about the defaults alone")
         self.assertNotIn("from the built-in defaults\n", log, "the line never says the defaults serve the whole table here")
 
+    def test_an_age_of_thirty_days_is_said_in_days(self):
+        """The tail's age had three arms (s, min, h) and counted hours without end, so a month-old cache read `fetched
+        720 h ago` in the log where the modal's line, through the webview's one age helper, says 30 days ago; the day
+        arm at 24 h makes the two agree on the unit. Red over the 3ddaf64d8 archive at the text (720 h there)."""
+        self._analytics()                                          # a fetch landed while the feed was on
+        os.environ["ROMP_PRICE_FEED"] = "off"
+        km._ANALYTICS_MEMO.clear()
+        resp, log = self._analytics(now=NOW + 30 * 86400)
+        self.assertIn(OFF_LINE + "; the cost view prices tokens from the feed rows in memory for 1 of 6 models, fetched 30 d ago, "
+                      "and the built-in defaults for the rest\n", log, log)
+        self.assertNotIn(" h ago", log, "past 24 h the unit is days, as the modal's line has it")
+        self.assertEqual(resp["priceFeed"]["ageS"], 30 * 86400, "the block carries the seconds; the words are the line's")
+        err = io.StringIO()
+        with redirect_stderr(err):
+            km._price_feed_line(NOW + 86400, "price feed: probe")   # the boundary: 24 h is the first day
+            km._price_feed_line(NOW + 86399, "price feed: probe")   # a second short of it is still hours
+        self.assertIn("fetched 1 d ago", err.getvalue(), err.getvalue())
+        self.assertIn("fetched 23 h ago", err.getvalue(), err.getvalue())
+
     def test_an_override_row_is_counted_in_the_status_and_the_line(self):
         """The table's third layer: a row in PRICE_CONFIG (~/.config/romp/model-prices.json) wins over the feed and the
         defaults, and the reference tells a person with the feed off to keep a rate current there. A status that knew
@@ -1056,6 +1218,65 @@ class TheOverrideFileIsSaid(PriceFeedCase):
         self.assertEqual((pf["overrides"], pf.get("overrideRowsRejected")), (0, 1))
         self.assertEqual(log.count(ROW_LINE % "'claude-fable-5-1'"), 1, log)
 
+    def _rate_present_and_not_a_number(self, shape):
+        """Round 2 of the review: a rate whose key is PRESENT and whose value is not a JSON number (`shape` is the JSON text
+        of the value) is a rejected row like a non-object row or a non-finite rate, never a coerced one. Until then
+        `float(x or 0)` priced null, an empty string, a list, an object and false at 0.0 per token and true at 1.0 (a dollar
+        a token), and a numeric string parsed, while the block read a clean override and stderr said nothing. Asserted in
+        the order that names the red over the 84b27dd39 archive, where the coercion is the base's and no block, no fault
+        class and no line exist: the merged rate first (0.0, 1.0 or the string's number there, where the table's rate is
+        expected), then the block's class and count and the line, through .get so the archive reads None at them."""
+        km.PRICE_CONFIG.write_text('{"claude-fable-5-1": {"in": %s}}' % shape)
+        os.environ["ROMP_PRICE_FEED"] = "off"
+        resp, log = self._analytics()
+        prices = km._model_prices(NOW, refresh=False)
+        table = km.DEFAULT_MODEL_PRICES["claude-fable-5-1"]
+        self.assertEqual(prices["claude-fable-5-1"]["in"], table["in"],
+                         "a rate that is present and not a number is a rejected row: the table's rate stands, never a coerced one")
+        self.assertEqual(prices["claude-fable-5-1"], table, "the whole row is the table's")
+        pf = resp.get("priceFeed") or {}
+        self.assertEqual((pf.get("overrideFault"), pf.get("overrideRowsRejected"), pf.get("overrides")), ("row", 1, 0),
+                         "the block classes and counts it like any other unreadable row, and counts no override in effect")
+        self.assertEqual(log.count(ROW_LINE % "'claude-fable-5-1'"), 1, "and the row is named once on stderr:\n" + log)
+
+    def test_a_rate_that_is_null_is_a_rejected_row_never_a_zero_rate(self):
+        self._rate_present_and_not_a_number("null")
+
+    def test_a_rate_that_is_an_empty_string_is_a_rejected_row_never_a_zero_rate(self):
+        self._rate_present_and_not_a_number('""')
+
+    def test_a_rate_that_is_a_list_is_a_rejected_row_never_a_zero_rate(self):
+        self._rate_present_and_not_a_number("[]")
+
+    def test_a_rate_that_is_an_object_is_a_rejected_row_never_a_zero_rate(self):
+        self._rate_present_and_not_a_number("{}")
+
+    def test_a_rate_that_is_false_is_a_rejected_row_never_a_zero_rate(self):
+        self._rate_present_and_not_a_number("false")
+
+    def test_a_rate_that_is_true_is_a_rejected_row_never_a_dollar_a_token(self):
+        self._rate_present_and_not_a_number("true")
+
+    def test_a_rate_written_as_a_numeric_string_is_a_rejected_row_never_parsed(self):
+        """The rule says a JSON number: "0.5" is text, and text is not a rate (float("0.5") was accepted at both earlier heads)."""
+        self._rate_present_and_not_a_number('"0.5"')
+
+    def test_control_an_absent_rate_key_inherits_the_tables_rate_and_is_no_fault(self):
+        """The other side of the predicate: a rate whose KEY is absent takes the table's rate for an id the table names
+        (APartialOverrideRow pins the base resolution), the row is an override in effect, and nothing is classed, counted
+        or said. A GUARD, green at the tree and no red-before evidence for anything: over the 84b27dd39 archive it reds
+        for reasons that are not its subject (the base has no off switch, so the build fetches and the inherited rate is
+        the feed row's 1.1e-05, the table's rate there too; and the block's keys are absent)."""
+        km.PRICE_CONFIG.write_text(json.dumps({"claude-fable-5-1": {"out": 6e-05}}))
+        os.environ["ROMP_PRICE_FEED"] = "off"
+        resp, log = self._analytics()
+        prices = km._model_prices(NOW, refresh=False)
+        self.assertEqual((prices["claude-fable-5-1"]["in"], prices["claude-fable-5-1"]["out"]), (10e-6, 6e-05),
+                         "in inherited from the table, out the row's")
+        pf = resp.get("priceFeed") or {}
+        self.assertEqual((pf.get("overrideFault"), pf.get("overrideRowsRejected"), pf.get("overrides")), (None, 0, 1))
+        self.assertEqual(log.count("in model-prices.json could not be read"), 0, log)
+
     def test_a_file_that_is_not_a_json_object_is_ignored_whole_and_classed_file(self):
         km.PRICE_CONFIG.write_text("{not json")
         os.environ["ROMP_PRICE_FEED"] = "off"
@@ -1230,6 +1451,31 @@ class TheRecorderCountsTheFeedAlone(PriceFeedCase):
         km._ANALYTICS_MEMO.clear()                                 # the build under off memoized its payload for 15 s
         self._analytics(now=NOW + 1)                               # this build starts the case's first fetch (off stamped nothing)
         self.assertEqual(self.calls, [km.PRICE_FEED_URL], "the feed's own request in the same case still counts")
+
+
+class TheFeedDictIsWhatTheHarnessResets(unittest.TestCase):
+    """The keys of the kernel's `_price_feed` literal are FEED_RESET's keys, and `rows` is not among them: the field was
+    written under the lock by every landing and read by nothing (the block's `rows` is len(remote), computed in
+    _price_feed_status), while the dict's comment listed it among the fields the block reads (the review of PR 878,
+    round 2), and FEED_RESET listed the keys by hand with nothing holding the two sets equal, so a dead field could stay
+    and a new one could be missed by the reset. Text only over the kernel's source (an ast read of the module-level
+    assignment: frozenset() in the literal is no literal for literal_eval), the shape tests/test_price_feed_census.py
+    reads the file in; the live dict is checked beside it. Red over the 3ddaf64d8 archive at the `rows` assertion (the
+    literal carries it there); proven by mutation at the tree too: `"rows": 0` put back in the literal in a scratch copy
+    reds the same assertion, and a key added to the literal and not to FEED_RESET reds the set comparison."""
+
+    def test_the_literals_keys_are_the_resets_keys_and_rows_is_not_one(self):
+        src = pathlib.Path(inspect.getsourcefile(km._refresh_remote_prices)).read_text()
+        assigns = [n for n in ast.parse(src).body if isinstance(n, ast.Assign) and len(n.targets) == 1
+                   and isinstance(n.targets[0], ast.Name) and n.targets[0].id == "_price_feed"]
+        self.assertEqual(len(assigns), 1, "kernel/kernel.py assigns _price_feed once at module level")
+        self.assertIsInstance(assigns[0].value, ast.Dict, "and the value is a dict literal")
+        keys = [k.value for k in assigns[0].value.keys if isinstance(k, ast.Constant)]
+        self.assertEqual(len(keys), len(assigns[0].value.keys), "every key is a literal")
+        self.assertNotIn("rows", keys, "the dead field is gone: the block's rows is the cache's own length, len(remote)")
+        self.assertEqual(set(keys), set(FEED_RESET), "the harness resets exactly the fields the kernel keeps")
+        self.assertEqual(len(keys), len(set(keys)), "no key twice")
+        self.assertEqual(set(km._price_feed), set(FEED_RESET), "the live dict holds the same keys")
 
 
 if __name__ == "__main__":
