@@ -551,6 +551,8 @@ from unittest import mock
 from romp_load import load_source  # noqa: F401  a direct run's floor lands with this import (tests/romp_load.py)
 
 HERE = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, HERE)
+from ast_bindings import Bindings, module_statements  # noqa: E402  names resolved to their declarations by scope (tests/ast_bindings.py)
 ROOT = os.path.dirname(HERE)
 BIN = os.path.join(ROOT, "bin")
 # Hermetic state BEFORE any load: romp modules resolve their state root at import time, and only pytest runs
@@ -2985,24 +2987,9 @@ class TheProtectionIsWorded(unittest.TestCase):
         self._assert_worded(re.sub(r"\s+", " ", nested_run.__doc__), "nested_run's docstring", RUN_PROTECT_READS, RUN_PROTECT_VV)
 
 
-# the compound statements module_statements enters: an if, a try and, where the interpreter has it, a try with except*
-MODULE_GATES = (ast.If, ast.Try) + ((ast.TryStar,) if hasattr(ast, "TryStar") else ())
-
-
-def module_statements(tree):
-    """The statements a module defines at its own level: every statement of tree.body and, for an if or a try met among
-    them (MODULE_GATES: If, Try and, where the interpreter has it, TryStar), the statements of its body, its handlers'
-    bodies, its else and its finally, recursively and in source order, so a function or a constant bound under a
-    version gate or a guarded import is read as the module's. A def or a class met on the way is yielded and never
-    entered, so a method or a nested function is no candidate for the populations built on this (ast.walk would make
-    every one a candidate, and a nested helper passed the output a reader with no roster entry); a statement under
-    any other compound statement (with, for, while, match) is outside what this reads, and so is a binding under one,
-    which the derivations' docstrings state. `tree` is the module (a list of statements while recursing)."""
-    for node in tree.body if isinstance(tree, ast.AST) else tree:
-        yield node
-        if isinstance(node, MODULE_GATES):
-            yield from module_statements(list(node.body) + [s for h in getattr(node, "handlers", ()) for s in h.body]
-                                         + list(node.orelse) + list(getattr(node, "finalbody", ())))
+# module_statements, the statements a module defines at its own level (the top level and the bodies of a module-level if
+# or try), and the Bindings resolver the maps below key on live in tests/ast_bindings.py, one home for both censuses
+# (the hermetic-kernel census imports the same file).
 
 
 def reader_population(source=None):
@@ -3082,28 +3069,39 @@ def refusal_text_names(conftest_source=None, module_source=None):
     module-level if or try (module_statements; a binding under another compound statement is outside) whose value is
     a piece of a text the conftest renders for the refusal or for a link to it. Those texts are the string constants
     in the bodies of the two functions that render the refusal and the boundary verdict's clause (REFUSAL_RENDERERS,
-    read from the conftest's statements the same way, the constants they name bound the same way included, their
-    docstrings not) and, wherever in the conftest it sits, the text of a conditional
+    read from the conftest's statements the same way; a name read in their bodies resolves to its declarations by
+    scope, tests/ast_bindings.py, the renderer's own local first, else the conftest's module scope within the same
+    reach, and every declaration's text counts: a name bound in both arms of a version gate yields both texts, the
+    UNION, since a raise on a shape of the shared conftest would break unrelated conftest edits; their docstrings
+    not) and, wherever in the conftest it sits, the text of a conditional
     expression gated by a call to _sdk_refused, the gone report's link. A module constant is folded from literals and
-    the names it concatenates (REFUSED_FOUND is one text and REFUSED_OBJECT); a constant bound in another shape is no
-    text. A conftest in which no such text is found raises, and so does a module with no copy, so the population cannot
-    come back silently short of a name; a case class that references one of these names reads the refusal's line or a
+    the names it concatenates, each name resolved to every declaration of it at module scope within the same reach and
+    folded to every text those give (REFUSED_FOUND is one text and REFUSED_OBJECT; a constant bound in both arms of a
+    gate folds to both texts, the union again); a constant bound in another shape is no text. A conftest in which no
+    such text is found raises, and so does a module with no copy, so the population cannot come back silently short of
+    a name, and a version gate's dead arm never hides its live one (before 2026-09-21 both maps kept the LAST binding
+    of a name); a case class that references one of these names reads the refusal's line or a
     link clause, present or absent, and is on the conftest roster's population (case_population). Sources are the two
     files' when None; synthetic texts pin the derivation itself (TheCaseRostersNameEveryCase)."""
     if conftest_source is None:
         with open(os.path.join(HERE, "conftest.py")) as f:
             conftest_source = f.read()
     conftest = ast.parse(conftest_source)
-    constants = {n.targets[0].id: n.value.value for n in module_statements(conftest)
-                 if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name)
-                 and isinstance(n.value, ast.Constant) and isinstance(n.value.value, str)}
+    conftest_bindings = Bindings.of(conftest, statements=module_statements)
 
     def strings(node):
+        """Every str constant under `node`, and every text of every declaration a Name read under it resolves to, in the
+        scope the Name is read in (a renderer's own local first, else the conftest's module scope within
+        module_statements' reach): a name bound twice, under the arms of a version gate say, yields both texts, the
+        union, so the arm that runs is never the one dropped (a raise here would break unrelated conftest edits)."""
         for n in ast.walk(node):
             if isinstance(n, ast.Constant) and isinstance(n.value, str):
                 yield n.value
-            elif isinstance(n, ast.Name) and n.id in constants:
-                yield constants[n.id]
+            elif isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load):
+                declarations, _ = conftest_bindings.scope_of(n).resolve(n.id)
+                for d in declarations:
+                    if isinstance(d.value, ast.Constant) and isinstance(d.value.value, str):
+                        yield d.value.value
 
     texts = set()
     for node in module_statements(conftest):
@@ -3120,24 +3118,28 @@ def refusal_text_names(conftest_source=None, module_source=None):
         raise AssertionError("no refusal or link text found in the conftest (%s, or a conditional gated by "
                              "_sdk_refused): the derivation would key on nothing" % ", ".join(REFUSAL_RENDERERS))
     module = ast.parse(inspect.getsource(sys.modules[__name__]) if module_source is None else module_source)
-    folded = {}
+    module_bindings = Bindings.of(module, statements=module_statements)
 
-    def fold(value):
+    def fold(value, seen=()):
+        """The texts `value` can be: a str constant is one text; a Name is every text of every declaration it resolves to
+        from where it is read (the module scope within module_statements' reach; a name bound in both arms of a gate
+        folds to both, the union); a + of two is every pairwise concatenation; any other shape is no text."""
         if isinstance(value, ast.Constant) and isinstance(value.value, str):
-            return value.value
-        if isinstance(value, ast.Name):
-            return folded.get(value.id)
+            return [value.value]
+        if isinstance(value, ast.Name) and value.id not in seen:
+            declarations, _ = module_bindings.scope_of(value).resolve(value.id)
+            return [t for d in declarations if d.value is not None for t in fold(d.value, seen + (value.id,))]
         if isinstance(value, ast.BinOp) and isinstance(value.op, ast.Add):
-            left, right = fold(value.left), fold(value.right)
-            return None if left is None or right is None else left + right
-        return None
+            return [left + right for left in fold(value.left, seen) for right in fold(value.right, seen)]
+        return []
 
-    for node in module_statements(module):
-        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
-            value = fold(node.value)
-            if value:
-                folded[node.targets[0].id] = value
-    names = tuple(sorted(name for name, value in folded.items() if any(value in text for text in texts)))
+    folded = {}
+    for name, declarations in module_bindings.module.names.items():
+        found = [t for d in declarations if d.kind == "assign" and isinstance(d.node, ast.Assign) and len(d.node.targets) == 1
+                 and isinstance(d.node.targets[0], ast.Name) for t in fold(d.value)]
+        if found:
+            folded[name] = found
+    names = tuple(sorted(name for name, found in folded.items() if any(value in text for value in found for text in texts)))
     if not names:
         raise AssertionError("no constant of this module is a piece of a refusal or link text: the derivation would "
                              "read an empty population")
@@ -3163,7 +3165,13 @@ def case_population(source=None, names=None):
     silently short of a case. Returns (ids, refusal_readers, cases): every case id; the ids of the cases that
     reference, in the class body or in a module-defined base other than _NestedRun, one of `names` or a function
     defined as a statement of the module (module_statements) whose body references one of `names` or another such
-    function, transitively (the round-8 review found a module-level helper reading the refusal's line, called from a
+    function, transitively; a reference is a Name resolved, in the scope it is read in, by tests/ast_bindings.py to
+    the module's declaration: to the function's own def, keyed on that declaration and not on its spelling, or to a
+    module-scope binding of one of `names` (a name of `names` the module never binds is read as the module's, which
+    can only put a class on the roster's demanded side), so a method's or a nested function's local spelled like
+    either is no reference; two module-level defs of one name RAISE naming the name and both lines, as two classes
+    of one name do, since a reference to the name could be read for either (the roster class's third test plants
+    both, 2026-09-21) (the round-8 review found a module-level helper reading the refusal's line, called from a
     case, leaving the case off this set while the conftest's sentence claimed every case that reads the refusal
     through a named copy; a function reached through a method of _NestedRun alone is outside like _NestedRun's own
     references, and a helper the module does not define as a statement, an import or a lambda bound by assignment,
@@ -3184,15 +3192,41 @@ def case_population(source=None, names=None):
                              % sorted(n.name for n in defined if [d.name for d in defined].count(n.name) > 1))
     if "_NestedRun" not in classes:
         raise AssertionError("no _NestedRun class in the source: the derivation would read an empty population")
-    referenced = {n.name: {m.id for m in ast.walk(n) if isinstance(m, ast.Name)}
-                  for n in module_statements(tree) if isinstance(n, ast.FunctionDef)}
-    reaching = {f for f, refs in referenced.items() if refs & names}       # the module-level functions reading a name,
+    bindings = Bindings.of(tree)
+    stated = [n for n in module_statements(tree) if isinstance(n, ast.FunctionDef)]   # the functions defined as statements
+    by_name = {}
+    for f in stated:
+        by_name.setdefault(f.name, []).append(f)
+    twice = {name: fs for name, fs in by_name.items() if len(fs) > 1}
+    if twice:
+        raise AssertionError("two module-level functions share a name, so a reference to it would be read for one of them: %s"
+                             % "; ".join("%s at lines %s" % (name, ", ".join(str(f.lineno) for f in fs)) for name, fs in sorted(twice.items())))
+    functions = {id(f) for f in stated}
+
+    def references(node):
+        """(functions, texts) `node` references: the module-level function DECLARATIONS (by node identity) and the names
+        of `names` that a Name read under `node` resolves to, each resolved in the scope it is read in, so a method's or
+        a nested function's local spelled like either is no reference; a name of `names` the module never binds is read
+        as the module's (it can only put a class on the roster's demanded side)."""
+        found_functions, found_names = set(), set()
+        for n in ast.walk(node):
+            if not (isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)):
+                continue
+            declarations, where = bindings.scope_of(n).resolve(n.id)
+            if where is not None and where is not bindings.module:
+                continue
+            found_functions.update(id(d.node) for d in declarations if d.kind == "def" and id(d.node) in functions)
+            if n.id in names:
+                found_names.add(n.id)
+        return found_functions, found_names
+
+    referenced = {id(f): references(f) for f in stated}
+    reaching = {f for f, (_, texts) in referenced.items() if texts}        # the module-level functions reading a name,
     grew = True                                                           # directly or through another such function
     while grew:
-        more = {f for f, refs in referenced.items() if f not in reaching and refs & reaching}
+        more = {f for f, (funcs, _) in referenced.items() if f not in reaching and funcs & reaching}
         reaching |= more
         grew = bool(more)
-    keys = names | reaching
 
     def bases(name):                                    # the module-defined bases, transitively, nearest first
         found = []
@@ -3223,7 +3257,7 @@ def case_population(source=None, names=None):
                                  % (name, ast.unparse(value) if value is not None else "no binding"))
         cases[name] = value.id[len("SCRATCH_"):]
         ids.add(cases[name])
-        if keys & {n.id for c in chain for n in ast.walk(classes[c]) if isinstance(n, ast.Name)}:
+        if any(texts or funcs & reaching for funcs, texts in (references(classes[c]) for c in chain)):
             readers.add(cases[name])
     if not ids:
         raise AssertionError("no class derives from _NestedRun: the derivation would read an empty population")
@@ -3314,7 +3348,9 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
         self._assert_same("the conftest's roster of the refusal's cases (keyed on a reference, in the case class or a "
                           "module-defined base other than _NestedRun, to one of %s, this module's copies of the texts "
                           "the conftest renders for the refusal and its links, or to a module-level function whose "
-                          "body references one of them, directly or through other module-level functions)"
+                          "body references one of them, directly or through other module-level functions; a reference "
+                          "is a name resolved to its module-level declaration in the scope it is read in, so a local "
+                          "spelled like one is none)"
                           % ", ".join(names), readers, conftest_roster_ids(ratchet_comment_text()))
 
     def test_the_derivation_reads_the_classes_by_shape_and_the_rosters_by_their_openers(self):
@@ -3322,13 +3358,19 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
         to a refusal text in a base puts the subclass on the readers' side, and one in _NestedRun, the base every
         case shares, puts no case there; a reference to a module-level function that reads a text through a second
         module-level function puts the class there, while such a function referenced from _NestedRun alone, or from
-        no class, puts none; a class under a module-level conditional
+        no class, puts none; a method's local spelled like the reading function and one spelled like the name are no
+        references (the key is the binding, tests/ast_bindings.py, not the spelling); two module-level defs of one
+        name raise naming the name and both lines; a class under a module-level conditional
         is a case; a class outside _NestedRun's tree is no case; a SCRATCH bound in another shape raises, and so do
         two classes of one name; both roster readers accept joined openers and refuse a
         mis-shaped entry. The names are derived from the texts: a constant equal to a head the refusal renders, one
         that is a piece of the boundary's clause through a name the renderer uses, and one folded from a literal and
         a name into a piece of the gone report's link are the copies, and so is a constant bound under a module-level
-        if whose value is a piece a renderer reaches through a constant bound under a try; a piece of the gone report's
+        if whose value is a piece a renderer reaches through a constant bound under a try; a conftest constant bound in
+        BOTH arms of a version gate gives both texts, so the module's copy of either arm is derived (before 2026-09-21
+        the dead arm's text overwrote the live one's), a module constant bound in both arms is derived when either
+        text is a piece, and a constant folded through such a name folds to both concatenations (the same union, in
+        the fold's own Name arm); a piece of the gone report's
         own head, of a renderer's docstring, or of a text outside those sites is not; a conftest with no such text
         raises. The whole test runs with HERE pointed at a directory holding no conftest, so every call here passes
         its texts and a call that fell to a default read of the real files would red as a FileNotFoundError."""
@@ -3379,21 +3421,32 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
                 class Gated(_NestedRun, unittest.TestCase):
                     SCRATCH = SCRATCH_G
 
+            class Shadow(_NestedRun, unittest.TestCase):
+                SCRATCH = SCRATCH_SH
+
+                def test(self):
+                    reads = None
+                    SWAPPED = "a local spelled like the name"
+                    return reads, SWAPPED
+
             class Pin(unittest.TestCase):
                 SCRATCH = SCRATCH_A
             """)
         ids, readers, cases = case_population(synthetic, names=("SWAPPED",))
-        self.assertEqual((ids, readers), ({"S98", "S99", "Z", "G", "F"}, {"S98", "S99", "F"}),
+        self.assertEqual((ids, readers), ({"S98", "S99", "Z", "G", "F", "SH"}, {"S98", "S99", "F"}),
                          "(ids, readers): an id per class in _NestedRun's tree from its SCRATCH binding; a reader by a "
                          "reference, in the class or a module-defined base other than _NestedRun, to a name or to a "
                          "module-level function whose body references a name directly or through another (via reads "
                          "SWAPPED through reads; _NestedRun's helper's references to SWAPPED and to reads put no case "
-                         "among the readers, and unused, referenced by no class, puts none)")
-        self.assertEqual(cases, {"One": "S98", "Two": "S99", "Three": "S98", "Four": "Z", "Five": "F", "Gated": "G"},
+                         "among the readers, and unused, referenced by no class, puts none; Shadow's method locals spelled "
+                         "reads and SWAPPED resolve to the locals, not to the module's declarations, so it is no reader)")
+        self.assertEqual(cases, {"One": "S98", "Two": "S99", "Three": "S98", "Four": "Z", "Five": "F", "Gated": "G", "Shadow": "SH"},
                          "the class-to-id map (case_population over the synthetic module: each case's id from its own "
                          "SCRATCH binding, or its base's when it binds none; the class outside _NestedRun's tree absent)")
         with self.assertRaisesRegex(AssertionError, "two classes share a name.*'Four'"):
             case_population(synthetic + "\nclass Four(_NestedRun):\n    SCRATCH = SCRATCH_Z\n", names=())
+        with self.assertRaisesRegex(AssertionError, "two module-level functions share a name.*via at lines 4, "):
+            case_population(synthetic + "\nif sys.version_info >= (3, 0):\n    def via(case):\n        return 1\n", names=())
         with self.assertRaisesRegex(AssertionError, "Four binds its SCRATCH in a shape case_population does not read"):
             case_population(synthetic.replace("SCRATCH = SCRATCH_Z", "SCRATCH = SCRATCH_HEAD + 'x'"), names=())
         with self.assertRaisesRegex(AssertionError, "no _NestedRun class"):
@@ -3406,13 +3459,17 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
                 _TRIED = "and the value it held"
             except Exception:
                 pass
+            if sys.version_info >= (3, 0):
+                _GATED = "the live gated text"
+            else:
+                _GATED = "the dead gated text"
 
             def _sdk_swapped(start, before):
                 """Refuses the object the start read found, a docstring phrase."""
                 return "%s, because of a build over a directory since removed" % _HEAD
 
             def _sdk_found_refused(verdict, start, end):
-                return "%s. %s, %s" % (verdict, _CLAUSE, _TRIED)
+                return "%s. %s, %s %s" % (verdict, _CLAUSE, _TRIED, _GATED)
 
             def _sdk_inherited(start, before):
                 link = ("It is the object the first window refused. " if _sdk_refused(before.be) else "")
@@ -3427,13 +3484,24 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
             DOCSTRING = "a docstring phrase"
             ELSEWHERE = "a text no renderer uses"
             SPLIT = "since removed", "a tuple"
+            GATED_LIVE = "the live gated text"
+            GATED_DEAD = "the dead gated text"
             if sys.version_info >= (3, 0):
                 TRIED = "the value it held"
+                PART = "the value"
+            else:
+                TRIED = "an unrelated dead text"
+                PART = "unrelated"
+            FOLDED_TRIED = PART + " it held"
             ''')
-        self.assertEqual(refusal_text_names(conftest, module), ("HEAD", "LINK", "REFUSED", "TAIL", "TRIED"),
+        self.assertEqual(refusal_text_names(conftest, module),
+                         ("FOLDED_TRIED", "GATED_DEAD", "GATED_LIVE", "HEAD", "LINK", "PART", "REFUSED", "TAIL", "TRIED"),
                          "the module's copies of the refusal's texts (refusal_text_names over the synthetic pair: every "
                          "module constant whose value is a piece of a text the conftest renders for the refusal or for the "
-                         "link to it; a docstring, the gone report's own head, a tuple and a text no renderer uses are no "
+                         "link to it; a conftest constant bound in both arms of a gate gives both texts, a module constant "
+                         "bound in both arms is derived when either is a piece, and one folded through a name bound in both "
+                         "arms folds to both concatenations, the union at every step, keyed on every declaration a name "
+                         "resolves to; a docstring, the gone report's own head, a tuple and a text no renderer uses are no "
                          "piece)")
         with self.assertRaisesRegex(AssertionError, "no refusal or link text found in the conftest"):
             refusal_text_names("def _sdk_other():\n    return 'x'\n", module)
