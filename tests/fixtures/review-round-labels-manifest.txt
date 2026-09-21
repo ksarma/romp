@@ -60,6 +60,7 @@ line	kernel/kernel.py	                # [fork] pass 7 (the author's label, 2026-
 line	kernel/kernel.py	                _hint = str(act)   # the page's own hint, for the record below (pass 5, the reviewer's round-4 kernel-2)
 line	kernel/kernel.py	            "#pane-load-msg{display:none;max-width:22em;padding:0 1.5em;text-align:center;font:14px/1.45 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#ccc}"   # the failed-load message (review round 1): shown by body.pane-failed inside the media block
 line	kernel/kernel.py	            "<script>" + _LANDING_DESKTOP_PANES_JS + "</script>"   # the desktop's Waiting and Files promotion, its own element so a throw in the mobile script cannot strand a pane (review round 1, 2026-09-19)
+line	kernel/kernel.py	            #   THE MARGIN (pass 8, the author's label, 2026-09-21, taking the reviewer's round-6 finding extra8-2): at this head the wake ENDS
 line	kernel/kernel.py	            # (feed.ts), dispatched once per hold. A LATCH, not a one-shot (review round 3, fresh-2): the hold word sets
 line	kernel/kernel.py	            # (review round 1, 2026-09-19): empty and hidden until a pane's document fails to load (body.pane-failed), announced (role=alert);
 line	kernel/kernel.py	            # 2026-09-21, taking the reviewer's round-6 findings tests-2 and extra9-3): no road reaches the pop below with a record at this head. A

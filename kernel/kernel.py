@@ -76751,6 +76751,11 @@ class Handler(BaseHTTPRequestHandler):
             #   above releases the parked-reveal preference's record before this wake, so the push the wake starts reads the
             #   page's own word (_watched_tab) and never builds the parked preference once more. Its comment is one tag so the
             #   wake stays inside the tab-switch pin's 400-character window (tests/test_chat_fold.py, Wiring.test_a_tab_switch_wakes_the_pusher).
+            #   THE MARGIN (pass 8, the author's label, 2026-09-21, taking the reviewer's round-6 finding extra8-2): at this head the wake ENDS
+            #   20 characters inside the window (the anchor `msg.get("type") == "activeTab"` to the end of `_pusher_wake.set()` is 380 of the
+            #   400, by the pin's own method: src.index(anchor), then the wake's index in src[i:i + 400] plus the wake's 18 characters). Before
+            #   inserting anything between the anchor and the wake, re-measure by that method and keep the end under 400; a comment goes
+            #   here, after the wake, where it leaves the distance unchanged (this block did).
             if client.get("app") == "chat":
                 _relay_active_chat(client, msg.get("id"), msg.get("nonce"))   # …and the window's feed learns which session is focused (T347), the announcement number echoed (T416)
             return
