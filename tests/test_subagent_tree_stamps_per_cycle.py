@@ -45,7 +45,9 @@ the walk) is held for the cycle like a clean one, its pair and its stamps, and w
 (round 1 of #882: every case closed the window, so the hold had no executed pin and the opposite policy stayed green); a
 launch fold that did not read the file is folded once per read (the call-local
 hold) and again by the next read (not held for the cycle) while one that read it is held for the cycle, with the fault's
-producer driven for real (the reader's fail path, a raising fold, a readable file); a root gone mid-cycle whose entry stood
+producer driven for real (the reader's fail path, a raising fold, a readable file); the generation is read before each disk
+read, so an eviction landing inside the root's lstat, an own stat or a launch fold's resolution leaves that hold outdated
+and the next lookup validates, stats or folds it once more (D lstats, 1 stat, 1 fold) instead of serving it; a root gone mid-cycle whose entry stood
 moves the gen and records its own eviction, and a sibling tree the scope held is still served (the eviction is that root's,
 not the sibling's), while one with no entry moves nothing; the two pop paths, each found by a thread with no hold on the
 root while another thread's scope holds it (the tree removed, and the tree replaced by a regular file; round 1 of #882,
@@ -86,6 +88,7 @@ import json
 import os
 import shutil
 import stat
+import sys
 import tempfile
 import threading
 import time
@@ -848,6 +851,108 @@ class Guards(_World):
                              "the racy entry is unvouched across cycles, so the cross-cycle memo never hits on it, and the hold ended with "
                              "the scope, so the new cycle reads the disk (a hold that outlived the scope would serve the pair for 0)"
                              % (cost3,))
+
+    def test_an_eviction_landing_inside_the_roots_read_outdates_the_pair_so_the_next_read_validates_again(self):
+        """The generation is read BEFORE the disk read at each of the three hold sites (the pair's before the root's lstat,
+        here; the own stat's before its stat and the launch fold's before its file's resolution, the two cases below), so an
+        eviction that lands inside the read leaves the hold outdated and the next lookup validates, stats or folds once more
+        instead of serving an entry under a value that already counts the eviction: the safe side, one re-validation, as the
+        ledger and the docstrings state. Fires the own root's eviction (nobody alive owns it: _subagent_trees_forget) from
+        inside os.lstat of the root, the read's first call, so the read's walk re-inserts the root and the hold is under the
+        generation from before the eviction. Keys on the second read costing D lstats (a validation): a generation read after
+        the root's lstat counts the eviction and serves the pair (0)."""
+        root = str(self.sub)
+        self._open()
+        real_lstat, fired = os.lstat, [0]
+
+        def racing(p, *a, **k):
+            st = real_lstat(p, *a, **k)
+            if str(p) == root and not fired[0]:
+                fired[0] = 1
+                km._subagent_trees_forget([])              # the eviction, inside the read
+            return st
+        with mock.patch.object(os, "lstat", racing):
+            dirs1, _s1 = km._subagent_tree(root)
+        self.assertEqual((fired[0], len(dirs1)), (1, D), "premise: the eviction ran inside the read and the read answered the tree")
+        self.assertIn(root, km._SUBAGENT_TREES, "the read re-inserted the root (its walk, after the forget popped the entry)")
+        with self._spy() as sp:
+            dirs2, _s2 = km._subagent_tree(root)
+        self.assertEqual((sp.total()["dir_lstat"], len(dirs2)), (D, D),
+                         "(os.lstat on the tree's directories, directories) on the read after one whose generation was read before an "
+                         "eviction inside it: %r; keyed on (D = %d, D): the hold is outdated by that eviction, so this read validates again; "
+                         "a generation read after the root's lstat counts the eviction and serves the pair (0, D)"
+                         % ((sp.total()["dir_lstat"], len(dirs2)), D))
+        with self._spy() as sp:
+            km._subagent_tree(root)
+        self.assertEqual(sp.total()["dir_lstat"], 0, "held again, under a generation that counts the eviction: served")
+
+    def test_an_eviction_landing_inside_an_own_stat_outdates_the_stamp_so_it_is_re_taken(self):
+        """The own stat's site of the rule above: the eviction fires inside os.stat of the directory (no tree read this cycle,
+        so the stamp is an own stat, root None), and the next _dir_stamp re-takes it. Keys on 1 stat: a generation read after
+        the stat serves it (0)."""
+        sc = self._open()
+        target = self.dirs[3]
+        real_stat, fired = os.stat, [0]
+
+        def racing(p, *a, **k):
+            st = real_stat(p, *a, **k)
+            if str(p) == target and not fired[0]:
+                fired[0] = 1
+                km._subagent_trees_forget([])
+            return st
+        with mock.patch.object(os, "stat", racing):
+            r1 = km._dir_stamp(target)
+        self.assertEqual(fired[0], 1, "premise: the eviction ran inside the stat")
+        self.assertIsNotNone(r1[1])
+        self.assertIsNone(sc["stamps"][target][1], "premise: an own stat, root None")
+        with self._spy() as sp:
+            r2 = km._dir_stamp(target)
+        self.assertEqual(sp.total()["dir_stat"], 1,
+                         "os.stat for an own stamp on the read after one whose generation was read before an eviction inside the stat: %d; "
+                         "keyed on 1 (the hold is outdated, the stamp re-taken); a generation read after the stat serves it (0)"
+                         % sp.total()["dir_stat"])
+        self.assertEqual(r1, r2)
+        with self._spy() as sp:
+            km._dir_stamp(target)
+        self.assertEqual(sp.total()["dir_stat"], 0, "held again: served")
+
+    def test_an_eviction_landing_inside_a_launch_folds_resolution_outdates_the_fold_so_it_is_redone(self):
+        """The launch fold's site of the rule above: the own root leaves the memo inside the FIRST fold's resolution of its
+        file (_subagent_file called from _awaiting_nest's launches(); the sidecar reader's earlier call for the same agent is
+        not the one), so that fold is held under the generation from before the eviction and the other A - 1 under the one
+        after. Keys on the read's folds: one per agent plus that one fold redone at its next lookup in the same read (a later
+        agent's owner lookup consults it again and finds its hold outdated), A + 1; and on the next read folding nothing,
+        every hold now under a generation that counts the eviction. A generation read after the resolution counts the
+        eviction at once and never redoes the fold (A folds in the read)."""
+        self._open()
+        real_file, real_fold, fired, folded = km._subagent_file, km._agent_launch_ids, [], []
+        names = sorted("agent-%s.jsonl" % a for a in self.aids)
+
+        def racing(path, aid):
+            ap = real_file(path, aid)
+            if not fired and sys._getframe(1).f_code.co_name == "launches":
+                fired.append("agent-%s.jsonl" % aid)
+                km._subagent_trees_forget([])              # the own root leaves the memo inside the resolution
+            return ap
+
+        def counting(agent_path, *a, **k):
+            folded.append(os.path.basename(str(agent_path)))
+            return real_fold(agent_path, *a, **k)
+        with mock.patch.object(km, "_subagent_file", racing), mock.patch.object(km, "_agent_launch_ids", counting):
+            aw1 = km._session_awaiting(SID, self.path, True)
+        self.assertEqual(((aw1 or {}).get("count"), len(fired)), (A, 1),
+                         "premise: the read saw the A agents and the eviction fired inside one launches() resolution: %r" % (((aw1 or {}).get("count"), fired),))
+        self.assertEqual(sorted(folded), sorted(names + fired),
+                         "folds in the read whose first fold's resolution had the own root's eviction land inside it: %r; keyed on one fold "
+                         "per agent plus that fold, %r, redone at its next lookup in the same read (its generation was read before the "
+                         "eviction, so its hold is outdated once the eviction lands; the other A - 1 = %d were read after it and are held), "
+                         "A + 1 = %d folds; a generation read after the resolution counts the eviction at once and never redoes it (A = %d)"
+                         % (sorted(folded), fired, A - 1, A + 1, A))
+        del folded[:]
+        with mock.patch.object(km, "_agent_launch_ids", counting):
+            aw2 = km._session_awaiting(SID, self.path, True)
+        self.assertEqual(((aw2 or {}).get("count"), folded), (A, []),
+                         "the next read: every fold held under a generation that counts the eviction, served (0 folds): %r" % (folded,))
 
     def test_a_faulted_launch_fold_is_folded_once_per_call_and_not_held_across_calls(self):
         """Two lifetimes for a launch fold whose reader took its fail path (_awaiting_nest's `faulted`; round 1 of #882's extra9-2): the
