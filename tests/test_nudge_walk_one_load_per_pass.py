@@ -2747,7 +2747,7 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
     executed, by a trace of the door's code object and every code object nested in it, the set derived from co_consts (_line_trace
     over _nested_codes), the set checked by the coverage case against the defs nested in the door's statement lists both ways and, since
     the door holds no nested code object today, by execution over a stand-in with a def two levels down, a lambda and a generator
-    expression, the old singleton as the control; the coverage, the door's sites against the rows' sites plus
+    expression; the coverage, the door's sites against the rows' sites plus
     UNDRIVEN_SITES both ways and none in both; the keys ROADS expects against both rosters both ways; the rows against the class's
     method names both ways; per site, whether the statement list holding it hands the read to load_goals (_door_hands_off, the roster
     pin's predicate), each row's hand-off column against the count over its sites, and the no-hand-off sites of hand-off keys, the
@@ -2978,17 +2978,12 @@ class TheDoorBumpsAtMostOneSecondKeyPerCall(_WalkHarness):
                          "a trace of the derived set records exactly the lines the traces of its members record one at a time (the set is "
                          "the composition of the singletons): together %r, one at a time %r" % (sorted(together), sorted(set().union(*own.values()))))
         outer = own["stand_in"]
-        alone = {name: lines - outer for name, lines in own.items() if not name.startswith("<")}
-        self.assertEqual(sorted(name for name, lines in alone.items() if name != "stand_in" and not lines), [],
-                         "each def nested in the stand-in runs a line the stand-in's own frame never runs (the lines the singleton lost): "
-                         "none for %r" % sorted(name for name, lines in alone.items() if name != "stand_in" and not lines))
-        with _line_trace((stand_in.__code__,), set()) as control:
-            stand_in(1)
-        self.assertEqual(control, outer, "the control, the singleton the trace read until the round-7 fixes, records the stand-in's own "
-                                         "lines alone: %r against %r" % (sorted(control), sorted(outer)))
-        self.assertEqual(sorted(control & set().union(*(alone[n] for n in alone if n != "stand_in"))), [],
-                         "and none of the lines the nested defs alone run, so a bump on such a line was invisible to it: %r"
-                         % sorted(control & set().union(*(alone[n] for n in alone if n != "stand_in"))))
+        lost = {name: sorted(lines - outer) for name, lines in own.items() if not name.startswith("<") and name != "stand_in"}
+        self.assertEqual(sorted(name for name, lines in lost.items() if not lines), [],
+                         "each def nested in the stand-in ran, under a trace of its code object alone, a line the trace of the stand-in's "
+                         "code object alone never recorded (own[def] minus own[stand_in]: the lines the singleton the door witness read "
+                         "until the round-7 fixes never saw), per nested def %r; none for %r"
+                         % (lost, sorted(name for name, lines in lost.items() if not lines)))
 
     def test_the_miss_road_a_seeded_store_read_once_fills_and_publishes(self):
         self._seed(SID_C, stamped=False)
