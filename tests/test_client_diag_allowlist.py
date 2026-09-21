@@ -551,6 +551,73 @@ def fed_src():
     return open(os.path.join(os.path.dirname(HERE), "ui", "webview", "federation.ts"), encoding="utf-8").read()
 
 
+def _ts_code(src):
+    """TypeScript source with its comments blanked (a block comment to spaces, its line breaks kept; a line comment to its end,
+    a `//` inside a string or after a colon kept), so a writer named in prose is not a writer."""
+    src = re.sub(r"/\*.*?\*/", lambda m: re.sub(r"[^\n]", " ", m.group(0)), src, flags=re.S)
+    return re.sub(r"(^|[^:\"'`\\])//[^\n]*", r"\1", src)
+
+
+def _call_args(src, open_paren):
+    """The top-level arguments of the call whose `(` is at `open_paren`: parentheses, brackets and braces balanced, strings skipped."""
+    out, depth, quote, start, i = [], 0, "", open_paren + 1, open_paren
+    while i < len(src):
+        c = src[i]
+        if quote:
+            if c == "\\":
+                i += 1
+            elif c == quote:
+                quote = ""
+        elif c in "\"'`":
+            quote = c
+        elif c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+            if depth == 0:
+                last = src[start:i].strip()
+                if last:
+                    out.append(last)
+                return out
+        elif c == "," and depth == 1:
+            out.append(src[start:i].strip())
+            start = i + 1
+        i += 1
+    raise AssertionError("an unbalanced call at %d" % open_paren)
+
+
+def diag_road_sites():
+    """Every `this.diag(` call in federation.ts's CODE whose data carries a `road` key, as (the row kind, the road's value): the kind
+    a string literal's text, the value a string literal's text, and any other form named for what it is (a kind or a road that is
+    not a literal, a shorthand `road`, a data expression that is not an object literal and mentions a road), so it reds the census
+    until classified (the maintainer's round 6, extra8-1: the census had keyed on the spelling `this.diag("feedDelta-apply", {...
+    road: "<w>"` and could not see a road under another spelling or on another row kind)."""
+    src = _ts_code(fed_src())
+    out = set()
+    for m in re.finditer(r"this\.diag\(", src):
+        args = _call_args(src, m.end() - 1)
+        if len(args) < 2:
+            continue
+        kind_lit = re.fullmatch(r'"([\w-]+)"', args[0])
+        kind = kind_lit.group(1) if kind_lit else "a row kind that is not a string literal: %s" % args[0][:40]
+        data = args[1]
+        if not data.startswith("{"):
+            if re.search(r"\broad\b", data):
+                out.add((kind, "a data expression this reader cannot open: %s" % data[:40]))
+            continue
+        body = data[1:-1]
+        if re.search(r"(^|[,{\s])road\s*(?=[,}]|$)", body):
+            out.add((kind, "a shorthand road property, a variable"))
+            continue
+        rm = re.search(r"\broad\s*:\s*([^,}]+)", body)
+        if not rm:
+            continue
+        val = rm.group(1).strip()
+        lit = re.fullmatch(r'"([^"]*)"', val)
+        out.add((kind, lit.group(1) if lit else "a road that is not a string literal: %s" % val))
+    return out
+
+
 def federation_writer_tables():
     """The tables and literals federation.ts's hold, sendqueue and senddrop writers draw their fields from, read off the source:
     the KERNEL_SETTING set, the BOOKKEEPING map's keys, and the literal object of every senddrop and hold call site (its
@@ -1410,9 +1477,13 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         why_reason, msg_reason = CENSUS["federation"]["why"][1], CENSUS["federation"]["msgType"][1]
         for lit in ("quiet", "connecting", "local-down", "no-conn", "asked", "stopped"):
             self.assertIn(lit, why_reason, "the why reason names the writer literal %r" % lit)
-        # the apply-throw row's road word (the maintainer's round 5, refusals-2): two fixed words at two writers, derived from federation.ts and named by the reason
-        roads = sorted(set(re.findall(r'this\.diag\("feedDelta-apply", \{[^}]*\broad: "(\w+)"', fed_src())))
-        self.assertEqual(roads, ["local", "wire"], "the two writers of feedDelta-apply post the two road words")
+        # the apply-throw row's road word (the maintainer's round 5, refusals-2): two fixed words at two writers, derived from federation.ts's
+        # code by the PROPERTY (every diag call whose data carries a road key, the kind and the value each a literal or named for its form:
+        # the maintainer's round 6, extra8-1) and named by the reason
+        road_sites = diag_road_sites()
+        self.assertEqual(road_sites, {("feedDelta-apply", "wire"), ("feedDelta-apply", "local")},
+                         "the road key rides feedDelta-apply alone, a fixed word at each of its two writers; a road on another row kind, or one that is not a literal, is classified here or the reason is wrong: %r" % (sorted(road_sites),))
+        roads = sorted(v for _, v in road_sites)
         road_reason = CENSUS["federation"]["road"][1]
         for lit in roads:
             self.assertIn(lit, road_reason, "the road reason names the writer literal %r" % lit)

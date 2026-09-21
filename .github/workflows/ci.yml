@@ -263,6 +263,8 @@ jobs:
     # growing: PR 1790's run 35138058863 was cancelled at 25 min 04 s mid served-lab on a slow runner,
     # every step green up to the cut (2026-09-16). 40 min: the served step's 20-odd minutes on a slow
     # runner plus the 600 s per-test timeout plus setup.
+    # (fork, 2026-09-21: the runs above are the dates' own; the served step's figures read on 2026-09-21 are stated beside that
+    # step's comment below, against this cap, which is main's item and unchanged here.)
     timeout-minutes: 40
     defaults:
       run:
@@ -319,8 +321,10 @@ jobs:
         # wsBytesByHost review, tests-1: the gate had verified the keyboard road by two pins keyed on where a brace fell). The
         # bundle is the Test step's (npm test builds out-tests/ and npm run build leaves it), so nothing is rebuilt here;
         # ROMP_GEAR_BROWSER_REQUIRE turns the file's browser skip into a failure naming the reason, the pane bench's stance
-        # below, so a runner that lost its browser turns this red rather than green with the coverage gone. About 25 browser
-        # launches, 24 s on a 60-core box. tests/test_served_labs_under_ci.py pins the step's place and its run line.
+        # below, so a runner that lost its browser turns this red rather than green with the coverage gone. Its cost, three
+        # numbers together (the maintainer's round 6, extra7-1 and extra6-1): 30 s for this step on the runner, in a job of
+        # 31 min 32 s, under the 40-minute cap above (the Actions API, job 106182603399, 2026-09-21); the step's browser
+        # launches are counted by nothing and not stated. tests/test_served_labs_under_ci.py pins the step's place and its run line.
         env:
           ROMP_GEAR_BROWSER_REQUIRE: "1"
         run: node --test out-tests/ui/webview/gear-sub-focus-browser.test.js
@@ -371,7 +375,11 @@ jobs:
         # skips, no built dist or a kernel that never served, into failures under the switch, and its gen-key
         # skip alone stays a skip here); and ROMP_CORNER_TWO_HOSTS
         # runs the two-host lab (TwoHostsBytesByHost in the corners module), about a minute of three kernels
-        # and Chromium, whose knob keeps every other runner unchanged.
+        # and Chromium, whose knob keeps every other runner unchanged. The figure above (12 min 44 s) is 2026-09-14's; read
+        # from the Actions API on 2026-09-21, this step ran 26 min 47 s, 28 min 18 s and 29 min 50 s on main's three latest
+        # runs (5e5ee79ed, 68d043742 and 5b8df8f5c; the jobs 29 min 03 s, 31 min 07 s and 33 min 24 s) and 28 min 21 s on
+        # this branch (job 106182603399, the job 31 min 32 s), against the 40-minute cap above; the cap and the job's
+        # structure are main's item, unchanged here.
         working-directory: ${{ github.workspace }}
         env:
           ROMP_SERVED_TESTS_REQUIRE: "1"

@@ -1184,7 +1184,7 @@ test("the LOCAL road's twin: a local feedDelta whose apply throws is refused wit
   });
 });
 
-test("the LOCAL bound: after the local full landed a second throw stops the asking and tells the shell once, naming both ways out (the connection's reconnect, a page reload); further throws are silent; a later local full still shows (the cards refresh) and leaves the stop standing, since the shim's in-page redial is a dial this manager never sees; the local road implicates no peer (host local, road local) and touches no remote socket", async () => {
+test("the LOCAL bound: after the local full landed a second throw stops the asking and tells the shell once, naming both ways out (the connection's reconnect, a page reload); further throws are silent; a later local full still shows (the cards refresh) and leaves the stop standing, by choice (the shim's in-page redial announces itself to this manager, as the romp:wsup event and the in-band wsup frame, and resets nothing here); the local road implicates no peer (host local, road local) and touches no remote socket", async () => {
   await withManager(({ fm, emitted, sent, notified }) => {
     const ws = attached(fm);
     fm.inbound("", { type: "feed", now: 420, buildId: 9, asks: [card(SID_L, 1)], ledgers: [ledger(SID_L, "web")] });
@@ -1205,18 +1205,48 @@ test("the LOCAL bound: after the local full landed a second throw stops the aski
     fm.inbound("", { type: "feedDelta", now: 451, buildId: 13, asks: { not: "a list" } });
     assert.equal(sent.filter((x) => x && x.type === "needFullFeed").length, 1); assert.equal(applyRows(sent).length, 2); assert.equal(notifies(notified).length, 1);
     // a later LOCAL full (the redialed socket's, or a kernel restart's): it lands and shows, the cards refreshing as the message
-    // says, and the stop stands (a full is not progress; the manager sees no dial event for the local socket, so the page's life
-    // is the local bound's), so the next throw asks nothing and files nothing
+    // says, and the stop stands (a full is not progress, and the shim's reopen, which reaches this manager as the romp:wsup event
+    // and the in-band wsup frame, resets the local bound by no rule of this manager's: the page's life is the bound's, by choice),
+    // so the next throw asks nothing and files nothing
     fm.inbound("", { type: "feed", now: 460, buildId: 14, asks: [card(SID_L, 3)], ledgers: [ledger(SID_L, "web")] });
     assert.equal(feeds(emitted).length, before + 1, "the later local full shows: the feed arm stores and emits every full whatever the latch");
     assert.equal(last(feeds(emitted)).asks.find((a: any) => a.sid === SID_L).text, card(SID_L, 3).text, "and it is the full's content the cards now show");
-    assert.equal(fm.localFeedApply, "stopped", "the stop stands past the full (only an applying delta clears it; no dial resets the local bound)");
+    assert.equal(fm.localFeedApply, "stopped", "the stop stands past the full (only an applying delta clears it; the shim's reopen resets nothing, by choice)");
     fm.inbound("", { type: "feedDelta", now: 461, buildId: 15, asks: { not: "a list" } });
     assert.equal(sent.filter((x) => x && x.type === "needFullFeed").length, 1, "a throw after the later full asks nothing"); assert.equal(applyRows(sent).length, 2, "and files nothing"); assert.equal(notifies(notified).length, 1, "and tells nothing further");
+    // the shim's reopen as this manager sees it (the maintainer's round 6, extra11-1: the earlier text said the manager sees no dial
+    // for the local socket, and it does, twice: kernel.py's ws.onopen dispatches romp:wsup, which localUp() takes, and enqueues
+    // {type:"wsup"} as a frame, which lands here); by choice it resets nothing on the local road: the latch stands, no row, no
+    // notify, no throw, and the reset on that event, with the saidLocalDelta clearing it would need, is the maintainer's call
+    fm.inbound("", { type: "wsup" });
+    assert.equal(fm.localFeedApply, "stopped", "the in-band wsup frame leaves the local latch as it is (a reset there is unruled)");
+    assert.equal(applyRows(sent).length, 2, "and files nothing"); assert.equal(notifies(notified).length, 1, "and tells nothing");
     assert.deepEqual(ws.sent, [], "the remote socket carried nothing for any of it");
     assert.equal(fm.conns.get(HOST).feedApply, undefined, "and the remote conn's latch is untouched");
     fm.conns.get(HOST).closed = true;
   });
+});
+
+test("the local bound's stated reason is a choice, not a missing event: no copy says the manager sees no dial for the local socket, and federation.ts names the two events the shim's reopen sends it (the maintainer's round 6, extra11-1)", () => {
+  // kernel.py's shim, at ws.onopen after a redial: it dispatches the window event romp:wsup (localUp() takes it) and enqueues
+  // {type:"wsup"} as a frame the FIFO delivers to __rompFed.inbound, so the manager sees the reopen twice; the earlier text at
+  // four copies (federation.ts, docs/read-side.md, the ledger entry, this file) called the redial a dial the manager never sees,
+  // and the choice to leave the local bound on the page's life rested on that premise. The choice stands, stated as a choice.
+  const root = path.resolve(process.cwd(), "..");
+  const kernel = fs.readFileSync(path.join(root, "kernel", "kernel.py"), "utf8");
+  assert.match(kernel, /dispatchEvent\(new Event\("romp:wsup"\)\)/, "the rig: the shim dispatches romp:wsup at ws.onopen");
+  assert.match(kernel, /enqueue\(\{type:"wsup"\}\)/, "the rig: and enqueues the in-band wsup frame");
+  const copies: Record<string, string> = {
+    "federation.ts": fs.readFileSync(path.join(root, "ui", "webview", "federation.ts"), "utf8"),
+    "docs/read-side.md": fs.readFileSync(path.join(root, "docs", "read-side.md"), "utf8"),
+    "the ledger entry": fs.readFileSync(path.join(root, "upstream", "2026-09-19-relay-dial-page-caps-ws-bytes-by-host.md"), "utf8"),
+  };
+  for (const [name, text] of Object.entries(copies)) {
+    assert.doesNotMatch(text, /(a dial (this|the) manager never sees|sees no dial|no dial event)/, name + " states the premise the shim's own code refutes");
+  }
+  assert.match(copies["federation.ts"], /in-band \{type:"wsup"\} frame that reaches inbound\(\)/, "federation.ts names the event that exists and says the reset on it is unhandled by choice");
+  assert.match(copies["docs/read-side.md"], /by choice: the\s+shim redials the local socket in-page and announces the reopen/, "the docs state the choice");
+  assert.match(copies["the ledger entry"], /announces the reopen to the manager, which resets nothing on it/, "the ledger entry states the choice");
 });
 
 test("a remote feedDelta whose `top` is a string onto a held pair is refused like any apply throw (the author's fixer pass after the maintainer's round 5, refusal-5): the pair stands at (G, 1), the raw base is unchanged and carries no index keys, one bare ask, the row asked on the wire road; before the guard it applied and moved the pair to (G, 2) with '0', '1', '2' as the frame's keys", async () => {

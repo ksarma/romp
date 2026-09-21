@@ -313,7 +313,7 @@ test("one tooltip per settings row: the Account row's live status is NOT a secon
   assert.doesNotMatch(GEAR, /id=rs-pal-btn type=button title=/);
   assert.ok(GEAR.includes("aria-label='Pick the recency colormap'") && GEAR.includes("aria-label='Pick the session palette'"));
   assert.ok(GEAR_CSS.includes("#rsettings .rs-row.rs-picking .rs-sub { display: none; }"), "an open picker menu owns the row: its description stands down while the row wears rs-picking, which gear.js setListOpen toggles with the list's hidden (the maintainer's round 5 of the wsBytesByHost review, correctness-1: keyed on the list's id before; gear-sub-focus-browser.test.ts drives it)");
-  assert.match(GEAR, /function setListOpen\(list, open\) \{ if \(!list\) return; list\.hidden = !open; var row = list\.closest\('\.rs-row'\); if \(row\) row\.classList\.toggle\('rs-picking', !!open\); \}/, "the one writer of a list's open state");
+  assert.match(GEAR, /function setListOpen\(/, "setListOpen exists; that it is the ONE writer of a list's open state is held in gear-sub-focus-browser.test.ts, which pins its body verbatim, counts its six call sites and holds that no site writes a list's hidden directly (one home for the body pin: the maintainer's round 6, tests-7)");
   assert.ok(GEAR_CSS.includes("#rsettings .rs-row:has(.rs-mixed:hover) .rs-sub { display: none; }"), "the mixed mark's title stands alone");
 });
 

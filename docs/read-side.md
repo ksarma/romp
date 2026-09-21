@@ -188,8 +188,10 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   lands (a full lands and shows whatever the latch; an applying delta alone
   lifts the stop, so a throw after a quiet interval with no applying delta
   between is read as the same stall and asks nothing); the remote bound
-  resets with its socket, the local one with the page alone, since the shim
-  redials the local socket in-page and the manager sees no dial for it. A
+  resets with its socket, the local one with the page alone, by choice: the
+  shim redials the local socket in-page and announces the reopen to the
+  manager (a `romp:wsup` event and an in-band `wsup` frame), and a reset on
+  that reopen is left to the maintainer. A
   remote host's view-delta patches (the timeline's bars; the feed from a kernel
   too old to read the caps term) are reassembled per relay socket
   (`Conn.viewDeltas`) before the merge. A build that carries no `ledgers`

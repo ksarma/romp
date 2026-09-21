@@ -1039,9 +1039,13 @@ export class FederationManager {
   // conn, so its bound is the manager's, per document, the page's life): the same three states, moved by the local feedDelta arm
   // (a throw: asked, then stopped after the answering full; an apply: cleared) and the feed arm (a local full after the ask:
   // answered). Its reset is the page's life alone, by choice and not because the local socket's life is the page's (the author's
-  // fixer pass after the maintainer's round 5, refusal-3): the shim redials the local socket in-page after a drop (kernel.py's connect(), the
-  // reconnect=1 term), a dial this manager never sees, so unlike Conn.feedApply, which connect() resets per socket, nothing but
-  // an applying delta moves this latch off stopped; a redialed socket's full still lands and refreshes the cards (the feed arm
+  // fixer pass after the maintainer's round 5, refusal-3): the shim redials the local socket in-page after a drop (kernel.py's
+  // connect(), the reconnect=1 term) and announces the reopen to this manager twice, as the window event romp:wsup that localUp()
+  // takes and as the in-band {type:"wsup"} frame that reaches inbound(), so the event a per-socket reset would key on exists and is
+  // left unhandled on this road (the maintainer's round 6, extra11-1: the earlier comment called it a dial this manager never
+  // sees); a reset there would also have to clear saidLocalDelta, keyed per document and not per socket, or a second stall on a
+  // new socket files no row, and both are the maintainer's call. So unlike Conn.feedApply, which connect() resets per socket,
+  // nothing but an applying delta moves this latch off stopped; a redialed socket's full still lands and refreshes the cards (the feed arm
   // stores and emits every full whatever the latch), so a stopped stall costs one ask per page life, never a pane frozen past the
   // next full. saidLocalDelta latches the two rows the road files, one per word per document, as Conn.saidDelta does per conn
   // for the remote road.
