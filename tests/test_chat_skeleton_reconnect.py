@@ -23,6 +23,7 @@ import io
 import json
 import os
 import re
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -1160,6 +1161,90 @@ class SkeletonReconnect(unittest.TestCase):
             self.assertEqual(km._watched_tab(c2), S1)
         finally:
             km._PENDING_REVEAL.clear()
+
+    def test_12g_a_second_ready_re_bases_the_record_with_the_set_it_belongs_to(self):
+        # pass 8 (the author's label, 2026-09-21, taking the reviewer's round-6 finding kernel-2). `preferred` joined the family of
+        # per-renderer beliefs (echat, skeleton, skeletonOrder, reconnect) and had not joined the reset that clears them: on the
+        # second-ready re-base road (Handler._dispatch_ws runs _client_reset_chat_base on EVERY ready, readySeen or not) the stale
+        # record outlived its set, and _watched_tab demoted the page's own declared tab out of _push's active-first batch. By reading,
+        # no client of this tree posts a second ready on one socket (render.ts once at evaluation, the shim's re-post on a new socket
+        # alone, federation.ts once per remote socket, the extension's pipe once per up): the arm's own re-base branch is the road, and
+        # this drives it. Red before: the record stood through the reset and the build order was ['docs', 'web', 'tests'].
+        km._PENDING_REVEAL.clear()
+        row = {"state": "working", "since": 1781100000, "model": "", "effort": "", "mode": "", "backend": "sdk"}
+        km._live_map = lambda: {S2: dict(row), S1: dict(row)}
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertFalse(km._reveal_request(S2, "W1", via="ack", cols=1), "parked, one column declared")
+                c = self._client(active=S1, reconnect=True, wid="W1", col="")
+                km._clients.append(c)
+                km._push([c])
+            self.assertEqual(c.get("preferred"), S2, "test_12f's state: the record stands after the resolve")
+            del self.built[:]
+            c["_frames"].clear()
+            with contextlib.redirect_stderr(io.StringIO()):
+                km.Handler._dispatch_ws(_Self(lambda cl: km._push([cl], connect=True)), {"type": "ready", "proto": 2}, c)   # the re-base: the reset, then the connect push
+            self.assertEqual(self._names(self.built), ["web", "docs", "api", "tests"],
+                             "the re-based renderer's active-first batch is the page's declared tab (web), the transcript-less docs with it, "
+                             "then the rest in strip order; before the reset dropped the record, api (the stale record) was built first and "
+                             "web third: %r" % (self._names(self.built),))
+            self.assertNotIn("preferred", c, "the reset forgets the record with the set it belongs to")
+            self.assertEqual(km._watched_tab(c), S1, "the readers see the page's own declared tab again")
+            self.assertEqual(c["active"], S1, "the page's declaration was never overwritten")
+            # the family rule both ways: a DECLARED redial keeps its beliefs through a ready, the record among them (the reset's guard)
+            r = self._client(active=S1, redial=True, reconnect=True, skeleton={S3}, skeletonOrder=[S3], preferred=S2, echat={})
+            km._client_reset_chat_base(r)
+            self.assertEqual((r.get("preferred"), r.get("skeleton"), r.get("reconnect")), (S2, {S3}, True),
+                             "a declared redial keeps its state for _resolve_reconnect to fill, the record with it")
+        finally:
+            km._PENDING_REVEAL.clear()
+
+    def test_12h_the_resolve_pop_of_the_record_is_defensive_no_road_reaches_it_with_a_record(self):
+        # pass 8 (the author's label, 2026-09-21, taking the reviewer's round-6 findings tests-2 and extra9-3). The `c.pop("preferred", None)`
+        # in _resolve_reconnect's `act and not fresh` branch finds nothing on any road at this head, because a socket enters that branch
+        # at most once: `skeletonOnReady` alone re-arms `reconnect` on a live client (the reset, once, at the bundle's one ready), and
+        # the two other writers arm it at the handshake. Driven, each with a park the preference takes so a record is WRITTEN after the
+        # pop, then a second strip sender (_push_session_now) and a second push, neither of which may re-enter: road A (a redial), road B
+        # (a skeleton column: the pre-ready pop skips the branch under `fresh`, the ready-time re-arm enters once), road C (a redial of a
+        # skeleton column). The spy counts the branch's pops of `preferred` by caller and what each found. Red under a kernel whose
+        # resolve reads the flag without consuming it (every sender re-enters: two pops, the second finding the record).
+        class _PopSpy(dict):
+            def __init__(self, *a, **k):
+                super().__init__(*a, **k)
+                self.pops = []
+
+            def pop(self, key, *default):
+                if key == "preferred":
+                    self.pops.append((sys._getframe(1).f_code.co_name, dict.get(self, key)))
+                return dict.pop(self, key, *default)
+
+        row = {"state": "working", "since": 1781100000, "model": "", "effort": "", "mode": "", "backend": "sdk"}
+        km._live_map = lambda: {S2: dict(row), S1: dict(row)}
+        roads = [("A, a redial", dict(active=S1, reconnect=True, redial=True, wid="W1", col="")),
+                 ("B, a skeleton column", dict(active=S1, reconnect=True, skeletonOnReady=True, dietSkeleton=True, wid="W1", col="")),
+                 ("C, a redial of a skeleton column", dict(active=S1, reconnect=True, redial=True, dietSkeleton=True, wid="W1", col=""))]
+        for name, kw in roads:
+            with self.subTest(road=name):
+                del km._clients[:]
+                km._PENDING_REVEAL.clear()
+                km._built_chat.clear()
+                del self.built[:]
+                try:
+                    with contextlib.redirect_stderr(io.StringIO()):
+                        self.assertFalse(km._reveal_request(S2, "W1", via="ack", cols=1), "parked, one column declared")
+                        c = _PopSpy(self._client(**kw))
+                        km._clients.append(c)
+                        km._push([c])                                    # the first strip sender (road B: the pre-ready pop, under fresh)
+                        if kw.get("skeletonOnReady"):
+                            km.Handler._dispatch_ws(_Self(lambda cl: km._push([cl], connect=True)), {"type": "ready", "proto": 2}, c)   # the one ready: the reset re-arms, the connect push resolves
+                        km._push_session_now(S3)                         # a second strip sender: the flag is consumed, the branch is not re-entered
+                        km._push([c])                                    # and the pusher's next cycle
+                    resolve_pops = [(f, v) for f, v in c.pops if f == "_resolve_reconnect"]
+                    self.assertEqual(len(resolve_pops), 1, "the branch is entered once per socket on this road: %r" % (c.pops,))
+                    self.assertIsNone(resolve_pops[0][1], "the pop finds no record on this road: it is defensive: %r" % (c.pops,))
+                    self.assertEqual(c.get("preferred"), S2, "the record is written after the pop, once, and stands until a release")
+                finally:
+                    km._PENDING_REVEAL.clear()
 
 
 

@@ -61,17 +61,19 @@ line	kernel/kernel.py	            "#pane-load-msg{display:none;max-width:22em;pa
 line	kernel/kernel.py	            "<script>" + _LANDING_DESKTOP_PANES_JS + "</script>"   # the desktop's Waiting and Files promotion, its own element so a throw in the mobile script cannot strand a pane (review round 1, 2026-09-19)
 line	kernel/kernel.py	            # (feed.ts), dispatched once per hold. A LATCH, not a one-shot (review round 3, fresh-2): the hold word sets
 line	kernel/kernel.py	            # (review round 1, 2026-09-19): empty and hidden until a pane's document fails to load (body.pane-failed), announced (role=alert);
+line	kernel/kernel.py	            # 2026-09-21, taking the reviewer's round-6 findings tests-2 and extra9-3): no road reaches the pop below with a record at this head. A
 line	kernel/kernel.py	            # The cost when the seeded hint names a session this kernel cannot match (review round 4, 2026-09-19, regression-4): the notified
 line	kernel/kernel.py	            # [fork] pass 5, the author's label (2026-09-20, taking the reviewer's round-4 finding correctness-1: the regression pass 4b introduced by taking the reviewer's round-3 addendum). The preference is for the client
 line	kernel/kernel.py	            # [fork] pass 5, the author's label (2026-09-20, taking the reviewer's round-4 finding kernel-2): the preference is the one place the kernel overrides the page's own active
 line	kernel/kernel.py	            # [fork] pass 7 (the author's label, 2026-09-20, taking the reviewer's round-5 finding kernel-1): the pop of `preferred`
+line	kernel/kernel.py	            # [fork] pass 7 (the author's label, 2026-09-20, taking the reviewer's round-5 finding kernel-1); DEFENSIVE (pass 8, the author's label,
 line	kernel/kernel.py	            # [fork] review round 2 (2026-09-19, D3): while a pane's FIRST paint is held off screen (the feed on the phone,
 line	kernel/kernel.py	            # [fork] review round 3 (2026-09-19, fresh-1): a push notification's deep link names the session it is about (?push-reveal=<sid>,
 line	kernel/kernel.py	            # for (executed by the reviewer's round-4 refuter). Read off a lock-free copy of _clients, no _clients_lock under this slot lock (a new
 line	kernel/kernel.py	            # its third the retry button, hidden until the failed paint shows it (review round 3, ui-1: a keyboard-reachable, named control)
 line	kernel/kernel.py	            # the FAILED state (review round 1, 2026-09-19): the same element stays up over a pane whose document did not load, the
 line	kernel/kernel.py	            # the retry button (review round 3, ui-1): a real button, shown by the failed paint alone (paintLoading drops its `hidden`), in the
-line	kernel/kernel.py	            c.pop("preferred", None)   # [fork] pass 7 (the author's label, 2026-09-20, taking the reviewer's round-5 finding kernel-1): a record from an earlier resolve of this socket stands only while it is this resolve's
+line	kernel/kernel.py	            client.pop("preferred", None)   # [fork] pass 8 (the author's label, 2026-09-21, taking the reviewer's round-6 finding kernel-2): the parked-reveal
 line	kernel/kernel.py	        # [fork] pass 4b, the author's label (2026-09-20, taking the reviewer's round-3 addendum: fresh-1 / regression-4, the round-3 fixlist's extra9-1): a reveal PARKED for this client's
 line	kernel/kernel.py	        _hint = None   # the page's hint the preference below replaced, when it did (pass 5, the author's label, taking the reviewer's round-4 finding kernel-2: the record)
 line	kernel/kernel.py	    """[fork] The lazy panes' proof of a 200 (review round 4 of the lazy panes, 2026-09-19, kernel-1): every text/html 200 this kernel
@@ -142,6 +144,8 @@ line	tests/test_chat_skeleton_reconnect.py	            # THE SPLIT (pass 5, the 
 line	tests/test_chat_skeleton_reconnect.py	            # pass 5, the author's label, taking the reviewer's round-4 finding kernel-2: the one place the kernel overrides the page's hint files a record, printed once the set is built
 line	tests/test_chat_skeleton_reconnect.py	            self.assertNotIn("preferred at the set's resolve", gone_trail.getvalue(), "not applied, so no record claims it (pass 5, the reviewer's round-4 kernel-2)")
 line	tests/test_chat_skeleton_reconnect.py	        # pass 7 (the author's label, 2026-09-20, taking the reviewer's round-5 finding kernel-1). The preference reassigned only the
+line	tests/test_chat_skeleton_reconnect.py	        # pass 8 (the author's label, 2026-09-21, taking the reviewer's round-6 finding kernel-2). `preferred` joined the family of
+line	tests/test_chat_skeleton_reconnect.py	        # pass 8 (the author's label, 2026-09-21, taking the reviewer's round-6 findings tests-2 and extra9-3). The `c.pop("preferred", None)`
 line	tests/test_chat_skeleton_reconnect.py	    # ── pass 4b, the author's label (2026-09-20, taking the reviewer's round-3 addendum: fresh-1 / regression-4, the round-3 fixlist's extra9-1) ──
 line	tests/test_chat_skeleton_reconnect.py	# the record the parked-reveal preference files when it applies (pass 5, the author's label, taking the reviewer's round-4 finding kernel-2): the session served whole, the page's hint, its fate
 line	tests/test_client_diag_allowlist.py	                ("pane-load-unmarked", {"pane": "waiting", "via": "load"}),   # review round 3 (2026-09-19, family two; a 200 alone since pass 4, the kernel's stamp): a 200 the kernel served at the pane's url with no pane shim, shown as served and said

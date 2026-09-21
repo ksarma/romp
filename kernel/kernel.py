@@ -54987,6 +54987,14 @@ def _client_reset_chat_base(client):
         # the accept-time comment in _ws states the rationale in full).
         if not client.get("redial"):
             client.pop("skeleton", None); client.pop("skeletonOrder", None); client.pop("reconnect", None)
+            client.pop("preferred", None)   # [fork] pass 8 (the author's label, 2026-09-21, taking the reviewer's round-6 finding kernel-2): the parked-reveal
+            #   preference's record (`preferred`, _resolve_reconnect) is a belief about this set, so it leaves with the set. The road that reaches
+            #   this line with a record standing is the ready arm's re-base: a second ready on a socket whose connect push already resolved and
+            #   recorded (Handler._dispatch_ws runs this reset on every ready, readySeen or not). Before this line the record outlived its set and
+            #   _watched_tab demoted the page's own declared tab out of _push's active-first batch. By reading, no client of this tree posts a
+            #   second ready on one socket (render.ts posts once at evaluation, the shim re-posts on a new socket alone, federation.ts once per
+            #   remote socket, the extension's pipe once per up), so the arm's own re-base branch is the road; driven by
+            #   tests/test_chat_skeleton_reconnect.py test_12g. A declared redial keeps its record with its set, as the guard above says.
         # A SKELETON client (a later chat column, ?skeleton=1 at its handshake, 2026-09-11): the pop above took the
         # `reconnect` the handshake armed, with the set a pre-ready pusher cycle may have built into a document that
         # could not hear it. Re-armed HERE, from the survivor, so the ready arm's connect push serves the page the same
@@ -55355,7 +55363,16 @@ def _resolve_reconnect(c, chat_list):
             _col = str(c.get("col") or "")
             _cols = {str(x.get("col") or "") for x in list(_clients) if x.get("app") == "chat" and str(x.get("wid") or "") == _pk}
             _cols.add(_col)
-            c.pop("preferred", None)   # [fork] pass 7 (the author's label, 2026-09-20, taking the reviewer's round-5 finding kernel-1): a record from an earlier resolve of this socket stands only while it is this resolve's
+            # [fork] pass 7 (the author's label, 2026-09-20, taking the reviewer's round-5 finding kernel-1); DEFENSIVE (pass 8, the author's label,
+            # 2026-09-21, taking the reviewer's round-6 findings tests-2 and extra9-3): no road reaches the pop below with a record at this head. A
+            # socket enters this branch at most once: `skeletonOnReady` alone re-arms `reconnect` on a live client (the ready arm's reset, once, at
+            # the bundle's one ready), and the two other writers arm it at the handshake; so a redial enters once (its first strip sender's pop,
+            # fresh False), a skeleton column enters once (the pre-ready pop skips the branch under `fresh`, the ready-time re-arm's pop enters), and
+            # a redial of a skeleton column enters once. The record's releases today are the page's activeTab (Handler._dispatch_ws) and the ready
+            # arm's reset (_client_reset_chat_base). Kept against a future writer that re-arms `reconnect` on a live client past the fresh guard,
+            # so a second resolve of one socket never carries the first's record into its set; the premise is pinned by
+            # tests/test_chat_skeleton_reconnect.py test_12h (the three roads driven, the branch entered once each, the pop finding nothing).
+            c.pop("preferred", None)   # [fork] pass 7 (kernel-1), defensive since pass 8 (the block above)
             if _ps and (_pc is None or _pc == 1) and len(_cols) <= 1 and _ps != str(act) and any(s.get("sid") == _ps for s in chat_list):
                 _hint = str(act)   # the page's own hint, for the record below (pass 5, the reviewer's round-4 kernel-2)
                 act = _ps
@@ -55364,7 +55381,8 @@ def _resolve_reconnect(c, chat_list):
                 # the local `act` alone, so those readers still named the page's stale hint: on the boot road the hint, a skeleton on every
                 # connected page, was ranked first and handed a cold full build the gate would otherwise have skipped, and the notified session's
                 # full was built after it. `active` is left as the page's own declaration (the client-diag skeleton row, _watched_sids and the
-                # live-wake exemption read it); the page's next activeTab drops this record (Handler._dispatch_ws).
+                # live-wake exemption read it); the page's next activeTab drops this record (Handler._dispatch_ws), and so does the ready
+                # arm's reset (_client_reset_chat_base, pass 8: the record is a belief about the set and leaves with it).
                 c["preferred"] = _ps
         held = c.get("echat") or {}
         if not act:
@@ -55402,7 +55420,7 @@ def _watched_tab(c):
     """The chat tab a client will show once its set resolves, for _push's active-first order and the cold-tab gate: the
     session the parked-reveal preference served whole in place of the page's hint (`preferred`, written by
     _resolve_reconnect under the slot lock when the preference applies and dropped by the page's next activeTab, which is
-    the page's own word), else the page's own declaration (`active`). `active` itself is never overwritten: the client-diag
+    the page's own word, and by the ready arm's reset, with the set it belongs to), else the page's own declaration (`active`). `active` itself is never overwritten: the client-diag
     skeleton row, _watched_sids and the live-wake exemption read it as the page's declaration. [fork] pass 7 (the author's label, 2026-09-20, taking the reviewer's round-5 finding kernel-1): before this the
     preference reassigned only the local `act`, so on the boot road the stale hint stayed in _push's active set, was ranked first
     and handed a cold full build the gate would have skipped (every connected page holds it as a skeleton, and its live row
