@@ -68,6 +68,7 @@ class FakeEl {
     hideEdges(this);
   }
   get className(): string { return this.cls.join(" "); }
+  set className(s: string) { this.cls = s ? String(s).split(/\s+/).filter(Boolean) : []; }   // a className write lands on the list classList and the selectors read (the closing pass over the author's fixer pass: with a getter alone a remover spelled as a className rewrite was inert here, so the hover pins saw classList mutations only)
   get classList() {
     const c = this.cls;
     return { add: (...xs: string[]) => { for (const x of xs) if (!c.includes(x)) c.push(x); }, contains: (x: string) => c.includes(x),

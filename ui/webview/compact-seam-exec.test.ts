@@ -225,14 +225,20 @@ test("render.ts: one owner per hover class. The tail paint (both paths and the t
   // its remover named, so the ownership is a fact of the tree and not of a comment. The census parses render.ts and every module it reaches
   // through relative imports (the webview's bundle from this entry) and keys on the PROPERTY: a class mutation (classList.add/remove/toggle/
   // replace, a className write, setAttribute("class")) whose class argument RESOLVES to an owned class sits inside its owner, whatever the
-  // spelling and whatever the file. Resolution: a string literal, a substitution-free template, a template or `+` concatenation of resolvable
-  // parts, a conditional's two arms, an identifier bound to a string constant in an enclosing block or at module level. The pass-4 census
-  // counted the literal `classList.remove("ext-glow")` over render.ts alone, so a `classList.toggle("ext-glow", false)`, a remover through an
-  // alias of the class name and a remover in another module all passed it (the mutations note, R4-M32 and its variants). Second axis: every
-  // string literal naming an owned class as a token, by (module, owner), a closed multiset, so a literal handed to a helper that mutates by
-  // parameter, or a new selector on the class, is enumerated here or reds. Outside the census: a mutator whose class comes from a parameter
-  // or a computed value with no literal at its site (41 such mutators are reached at this head; none is handed an owned class by any literal
-  // the second axis sees, and a caller passing the class through a variable shows up as its module's literal).
+  // spelling and whatever the file. Resolution: a string literal, a substitution-free template, a regular-expression literal (its source read
+  // as the class tokens it names, escapes stripped), a template or `+` concatenation of resolvable parts, a conditional's two arms, an
+  // identifier bound to a string or regular-expression constant in an enclosing block or at module level; a className write is read whole
+  // and, when its right side is built by `.replace` or `.replaceAll`, through that call's pattern and replacement, so a rewrite that strips
+  // the class by a regular expression is a remover naming it (the closing pass over the author's fixer pass: `className =
+  // className.replace(/\bext-glow\b/, "")` planted in sizeSpacers and in evictCompactTop passed both axes, the right side resolving to nothing
+  // and the regular expression being no literal to the second axis). The pass-4 census counted the literal `classList.remove("ext-glow")`
+  // over render.ts alone, so a `classList.toggle("ext-glow", false)`, a remover through an alias of the class name and a remover in another
+  // module all passed it (the mutations note, R4-M32 and its variants). Second axis: every string, template or regular-expression literal
+  // naming an owned class as a token, by (module, owner), a closed multiset, so a literal handed to a helper that mutates by parameter, or a
+  // new selector on the class, is enumerated here or reds. Outside the census: a mutator whose class comes from a parameter or a computed
+  // value with no literal at its site (41 such mutators are reached at this head; none is handed an owned class by any literal the second
+  // axis sees, and a caller passing the class through a variable shows up as its module's literal), and a className write that names no
+  // class at all (a wipe to "", a list rebuilt from a computed value), which takes every class off a node it does not own.
   const dir = path.resolve(process.cwd(), "..", "ui", "webview");
   const files = new Map<string, ts.SourceFile>();
   const load = (rel: string): void => {
@@ -264,16 +270,23 @@ test("render.ts: one owner per hover class. The tail paint (both paths and the t
       return null;
     };
     const ownerOf = (n: ts.Node): string => { for (let q: ts.Node | undefined = n.parent; q; q = q.parent) { if (ts.isFunctionLike(q)) { const nm = nameOf(q); if (nm) return nm; } } return "<module>"; };
-    const constOf = (id: ts.Identifier): string | null => {   // `const <id> = "<literal>"` in the nearest enclosing block that declares it, else the module's
+    // a regular expression's source as the class tokens it names: the slashes and flags off, escaped punctuation kept (`\-` is a hyphen in a
+    // class name), the class escapes (`\b`, `\s`, `\S` and the rest) read as separators, so `/\bext-glow\b/` names ext-glow
+    const regexClasses = (src: string): string => src.replace(/^\/([\s\S]*)\/[a-z]*$/, "$1").replace(/\\([^A-Za-z0-9])/g, "$1").replace(/\\[A-Za-z]/g, " ");
+    const constOf = (id: ts.Identifier): string | null => {   // `const <id> = "<literal>"` or `= /<pattern>/` in the nearest enclosing block that declares it, else the module's
       for (let q: ts.Node | undefined = id.parent; q; q = q.parent) {
         if (!ts.isBlock(q) && !ts.isSourceFile(q)) continue;
-        for (const st of q.statements) if (ts.isVariableStatement(st)) for (const d of st.declarationList.declarations) if (ts.isIdentifier(d.name) && d.name.text === id.text && d.initializer && (ts.isStringLiteral(d.initializer) || ts.isNoSubstitutionTemplateLiteral(d.initializer))) return d.initializer.text;
+        for (const st of q.statements) if (ts.isVariableStatement(st)) for (const d of st.declarationList.declarations) if (ts.isIdentifier(d.name) && d.name.text === id.text && d.initializer) {
+          if (ts.isStringLiteral(d.initializer) || ts.isNoSubstitutionTemplateLiteral(d.initializer)) return d.initializer.text;
+          if (ts.isRegularExpressionLiteral(d.initializer)) return regexClasses(d.initializer.text);
+        }
       }
       return null;
     };
     const resolve = (e: ts.Expression | undefined): string | null => {   // null: the class is not a constant of the source
       if (!e) return "";
       if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) return e.text;
+      if (ts.isRegularExpressionLiteral(e)) return regexClasses(e.text);
       if (ts.isIdentifier(e)) return constOf(e);
       if (ts.isTemplateExpression(e)) { let t = e.head.text; for (const sp of e.templateSpans) { const r = resolve(sp.expression); if (r == null) return null; t += r + sp.literal.text; } return t; }
       if (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.PlusToken) { const a = resolve(e.left), b = resolve(e.right); return a == null || b == null ? null : a + b; }
@@ -284,8 +297,11 @@ test("render.ts: one owner per hover class. The tail paint (both paths and the t
     const record = (n: ts.Node, method: string, args: readonly ts.Expression[]): void => {
       const owner = ownerOf(n);
       if ((owner === "syncViewInner" || owner === "trimUnitsFrom") && REMOVERS.has(method)) tailPaint.push(rel + ":" + owner + ":" + method);
-      for (const a of args) { const r = resolve(a); if (r != null && namesOwned(r)) mutations.push(rel + ":" + owner + ":" + method + ":" + r); }
+      for (const a of args) { const r = resolve(a); if (r != null && namesOwned(r)) mutations.push(rel + ":" + owner + ":" + method + ":" + r.trim()); }
     };
+    // a className write's class arguments: the right side whole and, when it is built by a `.replace` or `.replaceAll` chain (a rewrite that
+    // strips or swaps a class), each call's pattern and replacement
+    const classWriteArgs = (e: ts.Expression): ts.Expression[] => { const out: ts.Expression[] = [e]; for (let x: ts.Expression = e; ts.isCallExpression(x) && ts.isPropertyAccessExpression(x.expression); x = x.expression.expression) if (x.expression.name.text === "replace" || x.expression.name.text === "replaceAll") out.push(...x.arguments); return out; };
     const visit = (n: ts.Node): void => {
       if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression)) {
         const m = n.expression.name.text, obj = n.expression.expression;
@@ -293,8 +309,9 @@ test("render.ts: one owner per hover class. The tail paint (both paths and the t
         if (m === "setAttribute" && n.arguments[0] && ts.isStringLiteral(n.arguments[0]) && n.arguments[0].text === "class") record(n, "setAttribute(class)", n.arguments.slice(1));
       }
       if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "clearRailRings") ringCalls.push(rel + ":" + ownerOf(n) + "(" + n.arguments.map((a) => a.getText(sf)).join(", ") + ")");
-      if (ts.isBinaryExpression(n) && (n.operatorToken.kind === ts.SyntaxKind.EqualsToken || n.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken) && ts.isPropertyAccessExpression(n.left) && n.left.name.text === "className") record(n, "className=", [n.right]);
+      if (ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && n.operatorToken.kind <= ts.SyntaxKind.LastAssignment && ts.isPropertyAccessExpression(n.left) && n.left.name.text === "className") record(n, "className=", classWriteArgs(n.right));
       if ((ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateHead(n) || ts.isTemplateMiddle(n) || ts.isTemplateTail(n)) && namesOwned(n.text)) literals.push(rel + ":" + ownerOf(n) + ":" + JSON.stringify(n.text));
+      if (ts.isRegularExpressionLiteral(n) && namesOwned(regexClasses(n.text))) literals.push(rel + ":" + ownerOf(n) + ":" + n.text);
       if (ts.isIdentifier(n) && n.text === "clearHoverMarks") clearHoverMarks++;
       ts.forEachChild(n, visit);
     };
@@ -305,13 +322,13 @@ test("render.ts: one owner per hover class. The tail paint (both paths and the t
     "render.ts:applyGlow:classList.remove:ext-glow",                                            // the one remover of the glow: document-wide, at the start of every application
     "render.ts:clearRailRings:classList.remove:rail-ring",                                      // the one remover of the rings: on the host it is given, the document by default
     "render.ts:drawRailBand:classList.add:rail-ring",                                           // the one adder of the rings
-  ].sort(), "every class mutation in the bundle that resolves to a hover class, by module, owner and method: one adder and one remover per class, each inside its owner; a second remover in any spelling, through an alias of the class name or in another module reds");
+  ].sort(), "every class mutation in the bundle that resolves to a hover class, by module, owner and method: one adder and one remover per class, each inside its owner; a second remover in any spelling, through an alias of the class name, in another module, or as a className rewrite through a regular expression reds");
   assert.deepEqual(literals.sort(), [
     'render.ts:applyGlow:".ext-glow"', 'render.ts:applyGlow:"ext-glow"', 'render.ts:applyGlow:"ext-glow"', 'render.ts:applyGlow:"ext-glow"',   // the remover's selector and the three mutations
     'render.ts:clearRailRings:".dot.rail-ring"', 'render.ts:clearRailRings:"rail-ring"',                                                    // the remover's selector and the mutation
     'render.ts:drawRailBand:"rail-ring"',                                                                                                 // the adder
     'render.ts:paintGlowRuler:".turn.ext-glow"', 'render.ts:paintRailBand:".turn.ext-glow"',                                                // the two READERS of the glow: the ruler mirrors it, the band reads it
-  ].sort(), "every string literal in the bundle naming a hover class as a token, by module and owner: the owners, the two readers, nothing else (a literal handed to a helper that mutates by parameter, or a new selector on the class, is enumerated here or reds)");
+  ].sort(), "every string, template or regular-expression literal in the bundle naming a hover class as a token, by module and owner: the owners, the two readers, nothing else (a literal handed to a helper that mutates by parameter, a new selector on the class, or a pattern that strips it is enumerated here or reds)");
   assert.deepEqual(tailPaint, [], "the tail paint (syncViewInner, both paths, and the trim) removes or replaces no class of any kind itself, by owner from the tree");
   assert.deepEqual(ringCalls.filter((c) => c.startsWith("render.ts:syncViewInner")), ["render.ts:syncViewInner(v.el)", "render.ts:syncViewInner(v.el)"], "both tail paths hand the view's own host to the band module's remover (the compact seam's append branch, normal mode's exact tail; compact-tail-differential.test.ts lifts the remover and executes both paths)");
   assert.equal(clearHoverMarks, 0, "the second remover is gone: no identifier in the bundle names it");
