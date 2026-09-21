@@ -20,7 +20,9 @@ This module holds five things, and it never skips: a pin that skips reports gree
    every command that runs pytest in ci.yml passes `-p no:anyio`, and either sets ROMP_SDK_REQUIRE=1 in the environment
    GitHub Actions merges for it (the workflow's env, the job's, the step's, a VAR=value prefix on the command; later
    scopes override earlier) or is listed in SWITCH_LISTED by (job, step name) with a reason whose premises the test
-   checks; an invocation that does neither is named with its job, step and file line. The population is derived from
+   checks over every pytest line of the step; an invocation that does neither is named with its job, step and file
+   line, and so is one whose step name another pytest-running step of the job shares (`ambiguous`: the key would name
+   two steps, and GitHub Actions does not require unique names). The population is derived from
    the file's text by pytest_invocations (its docstring is the rule: `python -m pytest`, a bare `pytest` or `py.test`
    at command position, in a named or unnamed step, in a single-line, quoted, continued, `run: |` or `run: >` scalar,
    backslash continuations joined, comment and pip lines excluded), and the two invocations the file is known to
@@ -645,7 +647,9 @@ FLAG_RE = re.compile(r"(?:^|\s)-p\s+no:anyio(?=\s|$)")
 # Invocations that pass the flag and do NOT set the switch, each with the reason that makes that right, keyed (job,
 # step name). The reason's premises are CHECKED by ListedInvocations below, not read: a listing whose premise stops
 # holding goes red there, so the list stays a rule and not a roster. A step without a name cannot be listed: the
-# stale-entry check needs a name to find.
+# stale-entry check needs a name to find. A name two pytest-running steps of one job share is `ambiguous` and red
+# until one is renamed (2026-09-21; GitHub Actions does not require unique step names, and a second step of a listed
+# name inherited the listing).
 SWITCH_LISTED = {
     ("vscode-extension", "Browser-backed served-page tests (pytest)"): (
         "the switch declares that the interpreter running pytest has the SDK the Python job's install step put there, "
@@ -816,8 +820,12 @@ def pytest_invocations(src):
     of ITS command, the line split into commands at its operators and cut at a comment first by _shell_commands, so a
     line running two pytest commands is two invocations at one line and a flag in the next command or in a comment is
     not this one's), run (the step's whole run text), job_run (every run text in the job) and cwd (the step's
-    working-directory, else the job's default, else None); plus, for a command that mentions pytest without being one
-    the parser reads or a pip install line, a dict with `unparsed` set to the reason and args None.
+    working-directory, else the job's default, else None) and namesakes (the file lines of the pytest invocations in
+    OTHER steps of the same job that carry this step's name: GitHub Actions does not require unique step names, and
+    the listing and every report here key on (job, step name), so a shared name is `ambiguous` in verdict and red
+    until one step is renamed; empty for a unique name and for an unnamed step, which cannot be listed); plus, for a
+    command that mentions pytest without being one the parser reads or a pip install line, a dict with `unparsed` set
+    to the reason and args None.
     A text parse over the file's own indentation (top-level keys at column 0, jobs at 2, job keys at 4, steps at 6,
     step keys at 8, env keys and run block lines at 10), the way this file's other pins and tests/test_ci_bats_bound.py
     read it: no YAML library in the test deps. The run forms read are _step_run's; comment lines are skipped; a line
@@ -872,7 +880,7 @@ def pytest_invocations(src):
                     continue
                 if not PYTEST_WORD_RE.search(cmd):
                     continue
-                base = {"job": job, "step": step, "line": at, "run": run_text, "cwd": cwd, "cmd": cmd}
+                base = {"job": job, "step": step, "line": at, "run": run_text, "cwd": cwd, "cmd": cmd, "step_index": k}
                 if unreadable:
                     if not PIP_INSTALL_RE.search(cmd):
                         parsed.append(dict(base, env=dict(env), args=None, unparsed=unreadable))
@@ -889,16 +897,33 @@ def pytest_invocations(src):
                         parsed.append(dict(base, env=dict(env), args=None, unparsed="a form the parser does not read as a command"))
         for inv in parsed:
             inv["job_run"] = "".join(job_runs)
+            inv["namesakes"] = sorted(o["line"] for o in parsed if o["step"] == inv["step"] and o["step_index"] != inv["step_index"]
+                                      and inv["step"] != UNNAMED)
         found.extend(parsed)
     return found
 
 
+def invocations_by_key(found):
+    """{(job, step name): [invocations, in file order]} over the parsed invocations (unparsed rows left out): every
+    invocation under a key is kept, so a check over a listed key sees each pytest line of the step (until 2026-09-21
+    ListedInvocations built a dict of one invocation per key, which kept the last and checked the premises on it alone)."""
+    out = {}
+    for inv in found:
+        if not inv["unparsed"]:
+            out.setdefault((inv["job"], inv["step"]), []).append(inv)
+    return out
+
+
 def verdict(inv):
     """'ok': the args carry -p no:anyio and the env sets ROMP_SDK_REQUIRE to 1; 'listed': the flag, no switch, and
-    (job, step) in SWITCH_LISTED; 'unparsed': a pytest mention the parser did not read as a command; 'unlisted':
+    (job, step) in SWITCH_LISTED; 'unparsed': a pytest mention the parser did not read as a command; 'ambiguous': a
+    named step whose name another pytest-running step of the job shares, so the (job, step name) key names two steps
+    (red whatever the invocations carry: a listing under that key would excuse the other step too); 'unlisted':
     anything else, the failure this check exists for (the flag missing has no listing that excuses it)."""
     if inv["unparsed"]:
         return "unparsed"
+    if inv["namesakes"]:
+        return "ambiguous"
     if not FLAG_RE.search(inv["args"]):
         return "unlisted"
     if inv["env"].get(SWITCH) == "1":
@@ -914,6 +939,11 @@ def _describe(inv):
     if inv["unparsed"]:
         return "%s / %r (ci.yml line %d): mentions pytest in a run line the parser does not read as a command (%s): %r" % (
             inv["job"], inv["step"], inv["line"], inv["unparsed"], inv["cmd"].strip())
+    if inv["namesakes"]:
+        return ("%s / %r (ci.yml line %d): another step named %r in this job runs pytest too (ci.yml line%s %s); the listing "
+                "and this report key on (job, step name), so the name is ambiguous: rename one" % (
+                    inv["job"], inv["step"], inv["line"], inv["step"], "s" if len(inv["namesakes"]) > 1 else "",
+                    ", ".join(str(l) for l in inv["namesakes"])))
     lacks = [w for w, ok in (("%s (keyed on that spelling, one space, in the command's arguments)" % FLAG_SPELLING,
                               bool(FLAG_RE.search(inv["args"]))),
                              ("%s=1 (keyed on the merged workflow, job, step and inline env reading 1)" % SWITCH,
@@ -966,10 +996,11 @@ class PytestPopulation(unittest.TestCase):
                       "indent 2 and the step's name: line): %r" % keys)
 
     def test_every_invocation_passes_the_flag_and_sets_the_switch_or_is_listed_with_its_reason(self):
-        bad = [_describe(i) for i in self.found if verdict(i) in ("unlisted", "unparsed")]
+        bad = [_describe(i) for i in self.found if verdict(i) in ("unlisted", "unparsed", "ambiguous")]
         self.assertEqual(bad, [], "pytest invocations in ci.yml that lack %s (keyed on that spelling), or set no %s=1 in "
                          "the env Actions merges for them (workflow, job, step, inline) without an entry in SWITCH_LISTED, "
-                         "or that the parser could not read as a command (red until read):\n  " % (FLAG_SPELLING, SWITCH)
+                         "or that the parser could not read as a command (red until read), or whose step name another "
+                         "pytest-running step of the job shares (red until one is renamed):\n  " % (FLAG_SPELLING, SWITCH)
                          + "\n  ".join(bad))
 
     def test_the_python_matrix_step_is_compliant_not_listed(self):
@@ -991,26 +1022,32 @@ class PytestPopulation(unittest.TestCase):
 
 
 class ListedInvocations(unittest.TestCase):
-    """The premises of each SWITCH_LISTED reason, checked against the tree, so the list stays a rule and not a roster."""
+    """The premises of each SWITCH_LISTED reason, checked against the tree, so the list stays a rule and not a roster.
+    Over EVERY invocation under the listed key (invocations_by_key): a step may run pytest on two lines, and each is
+    the listing's subject; the key names one step, since a name two steps share is `ambiguous` in verdict and red in
+    PytestPopulation."""
     def setUp(self):
-        self.found = {(i["job"], i["step"]): i for i in pytest_invocations(open(WF).read()) if not i["unparsed"]}
-        self.served = self.found[SERVED_STEP]
+        self.by_key = invocations_by_key(pytest_invocations(open(WF).read()))
+        self.served = self.by_key[SERVED_STEP]
+        self.assertTrue(self.served, "no invocation under the served step's key")
 
     def test_the_served_step_passes_the_flag_its_listing_excuses_only_the_switch(self):
-        self.assertTrue(FLAG_RE.search(self.served["args"]), "the served step's pytest line lacks %s (keyed on that "
-                        "spelling): the listing covers the switch alone; the flag is accepted where anyio is absent and "
-                        "has no exemption" % FLAG_SPELLING)
+        for inv in self.served:
+            self.assertTrue(FLAG_RE.search(inv["args"]), "the served step's pytest line %d lacks %s (keyed on that "
+                            "spelling): the listing covers the switch alone; the flag is accepted where anyio is absent and "
+                            "has no exemption" % (inv["line"], FLAG_SPELLING))
 
     def test_the_served_steps_job_installs_no_sdk(self):
         # keyed on the install's names in the job's run blocks; an install by a `uses:` action is outside this read
         for token in SDK_INSTALL_TOKENS:
-            self.assertNotIn(token, self.served["job_run"], "a run block of the vscode-extension job names %r: the job's "
+            self.assertNotIn(token, self.served[0]["job_run"], "a run block of the vscode-extension job names %r: the job's "
                              "interpreter may now have the SDK, so the served step's listing for the switch is no longer "
                              "true; set %s=1 there and drop the entry" % (token, SWITCH))
 
     def test_the_served_step_does_not_set_the_switch(self):
         # a listed step that sets the switch is a contradiction: either it is compliant, or it is listed
-        self.assertNotIn(SWITCH, self.served["env"], "the served step sets %s: it declares an SDK it does not install" % SWITCH)
+        for inv in self.served:
+            self.assertNotIn(SWITCH, inv["env"], "the served step's pytest line %d sets %s: it declares an SDK it does not install" % (inv["line"], SWITCH))
 
     def test_the_served_steps_globs_collect_no_module_that_reads_the_switch(self):
         # keyed on the switch's name spelled in the file's text: the modules the step's globs collect, plus every
@@ -1025,9 +1062,10 @@ class ListedInvocations(unittest.TestCase):
         helpers = {os.path.realpath(p) for p in glob.glob(os.path.join(HERE, "*.py")) if not os.path.basename(p).startswith("test_")}
         self.assertIn(os.path.realpath(os.path.join(HERE, "conftest.py")), helpers, "the helper census missed conftest.py")
         collected = set()
-        for pattern in _positional_paths(self.served):
-            collected.update(os.path.realpath(p) for p in glob.glob(pattern))
-        self.assertTrue(collected, "the served step's globs resolve to no file at the repo root: %r" % self.served["args"])
+        for inv in self.served:
+            for pattern in _positional_paths(inv):
+                collected.update(os.path.realpath(p) for p in glob.glob(pattern))
+        self.assertTrue(collected, "the served step's globs resolve to no file at the repo root: %r" % [i["args"] for i in self.served])
         hit = sorted(os.path.relpath(p, ROOT) for p in readers & (collected | helpers))
         self.assertEqual(hit, [], "the served step collects or could load a module that reads %s, and it runs without the "
                          "switch: %s" % (SWITCH, hit))
@@ -1090,7 +1128,10 @@ class PopulationCheckReds(unittest.TestCase):
         return out
 
     def _new_bad(self, src):
-        return [i for i in pytest_invocations(src) if verdict(i) in ("unlisted", "unparsed") and (i["job"], i["step"]) not in self.base]
+        return [i for i in pytest_invocations(src) if verdict(i) in ("unlisted", "unparsed", "ambiguous") and (i["job"], i["step"]) not in self.base]
+
+    def found_live(self):
+        return pytest_invocations(self.src)
 
     def _new(self, src):
         return [i for i in pytest_invocations(src) if (i["job"], i["step"]) not in self.base]
@@ -1212,6 +1253,51 @@ class PopulationCheckReds(unittest.TestCase):
         # an expression-valued switch is never read as 1: the safe side
         found = {i["step"]: i for i in pytest_invocations(self._with_shell_job_env(src, "${{ matrix.require }}"))}
         self.assertEqual(verdict(found["Literal (pytest)"]), "unlisted", _describe(found["Literal (pytest)"]))
+
+    def _with_step_in_last_job(self, step_text, src=None):
+        # appended at the end of the file: the vscode-extension job is the file's last, so the step joins it
+        src = self.src if src is None else src
+        self.assertEqual(re.findall(JOB_RE, _top_sections(src)["jobs"][0][1])[-1], SERVED_STEP[0], "the last job moved: re-anchor this case")
+        return src.rstrip("\n") + "\n" + step_text
+
+    def test_a_second_step_of_a_listed_name_in_its_job_is_ambiguous_and_both_are_named(self):
+        # GitHub Actions does not require unique step names, and the listing keys on (job, step name): until 2026-09-21 a
+        # second step named like the served step, in its job, inherited the listing (verdict listed, flag on and no
+        # switch, nothing red; probed in memory), and ListedInvocations' dict of invocations by key kept the last one
+        # alone, so the premises were checked on it and never on the first. Now a name two steps of one job share
+        # among the pytest invocations is `ambiguous`, red whatever else the invocations carry, and each is named with
+        # the other's line: rename one.
+        dup = "      - name: %s\n        run: python -m pytest tests/test_other.py -q -p no:anyio\n" % SERVED_STEP[1]
+        src = self._with_step_in_last_job(dup)
+        served = [i for i in pytest_invocations(src) if (i["job"], i["step"]) == SERVED_STEP]
+        self.assertEqual([verdict(i) for i in served], ["ambiguous", "ambiguous"], [_describe(i) for i in served])
+        self.assertEqual(sorted(i["line"] for i in served), sorted(served[0]["namesakes"] + served[1]["namesakes"]))
+        for i in served:
+            self.assertIn("another step named %r in this job runs pytest too" % SERVED_STEP[1], _describe(i))
+            self.assertIn("rename one", _describe(i))
+        bad = [i for i in pytest_invocations(src) if verdict(i) in ("unlisted", "unparsed", "ambiguous")]
+        self.assertEqual([(i["job"], i["step"]) for i in bad], [SERVED_STEP, SERVED_STEP], "the population check names both")
+        # the live file: the served step is the one step of its name, so it is listed, not ambiguous
+        live = [i for i in self.found_live() if (i["job"], i["step"]) == SERVED_STEP]
+        self.assertEqual([verdict(i) for i in live], ["listed"])
+        # two pytest lines in ONE step's block are one step: read as two invocations, neither ambiguous
+        two, first = self._with_step_in_shell_job("      - name: Two lines (pytest)\n        run: |\n          python -m pytest tests/test_a.py -q\n          python -m pytest tests/test_b.py -q -p no:anyio\n")
+        new = self._new(two)
+        self.assertEqual([(i["line"], verdict(i)) for i in new], [(first + 2, "unlisted"), (first + 3, "unlisted")], [_describe(i) for i in new])
+        self.assertEqual([i["namesakes"] for i in new], [[], []])
+        # two unnamed steps are not namesakes: an unnamed step cannot be listed, and each is named at its own line
+        unnamed, first = self._with_step_in_shell_job("      - run: python -m pytest tests/test_a.py -q\n      - run: python -m pytest tests/test_b.py -q\n")
+        self.assertEqual([verdict(i) for i in self._new(unnamed)], ["unlisted", "unlisted"])
+
+    def test_every_invocation_under_a_listed_key_is_kept_for_the_premise_checks(self):
+        # the served step with a second pytest line in its run block, unflagged: the grouping ListedInvocations reads
+        # (invocations_by_key) keeps both, so a premise checked over the key sees each, and the second is unlisted
+        served_line = [l for l in self.src.splitlines() if l.startswith("          python -m pytest tests/test_*_browser.py")]
+        self.assertEqual(len(served_line), 1, served_line)
+        src = self.src.replace(served_line[0] + "\n", served_line[0] + "\n          python -m pytest tests/test_other_served.py -q\n", 1)
+        by_key = invocations_by_key(pytest_invocations(src))
+        self.assertEqual([verdict(i) for i in by_key[SERVED_STEP]], ["listed", "unlisted"], [_describe(i) for i in by_key[SERVED_STEP]])
+        self.assertEqual([i["args"].strip() for i in by_key[SERVED_STEP]][1], "tests/test_other_served.py -q")
 
     def test_a_second_pytest_command_on_the_same_run_line_is_read_and_judged_on_its_own(self):
         # Until 2026-09-21 the command regex took the rest of the line as the first command's arguments, so a second
