@@ -3217,8 +3217,15 @@ function drawRailBand(host: HTMLElement, hostR: DOMRect, xRef: HTMLElement, top:
     put(lx - 2, a, 4, b - a);
   }
 }
-function clearRailRings(): void {
-  document.querySelectorAll(".dot.rail-ring").forEach((n) => n.classList.remove("rail-ring"));
+/** The band module's own remover of the rings drawRailBand grew (.dot.rail-ring): document-wide for the band's repaint and clears
+ *  (instantLocalBand, paintRailBand, clearLocalBand), and host-scoped for the two tail paints (compact mode's seam, normal mode's exact
+ *  tail), which drop the band as a foreign child and take its rings off with it, on the view's own host and with no layout read. One
+ *  remover per class: the glow on the turns (.ext-glow) is applyGlow's cross-surface hover state, mirrored by the overview ruler, and no
+ *  tail paint touches it (the maintainer's round 3 ruling D: a second remover of a class outside the function that owns it left the
+ *  transcript dark while the ruler still banded the turns it had unlit; the kept rows keep their glow, and a re-rendered row's, a fresh
+ *  node's, is re-applied by the next glowTurns tick, as after any rebuild). */
+function clearRailRings(host: ParentNode = document): void {
+  host.querySelectorAll(".dot.rail-ring").forEach((n) => n.classList.remove("rail-ring"));
 }
 
 // ONE continuous rail band per hovered segment: from the segment's own prompt dot down to the NEXT dot
@@ -13625,9 +13632,11 @@ function syncViewInner(id: string, atBottom?: boolean, anchored: boolean = atBot
       // the reader is scrolled up (keepTop below: the content above the viewport stays where it is)
       const span = Math.max(WINDOW_TAIL, (v.winEnd ?? total) - (v.winStart ?? 0));
       const u0 = plan.u0;
-      // the hover's marks (the rings on the dots, the glow on the turns) come off with the band the trim drops, as the rebuild's wipe
-      // took them; host-scoped and layout-free (clearHoverMarks, review round 2: they stayed lit on the kept units until the pointer moved)
-      clearHoverMarks(v.el);
+      // the band's rings come off with the band the trim drops, through the band module's own remover on the view's host, layout-free
+      // (clearRailRings; the maintainer's round 2 ruling: the rings stayed on the kept units' dots until the pointer moved). The glow on the
+      // turns stays: it is applyGlow's cross-surface hover state, mirrored by the overview ruler, and a tail paint that took it off left the
+      // transcript dark while the ruler still banded those turns (the maintainer's round 3 ruling D: one owner per visual state)
+      clearRailRings(v.el);
       trimUnitsFrom(v.el, u0);
       // the rail chain a window build reaches at u0 (railChainBefore), so the first re-rendered unit's stamp is what a rebuild of the
       // same rows draws; the day walk's mark likewise (dayWalkBefore, T339)
@@ -13686,8 +13695,9 @@ function syncViewInner(id: string, atBottom?: boolean, anchored: boolean = atBot
   // data-unit, so it ends the walk, and a foreign child met on the way (a hover's rail band) is dropped:
   // trimUnitsFrom, the one walk both tail paths share (review round 2; this mode's own copy stopped at
   // the band and re-appended the tail on top of a stale copy of itself, one stranded duplicate per hover). The
-  // hover's marks come off with the band (clearHoverMarks), or the kept rows stay half lit until the pointer moves.
-  clearHoverMarks(v.el);
+  // band's rings come off with it through the band module's own remover, host-scoped (clearRailRings); the glow on
+  // the turns is applyGlow's and stays, as in the seam (the maintainer's round 3 ruling D).
+  clearRailRings(v.el);
   trimUnitsFrom(v.el, from);
   const walk = dayWalkBeforeEvent(s.events, from);   // the day walk's high-water mark up to here (T339)
   for (let i = from; i < len; i++) {
@@ -14044,16 +14054,6 @@ function trimUnitsFrom(host: HTMLElement, u0: number): number {
     c = prev;
   }
   return n;
-}
-/** The hover's marks off a view's rows, host-scoped and layout-free: the rings a rail band grew on the dots (drawRailBand) and the glow on
- *  the turns (applyGlow). The band itself is a foreign child the trim drops; the rebuild the tail paths replaced took the marks with it by
- *  re-rendering every row, and a hover redraws them on the next mouseenter (paintRailBand's contract), so a tail paint takes them off where
- *  it drops the band, or a streamed frame left the highlight half lit on the kept units until the pointer moved (review round 2). Scoped
- *  to the view, not the document (clearLocalBand's document-wide rule would let another view's band suppress this view's clear), and no
- *  rect is read (a paintRailBand re-run forces a layout); called before the trim so the pin over the trim's line stands. */
-function clearHoverMarks(host: HTMLElement): void {
-  host.querySelectorAll(".dot.rail-ring").forEach((n) => n.classList.remove("rail-ring"));
-  host.querySelectorAll(".turn.ext-glow").forEach((n) => n.classList.remove("ext-glow"));
 }
 /** Compact mode keeps its window's span while the reader follows the tail (PR E): after an append at the bottom the leading units past
  *  the span leave the DOM and the top spacer stands for them, as the rebuild's re-slice did, so a watched session's DOM does not grow

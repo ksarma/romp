@@ -75,14 +75,15 @@ test("a plain human-prompt append does not set stale: the signature reads the pr
 // Compact mode's tail path by unit (chat-compact-tail.test.ts) was inserted ABOVE normal mode's block and the two fixes to the
 // spacers' measurement live in functions of their own; the normal-mode block (from "Normal mode, pure append." to syncViewInner's
 // closing brace) is recorded here line by line and pinned byte for byte, so a change to the desktop's path is a deliberate edit
-// of this record, never a side effect. On a failure the diff says what moved. Three deliberate edits so far. Two applied the
+// of this record, never a side effect. On a failure the diff says what moved. Four deliberate edits so far. Two applied the
 // maintainer's round 2 ruling: the block's own copy of the tail walk, which stopped at a foreign child (a hover's rail band) and
 // re-appended the tail on top of a stale copy of itself, gave way to trimUnitsFrom, the walk compact mode's seam uses, and the hover's
-// marks (the rings and the glow the band lit) come off with the band, as in the seam (compact-seam-exec.test.ts executes both calls;
-// chat-compact-tail.test.ts drives the walk over a band; compact-tail-differential.test.ts the marks). The third applied the
-// maintainer's round 3 ruling B: the browse branch patches the window's worked footers before it grows the bottom spacer, as compact
-// mode's spacer branch has since the author's pass 1b (compact-seam-exec.test.ts's normal-mode browsed world and the differential's
-// normal-mode leg execute it, red before at the head the round ruled on).
+// marks came off with the band, as in the seam (compact-seam-exec.test.ts executes both calls; chat-compact-tail.test.ts drives the
+// walk over a band; compact-tail-differential.test.ts the marks). The third applied the maintainer's round 3 ruling B: the browse branch
+// patches the window's worked footers before it grows the bottom spacer, as compact mode's spacer branch has since the author's pass 1b
+// (compact-seam-exec.test.ts's normal-mode browsed world and the differential's normal-mode leg execute it, red before at the head the
+// round ruled on). The fourth applied that round's ruling D: the marks taken off narrow to the band's rings, through the band module's
+// own remover (clearRailRings, host-scoped); the glow on the turns is applyGlow's cross-surface state and stays.
 const NORMAL_MODE_BLOCK = [
   "  // Normal mode, pure append. While BROWSING history (window not at the tail), the new events land below the",
   "  // rendered window → just grow the bottom spacer (no DOM churn); the user sees them on scroll-down.",
@@ -113,8 +114,9 @@ const NORMAL_MODE_BLOCK = [
   "  // data-unit, so it ends the walk, and a foreign child met on the way (a hover's rail band) is dropped:",
   "  // trimUnitsFrom, the one walk both tail paths share (review round 2; this mode's own copy stopped at",
   "  // the band and re-appended the tail on top of a stale copy of itself, one stranded duplicate per hover). The",
-  "  // hover's marks come off with the band (clearHoverMarks), or the kept rows stay half lit until the pointer moves.",
-  "  clearHoverMarks(v.el);",
+  "  // band's rings come off with it through the band module's own remover, host-scoped (clearRailRings); the glow on",
+  "  // the turns is applyGlow's and stays, as in the seam (the maintainer's round 3 ruling D).",
+  "  clearRailRings(v.el);",
   "  trimUnitsFrom(v.el, from);",
   "  const walk = dayWalkBeforeEvent(s.events, from);   // the day walk's high-water mark up to here (T339)",
   "  for (let i = from; i < len; i++) {",
@@ -147,6 +149,7 @@ test("normal mode's tail block is byte-identical to the recorded text, sits afte
   // trimUnitsFrom is not in this list since review round 2: the trim is unitOfNode's walk, the one predicate for what a view's child is,
   // and normal mode's own copy of it stopped at a foreign child (the block's one deliberate edit)
   assert.doesNotMatch(NORMAL_MODE_BLOCK, /compactTailPlan|evictCompactTop|reseedWindowHead|v\.units|measureDue|applyMeasure/, "no compact plan, eviction or measurement helper inside normal mode's block");
-  assert.match(NORMAL_MODE_BLOCK, /\n  clearHoverMarks\(v\.el\);\n  trimUnitsFrom\(v\.el, from\);\n/, "normal mode drops the hover's marks and trims through the shared walk, from the first changed event");
+  assert.match(NORMAL_MODE_BLOCK, /\n  clearRailRings\(v\.el\);\n  trimUnitsFrom\(v\.el, from\);\n/, "normal mode takes the band's rings off through the band module's own remover, host-scoped, and trims through the shared walk, from the first changed event");
+  assert.doesNotMatch(NORMAL_MODE_BLOCK, /clearHoverMarks|ext-glow|classList\.remove/, "…and removes no class itself: the glow on the turns is applyGlow's (the maintainer's round 3 ruling D)");
   assert.ok(NORMAL_MODE_BLOCK.split("\n").length > 30, "the record holds the whole block, not a stub");
 });

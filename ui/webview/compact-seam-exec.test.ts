@@ -62,7 +62,7 @@ function liftSeam(sessions: Map<string, any>, views: Map<string, any>, itemsOf: 
     const patchWorkedFooters = (v, s, from, working, items) => { H.calls.push(["patchWorkedFooters", from, working, items ? items.length : null]); };
     const compactTailPlan = H.compactTailPlan;
     const trimUnitsFrom = (host, u0) => { H.calls.push(["trim", u0]); return 0; };
-    const clearHoverMarks = (host) => { H.calls.push(["clearHoverMarks", host === H.views.get("A").el]); };   // the hover's rings and glow off the view (review round 2); records that it is the view's own host
+    const clearRailRings = (host) => { H.calls.push(["clearRailRings", host === H.views.get("A").el]); };   // the band module's ring remover, host-scoped for the tail paint (the maintainer's round 2 ruling took the rings and the glow here; round 3's ruling D left the glow to applyGlow); records that it is the view's own host
     const railChainBefore = (s, items, winStart, u0) => { H.calls.push(["railChainBefore", winStart, u0]); return H.SENTINEL; };
     const dayWalkBefore = () => new H.DayWalk();
     const turnOfEvents = () => null;
@@ -110,8 +110,8 @@ test("the seam seeds the first re-rendered unit with railChainBefore over the vi
   assert.deepEqual(w.calls.filter((c) => c[0] === "railChainBefore"), [["railChainBefore", 1, 2]], "the chain from the window's start to u0");
   assert.deepEqual(w.calls.filter((c) => c[0] === "appendItem"), [["appendItem", 2, SENTINEL]], "the reply's unit re-rendered from that reference");
   assert.deepEqual(w.calls.filter((c) => c[0] === "trim"), [["trim", 2]]);
-  assert.deepEqual(w.calls.filter((c) => c[0] === "clearHoverMarks"), [["clearHoverMarks", true]], "the hover's marks come off the view's own host (review round 2)");
-  assert.ok(w.calls.findIndex((c) => c[0] === "clearHoverMarks") < w.calls.findIndex((c) => c[0] === "trim"), "…where the trim drops the band, before it");
+  assert.deepEqual(w.calls.filter((c) => c[0] === "clearRailRings"), [["clearRailRings", true]], "the band's rings come off the view's own host, through the band module's remover (the maintainer's round 2 ruling, narrowed by round 3's ruling D to the rings)");
+  assert.ok(w.calls.findIndex((c) => c[0] === "clearRailRings") < w.calls.findIndex((c) => c[0] === "trim"), "…where the trim drops the band, before it");
   assert.equal(w.v.rendered, 4); assert.deepEqual(w.v.units, [ev(0), tg(1, 2), ev(3)]);
   // a run forming (a tool joins the lone tool at unit 1): the seam re-renders from unit 1, seeded with the chain before it
   const w2 = world(["user", "tool", "tool"], [ev(0), ev(1)], [ev(0), tg(1, 2)], 2, 0);
@@ -205,8 +205,8 @@ test("normal mode's exact tail trims through the shared walk (trimUnitsFrom from
   const w = world(["user", "assistant"], [ev(0), ev(1)], [ev(0), ev(1)], 1, 0, true, false);
   w.sync("A", true);
   assert.deepEqual(w.calls.filter((c) => c[0] === "trim"), [["trim", 1]], "one trim, from the first changed event (the shared walk drops a foreign child on its way: chat-compact-tail.test.ts)");
-  assert.deepEqual(w.calls.filter((c) => c[0] === "clearHoverMarks"), [["clearHoverMarks", true]], "the hover's marks come off the view's own host here too");
-  assert.ok(w.calls.findIndex((c) => c[0] === "clearHoverMarks") < w.calls.findIndex((c) => c[0] === "trim"), "…before the trim drops the band");
+  assert.deepEqual(w.calls.filter((c) => c[0] === "clearRailRings"), [["clearRailRings", true]], "the band's rings come off the view's own host here too, through the band module's remover");
+  assert.ok(w.calls.findIndex((c) => c[0] === "clearRailRings") < w.calls.findIndex((c) => c[0] === "trim"), "…before the trim drops the band");
   assert.deepEqual(w.calls.filter((c) => c[0] === "renderEvent"), [["renderEvent", "e1"]], "the events from the change re-rendered");
   assert.deepEqual(w.calls.filter((c) => c[0] === "patchWorkedFooters"), [["patchWorkedFooters", 1, true, null]], "the footers patched from the change, no unit list");
   assert.deepEqual(w.calls.filter((c) => c[0] === "appendItem" || c[0] === "renderWindowItems" || c[0] === "evict" || c[0] === "reseed"), [], "no compact helper, no rebuild");
@@ -217,6 +217,29 @@ test("normal mode's exact tail trims through the shared walk (trimUnitsFrom from
   const w2 = world(["user", "assistant", "user"], [ev(0), ev(1)], [ev(0), ev(1), ev(2)], 2, 0, true, false);
   w2.sync("A", true);
   assert.deepEqual(w2.calls.filter((c) => c[0] === "trim" || c[0] === "renderEvent"), [["trim", 2], ["renderEvent", "e2"]]);
+});
+
+test("render.ts: one remover per hover class. The tail paint (both paths and the trim) removes no class itself and names neither hover class; the rings' one remover is the band module's clearRailRings, host-scoped when the tail paint calls it; the glow's one remover is applyGlow (the maintainer's round 3 ruling D: a second remover of a class outside its owner is the defect)", () => {
+  // the population: the classes the tail paint took off until this pass (.rail-ring, the band's; .ext-glow, applyGlow's), each with its adder
+  // and its remover named, so the ownership is a fact of the tree and not of a comment
+  const seam = RENDER.slice(RENDER.indexOf("function syncViewInner("), RENDER.indexOf("function patchWorkedFooters("));
+  const trim = RENDER.slice(RENDER.indexOf("function trimUnitsFrom("), RENDER.indexOf("\n}\n", RENDER.indexOf("function trimUnitsFrom(")));
+  for (const [name, span] of [["syncViewInner", seam], ["trimUnitsFrom", trim]] as const) {
+    assert.doesNotMatch(span, /classList\.remove\(|classList\.toggle\(|className\s*=/, name + " removes no class itself");
+    assert.doesNotMatch(span, /ext-glow|rail-ring/, name + " names neither hover class");
+  }
+  assert.equal((seam.match(/(?<![\w.])clearRailRings\(v\.el\);/g) || []).length, 2, "both tail paths hand the view's own host to the band module's remover (the compact seam's append branch, normal mode's exact tail)");
+  assert.doesNotMatch(RENDER, /function clearHoverMarks\(/, "the second remover is gone");
+  // .rail-ring: drawRailBand adds it, clearRailRings alone removes it (document-wide by default, host-scoped when a host is given)
+  assert.equal((RENDER.match(/classList\.add\("rail-ring"\)/g) || []).length, 1, "one adder of the rings: drawRailBand");
+  assert.equal((RENDER.match(/classList\.remove\("rail-ring"\)/g) || []).length, 1, "one remover of the rings: clearRailRings");
+  assert.match(RENDER, /function clearRailRings\(host: ParentNode = document\): void \{\s*\n\s*host\.querySelectorAll\("\.dot\.rail-ring"\)\.forEach\(\(n\) => n\.classList\.remove\("rail-ring"\)\);\s*\n\}/, "the remover reads the host it is given, the document by default");
+  // .ext-glow: applyGlow adds it (by mid, by uuid) and applyGlow alone removes it (document-wide, at the start of every application)
+  const glow = RENDER.slice(RENDER.indexOf("function applyGlow("), RENDER.indexOf("\n}\n", RENDER.indexOf("function applyGlow(")));
+  assert.equal((RENDER.match(/classList\.add\("ext-glow"\)/g) || []).length, 2, "two adders of the glow, both applyGlow's");
+  assert.equal((glow.match(/classList\.add\("ext-glow"\)/g) || []).length, 2);
+  assert.equal((RENDER.match(/classList\.remove\("ext-glow"\)/g) || []).length, 1, "one remover of the glow");
+  assert.match(glow, /document\.querySelectorAll\("\.ext-glow"\)\.forEach\(\(n\) => n\.classList\.remove\("ext-glow"\)\);/, "…applyGlow itself, at the start of every application");
 });
 
 test("a paint of the view ends a re-window's follow of its rebuilt rows: the mark armed by the stick re-window is cleared before any branch runs (review round 1b; the reader's own scroll is the other ending event, tail-shrink.test.ts)", () => {

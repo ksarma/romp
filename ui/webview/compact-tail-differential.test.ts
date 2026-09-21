@@ -146,9 +146,15 @@ function lift(sessions: Map<string, any>, views: Map<string, any>, open: Set<str
   const first = liftBetween("function itemFirstEvent(", "// The display-unit index");
   const build = liftBetween("function appendItem(", "/** The estimated height of the units [from, to)");
   const divider = liftBetween("function dayDividerFor(", "// STICKY rail stamp");
+  const rings = liftBetween("function clearRailRings(", "// ONE continuous rail band per hovered segment");   // the band module's remover, real: the tail paint hands it the view's host
   const prelude = `
     const H = HOOKS;
     let renderingSid = null, renderingOwnerSid = null;
+    // no document in the lift: the tail paint's ring clear is host-scoped (a document query here is a red), and the overview ruler is an
+    // instrument: paintGlowRuler records its calls, glowHistory and glowUnits stand as applyGlow left them (the maintainer's round 3 ruling D)
+    const document = { querySelectorAll: () => { throw new Error("the tail paint queried the document: the ring clear is host-scoped"); } };
+    let glowHistory = H.ruler.history, glowUnits = H.ruler.units;
+    const paintGlowRuler = () => { H.ruler.paints++; };
     const subParts = () => null;
     const sessions = H.sessions, views = H.views;
     const ensureView = (id) => views.get(id);
@@ -191,9 +197,13 @@ function lift(sessions: Map<string, any>, views: Map<string, any>, open: Set<str
     };
     const Date = { now: () => H.NOW };
   `;
-  const hooks = { FakeEl, sessions, views, itemsOf: (s: any) => itemsFor(s, compact), WINDOW_TAIL, compactTailPlan, plans, open, itemAnchor, gapHeight, workedSecsOf, workedFooterPlan, DayWalk, NOW, painted: [] as any[], compact };
-  return new Function("HOOKS", prelude + rail + first + divider + build + seam + "\nreturn { syncViewInner, renderWindowItems };")(hooks) as Lifted;
+  const hooks = { FakeEl, sessions, views, itemsOf: (s: any) => itemsFor(s, compact), WINDOW_TAIL, compactTailPlan, plans, open, itemAnchor, gapHeight, workedSecsOf, workedFooterPlan, DayWalk, NOW, painted: [] as any[], compact, ruler };
+  return new Function("HOOKS", prelude + rings + rail + first + divider + build + seam + "\nreturn { syncViewInner, renderWindowItems };")(hooks) as Lifted;
 }
+/** The overview ruler as an instrument: what applyGlow last left on it (the history marks and the resident units with no row, as fractions and
+ *  units) and how many times the tail paint repainted it. A hover through the lift leaves these as applyGlow would; the tail paint must not touch them. */
+type Ruler = { history: number[]; units: number[]; paints: number };
+const ruler: Ruler = { history: [], units: [], paints: 0 };
 
 /** A local clock on a fixed day, so the same-minute rule reads local hours and minutes the way the rail does; NOW is a later day, so
  *  every stamp is a clock time (a row of today would read how long ago). */
@@ -209,7 +219,10 @@ const settleNotice = (uuid: string, t: number): Ev => ({ kind: "assistant", uuid
 const nextDay = (h: number, m: number, s: number) => Math.floor(new Date(2026, 0, 16, h, m, s).getTime() / 1000);   // the day after `at`'s
 
 /** What a reader can see of a view's DOM, unit by unit: the unit, the class list, the row's text, the rail marker (its reference and the
- *  stamp that reference yields, the walk's day) and the worked footer; a spacer as itself; a child that is neither as "foreign". */
+ *  stamp that reference yields, the walk's day) and the worked footer; a spacer as itself; a child that is neither as "foreign". The
+ *  glow on a turn (.ext-glow) is left out of the class list: it is applyGlow's cross-surface hover state, which neither leg paints and
+ *  which the incremental leg KEEPS on the units it does not re-render (the maintainer's round 3 ruling D); the hover tests read it apart. */
+const HOVER_CLASSES = new Set(["ext-glow"]);
 type Row = { unit: number; cls: string; uuid: string | null; text: string; marker: { epoch: number; prev: string; day: string | null; stamp: string } | null; footer: string | null };
 type Projected = { spacer: string } | { foreign: string } | Row;
 function project(host: FakeEl): Projected[] {
@@ -219,14 +232,16 @@ function project(host: FakeEl): Projected[] {
     const m = c.children.find((x) => x.classList.contains("time-marker")) ?? null;
     const f = c.children.find((x) => x.classList.contains("turn-elapsed")) ?? null;
     const prev = m ? (m.dataset.prev === "" ? null : Number(m.dataset.prev)) : null;
-    return { unit: Number(c.dataset.unit), cls: c.className, uuid: c.dataset.uuid ?? null, text: c.dataset.text ?? c.textContent ?? "",
+    return { unit: Number(c.dataset.unit), cls: c.className.split(" ").filter((x) => !HOVER_CLASSES.has(x)).join(" "), uuid: c.dataset.uuid ?? null, text: c.dataset.text ?? c.textContent ?? "",
              marker: m ? { epoch: Number(m.dataset.epoch), prev: m.dataset.prev, day: m.dataset.day ?? null, stamp: markerLabel(Number(m.dataset.epoch), prev, NOW).text } : null,
              footer: f ? f.textContent : null };
   });
 }
 const units = (p: Projected[]): Row[] => p.filter((x): x is Row => "unit" in x);
-/** The hover's marks a view holds: the dots a rail band grew (.dot.rail-ring, drawRailBand) and the turns a glow lit (.turn.ext-glow, applyGlow). */
+/** The hover's marks a view holds: the dots a rail band grew (.dot.rail-ring, drawRailBand) and the turns a glow lit (.turn.ext-glow, applyGlow),
+ *  and which units carry the glow. */
 const hoverMarks = (host: FakeEl) => ({ rings: host.querySelectorAll(".dot.rail-ring").length, glow: host.querySelectorAll(".turn.ext-glow").length });
+const glowedUnits = (host: FakeEl) => host.querySelectorAll(".turn.ext-glow").map((t) => Number(t.dataset.unit));
 
 type World = { s: any; v: any; L: Lifted; plans: TailPlan[]; open: Set<string>; frames: string[]; compact: boolean; items: () => DisplayItem[] };
 /** A session over `events` in a view built by the real first build (renderWindowItems over the tail window), the seam lifted over it;
@@ -374,6 +389,27 @@ function footerOn(w: World, uuid: string): string | null | undefined {
   return rows.map((r) => r.footer).find((f) => f != null) ?? null;
 }
 
+/** A hover held through a streamed frame, on either side of the compact switch: a hover as drawRailBand and applyGlow leave it (a dot on
+ *  every turn, the hovered segment's dots ringed and its turns glowed: the first three units, below the unit the frame re-renders, so they
+ *  are KEPT nodes; the band as the thread's last child; the ruler's history marks and spacer units as applyGlow set them), then the frame.
+ *  After it: the band is gone (the trim), the rings are gone (clearRailRings on the view's host, the band module's own remover), the glow
+ *  stands on every kept unit that had it and on no fresh node, the ruler was not repainted and its marks stand, and the incremental DOM
+ *  equals the rebuild's with the glow read apart (project leaves the hover class out). */
+function hoverThroughFrame(w: World): void {
+  const turns = (w.v.el as FakeEl).children.filter((c) => c.dataset.unit != null && !c.classList.contains("day-divider"));
+  for (const t of turns) t.appendChild(new FakeEl("span", "dot green"));
+  for (const t of turns.slice(0, 3)) { t.classList.add("ext-glow"); t.children.find((x) => x.classList.contains("dot"))!.classList.add("rail-ring"); }
+  const lit = glowedUnits(w.v.el);
+  assert.deepEqual(hoverMarks(w.v.el), { rings: 3, glow: 3 }, "the hover lit three units");
+  ruler.history = [0.25]; ruler.units = [0]; ruler.paints = 0;   // the hover's marks on the ruler, as applyGlow left them (a history mark, a resident unit with no row)
+  frame(w, "the reply grows under a hover", (ev) => { ev[ev.length - 1] = reply("a4", at(10, 4, 20), "second answer, hovered"); return ev; }, "append", { band: true });
+  assert.equal(hoverMarks(w.v.el).rings, 0, "the band's rings left with the band: the band module's remover ran on the view's host");
+  assert.deepEqual(glowedUnits(w.v.el), lit, "the glow stands on every kept unit that had it: the tail paint does not touch applyGlow's class (at the head the round ruled on: none, the kept units unlit while the ruler still banded them)");
+  assert.equal(hoverMarks(rebuild(w)).glow, 0, "the rebuild leg's rows are fresh nodes with no glow: the two legs are compared with the hover class read apart");
+  assert.equal(ruler.paints, 0, "the ruler was not repainted by the tail paint"); assert.deepEqual([ruler.history, ruler.units], [[0.25], [0]], "…and its marks stand as applyGlow left them: the ruler and the kept turns' glow agree");
+  assert.equal((w.v.el as FakeEl).children.filter((c) => c.classList.contains("rail-band")).length, 0, "the band itself is gone (a hover redraws it on the next mouseenter)");
+}
+
 // The transcript: a prompt, a reply, then the agentic turn (a prompt, a collapsed run of two tools across a minute boundary, a hidden
 // thinking block in a later minute, the reply in that minute). The run's key is "tg:t1"; the fold state is the sequence's parameter, and
 // the open fold also opens the run that forms during the stream ("tg:t6") and the notice run ("ng:n5").
@@ -478,17 +514,8 @@ for (const [fold, open] of FOLDS) {
     assert.equal(rows.length, fold === "open" ? 4 : 1, "the run's head, and a row per member when the fold is open");
   });
 
-  test(`a hover's marks, run ${fold}: the rings a band grew on the dots and the glow on the turns come off with the band at the next streamed frame, on the kept units too, as the rebuild's wipe took them (the incremental and the rebuilt DOM hold the same ringed dots and glowed turns: none)`, () => {
-    const w = world(base(), new Set(open));
-    // a hover as drawRailBand and applyGlow leave it: a dot on every turn, the hovered segment's dots ringed and its turns glowed (the
-    // first three units, below the unit the frame re-renders, so they are KEPT nodes), the band as the thread's last child
-    const turns = (w.v.el as FakeEl).children.filter((c) => c.dataset.unit != null && !c.classList.contains("day-divider"));
-    for (const t of turns) t.appendChild(new FakeEl("span", "dot green"));
-    for (const t of turns.slice(0, 3)) { t.classList.add("ext-glow"); t.children.find((x) => x.classList.contains("dot"))!.classList.add("rail-ring"); }
-    assert.deepEqual(hoverMarks(w.v.el), { rings: 3, glow: 3 }, "the hover lit three units");
-    frame(w, "the reply grows under a hover", (ev) => { ev[ev.length - 1] = reply("a4", at(10, 4, 20), "second answer, hovered"); return ev; }, "append", { band: true });
-    assert.deepEqual(hoverMarks(w.v.el), hoverMarks(rebuild(w)), "the incremental DOM and the rebuild hold the same ringed dots and glowed turns (review round 2: the trim dropped the band and left the marks lit on the kept units until the pointer moved)");
-    assert.deepEqual(hoverMarks(w.v.el), { rings: 0, glow: 0 }, "none: the marks left with the band, and a hover redraws them on the next mouseenter");
+  test(`a hover held through a streamed frame, run ${fold}: the band and its rings come off with the paint (the band module's remover, on the view's host), the glow stays on the kept units and the ruler stands as applyGlow left it, so the transcript and the ruler agree on every kept turn; the re-rendered unit, a fresh node, carries no glow until the next glowTurns tick, as after any rebuild (the maintainer's round 3 ruling D: taking the glow off left the transcript dark and the ruler banding the turns it had unlit)`, () => {
+    hoverThroughFrame(world(base(), new Set(open)));
   });
 
   test(`a hover's rail band as the thread's last child, run ${fold}: the next streamed frame still renders what a rebuild renders (the trim reaches the units behind it), and nothing foreign is left among the units`, () => {
@@ -607,6 +634,10 @@ test("normal mode, a change below a browsed window: the browse branch patches th
   assert.equal(footerOn(w2, "a4"), String(at(10, 4, 20) - at(10, 0, 0)), "idle: the footer is on the turn's last reply");
   spacerFrame(w2, "a reply joins the turn below the window", (ev) => ev.concat([reply("a6", at(10, 5, 30), "second answer, continued")]));
   assert.equal(footerOn(w2, "a4"), null, "no longer the turn's last reply: the footer came off, below a browsed window");
+});
+
+test("normal mode, a hover held through a streamed frame: the band and its rings come off with the paint, the glow stays on the kept units and the ruler stands as applyGlow left it (the maintainer's round 3 ruling D on the other side of the switch: normal mode's tail took the rings and the glow off unconditionally since the author's pass 3)", () => {
+  hoverThroughFrame(world(base(), new Set(), true, undefined, false));
 });
 
 test("normal mode, a hover's rail band as the thread's last child: the next streamed frame still renders what a rebuild renders (the shared trim reaches the units behind it), and nothing foreign is left among the units", () => {
