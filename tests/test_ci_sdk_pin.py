@@ -118,15 +118,19 @@ This module holds five things, and it never skips: a pin that skips reports gree
    flag where anyio is absent, so no launcher has had a reason to lack it), and the population is derived from the
    modules' syntax by child_pytest_launchers, keyed on the argv PROPERTY and not a spelling: a list or tuple literal,
    wherever it is built (in the call, in a helper that passes it on, in a variable extended later), whose command is
-   pytest (`-m pytest` after any interpreter expression or as the first two elements, `-mpytest` as one token, pytest
-   or py.test by name or path as argv[0]). The flag check keys on the argv's constant elements (`-p` then `no:anyio`,
+   pytest (`-m pytest`, or `-mpytest` as one token, after an interpreter head through interpreter options only, the
+   head an expression or a python-named constant wherever it sits, so `python -B -m pytest`, the repo's own recipe,
+   and `uv run python -m pytest` read; `-m pytest` as the first two elements; pytest or py.test by name or path as
+   argv[0]; _argv_command's docstring is the rule). The flag check keys on the argv's constant elements (`-p` then `no:anyio`,
    or `-pno:anyio`), so a flag carried by a variable reads as absent, the safe side, and the message says so. The
    modules known to spawn pytest are asserted present, so an empty read is red, and there is no count to keep; the
    derivation case prints the listing (python -m pytest tests/test_ci_sdk_pin.py -q -p no:cacheprovider -p no:anyio
    -k ChildPytestLaunchers -rP). The census reads argv literals, and that is its residual: a pytest command inside a
-   string handed to subprocess, os.system or shlex.split, or to a shell's -c, is `unparsed` and red until it is spelled
-   as an argv, and a module that does not parse under the running interpreter is red the same way; an argv assembled
-   one element at a time (append calls) is outside the read. What the flag buys, in every pytest process a cell runs:
+   string handed to subprocess, os.system or shlex.split, or to a shell's -c (a `pytest.main(` call included), is
+   `unparsed` and red until it is spelled as an argv, as is an argv that may run pytest and the census cannot tell (a
+   `-m` whose module name is not a constant, an element that is not a constant right before `pytest`, after an
+   interpreter head), and a module that does not parse under the running interpreter is red the same way; an argv
+   assembled one element at a time (append calls) is outside the read. What the flag buys, in every pytest process a cell runs:
    anyio's plugin is absent from that process's plugin set as it is from the box's default run's. The sets are not
    equal, and nothing here says they are: the box's default run loads pytest-xdist's two plugins, which no cell
    installs. Verified by execution before this landed: a synthetic broken anyio/pytest_plugin.py in a CI-shaped venv
@@ -1170,10 +1174,16 @@ class PopulationCheckReds(unittest.TestCase):
 # child_pytest_launchers (its docstring and _launchers_in's are the rule); the derivation case prints the listing:
 #   python -m pytest tests/test_ci_sdk_pin.py -q -p no:cacheprovider -p no:anyio -k ChildPytestLaunchers -rP
 # ---------------------------------------------------------------------------------------------------------------------
-PYTEST_TEXT_RE = re.compile(r"\bpytest\b|py\.test")           # a module whose text spells neither can name pytest in no argv
+# a module whose text spells neither can name pytest in no argv and no string; no word boundaries, so the one token
+# `-mpytest` counts (until 2026-09-21 the prefilter was `\bpytest\b`, which it does not match, and a module whose only
+# spelling was that token was skipped without a parse while _launchers_in read it)
+PYTEST_TEXT_RE = re.compile(r"pytest|py\.test")
 # a pytest command inside ONE string: `python -m pytest` (any interpreter spelling), or pytest / py.test by name or path,
-# at command position (the start of the string, or after whitespace, `;`, `&`, `|` or `(`)
-PYTEST_IN_STRING_RE = re.compile(r"(?:^|[\s;&|(])(?:\S*python[0-9.]*\s+-m\s*pytest|(?:\S*/)?(?:pytest|py\.test))(?=\s|$)")
+# at command position (the start of the string, or after whitespace, `;`, `&`, `|` or `(`); or a `pytest.main(` call, an
+# in-process pytest inside a `-c` string or a shell string (2026-09-21)
+PYTEST_IN_STRING_RE = re.compile(r"(?:^|[\s;&|(])(?:\S*python[0-9.]*\s+-m\s*pytest|(?:\S*/)?(?:pytest|py\.test))(?=\s|$)|\bpytest\.main\s*\(")
+PYTHON_NAME_RE = re.compile(r"python[0-9.]*t?(?:\.exe)?")       # a python-named constant: python, python3, python3.12, python3.14t
+INTERPRETER_OPTS_WITH_VALUE = ("-X", "-W")                         # CPython options whose value is the next element
 SUBPROCESS_FUNCS = ("run", "Popen", "call", "check_call", "check_output")
 SHELL_NAMES = ("sh", "bash", "dash", "zsh", "ksh")                 # an argv headed by one of these runs its -c string
 FLAG_ARGV = ("-p", "no:anyio")
@@ -1199,20 +1209,58 @@ def _text(node):
     return None
 
 
-def _argv_head(elts):
-    """How an argv literal names pytest, or None. The property, not a spelling: `-m pytest` after ANY interpreter
-    expression (sys.executable, a name, a call, a starred tail), `-m pytest` as the first two elements (the interpreter
-    joins the argv elsewhere, an extend), `-mpytest` as one token, or pytest / py.test by name or path as argv[0]."""
+def _python_named(tok):
+    return tok is not None and PYTHON_NAME_RE.fullmatch(os.path.basename(tok)) is not None
+
+
+def _argv_command(elts):
+    """How an argv literal names pytest: (kind, None) for a launcher, (None, reason) for an argv the census cannot read
+    as one and reports unparsed, (None, None) for an argv that is not a pytest command. The property, not a spelling.
+    A launcher: `-m pytest` as two elements, or `-mpytest` as one, after an INTERPRETER HEAD through interpreter options
+    only. The head is any element that is not a constant (sys.executable, a name, a call, a starred tail) or a
+    python-named constant (`python`, `python3.12`, a path to one), wherever it sits, so `uv run python -m pytest` reads;
+    the elements between it and the `-m` are constants starting with `-` (-B, -u, -I, -E, -s), a value allowed after -X
+    or -W (`-X dev`, `-W error`). Until 2026-09-21 the pair was read at indices 1 and 2 alone, and `python -B -m
+    pytest`, the repo's own recipe, was outside the census with no red. Also a launcher: `-m pytest` as the first two
+    elements (the interpreter joins the argv elsewhere, an extend), and pytest or py.test by name or path as argv[0].
+    Unparsed, after such a head and its options: a `-m` whose next element is not a constant (a module name the census
+    cannot read: it may be pytest), or an element that is not a constant right before the constant `pytest` (an option
+    the census cannot read: it may be -m). Not a pytest command: a word that is not an option after the head (a script,
+    which takes any later `-m pytest` as its own arguments) or another module after -m (`-m unittest`, `-m pip`); and
+    `-m` under a head that is neither (`git commit -m msg`, with a constant or a variable for git)."""
     c = [_str(e) for e in elts]
-    if len(c) >= 3 and c[1] == "-m" and c[2] == "pytest":
-        return "<interpreter> -m pytest"
-    if len(c) >= 2 and c[1] == "-mpytest":
-        return "<interpreter> -mpytest"
     if len(c) >= 2 and c[0] == "-m" and c[1] == "pytest":
-        return "-m pytest (the interpreter joins the argv elsewhere)"
+        return "-m pytest (the interpreter joins the argv elsewhere)", None
     if c and c[0] is not None and os.path.basename(c[0]) in ("pytest", "py.test"):
-        return "pytest by name or path"
-    return None
+        return "pytest by name or path", None
+    for i, head in enumerate(c):
+        if not (head is None or _python_named(head)):
+            continue
+        j = i + 1
+        while j < len(c):
+            tok = c[j]
+            if tok is None:
+                if j + 1 < len(c) and c[j + 1] == "pytest":
+                    return None, ("an element the census cannot read before `pytest`, after the interpreter at argv[%d] (it "
+                                  "may be -m): not read as a launcher until the option is spelled as a constant" % i)
+                break
+            if tok == "-m":
+                if j + 1 < len(c) and c[j + 1] == "pytest":
+                    return "<interpreter> -m pytest", None
+                if j + 1 < len(c) and c[j + 1] is None:
+                    return None, ("a module name the census cannot read after -m, after the interpreter at argv[%d] (it may "
+                                  "be pytest): not read as a launcher until the module is spelled as a constant" % i)
+                break
+            if tok == "-mpytest":
+                return "<interpreter> -mpytest", None
+            if tok in INTERPRETER_OPTS_WITH_VALUE:
+                j += 2
+                continue
+            if tok.startswith("-"):
+                j += 1
+                continue
+            break
+    return None, None
 
 
 def _passes_flag(elts):
@@ -1225,17 +1273,22 @@ def _passes_flag(elts):
 def _launchers_in(src, filename):
     """The launchers, and the pytest commands the census cannot read as an argv, in one module's source. Each is a dict:
     file (the basename; child_pytest_launchers rewrites it relative to tests/), line, func (the enclosing function, else
-    '<module>'), kind (_argv_head's answer, or the call that got a string), argv (the constant elements in order, None
-    for an expression), flag (_passes_flag), unparsed (None, or why the command was not read as an argv).
-    Read: every list or tuple literal in the module whose head names pytest (_argv_head), wherever it is built: in the
-    subprocess call, in a helper that passes it on, in a variable extended later, so a helper-built argv is counted.
-    Unparsed, and red in ChildPytestLaunchers until spelled as an argv: a string handed to subprocess.run, Popen, call,
+    '<module>'), kind (_argv_command's answer, "an argv literal" for a literal it reports unparsed, or the call that
+    got a string), argv (the constant elements in order, None for an expression), flag (_passes_flag), unparsed (None,
+    or why the command was not read as an argv).
+    Read: every list or tuple literal in the module whose command is pytest (_argv_command: `-m pytest` after an
+    interpreter head through interpreter options, pytest by name or path), wherever it is built: in the subprocess
+    call, in a helper that passes it on, in a variable extended later, so a helper-built argv is counted.
+    Unparsed, and red in ChildPytestLaunchers until spelled as an argv: a list or tuple literal that may run pytest and
+    the census cannot tell (after an interpreter head, a -m whose module name is not a constant, or an element that is
+    not a constant right before `pytest`; _argv_command's docstring); a string handed to subprocess.run, Popen, call,
     check_call or check_output (by the module's own names for them), to os.system or os.popen, or through shlex.split,
-    whose text spells a pytest command (PYTEST_IN_STRING_RE); and an argv handed to those calls whose head is not
-    pytest but carries a pytest command inside one element: any element when the head is a shell (SHELL_NAMES) run with
-    -c, else a multi-word element (a lone `pytest` element is a package name on a pip line, or an argument). A module
-    that does not parse is one unparsed row. A list or tuple on the right of an `in` test is a set of names, not an
-    argv, and is not read. Not read, stated as the residual: an argv assembled one element at a time (append calls); a
+    whose text spells a pytest command or a `pytest.main(` call (PYTEST_IN_STRING_RE); and an argv handed to those
+    calls whose command is not pytest but carries a pytest command inside one element: any element when the head is a
+    shell (SHELL_NAMES) run with -c, else a multi-word element (a `-c` string running pytest.main; a lone `pytest`
+    element is a package name on a pip line, or an argument). A module that does not parse is one unparsed row. A list
+    or tuple on the right of an `in` test is a set of names, not an argv, and is not read. Not read, stated as the
+    residual: an argv assembled one element at a time (append calls); a `-c` or shell string that is not a constant; a
     string that spells pytest anywhere else (the suite's synthetic tool-call fixtures spell `uv run pytest -q` by the
     dozen) is data, not a command."""
     base = os.path.basename(filename)
@@ -1290,9 +1343,11 @@ def _launchers_in(src, filename):
 
     for node in ast.walk(tree):
         if isinstance(node, (ast.List, ast.Tuple)):
-            kind = _argv_head(node.elts) if id(node) not in membership else None
+            kind, unparsed = _argv_command(node.elts) if id(node) not in membership else (None, None)
             if kind:
                 row(node, kind, node.elts)
+            elif unparsed:
+                row(node, "an argv literal", [], unparsed)
         elif isinstance(node, ast.Call):
             what = call_kind(node)
             if what is None:
@@ -1301,7 +1356,7 @@ def _launchers_in(src, filename):
             if arg is None:
                 continue
             if isinstance(arg, (ast.List, ast.Tuple)):
-                if _argv_head(arg.elts) is None:
+                if _argv_command(arg.elts) == (None, None):      # a launcher or an unparsed argv has its row from the literal
                     c = [_str(e) for e in arg.elts]
                     shell = bool(c) and c[0] is not None and os.path.basename(c[0]) in SHELL_NAMES and "-c" in c
                     hit = [t for t in c if t and PYTEST_IN_STRING_RE.search(t) and (shell or re.search(r"\s", t))]
@@ -1425,6 +1480,17 @@ class ChildPytestLaunchers(unittest.TestCase):
             ("a helper-built argv passed on by a name", 'import subprocess, sys\ndef _run(*a):\n    argv = [sys.executable, "-m", "pytest", "-q", *a]\n    return subprocess.run(argv)\n',
              "<interpreter> -m pytest", False),
             ("the argv built where no subprocess call is in sight", 'import sys\nEXPECTED = [sys.executable, "-m", "pytest", "-q"]\n', "<interpreter> -m pytest", False),
+            # interpreter options between the head and -m (the box's own recipe runs `python -B -m pytest`): until
+            # 2026-09-21 the pair was read at indices 1 and 2 alone, and each of these was outside the census with no red
+            ("-B before -m", 'import subprocess, sys\nsubprocess.run([sys.executable, "-B", "-m", "pytest", "-q", "-p", "no:anyio"])\n', "<interpreter> -m pytest", True),
+            ("-X dev before -m", 'import subprocess, sys\nsubprocess.run([sys.executable, "-X", "dev", "-m", "pytest", "-q"])\n', "<interpreter> -m pytest", False),
+            ("-W error before -m", 'import subprocess, sys\nsubprocess.run([sys.executable, "-W", "error", "-m", "pytest", "-q"])\n', "<interpreter> -m pytest", False),
+            ("-u and -I before -m", 'import subprocess, sys\nsubprocess.run([sys.executable, "-u", "-I", "-m", "pytest", "-q"])\n', "<interpreter> -m pytest", False),
+            ("-B before -mpytest", 'import subprocess, sys\nsubprocess.run([sys.executable, "-B", "-mpytest", "-q"])\n', "<interpreter> -mpytest", False),
+            # a python-named constant as the head, wherever it sits: a wrapper in front of it does not hide the command
+            ("a python-named constant head", 'import subprocess\nsubprocess.run(["python3.12", "-m", "pytest", "-q"])\n', "<interpreter> -m pytest", False),
+            ("uv run python -m pytest", 'import subprocess\nsubprocess.run(["uv", "run", "python", "-m", "pytest", "-q"])\n', "<interpreter> -m pytest", False),
+            ("uv run --python 3.12 python -m pytest", 'import subprocess\nsubprocess.run(["uv", "run", "--python", "3.12", "python", "-m", "pytest", "-q", "-p", "no:anyio"])\n', "<interpreter> -m pytest", True),
         )
         for label, src, kind, flag in cases:
             with self.subTest(form=label):
@@ -1450,7 +1516,15 @@ class ChildPytestLaunchers(unittest.TestCase):
                 ("a shell -c argv", 'from subprocess import Popen\nPopen(["bash", "-c", "cd /tmp && python3 -m pytest -q"])\n', "inside one element of the argv"),
                 ("a shell -c argv, pytest alone", 'import subprocess\nsubprocess.run(["/bin/sh", "-c", "pytest"])\n', "inside one element of the argv"),
                 ("a multi-word element under another head", 'import subprocess\nsubprocess.run(["ssh", "host", "python -m pytest -q"])\n', "inside one element of the argv"),
-                ("the args keyword", 'import subprocess\nsubprocess.run(args="python3.12 -m pytest -q", shell=True)\n', "a shell string")):
+                ("the args keyword", 'import subprocess\nsubprocess.run(args="python3.12 -m pytest -q", shell=True)\n', "a shell string"),
+                # pytest.main inside a -c string, and in a shell string: an in-process pytest in a child interpreter
+                ("pytest.main in a -c element", 'import subprocess, sys\nsubprocess.run([sys.executable, "-c", "import pytest; pytest.main([\'-q\'])"])\n', "inside one element of the argv"),
+                ("pytest.main in a shell string", 'import subprocess\nsubprocess.run("python -c \'import pytest; pytest.main()\'", shell=True)\n', "a shell string"),
+                # after an interpreter head, a -m whose module is not a constant may be pytest, and an element that is not a
+                # constant before `pytest` may be -m: the census cannot tell, so each is red until spelled (2026-09-21)
+                ("-m then a name", 'import subprocess, sys\nmod = "pytest"\nsubprocess.run([sys.executable, "-m", mod, "-q"])\n', "a module name the census cannot read after -m"),
+                ("-B, -m then a name", 'import subprocess, sys\nmod = "pytest"\nsubprocess.run([sys.executable, "-B", "-m", mod, "-q"])\n', "a module name the census cannot read after -m"),
+                ("a name then pytest", 'import subprocess, sys\nflag = "-m"\nsubprocess.run([sys.executable, flag, "pytest", "-q"])\n', "an element the census cannot read before `pytest`")):
             with self.subTest(form=label):
                 rows = _launchers_in(src, "t.py")
                 self.assertEqual(len(rows), 1, "%s: one unparsed row expected, read %r" % (label, [_describe_launcher(r) for r in rows]))
@@ -1462,6 +1536,14 @@ class ChildPytestLaunchers(unittest.TestCase):
                                        'self._bash_turn(0, "pytest -q")\nnote = "run python -m pytest -q first"\n', "t.py"), [])
         self.assertEqual(_launchers_in('import subprocess, sys\nsubprocess.run([sys.executable, "-m", "pip", "install", "pytest", "anyio"])\n', "t.py"), [])
         self.assertEqual(_launchers_in('import subprocess\nsubprocess.run(["ssh", "host", "pytest"])\n', "t.py"), [], "a lone element under a non-shell head is an argument")
+        # -m under an interpreter head names another module; -m under any other head is that command's own option
+        # (git commit -m, with a constant or a variable for git); a script after the head takes -m pytest as ITS arguments;
+        # a variable package on a pip line before the word pytest is not an option the census owes
+        self.assertEqual(_launchers_in('import subprocess, sys\nsubprocess.run([sys.executable, "-m", "unittest", "-q"])\n', "t.py"), [], "-m unittest is another module")
+        self.assertEqual(_launchers_in('import subprocess\nsubprocess.run(["git", "commit", "-q", "-m", msg])\n', "t.py"), [], "git commit -m is not an interpreter's -m")
+        self.assertEqual(_launchers_in('import subprocess\nsubprocess.run([GIT, "commit", "-q", "-m", msg])\n', "t.py"), [], "a word that is not an option ends the interpreter's options")
+        self.assertEqual(_launchers_in('import subprocess, sys\nsubprocess.run([sys.executable, "tool.py", "-m", "pytest"])\n', "t.py"), [], "a script's own -m pytest")
+        self.assertEqual(_launchers_in('import subprocess, sys\nsubprocess.run([sys.executable, "-m", "pip", "install", pkg, "pytest"])\n', "t.py"), [], "a pip line with a variable package")
         self.assertEqual(_launchers_in('import os\nname = "x"\nok = os.path.basename(name) in ("pytest", "py.test")\nbad = name not in ["pytest", "-q"]\n', "t.py"), [],
                          "the right operand of an in test is a set of names, not an argv")
         self.assertEqual(_launchers_in("def f():\n    return 1\n", "t.py"), [])
@@ -1469,6 +1551,22 @@ class ChildPytestLaunchers(unittest.TestCase):
         rows = _launchers_in("def f(:\n    pass\n", "t.py")
         self.assertEqual([(r["kind"], r["flag"]) for r in rows], [("module", False)])
         self.assertIn("does not parse under this interpreter", rows[0]["unparsed"])
+
+    def test_the_walk_parses_a_module_whose_only_pytest_spelling_is_the_one_token_form(self):
+        # child_pytest_launchers skips a module without a parse when its text spells no pytest; until 2026-09-21 that
+        # prefilter was `\bpytest\b`, which `-mpytest` does not match (no word boundary between m and p), so a module
+        # whose only spelling was the one token _argv_command reads was skipped whole: read by _launchers_in, unread by the
+        # walk. Keyed on the walk over a scratch directory listing the launcher, with an option before the token too.
+        d = tempfile.mkdtemp(prefix="census-walk-")
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        with open(os.path.join(d, "test_one_token.py"), "w") as f:
+            f.write('import subprocess, sys\nsubprocess.run([sys.executable, "-B", "-mpytest", "-q"])\n')
+        with open(os.path.join(d, "test_no_pytest.py"), "w") as f:
+            f.write('def f():\n    return 1\n')
+        rows = child_pytest_launchers(d)
+        self.assertEqual([(r["file"], r["kind"], r["flag"], r["unparsed"]) for r in rows],
+                         [("test_one_token.py", "<interpreter> -mpytest", False, None)],
+                         "the walk must parse a module whose only spelling of pytest is the one token `-mpytest`: %r" % rows)
 
     def test_a_live_launcher_with_its_flag_removed_is_named_at_its_line(self):
         # the census against what it refuses, on a copy of a live launcher module's text: the flag removed from one
