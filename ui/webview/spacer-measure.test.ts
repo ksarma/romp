@@ -617,35 +617,60 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   assert.deepEqual(censusCalls.filter((c) => (c.expression as ts.Identifier).text === "untakeMeasure").map((c) => ownerOf(c)).sort(),
     ["appendActive", "fillInPlace", "fillInPlace", "keepPlaceAcrossWindow", "landActive", "landNearestMoment", "scrollToAnchor", "scrollToAnchor", "toggleToolGroup", "virtualizeToViewport"].sort(),
     "the take is given back at every road that can end unanchored: appendActive's raw write, the fill's two raw roads, the keep's double miss, landActive's land-saved after a take, the moment's miss, scrollToAnchor's two misses, the toggle's raw write, the re-window's lost focus unit");
-  // 5. the raw writes by reader (the author's fixer pass over pass 4, its own finding, narrowed by the closing pass over it): axis 4 pins the
-  //    untake SITES and the harnesses drive the roads they name, so a raw write added inside a listed reader after its take, with no untake,
-  //    was caught by nothing when it reused a writer name the family already has (`writeScroll(content, 12345, "land-saved")` planted in
-  //    landActive ran green through spacer-measure, land-active-keep and landing-settle before this census); a write under a NEW name
-  //    (`"planted-raw"`) was refused by landing-settle.test.ts's writer census, an unclassified writer, before this census existed, so that
-  //    shape is caught twice. Every call of the write family (writeScroll and the wrappers writer-census.ts registers, landing-settle.ts's
-  //    WRITER_WRAPPERS, the writer read at each one's registered position) whose lexical chain holds a reader on the untake list, as
-  //    (reader, writer), a closed multiset: a write added to one of these readers reds here and owes its road a harness case (the six
-  //    harnesses are the executed guard on the raw roads). The reader is the first function on the call's chain, innermost outward, that is
-  //    on the list, so a write inside a named inner function of a reader is the reader's and is named with its inner owner (the closing
-  //    pass: attributed to the nearest name and filtered by the list, `const later = () => writeScroll(...); later();` planted in landActive
-  //    fell out of the census and passed every leg, where the same write in an anonymous callback was counted). keepPlaceAcrossWindow and
-  //    landNearestMoment write through restoreScrollAnchor and scrollToAnchor and own no write of their own; a write outside these readers
-  //    is outside the take rule and outside this census.
+  // 5. the writes by reader (the author's fixer pass over pass 4, its own finding, narrowed by the closing pass over it and widened one hop
+  //    by the author's pass over the second closing lens): axis 4 pins the untake SITES and the harnesses drive the roads they name, so a
+  //    raw write added inside a listed reader after its take, with no untake, was caught by nothing when it reused a writer name the family
+  //    already has (`writeScroll(content, 12345, "land-saved")` planted in landActive ran green through spacer-measure, land-active-keep and
+  //    landing-settle before this census); a write under a NEW name (`"planted-raw"`) was refused by landing-settle.test.ts's writer census,
+  //    an unclassified writer, before this census existed, so that shape is caught twice. Every call of the write family (writeScroll and the
+  //    wrappers writer-census.ts registers, landing-settle.ts's WRITER_WRAPPERS, the writer read at each one's registered position) outside the wrappers' own
+  //    bodies (writeScroll inside scrollContentBy, scrollElInto inside landOn's local `land`: a wrapper's body is what its calls stand for)
+  //    that runs under a reader on the untake list, as (reader, writer), a closed multiset: a write added under one of these readers reds
+  //    here and owes its road a harness case (the six harnesses are the executed guard on the raw roads). Two attributions:
+  //    - DIRECT: the reader is the first function on the call's lexical chain, innermost outward, that is on the list, so a write inside a
+  //      named inner function of a reader is the reader's and is named with its inner owner (the closing pass: attributed to the nearest
+  //      name and filtered by the list, `const later = () => writeScroll(...); later();` planted in landActive fell out of the census and
+  //      passed every leg, where the same write in an anonymous callback was counted).
+  //    - ONE HOP: a family call in another render.ts function F (the outermost named function on the call's chain) is attributed to every
+  //      call of F whose own chain holds a reader, the conduit named (`landActive: anchor-restore via restoreScrollAnchor`), F on the list
+  //      or not (scrollToAnchor's keep-offset is landActive's too, through landActive's call of scrollToAnchor); a reader's call of itself
+  //      adds nothing (landActive's retry when the chat becomes visible: its writes are its own at zero hops). Before this hop (the second
+  //      closing lens over the closing pass) a module-level helper calling writeScroll, called from landActive after its take, and a second
+  //      write inside restoreScrollAnchor, which keepPlaceAcrossWindow and landActive call under their takes, were attributed to nobody and
+  //      passed every leg.
+  //    Outside the census, by construction: a write two hops away (a helper's helper), a write at module level (an anonymous handler, no
+  //    name to be called by) and a conduit called through a property access; a write outside these readers is outside the take rule and
+  //    outside this census.
   const UNTAKERS = new Set(["appendActive", "fillInPlace", "keepPlaceAcrossWindow", "landActive", "landNearestMoment", "scrollToAnchor", "toggleToolGroup", "virtualizeToViewport"]);
   const FAMILY: Readonly<Record<string, number>> = WRITER_WRAPPERS;   // the write family and the writer's position in each call (writeScroll 2, scrollContentBy 2, scrollElInto 3, land 0, settleLand 1), the table writer-census.ts pins
-  const inFamily = (c: ts.CallExpression): boolean => Object.prototype.hasOwnProperty.call(FAMILY, (c.expression as ts.Identifier).text);
+  const inFamilyName = (name: string): boolean => Object.prototype.hasOwnProperty.call(FAMILY, name);
+  const inFamily = (c: ts.CallExpression): boolean => inFamilyName((c.expression as ts.Identifier).text);
   const readerOf = (n: ts.Node): string | null => { for (let p: ts.Node | undefined = n.parent; p; p = p.parent) { if (ts.isFunctionLike(p)) { const nm = nameOf(p); if (nm && UNTAKERS.has(nm)) return nm; } } return null; };
+  const topOwnerOf = (n: ts.Node): string => { let top = "<module>"; for (let p: ts.Node | undefined = n.parent; p; p = p.parent) { if (ts.isFunctionLike(p)) { const nm = nameOf(p); if (nm) top = nm; } } return top; };
   const writerOf = (c: ts.CallExpression): string => { const a = c.arguments[FAMILY[(c.expression as ts.Identifier).text]]; return !a ? "absent" : ts.isStringLiteral(a) ? a.text : a.getText(sf); };
   const familyCalls = allCalls.filter(inFamily);
   assert.ok(familyCalls.length > 12, "the write family is called across render.ts, inside the readers and out: " + familyCalls.length + " calls");
-  assert.deepEqual(familyCalls.flatMap((c) => { const r = readerOf(c); if (!r) return []; const o = ownerOf(c), fn = (c.expression as ts.Identifier).text; return [r + (o === r ? "" : " (inside " + o + ")") + ": " + writerOf(c) + (fn === "writeScroll" ? "" : " via " + fn)]; }).sort(), [
+  const familyWrites = familyCalls.filter((c) => !inFamilyName(ownerOf(c)));   // outside the wrappers' own bodies
+  const pairOf = (reader: string, owner: string, c: ts.CallExpression, via: string | null): string => { const fn = (c.expression as ts.Identifier).text; return reader + (owner === reader ? "" : " (inside " + owner + ")") + ": " + writerOf(c) + (fn === "writeScroll" ? "" : " via " + fn) + (via ? " via " + via : ""); };
+  const direct = familyWrites.flatMap((c) => { const r = readerOf(c); return r ? [pairOf(r, ownerOf(c), c, null)] : []; });
+  const oneHop = familyWrites.flatMap((c) => { const F = topOwnerOf(c); if (F === "<module>") return []; return allCalls.filter((k) => (k.expression as ts.Identifier).text === F).flatMap((k) => { const r = readerOf(k); return r && r !== F ? [pairOf(r, ownerOf(k), c, F)] : []; }); });
+  assert.deepEqual([...direct, ...oneHop].sort(), [
     "appendActive: append-raw", "appendActive: append-stick",                                                        // the raw road (the untake before it) and the follow
     "fillInPlace: gap-fill", "fillInPlace: gap-fill",                                                                // the two raw roads, each with its untake
     "landActive: land-bottom", "landActive: land-saved", "landActive: reload-restore", "landActive: reload-restore",   // the bottom land; the saved place (the untake before it); the reload restore's two shapes (the take stands there, by measurement)
     "scrollToAnchor: keep-offset",                                                                                   // the keep-offset re-land; the two misses write nothing after their untake
     "toggleToolGroup: toolgroup-toggle",                                                                             // the raw road (the untake before it)
     "virtualizeToViewport: rewindow", "virtualizeToViewport: rewindow",                                              // the bottom, and the focus unit's offset (the untake when the unit is gone)
-  ].sort(), "every write of the family inside a reader of the take state, by reader and writer (an inner owner and a wrapper named where they apply): a raw write added to one of these readers, under any writer name, inside any inner function, through any registered wrapper, reds here and owes a harness case for its road");
+    // one hop, the conduit named: restoreScrollAnchor's write under every reader that puts a captured row back after its take
+    "appendActive: anchor-restore via restoreScrollAnchor",                                                          // the scrolled-up reader's anchor
+    "keepPlaceAcrossWindow: anchor-restore via restoreScrollAnchor", "keepPlaceAcrossWindow: anchor-restore via restoreScrollAnchor",   // the kept row; the row under the viewport top on the miss
+    "landActive: anchor-restore via restoreScrollAnchor", "landActive: anchor-restore via restoreScrollAnchor",     // the reload restore's anchor; the saved place's captured row
+    "toggleToolGroup: anchor-restore via restoreScrollAnchor",                                                       // the toggle's captured row
+    // one hop through a reader: scrollToAnchor's own write under the readers that land through it, and landOn's landing under the two that land on a turn
+    "keepPlaceAcrossWindow: keep-offset via scrollToAnchor",                                                         // the kept row re-landed by uuid
+    "landActive: keep-offset via scrollToAnchor", "landActive: keep-offset via scrollToAnchor",                      // the armed anchor; the reload restore's anchor re-landed
+    "landNearestMoment: land-on via land via landOn", "scrollToAnchor: land-on via land via landOn",                // the landing itself, through landOn's local wrapper
+  ].sort(), "every write of the family that runs under a reader of the take state, by reader and writer, direct or one hop through a named conduit (an inner owner, a wrapper and the conduit named where they apply): a write added under one of these readers, under any writer name, inside any inner function, through any registered wrapper or through a helper a reader calls, reds here and owes a harness case for its road");
   // every reset that clears the average clears the parked figures with it (forgetAverage), and none clears the figure bare
   assert.match(RENDER, /function forgetAverage\(v: View\): void \{\s*\n\s*v\.avgTurnH = undefined; v\.measured = undefined;\s*\n\}/);
   assert.deepEqual(avgWrites.sort(), ["applyMeasure: m.avg", "forgetAverage: undefined", "untakeMeasure: before.avg"], "the average is written by the take, the untake and the one bare clear, the helper's (by owner from the syntax tree, under every assignment operator, an increment or a delete)");
