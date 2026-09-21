@@ -71,8 +71,12 @@ both ways); the dunder names read are exactly DUNDERS; no attribute read is a du
 primitive is called or read but the one open() in _read and the one glob.glob in _family_modules, both of whose paths pass
 _under, which REFUSES at run time, over the value, a path that is absolute or leaves the root (pinned by execution in
 test_every_path_the_module_reads_is_under_the_tree); the one subprocess.run is inside _git, its command git under `-C root`,
-and the population's text is read through _show alone, a git show at HEAD through _git (the census cell calls no _read); and
-no string constant is an absolute path, a home path, a `..` step or a drive letter. The helper this module imports is
+and the population's text is read through _show alone, a git show at HEAD through _git: the census cell's call-graph CLOSURE
+over this module's own definitions (every name it calls that is a definition here, followed transitively, _closure) holds
+_show and _git and not _read, and no definition in it calls open(), so the pin holds what the cell REACHES and not what it
+names (pass 11's second closing fixer pass: the earlier pin read the cell's direct callees, and a wrapper on the way to _read
+kept it green while the census read the checkout); and no string constant is an absolute path, a home path, a `..` step or a
+drive letter. The helper this module imports is
 pinned the same way, by its own test module (tests/test_review_round_labels_rule.py: `import re` alone, no file read at all).
 What this pin does not check, stated: git's own reads (its configuration and the environment it inherits, GIT_DIR among them,
 which is how the skip road is driven), the standard library's own reads, and a method called on a value the module bound
@@ -291,6 +295,20 @@ def _chains(tree):
     return out, unresolved, whole
 
 
+def _closure(fn, tree):
+    """{name: its definition} for every definition of this module (a module-level def of `tree`) that `fn` reaches by a name call,
+    transitively: the call graph's closure over the module's own definitions, so a pin over it holds what `fn` reaches and not
+    what it names (a wrapper on the way to a reader is in it)."""
+    defs = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+    out, todo = {}, [fn]
+    while todo:
+        for n in ast.walk(todo.pop()):
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in defs and n.func.id not in out:
+                out[n.func.id] = defs[n.func.id]
+                todo.append(defs[n.func.id])
+    return out
+
+
 class RoundLabels(unittest.TestCase):
     maxDiff = None
 
@@ -314,8 +332,11 @@ class RoundLabels(unittest.TestCase):
         or an attribute chain (a subscript or a call as the callee is unresolved); every name called is a definition of this
         module or one of BUILTINS, held equal both ways; no primitive (PRIMITIVES) is called or read but exactly one open(),
         inside _read, whose argument is _under(root, rel), and the one glob.glob is inside _family_modules with its directory
-        through _under; the one subprocess.run is inside _git and its command starts with git and `-C root`; the dunder names
-        read are exactly DUNDERS (so `__builtins__`, `__loader__` and `__spec__`, which reach the builtins and the file system,
+        through _under; the one subprocess.run is inside _git and its command starts with git and `-C root`; the census cell's
+        call-graph closure over this module's definitions (_closure: what the cell reaches by name calls, transitively) holds
+        _show and _git and not _read, and no definition in it calls open() (pass 11's second closing fixer pass: the earlier
+        pin read the cell's direct callees, so a wrapper over _read called from the cell read the checkout with it green);
+        the dunder names read are exactly DUNDERS (so `__builtins__`, `__loader__` and `__spec__`, which reach the builtins and the file system,
         are refused); no attribute read is a dunder (`__class__`, `__globals__`, `__dict__`: reflection) or str.format or
         format_map, whose fields walk attributes by name inside a string the walk does not read; and no string constant is an
         absolute path, a home path, a `..` step or a drive letter. _under's refusals at run time are pinned by execution in
@@ -348,6 +369,19 @@ class RoundLabels(unittest.TestCase):
         self.assertEqual(sorted(named - defs - set(BUILTINS) - {"open"}), [], "a name called that is neither a definition of this module nor one of BUILTINS is unresolved: %r" % (sorted(named - defs - set(BUILTINS) - {"open"}),))
         self.assertEqual(sorted(set(BUILTINS) - named), [], "a builtin in BUILTINS this module no longer calls: the tuple is held equal to the module's calls both ways")
         self.assertEqual(sorted(set(BUILTINS) & (defs | set(PRIMITIVES))), [], "BUILTINS names a definition of this module or a primitive")
+        cells = [m for n in tree.body if isinstance(n, ast.ClassDef) for m in n.body if isinstance(m, ast.FunctionDef)]
+        census = next(m for m in cells if m.name == "test_no_mention_credits_a_round_the_maintainer_never_held")
+        closure = _closure(census, tree)
+        self.assertNotIn("_read", closure, "the census cell reaches _read (the checkout's text) through its call graph %r: the population's text is read at HEAD "
+                                           "alone, through _show, and a wrapper or a helper on the way to _read reads the checkout with a direct-callee pin green (pass "
+                                           "11's second closing fixer pass); this pins WHERE the read is made, and the behaviour, a mislabel committed at HEAD read with "
+                                           "the checkout restored, is driven by execution in a scratch repository outside the tree (the pass record), since driving "
+                                           "it here would mean committing here" % (sorted(closure),))
+        self.assertIn("_show", closure, "the census cell reaches no _show: the population's text is read through _show, git show at HEAD through _git with the path "
+                                        "through _under's refusals, and through nothing else: %r" % (sorted(closure),))
+        self.assertIn("_git", closure, "the census cell reaches no _git: the text it judges is not the committed one: %r" % (sorted(closure),))
+        opened = [(d, n.lineno) for d in sorted(closure) for n in ast.walk(closure[d]) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "open"]
+        self.assertEqual(opened, [], "a definition the census cell reaches calls open(): a file of the checkout read on the way to the verdict: %r" % (opened,))
         prim = [(n.id, n.lineno) for n in ast.walk(tree) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id in PRIMITIVES]
         self.assertEqual([(i, ln) for i, ln in prim if i != "open"], [], "a reflective or file primitive read in the census module (a name reached by a string, a file opened outside _read) is a read the pin cannot resolve: %r" % ([(i, ln) for i, ln in prim if i != "open"],))
         read = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_read")
@@ -367,12 +401,6 @@ class RoundLabels(unittest.TestCase):
         self.assertEqual([n.lineno for n in runs], [n.lineno for n in ast.walk(git) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and ast.unparse(n.func) == "subprocess.run"], "every subprocess.run is inside _git: at lines %r" % ([n.lineno for n in runs],))
         self.assertEqual(len(runs), 1, "_git holds exactly one subprocess.run")
         self.assertEqual(ast.unparse(runs[0].args[0]), "['git', '-C', root] + list(args)", "the one program this module runs is git under the root it was handed: %s" % ast.unparse(runs[0].args[0]))
-        cells = [m for n in tree.body if isinstance(n, ast.ClassDef) for m in n.body if isinstance(m, ast.FunctionDef)]
-        census = next(m for m in cells if m.name == "test_no_mention_credits_a_round_the_maintainer_never_held")
-        readers = sorted({n.func.id for n in ast.walk(census) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in ("_read", "_show")})
-        self.assertEqual(readers, ["_show"], "the census cell reads the population's text through _show alone (git show at HEAD), never _read (the checkout's text): this pins WHERE the "
-                                             "read is made; the behaviour, a mislabel committed at HEAD read with the checkout restored, is driven by execution in a scratch repository "
-                                             "outside the tree (the pass record), since driving it here would mean committing here: %r" % (readers,))
         dunders = sorted({n.id for n in ast.walk(tree) if isinstance(n, ast.Name) and n.id.startswith("__")})
         self.assertEqual(dunders, sorted(DUNDERS), "the module-level dunder names read are exactly DUNDERS (`__builtins__`, `__loader__` and `__spec__` reach the builtins and the file system): %r" % (dunders,))
         reflective = [(n.attr, n.lineno) for n in ast.walk(tree) if isinstance(n, ast.Attribute) and (n.attr.startswith("__") or n.attr in ("format", "format_map"))]
