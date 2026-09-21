@@ -86,7 +86,7 @@ const PLANTS = [
 ];
 const TS_PRESENT = fs.existsSync(path.join(NODE_MODULES, 'typescript', 'lib', 'typescript.js'));
 
-test('the plants: a path-built dynamic import, a double-quoted static import, a two-line import, a side-effect import and the createRequire road that bit the job on 2026-09-21, each a synthetic module run as a child from a mirror without node_modules, exits non-zero naming the missing module (FAILS BEFORE the property guard: each was green under the spelling pins while red in the job); and from a mirror with node_modules linked each loads and passes, so each is the job\'s own shape (skipped where this tree has no compiler to link, the mirror without one still refusing)', () => {
+test('the plants: a path-built dynamic import, a double-quoted static import, a two-line import, a side-effect import and the createRequire road that bit the job on 2026-09-21, each a synthetic module run as a child from a mirror without node_modules, exits non-zero naming the missing module (FAILS BEFORE the property guard: each was green under the spelling pins while red in the job); and from a mirror with node_modules linked each loads and passes, so each is the job\'s own shape (skipped where this tree has no compiler to link, the mirror without one still refusing)', (t) => {
   const files = Object.fromEntries(PLANTS.map((p) => ['print-isolation-plant-' + p.name + '.test.mjs', HEAD + p.road + BODY]));
   const bare = mirror(MODULES[0], { extra: files });
   try {
@@ -96,7 +96,8 @@ test('the plants: a path-built dynamic import, a double-quoted static import, a 
       assert.match(r.tail, p.refuses, p.name + ': the child names the missing module: ' + r.tail);
     }
   } finally { fs.rmSync(bare, { recursive: true, force: true }); }
-  if (!TS_PRESENT) return;   // a tree with no compiler installed (the shell job's own): the refusing half above ran; the passing half needs the module to link
+  if (!TS_PRESENT) { t.diagnostic('the linked half did not run: no compiler under vscode-extension/node_modules to link (the shell job\'s own state); the refusing half above ran, ' + PLANTS.length + ' plants red from the bare mirror'); return; }   // a tree with no compiler installed: the passing half needs the module to link; the skip is said in the output, so a CI log shows which half ran (the author's closing pass over round 8, the verifiers' r8v-F-G-H-I-3)
+  t.diagnostic('both halves ran: ' + PLANTS.length + ' plants red from the bare mirror and green from the linked one');
   const linked = mirror(MODULES[0], { withNodeModules: true, extra: files });
   try {
     for (const p of PLANTS) {
