@@ -3320,12 +3320,58 @@ class StepWrite:
     `replaced`: the record's values this step's writes replaced, field by field, the first replaced value kept per field
     (a later write of the same field in one step replaced what the earlier one wrote), so the guard's retry can put back
     exactly what the step's own write took away and nothing another writer put there since. The retry itself writes
-    into no carrier: it is the RESTORE, and a carrier it wrote into would read as the step's write."""
-    __slots__ = ("landed", "replaced")
+    into no carrier: it is the RESTORE, and a carrier it wrote into would read as the step's write.
+
+    THE LIVE HALF (round 7 of the review, 2026-09-21; the reviewer's ruling on round 6's disclosed observation, a lost write
+    with a false success): the same discipline for the six live fields a step writes under the hold lock (STEP_LIVE_FIELDS:
+    the pick pair, the pending pair, the relaunch slot flag and the landing's slot memo). Every hold a step takes through
+    SdkSession._step_write records, per field the hold CHANGED, what it replaced (`live_replaced`, the first per field) and
+    what it left (`live_wrote`, the last per field), so the guard's restore (SdkSession._restore_step_writes) can put a
+    field back only while it still holds what THIS step wrote and leave a field another writer moved standing, named in
+    the row (`moved`, written by that restore for the walk's summary line). Until round 7 the guard restored a door-time
+    snapshot of all six whenever any had moved, so a concurrent pick that landed inside the failing step's window was
+    told applied and then silently undone."""
+    __slots__ = ("landed", "replaced", "live_replaced", "live_wrote", "moved")
 
     def __init__(self):
         self.landed = False
         self.replaced = {}
+        self.live_replaced = {}   # per live field this step's holds changed: the value the FIRST change replaced
+        self.live_wrote = {}      # per live field this step's holds changed: the value the LAST change left
+        self.moved = []           # after the restore: the live fields another writer moved during the step (sorted names)
+
+    def note_live(self, pre: dict, post: dict) -> None:
+        """One hold of the step closed (SdkSession._step_write): record, per live field the hold CHANGED, what it replaced
+        (kept from the first change) and what it left (the last change wins), the record the per-field restore compares
+        against. A field the hold left as it found it is no write of this step's and is not recorded."""
+        for k, v in post.items():
+            if pre.get(k) != v:
+                self.live_replaced.setdefault(k, pre.get(k))
+                self.live_wrote[k] = v
+
+
+STEP_LIVE_FIELDS = ("auth", "auth_login", "_auth_pending", "_auth_pending_login", "_relaunch_bounded", "_landing_ask_bounded")
+# The six live fields of a session a billing STEP writes under the hold lock, and the guard's restore puts back per field
+# (round 7 of the review, 2026-09-21): the session's own pick (auth, auth_login), the pending ask (_auth_pending,
+# _auth_pending_login), the relaunch slot flag (_relaunch_bounded) and the landing's slot memo (_landing_ask_bounded).
+# WRITERS, by enclosing def (derived at the round-7 commit by an ast walk over this file's attribute assignments): inside
+# a step, recording into the step's carrier through SdkSession._step_write: set_auth (five roads), _follow_default (four
+# holds), _follow_default_unlanded (one), _clear_served_auth_pending and _ask_parked_pick (recorded only when handed the
+# closer step's carrier, _recover_picked_pending_at_init), and follow_default_auth's live clear (its own carrier); outside
+# any step, bare under _hold_write: SdkSession.__init__ (the constructing thread), _served_by_connect (the served
+# withdrawal, loop), _arm_after_relaunch_slot (the slot grant) and _amain (the reconnect loop's top), both spending
+# _relaunch_bounded on the loop, _connect_landed through _clear_served_auth_pending and _ask_parked_pick (loop); and the
+# one setattr writer, SdkSession._restore_step_writes (under the hold, from the guard and the clear's unit). READERS, by
+# enclosing def (attribute and getattr reads, the same walk): auth: __init__, _auth_live_fields, _connect_landed,
+# _decide_auth, _note_auth_source, _options, _pick_held, _push, _reconnect_default_followers, _step_fields_view,
+# billing_view, effective_auth, effective_login, set_auth, set_auth_followers, snapshot; auth_login: _auth_live_fields,
+# _connect_landed, _decide_auth, _options, _step_fields_view, effective_login, set_auth, snapshot; _auth_pending:
+# __init__, _auth_live_fields, _auth_pending_flag, _auth_pending_target, _follow_default, _follow_default_guarded,
+# _follow_default_unlanded, _note_auth_source, _served_by_connect, _step_fields_view, auth_apply_outlook, billing_view,
+# set_auth's read_picks, set_auth, snapshot; _auth_pending_login: _auth_pending_target, _step_fields_view;
+# _relaunch_bounded: _amain, _arm_reconnect_if_quiet, _step_fields_view, auth_relaunch_staggered; _landing_ask_bounded:
+# _ask_parked_pick, _step_fields_view. tests/test_billing_route.py pins by ast that every assignment to these names
+# inside a step function sits in a _step_write block.
 
 
 def read_reg_for_rmw(state_dir: Path, sid: str) -> "dict | None":
@@ -7452,12 +7498,73 @@ class SdkSession:
         2 of the billing verb's review, and mirrored to the reg from the live fields, _mirror_auth) and of the relaunch
         slot flag (_relaunch_bounded: the ask's flag, written in the same hold as the pending it belongs to, so the
         landing's guarded clear cannot be undone by a walk that wrote the flag bare after its pending; the reviewer's
-        regression-3); a reader takes _hold_lock bare."""
+        regression-3); a reader takes _hold_lock bare. A STEP's writer of the six billing fields (STEP_LIVE_FIELDS) takes
+        this lock through _step_write, which is this hold plus the step's recorder (round 7 of the review, 2026-09-21)."""
         with self._hold_lock:
             try:
                 yield
             finally:
                 self._hold_gen += 1
+
+    def _step_fields_view(self) -> dict:
+        """The six live fields a billing step writes (STEP_LIVE_FIELDS), normalised for a compare by value: "" for an unset
+        side or login, bool for the two flags. A bare read; the caller holds _hold_lock (the recorder and the restore do)."""
+        return {"auth": getattr(self, "auth", "") or "", "auth_login": getattr(self, "auth_login", "") or "",
+                "_auth_pending": getattr(self, "_auth_pending", "") or "",
+                "_auth_pending_login": getattr(self, "_auth_pending_login", "") or "",
+                "_relaunch_bounded": bool(getattr(self, "_relaunch_bounded", False)),
+                "_landing_ask_bounded": bool(getattr(self, "_landing_ask_bounded", False))}
+
+    @contextlib.contextmanager
+    def _step_write(self, token=None):
+        """_hold_write for a STEP's write of the six billing fields, with the step's recorder (round 7 of the review,
+        2026-09-21; the reviewer's ruling on round 6's disclosed observation): the same lock, and as the hold closes the
+        fields the block CHANGED are recorded into the step's carrier (StepWrite.note_live: what each change replaced,
+        kept from the first, and what it left, the last), under the very lock the write took, so the guard's restore
+        (_restore_step_writes) can tell a field that still holds this step's write from one another writer moved since.
+        `token` None is a plain hold (a caller outside any step: the landing's served clear, its parked ask). Every
+        assignment to a STEP_LIVE_FIELDS name inside set_auth, _follow_default, _follow_default_unlanded,
+        _clear_served_auth_pending, _ask_parked_pick and follow_default_auth sits in one of these blocks
+        (tests/test_billing_route.py pins the census by ast); a write outside them is a write no restore knows about."""
+        with self._hold_write():
+            pre = self._step_fields_view() if token is not None else None
+            try:
+                yield
+            finally:
+                if token is not None:
+                    token.note_live(pre, self._step_fields_view())
+
+    def _restore_step_writes(self, token, before: dict) -> dict:
+        """THE PER-FIELD RESTORE after a step failed (round 7 of the review, 2026-09-21; the reviewer's ruling: a guard
+        restore must not be a blanket snapshot; restore a field only if it still holds what the step put there). For each
+        of the six fields (STEP_LIVE_FIELDS) the step's carrier recorded as changed (`token.live_wrote`, through
+        _step_write): while the field still holds the value the step left, it goes back to the value the step's first
+        change replaced (`token.live_replaced`); a field that holds anything else was moved by another writer after the
+        step wrote it (a concurrent pick on another request or pusher thread, the loop's served withdrawal, a landing's
+        clear, the slot grant spending the flag) and is LEFT AS IT STANDS: the later writer's evidence is newer, and its
+        caller was told its write applied. A field the step never changed is never touched. Returns the fields whose value
+        after the restore differs from `before` (the door-time view the caller took under _hold_lock), each with the value
+        standing: what another writer moved during the step, for the row that names it; the same names go into
+        `token.moved` for the walk's summary line. The caller holds _hold_write (the compare and the put-back are one hold,
+        as _clear_served_auth_pending's compare is). Until round 7 the guard put the whole door-time snapshot back whenever
+        any of the six had moved, and the retry mirrored it to the record: the concurrent writer's pick was gone with no
+        row naming it (round 6's observation, the reviewer's drive D2d).
+        THE RESIDUAL, named: a compare by value cannot tell another writer's write of the SAME value from the step's own
+        (a concurrent pick of the same side and login that took set_auth's already-applying road writes nothing and is
+        told applied; a second `default` clear; the slot grant and a step's own False on the flag), so such a write is
+        put back over as if it were the step's, until the next pick or default write; no field of the session carries a
+        writer tag or a generation, and none is added here (the record's compare has the same residual and the same
+        reason, _follow_default_guarded's comment)."""
+        now = self._step_fields_view()
+        wrote = token.live_wrote if token is not None else {}
+        for k in STEP_LIVE_FIELDS:
+            if k in wrote and now[k] == wrote[k]:
+                setattr(self, k, token.live_replaced[k])
+        after = self._step_fields_view()
+        moved = {k: after[k] for k in STEP_LIVE_FIELDS if after[k] != before[k]}
+        if token is not None:
+            token.moved = sorted(moved)
+        return moved
 
     @staticmethod
     def _picks_phrase(names: list, one: str, many: str) -> str:
@@ -8224,7 +8331,7 @@ class SdkSession:
         read; the caller holds _hold_lock when the pair decides a write."""
         return (self._auth_pending, self._auth_pending_login if self._auth_pending == "login" else "")
 
-    def _clear_served_auth_pending(self, pending: tuple) -> None:
+    def _clear_served_auth_pending(self, pending: tuple, token=None) -> None:
         """The landing served `pending`, the (side, login) pair it read in the hold that ended the window: clear it, and the
         slot flag the ask carried, ONLY while the live pending is still that one (round 3 of the review, 2026-09-18). A
         pending written after the snapshot (a default write, or a pick, between the landing's hold and this clear, across
@@ -8247,10 +8354,13 @@ class SdkSession:
         which disposes of the pending without withdrawing the request armed for it (a re-pick of the side the CLI runs
         while a connect composing the other side is in flight leaves that arm standing), so the slot flag there still
         belongs to the relaunch that is coming, the walk's bounded one whenever it is set, and clearing it would send that
-        relaunch to a boot slot instead of the spawn stagger. The guard's restore puts the memo back with the pair
-        (_follow_default_guarded), and set_auth's request branch writes it from the same `bounded` its slot flag comes
-        from, so a new pending never inherits an old pending's memo."""
-        with self._hold_write():
+        relaunch to a boot slot instead of the spawn stagger. The guard's restore puts the memo back with the pair where
+        each still holds what the step wrote (_follow_default_guarded; per field since round 7 of the review, 2026-09-21),
+        and set_auth's request branch writes it from the same `bounded` its slot flag comes from, so a new pending never
+        inherits an old pending's memo. `token` (round 7): the closer step's carrier when this clear is that step's own
+        (_recover_picked_pending_at_init), so the guard's restore knows the clear as the step's write; the landing's
+        calls hand none."""
+        with self._step_write(token):
             if self._auth_pending_target() == tuple(pending):
                 self._auth_pending = ""
                 self._auth_pending_login = ""
@@ -8328,7 +8438,7 @@ class SdkSession:
         launched_login = getattr(self, "_launched_login", "") or ""
         running_login = launched_login if self._launched_auth == "login" else ""
         if pending_ask == (self._launched_auth, running_login):
-            self._clear_served_auth_pending(pending_ask)
+            self._clear_served_auth_pending(pending_ask, token=token)   # the step's own write, recorded (round 7 of the review)
             self._mirror_auth_pending(token=token)   # `token`: this closer is the guard's step, and the write is the step's own (round 6)
             self.backend._poke()
             self._log_quietly("auth (%s): this session's surviving CLI reported its billing, the %s, which its pick names: "
@@ -8342,7 +8452,7 @@ class SdkSession:
             shape = self.backend._launch_shape(self)
             if (shape["auth"], shape["login"]) == tuple(refused):
                 # the pair-guarded clear the served branch uses; what this close IS, the line below says (not a serve)
-                self._clear_served_auth_pending(pending_ask)
+                self._clear_served_auth_pending(pending_ask, token=token)
                 self._mirror_auth_pending(token=token)
                 self.backend._poke()
                 picked = ("the %s login" % self.backend.login_display(pending_ask[1])) if pending_ask[1] else "the %s" % pending_auth
@@ -8352,9 +8462,9 @@ class SdkSession:
                                   "pick cannot be applied on this box: it stands unapplied, nothing is asked, and the session keeps "
                                   "billing %s" % (self.name, runs, picked, runs), problem=True)
                 return
-        self._ask_parked_pick("init")
+        self._ask_parked_pick("init", token=token)   # the step's own writes of the flag and the memo, recorded (round 7)
 
-    def _ask_parked_pick(self, how: str) -> None:
+    def _ask_parked_pick(self, how: str, token=None) -> None:
         """THE PICK'S ASK STANDS UNSERVED, AND NO ARM STANDS FOR IT: ask now, with the stamps truthful (round 5 of the
         reviewer's review, 2026-09-19; its correctness-1 and kernel-1, in the shape both refuters verified and fork PR
         #813's _ask_parked_pick already had, so the two converged: this is the one method, the verb's copy folded into it
@@ -8398,7 +8508,7 @@ class SdkSession:
         if armed or not pending_auth:
             return
         outcome = self._note_reconnect_ask("auth")
-        with self._hold_write():
+        with self._step_write(token):   # `token`: the closer step's carrier on the init road; the landing roads hand none (round 7)
             bounded = bool(getattr(self, "_landing_ask_bounded", False))
             self._relaunch_bounded = bounded
             self._landing_ask_bounded = False
@@ -9020,7 +9130,16 @@ class SdkSession:
         the pick, with a red "refused" line, and the next relaunch or restart dropped the pick silently. A lost
         answer leaves the pick standing (the next connect asserts it, and the running process either took it
         or answered nothing) and says so once, off the ring; a pick a newer one superseded meanwhile (self.mode
-        moved) stands down entirely, since the newer pick's own request answers for every layer."""
+        moved) stands down entirely, since the newer pick's own request answers for every layer. THE REVERT IS A
+        COMPARE-AND-SWAP PER LAYER (fork PR #813, round 7 of the review, 2026-09-21; the ruling on the billing guard's
+        restore, applied to this sibling restore site): the compare of self.mode against the refused pick and the
+        put-back of perm_mode and self.mode are one hold of the hold lock (set_mode writes them under the same lock, so
+        the swap cannot tear; until round 7 the compare ran in one hold and the writes bare after it), and the record's
+        `mode` goes back only while the record still holds the refused pick (SdkBackend._revert_mode_record, under
+        _reg_lock): set_mode writes the record BEFORE its live fields, so a newer pick whose record write had landed
+        while its live write had not was reverted on the record alone, the running session then carried the newer pick
+        while its record named the old mode, and the newer pick's caller had been told it applied. The row says when the
+        record was left to a newer pick."""
         if landing:
             if not mode or mode == prev or mode == "bypassPermissions":
                 return False
@@ -9073,8 +9192,12 @@ class SdkSession:
                 self.backend._poke()
                 return False
             refusal = _cli_refusal(e)
-            with self._hold_lock:
+            with self._hold_write():
+                # the compare and the live put-back in ONE hold (round 7 of fork PR #813's review: the docstring's last paragraph)
                 superseded = self.mode != mode
+                if refusal and not superseded:
+                    self.perm_mode = prev
+                    self.mode = prev
             if superseded:
                 # this request's evidence predates the diary: a newer pick owns the reg, perm_mode and its own
                 # request (the model path's rule); ring nothing, revert nothing
@@ -9094,12 +9217,14 @@ class SdkSession:
                 # indefinitely. Revert every layer to the last confirmed mode (snapshot, session, registry:
                 # the next connect must not re-apply the refused pick either) and ring the problems so the
                 # failed switch is unmissable.
-                self.perm_mode = prev
-                self.mode = prev
-                self.backend._update_reg(self.sid, mode=prev)
+                # the live layers went back in the hold above; the record goes back only while it still holds the refused
+                # pick (round 7 of fork PR #813's review), and the row says when a newer pick's record write stands instead
+                record_back = self.backend._revert_mode_record(self.sid, mode, prev)
                 self.backend._log("set_permission_mode (%s -> %s) refused by the SDK: %s: %s; the switch "
-                                  "did NOT apply; the mode reverted to %s"
-                                  % (self.name, mode, type(e).__name__, e, prev), problem=True)
+                                  "did NOT apply; the mode reverted to %s%s"
+                                  % (self.name, mode, type(e).__name__, e, prev,
+                                     "" if record_back else "; its record already carries a newer pick, which stands"),
+                                  problem=True)
             self.backend._poke()
             return False
         if landing:
@@ -18790,6 +18915,28 @@ class SdkBackend:
         self._seed_write_refused(prev.get("tok"))
         return back_model or ""
 
+    def _revert_mode_record(self, sid: str, refused: str, prev: str) -> bool:
+        """The record's half of _do_set_mode's revert after the CLI refused a live switch (fork PR #813, round 7 of the
+        review, 2026-09-21; _revert_model's shape for the reg's `model`): the reg's `mode` goes back to `prev`, the last
+        confirmed mode, ONLY while it still holds the refused pick, compared and written under _reg_lock in one read-
+        modify-write. set_mode writes the record first (its locked RMW) and the live fields after, under the hold lock, so
+        a newer pick can have reached the record and not yet the session when the refusal lands: its record write stands
+        here (False), the live compare in _do_set_mode still finds the refused pick and reverts the live layers, and the
+        newer pick's own live write then lands over them, so the record and the session agree on the newer pick. Until
+        round 7 the record was written back unconditionally, so that newer pick, whose caller was told it applied, was
+        undone on the record alone while the session ran it. A record that does not read (None) or is absent is left
+        alone: a refusal never builds a record. Returns whether the record moved. WRITERS of the reg's `mode`: set_mode
+        (every pick, before the live write) and this revert; READERS: SdkSession.__init__ (the connect-time mode), the
+        snapshot's and kernel.py's reads of the reg row, and _connect_landed's compare of the pick against the launched
+        mode (through self.mode, which set_mode writes from the same pick)."""
+        with self._reg_lock:
+            reg = read_reg(self.state_dir, sid)
+            if not reg or reg.get("mode") != refused:
+                return False
+            reg["mode"] = prev
+            write_reg(self.state_dir, sid, reg)
+            return True
+
     # ---- the shared defaults' `model`, ruled per WRITE ----
     # sdk-defaults.json seeds every NEW session, and every session's set_model writes it BEFORE the CLI has
     # ruled on the value. A refusal must then put the store back — but only where the store still holds
@@ -19594,7 +19741,7 @@ class SdkBackend:
         never_landed = (bool(s) and s.loop is not None and not s.ended and launched_pick[0] is None
                         and (bool(s.auth_live) or self._host_lease_live(s)))
         if never_landed:
-            with s._hold_write():
+            with s._step_write(token):   # the step's write, recorded for the guard's per-field restore (round 7 of the review)
                 if s._launched_auth is None:
                     s.auth = side
                     s.auth_login = login_id
@@ -19622,7 +19769,7 @@ class SdkBackend:
             # flags stay (or are set) for _connect_landed's clear. A FOLLOWER whose pending equals the pick still
             # takes the pick (round 1 of the review): the reconnect stands, and the pick makes it this session's own
             if pending_pick != pick or not s.auth:
-                with s._hold_write():   # every writer of the pending takes the hold, and the reg flag is mirrored from the
+                with s._step_write(token):   # every writer of the pending takes the hold, and the reg flag is mirrored from the
                     s.auth = side        # live value after it (round 3 of the review, 2026-09-18; _mirror_auth_pending); the
                     s.auth_login = login_id   # pick beside it since round 2 of the verb's review (_auth_live_fields says why)
                     s._auth_pending = side
@@ -19648,7 +19795,7 @@ class SdkBackend:
                 # reconnect end instead of relaunching the side the process already bills. auth_live is
                 # untouched: the CLI's report still describes the process that keeps running
                 reverted = self.login_display(pending_pick[1]) if pending_pick[1] else pending_pick[0]
-                with s._hold_write():
+                with s._step_write(token):
                     s.auth = side
                     s.auth_login = login_id
                     s._auth_pending = ""
@@ -19664,7 +19811,7 @@ class SdkBackend:
                            or reg.get("auth") != side or SdkBackend.reg_login(reg) != login_id)
                 clear = bool(s._auth_pending or reg.get("authPending"))
                 if changed or clear:
-                    with s._hold_write():
+                    with s._step_write(token):
                         s.auth = side
                         s.auth_login = login_id
                         if clear:
@@ -19692,7 +19839,7 @@ class SdkBackend:
                 # THE PENDING'S HOLD (the reviewer's regression-3, by the rebase follow-up): written bare after it, the
                 # landing's guarded clear could run between the two writes and the flag then stood with no ask behind it
                 bounded_arm = bounded and s.loop is not None and not s.ended   # reads no I/O: computed before the hold
-                with s._hold_write():
+                with s._step_write(token):
                     s.auth = side
                     s.auth_login = login_id
                     s._auth_pending = side
@@ -19865,6 +20012,7 @@ class SdkBackend:
         # round's cluster A list omitted) and the tail's sentence with the count and the names; and the route and printer
         # fixtures in tests/test_billing_route.py, which assert the names.
         moved, skipped, unwritten, failed, parked, diverged, outlook = [], [], [], [], [], [], {}
+        changed = []   # failed followers on which another caller's write landed during the step and stands (token.moved; round 7)
         superseded = 0
         label = self.login_display(login_id) if login_id else side
         for s in sessions:
@@ -19896,9 +20044,10 @@ class SdkBackend:
             # mid-step (a read-only or full state directory) raised out of the walk, so every follower after it was never
             # written, the route read the raise as a failure of the whole request, and the verb told the user nothing of
             # the ones it had moved. THROUGH THE ONE GUARDED ENTRY POINT (the verb's rebase onto the reviewer's round 2,
-            # 2026-09-19; its kernel-1): the guard leaves the failed session as the step FOUND it, compared before the
-            # write, with the pick pair and the landing's slot memo restored beside the pending pair and the slot flag,
-            # so it is a follower again, and an ask it already carried (the default walk's, or one carried across a
+            # 2026-09-19; its kernel-1): the guard puts back, field by field, what the step wrote where it still stands
+            # (the pick pair, the pending pair, the slot flag and the landing's memo; a field another caller moved
+            # meanwhile stands and the row names it, round 7 of the review, 2026-09-21; `changed` below carries such a
+            # follower to the summary line), so it is a follower again, and an ask it already carried (the default walk's, or one carried across a
             # restart) stands for its next deciding event as it did; the mirror is retried once from the live fields and
             # one problem row names the session, the side it stays on and whether an ask stands. Until then this walk kept
             # a hand-written copy of the round-1 handler, which wiped that standing ask along with the half-written pick
@@ -19925,6 +20074,8 @@ class SdkBackend:
                     unwritten.append(s.name)
                     continue
                 failed.append(s.name)
+                if token.moved:
+                    changed.append(s.name)   # "left following the default as the step found it" is false of this one: the line says so
                 if unrestored:
                     # the step's own record write LANDED and the guard's retry could not put it back (round 4 of the review,
                     # 2026-09-20; its regression-1: this was the one guarded-step caller that passed no `unrestored`, so the
@@ -19964,8 +20115,10 @@ class SdkBackend:
                      len(skipped), ", ".join(sorted(skipped)) or "none",
                      ("; %d record%s would not read (%s)" % (len(unwritten), "" if len(unwritten) == 1 else "s",
                                                              ", ".join(sorted(unwritten)))) if unwritten else "",
-                     ("; %d step%s failed (%s), left following the default as the step found %s" % (len(failed), "" if len(failed) == 1 else "s",
-                                                                                                  ", ".join(sorted(failed)), "it" if len(failed) == 1 else "them")) if failed else "",
+                     ("; %d step%s failed (%s), left following the default as the step found %s%s" % (len(failed), "" if len(failed) == 1 else "s",
+                                                                                                    ", ".join(sorted(failed)), "it" if len(failed) == 1 else "them",
+                                                                                                    (", except %s, which another caller changed during the step (the Log row names what stands)"
+                                                                                                     % ", ".join(sorted(changed))) if changed else "")) if failed else "",
                      ("; the record%s of %s could not be put back and may still name the pick with an ask standing, which the next "
                       "connect or a kernel restart would apply" % ("" if len(diverged) == 1 else "s", ", ".join(sorted(diverged)))) if diverged else "",
                      ("; %d parked behind a move in flight (%s), the pick applies when the move finishes" % (len(parked), ", ".join(sorted(parked)))) if parked else ""))
@@ -20036,15 +20189,21 @@ class SdkBackend:
         # round 1's regression-2 (a caller told nothing changed after a change); and the raise escaped this method into POST
         # /billing's catch-all, an HTTP 500 whose body was the traceback, absolute paths included, on a kernel reachable
         # over the tailnet. So the pair is snapshotted, the clear and its mirror run as one unit, and a raise restores the
-        # pair, files one problem row, leaves THIS call's own refusal sentence for the route (pop_auth_refusal: never the
+        # pair, PER FIELD since round 7 of the review (2026-09-21; the ruling on the guard's restore, applied to this sibling
+        # site): the clear records what its hold changed into a carrier of its own (_step_write), and the restore puts a
+        # field back only while it still holds the "" the clear wrote (_restore_step_writes); a pick another caller landed
+        # between the clear and the failing mirror stands, and the sentence and the row name it (until round 7 the unit put
+        # the door-time pair back blanket, and that pick was gone though its caller was told applied). It then files one
+        # problem row, leaves THIS call's own refusal sentence for the route (pop_auth_refusal: never the
         # 409's "record would not read, so nothing was changed", which misdescribes a refused write and the drop before
         # it) and returns False, which is what happened. Its own guard, not the follower step's (_follow_default_guarded):
         # that guard returns True with the pick cleared when the STEP fails, since the clear had happened; here it has not
+        clear = StepWrite()   # the clear's own carrier: what its hold replaced and left, for the per-field restore (round 7)
         with s._hold_lock:
-            before = (s.auth, getattr(s, "auth_login", "") or "")
+            before = s._step_fields_view()
         try:
             # the pick pair under the hold, mirrored from the live fields (round 2 of the review, 2026-09-18; _mirror_auth)
-            with s._hold_write():
+            with s._step_write(clear):
                 s.auth = ""
                 s.auth_login = ""
             if not s._mirror_auth():
@@ -20054,8 +20213,14 @@ class SdkBackend:
                 raise RegUnreadable("the record exists and would not read, so the clear's record write was skipped")
         except Exception as e:
             with s._hold_write():
-                s.auth, s.auth_login = before
-            return self._refuse_default_clear(sid, s.name, e)
+                moved = s._restore_step_writes(clear, before)   # the pair back where it still holds the clear's ""; else it stands
+                after = s._step_fields_view()
+            stands = ""
+            if "auth" in moved or "auth_login" in moved:
+                # a pick another caller landed during the clear stands (its pending and request are its own; round 7)
+                stands = (("the %s login" % self.login_display(after["auth_login"])) if after["auth"] == "login" and after["auth_login"]
+                          else "the %s" % after["auth"])
+            return self._refuse_default_clear(sid, s.name, e, stands=stands)
         self._log("auth (%s): its own pick is cleared; it follows the machine default again (%s)" % (s.name, label))
         if s.ended:
             return True
@@ -20076,22 +20241,29 @@ class SdkBackend:
         self._follow_default_guarded(s, label, because=because)
         return True
 
-    def _refuse_default_clear(self, sid: str, name: str, e: BaseException) -> bool:
+    def _refuse_default_clear(self, sid: str, name: str, e: BaseException, stands: str = "") -> bool:
         """follow_default_auth's own refusal (round 1 of the billing verb's review, 2026-09-19, the reviewer's 17:14Z takes; its
         fresh-2): the record write
         that mirrors the clear failed, the live pair is back as it was (the live road) or was never touched (the dormant
         road), so the caller is told the pick stands, in a sentence of this failure's own. The sentence names the failure's
         class only: the route hands it to a caller over HTTP, and an OSError's text carries the record's absolute path,
-        which is this box's business (the problem row below keeps the masked text for the Log). Always False."""
+        which is this box's business (the problem row below keeps the masked text for the Log). `stands` (round 7 of the
+        review, 2026-09-21): the pick another caller landed on the live session during the clear's window, as the row
+        names it (a side word or a stored login's label), when the per-field restore left it standing; "" when the pick
+        that stands is the one the clear found. Always False."""
+        keeps = ("it keeps its own pick" if not stands
+                 else "it keeps a pick of its own: %s, which another caller picked meanwhile" % stands)
         if isinstance(e, RegUnreadable):
             # the skip (round 6 of the review, 2026-09-20): the record would not READ, in the words the route already has for
             # that (_auth_refusal's record-would-not-read sentence in kernel/kernel.py), so the doors keep one voice
-            why = "%s's pick was not cleared: its record would not read, so nothing was written and it keeps its own pick" % name
+            why = "%s's pick was not cleared: its record would not read, so nothing was written and %s" % (name, keeps)
         else:
-            why = "%s's pick was not cleared: its record would not write (%s), so it keeps its own pick" % (name, type(e).__name__)
+            why = "%s's pick was not cleared: its record would not write (%s), so %s" % (name, type(e).__name__, keeps)
         self._auth_refusals[str(sid)] = why
-        self._log("auth (%s): its own pick was NOT cleared: the record write failed (%s: %s); the pick stands and the session "
-                  "bills as it did" % (name, type(e).__name__, _mask_ids(e)), problem=True)
+        self._log("auth (%s): its own pick was NOT cleared: the record write failed (%s: %s); %s and the session "
+                  "bills as it did" % (name, type(e).__name__, _mask_ids(e),
+                                       ("the pick another caller made meanwhile (%s) stands" % stands) if stands else "the pick stands"),
+                  problem=True)
         return False
 
     def pop_auth_refusal(self, sid: str) -> str:
@@ -20112,7 +20284,9 @@ class SdkBackend:
         POST /billing's catch-all answered an HTTP 500 whose body was the traceback with this box's absolute paths; the
         `default` road had its guard (follow_default_auth, round 1's fresh-2) and these roads had none. A raise here is
         contained as a follower step's is (_follow_default_guarded, `road` "pick": the pick pair, the pending pair and the
-        slot flags restored to what stood when the step began, the mirror retried once, one problem row), and this leaves the
+        slot flags put back field by field where each still holds what the step wrote, a field another caller moved
+        meanwhile left standing and named in the row, since round 7 of the review; the mirror retried once, one problem
+        row), and this leaves the
         failure's own sentence for the route (pop_auth_refusal; the slot cleared at entry as follow_default_auth clears it, so
         a caller never pops another call's sentence) and answers False, the verdict the route already answers 409 with.
         set_auth's own False (the box's reason, a record that would not read) rides through as it is: those have their own
@@ -20265,7 +20439,7 @@ class SdkBackend:
         # review, 2026-09-18, its regression-2 and regression-3; carried here by the rebase follow-up): by the side word a
         # default moved between two stored logins left the old target standing, and a flag written bare after the hold
         # could stand with no ask behind it once the landing's guarded clear ran between the two writes
-        with s._hold_write():
+        with s._step_write(token):   # the step's write, recorded for the guard's per-field restore (round 7 of the review)
             landed = bool(s.auth_live) or s._launched_auth is not None
             if not landed:
                 launching = s._launching
@@ -20521,6 +20695,26 @@ class SdkBackend:
             # problem row, and the walk goes on to the next follower
             self._follow_default_guarded(s, label)
 
+    def _describe_moved(self, moved: dict, after: dict) -> str:
+        """The live fields another caller moved during a failed step, for the guard's row (round 7 of the review,
+        2026-09-21): `moved` is _restore_step_writes' answer (field name to the value standing), `after` the six fields as
+        they stand. Grouped as the user knows them: the pick, the pending ask, the relaunch slot flag, the landing's slot
+        memo, each with what stands now (a side word or a stored login's label; never a credential, the fields hold none)."""
+        def side_of(side, lid):
+            return ("the %s login" % self.login_display(lid)) if (side == "login" and lid) else ("the %s" % side)
+        parts = []
+        if "auth" in moved or "auth_login" in moved:
+            parts.append("its pick (now %s)" % (side_of(after["auth"], after["auth_login"]) if after["auth"]
+                                                else "none: it follows the machine default"))
+        if "_auth_pending" in moved or "_auth_pending_login" in moved:
+            parts.append("its pending ask (now %s)" % (side_of(after["_auth_pending"], after["_auth_pending_login"])
+                                                       if after["_auth_pending"] else "none"))
+        if "_relaunch_bounded" in moved:
+            parts.append("its relaunch slot flag (now %s)" % ("on" if after["_relaunch_bounded"] else "off"))
+        if "_landing_ask_bounded" in moved:
+            parts.append("its landing slot memo (now %s)" % ("on" if after["_landing_ask_bounded"] else "off"))
+        return " and ".join(parts) if len(parts) <= 2 else ", ".join(parts[:-1]) + " and " + parts[-1]
+
     def _follow_default_guarded(self, s, label=None, landing=None, because=None, step=None, head=None, road=None, unrestored=None,
                                 token=None) -> bool:
         """THE ONE GUARDED ENTRY POINT for a step that writes a session's billing ask (the reviewer's round 2, 2026-09-19;
@@ -20543,18 +20737,25 @@ class SdkBackend:
         `step` is that closer, run in place of the follower's step with the same restore, retry and row; its head names
         the pick.
 
-        On a raise the session is left as the step FOUND it, never half-asked: the raise can land between the hold that
+        On a raise the step's OWN writes are undone, never another writer's: the raise can land between the hold that
         wrote a pending and the reg mirror, and a pending with no arm behind it keeps the dots on and makes a later pick
-        read as already applying (the walk's round-1 handler). The pending pair and the slot flag are restored under the
-        hold to what stood when the step began, COMPARED before the write (the landing's discipline,
-        _clear_served_auth_pending): a pair the step did not change is not this step's to wipe, so an ask carried across
-        a restart, or standing from the walk, stands for its next deciding event as it did, and the row says so. The
-        mirror is then retried once from the live pending, guarded, since the I/O that may have just failed is the same
-        I/O; one problem row names the session, the side it stays on and whether an ask stands; the caller goes on (the
-        walk to the next follower, the landing to its return, the connect up and the CLI running). The window between
-        the snapshot and the restore is shared with every other writer of the pending: a default write landing inside a
-        failing step's own milliseconds is undone with it, the same window the walk's handler had. Returns whether the
-        step completed.
+        read as already applying (the walk's round-1 handler). THE RESTORE IS A COMPARE-AND-SWAP PER FIELD (round 7 of the
+        review, 2026-09-21; the reviewer's ruling on round 6's disclosed observation): every hold the step takes records
+        what it changed into the step's carrier (SdkSession._step_write, StepWrite.note_live), and under the hold each of
+        the six billing fields (STEP_LIVE_FIELDS: the pick pair, the pending pair, the slot flag, the landing's memo) goes
+        back to what the step's first change replaced ONLY while it still holds what the step's last change left
+        (SdkSession._restore_step_writes); a field the step never changed is not this step's to touch, so an ask carried
+        across a restart, or standing from the walk, stands for its next deciding event as it did, and the row says so;
+        a field another writer moved after the step wrote it (a concurrent pick on another request or pusher thread, the
+        loop's served withdrawal, a landing's clear, the slot grant) STANDS, since that writer's evidence is newer and its
+        caller was told its write applied, and the row names the field and what stands. Until round 7 the guard put a
+        door-time snapshot of all six back whenever any had moved, and the retry mirrored it to the record, so a pick a
+        second thread landed inside the failing step's window was told applied and silently undone (the reviewer's drive
+        D2d: a lost write with a false success, the one failure shape this project treats as unacceptable regardless of
+        severity). The mirror is then retried once from the live fields as they stand after the restore, guarded, since
+        the I/O that may have just failed is the same I/O; one problem row names the session, the side it stays on,
+        whether an ask stands and what another caller changed; the caller goes on (the walk to the next follower, the
+        landing to its return, the connect up and the CLI running). Returns whether the step completed.
 
         THE GUARD'S SCOPE IS THE FOLLOWER'S STEP ALONE (the round 3 pre-check, 2026-09-19; its seventh item). The
         post-handshake body of the connect has other blocks that raise out of it bare and, under a host, end the surviving
@@ -20661,8 +20862,7 @@ class SdkBackend:
         # retires it again; tests/test_billing_route.py pins each as the documented behaviour, one cell per writer class.
         token = StepWrite() if token is None else token
         with s._hold_lock:
-            before = (s._auth_pending_target(), bool(getattr(s, "_relaunch_bounded", False)),
-                      (getattr(s, "auth", None), getattr(s, "auth_login", "") or ""), bool(getattr(s, "_landing_ask_bounded", False)))
+            before = s._step_fields_view()   # the door: the reference the row compares against for a field the step never wrote
         try:
             if step is not None:
                 step()                                     # the picked closer (round 5) on the init road; the verb's walk step
@@ -20671,22 +20871,23 @@ class SdkBackend:
             return True
         except Exception as e:
             standing, retry_failed = "", None
+            after, moved = before, {}
             landed = token.landed   # the step's OWN write landed: read before the retry, which writes into no carrier
             try:
                 with s._hold_write():
-                    now = (s._auth_pending_target(), bool(s._relaunch_bounded),
-                           (getattr(s, "auth", None), getattr(s, "auth_login", "") or ""), bool(getattr(s, "_landing_ask_bounded", False)))
-                    # OBSERVATION (2026-09-21, the third verifier pass of round 6; not ruled; disclosed for the reviewer): this
-                    # restore puts back what stood at the door whenever the live pair or the pending moved, and the retry
-                    # below mirrors that pair to the record, so a CONCURRENT pick by another request or pusher thread that
-                    # landed inside the failing step's window is undone with no row naming it: driven (D2d) with a second
-                    # thread whose set_auth answered True, its pick gone after this restore, the only row naming the failing
-                    # pick. Behaviour unchanged here.
-                    if now != before:
-                        s._auth_pending, s._auth_pending_login = before[0]
-                        s._relaunch_bounded = before[1]
-                        s.auth, s.auth_login = before[2]
-                        s._landing_ask_bounded = before[3]
+                    # THE RESTORE IS A COMPARE-AND-SWAP PER FIELD (round 7 of the review, 2026-09-21; the reviewer's ruling on
+                    # round 6's disclosed observation, which stood here as an OBSERVATION comment): a field goes back only while it
+                    # still holds what the step wrote, recorded at the step's own holds (_step_write); a field another writer
+                    # moved stands, and `moved` names it for the row. WRITERS of the six fields that can land inside a step's
+                    # window, by enclosing def: set_auth on another request or pusher thread (a concurrent pick: the WS arm, POST
+                    # /billing, the drain), follow_default_auth's clear (a concurrent `default`), _served_by_connect (the loop's
+                    # served withdrawal), _connect_landed through _clear_served_auth_pending and _ask_parked_pick (the loop's
+                    # landing), _arm_after_relaunch_slot (the slot grant) and _amain (the loop top), the flag spent, and
+                    # _follow_default on the loop for a landing's step. CONSUMERS of `moved` and `after`: this row's subject, event, ask clause and its
+                    # "another caller changed" clause; set_auth_followers' summary line (token.moved). The same-value residual
+                    # is named at _restore_step_writes.
+                    moved = s._restore_step_writes(token, before)
+                    after = s._step_fields_view()
                     standing = s._auth_pending
                 retry_exc = None
                 try:
@@ -20732,27 +20933,39 @@ class SdkBackend:
                     else "this session's connect landed",
                     "pick's" if step is not None else "follower's")
                 subject = "the connect goes on with the CLI it has, and it"
+            picked_after = bool(after["auth"])   # what STANDS after the per-field restore (round 7): the step's pick put back, or a
+            #                                        concurrent caller's pick left standing, decides the subject and the event
             if step is not None and landing is None:
                 # the restore put the step's pick back: the walk's follower is a follower still; the per-session door's session
-                # (road "pick") keeps whatever it had, its own pick or the default it followed
-                subject = ("it keeps its own pick and" if road == "pick" and before[2][0] else "it keeps following the machine default and")
+                # (road "pick") keeps whatever it had, its own pick or the default it followed; a pick another caller landed
+                # during the step stands, on either road, and the clause below names it
+                subject = ("it keeps its own pick and" if picked_after else "it keeps following the machine default and")
             # the next event that decides a follower's ask is a default write; a pick's is the next pick (a re-pick of the
             # side the CLI bills clears it in set_auth's unchanged branch, a pick of the other side asks). The verb's walk
             # step (`step` with no `landing`, fork PR #813) asked a follower's pick and the restore made it a follower again,
             # so its next event is a default write too
-            event = ("the next pick" if (step is not None and (landing is not None or (road == "pick" and before[2][0])))
+            event = ("the next pick" if (step is not None and (landing is not None or picked_after))
                      else "the next default write")
+            if not standing:
+                ask = "no ask standing"
+            elif "_auth_pending" in moved or "_auth_pending_login" in moved:
+                ask = "the %s ask another caller made during the step standing" % standing
+            else:
+                ask = "the %s ask it already carried standing for that event" % standing
+            # what another caller changed during the step and the restore left standing (round 7 of the review): the row
+            # names the field and what stands, since the caller of that write was told it applied and nothing undoes it
+            changed = ("" if not moved else
+                       "; during the step another caller changed %s, and that stands: the later writer wins"
+                       % self._describe_moved(moved, after))
             # the retry's failure, in the row's own words (extra6-2): the clauses before it describe the restored live
             # object, which is true of the running session; this one says the record may not agree with it
             diverged = ("" if retry_failed is None else
                         "; its record could not be put back (%s: %s), so it may still carry what the step wrote while the running "
                         "session does not, and a restart or the next connect reads the record: the two disagree until %s writes it "
                         "again" % (type(retry_failed).__name__, _mask_ids(retry_failed), event))
-            self._log("%s (%s: %s); %s stays on %s until its next connect or %s, with %s%s"
+            self._log("%s (%s: %s); %s stays on %s until its next connect or %s, with %s%s%s"
                       % (head, type(e).__name__, _mask_ids(e), subject,
-                         ("the %s" % stays) if stays in ("login", "key") else "the side it is on", event,
-                         ("the %s ask it already carried standing for that event" % standing) if standing else "no ask standing",
-                         diverged),
+                         ("the %s" % stays) if stays in ("login", "key") else "the side it is on", event, ask, changed, diverged),
                       problem=True)
             return False
 
@@ -20909,7 +21122,7 @@ class SdkBackend:
         if running == target and launching_pick is None:
             if s._auth_pending:
                 reverted = s._auth_pending
-                with s._hold_write():          # every writer of the pending takes the hold (round 3; the landing's guarded clear compares against it)
+                with s._step_write(token):     # every writer of the pending takes the hold (round 3; the landing's guarded clear compares against it)
                     s._auth_pending = ""
                     s._auth_pending_login = ""
                     s._relaunch_bounded = False   # the flag was the ask's (round 2 of the review; the docstring says why)
@@ -20936,7 +21149,7 @@ class SdkBackend:
             # 3: written inside it, the walk held the lock across the reg file's read and replace). The pending is the
             # (side, login) PAIR (round 1 of the reviewer's review): compared by the side word, a default moved between
             # two stored logins while the object waited left the old target standing
-            with s._hold_write():
+            with s._step_write(token):   # the step's write, recorded for the guard's per-field restore (round 7 of the review)
                 landed = s._launched_auth is not None
                 # the WALK writes the parked ask (the default moved: new information, and the dots say the follower may
                 # have to move); a cannot-tell ATTACH landing with no ask standing writes none, since nothing has changed
@@ -20983,7 +21196,7 @@ class SdkBackend:
             if state == "missing":
                 withdrawn = s._auth_pending
                 if withdrawn:
-                    with s._hold_write():
+                    with s._step_write(token):
                         s._auth_pending = ""
                         s._auth_pending_login = ""
                         s._relaunch_bounded = False
@@ -20999,7 +21212,7 @@ class SdkBackend:
                 self._log("%s; this session's CLI bills a key, and whether Claude Code's settings carry the apiKeyHelper "
                           "that supplies it cannot be told until they read; asked anyway" % head)
         can_arm = s.loop is not None and not s.ended   # reads no I/O: computed before the hold, written inside it
-        with s._hold_write():
+        with s._step_write(token):   # the hold lock, with the step's recorder (round 7 of the review); the stamp rides in the same hold
             if s.auth_live and s._launched_auth != s.auth_live:
                 # THE STAMP FOLLOWS THE REPORT: the served check (_served_by_connect) and set_auth's guards read the launched
                 # shape (_launched_auth) as what the running process bills, and after a kernel restart that stamp is the

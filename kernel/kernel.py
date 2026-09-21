@@ -41491,8 +41491,10 @@ def _billing_default(be):
     two differ (`explicitWhy`: auth_unavailable_why for the explicit side and its stored login, "" when they agree),
     compared as pick VALUES: an explicit stored-login default whose record is unusable resolves to the machine's own
     login, the same side word. Not _auth_avail's `default`: that is the new-session picker's preselected choice, which
-    a remembered per-session pick seeds while no explicit default is set, and a follower does not bill it (the
-    reference's rule, "Per-session billing"): the read said login for a default every follower launched on the key."""
+    only the explicit machine default seeds (since fork PR #819, merged 2026-09-20, a per-session pick's flag-less write
+    preselects nothing; this sentence said a remembered per-session pick seeded it while no explicit default was set,
+    the mechanism that PR removed, until fork PR #813's round 7), and a follower does not bill it (the reference's rule,
+    "Per-session billing"): the read said login for a default every follower launched on the key."""
     side = str(be.fallback_auth() or "")
     lid = str(be.explicit_default_login() or "") if side == "login" else ""
     label = be.login_display(lid) if lid else (_claude_account_label() if side == "login" else "")

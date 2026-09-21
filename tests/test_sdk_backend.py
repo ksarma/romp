@@ -6981,6 +6981,65 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         asyncio.run(s2._do_set_mode("plan", prev="default"))
         self.assertEqual(s2._launched_mode, "default"); self.assertEqual(s2.perm_mode, "default")
 
+    def test_a_refused_live_mode_switch_puts_back_only_the_layers_that_still_hold_the_refused_pick(self):
+        # THE RULING OF ROUND 7 OF FORK PR #813'S REVIEW (2026-09-21), applied to _do_set_mode's revert, a sibling of the billing
+        # guard's restore in the ruling's population of restore sites: a restore puts a layer back only if it still holds
+        # what the step put there. set_mode writes the record BEFORE the live fields (its locked RMW, then the hold), so a
+        # newer pick can have reached the record and not yet the session when the CLI's refusal of an older live switch
+        # lands. Driven with a real second thread parked right after its record write: the refusal reverts the live layers
+        # (they still hold the refused pick, compared and written in one hold) and leaves the record to the newer pick
+        # (_revert_mode_record's compare-and-swap under the reg lock); the newer pick's live write then lands, and the
+        # session and its record agree on it. At the round-6 head the revert wrote the record back unconditionally: the
+        # newer pick, whose caller was told it applied, was undone on the record alone while the session ran it, and a
+        # restart would have launched the old mode. Red there at the three-layer assertion: ('plan', 'plan', 'default') !=
+        # ('plan', 'plan', 'plan').
+        s = self._sess(mode="default")
+        s.perm_mode = "default"; s._launched_mode = "default"
+        live = []
+        s.set_mode_live = lambda mode, prev="default": live.append((mode, prev))   # the loop hop, stubbed: the test drives _do_set_mode
+        arrived, gate, answered, threads = threading.Event(), threading.Event(), [], []
+        real = sb.SdkBackend._update_reg
+
+        def parked(be, sid, live_fields=None, **kw):
+            out = real(be, sid, live_fields=live_fields, **kw)
+            if threading.current_thread().name == "q813-pick-plan" and kw.get("mode") == "plan":
+                arrived.set()          # the newer pick's record write landed...
+                gate.wait(10)          # ...and its live write waits until the refusal has run
+            return out
+
+        class _Refusing:
+            async def set_permission_mode(self_, m):
+                t = threading.Thread(target=lambda: answered.append(s.backend.set_mode(self.SID, "plan")), name="q813-pick-plan")
+                threads.append(t)
+                t.start()
+                self.assertTrue(arrived.wait(10), "the newer pick's record write landed inside the refusal's window")
+                raise Exception("Cannot set permission mode to %s" % m)   # the CLI's refusal: a bare Exception (_cli_refusal)
+        s.client = _Refusing()
+        with mock.patch.object(sb.SdkBackend, "_update_reg", parked):
+            self.assertTrue(s.backend.set_mode(self.SID, "acceptEdits"), "the pick under test: its live switch is the one refused")
+            self.assertEqual(live, [("acceptEdits", "default")])
+            asyncio.run(s._do_set_mode("acceptEdits", prev="default"))
+            gate.set()
+            threads[0].join(10)
+        self.assertFalse(threads[0].is_alive())
+        self.assertEqual(answered, [True], "the newer pick was told applied")
+        reg = sb.read_reg(s.backend.state_dir, self.SID)
+        self.assertEqual((s.mode, s.perm_mode, reg.get("mode")), ("plan", "plan", "plan"),
+                         "the newer pick stands on every layer: the refusal reverted the live layers it found holding the refused "
+                         "pick and left the record to the newer pick, whose live write then landed")
+        self.assertEqual(live[-1], ("plan", "default"), "the newer pick's own live switch was asked, the confirmed mode its revert target")
+        self.assertTrue(any("did NOT apply" in str(m) and "the mode reverted to default; its record already carries a newer pick, "
+                            "which stands" in str(m) for m in self.logs), self.logs)
+        # the other half of the compare, by the same road with no newer pick: every layer goes back (test_mode_truth.py's
+        # RefusedSwitchReverts drives it through set_mode_live's real hop); here the record's compare-and-swap alone
+        s2 = self._sess(mode="default")
+        s2.perm_mode = "default"; s2._launched_mode = "default"
+        self.assertTrue(s2.backend.set_mode(self.SID, "plan"))
+        self.assertIs(s2.backend._revert_mode_record(self.SID, "plan", "default"), True, "the record held the refused pick: put back")
+        self.assertEqual(sb.read_reg(s2.backend.state_dir, self.SID).get("mode"), "default")
+        self.assertIs(s2.backend._revert_mode_record(self.SID, "plan", "acceptEdits"), False, "it no longer holds it: left alone")
+        self.assertEqual(sb.read_reg(s2.backend.state_dir, self.SID).get("mode"), "default")
+
     def test_j2_a_repeat_bypass_pick_during_the_hold_is_a_no_op_never_the_refused_live_call(self):
         # prev read the declared (unconfirmed) bypass, so the re-click went LIVE and the CLI refused it
         # with the red "did NOT apply" problem while the hold stood (review round 2)
@@ -8481,7 +8540,9 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         # whether the hold lock is held at the write, and the three writers run: the landing, a confirmed live switch,
         # and a turn's init report. Every write is locked, and each writer is reached. An AST walk over the module
         # then enumerates every assignment statement to the four names outside __init__, setattr included, and requires
-        # a _hold_write block around it, so a writer the fake does not reach cannot land bare either
+        # a _hold_write block around it (or a _step_write block: the same lock taken through _hold_write, with a billing
+        # step's recorder, fork PR #813's round 7; tests/test_billing_route.py drives that it holds the lock), so a writer
+        # the fake does not reach cannot land bare either
         STAMPS = ("_launched_effort", "_launched_mode", "_launched_auth", "_launched_env")
         writes = []
 
@@ -8567,7 +8628,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         def hold_write(node):
             return isinstance(node, ast.With) and any(
                 isinstance(i.context_expr, ast.Call) and isinstance(i.context_expr.func, ast.Attribute)
-                and i.context_expr.func.attr == "_hold_write" for i in node.items)
+                and i.context_expr.func.attr in ("_hold_write", "_step_write") for i in node.items)
 
         def bare_writes(tree):
             bare = []

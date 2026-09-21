@@ -2344,8 +2344,8 @@ class BackendHelpers(unittest.TestCase):
         # leaves standing); a second thread's differing pick, a stored login on the request road, clears it again (None);
         # the step's fault; the retry sees None and puts True back, over the concurrent pick's clear and over the newer
         # report that clear replaced. Without the concurrent clear the field would read False, so the final True is this
-        # writer's mark. The concurrent pick's live pair and record pair go back to the door-time pair with the step's
-        # restore (the guard's snapshot-and-restore, unchanged here and not asserted). Pinned as the DOCUMENTED BEHAVIOUR
+        # writer's mark. The concurrent pick's live pair and record pair STAND since round 7 of the review (2026-09-21; the
+        # per-field restore, asserted by the D2d pins further down), and this cell asserts the report's residual alone. Pinned as the DOCUMENTED BEHAVIOUR
         # beside the launch-retirement cell: a change that closes the gap must update both pins. Green at the closing
         # commit by design; the mutation that drops the retry's restore (restore always empty) reds it at the last
         # assertion, None is not True, and the cell without its concurrent pick ends False at that assertion.
@@ -4824,6 +4824,177 @@ class BackendHelpers(unittest.TestCase):
                          "the pending and the memo go; the request armed for it and its slot flag stand")
         self.assertIs(bool(self._reg(s.sid).get("authPending")), False, "the flag mirrored from the cleared pending")
         self.assertTrue(any("auth (web): set to key; unchanged, no reconnect" in m for m in self.logs), self.logs[-2:])
+
+    def test_a_concurrent_pick_landing_inside_a_failing_steps_window_stands_and_the_row_names_it(self):
+        # THE RULING ON ROUND 6'S DISCLOSED OBSERVATION (round 7 of the review, 2026-09-21; the reviewer's drive D2d): the guard's
+        # restore put back what stood at the door whenever the live pair or the pending had moved, and the retry mirrored
+        # that to the record, so a pick a SECOND THREAD landed inside the failing step's window (a WS handler, POST /billing's
+        # handler or the drain on one session; set_auth's docstring says several threads pick on one session) was told
+        # applied and then silently undone: a lost write with a false success, the one failure shape this project refuses
+        # regardless of severity. The restore is a compare-and-swap per field now (SdkSession._restore_step_writes): a field
+        # goes back only while it still holds what THIS step wrote, recorded at the step's own holds (_step_write); a field
+        # another writer moved stands, and the row names it. Driven with a real second thread on the door and on the walk:
+        # the door-time pick is the login (the walk's follower has none), the step asks the key, the concurrent pick is a
+        # stored login on the request road (its own pair, pending and request, so every field carries its mark), the step
+        # then faults. Red at the round-6 head at the live-pair assertion of the door cell: ('login', '', '', '') !=
+        # ('login', <id>, 'login', <id>), the concurrent pick gone with the record back on the door-time pair, the second
+        # thread told True, and the one row naming the failing pick alone.
+        rec = {"id": sb._logins.mint_id(), "label": "Work", "tokenCmd": "token-read 'romp login Work'",
+               "addedAt": int(time.time()) - 86400}
+        sb._logins.write_record(self.d, rec)
+        for road in ("door", "walk"):
+            with self.subTest(road=road):
+                s = self._sess("web" if road == "door" else "tests", auth="login" if road == "door" else "", launched="login")
+                s.auth_live = "login"
+                q = self._queue_loop(s)
+                answered, gap = [], []
+
+                def concurrent_pick_then_raise(*a, **k):
+                    if gap:
+                        return ""   # the concurrent pick's own reconnect ask, on the second thread: nothing to record
+                    gap.append(1)
+                    t = threading.Thread(target=lambda: answered.append(self.be.set_auth(s.sid, "login:" + rec["id"], chip=False)),
+                                         name="q813-concurrent-pick")
+                    t.start()
+                    t.join(10)
+                    self.assertFalse(t.is_alive(), "the concurrent pick landed inside the step's window")
+                    raise RuntimeError("a synthetic fault after the mirror")
+                seq0 = self.be._problem_seq
+                with mock.patch.object(s, "_note_reconnect_ask", side_effect=concurrent_pick_then_raise):
+                    if road == "door":
+                        self.assertFalse(self.be.set_auth_guarded(s.sid, "key"), "the failing pick is refused")
+                    else:
+                        out = self.be.set_auth_followers("key")
+                        self.assertEqual((out["failed"], out["moved"], out["diverged"]), (["tests"], [], []))
+                self.assertEqual(answered, [True], "the concurrent pick was told applied")
+                self.assertEqual((s.auth, s.auth_login, s._auth_pending, s._auth_pending_login), ("login", rec["id"], "login", rec["id"]),
+                                 "the concurrent pick STANDS on the running session: the later writer wins, nothing is undone")
+                reg = self._reg(s.sid)
+                self.assertEqual((reg["auth"], reg.get("authLogin"), bool(reg.get("authPending"))), ("login", rec["id"], True),
+                                 "and on its record, which the retry mirrors from the live fields as they stand")
+                self.assertEqual(len(q), 1, "the concurrent pick's own reconnect request stands queued; the failing step queued none")
+                rows = [p["text"] for p in self.be.problems(10) if p["seq"] > seq0]
+                self.assertEqual(len(rows), 1, rows)
+                self.assertIn("it keeps its own pick and stays on the login until its next connect or the next pick, with the login ask "
+                              "another caller made during the step standing; during the step another caller changed its pick (now the "
+                              "Work login) and its pending ask (now the Work login), and that stands: the later writer wins", rows[0])
+                if road == "walk":
+                    self.assertTrue(any("1 step failed (tests), left following the default as the step found it, except tests, which "
+                                        "another caller changed during the step (the Log row names what stands)" in m for m in self.logs),
+                                    self.logs[-1:])
+
+    def test_a_concurrent_pick_landing_inside_a_failing_clears_window_stands_and_the_refusal_names_it(self):
+        # round 7 of the review (2026-09-21): the ruling's population of restore sites includes follow_default_auth's live
+        # clear, whose own unit restored the door-time pair on a refused mirror, blanket: a pick another thread landed
+        # between the clear and the failing mirror was undone though its caller was told applied. Per field now
+        # (_restore_step_writes with the clear's own carrier): the pair goes back only where it still holds the clear's "",
+        # the concurrent pick stands, and the refusal's sentence and its row say so. Red at the round-6 head at the live
+        # assertion: ('login', '', 'key') != ('key', '', 'key'), the concurrent key pick's pair gone with its ask standing.
+        web = self._sess("web", auth="login", launched="login")
+        web.auth_live = "login"
+        q = self._queue_loop(web)
+        real_mirror, answered = web._mirror_auth, []
+
+        def concurrent_pick_then_refuse(**kw):
+            if threading.current_thread().name == "q813-concurrent-pick":
+                return real_mirror(**kw)   # the concurrent pick's own record write lands
+            t = threading.Thread(target=lambda: answered.append(self.be.set_auth(web.sid, "key", chip=False)), name="q813-concurrent-pick")
+            t.start()
+            t.join(10)
+            self.assertFalse(t.is_alive(), "the concurrent pick landed between the clear and its mirror")
+            raise PermissionError(13, "Permission denied", str(sb._reg_path(Path(self.d), web.sid)))   # the clear's mirror is refused
+        seq0 = self.be._problem_seq
+        with mock.patch.object(web, "_mirror_auth", concurrent_pick_then_refuse):
+            self.assertFalse(self.be.follow_default_auth(web.sid), "the clear is refused")
+        self.assertEqual(answered, [True], "the concurrent pick was told applied")
+        self.assertEqual((web.auth, web.auth_login, web._auth_pending), ("key", "", "key"), "the concurrent pick stands: nothing is undone")
+        self.assertEqual((self._reg(web.sid)["auth"], bool(self._reg(web.sid).get("authPending"))), ("key", True), "its record too")
+        self.assertEqual(len(q), 1, "its reconnect request stands queued")
+        self.assertEqual(self.be.pop_auth_refusal(web.sid),
+                         "web's pick was not cleared: its record would not write (PermissionError), so it keeps a pick of its own: the key, "
+                         "which another caller picked meanwhile")
+        rows = [p["text"] for p in self.be.problems(10) if p["seq"] > seq0]
+        self.assertEqual(len(rows), 1, rows)
+        self.assertIn("; the pick another caller made meanwhile (the key) stands and the session bills as it did", rows[0])
+
+    def test_the_step_recorder_and_the_per_field_restore_by_execution(self):
+        # round 7 of the review (2026-09-21): the mechanism under the D2d pins, driven alone. A step's hold through _step_write
+        # records what it changed into the carrier (the first replaced value and the last written one per field, a field left
+        # as found not recorded); the restore puts back only a field that still holds the step's last write, leaves one
+        # another writer moved, never touches one the step never wrote, and reports what differs from the door.
+        s = self._sess("web", auth="login", launched="login")
+        t = sb.StepWrite()
+        with s._hold_lock:
+            before = s._step_fields_view()
+        with s._step_write(t):
+            self.assertTrue(s._hold_lock.locked(), "the recorder's block holds the hold lock")
+            s.auth = "key"
+            s._auth_pending = "key"
+            s._relaunch_bounded = True
+            s.auth_login = ""   # written to what it already held: no change, so no write of this step's
+        self.assertEqual((t.live_wrote, t.live_replaced),
+                         ({"auth": "key", "_auth_pending": "key", "_relaunch_bounded": True},
+                          {"auth": "login", "_auth_pending": "", "_relaunch_bounded": False}))
+        with s._step_write(t):
+            s._auth_pending = "login"   # a second write of one field: the first replaced value stands, the last write is compared
+        self.assertEqual((t.live_wrote["_auth_pending"], t.live_replaced["_auth_pending"]), ("login", ""))
+        with s._hold_write():             # another writer: one field the step wrote (back to the door's value), one it never wrote
+            s.auth = "login"
+            s._landing_ask_bounded = True
+        with s._hold_write():
+            moved = s._restore_step_writes(t, before)
+        self.assertEqual((s.auth, s._auth_pending, s._relaunch_bounded, s._landing_ask_bounded), ("login", "", False, True),
+                         "the two fields still holding the step's writes went back; the two another writer moved stand")
+        self.assertEqual((moved, t.moved), ({"_landing_ask_bounded": True}, ["_landing_ask_bounded"]),
+                         "what differs from the door after the restore: the field another writer moved and the step never wrote")
+        self.assertEqual(sb.STEP_LIVE_FIELDS, ("auth", "auth_login", "_auth_pending", "_auth_pending_login", "_relaunch_bounded",
+                                               "_landing_ask_bounded"))
+
+    def test_every_step_writer_of_the_live_pick_fields_records_into_the_steps_carrier(self):
+        # CENSUS PIN (round 7 of the review, 2026-09-21): the per-field restore knows a write only if the hold that made it went
+        # through _step_write with the step's carrier, so every assignment to one of the six fields inside a step function
+        # (set_auth, _follow_default, _follow_default_unlanded, _clear_served_auth_pending, _ask_parked_pick and
+        # follow_default_auth's clear) must sit in a _step_write block, and no except arm of the guard or the clear's unit
+        # may assign them (the blanket restore, as an assignment, lands here). Derived by ast at run time, so a new hold that
+        # writes bare reds here first. Red at the round-6 head: every one of those assignments sat in a bare _hold_write block.
+        FIELDS = ("auth", "auth_login", "_auth_pending", "_auth_pending_login", "_relaunch_bounded", "_landing_ask_bounded")
+        STEPS = ("set_auth", "_follow_default", "_follow_default_unlanded", "_clear_served_auth_pending", "_ask_parked_pick",
+                 "follow_default_auth")
+        mod = ast.parse(Path(BIN, "romp_sdk_backend.py").read_text())
+        fns = {n.name: n for n in ast.walk(mod) if isinstance(n, ast.FunctionDef) and n.name in STEPS + ("_follow_default_guarded",)}
+        self.assertEqual(sorted(fns), sorted(STEPS + ("_follow_default_guarded",)), "a step function was renamed or removed")
+
+        def attr_names(t):
+            if isinstance(t, (ast.Tuple, ast.List)):
+                for e in t.elts:
+                    yield from attr_names(e)
+            elif isinstance(t, ast.Starred):
+                yield from attr_names(t.value)
+            elif isinstance(t, ast.Attribute):
+                yield t.attr
+
+        def recorder(node):
+            return isinstance(node, ast.With) and any(
+                isinstance(i.context_expr, ast.Call) and isinstance(i.context_expr.func, ast.Attribute)
+                and i.context_expr.func.attr == "_step_write" for i in node.items)
+
+        bare, recorded, in_except = [], [], []
+
+        def walk(node, held, fn, handler):
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                    continue   # a nested def (set_auth's read_picks) is its own scope and writes nothing
+                if isinstance(child, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
+                    targets = child.targets if isinstance(child, ast.Assign) else [child.target]
+                    for name in (n for t in targets for n in attr_names(t) if n in FIELDS):
+                        (in_except if handler else recorded if held else bare).append((fn, child.lineno, name))
+                walk(child, held or recorder(child), fn, handler or isinstance(child, ast.ExceptHandler))
+        for name, fn in fns.items():
+            walk(fn, False, name, False)
+        self.assertEqual(bare, [], "assignments to the six live fields inside a step function outside a _step_write block")
+        self.assertEqual(in_except, [], "an except arm of a step function or the guard assigns a live field: a blanket restore")
+        self.assertEqual(sorted(set(fn for fn, _, _ in recorded)), sorted(STEPS), "every step function writes at least one of the six through the recorder")
+        self.assertEqual(sb.STEP_LIVE_FIELDS, FIELDS)
 
 
 class ParkedPickRefusedAtTheDrain(unittest.TestCase):
