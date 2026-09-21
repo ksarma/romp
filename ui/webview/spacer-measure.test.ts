@@ -639,7 +639,7 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   //    already has (`writeScroll(content, 12345, "land-saved")` planted in landActive ran green through spacer-measure, land-active-keep and
   //    landing-settle before this census); a write under a NEW name (`"planted-raw"`) was refused by landing-settle.test.ts's writer census,
   //    an unclassified writer, before this census existed, so that shape is caught twice. Every call of the write family (writeScroll and the
-  //    wrappers writer-census.ts registers, landing-settle.ts's WRITER_WRAPPERS, the writer read at each one's registered position) outside the wrappers' own
+  //    wrappers landing-settle.ts registers, WRITER_WRAPPERS, the writer read at each one's registered position) outside the wrappers' own
   //    bodies (writeScroll inside scrollContentBy, scrollElInto inside landOn's local `land`: a wrapper's body is what its calls stand for)
   //    that runs under a reader on the untake list, as (reader, writer), a closed multiset: a write added under one of these readers reds
   //    here and owes its road a harness case (the six harnesses are the executed guard on the raw roads). Two attributions:
@@ -658,7 +658,7 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   //    name to be called by) and a conduit called through a property access; a write outside these readers is outside the take rule and
   //    outside this census.
   const UNTAKERS = new Set(["appendActive", "fillInPlace", "keepPlaceAcrossWindow", "landActive", "landNearestMoment", "scrollToAnchor", "toggleToolGroup", "virtualizeToViewport"]);
-  const FAMILY: Readonly<Record<string, number>> = WRITER_WRAPPERS;   // the write family and the writer's position in each call (writeScroll 2, scrollContentBy 2, scrollElInto 3, land 0, settleLand 1), the table writer-census.ts pins
+  const FAMILY: Readonly<Record<string, number>> = WRITER_WRAPPERS;   // the write family and the writer's position in each call (writeScroll 2, scrollContentBy 2, scrollElInto 3, land 0, settleLand 1), the table landing-settle.test.ts's writer census reads and pins
   const inFamilyName = (name: string): boolean => Object.prototype.hasOwnProperty.call(FAMILY, name);
   const inFamily = (c: ts.CallExpression): boolean => inFamilyName((c.expression as ts.Identifier).text);
   const readerOf = (n: ts.Node): string | null => { for (let p: ts.Node | undefined = n.parent; p; p = p.parent) { if (ts.isFunctionLike(p)) { const nm = nameOf(p); if (nm && UNTAKERS.has(nm)) return nm; } } return null; };
