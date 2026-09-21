@@ -14,7 +14,7 @@
 // plain click, the viewer and the trail unmoved (before: the viewer opened on the kernel's /file route at that path, a 404,
 // and Back was armed); (5) a captioned picture inside a DEAD link (an `<a>` whose href the sanitizer removed, dressed fv-dead)
 // wears no control either, since linkAbove reads any anchor (before: `a[href]` alone, so the control went inside the dead
-// anchor); its plain click, with no link the links listener or the browser will act on, opens the picture. Skipped LOUDLY where playwright has no browser (in CI the Test step runs before the job's Chromium install, so the leg skips there and runs in the step after the install under ROMP_FILEVIEW_BROWSER_REQUIRE, where the skip is a failure: real-viewer-leg.ts inBrowser). Synthetic values only: the
+// anchor); its plain click, with no link the links listener or the browser will act on, opens the picture. Skipped LOUDLY where playwright has no browser (in CI the Test step runs before the job's Chromium install, so the leg skips there; the launch is real-viewer-leg.ts's inBrowser, the shared helper). Synthetic values only: the
 // notes-api world, a placeholder session id, example.invalid addresses, /repo/notes-api paths.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";

@@ -8589,13 +8589,11 @@ bypassed: no request reaches a host the gate still holds. The build's record her
 the contract said the same; the claim was false, and the follow-on is a privacy surface, landing on the owner's word
 (open point 11). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui/webview, docs, plans, tools,
-upstream or tests alone, save one file under .github/workflows, ci.yml, whose step the file review's
-round 8, extra8-2, asked for (45 files, the ledger entry's where line; run 2026-09-21 at the head that carries the fixes for the
+upstream or tests alone (43 files, the ledger entry's where line; run 2026-09-21 at the head that carries the fixes for the
 file review's round 8, where the merge-base is 5e5ee79ed, the fork's main merged into the branch
-before landing, and the listing is the branch's whole delta over it; the run at 7f8684caf, the head that read took, one
-commit after that merge, listed 42 from the same merge-base, before three files joined the delta in the read's fixes,
-ui/webview/file-view-place-blocks.test.ts, ui/webview/real-viewer-leg.ts and .github/workflows/ci.yml, the last the one
-outside the six directories; the run at the head before that merge listed the same 42 from 01434a45b, the fork's main
+before landing, and the listing is the branch's whole delta over it; the run at 7f8684caf, the head that round took, one
+commit after that merge, listed 42 from the same merge-base, before ui/webview/file-view-place-blocks.test.ts joined the
+delta in the round's fixes; the run at the head before that merge listed the same 42 from 01434a45b, the fork's main
 the branch had merged for the file review's round 5; the run at the head after that earlier merge, for the file review's
 round 5, listed 40, before the landing round's executed test re-aimed two more standing suites; the two earlier runs, at
 the commit that built the one reader for the file review's round 4 and at the head that closed the author's closing
@@ -8670,17 +8668,21 @@ opens the source's file, and since its round 2 a failed local figure with a box 
 nothing) and ui/webview/file-view-figure-recent-browser.test.ts (Chromium over the real Files page: a picture
 opened from a figure, by the control and by the plain click, takes no Recent row while Back returns to the report at the
 reader's block, a Forward step onto the picture mints its row, and a link's open still takes its row).
-The browser legs named here skip where Playwright's engines are absent, in the Test step of the job that gates a landing too,
-which runs before that job installs Chromium (the gate-before-adoption section's Tests paragraph states that job's shape
-and tools/markdown-viewer-plan-gate-adopt.test.mjs holds it), and run in the step after that install under
-`ROMP_FILEVIEW_BROWSER_REQUIRE`, where a runner without the browser turns the job red rather than green with the coverage
-gone; tools/markdown-viewer-plan-linknav.test.mjs derives those legs from the tree, as the browser modules whose own text
-names this follow-on, and holds the step's run line to them, the step's place after the install and after the Test step
-and its bound in minutes, reads each leg's route to the one launching helper comment-stripped, and, behind L6's gate,
-holds that every browser leg the diff since the merge-base adds or modifies is among them, since a leg the branch adds
-whose text names no follow-on would run in no gating step with both text-keyed derivations of the roster agreeing
-(the file review's round 8, extra8-2: the legs were the feature's evidence and none of them ran where landing is
-gated, the gating run's log showing every browser scenario of theirs as SKIP). Sixteen standing suites were re-aimed, not undone:
+The browser legs named here skip at launch in the Test step of the job that gates a landing, which runs before that job
+installs Chromium (the gate-before-adoption section's Tests paragraph states that job's shape and
+tools/markdown-viewer-plan-gate-adopt.test.mjs holds it), so none of them runs where landing is gated; what gates the
+follow-on there is its source pins, the node modules beside each leg in that Test step, and the pytest modules it added
+or re-aimed, tests/test_guide_trail_chords_and_figure_button.py and tests/test_guide_files_failures.py, in the pytest job,
+and the road that runs the legs with a browser where landing is gated is the shared roster of browser legs,
+vscode-extension/ci-browser-legs.txt, one compiled bundle path per line, read by a step of that job after its Chromium
+install, a change of its own that this branch does not carry, so this follow-on's legs join the roster once both are in
+the tree; tools/markdown-viewer-plan-linknav.test.mjs derives the legs from the tree, as the browser modules whose own
+text names this follow-on, holds each to a launch through real-viewer-leg.ts's inBrowser, the shared helper a roster's
+switch reaches, and reads the tree for the roster, its exclusions file (vscode-extension/ci-browser-legs-excluded.txt)
+and that step: where the tree carries none of the three it holds this sentence, where it carries all three it holds every
+leg to a roster line outside the exclusions and the roster's own tree test to exist, and a tree with some of the three it
+refuses, naming them (the file review's round 8, extra8-2: the legs were the feature's evidence and none of them ran where
+landing is gated, the gating run's log showing every browser scenario of theirs as SKIP). Sixteen standing suites were re-aimed, not undone:
 ui/webview/file-view-text-size.test.ts (its real-module bar leg at 380, 420, 480 and 600 px in the chat and feed modals
 reads the group hidden on a fresh open and, once a link is followed, measures the two glyphs among the actions, case 8), ui/webview/file-view.test.ts and ui/webview/file-view-links.test.ts
 (the delegate's open through openFromViewer; the model import), ui/webview/file-view-figure-error.test.ts and
@@ -8724,7 +8726,7 @@ guide are the sources' literals; the sheets carry L3's rules under `screen` in b
 control nowhere; no history API call stands in the trail or the viewer; L6's two verifications are run from the
 merge-base with `origin/main` behind a two-part gate read off git, the merge-base not `origin/main` itself and the
 diff since it adding the module (the file review's round 4, extra8-1: the kernel stat empty, every changed file under
-the six directories or the one workflow file L6 names, and the count L6 gives the listing's, on the open PR branch in a clone where `origin/main` has
+the six directories, and the count L6 gives the listing's, on the open PR branch in a clone where `origin/main` has
 moved past the branch's last merge of it; on main, on a batch head cut from main's tip, on this branch right after
 merging `origin/main` and on any later branch once the follow-on has landed the checks stand down and the diagnostic
 names the part of the gate that held them, and without the ref the prose alone holds; a batch head that main has moved

@@ -16,7 +16,7 @@
 // twin), and a dispatched romp:wsup probes each parked URL off the DOM through a detached Image; the probes fail again, no
 // error reaches an img on the page, and the three labels stand unchanged, never rewritten or doubled. Every wait is for the
 // figures' own settling (`complete`), the probes' own events or the panel's paint, never a timer.
-// Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there and runs in the step after the install under ROMP_FILEVIEW_BROWSER_REQUIRE, where the skip is a failure: real-viewer-leg.ts inBrowser), as the other legs do. Before item 2: no label anywhere (red at
+// Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there; the launch is real-viewer-leg.ts's inBrowser, the shared helper), as the other legs do. Before item 2: no label anywhere (red at
 // the first label assertion over a git archive of the base, whose real-viewer-leg has no `serve` hook either). Synthetic
 // values only: an invented report, /repo/notes-api paths, the placeholder sid.
 import { test } from "node:test";

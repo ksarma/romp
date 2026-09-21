@@ -11,7 +11,7 @@
 // exception L2 states is driven too (the file review's round 2, extra8-1): a Forward step to the picture is a Back or Forward
 // open, which the Files pane records as any open there (openFromViewer through the host's opener), so it DOES mint the
 // picture's row, one per step, where the figure's own open did not; open point 12 states it beside the default.
-// Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there and runs in the step after the install under ROMP_FILEVIEW_BROWSER_REQUIRE, where the skip is a failure: real-viewer-leg.ts inBrowser). Synthetic values only: the notes-api world, a placeholder
+// Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there; the launch is real-viewer-leg.ts's inBrowser, the shared helper). Synthetic values only: the notes-api world, a placeholder
 // session id, /repo/notes-api paths.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -77,7 +77,7 @@ type H = {
   back: () => Promise<Nav>; shape: () => Promise<{ back: string[]; current: string | null; forward: string[] }>;
   top: () => Promise<Top>; putAtTop: (t: string) => Promise<void>; base: () => Promise<string | null>; frames: (n?: number) => Promise<null>;
 };
-/** This leg's harness over the shared launch (real-viewer-leg.ts inBrowser: the skip on either road, the failure under CI's switch,
+/** This leg's harness over the shared launch (real-viewer-leg.ts inBrowser: the skip on either road,
  *  the close), so one home carries the stand-down; the page here is the leg's own, not the shared module's. */
 async function inBrowser(t: any, body: (h: H) => Promise<void>): Promise<void> {
   await withBrowser(t, async (browser: any) => {

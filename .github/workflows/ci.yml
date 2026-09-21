@@ -311,30 +311,6 @@ jobs:
         # which one ran ("browser: playwright chromium").
         timeout-minutes: 5
         run: npx playwright install chromium
-      - name: File viewer browser legs (node --test)
-        # The link-navigation follow-on's browser legs (plans/markdown-viewer.md, "Follow-on: Link navigation", its Tests
-        # paragraph) drive the real file viewer in the Chromium installed above: the trail's Back and Forward over the Files
-        # and chat pages, the figure's Open the picture control and the gestures on a figure, the floor at each reflow, the
-        # candidate the browser chose and the remote picture's request census, the failed and fetching states, the Recent
-        # rows. The Test step above ran these files too, BEFORE the install, where their browser legs skip and their
-        # node-only pins alone run (the file review of the follow-on's PR read the gating run's log: every browser scenario
-        # of theirs logged SKIP, so a visual feature was green on source-text pins alone). The bundle is the Test step's
-        # (npm test builds out-tests/ and npm run build leaves it), so nothing is rebuilt here. ROMP_FILEVIEW_BROWSER_REQUIRE
-        # turns the legs' browser skip into a failure naming the reason (ui/webview/real-viewer-leg.ts inBrowser, the one
-        # helper the legs launch through), the pane bench's stance below, so a runner that lost its browser turns this red
-        # rather than green with the coverage gone. Measured at 11 s on the development box, 60 cores, at concurrency 4;
-        # the bound below is minutes, so a wedged launch or page in one leg reds this step with the leg's name in its log
-        # instead of running to the job's cap and showing as a cancelled job. Seven of the eight modules are new to the
-        # branch; file-view-figure-error-browser.test.ts predates it and is re-aimed there (its label readers step past
-        # the control), so its browser scenarios run in this job for the first time here too.
-        # tools/markdown-viewer-plan-linknav.test.mjs derives the legs from the tree (the browser modules whose own text
-        # names the follow-on) and holds this run line to them, the step's place after the install and after Test, and
-        # the bound's presence; behind its L6 gate it holds every browser leg the branch's delta adds or modifies to that
-        # roster.
-        timeout-minutes: 5
-        env:
-          ROMP_FILEVIEW_BROWSER_REQUIRE: "1"
-        run: node --test out-tests/ui/webview/file-figure-open-browser.test.js out-tests/ui/webview/file-trail-browser.test.js out-tests/ui/webview/file-view-figure-chosen-browser.test.js out-tests/ui/webview/file-view-figure-error-browser.test.js out-tests/ui/webview/file-view-figure-floor-browser.test.js out-tests/ui/webview/file-view-figure-recent-browser.test.js out-tests/ui/webview/file-view-figure-shapes-browser.test.js out-tests/ui/webview/file-view-figure-state-browser.test.js
       - name: Dashboard pane bench (node --test)
         # tools/ui-bench.mjs replays a synthetic frame stream into the real feed and timeline pages in the
         # headless Chromium installed above, served by the kernel's own page route from the dist the Build

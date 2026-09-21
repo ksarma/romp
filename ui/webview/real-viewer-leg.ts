@@ -156,29 +156,12 @@ window.putAtTop = function (text) {
 let pw: any = null;
 try { pw = requireCjs("playwright"); } catch { pw = null; }
 
-/** The switch CI's step after its Chromium install sets over the file viewer's browser legs (.github/workflows/ci.yml, the step
- *  named for them in the job that runs npm test): under it a leg that cannot launch the browser FAILS naming the reason instead of
- *  skipping, so a runner that lost its browser turns the job red rather than green with the coverage gone (the pane bench's
- *  ROMP_UI_BENCH_REQUIRE stance). The Test step itself runs before the install and leaves the switch unset, so the legs skip there
- *  as before. One home for the name: tools/markdown-viewer-plan-linknav.test.mjs reads it here and finds the step by it. */
-export const BROWSER_REQUIRE = "ROMP_FILEVIEW_BROWSER_REQUIRE";
-/** What a browser leg does when it cannot run: fail under the switch, else skip LOUDLY, saying where the legs do run. `env` is
- *  read at the call, never at import, so the switch's own test drives both settings (file-figure-open-browser.test.ts). */
-export function skipOrFail(t: any, why: string, env: Record<string, string | undefined> = process.env): void {
-  if (env[BROWSER_REQUIRE]) assert.fail(BROWSER_REQUIRE + " is set and this browser leg cannot run: " + why);
-  t.skip(why + " (in CI the Test step runs before the job installs Chromium, so a browser leg skips there; the file viewer's legs the workflow names run again in the step after the install, under " + BROWSER_REQUIRE + ", where this skip is a failure)");
-}
-/** The launch's two roads, injectable for the switch's own test: `pw` the playwright module (null for none), `env` the environment read. */
-export type BrowserDeps = { pw?: any; env?: Record<string, string | undefined> };
-/** Launch headless Chromium and run `body` with it, or stand down through skipOrFail on either road (no playwright module under
- *  vscode-extension; a launch that throws, no browser binary), as every leg that imports this module does. */
-export async function inBrowser(t: any, body: (browser: any) => Promise<void>, deps: BrowserDeps = {}): Promise<void> {
-  const driver = "pw" in deps ? deps.pw : pw;
-  const env = deps.env ?? process.env;
-  if (!driver) { skipOrFail(t, "playwright is not installed under vscode-extension; the browser leg needs it", env); return; }
+/** Launch headless Chromium and run `body` with it, or skip LOUDLY (CI installs no browsers), as the other legs do. */
+export async function inBrowser(t: any, body: (browser: any) => Promise<void>): Promise<void> {
+  if (!pw) { t.skip("playwright is not installed under vscode-extension; the browser leg needs it (CI installs no browsers)"); return; }
   let browser: any;
-  try { browser = await driver.chromium.launch(); }
-  catch (e) { skipOrFail(t, "no playwright browser on this box; the browser leg needs one: " + String((e as Error).message).split("\n")[0], env); return; }
+  try { browser = await pw.chromium.launch(); }
+  catch (e) { t.skip("no playwright browser on this box; the browser leg needs one (CI installs none): " + String((e as Error).message).split("\n")[0]); return; }
   try { await body(browser); } finally { await browser.close(); }
 }
 

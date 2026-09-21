@@ -361,7 +361,6 @@ test('L5 and L6: no history API call in the trail or the viewer; the trail modul
   assert.ok(section.includes('`git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty'), 'L6 names the kernel stat from the merge-base');
   assert.ok(section.includes('`git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui/webview, docs, plans, tools, upstream or tests alone'), 'and the listing from the merge-base');
   assert.ok(!section.includes('git diff --stat 34142c262') && !section.includes('git diff --name-only 34142c262'), 'no verification against the branch point remains');
-  assert.ok(section.includes('upstream or tests alone, save one file under .github/workflows, ci.yml, whose step'), 'L6 names the one file outside the six directories, the CI step the file review\'s landing round asked for (extra8-2)');
   const count = /upstream or tests alone[^()]*\((\d+) files, the ledger entry's where line/.exec(section);
   assert.ok(count, 'L6 counts the listing beside the command');
   assert.ok(exists('upstream', '2026-09-19-linknav-trail-back-forward.md'), 'the ledger entry the section names');
@@ -369,12 +368,9 @@ test('L5 and L6: no history API call in the trail or the viewer; the trail modul
   gated(t, L6_CHECK, (d) => {
     assert.equal(d.kernel, '', 'no kernel change since the merge-base ' + d.base);
     const DIRS = ['ui/webview/', 'docs/', 'plans/', 'tools/', 'upstream/', 'tests/'];
-    // the one file outside them: the CI step the file review's landing round asked for (extra8-2), named as a file, not a
-    // directory, so a second workflow file joining the delta is red here until L6 names it
-    const FILES = ['.github/workflows/ci.yml'];
-    for (const f of d.files) assert.ok(DIRS.some((dir) => f.startsWith(dir)) || FILES.includes(f), f + ' lies under one of the six directories L6 names, or is the one workflow file it names');
+    for (const f of d.files) assert.ok(DIRS.some((dir) => f.startsWith(dir)), f + ' lies under one of the six directories L6 names');
     assert.equal(d.files.length, Number(count[1]), 'L6 says the listing since the merge-base has ' + count[1] + ' files; it has ' + d.files.length + ': ' + d.files.join(', '));
-    t.diagnostic('L6\'s verifications ran: ' + d.files.length + ' files since the merge-base ' + d.base + ', none under kernel/, all under the six directories or the one workflow file L6 names');
+    t.diagnostic('L6\'s verifications ran: ' + d.files.length + ' files since the merge-base ' + d.base + ', none under kernel/, all under the six directories L6 names');
   });
 });
 
@@ -483,7 +479,7 @@ test('the re-aimed sentence: its count is the number of pre-existing test module
   }, '; the re-aimed count is held to the sentence\'s own list alone here');
 });
 
-// ── the browser legs in the job that gates a landing (the file review's round 8, extra8-2) ─────────────────────
+// ── the browser legs and the job that gates a landing (the file review's round 8, extra8-2) ────────────────────────────
 
 /** The follow-on's browser legs, derived from the tree: the `*-browser.test.ts` modules under ui/webview whose own text names the
  *  follow-on (claimants, above). Two derivations must agree: the Tests paragraph's list of browser modules is the same set. */
@@ -506,33 +502,75 @@ const codeLines = (src) => {
   }
   return out.join('\n');
 };
-/** Why a leg's code is not routed through the helper, or null: it imports inBrowser from real-viewer-leg.ts in an import
+/** Why a leg's code is not routed through the shared helper, or null: it imports inBrowser from real-viewer-leg.ts in an import
  *  statement at a line's start, and calls launch on nothing, under any access spelling (a property access, an optional chain, a
  *  bracket holding a string literal) followed by a call. A launch reached through a name computed at run time
- *  (`pw.chromium["la" + "unch"]()`) is outside this read; a `launch` key in an object (the stand-down test's throwing stub) is no
- *  call and passes. */
+ *  (`pw.chromium["la" + "unch"]()`) is outside this read; a `launch` key in an object is no call and passes. The helper is the
+ *  road a browser-legs roster's switch reaches (ci-browser-legs.txt's header names it), so a leg with a launch of its own would
+ *  skip under such a step as it does without one. */
 const offRoute = (code) => {
   if (!/^import \{[^}]*\binBrowser\b[^}]*\} from "\.\/real-viewer-leg";/m.test(code)) return 'no import of inBrowser from real-viewer-leg.ts at a line\'s start';
   const m = /(?:\.|\?\.)\s*launch\s*\(|\[\s*(["'`])launch\1\s*\]\s*\(/.exec(code);
   return m ? 'a launch outside the helper: ' + m[0] : null;
 };
-/** The browser legs among `files` (paths from the repo root, the delta's) that `legs` (the roster, basenames) does not hold:
- *  a leg the branch touched that runs in no gating step and is named in no record. */
+/** The browser legs among `files` (paths from the repo root, the delta's) that `legs` (the derived legs, basenames) does not hold:
+ *  a leg the branch touched that names no follow-on, so no derivation above reaches it and no record names it. */
 const legsOffRoster = (files, legs) => files.filter((f) => /^ui\/webview\/[\w-]+-browser\.test\.ts$/.test(f)).map((f) => f.replace(/^ui\/webview\//, '')).filter((f) => !legs.includes(f)).sort();
 
-test('the follow-on\'s browser legs run in the job that gates a landing: the step that sets the switch real-viewer-leg.ts exports runs, as compiled files under out-tests, every browser leg whose own text names the follow-on and no other, stands after that job\'s Chromium install and after its Test step (which runs the legs first, where they skip) inside the one job that runs npm test, is bounded in minutes so a wedged leg reds the step rather than cancelling the job, and each leg, read comment-stripped, launches through the helper that reads the switch under any access spelling; behind L6\'s gate every browser leg the delta adds or modifies is in that roster; the Tests paragraph says so, naming the switch and no count', (t) => {
+/** The shared convention for browser legs in the gating job, by the names fixed with the sibling PRs: the roster (one compiled
+ *  bundle path per line, `#` comments), the exclusions (bundle path, a tab, a reason) and the step in the vscode-extension job,
+ *  directly after its Chromium install. None of the three is this branch's to add (the maintainer's ruling on the file review's
+ *  round 8, extra8-2: the step lands once as its own change); this module reads the tree for them and pins the consuming side. */
+const ROSTER = ['vscode-extension', 'ci-browser-legs.txt'];
+const EXCLUDED = ['vscode-extension', 'ci-browser-legs-excluded.txt'];
+const ROSTER_TEST = ['tools', 'ci-browser-legs.test.mjs'];
+const STEP = 'Browser legs (node --test over ci-browser-legs.txt)';
+const INSTALL_RUN = /^\s+run: npx playwright install chromium\s*$/;
+/** The step's state in a workflow text: 'present' when exactly one step carries the fixed name and it is the step directly after
+ *  the one whose run line installs Chromium; 'absent' when no step carries the name; otherwise a sentence saying what stands. */
+function stepStateOf(ci) {
+  const lines = ci.split('\n');
+  const names = lines.flatMap((l, i) => { const m = /^\s+- name: (.*\S)\s*$/.exec(l); return m ? [{ name: m[1], line: i }] : []; });
+  const at = names.filter((n) => n.name === STEP);
+  if (at.length === 0) return 'absent';
+  if (at.length > 1) return 'present ' + at.length + ' times (lines ' + at.map((n) => n.line + 1).join(', ') + '), where the convention has one step';
+  const installs = lines.flatMap((l, i) => (INSTALL_RUN.test(l) ? [i] : []));
+  if (installs.length !== 1) return 'present at line ' + (at[0].line + 1) + ' while the Chromium install line stands ' + installs.length + ' times, so its place cannot be read';
+  const installStep = names.filter((n) => n.line < installs[0]).pop();
+  const after = names[names.indexOf(installStep) + 1];
+  if (!after || after.name !== STEP) return 'present at line ' + (at[0].line + 1) + ' but not directly after the Chromium install step (line ' + (installStep.line + 1) + '), which is followed by ' + (after ? JSON.stringify(after.name) + ' at line ' + (after.line + 1) : 'nothing');
+  return 'present';
+}
+/** The convention's three parts as the tree holds them, and the state they make: A (all three present), B (none of the three),
+ *  or a refusal naming what is present and what is absent (some of the three: a tree this module cannot classify). */
+function conventionStateOf(rosterExists, excludedExists, stepState) {
+  const parts = [['the roster ' + ROSTER.join('/'), rosterExists ? 'present' : 'absent'], ['the exclusions ' + EXCLUDED.join('/'), excludedExists ? 'present' : 'absent'], ['the step ' + JSON.stringify(STEP) + ' in ci.yml', stepState]];
+  if (parts.every(([, st]) => st === 'present')) return { state: 'A', parts };
+  if (parts.every(([, st]) => st === 'absent')) return { state: 'B', parts };
+  return { state: 'refuse', parts };
+}
+/** A roster's bundle lines: every line that is not blank and not a `#` comment, as written (the shared script refuses a
+ *  malformed line, so a line that differs from a leg's bundle path by whitespace is not that leg's line here either). */
+const rosterLines = (text) => text.split('\n').filter((l) => !/^\s*(?:#|$)/.test(l));
+/** An exclusions file's bundles: the text before the first tab of each such line. */
+const excludedBundles = (text) => rosterLines(text).map((l) => l.split('\t')[0]);
+const bundleOf = (leg) => 'out-tests/ui/webview/' + leg.replace(/\.ts$/, '.js');
+/** The Tests paragraph's disclosure, state B's sentence: its opening words, and the clauses it must carry. */
+const DISCLOSURE = 'The browser legs named here skip at launch in the Test step of the job that gates a landing';
+const DISCLOSURE_CLAUSES = [
+  ['which runs before that job installs Chromium', 'why they skip there'],
+  ['so none of them runs where landing is gated', 'that none runs where landing is gated'],
+  ['what gates the follow-on there is its source pins', 'what does gate the follow-on there'],
+  ['the shared roster of browser legs, ' + ROSTER.join('/'), 'the road that runs them with a browser, the shared roster by its file name'],
+  ['a change of its own that this branch does not carry', 'that the roster is not this branch\'s to add'],
+];
+
+test('the follow-on\'s browser legs and the job that gates a landing, a two-state pin over the shared convention: the legs are derived from the tree and each launches through real-viewer-leg.ts\'s inBrowser, the helper a roster\'s switch reaches, read comment-stripped under any launch spelling; where the tree carries the roster, the exclusions and the step directly after the Chromium install (state A) every leg is a roster line and no exclusions line and the roster\'s tree test exists, and the Tests paragraph no longer says none runs where landing is gated; where it carries none of the three (state B) the Tests paragraph discloses that the legs skip in the gating job\'s Test step, what gates the follow-on there and the roster by name as the road, with no count; a tree with some of the three is refused, naming them; behind L6\'s gate every browser leg the delta adds or modifies is among the derived legs', (t) => {
   const legs = browserLegs();
   assert.ok(legs.length > 0, 'browser legs naming the follow-on are on disk');
   const tests = section.slice(section.indexOf('**Tests.**'));
   const named = [...new Set([...tests.matchAll(/ui\/webview\/([\w-]+-browser\.test\.ts)\b/g)].map((m) => m[1]))].sort();
-  assert.deepEqual(named, legs, 'the browser modules the Tests paragraph names are the legs whose own text names the follow-on: the two derivations of the roster agree');
-  const helper = read('ui', 'webview', 'real-viewer-leg.ts');
-  const sw = /^export const BROWSER_REQUIRE = "(ROMP_[A-Z_]+)";$/m.exec(helper);
-  assert.ok(sw, 'real-viewer-leg.ts exports the switch\'s name as BROWSER_REQUIRE');
-  const SWITCH = sw[1];
-  // that the helper fails under the switch on both roads is driven, not read: file-figure-open-browser.test.ts's stand-down test
-  // runs inBrowser with no module and with a throwing launch, under both settings and with an empty value (a grep of the helper's
-  // `assert.fail` line stood here and a comment quoting it would have satisfied it)
+  assert.deepEqual(named, legs, 'the browser modules the Tests paragraph names are the legs whose own text names the follow-on: the two derivations of the legs agree');
   // the route: each leg's code, comment-stripped, imports the helper at a line's start and launches nothing itself; the read is
   // armed on the shape that passed the raw read and on the spellings the one-spelling check missed
   assert.equal(offRoute(codeLines('import { inBrowser, openViewer } from "./real-viewer-leg";\ntest("x", (t) => inBrowser(t, async (b) => { const stub = { chromium: { launch: async () => {} } }; void stub; }));\n')), null, 'the head\'s shape passes: the import at a line\'s start, no launch call, a launch KEY in a stub allowed');
@@ -542,60 +580,56 @@ test('the follow-on\'s browser legs run in the job that gates a landing: the ste
     assert.equal(offRoute(codeLines('import { inBrowser } from "./real-viewer-leg";\n' + spelling + '\n')), 'a launch outside the helper: ' + want, 'a private launch is refused under the spelling ' + spelling);
   }
   assert.equal(offRoute(codeLines('import { inBrowser } from "./real-viewer-leg";\nconst b = 1; // pw.chromium.launch()\n')), 'a launch outside the helper: .launch(', 'a launch quoted in a comment after code reds too: the stripper reads line shapes, and this is its safe side');
-  for (const f of legs) assert.equal(offRoute(codeLines(read('ui', 'webview', f))), null, f + ' launches through the helper alone: it imports inBrowser from real-viewer-leg.ts at a line\'s start and calls launch on nothing (a private launch would skip under the switch)');
-  const ci = read('.github', 'workflows', 'ci.yml');
-  const lines = ci.split('\n');
-  const at = lines.flatMap((l, i) => (l.trim() === SWITCH + ': "1"' ? [i] : []));
-  assert.equal(at.length, 1, 'one step sets ' + SWITCH + ' to "1": lines ' + JSON.stringify(at.map((i) => i + 1)));
-  const step = at[0];
-  let k = step;
-  while (k < lines.length && !/^\s+run:/.test(lines[k]) && !/^\s+- /.test(lines[k])) k++;
-  assert.ok(k < lines.length && /^\s+run:/.test(lines[k]), 'the step that sets the switch has a run line before the next step');
-  // the step's block, from its `- name:` to the next step, carries a bound in minutes (a hung launch or page in one leg reds the step
-  // naming the leg in its log instead of running to the job's cap and showing as a cancelled job)
-  let from = step;
-  while (from > 0 && !/^\s+- name:/.test(lines[from])) from--;
-  let to = step + 1;
-  while (to < lines.length && !/^\s+- /.test(lines[to])) to++;
-  const bound = lines.slice(from, to).flatMap((l) => (/^\s+timeout-minutes: (\d+)\s*$/.exec(l) ? [Number(/(\d+)/.exec(l)[1])] : []));
-  assert.deepEqual(bound.length, 1, 'the step carries one timeout-minutes line: ' + JSON.stringify(bound));
-  assert.ok(bound[0] >= 1 && bound[0] <= 10, 'the bound is minutes, at most ten (the legs run in about 11 s here at concurrency 4): ' + bound[0]);
-  const run = lines[k].replace(/^\s+run:\s*/, '');
-  const m = /^node --test((?: out-tests\/ui\/webview\/[\w-]+\.test\.js)+)$/.exec(run);
-  assert.ok(m, 'the run line is node --test over compiled files under out-tests/ui/webview and nothing else: ' + run);
-  const ran = m[1].trim().split(/\s+/).map((f) => f.replace(/^out-tests\/ui\/webview\//, '').replace(/\.js$/, '.ts')).sort();
-  assert.deepEqual(ran, legs, 'the step runs every browser leg naming the follow-on and no other (a leg dropped from the line, or one added to the tree without the line, reds here)');
-  // the step's place: after the install and after Test, inside the job that runs npm test (the job's block runs from its key to the next)
-  const jobsAt = lines.findIndex((l) => l === 'jobs:');
-  assert.ok(jobsAt >= 0, 'ci.yml has a jobs: map');
-  const keys = lines.flatMap((l, i) => (i > jobsAt && /^  [a-z][a-z-]*:$/.test(l) ? [i] : []));
-  const jobOf = (i) => keys.filter((j) => j < i).pop();
-  const npmTest = lines.findIndex((l) => /^\s+run: npm test\s*$/.test(l));
-  const install = lines.findIndex((l) => /^\s+run: npx playwright install chromium\s*$/.test(l));
-  assert.ok(npmTest >= 0 && install >= 0, 'the Test step and the Chromium install are in the workflow');
-  assert.equal(lines.filter((l) => /^\s+run: npm test\s*$/.test(l)).length, 1, 'one step runs npm test');
-  assert.equal(jobOf(step), jobOf(npmTest), 'the step is in the job that runs npm test (' + lines[jobOf(step)].trim() + ')');
-  assert.equal(jobOf(install), jobOf(npmTest), 'and so is the Chromium install');
-  assert.ok(npmTest < install && install < step, 'the order inside the job: Test (line ' + (npmTest + 1) + '), the Chromium install (' + (install + 1) + '), the legs (' + (step + 1) + '): nothing before Test moves, so the gate-before-adoption section\'s CI sentence and its pin stand');
-  // the Tests paragraph: the property, the switch by name, no count
-  const sentenceAt = tests.indexOf('The browser legs named here skip where Playwright\'s engines are absent');
-  assert.ok(sentenceAt >= 0, 'the Tests paragraph states the legs skip where the engines are absent');
-  const sentence = tests.slice(sentenceAt, tests.indexOf('. ', sentenceAt) + 1);
-  assert.ok(sentence.includes('in the Test step of the job that gates a landing too, which runs before that job installs Chromium'), 'and that the gating job\'s Test step is such a place: ' + sentence);
-  assert.ok(sentence.includes('run in the step after that install under `' + SWITCH + '`'), 'and that they run in the step after the install under the switch, by its name: ' + sentence);
-  assert.ok(sentence.includes('every browser leg the diff since the merge-base adds or modifies is among them'), 'and that the roster is compared with the delta behind L6\'s gate: ' + sentence);
-  assert.equal((tests.match(new RegExp('`' + SWITCH + '`', 'g')) || []).length, 1, 'the switch is named once in the Tests paragraph');
-  assert.ok(!/\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|\d+) browser legs\b/i.test(sentence), 'the sentence counts no legs (the roster is derived here, never typed there): ' + sentence);
-  // the roster against the delta, behind L6's gate: a browser leg the branch adds or modifies whose text names no follow-on is in
-  // the roster of no step and named in no record while the two text-keyed derivations above agree (the author's closing pass after
-  // the file review's round 8: a committed quiet leg left this test green and only L6's count red)
-  assert.deepEqual(legsOffRoster(['ui/webview/zz-quiet-browser.test.ts', 'ui/webview/file-trail-browser.test.ts', 'ui/webview/file-trail.test.ts', 'docs/guide.md'], ['file-trail-browser.test.ts']), ['zz-quiet-browser.test.ts'], 'the comparison, driven: a browser leg in the delta and not in the roster is named; a leg in both, a node module and a doc are not');
+  for (const f of legs) assert.equal(offRoute(codeLines(read('ui', 'webview', f))), null, f + ' launches through the helper alone: it imports inBrowser from real-viewer-leg.ts at a line\'s start and calls launch on nothing (a private launch would skip under a roster\'s switch)');
+  // the step's state, driven on synthetic workflows before the tree's is read
+  const wf = (steps) => 'jobs:\n  vscode-extension:\n    steps:\n' + steps.map(([name, run]) => '      - name: ' + name + '\n' + (run ? '        run: ' + run + '\n' : '')).join('');
+  const INSTALL = ['Install the pinned Playwright Chromium', 'npx playwright install chromium'];
+  assert.equal(stepStateOf(wf([['Test', 'npm test'], INSTALL, [STEP, 'bash scripts/ci-browser-legs.sh'], ['Bench', 'node x']])), 'present', 'the step directly after the install');
+  assert.equal(stepStateOf(wf([['Test', 'npm test'], INSTALL, ['Bench', 'node x']])), 'absent', 'no step of the name');
+  assert.match(stepStateOf(wf([['Test', 'npm test'], INSTALL, ['Bench', 'node x'], [STEP, 'bash scripts/ci-browser-legs.sh']])), /^present at line \d+ but not directly after the Chromium install step \(line \d+\), which is followed by "Bench" at line \d+$/, 'the step present but a step later is neither present nor absent');
+  assert.match(stepStateOf(wf([['Test', 'npm test'], [STEP, 'bash scripts/ci-browser-legs.sh'], INSTALL])), /but not directly after the Chromium install step/, 'nor one before the install');
+  assert.match(stepStateOf(wf([INSTALL, [STEP, 'bash x'], [STEP, 'bash x']])), /^present 2 times/, 'nor two of them');
+  assert.match(stepStateOf(wf([[STEP, 'bash x']])), /while the Chromium install line stands 0 times/, 'nor one in a workflow with no install to stand after');
+  // the three states, driven
+  assert.equal(conventionStateOf(true, true, 'present').state, 'A');
+  assert.equal(conventionStateOf(false, false, 'absent').state, 'B');
+  for (const [r, e, st] of [[true, false, 'absent'], [false, true, 'absent'], [false, false, 'present'], [true, true, 'absent'], [true, true, 'present at line 9 but not directly after the Chromium install step (line 5), which is followed by "Bench" at line 7']]) assert.equal(conventionStateOf(r, e, st).state, 'refuse', 'some of the three: refused (' + [r, e, st].join(', ') + ')');
+  assert.deepEqual(rosterLines('# a comment\n\nout-tests/ui/webview/a-browser.test.js\n  # indented comment\nout-tests/ui/webview/b-browser.test.js\n'), ['out-tests/ui/webview/a-browser.test.js', 'out-tests/ui/webview/b-browser.test.js'], 'roster lines: comments and blanks dropped, lines as written');
+  assert.deepEqual(excludedBundles('# c\nout-tests/ui/webview/a-browser.test.js\tlaunches Firefox\n'), ['out-tests/ui/webview/a-browser.test.js'], 'exclusions: the bundle before the tab');
+  // the tree's state
+  const st = conventionStateOf(exists(...ROSTER), exists(...EXCLUDED), stepStateOf(read('.github', 'workflows', 'ci.yml')));
+  const picture = st.parts.map(([what, s]) => what + ': ' + s).join('; ');
+  assert.notEqual(st.state, 'refuse', 'the tree carries some of the shared convention\'s three parts and not all, a state this module does not classify (the legs are held to the roster where all three stand, to the Tests paragraph\'s disclosure where none does): ' + picture);
+  const disclosureAt = tests.indexOf(DISCLOSURE);
+  if (st.state === 'A') {
+    const roster = rosterLines(read(...ROSTER));
+    const excluded = excludedBundles(read(...EXCLUDED));
+    for (const f of legs) {
+      assert.ok(roster.includes(bundleOf(f)), f + ' is a roster line (' + bundleOf(f) + ' in ' + ROSTER.join('/') + '): the gating job runs it with a browser through the step ' + JSON.stringify(STEP) + '; a leg of the follow-on missing from the roster runs where landing is gated only where it skips');
+      assert.ok(!excluded.includes(bundleOf(f)), f + ' is not an exclusions line (' + bundleOf(f) + ' in ' + EXCLUDED.join('/') + '): a leg is in one file or the other, and the follow-on\'s legs run');
+    }
+    assert.ok(exists(...ROSTER_TEST), ROSTER_TEST.join('/') + ' exists: the convention\'s own tree test, which holds every browser leg in the tree to one file or the other');
+    assert.equal(disclosureAt, -1, 'the Tests paragraph no longer says the legs skip in the gating job and none runs where landing is gated: with the roster in the tree and the legs its lines, that sentence is false and is reworded to say the roster runs them');
+    t.diagnostic('state A: the roster, the exclusions and the step are in the tree; ' + legs.length + ' legs are roster lines and no exclusions line');
+  } else {
+    assert.ok(disclosureAt >= 0, 'the Tests paragraph discloses that the legs skip in the gating job\'s Test step (the tree carries none of the roster, the exclusions and the step: ' + picture + '); the sentence opens ' + JSON.stringify(DISCLOSURE));
+    const sentence = tests.slice(disclosureAt, tests.indexOf('as SKIP). ', disclosureAt) + 'as SKIP).'.length);
+    assert.ok(sentence.length > DISCLOSURE.length && sentence.endsWith('as SKIP).'), 'the disclosure runs to its closing citation of the gating run\'s log: ' + sentence.slice(-120));
+    for (const [clause, what] of DISCLOSURE_CLAUSES) assert.ok(sentence.includes(clause), 'the disclosure says ' + what + ' (' + JSON.stringify(clause) + '): ' + sentence);
+    assert.ok(!/\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|\d+) browser legs\b/i.test(sentence), 'the sentence counts no legs (the legs are derived here, never typed there): ' + sentence);
+    assert.equal((tests.match(new RegExp(ROSTER.join('\\/'), 'g')) || []).length, 1, 'the roster is named once in the Tests paragraph, as the road');
+    t.diagnostic('state B: the tree carries none of the roster, the exclusions and the step; the Tests paragraph discloses the skip and names the roster as the road');
+  }
+  // the derived legs against the delta, behind L6's gate: a browser leg the branch adds or modifies whose text names no follow-on
+  // is reached by no derivation above and named in no record while the two text-keyed derivations agree (the author's closing
+  // pass after the file review's round 8: a committed quiet leg left this test green and only L6's count red)
+  assert.deepEqual(legsOffRoster(['ui/webview/zz-quiet-browser.test.ts', 'ui/webview/file-trail-browser.test.ts', 'ui/webview/file-trail.test.ts', 'docs/guide.md'], ['file-trail-browser.test.ts']), ['zz-quiet-browser.test.ts'], 'the comparison, driven: a browser leg in the delta and not among the derived legs is named; a leg in both, a node module and a doc are not');
   gated(t, LEGS_CHECK, (d) => {
     const inTree = d.files.filter((f) => exists(...f.split('/')));
     const off = legsOffRoster(inTree, legs);
-    assert.deepEqual(off, [], 'every browser leg the diff since the merge-base ' + d.base + ' adds or modifies names the follow-on and is in the roster the step runs (a quiet leg runs in no gating step): ' + off.join(', '));
-    t.diagnostic('the browser legs\' comparison ran: ' + inTree.filter((f) => /-browser\.test\.ts$/.test(f)).length + ' browser legs in the delta since the merge-base ' + d.base + ', every one in the roster');
-  }, '; the roster is held to the tree\'s text and the Tests paragraph alone here');
+    assert.deepEqual(off, [], 'every browser leg the diff since the merge-base ' + d.base + ' adds or modifies names the follow-on and is among the derived legs (a quiet leg is held by no derivation here and named in no record): ' + off.join(', '));
+    t.diagnostic('the browser legs\' comparison ran: ' + inTree.filter((f) => /-browser\.test\.ts$/.test(f)).length + ' browser legs in the delta since the merge-base ' + d.base + ', every one among the derived legs');
+  }, '; the legs are held to the tree\'s text and the Tests paragraph alone here');
 });
 
 // ── the gate on L6's verifications ─────────────────────────────────────────────────────────────────

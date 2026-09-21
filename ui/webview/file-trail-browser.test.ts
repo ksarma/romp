@@ -11,7 +11,7 @@
 // unchanged viewer at the first Back assertion (no Back button existed); (2) Forward after Back; (3) an open from
 // outside, the Recent row and the shell's relay, starts the trail over; (4) the chords, with and without a text field
 // holding the keyboard, and a key another listener prevented; (5) a section link, a web address and a same-file line
-// target push nothing; (7) closing the viewer ends the trail. Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there and runs in the step after the install under ROMP_FILEVIEW_BROWSER_REQUIRE, where the skip is a failure: real-viewer-leg.ts inBrowser). Synthetic values only: the notes-api world, a placeholder session id, example.invalid addresses.
+// target push nothing; (7) closing the viewer ends the trail. Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there; the launch is real-viewer-leg.ts's inBrowser, the shared helper). Synthetic values only: the notes-api world, a placeholder session id, example.invalid addresses.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -93,7 +93,7 @@ type H = {
   nav: () => Promise<Nav>; shape: () => Promise<Shape>; top: () => Promise<Top>; putAtTop: (t: string) => Promise<void>; base: () => Promise<string | null>;
   frames: (n?: number) => Promise<null>; fmt: () => Promise<string | null>;
 };
-/** This leg's harness over the shared launch (real-viewer-leg.ts inBrowser: the skip on either road, the failure under CI's switch,
+/** This leg's harness over the shared launch (real-viewer-leg.ts inBrowser: the skip on either road,
  *  the close), so one home carries the stand-down; the page here is the leg's own, not the shared module's. */
 async function inBrowser(t: any, host: "files" | "chat", body: (h: H) => Promise<void>): Promise<void> {
   await withBrowser(t, async (browser: any) => {
