@@ -1654,7 +1654,7 @@ export class FederationManager {
       this.diag("feedDelta-apply", { host, buildId: d.buildId, why, road: "wire" });
     }
     if (why === "asked") this.sendRemote(host, { type: "needFullFeed" });
-    else this.tellShell("error", host + ": its cards are frozen at their last update. An update from it could not be applied, and neither could the whole feed it sent back. They refresh when the connection reconnects.");
+    else this.tellShell("frozen", host + ": its cards are frozen at their last update. An update from it could not be applied, and neither could the fresh copy it sent back. They refresh when the connection reconnects.");
   }
 
   /** The LOCAL road's twin (the 19:31Z ruling of the maintainer's round 5: the local road is guarded in this PR, with its own
@@ -1680,13 +1680,16 @@ export class FederationManager {
     if (why === "asked") {
       const s = (window as any).__rompLocalSend;
       if (typeof s === "function") s({ type: "needFullFeed" });
-    } else this.tellShell("error", "The cards are frozen at their last update. An update from the kernel could not be applied, and neither could the whole feed it sent back. They refresh when the connection reconnects, or when you reload the page.");
+    } else this.tellShell("frozen", "The cards are frozen at their last update. An update from the kernel could not be applied, and neither could the fresh copy it sent back. They refresh when the connection reconnects or when you reload the page.");
   }
 
   /** A message for the person, through the shell's error center: the {romp: "notify"} post render.ts, waiting.ts and feed.ts make
    *  to the same parent this manager posts hostsPending and reveal to; the shell's listener hands it to __rompNotify (kernel.py),
    *  which appends a Log entry and folds a repeat of the same kind and text into a counter, so the message is visible, persistent,
-   *  deduped and bounded. A standalone page has no parent, and the console line beside the row stands alone there. */
+   *  deduped and bounded. The kind is one the centre registers (kernel.py's KINDS, KINDLBL and DESC, with a chip colour), or the
+   *  entry lands unlabelled with no way to mute it (the maintainer's round 6 of the wsBytesByHost review, ui-1: the two refusals
+   *  above posted the kindless catch-all); ui/webview/notify-kinds-registered.test.ts derives every writer's kind and holds it.
+   *  A standalone page has no parent, and the console line beside the row stands alone there. */
   private tellShell(kind: string, text: string): void {
     try {
       if (window.parent && window.parent !== window) window.parent.postMessage({ romp: "notify", kind, text }, "*");

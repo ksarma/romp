@@ -67640,6 +67640,11 @@ locate:"a click that should have jumped to a message in the chat couldn't find i
 cleared:"a /clear in a session dropped still-open cards at the boundary; Undo on the feed restores them",
 refused:"a setting that could not be saved, a state file that could not be read, or a restart the manager refused. A change you made (a lane or tab setting, a card bell, a lane order) was not saved because romp could not read or write the file that holds it; nothing changed, the entry carries the reason, and the same change can be tried again. Or one of those files could not be read (the last values are shown until it can), or held bytes romp could not parse and was moved aside, so what it held starts over as defaults. Or the kernel asked its manager to restart and the manager refused (it does not hold the serve token the kernel sent, or cannot read its own): nothing restarted, and the entry carries the status and the way out",
 undelivered:"something you sent never reached a session. Either the kernel it was addressed to has no session by that id (on a board showing more than one machine, the pane addressed the wrong one), or it holds a record for that session that would not read, or it could not read the comment threads' store while resolving a session name, or it could not read or write the session's goals file; the dialog that announced it says which. Nothing was delivered. A message you typed is kept verbatim in undelivered.jsonl under ~/.local/state/romp, and a refused reply, interrupt, end or compact files a row there with no text; a clear, drop or undo refused over the goals file writes nothing there"};
+// `frozen` (the maintainer's round 6 of the wsBytesByHost review, ui-1): the kind of the two messages the apply-throw refusal
+// posts (federation.ts refuseRemoteApply and refuseLocalApply), which posted the kindless catch-all before and landed unlabelled;
+// registered in all three tables here, on lines of its own after them, and worn in the warning yellow (its chip rule beside k-refused):
+// the cards are stale, not lost, and the person can act on it, so it is labelled, explained and mutable like every other kind
+KINDS.push('frozen');KINDLBL.frozen='cards frozen';DESC.frozen="a machine's cards stopped updating: a live update could not be applied and neither could the fresh copy the machine sent back, so the cards shown for it are frozen at their last update. Nothing is lost. A remote machine's cards refresh when its connection reconnects; the local machine's when the connection reconnects or the page is reloaded";
 // the toggles ARE the chips (same pill, same colours) — lit = shown, dimmed = muted. Built once on a
 // STABLE container; only classes flip on click, so the buttons stay click-safe.
 if(filtBar)KINDS.forEach(function(k){var b=document.createElement('span');
@@ -72611,6 +72616,7 @@ def _landing():
             "border-radius:999px;line-height:1.4;white-space:nowrap;border:1px solid transparent}"
             ".rerr-chip.k-stalled,.rerr-chip.k-warn{color:#ffd166;border-color:rgba(255,209,102,0.6)}"
             ".rerr-chip.k-refused{color:#ffd166;border-color:rgba(255,209,102,0.6)}"   # a change that did not land: the warning yellow, its own kind
+            ".rerr-chip.k-frozen{color:#ffd166;border-color:rgba(255,209,102,0.6)}"   # cards frozen at their last update (the maintainer's round 6 of the wsBytesByHost review, ui-1): stale, not lost, so the warning yellow
             # "not sent" rides with the follow-up-failed red: both mean a message of yours didn't land, and
             # this one is the harder loss of the two — nothing was delivered at all (the user 2026-07-29)
             ".rerr-chip.k-nudge,.rerr-chip.k-undelivered{color:#ff6a6a;border-color:rgba(255,106,106,0.6)}"

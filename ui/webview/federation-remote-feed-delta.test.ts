@@ -1115,7 +1115,7 @@ test("the BOUND on the remote road: after the answering full lands a second thro
     assert.equal(fm.conns.get(HOST).feedApply, "stopped");
     const told = notifies(notified);
     assert.equal(told.length, 1, "the shell told once");
-    assert.equal(told[0].kind, "error");
+    assert.equal(told[0].kind, "frozen", "the registered kind (kernel.py KINDS, KINDLBL, DESC and a chip; notify-kinds-registered.test.ts holds the registration), never the kindless catch-all");
     assert.match(told[0].text, /^TESTHOST: its cards are frozen at their last update\./, "the message names the host and what the person sees");
     assert.match(told[0].text, /reconnects\.$/, "and the way out");
     assert.equal(feeds(emitted).length, before, "nothing emitted for the refused delta");
@@ -1198,9 +1198,9 @@ test("the LOCAL bound: after the local full landed a second throw stops the aski
     assert.equal(fm.localFeedApply, "stopped");
     const told = notifies(notified);
     assert.equal(told.length, 1, "the shell told once");
-    assert.equal(told[0].kind, "error");
+    assert.equal(told[0].kind, "frozen", "the registered kind (kernel.py KINDS, KINDLBL, DESC and a chip; notify-kinds-registered.test.ts holds the registration), never the kindless catch-all");
     assert.match(told[0].text, /^The cards are frozen at their last update\./);
-    assert.match(told[0].text, /They refresh when the connection reconnects, or when you reload the page\.$/, "the local road's two ways out: the shim redials the local socket in-page after a drop and the feed arm shows the full it earns whatever the latch, or the page is reloaded (the author's fixer pass after the maintainer's round 5, refusal-3: the message had named the reload alone, on the premise that the local socket's life is the page's, which the shim's reconnect=1 redial refutes)");
+    assert.match(told[0].text, /They refresh when the connection reconnects or when you reload the page\.$/, "the local road's two ways out: the shim redials the local socket in-page after a drop and the feed arm shows the full it earns whatever the latch, or the page is reloaded (the author's fixer pass after the maintainer's round 5, refusal-3: the message had named the reload alone, on the premise that the local socket's life is the page's, which the shim's reconnect=1 redial refutes)");
     assert.equal(feeds(emitted).length, before);
     fm.inbound("", { type: "feedDelta", now: 451, buildId: 13, asks: { not: "a list" } });
     assert.equal(sent.filter((x) => x && x.type === "needFullFeed").length, 1); assert.equal(applyRows(sent).length, 2); assert.equal(notifies(notified).length, 1);
