@@ -41,8 +41,9 @@
 //   REFUSALS:  a form the walker cannot classify refuses with file and line, never reports it absent: an import or loader
 //              specifier that is not a string literal and folds through no closed form; a computed member with a name it
 //              cannot fold on a playwright or launcher binding; the inBrowser binding used as a value, not called (an
-//              initializer `const f = inBrowser` and a default value `{ x = inBrowser }` included; the NAME position of a
-//              declaration is the one exempt use); a local declaration shadowing a launcher or playwright binding; a parse
+//              initializer `const f = inBrowser` and a default value `{ x = inBrowser }` included; the exempt uses are the
+//              NAME position of a declaration or import specifier and an assignment's target); a local declaration shadowing
+//              a launcher or playwright binding; a parse
 //              diagnostic; a loaded module of the tree as the `loaded` clause states, or a relative specifier that names no
 //              file, or two. The CLI exits 2 on any refusal.
 // THE CENSUS RULE: a module is a browser leg when it calls the shared launcher through its binding, names a playwright
