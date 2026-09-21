@@ -182,6 +182,10 @@ function world(o: Opts, arm: Arm = {}): World {
   let parkedFlag = o.parked ?? true, recordCalls = 0;
   const geometry = (): string[] => host.children.map((c) => c.className + ":" + c.h);
   H.geometry = geometry;
+  // the document stand-in: getElementById alone (the one call the lifted span makes); every other member fails closed with the model's
+  // message, so production's `document.createElement` or `document.querySelectorAll` planted in the window reds by the model's refusal
+  // rather than a bare TypeError (the author's fixer pass over the pass after the maintainer's round 4 ruling, VE-4)
+  H.document = failClosed({ getElementById: (id: string) => (id === "content" ? content : null) }, "document");
   Object.defineProperty(H, "parked", { get: () => parkedFlag, set: (x: boolean) => { H.trace.push("parked=" + x); parkedFlag = x; } });
   const takeState: Record<string, unknown> = { measured: undefined, avgTurnH: undefined, pxPerTurn: undefined };
   for (const f of Object.keys(takeState)) Object.defineProperty(v, f, { configurable: false, enumerable: true, get: () => takeState[f], set: (x: unknown) => { H.trace.push(f + "=" + JSON.stringify(x)); takeState[f] = x; } });
@@ -200,7 +204,7 @@ function world(o: Opts, arm: Arm = {}): World {
     let pendingAnchorKeepY = H.arm.keepY ?? null, pendingAnchorClick = false, pendingReloadScroll = H.arm.reload ?? null;
     let seek = H.arm.seek ?? null, landTrail = [], landSettling = null, anchorPendingOlder = false;
     const activeId = "A"; const views = new Map([["A", H.v]]); const sessions = new Map([["A", { name: "web" }]]);
-    const document = { getElementById: (id) => (id === "content" ? H.content : null) };
+    const document = H.document;
     const vscodeApi = { postMessage: (row) => { H.rows.push(row); } };
     const whenChatVisible = (cb) => { H.deferred.push(cb); };
     const takeReloadScroll = H.takeReloadScroll;
