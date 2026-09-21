@@ -8161,7 +8161,7 @@ review before the PR ran two rounds, named below as the review's round 1 and rou
 of the PR (2026-09-20) is named the file review. Its contract is kept outside the repo; this section records what was built,
 with the build's deliberate departures from that contract recorded as the decisions, and what is left for the owner to
 rule on. The file review's rounds are numbered by the maintainer, and a record names one by its number: the file review's rounds 1,
-2, 3, 4, 5, 6, 7, 8 and 9 are the rounds the convention enumerates, this list the one home of the enumeration
+2, 3, 4, 5, 6, 7, 8, 9 and 10 are the rounds the convention enumerates, this list the one home of the enumeration
 (ui/webview/linknav-records-attribution.test.ts reads its allowed set from this list and faults a numbered round the list
 lacks, so a round the maintainer rules next is added here first; the fixlists and rulings are kept outside the repo in the
 maintainer's notes). In that numbering rounds 1 to 6 are the delta rounds, each reading what changed since the round before
@@ -8171,7 +8171,7 @@ digit before the hyphen), none of the author's family; round 8 read the whole PR
 for round 7 and the author's verification of them, the landing round's second read, and its fixlist shares several ids with
 round 7's (fresh-1, fresh-2, tests-1, tests-2, regression-1, extra6-1, extra7-1, extra8-1, extra8-2 and extra8-3
 stand in both), so a record cites such a finding by its round's number and never as the landing round's alone; round 9 is
-the round after it, which reads the fixes for round 8. The author's own verification after a round's fixes, by a verifier of the
+the round after it, which reads the fixes for round 8, and round 10 the round after that, which reads the fixes for round 9. The author's own verification after a round's fixes, by a verifier of the
 author's, is named the author's closing pass after that round, never a round of either review, and its findings carry the
 ids behaviour-N, records-N, coverage-N, guards-N, attribution-and-gates-N, reader-N and tree-N, which no fixlist of the file
 review holds; the passes after the file review's rounds 7 and 8 kept their ids (census-N, and records-N of the family

@@ -49,6 +49,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { cssRules, renderRule, underScreen } from './css-rules.mjs';
 import { execFileSync } from 'node:child_process';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -280,26 +281,31 @@ test('L3: the control\'s words are the viewer\'s literal, quoted by the section 
   // them). The entry's execution is md-config-figure-gate-place.test.ts's labelled scene, its count word file-figure-open.test.ts's
   // derived pin, and the structural exclusion file-view-place-blocks.test.ts's top-level figure.
   assert.ok(viewer.includes('const n = (figureControlAfter(anchor) || anchor).nextSibling;'), 'the label lookup steps past the control');
-  // the sheets: the same fv-figopen rule lines in both, every reveal under screen, none in the print block
+  // the sheets: the same fv-figopen rules in both, read as RULES through ./css-rules.mjs (the reader this home shares with
+  // ui/webview/file-figure-open.test.ts: brace-matched over the comment-stripped sheet, each rule with the at-rules enclosing
+  // it), every reveal under screen, none in the print block
   const REST = '.fileview-md .fv-figopen { position: relative; z-index: 1; vertical-align: top; margin: 0 6px 0 -28px; top: 6px; padding: 3px; background: var(--bg); opacity: 0; }';
   const REVEAL = '@media screen { .fileview-md :hover + .fv-figopen, .fileview-md .fv-figopen:hover, .fileview-md .fv-figopen:focus-visible { opacity: 1; } }';
   const NOHOVER = '@media screen and (hover: none) { .fileview-md .fv-figopen { opacity: 0.8; } }';
   const HOVER_BG = '.fileview-md .fv-figopen:hover { background: var(--bg) linear-gradient(var(--accent-wash), var(--accent-wash)); }';
   const LEFT = '.fileview-md .fv-figopen-left { float: left; }', RIGHT = '.fileview-md .fv-figopen-right { float: right; margin: 0 -28px 0 6px; }';
-  /** The sheet's rule lines naming the control, at column zero, a trailing comment stripped (the no-hover line carries one). */
-  const ruleLines = (css) => css.split('\n').filter((l) => /fv-figopen/.test(l) && /\{/.test(l) && !/^\s/.test(l) && !l.startsWith('/*')).map((l) => l.replace(/\s*\/\*.*\*\/\s*$/, ''));
-  const lines = Object.fromEntries(Object.entries(sheets).map(([n, css]) => [n, ruleLines(css)]));
-  assert.deepEqual(lines['styles.css'], lines['feed.css'], 'the rule lines are the same in both sheets');
+  /** The sheet's rules naming the control, each rendered on one line with whether a screen-only at-rule encloses it. */
+  const controlRules = (css) => cssRules(css).filter((r) => /fv-figopen/.test(r.selector)).map((r) => ({ text: renderRule(r), screen: underScreen(r.chain) }));
+  const rules = Object.fromEntries(Object.entries(sheets).map(([n, css]) => [n, controlRules(css)]));
+  assert.deepEqual(rules['styles.css'], rules['feed.css'], 'the control\'s rules are the same in both sheets');
   for (const [name, css] of Object.entries(sheets)) {
     assert.ok(css.includes('\n' + REST + '\n'), name + ': the rest');
     assert.ok(css.includes('\n' + LEFT + '\n' + RIGHT + '\n'), name + ': the float twins');
     assert.ok(css.includes('\n' + REVEAL + '\n'), name + ': the reveal under screen');
     assert.ok(css.includes('\n' + NOHOVER), name + ': no hover keeps it visible, under screen');
-    // the closed set: outside `@media screen` exactly the rest, the hover background and the float twins, none a reveal, and every
-    // other rule line under screen (the file review's round 8, fresh-4: the guard before it matched two opacity spellings,
-    // so a reveal spelled any other way outside screen passed it)
-    assert.deepEqual(lines[name].filter((l) => !l.startsWith('@media screen')), [REST, HOVER_BG, LEFT, RIGHT], name + ': the rule lines outside `@media screen` are exactly the rest, the hover background and the float twins; any other line there is a reveal outside screen');
-    assert.deepEqual(lines[name].filter((l) => l.startsWith('@media screen')), [REVEAL, NOHOVER], name + ': the rule lines under screen are the reveal and the no-hover rule');
+    // the closed set over the parsed rules: outside a screen-only at-rule exactly the rest, the hover background and the float
+    // twins, none a reveal, and every other rule naming the control under one, however the sheet writes it (the file review's
+    // round 10, correctness-1 with tests-1 and ui-1: the set had been keyed on lines at column zero carrying the class and a
+    // brace, so a reveal indented under an at-rule or on a grouped selector's continuation line stood outside it with every pin
+    // green; the file review's round 8, fresh-4: the guard before the set matched two opacity spellings, so a reveal spelled any
+    // other way outside screen passed it)
+    assert.deepEqual(rules[name].filter((r) => !r.screen).map((r) => r.text), [REST, HOVER_BG, LEFT, RIGHT], name + ': the rules naming the control outside a screen-only at-rule, however the sheet writes them, are exactly the rest, the hover background and the float twins; any other rule there is one a print would apply');
+    assert.deepEqual(rules[name].filter((r) => r.screen).map((r) => r.text), [REVEAL, NOHOVER], name + ': the rules under a screen-only at-rule are the reveal and the no-hover rule');
     const printAt = css.indexOf('\n@media print {');
     assert.ok(printAt >= 0, name + ': the print block');
     assert.ok(!css.slice(printAt, css.indexOf('\n}', printAt)).includes('fv-figopen'), name + ': the print block names the control nowhere');
@@ -307,6 +313,41 @@ test('L3: the control\'s words are the viewer\'s literal, quoted by the section 
   }
   assert.ok(section.includes('every reveal under `screen`, so a print shows none of it and the print block carries no line for it'));
   assert.ok(section.includes('a right float\'s at the top-LEFT corner (`fv-figopen-left`, `fv-figopen-right`'));
+});
+
+test('the rule reader the two homes of the closed set share (./css-rules.mjs): a sheet is read as rules with their enclosing at-rules, not as lines, so a rule indented under an at-rule, a grouped selector wrapped across lines, a one-line at-rule block and a column-zero rule read alike; a statement at-rule, a declaration-only at-rule and a comment yield no rule; a brace inside a string is text; whether a chain confines a rule to screens is a property of the whole query list; a nested block, an unbalanced brace and an open comment are refused (the file review\'s round 10, correctness-1 with tests-1 and ui-1)', () => {
+  const sheet = [
+    '/* a comment naming .fv-figopen { */',
+    '.fileview-md .fv-figopen { opacity: 0; }',
+    '@media (min-width: 1px) {',
+    '  .fileview-md .fv-figopen { opacity: 1; }   /* indented under an at-rule a print matches too */',
+    '}',
+    '.fileview-md .fv-figerr,',
+    '.fileview-md .fv-figopen { opacity: 1; }',
+    '@media screen {',
+    '  .fileview-md .fv-figopen:focus-visible { opacity: 1; }',
+    '}',
+    '@media screen and (hover: none) { .fileview-md .fv-figopen { opacity: 0.8; } }',
+  ].join('\n');
+  const control = cssRules(sheet).filter((r) => /fv-figopen/.test(r.selector));
+  assert.deepEqual(control.map((r) => [renderRule(r), underScreen(r.chain)]), [
+    ['.fileview-md .fv-figopen { opacity: 0; }', false],
+    ['@media (min-width: 1px) { .fileview-md .fv-figopen { opacity: 1; } }', false],
+    ['.fileview-md .fv-figerr, .fileview-md .fv-figopen { opacity: 1; }', false],
+    ['@media screen { .fileview-md .fv-figopen:focus-visible { opacity: 1; } }', true],
+    ['@media screen and (hover: none) { .fileview-md .fv-figopen { opacity: 0.8; } }', true],
+  ], 'the column-zero rule, the indented reveal under (min-width: 1px) and the grouped selector\'s continuation-line reveal are rules outside screen, the indented rule inside the multi-line screen block and the one-line screen rule are under it, and the comment\'s brace is no rule');
+  assert.deepEqual(cssRules('@supports (display: grid) { @media screen { .a { top: 0 } } }'), [{ selector: '.a', body: 'top: 0', chain: ['@supports (display: grid)', '@media screen'] }], 'the chain holds every enclosing at-rule, outermost first');
+  assert.deepEqual(cssRules('.a::after { content: "{"; }\n.b[data-x="}"] { top: 0; }').map(renderRule), ['.a::after { content: "{"; }', '.b[data-x="}"] { top: 0; }'], 'a brace inside a string is text');
+  assert.deepEqual(cssRules('@import "x.css";\n@font-face { font-family: F; src: url(f.woff2); }\n@keyframes k { from { opacity: 0; } to { opacity: 1; } }').map(renderRule), ['@keyframes k { from { opacity: 0; } }', '@keyframes k { to { opacity: 1; } }'], 'a statement at-rule and a declaration-only at-rule yield no rule; a keyframes step is a rule under its at-rule');
+  assert.deepEqual(cssRules('.a,\n  .b\n{\n  top: 0;\n  left: 0;\n}').map(renderRule), ['.a, .b { top: 0; left: 0; }'], 'whitespace inside a selector list and a body is collapsed, so a rule renders the same however the sheet wrapped it');
+  assert.throws(() => cssRules('.a { .b { top: 0; } }'), /CSS nesting/, 'a block inside a style rule is refused, not read');
+  assert.throws(() => cssRules('.a { top: 0;'), /never closes/, 'an unclosed rule is refused');
+  assert.throws(() => cssRules('@media screen { .a { top: 0; }'), /never closes/, 'an unclosed at-rule block is refused');
+  assert.throws(() => cssRules('.a { top: 0; } }'), /no block open/, 'a stray close brace is refused');
+  assert.throws(() => cssRules('/* open'), /never closes/, 'an open comment is refused');
+  for (const chain of [['@media screen'], ['@media screen and (hover: none)'], ['@media only screen and (min-width: 1px) and (hover: none)'], ['@supports (display: grid)', '@media screen'], ['@media screen', '@media (min-width: 1px)']]) assert.equal(underScreen(chain), true, 'confined to screens: ' + JSON.stringify(chain));
+  for (const chain of [[], ['@media (min-width: 1px)'], ['@media print'], ['@media print, screen'], ['@media screen, print'], ['@media screen and (hover: none), (min-width: 1px)'], ['@media not screen'], ['@media all'], ['@supports (display: grid)'], ['@container (max-width: 540px)']]) assert.equal(underScreen(chain), false, 'not confined to screens: ' + JSON.stringify(chain));
 });
 
 // ── L4: the picture view reached from a report ─────────────────────────────────────────────────────

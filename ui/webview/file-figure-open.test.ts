@@ -5,12 +5,13 @@
 // for a file of the session, a tab for an http source, nothing for a `data:` one), where it is decided (mdBlock's file arm after
 // the anchors; the body's `load` and `error` capture pair for a figure the browser answers for later), how a click on it or on a bare figure is routed
 // (a listener of its own beside the links', with the guards for a link, a panel mark, the open panel and a drag-select), the
-// label lookup that steps past it, the two text walks that skip it, the glyph, and the sheets' rules under `screen`. Every pin
+// label lookup that steps past it, the two text walks that skip it, the glyph, and the sheets' rules under `screen`, read as rules through tools/css-rules.mjs. Every pin
 // reads the tree's own source, so a rename here fails loudly. Synthetic values only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { cssRules, renderRule, underScreen } from "../../tools/css-rules.mjs";
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const VIEW = web("file-view.ts");
@@ -128,18 +129,49 @@ test("the sheets: the control rests transparent over the figure's corner with a 
     assert.match(css, /\n@media screen and \(hover: none\) \{ \.fileview-md \.fv-figopen \{ opacity: 0\.8; \} \}/, name + ": no hover keeps it visible, screen only");
     const print = css.slice(css.indexOf("\n@media print {"), css.indexOf("\n}", css.indexOf("\n@media print {")));
     assert.doesNotMatch(print, /fv-figopen/, name + ": the print block names it nowhere");
-    // the closed set: outside `@media screen` exactly the rest, the hover background and the float twins, and every other rule
-    // line under screen (the file review's round 8, fresh-4: the guard before it matched two opacity spellings, so a
-    // reveal spelled any other way outside screen passed it); a trailing comment is stripped (the no-hover line carries one)
-    const heads = css.split("\n").filter((l) => /fv-figopen/.test(l) && /\{/.test(l) && !/^\s/.test(l) && !l.startsWith("/*")).map((l) => l.replace(/\s*\/\*.*\*\/\s*$/, ""));
-    assert.deepEqual(heads.filter((l) => !l.startsWith("@media screen")), [
+    // the closed set over the control's rules, read as RULES (tools/css-rules.mjs, the reader this home shares with
+    // tools/markdown-viewer-plan-linknav.test.mjs: brace-matched over the comment-stripped sheet, each rule with the at-rules
+    // enclosing it), so a rule written the sheets' own way, indented inside an at-rule block or on a grouped selector wrapped
+    // across lines, is in the population (the file review's round 10, correctness-1 with tests-1 and ui-1: the set had been
+    // keyed on lines at column zero carrying the class and a brace, and a reveal in either shape stood outside it with every
+    // pin green). Outside a screen-only at-rule exactly the rest, the hover background and the float twins; under one the
+    // reveal and the no-hover rule (the file review's round 8, fresh-4: the guard before the set matched two opacity spellings,
+    // so a reveal spelled any other way outside screen passed it).
+    const control = cssRules(css).filter((r) => /fv-figopen/.test(r.selector));
+    assert.deepEqual(control.filter((r) => !underScreen(r.chain)).map(renderRule), [
       ".fileview-md .fv-figopen { position: relative; z-index: 1; vertical-align: top; margin: 0 6px 0 -28px; top: 6px; padding: 3px; background: var(--bg); opacity: 0; }",
       ".fileview-md .fv-figopen:hover { background: var(--bg) linear-gradient(var(--accent-wash), var(--accent-wash)); }",
       ".fileview-md .fv-figopen-left { float: left; }", ".fileview-md .fv-figopen-right { float: right; margin: 0 -28px 0 6px; }",
-    ], name + ": the rule lines outside `@media screen` are exactly the rest, the hover background and the float twins; any other line there is a reveal outside screen");
-    assert.deepEqual(heads.filter((l) => l.startsWith("@media screen")), [
+    ], name + ": the rules naming the control outside a screen-only at-rule, however the sheet writes them, are exactly the rest, the hover background and the float twins; any other rule there is one a print would apply");
+    assert.deepEqual(control.filter((r) => underScreen(r.chain)).map(renderRule), [
       "@media screen { .fileview-md :hover + .fv-figopen, .fileview-md .fv-figopen:hover, .fileview-md .fv-figopen:focus-visible { opacity: 1; } }",
       "@media screen and (hover: none) { .fileview-md .fv-figopen { opacity: 0.8; } }",
-    ], name + ": the rule lines under screen are the reveal and the no-hover rule");
+    ], name + ": the rules under a screen-only at-rule are the reveal and the no-hover rule");
   }
+});
+
+test("the reader the closed set stands on reads rules, not lines: the three shapes the line-keyed set missed or read are in the population alike, an indented reveal under an at-rule other than screen, a grouped selector wrapped across lines and a column-zero rule, each read as a rule outside screen; a rule indented inside a multi-line @media screen block is under screen as a one-line one is; a brace in a comment is no rule (the file review's round 10, correctness-1 with tests-1 and ui-1)", () => {
+  const sheet = [
+    "/* a comment naming .fv-figopen { */",
+    ".fileview-md .fv-figopen { opacity: 0; }",
+    "@media (min-width: 1px) {",
+    "  .fileview-md .fv-figopen { opacity: 1; }   /* indented under an at-rule a print matches too */",
+    "}",
+    ".fileview-md .fv-figerr,",
+    ".fileview-md .fv-figopen { opacity: 1; }",
+    "@media screen {",
+    "  .fileview-md .fv-figopen:focus-visible { opacity: 1; }",
+    "}",
+    "@media screen and (hover: none) { .fileview-md .fv-figopen { opacity: 0.8; } }",
+  ].join("\n");
+  const control = cssRules(sheet).filter((r) => /fv-figopen/.test(r.selector));
+  assert.deepEqual(control.filter((r) => !underScreen(r.chain)).map(renderRule), [
+    ".fileview-md .fv-figopen { opacity: 0; }",
+    "@media (min-width: 1px) { .fileview-md .fv-figopen { opacity: 1; } }",
+    ".fileview-md .fv-figerr, .fileview-md .fv-figopen { opacity: 1; }",
+  ], "the column-zero rule, the indented reveal under (min-width: 1px) and the grouped selector's continuation-line reveal are rules outside screen; the comment's brace is none");
+  assert.deepEqual(control.filter((r) => underScreen(r.chain)).map(renderRule), [
+    "@media screen { .fileview-md .fv-figopen:focus-visible { opacity: 1; } }",
+    "@media screen and (hover: none) { .fileview-md .fv-figopen { opacity: 0.8; } }",
+  ], "the indented rule inside the multi-line screen block and the one-line screen rule are under screen");
 });
