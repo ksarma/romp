@@ -6,13 +6,15 @@
 // forced layout and the write claims that move with the pre-toggle top as its origin; an expand leaves the run's head where it was);
 // anyone else has the first visible row's offset captured before the sync and restored after it, the raw write standing as the fallback
 // when no row is capturable or the anchor row was inside the run that collapsed. The build's sync is flagged by whether a row was
-// captured (review round 1b): a bottom reader's and a row-less reader's build takes no parked figure, since their raw write would move
-// them by it (a figure parked while the reader was off the bottom has no paint asked for, so an idle session's first paint at the bottom
-// can be the toggle); the one take followed by a raw write is the anchor row gone in the collapse, the PR's disclosed residual.
+// captured (the maintainer's round 1 addendum, applied in the author's pass 1b): a bottom reader's and a row-less reader's build takes no
+// parked figure, since their raw write would move them by it (a figure parked while the reader was off the bottom has no paint asked
+// for, so an idle session's first paint at the bottom can be the toggle); the one take followed by a raw write, the anchor row gone in
+// the collapse, is undone before the write (untakeMeasure: the figures parked again, the spacer back, so the raw pre-toggle top lands in
+// the layout it was read in; the maintainer's round 3 ruling B, until which it was the PR's disclosed residual).
 // toggleToolGroup, captureScrollAnchor, restoreScrollAnchor and atBottom are lifted from render.ts and run over a layout model: a head
 // spacer, rows of known heights, a scroller with a viewport; the stubbed syncView models production's gate (renderWindowItems takes
 // under the flag alone): with a figure parked, it grows the head spacer by the take's delta when, and only when, the toggle hands it
-// anchored true. Synthetic uuids.
+// anchored true, and the stubbed untake gives that delta back. Synthetic uuids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -54,7 +56,7 @@ class Host {
   querySelector(sel: string): Node | null { const m = /^\[data-uuid="([^"]*)"\]$/.exec(sel); assert.ok(m, "restoreScrollAnchor's selector: " + sel); return this.children.find((c) => c.dataset.uuid === m![1]) ?? null; }
 }
 
-type World = { content: Content; host: Host; v: any; writes: Write[]; open: Set<string>; toggle: (key: string) => void; spacer: Node; rows: Node[]; onSync: () => void; syncs: Array<[boolean | undefined, boolean | undefined]>; take: (delta?: number) => void };
+type World = { content: Content; host: Host; v: any; writes: Write[]; open: Set<string>; toggle: (key: string) => void; spacer: Node; rows: Node[]; onSync: () => void; syncs: Array<[boolean | undefined, boolean | undefined]>; take: (delta?: number) => void; untakes: () => number };
 /** A view with a head spacer of `spacerH`, `n` rows of `rowH` each (uuids r0..), in a scroller of `clientHeight`, the reader at
  *  `scrollTop`; `onSync` is what the stubbed window build does to the DOM (a collapse drops rows, an expand adds them), and `take` is
  *  production's gate over a parked figure: the head spacer grows by the take's delta only when the sync in progress was handed
@@ -76,14 +78,17 @@ function world(spacerH: number, n: number, rowH: number, clientHeight: number, s
     const document = { getElementById: (id) => (id === "content" ? H.content : null) };
     const activeId = "A"; const views = new Map([["A", H.v]]);
     const syncView = (id, atBottom, anchored) => { H.synced = (H.synced || 0) + 1; H.syncs.push([atBottom, anchored]); H.onSync(); };
+    const figuresBefore = (v) => ({ parked: true });   // production's pair (spacer-measure.test.ts executes the real one): the untake gives back what this toggle's build took
+    const untakeMeasure = (v, fig) => { H.untakes++; if (!H.took) return false; H.spacer.h -= H.took; H.took = 0; return true; };
     const writeScroll = (c, top, writer, stick = false, from) => { H.writes.push({ writer, top, stick, from }); c.scrollTop = Math.max(0, Math.min(top, c.scrollHeight - c.clientHeight)); };
     const cssEscape = (s) => s;
     const refillOpenCommentPop = () => {}; const scheduleRailSticky = () => {};
     const atBottomDist = H.atBottomDist;
   `;
-  const hooks: any = { open, content, v, writes, atBottomDist, syncs, onSync: () => w.onSync() };
+  const hooks: any = { open, content, v, writes, atBottomDist, syncs, spacer, took: 0, untakes: 0, onSync: () => w.onSync() };
   w.toggle = new Function("HOOKS", prelude + js + "\nreturn toggleToolGroup;")(hooks) as (key: string) => void;
-  w.take = (delta = D) => { const last = syncs[syncs.length - 1]; assert.ok(last, "take is called inside the sync"); if (last[1] === true) spacer.h += delta; };
+  w.take = (delta = D) => { const last = syncs[syncs.length - 1]; assert.ok(last, "take is called inside the sync"); if (last[1] === true) { spacer.h += delta; hooks.took = delta; } };
+  w.untakes = () => hooks.untakes;
   return w as World;
 }
 const D = 300;   // the take's delta: the head spacer re-sized by the re-measured figure over the head gap's turns
@@ -128,13 +133,14 @@ test("a reader at the bottom keeps the raw write with the pre-toggle top as its 
   assert.equal(w2.rows[4].getBoundingClientRect().top, r4Before, "the row under the viewport top did not move (with the flag true it would sit 300 px lower)");
 });
 
-test("the anchor row was inside the run that collapsed and is gone after the build: the raw write stands as the fallback, the pre-toggle top its origin; a row was captured, so this build took (the PR's disclosed residual: the one take followed by a raw write)", () => {
+test("the anchor row was inside the run that collapsed and is gone after the build: the take is undone and the raw write stands as the fallback, exact in the layout its pre-toggle top was read in (the maintainer's round 3 ruling B: a row was captured, so this build took, and until then the take stood under the raw write, the PR's disclosed residual)", () => {
   const w = world(2000, 10, 100, 600, 2350);   // r3 under the viewport top, a member row of the run
   w.onSync = () => { w.take(); w.host.removeChild(w.rows[3]); w.host.removeChild(w.rows[4]); };
   w.toggle("tg:k");
   assert.deepEqual(w.syncs, [[undefined, true]], "a row was captured before the build, so the sync was flagged (the row's fate is known only after the build)");
-  assert.equal(w.spacer.h, 2000 + D, "the build took the parked figure");
-  assert.deepEqual(w.writes, [{ writer: "toolgroup-toggle", top: 2350, stick: false, from: 2350 }], "no anchor to restore: the raw write, its origin the top read before the build (the reader is 300 px off where they were: the residual)");
+  assert.equal(w.untakes(), 1, "the restore missed: the take is given back before the raw write");
+  assert.equal(w.spacer.h, 2000, "the head spacer stands where the pre-toggle top was read (at the head it stood 300 px taller, the reader 300 px off where they were)");
+  assert.deepEqual(w.writes, [{ writer: "toolgroup-toggle", top: 2350, stick: false, from: 2350 }], "no anchor to restore: the raw write, its origin the top read before the build, exact in the layout it was read in");
 });
 
 test("no row capturable (the viewport inside a spacer): the sync is flagged false, nothing is taken, and the raw write stands", () => {
@@ -152,6 +158,8 @@ test("render.ts: the toggle's keep is appendActive's: the stick check, the ancho
   assert.match(t, /const anchor = content && v && !stick \? captureScrollAnchor\(content, v\) : null;/, "the anchor captured before the sync, not for a bottom reader");
   assert.ok(t.indexOf("captureScrollAnchor(") < t.indexOf("syncView(activeId, undefined, !!anchor)"), "…before the build, whose sync is flagged by whether a row was captured (review round 1b: the keep below puts the row back, so that paint may take a parked figure; a bottom or row-less reader's raw write anchors nothing and takes nothing)");
   assert.doesNotMatch(t, /syncView\(activeId, undefined, (?:true|!stick)\)/, "neither the flag true for every reader nor `!stick` (a row-less reader off the bottom would take and write raw)");
-  assert.match(t, /if \(content && !\(anchor && v && restoreScrollAnchor\(content, v, anchor, top\)\)\) writeScroll\(content, top, "toolgroup-toggle", false, top\);/, "the restore after it, the raw write its fallback, `top` the origin of both");
+  assert.match(t, /const figures = v \? figuresBefore\(v\) : null;/, "the figures read before the build, for the untake");
+  assert.ok(t.indexOf("captureScrollAnchor(") < t.indexOf("const figures = ") && t.indexOf("const figures = ") < t.indexOf("syncView(activeId, undefined, !!anchor)"), "…between the capture and the build");
+  assert.match(t, /if \(content && !\(anchor && v && restoreScrollAnchor\(content, v, anchor, top\)\)\) \{ if \(v && figures\) untakeMeasure\(v, figures\); writeScroll\(content, top, "toolgroup-toggle", false, top\); \}/, "the restore after it, the raw write its fallback with the take undone first, `top` the origin of both");
   assert.doesNotMatch(t, /scroll preserved/, "the old comment's claim is gone");
 });

@@ -81,9 +81,10 @@ test("render.ts: the #content scroll listener keeps the active view's saved spot
   // …and stands down while a deferred build is pending: the reveal's clamp fires a scroll event before the land
   assert.match(RENDER, /c\.addEventListener\("scroll", \(\) => \{\n\s*if \(c\.clientHeight <= 0\) return;\n\s*followReader\(activeId \? views\.get\(activeId\) : null, c\.scrollTop, atBottom\(c\), pendingBuildRaf != null\);\n(?:.*\n){0,13}?\s*\}, \{ passive: true \}\);/);   // up to thirteen lines follow the follow rule (three of them the settle's gesture-evidence note, T386 round two): the gesture classification, its mark on the view for the edge check (T366), the gesture row, the re-window mark's end on a gesture (PR E review round 1b) and the sh/ch note
   // landActive's landing rule itself is unchanged; its INPUT is what the fix repairs. The saved-place fallback restores the row the saved
-  // place held when an armed land missed and took (PR E review round 2), the raw write when that restore has no row to put back: nothing
-  // armed, no row at the saved place, or the row gone with the attempt's window build (land-active-keep.test.ts executes the three)
-  assert.match(RENDER, /if \(!v\.shown \|\| v\.stick\) writeScroll\(content, content\.scrollHeight, "land-bottom", true\);\n(?:\s*\/\/[^\n]*\n)*\s*else if \(!\(held && restoreScrollAnchor\(content, v, held\)\)\) writeScroll\(content, v\.scrollTop, "land-saved"\);/);   // (T262: every #content write rides writeScroll)
+  // place held when an armed land missed and took (PR E, the maintainer's round 2 ruling), the raw write when that restore has no row to
+  // put back: nothing armed, no row at the saved place, or the row gone with the attempt's window build, the take given back first on the
+  // two roads after one (the maintainer's round 3 ruling B; land-active-keep.test.ts executes the three)
+  assert.match(RENDER, /if \(!v\.shown \|\| v\.stick\) writeScroll\(content, content\.scrollHeight, "land-bottom", true\);\n(?:\s*\/\/[^\n]*\n)*\s*else if \(!\(held && restoreScrollAnchor\(content, v, held\)\)\) \{ untakeMeasure\(v, figures\); writeScroll\(content, v\.scrollTop, "land-saved"\); \}/);   // (T262: every #content write rides writeScroll)
 });
 
 test("render.ts: showActive keeps the reader's place across a re-show of the view already on screen, on both build paths", () => {

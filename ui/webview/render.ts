@@ -12870,6 +12870,12 @@ function scrollToAnchor(uuid: string): boolean {
   // Deep-link into history the window doesn't currently cover (the head/tail folded into a spacer): find the
   // event, render a fresh window AROUND its unit, then re-query — the "load it when you jump there" behaviour.
   // (No match anywhere → genuinely off the active path; stash for the next render pass.)
+  // The build below takes the parked figures (anchored: landOn puts the target under the reader); when its re-query then misses (the row
+  // not rendered, or the wrong kind for the link's intent) nothing places the reader, so the take is given back (untakeMeasure) and the
+  // figures wait for a paint that anchors: the reader is where the rebuild left them, in the layout it was built in. For landActive's and
+  // keepPlaceAcrossWindow's calls, which took before this attempt, the build finds nothing parked and there is nothing to give back (the
+  // maintainer's round 3 ruling B; scroll-to-anchor-roads.test.ts executes the roads)
+  let figures: FiguresBefore | null = null;
   if (!target && v && activeId) {
     const s = liveSession(activeId);
     // resultUuid too: an ANSWERED AskUserQuestion turn is anchored by its answer line's uuid
@@ -12894,6 +12900,7 @@ function scrollToAnchor(uuid: string): boolean {
       if (hit && hit.kind === "noticegroup" && hit.indices.includes(idx))
         openFolds.add(noticeGroupKey(s.events[hit.indices[0]]));
       const working = s.status.state === "working" || s.status.state === "compacting";
+      figures = figuresBefore(v);
       renderWindowItems(v, s, items, Math.max(0, u - WINDOW_RADIUS), Math.min(items.length, u + WINDOW_RADIUS), working, true);   // anchored: landOn puts the target under the reader
       // Re-query with the SAME three selectors the first lookup used. data-mids was missing here, so an
       // unhydrated postal turn (whose message ids live only in data-mids) could be found in the events,
@@ -12946,6 +12953,7 @@ function scrollToAnchor(uuid: string): boolean {
     // parked across it runs no attempt before the frame and lands once it arrives, at both heads)
     const sm = activeId ? liveSession(activeId) : null;   // the active tab's live session (the display paths read through liveSession)
     scrollDiagRow("landmiss", { sid: activeId, anchor: uuid.slice(-12), proto: sm ? (sm.proto ?? null) : null, events: sm ? sm.events.length : -1, regions: !!(sm && sm.regions), headKnown: sm ? (sm.headKnown ?? null) : null, headFrom: sm ? (sm.headFrom ?? 0) : null, older: !!(sm && olderOnServer(sm)), noframe: !sm || sm.proto == null, trail: landTrail.slice(-4) });
+    if (figures && v) untakeMeasure(v, figures);   // the build's take, given back: nothing placed the reader
     pendingAnchor = uuid; landTrail.push("pointer-not-rendered"); return false;
   }
   // KIND GUARD — the robust half of "title clicks always land on the originating
@@ -12963,6 +12971,7 @@ function scrollToAnchor(uuid: string): boolean {
   if (pendingAnchorIntent === "user"
       && !target.classList.contains("turn-user") && !target.classList.contains("turn-postal-service")
       && !target.classList.contains("turn-notice")) {
+    if (figures && v) untakeMeasure(v, figures);   // the build's take, given back: nothing placed the reader
     pendingAnchor = null; pendingAnchorIntent = null; landTrail.push("pointer-wrong-kind"); return false;
   }
   pendingAnchor = null; pendingAnchorIntent = null;
@@ -13035,10 +13044,11 @@ function landNearestMoment(t: number): boolean {
   let u = items.findIndex((it) => it.kind === "toolgroup" || it.kind === "noticegroup" ? it.indices.includes(best) : it.kind === "event" && it.index === best);
   if (u < 0) u = Math.max(0, items.findIndex((it) => itemFirstEvent(it) >= best));
   const working = s.status.state === "working" || s.status.state === "compacting";
+  const figures = figuresBefore(v);   // what the build takes, given back on a miss (its one caller, landActive, took before it, so nothing is parked here in practice)
   renderWindowItems(v, s, items, Math.max(0, u - WINDOW_RADIUS), Math.min(items.length, u + WINDOW_RADIUS), working, true);   // anchored: the moment's row is landed below
   const target = (uuid ? v.el.querySelector(`.turn[data-uuid="${cssEscape(uuid)}"]`) : null)
     || (v.el.querySelector(`[data-unit="${u}"]`) as HTMLElement | null);
-  if (!target) { landTrail.push("time-nearest-miss"); return false; }
+  if (!target) { untakeMeasure(v, figures); landTrail.push("time-nearest-miss"); return false; }
   landTrail.push("time-nearest");
   landOn(target as HTMLElement, uuid || undefined);
   const beforeHead = headEp != null && t < headEp && olderOnServer(s);
@@ -13649,7 +13659,13 @@ function syncViewInner(id: string, atBottom?: boolean, anchored: boolean = atBot
   }
   // Normal mode, pure append. While BROWSING history (window not at the tail), the new events land below the
   // rendered window → just grow the bottom spacer (no DOM churn); the user sees them on scroll-down.
+  // …after the one render inside the window that reads LATER events, the "worked …" footer on a turn's last reply, is patched from
+  // the first changed event (v.rendered, still the pre-append value), as compact mode's spacer branch and this mode's tail do: a
+  // prompt completing the turn below the window put no footer on the window's last reply, and a later reply joining the turn took none
+  // off, until the maintainer's round 3 ruling B (the compact branch was fixed for this in the author's pass 1b, applying the maintainer's
+  // round 1 addendum, and this branch was not: the same defect on the other side of the compact switch)
   if (!wasAtTail) {
+    patchWorkedFooters(v, s, v.rendered, working);
     v.spacerCountBot = total - (v.winEnd ?? total); v.unitTotal = total; v.rendered = len; sizeSpacers(v); return v;
   }
   // Normal mode, append AT the tail (unit === event, top spacer only): the cheap incremental hot path —
@@ -14189,6 +14205,34 @@ function applyMeasure(v: View): boolean {
   if (m.per != null && m.per !== v.pxPerTurn) { v.pxPerTurn = m.per; changed = true; }
   return changed;
 }
+/** The view's figures as a paint finds them, read BEFORE its take (applyMeasure): what is parked, and what the spacers and gap units stand
+ *  at. A paint that ends anchoring the reader keeps its take; one whose restore turns out to have no row to put back gives the figures
+ *  back (untakeMeasure) before its raw write. */
+type FiguresBefore = { avg: number | undefined; per: number | undefined; measured: View["measured"] };
+function figuresBefore(v: View): FiguresBefore { return { avg: v.avgTurnH, per: v.pxPerTurn, measured: v.measured }; }
+/** The take undone. A paint took the parked figures (applyMeasure, re-sizing the head spacer and the gap units above the reader) and then
+ *  found no row to put the reader back over, so its only write is a raw scrollTop measured in the layout BEFORE the take: the figures the
+ *  paint found parked are parked again, the view's figures are what they were, and the spacers and gap units are re-drawn from them (no
+ *  layout read), so the raw write lands in the layout it was measured in and the figures wait for the next paint that anchors, as they would
+ *  have had this paint taken nothing. One rule over every reader of the take state, keyed on the OUTCOME (the maintainer's round 3 ruling B;
+ *  the intent-keyed rule, a figure is taken only by a paint that anchors and every anchoring paint takes one, stands, and this is its
+ *  outcome half: a paint whose anchor was gone by the time it wrote has, net, taken nothing). The readers and their roads:
+ *  appendActive's append-raw (the captured row gone after the sync), the tool-run toggle's raw write (the row inside the run that
+ *  collapsed), the fill's two raw roads (no row or point to put back; a point that maps to no y, on the fill and on its re-window),
+ *  landActive's land-saved after a take (no row at the saved place; the row gone with the attempt's window build), keepPlaceAcrossWindow's
+ *  double miss with the row under the viewport top gone too, scrollToAnchor's re-query missing after its build (not rendered; the wrong
+ *  kind) for its direct callers, landNearestMoment's miss, and virtualizeToViewport's focus unit gone from the rebuilt window. True when
+ *  a take was undone; false when the paint took nothing (nothing was parked, or what was parked is still parked), so a paint with no take of
+ *  its own gives nothing back whatever an earlier paint did. The reload restore's raw `rs.top` is NOT one of these roads: that scrollTop
+ *  was measured on the page before the reload, whose figures the take re-derives, so the take is what makes the persisted figure land
+ *  right (both refuters' probes on the round-3 filing; land-active-keep.test.ts executes the record with no anchor and asserts the take
+ *  standing). */
+function untakeMeasure(v: View, before: FiguresBefore): boolean {
+  if (!before.measured || v.measured) return false;
+  v.avgTurnH = before.avg; v.pxPerTurn = before.per; v.measured = before.measured;
+  redrawGapUnits(v); sizeSpacers(v);
+  return true;
+}
 /** The gap units at the current per-turn figure: the spacer map (hiddenHeight, the turn walks) and every rendered gap element. */
 function redrawGapUnits(v: View): void {
   if (!v.units) return;
@@ -14352,10 +14396,14 @@ function toggleToolGroup(key: string): void {
   const v = activeId ? views.get(activeId) : undefined;
   const stick = !!content && content.scrollHeight > content.clientHeight + 2 && atBottom(content);
   const anchor = content && v && !stick ? captureScrollAnchor(content, v) : null;
+  const figures = v ? figuresBefore(v) : null;   // what the build may take, given back below if the captured row collapsed away
   // the expand/collapse changes the DOM without changing the event set, so mark the view stale to force
   // the compact rebuild past the cache guard (a plain tab switch leaves stale false → reuses the cache).
   if (activeId) { if (v) v.stale = true; syncView(activeId, undefined, !!anchor); }   // anchored when a row was captured: the keep below puts it back over the re-sized spacer; a bottom reader or one with no row takes nothing
-  if (content && !(anchor && v && restoreScrollAnchor(content, v, anchor, top))) writeScroll(content, top, "toolgroup-toggle", false, top);
+  // the raw write: a bottom reader's clamp claimed, a row-less reader's top kept (neither took), or the captured row gone inside the run that
+  // collapsed, where the build took and the raw pre-toggle top is exact only in the layout it was read in, so the take is undone first
+  // (untakeMeasure; the maintainer's round 3 ruling B: until then the one take followed by a raw write, disclosed; toolgroup-toggle-keep.test.ts)
+  if (content && !(anchor && v && restoreScrollAnchor(content, v, anchor, top))) { if (v && figures) untakeMeasure(v, figures); writeScroll(content, top, "toolgroup-toggle", false, top); }
   refillOpenCommentPop();   // the popover renders the same units — its copy of this run must flip too
   scheduleRailSticky();
 }
@@ -15303,6 +15351,7 @@ function keepPlaceAcrossWindow(content: HTMLElement, v: View, keep: { uuid: stri
   // roads); when the attempt rebuilt the window around the anchor's unit and its re-query missed, that row is gone too and nothing is
   // written: the reader is where the rebuild left them, a residual the body names (review round 2)
   const under = captureScrollAnchor(content, v);
+  const figures = figuresBefore(v);   // what the take below takes, given back when neither restore has a row to put back
   if (applyMeasure(v)) { redrawGapUnits(v); sizeSpacers(v); }
   if (restoreScrollAnchor(content, v, keep)) return true;
   pendingAnchor = keep.uuid; pendingAnchorKeepY = keep.y;
@@ -15310,7 +15359,10 @@ function keepPlaceAcrossWindow(content: HTMLElement, v: View, keep: { uuid: stri
   let landed = false;
   try { landed = scrollToAnchor(keep.uuid); } finally { relandAsk = false; }
   if (!anchorPendingOlder) { pendingAnchor = null; pendingAnchorKeepY = null; }   // an older-history fetch keeps them armed for chatHead's re-land
-  if (!landed && under) restoreScrollAnchor(content, v, under);   // the double miss: the row that was under the viewport top, back at its offset over the take
+  // the double miss: the row that was under the viewport top, back at its offset over the take; with that row gone too (the attempt's window
+  // build replaced the rows) nothing can be put back and nothing is written, so the take is undone and the figures wait (untakeMeasure; the
+  // maintainer's round 3 ruling B: until then the take stood under a reader nothing had placed)
+  if (!landed && !(under && restoreScrollAnchor(content, v, under))) untakeMeasure(v, figures);
   return landed;
 }
 
@@ -15368,6 +15420,7 @@ function landActive(content: HTMLElement | null, v: View): void {
   // comment said the road could not happen; review round 3: the comment then named two raw roads where there are three)
   const saved = !pendingAnchor && pendingAnchorT == null && !(seek && seek.sid === activeId) && v.shown && !v.stick && takeReloadScroll(pendingReloadScroll, activeId) == null;
   const held = !saved && v.shown && !v.stick ? captureScrollAnchor(content, v, v.scrollTop) : null;   // the row at the saved place, for a land that misses
+  const figures = figuresBefore(v);   // what the take below takes, given back by the fallback when it has no row to put back
   if (!saved && applyMeasure(v)) redrawGapUnits(v);
   sizeSpacers(v);
   // The durable seek re-arms the per-pass attempt: every render pass retries until it lands, the
@@ -15458,8 +15511,11 @@ function landActive(content: HTMLElement | null, v: View): void {
     else if (!v.shown || v.stick) writeScroll(content, content.scrollHeight, "land-bottom", true);
     // an armed land that missed: the row the saved place held goes back at its offset over the spacers the take re-sized; the raw write
     // whenever the restore has no row to put back: nothing armed (nothing taken: the saved scrollTop is exact), no row at the saved
-    // place, or the captured row gone with the attempt's window build (review round 2; the third road named in review round 3)
-    else if (!(held && restoreScrollAnchor(content, v, held))) writeScroll(content, v.scrollTop, "land-saved");
+    // place, or the captured row gone with the attempt's window build (the maintainer's round 2 ruling; the third road named by the
+    // author's own verifiers after pass 3, executed in land-active-keep.test.ts). On the two roads after a take the take is undone first
+    // (untakeMeasure), so the saved scrollTop lands in the layout it was saved in and the figures wait, as on the nothing-armed road (the
+    // maintainer's round 3 ruling B)
+    else if (!(held && restoreScrollAnchor(content, v, held))) { untakeMeasure(v, figures); writeScroll(content, v.scrollTop, "land-saved"); }
   }
   v.shown = true;
   scheduleRailSticky();
@@ -15616,8 +15672,10 @@ function appendActive() {
   const heightBefore = content.scrollHeight;
   const distBefore = heightBefore - before - content.clientHeight;
   const anchor = !stick && v ? captureScrollAnchor(content, v) : null;
+  const figures = v ? figuresBefore(v) : null;   // what the sync may take, given back below if the restore finds the captured row gone
   // anchored by the follow (stick) or by the anchor restore below; a scrolled-up reader with no capturable row (the viewport inside a
-  // spacer) gets the raw restore, which anchors nothing, so their paint takes no parked figure (review round 1b)
+  // spacer) gets the raw restore, which anchors nothing, so their paint takes no parked figure (the maintainer's round 1 addendum, applied
+  // in the author's pass 1b)
   syncView(activeId, stick, stick || !!anchor);
   syncHostOfflineFoot();                 // before the scroll maths: it changes scrollHeight
   updateStatusline();
@@ -15628,7 +15686,10 @@ function appendActive() {
   // layout, and the write must claim that move as its own (see writeScroll), else the clamp's pending scroll event files as a gesture
   if (stick && followTail(distBefore, heightBefore, content.scrollHeight)) writeScroll(content, content.scrollHeight, "append-stick", true, before);
   else if (stick) { /* near the bottom, nothing new: the reader stays where they are */ }
-  else if (!(v && restoreScrollAnchor(content, v, anchor, before))) writeScroll(content, before, "append-raw", false, before);   // the same origin as the stick write: a shorter tail is claimed, not a gesture
+  // the captured row gone after the sync (folded into a run that formed, retired by a shrink): the raw pre-append top is exact only in the
+  // layout it was read in, so the sync's take is undone first and the figures wait for a paint that anchors (untakeMeasure; the maintainer's
+  // round 3 ruling B: this road took and wrote raw, moving the reader by the spacers' delta; append-active-keep.test.ts executes it)
+  else if (!(v && restoreScrollAnchor(content, v, anchor, before))) { if (v && figures) untakeMeasure(v, figures); writeScroll(content, before, "append-raw", false, before); }   // the same origin as the stick write: a shorter tail is claimed, not a gesture
   scheduleRailSticky();
   updateJumpBtn();   // appends can cross the overflow boundary either way — re-read the chip's truth
 }
@@ -16094,6 +16155,7 @@ function virtualizeToViewport(): void {
       // (a jump) → land it at the viewport top.
       const before = v.el.querySelector(`[data-unit="${c}"]`) as HTMLElement | null;
       const beforeY = before ? before.getBoundingClientRect().top - content.getBoundingClientRect().top : 0;
+      const figures = figuresBefore(v);   // what the build takes, given back if neither write below places the reader
       renderWindowItems(v, s, items, Math.max(0, c - WINDOW_RADIUS), Math.min(items.length, c + WINDOW_RADIUS), working, true);   // anchored: the focus unit's offset or the bottom is written below
       const anchor = v.el.querySelector(`[data-unit="${c}"]`) as HTMLElement | null;
       // A follow-mode reader whose re-window reaches the tail (a jump to the live bottom: focus-live) lands at the BOTTOM (PR E).
@@ -16105,6 +16167,7 @@ function virtualizeToViewport(): void {
         const yNow = anchor.getBoundingClientRect().top - content.getBoundingClientRect().top + content.scrollTop;
         writeScroll(content, yNow - beforeY, "rewindow");
       }
+      else untakeMeasure(v, figures);   // the focus unit gone from the rebuilt window: nothing to put back, so the take is given back (the maintainer's round 3 ruling B)
       if (activeId) applyCommentMarks(activeId);   // the re-window rebuilt turns — re-anchor highlights
       scheduleRailSticky();
     } finally {
@@ -19965,8 +20028,12 @@ function fillInPlace(sid: string, v: View | undefined): void {
   // The no-unit fallback (a row or a point in hand that names no unit) is the same paint one road over and passes the same predicate,
   // written out rather than relied on through unitAtScroll's guarantee that u < 0 implies a row in hand (review round 2: a flagless
   // sync there restored a row over spacers it had not re-sized, and the census could not see it).
-  // Two roads take and then restore the raw top, decided only after the build (a residual the PR discloses): the anchor row gone from
-  // the rebuilt window with no point to name, and a point whose turn maps to no y (yOfTurn null, here and in the re-window below)
+  // Two roads take and then find only the raw top to write, decided only after the build: the anchor row gone from the rebuilt window with
+  // no point to name, and a point whose turn maps to no y (yOfTurn null, here and in the re-window below). On both the take is undone
+  // before the raw write (untakeMeasure), so the pre-fill top lands in the layout it was read in and the figures wait for a paint that
+  // anchors (the maintainer's round 3 ruling B; until then the two roads were disclosed as a take followed by a raw write;
+  // fill-in-place.test.ts executes the roads)
+  const figures = figuresBefore(v);
   if (u >= 0) renderWindowItems(v, s, items, Math.max(0, u - WINDOW_RADIUS), Math.min(items.length, u + WINDOW_RADIUS), s.status.state === "working" || s.status.state === "compacting", keepVisible || pointBefore != null);
   else syncView(sid, undefined, keepVisible || pointBefore != null);
   // a visible row that survived the rebuild goes back to its exact offset; otherwise (no row on screen, or the anchor row gone: a turn
@@ -19977,7 +20044,8 @@ function fillInPlace(sid: string, v: View | undefined): void {
   if (row && keep) y = row.getBoundingClientRect().top - content.getBoundingClientRect().top + content.scrollTop - keep.y;
   else {
     const mapped = pointBefore != null ? yOfTurn(v, s, items, turnsNow, content, pointBefore) : null;
-    y = mapped != null ? mapped : topBefore;
+    if (mapped != null) y = mapped;
+    else { untakeMeasure(v, figures); y = topBefore; }   // nothing to put back: the raw top, in the layout it was read in
   }
   writeScroll(content, y, "gap-fill", false, topBefore);
   // a fill that leaves NO row on screen (the window rendered elsewhere than the point: the unit search missed, the mapped y fell
@@ -19987,6 +20055,7 @@ function fillInPlace(sid: string, v: View | undefined): void {
     if (u2 >= 0) {
       renderWindowItems(v, s, items, Math.max(0, u2 - WINDOW_RADIUS), Math.min(items.length, u2 + WINDOW_RADIUS), s.status.state === "working" || s.status.state === "compacting", true);   // anchored: the point is put back by its turn
       const y2 = yOfTurn(v, s, items, turnsNow, content, pointBefore);
+      if (y2 == null) untakeMeasure(v, figures);   // the point maps to no y after the re-window either: the raw top, the take undone
       writeScroll(content, y2 != null ? y2 : topBefore, "gap-fill", false, topBefore);
     }
   }

@@ -123,7 +123,7 @@ test("syncView: compact paints its tail by unit, else compact / an in-place chan
   // …and any stale (tool-group toggle, off-screen update) or a plan the trim cannot serve re-renders where the user is
   assert.match(RENDER, /if \(settings\.compact \|\| v\.stale\) \{[\s\S]*?renderWindowItems\(v, s, items, ws, we, working, anchored\);/);
   // browsing history away from the tail: appended events land below the window → grow the bottom spacer only
-  assert.match(RENDER, /if \(!wasAtTail\) \{\s*\n\s*v\.spacerCountBot = total - \(v\.winEnd \?\? total\);/);
+  assert.match(RENDER, /if \(!wasAtTail\) \{\s*\n\s*patchWorkedFooters\(v, s, v\.rendered, working\);\s*\n\s*v\.spacerCountBot = total - \(v\.winEnd \?\? total\);/);   // the browse branch patches the window's footers first (the maintainer's round 3 ruling B; compact-seam-exec.test.ts and the differential's normal-mode leg execute it)
 });
 
 test("a new message while scrolled UP keeps the viewport put (no backwards jump)", () => {
@@ -135,7 +135,7 @@ test("a new message while scrolled UP keeps the viewport put (no backwards jump)
   // the view "backwards" when messages arrived (the user 2026-06-25).
   assert.match(RENDER, /const before = content\.scrollTop;/);
   assert.match(RENDER, /syncView\(activeId, stick, stick \|\| !!anchor\);/);   // the flag: the follow, or the anchor the restore below holds (review round 1b)
-  assert.match(RENDER, /else if \(!\(v && restoreScrollAnchor\(content, v, anchor, before\)\)\) writeScroll\(content, before, "append-raw", false, before\);/);
+  assert.match(RENDER, /else if \(!\(v && restoreScrollAnchor\(content, v, anchor, before\)\)\) \{ if \(v && figures\) untakeMeasure\(v, figures\); writeScroll\(content, before, "append-raw", false, before\); \}/);   // the raw road gives the sync's take back first (the maintainer's round 3 ruling B; append-active-keep.test.ts executes it)
   // the compact branch keeps winStart on a scrolled-up append
   assert.match(RENDER, /const keepTop = wasAtTail && atBottom === false;/);
   assert.match(RENDER, /const ws = keepTop \? \(v\.winStart \?\? 0\)/);
@@ -182,7 +182,7 @@ test("round four and five fixes each carry a pin (T386 stage 2, round five low 1
   assert.doesNotMatch(fill, /keep\.y >= -1/, "…no lower bound on the row's top");
   assert.match(fill, /const turnsNow = turnOfEvents\(s\);\s*\n\s*const pointBefore = turnUnderTop\(v, s, items, turnsNow, content, topBefore\);/, "the point under the viewport top is named as a turn before the rebuild (medium B)");
   assert.match(fill, /if \(pointBefore != null\) u = unitOfTurn\(items, turnsNow, Math\.floor\(pointBefore\)\);/, "…and the window renders around the unit holding that turn in the NEW items, never a stale unit index (round six: unitOfTurn)");
-  assert.match(fill, /const mapped = pointBefore != null \? yOfTurn\(v, s, items, turnsNow, content, pointBefore\) : null;\s*\n\s*y = mapped != null \? mapped : topBefore;/, "…and put back by its turn after it, scrollTop kept only when the point cannot be named (medium A: the anchor row gone falls to the turn, never a doubled write)");
+  assert.match(fill, /const mapped = pointBefore != null \? yOfTurn\(v, s, items, turnsNow, content, pointBefore\) : null;\s*\n\s*if \(mapped != null\) y = mapped;\s*\n\s*else \{ untakeMeasure\(v, figures\); y = topBefore; \}/, "…and put back by its turn after it, scrollTop kept only when the point cannot be named (medium A: the anchor row gone falls to the turn, never a doubled write), with the take given back first on that road (the maintainer's round 3 ruling B)");
   assert.doesNotMatch(fill, /heightAbove/, "the view-coordinate tautology is gone");
   assert.match(RENDER, /function turnUnderTop\(v: View, s: Session, items: DisplayItem\[\], turns: number\[\], content: HTMLElement, top: number\): number \| null \{/, "the turn-under-top helper");
   assert.match(RENDER, /function yOfTurn\(v: View, s: Session, items: DisplayItem\[\], turns: number\[\], content: HTMLElement, t: number\): number \| null \{/, "the turn-to-scroll helper");
@@ -212,7 +212,7 @@ test("round six fixes each carry a pin (T386 stage 2): rows name their turn, the
   assert.match(RENDER, /function unitOfTurn\(items: DisplayItem\[\], turns: number\[\], t: number\): number \{[\s\S]*?if \(turns\[f\] <= t\) u = i; else break;/, "unitOfTurn: the last unit at or below the turn");
   assert.match(fill, /if \(u < 0\) \{ const rowEl = v\.el\.querySelector\(`\.turn\[data-uuid="\$\{cssEscape\(keep\.uuid\)\}"\]`\) as HTMLElement \| null; const tr = rowEl\?\.dataset\.turn; if \(tr\) u = unitOfTurn\(items, turnsNow, Number\(tr\)\); \}/, "an anchor row no event uuid names still centres the window by its turn");
   // a fill that leaves no row on screen re-windows once around the named point and puts it back
-  assert.match(fill, /if \(pointBefore != null && !rowOnScreen\(v, content\)\) \{\s*\n\s*const u2 = unitOfTurn\(items, turnsNow, Math\.floor\(pointBefore\)\);[\s\S]*?const y2 = yOfTurn\(v, s, items, turnsNow, content, pointBefore\);\s*\n\s*writeScroll\(content, y2 != null \? y2 : topBefore, "gap-fill", false, topBefore\);/, "the zero-row post-check re-windows around the point");
+  assert.match(fill, /if \(pointBefore != null && !rowOnScreen\(v, content\)\) \{\s*\n\s*const u2 = unitOfTurn\(items, turnsNow, Math\.floor\(pointBefore\)\);[\s\S]*?const y2 = yOfTurn\(v, s, items, turnsNow, content, pointBefore\);\s*\n\s*if \(y2 == null\) untakeMeasure\(v, figures\);[^\n]*\n\s*writeScroll\(content, y2 != null \? y2 : topBefore, "gap-fill", false, topBefore\);/, "the zero-row post-check re-windows around the point; a point that maps to no y gives the take back before the raw top (fill-in-place.test.ts executes the roads)");
   assert.match(RENDER, /function rowOnScreen\(v: View, content: HTMLElement\): boolean \{/, "the on-screen row check");
   // low: a run opening mid-turn starts AT its lo, so its first user row begins lo + 1 (the tail slice that opens with an assistant)
   const turnsFn = RENDER.slice(RENDER.indexOf("function turnOfEvents(s: Session): number[] {"), RENDER.indexOf("\nfunction ", RENDER.indexOf("function turnOfEvents(s: Session): number[] {") + 1));
@@ -279,7 +279,7 @@ test("round nine fixes each carry a pin (T386 stage 2): an older fetch in flight
 test("round ten fixes each carry a pin (T386 stage 2): a re-attempt waits on its own live ask; the not-rendered path names the state it saw", () => {
   const sca = RENDER.slice(RENDER.indexOf("function scrollToAnchor("), RENDER.indexOf("\nfunction ", RENDER.indexOf("function scrollToAnchor(") + 1));
   assert.match(sca, /const live = liveWindowAsk\(activeId\);\s*\n\s*if \(live && live\.anchor === uuid\) \{ anchorPendingOlder = true; landTrail\.push\("pointer-fetch-waiting"\); if \(pendingAnchorClick\) pulseLandingNotice\(\); return false; \}[^\n]*\n\s*if \(live\) \{ landTrail\.push\("pointer-fetch-busy"\); landToast\("still going to the earlier message"\); return false; \}/, "the same landing's re-attempt waits without a cue (a real second click pulses the notice, round eleven); a different anchor while one is live is refused with the cue");
-  assert.match(sca, /scrollDiagRow\("landmiss", \{ sid: activeId, anchor: uuid\.slice\(-12\), proto:[^\n]*noframe: !sm \|\| sm\.proto == null, trail: landTrail\.slice\(-4\) \}\);\s*\n\s*pendingAnchor = uuid; landTrail\.push\("pointer-not-rendered"\); return false;/, "the not-rendered path files the branch state it saw (proto, events, regions, the head, the older wire, whether a frame existed) before it stands the attempt down");
+  assert.match(sca, /scrollDiagRow\("landmiss", \{ sid: activeId, anchor: uuid\.slice\(-12\), proto:[^\n]*noframe: !sm \|\| sm\.proto == null, trail: landTrail\.slice\(-4\) \}\);\s*\n\s*if \(figures && v\) untakeMeasure\(v, figures\);[^\n]*\n\s*pendingAnchor = uuid; landTrail\.push\("pointer-not-rendered"\); return false;/, "the not-rendered path files the branch state it saw (proto, events, regions, the head, the older wire, whether a frame existed), gives a build's take back (the maintainer's round 3 ruling B), and stands the attempt down");
   assert.doesNotMatch(RENDER, /awaitingFrameAnchor|pointer-no-frame|frame-rearm/, "no arm-keeping for a shape that did not reproduce: the reload restore runs only once a frame is on the tab");
   assert.match(RENDER, /\| "unitchange" \| "regionask" \| "landmiss", data: any\): void \{/, "the row kind is budgeted with the other scroll rows");
 });

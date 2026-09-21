@@ -31,6 +31,6 @@ test("render.ts appendActive measures before the rebuild and pins only when foll
   assert.ok(body.indexOf("const distBefore") < body.indexOf("syncView(activeId, stick, stick || !!anchor);"), "measured BEFORE the rebuild");
   assert.match(body, /if \(stick && followTail\(distBefore, heightBefore, content\.scrollHeight\)\) writeScroll\(content, content\.scrollHeight, "append-stick", true, before\);/);
   assert.match(body, /else if \(stick\) \{ \/\* near the bottom, nothing new: the reader stays where they are \*\/ \}/);
-  // the scrolled-up path is untouched: anchor restore, raw fallback
-  assert.match(body, /else if \(!\(v && restoreScrollAnchor\(content, v, anchor, before\)\)\) writeScroll\(content, before, "append-raw", false, before\);/);
+  // the scrolled-up path: anchor restore, the raw fallback with the sync's take given back first (the maintainer's round 3 ruling B)
+  assert.match(body, /else if \(!\(v && restoreScrollAnchor\(content, v, anchor, before\)\)\) \{ if \(v && figures\) untakeMeasure\(v, figures\); writeScroll\(content, before, "append-raw", false, before\); \}/);
 });

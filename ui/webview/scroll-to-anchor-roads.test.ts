@@ -4,10 +4,12 @@
 // spelling census stayed green with a `return false` planted right after that build, a take followed by no write. Here the function is
 // lifted from render.ts over a stand-in view and driven road by road, so the pin reads what follows the take: a resident target lands
 // with no build; a target rendered by the build lands on it (landOn) in the same pass; a keep-offset re-land restores the offset; a
-// target the build's re-query does not find, or of the wrong kind, returns with no write and the build's take already made (the
-// take-then-no-write roads the PR body discloses, reached from the three direct callers, markjump, replyjump and cmtjump: landActive's
-// and keepPlaceAcrossWindow's calls run after a take of their own, so the build there finds nothing parked, and landNearestMoment's
-// take is dead for the same reason); an anchor older than the resident tail asks for the chunk and builds nothing. Synthetic uuids.
+// target the build's re-query does not find, or of the wrong kind, returns with no write and the build's take GIVEN BACK (untakeMeasure:
+// the figures parked again, the spacers as they were; the maintainer's round 3 ruling B: until then the take stood with no write, the
+// take-then-no-write roads the PR body disclosed), reached from the three direct callers, markjump, replyjump and cmtjump: landActive's
+// and keepPlaceAcrossWindow's calls run after a take of their own, so the build there finds nothing parked and there is nothing to give
+// back, and landNearestMoment's take is dead for the same reason; an anchor older than the resident tail asks for the chunk and builds
+// nothing. Synthetic uuids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -45,8 +47,8 @@ class Host {
 }
 
 type Ev = { kind: string; uuid: string };
-type Opts = { resident?: string[]; events: Ev[]; rendersOnBuild?: boolean; intent?: string | null; keepY?: number | null; headFrom?: number; proto?: number; older?: boolean };
-type World = { host: Host; calls: any[]; writes: any[]; rows: any[]; toasts: string[]; state: () => { pendingAnchor: string | null; pendingAnchorIntent: string | null; pendingAnchorKeepY: number | null; anchorPendingOlder: boolean; landTrail: string[] }; jump: (uuid: string) => boolean };
+type Opts = { resident?: string[]; events: Ev[]; rendersOnBuild?: boolean; intent?: string | null; keepY?: number | null; headFrom?: number; proto?: number; older?: boolean; parked?: boolean };
+type World = { host: Host; calls: any[]; writes: any[]; rows: any[]; toasts: string[]; state: () => { pendingAnchor: string | null; pendingAnchorIntent: string | null; pendingAnchorKeepY: number | null; anchorPendingOlder: boolean; landTrail: string[] }; jump: (uuid: string) => boolean; parked: () => boolean };
 
 /** A view holding `resident` uuids as rows, over a session of `events` (a unit per event); the stubbed renderWindowItems records the
  *  flag it is handed and, when `rendersOnBuild`, gives the anchor its row (the re-query then finds it); `intent` is the kind guard's,
@@ -56,7 +58,7 @@ function world(o: Opts): World {
   for (const u of o.resident ?? []) host.children.push(new Row("turn " + (o.events.find((e) => e.uuid === u)?.kind === "user" ? "turn-user" : "turn-assistant"), u));
   const s: any = { id: "A", events: o.events, status: { state: "working" }, proto: o.proto ?? 1, headFrom: o.headFrom ?? 0, regions: undefined };
   const v: any = { el: host };
-  const H: any = { host, s, v, calls: [] as any[], writes: [] as any[], rows: [] as any[], toasts: [] as string[], intent: o.intent ?? null, keepY: o.keepY ?? null, older: !!o.older,
+  const H: any = { host, s, v, calls: [] as any[], writes: [] as any[], rows: [] as any[], toasts: [] as string[], intent: o.intent ?? null, keepY: o.keepY ?? null, older: !!o.older, parked: o.parked ?? true,
                    build: (uuid: string) => { if (o.rendersOnBuild) { const ev = o.events.find((e) => e.uuid === uuid); host.children.push(new Row("turn " + (ev?.kind === "user" ? "turn-user" : "turn-assistant"), uuid)); } } };
   const js = liftBetween("function scrollToAnchor(uuid: string): boolean {", "/** The atoms of the transcript turn");
   const prelude = `
@@ -69,7 +71,9 @@ function world(o: Opts): World {
     const openFolds = new Set(); const toolGroupKey = (e) => "tg:" + e.uuid; const noticeGroupKey = (e) => "ng:" + e.uuid;
     const WINDOW_RADIUS = 70;
     let building = null;
-    const renderWindowItems = (v, s, items, ws, we, working, anchored) => { H.calls.push(["renderWindowItems", ws, we, anchored]); H.build(building); };
+    const renderWindowItems = (v, s, items, ws, we, working, anchored) => { H.calls.push(["renderWindowItems", ws, we, anchored]); if (anchored && H.parked) { H.parked = false; H.calls.push(["take"]); } H.build(building); };   // the build's take under the flag (production's gate, compact-seam-exec.test.ts)
+    const figuresBefore = (v) => ({ parked: H.parked });   // production's pair (spacer-measure.test.ts executes the real one)
+    const untakeMeasure = (v, f) => { H.calls.push(["untakeMeasure"]); if (!f.parked || H.parked) return false; H.parked = true; return true; };
     const cssEscape = (x) => x;
     const olderOnServer = () => H.older; const liveWindowAsk = () => null; const loadingOlder = new Set(); const pendingOlderAnchor = new Map(); const pendingOlderKeepY = new Map();
     const requestAround = () => false;
@@ -86,7 +90,7 @@ function world(o: Opts): World {
              state: () => ({ pendingAnchor, pendingAnchorIntent, pendingAnchorKeepY, anchorPendingOlder, landTrail: landTrail.slice() }) };
   `;
   const api = new Function("HOOKS", prelude + js + epilogue)(H) as { jump: (uuid: string) => boolean; state: World["state"] };
-  return { host, calls: H.calls, writes: H.writes, rows: H.rows, toasts: H.toasts, state: api.state, jump: api.jump };
+  return { host, calls: H.calls, writes: H.writes, rows: H.rows, toasts: H.toasts, state: api.state, jump: api.jump, parked: () => H.parked };
 }
 const U = (n: number) => "11111111-2222-4333-8444-0000000000" + String(n).padStart(2, "0");
 const events: Ev[] = [{ kind: "user", uuid: U(1) }, { kind: "assistant", uuid: U(2) }, { kind: "user", uuid: U(3) }, { kind: "assistant", uuid: U(4) }];
@@ -108,6 +112,7 @@ test("a target the window does not hold, in the events: the flagged build (the t
   assert.deepEqual(builds(w), [["renderWindowItems", 0, 4, true]], "one window build around the anchor's unit, flagged: its take is the land's");
   assert.deepEqual(lands(w), [["landOn", U(4), U(4)]], "the take is followed by the placing write");
   assert.ok(w.calls.findIndex((c) => c[0] === "renderWindowItems") < w.calls.findIndex((c) => c[0] === "landOn"), "the build (and its take) before the land, which reads the row's live rect");
+  assert.deepEqual(w.calls.filter((c) => c[0] === "take" || c[0] === "untakeMeasure").map((c) => c[0]), ["take"], "the build took and the landing kept the take"); assert.equal(w.parked(), false);
   assert.deepEqual(w.state().landTrail, ["pointer-exact"]); assert.equal(w.state().pendingAnchor, null);
 });
 
@@ -120,12 +125,14 @@ test("a keep-offset re-land (keepPlaceAcrossWindow's, or the reload restore's): 
   assert.deepEqual(w.state().landTrail, ["pointer-keep-offset"]); assert.equal(w.state().pendingAnchorKeepY, null, "the offset is consumed");
 });
 
-test("the take-then-no-write roads the body discloses, reached from markjump, replyjump and cmtjump: the build's re-query finds no row (pointer-not-rendered: the arm stays for the next pass, a landmiss row is filed), or the row is the wrong kind for a prompt-intent link (pointer-wrong-kind: the arm is dropped); neither writes", () => {
+test("the miss roads reached from markjump, replyjump and cmtjump: the build's re-query finds no row (pointer-not-rendered: the arm stays for the next pass, a landmiss row is filed), or the row is the wrong kind for a prompt-intent link (pointer-wrong-kind: the arm is dropped); neither writes, and the build's take is given back (the maintainer's round 3 ruling B: until then it stood, the take-then-no-write roads the body disclosed)", () => {
   // the build renders the window around the unit but no row answers to the uuid (a member the fold hides, a row minted under another key)
   const miss = world({ resident: [U(1), U(2)], events, rendersOnBuild: false });
   assert.equal(miss.jump(U(4)), false);
   assert.deepEqual(builds(miss), [["renderWindowItems", 0, 4, true]], "the build took");
   assert.deepEqual(lands(miss), []); assert.deepEqual(miss.writes, [], "…and nothing placed the reader (the window rebuilt around the unit is where they are now)");
+  assert.deepEqual(miss.calls.filter((c) => c[0] === "take" || c[0] === "untakeMeasure").map((c) => c[0]), ["take", "untakeMeasure"], "the build took, the re-query missed, the take was given back");
+  assert.equal(miss.parked(), true, "the figures wait for a paint that anchors (at the head the take stood, the spacers re-sized under a reader nothing had placed)");
   assert.deepEqual(miss.state().landTrail, ["pointer-not-rendered"]); assert.equal(miss.state().pendingAnchor, U(4), "armed for the next pass");
   assert.deepEqual(miss.rows.map((r) => r[0]), ["landmiss"], "the miss files the state it saw");
   // a prompt-intent link whose anchor resolves to an assistant row
@@ -133,7 +140,13 @@ test("the take-then-no-write roads the body discloses, reached from markjump, re
   assert.equal(kind.jump(U(4)), false);
   assert.deepEqual(builds(kind), [["renderWindowItems", 0, 4, true]], "the build took");
   assert.deepEqual(lands(kind), []); assert.deepEqual(kind.writes, []);
+  assert.deepEqual(kind.calls.filter((c) => c[0] === "take" || c[0] === "untakeMeasure").map((c) => c[0]), ["take", "untakeMeasure"], "the wrong kind: the take given back too"); assert.equal(kind.parked(), true);
   assert.deepEqual(kind.state().landTrail, ["pointer-wrong-kind"]); assert.equal(kind.state().pendingAnchor, null, "the arm is dropped"); assert.equal(kind.state().pendingAnchorIntent, null);
+  // called after a taker of its own (landActive's or keepPlaceAcrossWindow's attempt): nothing parked when the build runs, nothing given back
+  const after = world({ resident: [U(1), U(2)], events, rendersOnBuild: false, parked: false });
+  assert.equal(after.jump(U(4)), false);
+  assert.deepEqual(after.calls.filter((c) => c[0] === "take").length, 0, "nothing parked: the build took nothing");
+  assert.equal(after.parked(), false, "…and the untake gives nothing back (the caller's own take stands for the caller's restore to cover)");
   // …and a prompt-intent link onto a user row lands
   const ok = world({ resident: [U(1), U(2)], events, rendersOnBuild: true, intent: "user" });
   assert.equal(ok.jump(U(3)), true);

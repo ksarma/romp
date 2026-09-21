@@ -1,22 +1,25 @@
-// landActive's take and its roads, EXECUTED (PR E review round 2, A). A land takes the figures the unit observer parked since the last
-// paint (applyMeasure: the head spacer and the gap units re-sized) on every road but the nothing-armed re-show, BEFORE its landing
-// attempt, because the roads that land read the target's live rect (scrollToAnchor, landOn) and a resident target rebuilds nothing, so a
-// take after the attempt would re-size the spacer under a row just placed. The take is decided on what is ARMED, not on the outcome: a
-// land whose anchor MISSES (nowhere in the transcript, the wrong kind, a fetch armed) took the figures and then fell through to the raw
-// land-saved write of a scrollTop measured in the pre-resize layout, and the reader moved by the spacer's delta (round 1's HIGH 2 shape
-// one road over; the comment in the source and the pin over it said the road could not happen). The fallback now restores the row the
-// SAVED place held, captured at that place before the take (the scroller does not hold the saved place yet on a switch: the leaving
-// tab's position is still under the viewport). The raw write stands whenever that restore finds no row to put back, three roads: nothing
-// was armed (no take, the saved scrollTop exact); no row was capturable (the saved place inside a spacer); the captured row is gone,
-// because the attempt's window build around the anchor's unit (scrollToAnchor's pointer-not-rendered and pointer-wrong-kind roads)
-// replaced the rows before its re-query missed, the sub-road keepPlaceAcrossWindow's double miss has too (review round 3: the comment,
-// the pin and the body had named two roads). landActive, captureScrollAnchor and restoreScrollAnchor are lifted from
-// render.ts and run over a layout model (the toggle harness's: a head spacer, rows of known heights, a scroller with a viewport); the
-// stubs record the take, the landing attempt and every write, and scrollToAnchor answers what the world says. keepPlaceAcrossWindow,
-// the other taker pinned by source text alone until this round, is lifted the same way over both its roads (the direct restore, the
-// deep-link re-land with the kept offset) and the road where both miss: it takes before the restores (restoreScrollAnchor needs the
-// row's y in the re-sized layout), so on a double miss it took and wrote nothing, and the content under the viewport moved by the take's
-// delta; the row under the viewport top, captured before the take, now goes back at its offset there. Synthetic uuids.
+// landActive's take and its roads, EXECUTED (PR E, the maintainer's round 2 ruling A; the outcome rule of the maintainer's round 3 ruling
+// B). A land takes the figures the unit observer parked since the last paint (applyMeasure: the head spacer and the gap units re-sized) on
+// every road but the nothing-armed re-show, BEFORE its landing attempt, because the roads that land read the target's live rect
+// (scrollToAnchor, landOn) and a resident target rebuilds nothing, so a take after the attempt would re-size the spacer under a row just
+// placed. The take is decided on what is ARMED; the OUTCOME decides what stands. A land whose anchor MISSES (nowhere in the transcript,
+// the wrong kind, a fetch armed) puts the row the SAVED place held back at its offset over the take (captured at that place before the
+// take: the scroller does not hold the saved place yet on a switch, the leaving tab's position is still under the viewport); where that
+// restore has no row to put back (no row was capturable, the saved place inside a spacer; the captured row gone, because the attempt's
+// window build around the anchor's unit replaced the rows before its re-query missed) the take is UNDONE (untakeMeasure: the figures
+// parked again, the spacers back) and the raw land-saved write of the saved scrollTop lands in the layout it was saved in, as on the
+// nothing-armed road, where nothing was taken. Until the author's pass 3 the missed land took and wrote raw (the reader moved by the
+// spacer's delta: the maintainer's round 1 ruling's HIGH 2 shape one road over, while the comment in the source said the road could not
+// happen); until this pass the two no-row roads took and wrote raw, disclosed (the third road named by the author's own verifiers after
+// pass 3, where the comment, the pin and the body had named two). The reload restore with no anchor row is the one raw write after a take
+// that KEEPS the take: its scrollTop was measured on the page before the reload, whose figures the take re-derives. landActive,
+// captureScrollAnchor and restoreScrollAnchor are lifted from render.ts and run over a layout model (the toggle harness's: a head spacer,
+// rows of known heights, a scroller with a viewport); the stubs record the take, the untake, the landing attempt and every write, and
+// scrollToAnchor answers what the world says. keepPlaceAcrossWindow, the other taker pinned by source text alone until the author's pass
+// 3, is lifted the same way over both its roads (the direct restore, the deep-link re-land with the kept offset) and the road where both
+// miss: it takes before the restores (restoreScrollAnchor needs the row's y in the re-sized layout), so on a double miss it took and
+// wrote nothing, and the content under the viewport moved by the take's delta; the row under the viewport top, captured before the take,
+// goes back at its offset there, and when the attempt's rebuild dropped that row too the take is undone. Synthetic uuids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -59,7 +62,7 @@ class Host {
 
 type Arm = { anchor?: string; t?: number; keepY?: number; seek?: { sid: string; uuid: string; kind: string }; reload?: unknown; land?: boolean; landT?: boolean; rebuild?: (host: Host) => void };
 type Opts = { spacerH?: number; n?: number; rowH?: number; clientHeight?: number; saved: number; scrollTop?: number; shown?: boolean; stick?: boolean; parked?: boolean; bottomSpacerH?: number };
-type World = { content: Content; host: Host; v: any; spacer: Node; rows: Node[]; writes: Write[]; calls: any[]; rows_: any[]; toasts: string[]; land: (content: Content | null, v: any) => void };
+type World = { content: Content; host: Host; v: any; spacer: Node; rows: Node[]; writes: Write[]; calls: any[]; rows_: any[]; toasts: string[]; land: (content: Content | null, v: any) => void; parked: () => boolean };
 const D = 300;   // the take's delta: the head spacer re-sized by the re-measured figure over the head gap's turns
 
 /** A view of `n` rows of `rowH` under a head spacer of `spacerH` (uuids r0..), in a scroller of `clientHeight`; `saved` is the view's
@@ -92,6 +95,8 @@ function world(o: Opts, arm: Arm = {}): World {
     const whenChatVisible = (cb) => { H.deferred.push(cb); };
     const takeReloadScroll = H.takeReloadScroll;
     const applyMeasure = (v) => { H.calls.push("applyMeasure"); if (!H.parked) return false; H.parked = false; H.spacer.h += H.delta; return true; };
+    const figuresBefore = (v) => ({ parked: H.parked });   // production's: what is parked before the take (spacer-measure.test.ts executes the real pair)
+    const untakeMeasure = (v, fig) => { H.calls.push("untakeMeasure"); if (!fig.parked || H.parked) return false; H.parked = true; H.spacer.h -= H.delta; return true; };   // the take undone: the figures parked again, the spacer back
     const redrawGapUnits = () => { H.calls.push("redrawGapUnits"); };
     const sizeSpacers = () => { H.calls.push("sizeSpacers"); };
     const scrollToAnchor = (uuid) => { H.calls.push(["scrollToAnchor", uuid]); return H.land(uuid); };
@@ -102,7 +107,7 @@ function world(o: Opts, arm: Arm = {}): World {
     const scheduleRailSticky = () => {}; const updateJumpBtn = () => {}; const cssEscape = (s) => s;
   `;
   const land = new Function("HOOKS", prelude + js + "\nreturn landActive;")(H) as (content: Content | null, v: any) => void;
-  return { content, host, v, spacer, rows, writes: H.writes, calls: H.calls, rows_: H.rows, toasts: H.toasts, land };
+  return { content, host, v, spacer, rows, writes: H.writes, calls: H.calls, rows_: H.rows, toasts: H.toasts, land, parked: () => H.parked };
 }
 const takes = (w: World) => w.calls.filter((c) => c === "applyMeasure").length;
 const attemptAfterTake = (w: World) => { const t = w.calls.indexOf("applyMeasure"), a = w.calls.findIndex((c) => Array.isArray(c)); return t >= 0 && a >= 0 && t < a; };
@@ -114,8 +119,8 @@ test("the nothing-armed re-show of a scrolled-up view (land-saved): no take, the
   const w = world({ saved: 2350 });
   w.land(w.content, w.v);
   assert.equal(takes(w), 0, "nothing armed: the land takes nothing (a spacer written here would move the saved place)");
-  assert.deepEqual(w.calls.filter((c) => typeof c === "string"), ["sizeSpacers"], "the spacers take the figures the view holds, and nothing else runs");
-  assert.equal(w.spacer.h, 2000, "the parked figure stays parked for the next anchoring paint");
+  assert.deepEqual(w.calls.filter((c) => typeof c === "string"), ["sizeSpacers", "untakeMeasure"], "the spacers take the figures the view holds; the fallback's untake finds nothing taken; nothing else runs");
+  assert.equal(w.spacer.h, 2000, "the parked figure stays parked for the next anchoring paint"); assert.equal(w.parked(), true);
   assert.deepEqual(w.writes, [{ writer: "land-saved", top: 2350, stick: false, from: undefined }], "the saved scrollTop is exact in a layout nothing re-sized: the raw write");
   assert.equal(w.rows[3].getBoundingClientRect().top, R3_OFFSET, "the row the saved place held is where it was");
   assert.equal(w.v.shown, true);
@@ -147,24 +152,38 @@ test("the same miss on a tab SWITCH: the scroller still holds the leaving tab's 
   assert.equal(w.rows[3].getBoundingClientRect().top, R3_OFFSET);
 });
 
-test("an armed miss with no row at the saved place (the saved place inside a spacer): the take, then the raw land-saved write, the one road left to it", () => {
+test("an armed miss with no row at the saved place (the saved place inside a spacer): the take, then, with no row to put back, the take undone and the raw land-saved write exact in the layout the saved place was measured in (the maintainer's round 3 ruling B: until then the take stood and the raw write moved the reader by its delta, disclosed)", () => {
   // rows 0..1000 then a 5000 px bottom spacer; the saved place at 3000 has no row at or below the viewport top
   const w = world({ spacerH: 0, saved: 3000, bottomSpacerH: 5000 }, { anchor: "11111111-2222-4333-8444-000000000002", land: false });
   w.land(w.content, w.v);
   assert.equal(takes(w), 1, "the take is on the arm, not the row");
-  assert.deepEqual(w.writes, [{ writer: "land-saved", top: 3000, stick: false, from: undefined }], "nothing to put back: the raw write stands");
+  assert.deepEqual(w.calls.filter((c) => typeof c === "string"), ["applyMeasure", "redrawGapUnits", "sizeSpacers", "untakeMeasure"], "the take before the attempt, then, with no row to put back, the untake before the raw write");
+  assert.equal(w.spacer.h, 0, "the head spacer is back where the saved scrollTop was measured (at the head it stood 300 px taller under the raw write)");
+  assert.equal(w.parked(), true, "the figures are parked again for the next paint that anchors");
+  assert.deepEqual(w.writes, [{ writer: "land-saved", top: 3000, stick: false, from: undefined }], "nothing to put back: the raw write, exact in the layout it was saved in");
 });
 
-test("an armed miss whose attempt REBUILT the window around the anchor's unit (scrollToAnchor's pointer-not-rendered and pointer-wrong-kind roads): the captured row left with the old rows, so the restore misses and the raw land-saved write of the pre-resize scrollTop follows the take, the third of the raw write's roads; a rebuild that renders the saved place's row again under its uuid is restored", () => {
+test("the reload restore with no anchor row (the reader's place inside a spacer when the page went down): the take stands and the persisted scrollTop is written raw over it, the one raw write after a take that keeps the take, because that scrollTop was measured on the page before the reload, whose figures the take re-derives (both refuters' probes on the round-3 filing: a capture-then-restore here would displace the reader by the take's delta)", () => {
+  const r = world({ saved: 2350, scrollTop: 0 }, { reload: { id: "A", top: 2350, stick: false, anchor: null } });
+  r.land(r.content, r.v);
+  assert.equal(takes(r), 1, "a record is armed: the land takes before the restore");
+  assert.ok(!r.calls.includes("untakeMeasure"), "…and gives nothing back: the persisted figure was measured against the figures the take re-derives");
+  assert.equal(r.spacer.h, 2000 + D, "the take stands");
+  assert.deepEqual(r.writes, [{ writer: "reload-restore", top: 2350, stick: false, from: undefined }], "the persisted top, raw, over the re-derived figures (the first guess; a record with an anchor row arms the deep-link land after it)");
+  assert.equal(r.v.stick, false); assert.equal(r.parked(), false);
+});
+
+test("an armed miss whose attempt REBUILT the window around the anchor's unit (scrollToAnchor's pointer-not-rendered and pointer-wrong-kind roads): the captured row left with the old rows, so the restore misses, the take is undone and the raw land-saved write of the saved scrollTop lands in the layout it was saved in, the third of the raw write's roads; a rebuild that renders the saved place's row again under its uuid is restored over the take", () => {
   // the build removes every child and renders the units around the anchor's: rows 20..29 stand where 0..9 stood, and r3 is gone
   const gone = (host: Host) => { host.children = [host.children[0]]; for (let i = 20; i < 30; i++) host.add(new Node(100, "turn", "r" + i)); };
   const w = world({ saved: 2350 }, { anchor: "11111111-2222-4333-8444-000000000006", land: false, rebuild: gone });
   w.land(w.content, w.v);
   assert.equal(takes(w), 1, "the take is on the arm");
   assert.ok(attemptAfterTake(w));
-  assert.equal(w.spacer.h, 2000 + D, "the head spacer grew under the rebuilt rows");
+  assert.equal(w.spacer.h, 2000, "the take undone: the head spacer back where the saved scrollTop was measured (at the head it stood 300 px taller under the raw write, the reader 300 px off in the rebuilt window)");
+  assert.equal(w.parked(), true, "the figures wait for a paint that anchors");
   assert.deepEqual(w.writes, [{ writer: "land-saved", top: 2350, stick: false, from: undefined }],
-    "no row of the captured DOM is left to put back: the raw write at the pre-resize saved place stands, and the reader is in the window built around the anchor (the residual the body names beside keepPlaceAcrossWindow's double miss after a rebuild)");
+    "no row of the captured DOM is left to put back: the raw write at the saved place, in the layout it was saved in; the reader is in the window built around the anchor (the residual the body names, narrowed to that)");
   assert.deepEqual(w.toasts, ["couldn't locate this in the transcript"], "the error road it was");
   // the same rebuild rendering the saved place's row again (a fresh node, the same uuid): the restore finds it, so the rule is the
   // restore's answer, not whether a rebuild ran
@@ -174,6 +193,7 @@ test("an armed miss whose attempt REBUILT the window around the anchor's unit (s
   assert.equal(takes(w2), 1);
   assert.deepEqual(w2.writes, [{ writer: "anchor-restore", top: 2350 + D, stick: false, from: undefined }], "the rebuilt r3 is put back at its offset over the re-sized spacer");
   assert.equal(w2.host.children[4].getBoundingClientRect().top, R3_OFFSET, "the new r3 sits where the saved place had the old one");
+  assert.equal(w2.spacer.h, 2000 + D, "the take stands: the row was put back over it"); assert.equal(w2.parked(), false);
 });
 
 test("the anchoring roads each take once, before the attempt, and landActive writes nothing of its own when the landing placed the reader: an anchor that hits, a moment, a seek; the reload restore and the bottom land take and write their own", () => {
@@ -232,7 +252,7 @@ test("a hidden pane with a jump armed defers the whole land (nothing taken, noth
 // ── keepPlaceAcrossWindow: the take over its restores, and the double miss (review round 2, tests-4 and correctness-3) ──────────────
 
 type KeepArm = { land?: boolean; older?: boolean; rebuild?: (host: Host) => void };
-type KeepWorld = { content: Content; host: Host; spacer: Node; rows: Node[]; writes: Write[]; calls: any[]; keep: (k: { uuid: string; y: number }) => boolean; state: () => { pendingAnchor: string | null; pendingAnchorKeepY: number | null; relandAsk: boolean } };
+type KeepWorld = { content: Content; host: Host; spacer: Node; rows: Node[]; writes: Write[]; calls: any[]; keep: (k: { uuid: string; y: number }) => boolean; state: () => { pendingAnchor: string | null; pendingAnchorKeepY: number | null; relandAsk: boolean }; parked: () => boolean };
 /** The reader at `scrollTop` over the same view; `parked` a figure waiting; the stubbed scrollToAnchor answers `land`, marks an older fetch
  *  when `older`, and runs `rebuild` over the host first (the window rebuilt around the anchor's unit: rows leave). */
 function keepWorld(scrollTop: number, arm: KeepArm = {}, parked = true): KeepWorld {
@@ -248,6 +268,8 @@ function keepWorld(scrollTop: number, arm: KeepArm = {}, parked = true): KeepWor
     const H = HOOKS;
     let pendingAnchor = null, pendingAnchorKeepY = null, relandAsk = false, anchorPendingOlder = false;
     const applyMeasure = (v) => { H.calls.push("applyMeasure"); if (!H.parked) return false; H.parked = false; H.spacer.h += H.delta; return true; };
+    const figuresBefore = (v) => ({ parked: H.parked });
+    const untakeMeasure = (v, fig) => { H.calls.push("untakeMeasure"); if (!fig.parked || H.parked) return false; H.parked = true; H.spacer.h -= H.delta; return true; };
     const redrawGapUnits = () => { H.calls.push("redrawGapUnits"); };
     const sizeSpacers = () => { H.calls.push("sizeSpacers"); };
     const scrollToAnchor = (uuid) => { H.calls.push(["scrollToAnchor", uuid, relandAsk, pendingAnchor, pendingAnchorKeepY]); if (H.arm.rebuild) H.arm.rebuild(H.content.host); if (H.arm.older) anchorPendingOlder = true; return !!H.arm.land; };
@@ -255,7 +277,7 @@ function keepWorld(scrollTop: number, arm: KeepArm = {}, parked = true): KeepWor
     const cssEscape = (s) => s;
   `;
   const api = new Function("HOOKS", prelude + js + "\nreturn { keep: (k) => keepPlaceAcrossWindow(H.content, H.v, k), state: () => ({ pendingAnchor, pendingAnchorKeepY, relandAsk }) };")(H);
-  return { content, host, spacer, rows, writes: H.writes, calls: H.calls, keep: api.keep, state: api.state };
+  return { content, host, spacer, rows, writes: H.writes, calls: H.calls, keep: api.keep, state: api.state, parked: () => H.parked };
 }
 const keepTakes = (w: KeepWorld) => w.calls.filter((c) => c === "applyMeasure").length;
 
@@ -290,7 +312,7 @@ test("keepPlaceAcrossWindow, the restore missing (the reader's row gone from the
   assert.deepEqual(w2.state(), { pendingAnchor: "11111111-2222-4333-8444-000000000011", pendingAnchorKeepY: R3_OFFSET, relandAsk: false }, "armed for the arrival");
 });
 
-test("keepPlaceAcrossWindow, BOTH restores missing (the reader's row gone and the attempt landing nothing): the take was made, so the row that was under the viewport top goes back at its offset (measured on its own rect), never a take with no write; when the attempt's rebuild dropped that row too, nothing is written and the road is the disclosed residual", () => {
+test("keepPlaceAcrossWindow, BOTH restores missing (the reader's row gone and the attempt landing nothing): the take was made, so the row that was under the viewport top goes back at its offset (measured on its own rect), never a take with no write; when the attempt's rebuild dropped that row too, nothing is written and the take is undone (the maintainer's round 3 ruling B: until then the take stood under a reader nothing had placed, disclosed)", () => {
   // the reader's row is nowhere (a fetch is armed for it); before the fix the take grew the head spacer 300 px and nothing was written,
   // so the content under the viewport moved down by 300 px
   const w = keepWorld(2350, { land: false, older: true });
@@ -299,14 +321,18 @@ test("keepPlaceAcrossWindow, BOTH restores missing (the reader's row gone and th
   assert.equal(w.spacer.h, 2000 + D);
   assert.deepEqual(w.writes, [{ writer: "anchor-restore", top: 2350 + D, stick: false, from: undefined }], "the row under the viewport top before the take (r3) is put back at its offset");
   assert.equal(w.rows[3].getBoundingClientRect().top, R3_OFFSET, "what the reader saw under the viewport top is still there (it sat 300 px lower with no write)");
+  assert.equal(w.parked(), false, "the take stands: the row was put back over it");
   // the same with no fetch armed (an anchor nowhere in the transcript): the arm is dropped, the row still goes back
   const w2 = keepWorld(2350, { land: false });
   assert.equal(w2.keep({ uuid: "11111111-2222-4333-8444-000000000012", y: R3_OFFSET }), false);
   assert.deepEqual(w2.writes, [{ writer: "anchor-restore", top: 2350 + D, stick: false, from: undefined }]);
   assert.deepEqual(w2.state(), { pendingAnchor: null, pendingAnchorKeepY: null, relandAsk: false });
   // the attempt rebuilt the window around the anchor's unit (every row replaced) and its re-query missed: the captured row is gone too,
-  // nothing is written, and the reader is where the rebuild left them (the residual the body names)
+  // nothing is written, the take is undone, and the reader is where the rebuild left them in the layout it was built in
   const w3 = keepWorld(2350, { land: false, rebuild: (host) => { host.children = [host.children[0]]; for (let i = 20; i < 30; i++) host.add(new Node(100, "turn", "r" + i)); } });
   assert.equal(w3.keep({ uuid: "11111111-2222-4333-8444-000000000012", y: R3_OFFSET }), false);
-  assert.equal(keepTakes(w3), 1); assert.deepEqual(w3.writes, [], "no row of the captured DOM is left to put back");
+  assert.equal(keepTakes(w3), 1); assert.deepEqual(w3.writes, [], "no row of the captured DOM is left to put back: nothing written");
+  assert.equal(w3.spacer.h, 2000, "…and the take is undone: the head spacer back (at the head it stood 300 px taller under a reader nothing had placed)");
+  assert.equal(w3.parked(), true, "the figures wait for a paint that anchors");
+  assert.ok(w3.calls.includes("untakeMeasure"), "through untakeMeasure, after both restores missed");
 });

@@ -75,15 +75,24 @@ test("a plain human-prompt append does not set stale: the signature reads the pr
 // Compact mode's tail path by unit (chat-compact-tail.test.ts) was inserted ABOVE normal mode's block and the two fixes to the
 // spacers' measurement live in functions of their own; the normal-mode block (from "Normal mode, pure append." to syncViewInner's
 // closing brace) is recorded here line by line and pinned byte for byte, so a change to the desktop's path is a deliberate edit
-// of this record, never a side effect. On a failure the diff says what moved. Two deliberate edits so far (review round 2): the
-// block's own copy of the tail walk, which stopped at a foreign child (a hover's rail band) and re-appended the tail on top of a
-// stale copy of itself, gave way to trimUnitsFrom, the walk compact mode's seam uses, and the hover's marks (the rings and the glow
-// the band lit) come off with the band, as in the seam (compact-seam-exec.test.ts executes both calls; chat-compact-tail.test.ts
-// drives the walk over a band; compact-tail-differential.test.ts the marks).
+// of this record, never a side effect. On a failure the diff says what moved. Three deliberate edits so far. Two applied the
+// maintainer's round 2 ruling: the block's own copy of the tail walk, which stopped at a foreign child (a hover's rail band) and
+// re-appended the tail on top of a stale copy of itself, gave way to trimUnitsFrom, the walk compact mode's seam uses, and the hover's
+// marks (the rings and the glow the band lit) come off with the band, as in the seam (compact-seam-exec.test.ts executes both calls;
+// chat-compact-tail.test.ts drives the walk over a band; compact-tail-differential.test.ts the marks). The third applied the
+// maintainer's round 3 ruling B: the browse branch patches the window's worked footers before it grows the bottom spacer, as compact
+// mode's spacer branch has since the author's pass 1b (compact-seam-exec.test.ts's normal-mode browsed world and the differential's
+// normal-mode leg execute it, red before at the head the round ruled on).
 const NORMAL_MODE_BLOCK = [
   "  // Normal mode, pure append. While BROWSING history (window not at the tail), the new events land below the",
   "  // rendered window → just grow the bottom spacer (no DOM churn); the user sees them on scroll-down.",
+  "  // …after the one render inside the window that reads LATER events, the \"worked …\" footer on a turn's last reply, is patched from",
+  "  // the first changed event (v.rendered, still the pre-append value), as compact mode's spacer branch and this mode's tail do: a",
+  "  // prompt completing the turn below the window put no footer on the window's last reply, and a later reply joining the turn took none",
+  "  // off, until the maintainer's round 3 ruling B (the compact branch was fixed for this in the author's pass 1b, applying the maintainer's",
+  "  // round 1 addendum, and this branch was not: the same defect on the other side of the compact switch)",
   "  if (!wasAtTail) {",
+  "    patchWorkedFooters(v, s, v.rendered, working);",
   "    v.spacerCountBot = total - (v.winEnd ?? total); v.unitTotal = total; v.rendered = len; sizeSpacers(v); return v;",
   "  }",
   "  // Normal mode, append AT the tail (unit === event, top spacer only): the cheap incremental hot path —",

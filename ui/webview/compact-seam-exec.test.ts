@@ -184,6 +184,21 @@ test("a change below a browsed window patches the worked footers from the first 
   assert.equal(w.v.el.children.length, 6, "no unit node added or removed");
 });
 
+test("normal mode (the compact switch off), a change below a browsed window: the browse branch patches the worked footers from the first changed event with no unit list, then grows the bottom spacer: no trim, no re-render, no rebuild (the maintainer's round 3 ruling B: compact mode's spacer branch was fixed for this in the author's pass 1b and this branch, the same outcome on the other side of the switch, was not, so a prompt completing the turn below the window put no footer on the window's last reply)", () => {
+  // the compact test above, on the other side of the switch: six units built, a reply landed as the seventh, the window browsed away from the
+  // tail (winEnd lowered to 4 by hand, as a landing leaves it); a unit is an event, so the patch is told no unit list, as this mode's tail does
+  const kinds = ["user", "assistant", "user", "assistant", "user", "assistant", "assistant"];
+  const prev = Array.from({ length: 6 }, (_, i) => ev(i)), now = prev.concat([ev(6)]);
+  const w = world(kinds, prev, now, 6, 0, true, false);
+  w.v.winEnd = 4;
+  w.sync("A");
+  assert.deepEqual(w.calls, [["patchWorkedFooters", 6, true, null], ["sizeSpacers"]], "the footer patch from the pre-append v.rendered with no unit list, then the spacer re-size, and nothing else (at the head the round ruled on: the spacer re-size alone)");
+  assert.deepEqual(w.calls.filter((c) => c[0] === "trim" || c[0] === "renderEvent" || c[0] === "renderWindowItems" || c[0] === "appendItem"), [], "no unit re-rendered, no rebuild");
+  assert.equal(w.v.spacerCountBot, 3, "total less winEnd: the units the bottom spacer stands for");
+  assert.equal(w.v.rendered, 7, "the bookkeeping moves v.rendered to len after the patch"); assert.equal(w.v.unitTotal, 7);
+  assert.equal(w.v.el.children.length, 6, "no unit node added or removed");
+});
+
 test("normal mode's exact tail trims through the shared walk (trimUnitsFrom from the first changed event), then re-renders from there and patches the footers with no unit list: no plan, no compact helper (review round 2: its own copy of the walk stopped at a hover's band and re-appended the tail on top of a stale copy)", () => {
   // the desktop (compact off): the reply at event 1 edited (from = 1) in a two-event view; the walk is asked from event 1, the events from
   // it re-rendered in order, the footers patched from it with no unit list (a unit is an event in normal mode)

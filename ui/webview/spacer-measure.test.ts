@@ -77,6 +77,7 @@ type Writes = Array<{ top: number; writer: string; stick: boolean }>;
 type World = {
   reads: Reads; diag: Diag; rafs: Array<() => void>; views: Map<string, any>; activeId: string | null; writes: Writes; content: { scrollTop: number; ch: number }; paints: number;
   sizeSpacers: (v: any) => void; measureUnits: (v: any) => void; applyMeasure: (v: any) => boolean; redrawGapUnits: (v: any) => void; takeMeasureAtBottom: (v: any) => void; forgetAverage: (v: any) => void;
+  figuresBefore: (v: any) => { avg: number | undefined; per: number | undefined; measured: any }; untakeMeasure: (v: any, before: any) => boolean;
   setActive: (id: string | null) => void;   // the lifted span's own activeId (a tab switch between a queued spacer row and its frame)
   gapUnitsOf: (items: DisplayItem[], per: number | undefined) => Map<number, number> | undefined; entryBoxHeight: (e: any) => number;
 };
@@ -104,7 +105,7 @@ function lift(activeId: string | null, scrollTop = 9114 - 902): World {
     const rowsFor = H.rowsFor, meanRowHeight = H.meanRowHeight, perTurnEstimate = H.perTurnEstimate;
     const atBottom = H.atBottom, writeScroll = H.writeScroll, scheduleAppendActive = H.scheduleAppendActive;
   `;
-  const api = new Function("HOOKS", prelude + js + "\nreturn { sizeSpacers, measureUnits, applyMeasure, redrawGapUnits, gapUnitsOf, entryBoxHeight, takeMeasureAtBottom, forgetAverage, setActive };")(hooks);
+  const api = new Function("HOOKS", prelude + js + "\nreturn { sizeSpacers, measureUnits, applyMeasure, redrawGapUnits, gapUnitsOf, entryBoxHeight, takeMeasureAtBottom, forgetAverage, setActive, figuresBefore, untakeMeasure };")(hooks);
   return Object.assign(world, api) as World;
 }
 /** The unit observer's callback, lifted from ensureView (the `const view3 = v;` span) over a world's measure and take: a fake
@@ -341,6 +342,36 @@ test("a follow-mode reader at the bottom is given the figures on the next paint:
   assert.ok(w5.v.measured, "parked"); assert.equal(hidden.paints, 0, "an emptied scroller reads as the bottom and asks for nothing");
 });
 
+// ── the take undone: a paint that finds no row to put back gives the figures back (the maintainer's round 3 ruling B) ─────────────────
+
+test("figuresBefore then untakeMeasure: a take undone parks the figures again and puts the spacers and gap units back where the raw scrollTop was measured, with no layout read; a paint that took nothing gives nothing back; the next anchoring paint takes them", () => {
+  const two: Array<[string, number]> = [["turn turn-user", 30], ["turn turn-assistant", 70], ["turn turn-user", 30], ["turn turn-assistant", 90], ["turn turn-user", 30], ["turn turn-assistant", 500]];
+  const w = lift(null);
+  const { v, items, rows } = viewOver(w, 200, 1 + 100 + 6, 101, (u) => two[u - 101]);
+  buildOne(w, v, items); observe(w, v, rows);
+  const parked = v.measured; assert.ok(parked, "the figures are parked by the observer's measure");
+  const topOne = topPx(v), gapOne = v.gapUnits.get(0);
+  const before = w.figuresBefore(v);   // what a paint reads before its take
+  assert.deepEqual(before, { avg: undefined, per: undefined, measured: parked }, "the view's figures and the parked ones, as the paint finds them");
+  assert.equal(w.untakeMeasure(v, before), false, "nothing taken yet: nothing to give back (what was parked is still parked)");
+  assert.equal(topPx(v), topOne, "…and nothing moved");
+  paintTwo(w, v);   // the paint takes (syncViewInner under the flag, or a flagged build)
+  assert.equal(v.pxPerTurn, 100); assert.equal(v.measured, undefined); assert.notEqual(topPx(v), topOne, "the paint took: the spacer moved");
+  assert.equal(w.untakeMeasure(v, before), true, "the restore found no row to put back: the take is given back");
+  assert.deepEqual(v.measured, parked, "the figures are parked again, as they were");
+  assert.equal(v.pxPerTurn, undefined); assert.equal(v.avgTurnH, undefined);
+  assert.equal(topPx(v), topOne, "the head spacer is back where it stood when the raw scrollTop was measured"); assert.equal(v.gapUnits.get(0), gapOne, "the gap units too");
+  assert.equal(w.untakeMeasure(v, before), false, "given back once: a second call finds what was parked still parked");
+  paintTwo(w, v);
+  assert.equal(v.pxPerTurn, 100, "the next anchoring paint takes them"); assert.equal(v.measured, undefined); assert.notEqual(topPx(v), topOne);
+  // a paint with no take of its own gives nothing back whatever an earlier paint did: its own `before` saw nothing parked
+  const later = w.figuresBefore(v);
+  assert.equal(later.measured, undefined);
+  assert.equal(w.untakeMeasure(v, later), false, "nothing was parked for this paint: the earlier take stands");
+  assert.equal(v.pxPerTurn, 100);
+  assert.deepEqual(w.reads, { offsetHeight: 0, scrollHeight: 0, clientHeight: 0 }, "no layout read in any of it");
+});
+
 // ── the unit observer's callback: a view with no width is the hidden case (review round 0, high) ─
 
 test("an observer delivery with the view at width 0 (an ancestor hid it) forgets the baselines and measures nothing: no 0 enters the heights map, nothing is parked, no paint is asked for; the re-show measures", () => {
@@ -482,18 +513,22 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   // land-active-keep.test.ts), and keepPlaceAcrossWindow over its restore. A switch's, a landing's or a hidden prebuild's sync passes no flag and applies
   // nothing (a 55 px move of a bottom reader in the landing lab), a fill that can only restore its raw top passes false, and a paint whose
   // only restore is a raw scrollTop (appendActive with no capturable row, the toggle for a bottom or row-less reader) passes false too.
+  // The rule's OUTCOME half (the maintainer's round 3 ruling B): a paint that took and then found no row to put back gives the figures
+  // back before its raw write (untakeMeasure: parked again, the spacers and gap units re-drawn), so, net, it took nothing; the mechanism is
+  // executed above, and each reader's road in its harness (land-active-keep, toolgroup-toggle-keep, append-active-keep, fill-in-place,
+  // scroll-to-anchor-roads). The reload restore's raw write keeps its take: its scrollTop was measured against the figures the take re-derives.
   assert.match(RENDER, /function syncViewInner\(id: string, atBottom\?: boolean, anchored: boolean = atBottom !== undefined\): View \{/, "the flag defaults to 'atBottom was passed'");
   assert.match(RENDER, /if \(anchored && applyMeasure\(v\)\) \{ redrawGapUnits\(v\); sizeSpacers\(v\); \}/, "syncViewInner takes the figures inside an anchoring paint alone");
   assert.match(RENDER, /function renderWindowItems\([^\n]*anchored = false\): void \{\n(?:\s*\/\/[^\n]*\n)*\s*if \(anchored\) applyMeasure\(v\);/, "a window build takes them only when its caller anchors");
   const land = RENDER.slice(RENDER.indexOf("function landActive(content: HTMLElement | null, v: View): void {"), RENDER.indexOf("\n}\n", RENDER.indexOf("function landActive(content: HTMLElement | null, v: View): void {")));
-  assert.match(land, /const saved = !pendingAnchor && pendingAnchorT == null && !\(seek && seek\.sid === activeId\) && v\.shown && !v\.stick && takeReloadScroll\(pendingReloadScroll, activeId\) == null;\s*\n\s*const held = !saved && v\.shown && !v\.stick \? captureScrollAnchor\(content, v, v\.scrollTop\) : null;[^\n]*\n\s*if \(!saved && applyMeasure\(v\)\) redrawGapUnits\(v\);\s*\n\s*sizeSpacers\(v\);/,
-    "landActive takes on every road but the nothing-armed re-show, BEFORE its landing attempt (the gate reads what is armed, not the outcome), captures the row at the saved place first, and sizes the spacers after the take; an armed land that misses puts that row back (the fallback below, executed in land-active-keep.test.ts)");
-  assert.match(land, /else if \(!\(held && restoreScrollAnchor\(content, v, held\)\)\) writeScroll\(content, v\.scrollTop, "land-saved"\);/, "the saved-place fallback restores the captured row; the raw write stands whenever that restore finds no row to put back: nothing armed (nothing taken), no row at the saved place, or the captured row gone with the attempt's window build (land-active-keep.test.ts executes the three)");
+  assert.match(land, /const saved = !pendingAnchor && pendingAnchorT == null && !\(seek && seek\.sid === activeId\) && v\.shown && !v\.stick && takeReloadScroll\(pendingReloadScroll, activeId\) == null;\s*\n\s*const held = !saved && v\.shown && !v\.stick \? captureScrollAnchor\(content, v, v\.scrollTop\) : null;[^\n]*\n\s*const figures = figuresBefore\(v\);[^\n]*\n\s*if \(!saved && applyMeasure\(v\)\) redrawGapUnits\(v\);\s*\n\s*sizeSpacers\(v\);/,
+    "landActive takes on every road but the nothing-armed re-show, BEFORE its landing attempt (the gate reads what is armed), captures the row at the saved place and reads the figures first, and sizes the spacers after the take; the outcome decides what stands (the fallback below, executed in land-active-keep.test.ts)");
+  assert.match(land, /else if \(!\(held && restoreScrollAnchor\(content, v, held\)\)\) \{ untakeMeasure\(v, figures\); writeScroll\(content, v\.scrollTop, "land-saved"\); \}/, "the saved-place fallback restores the captured row; where that restore finds no row to put back the take is given back and the raw write follows, exact in the layout it was saved in: nothing armed (nothing taken, nothing given back), no row at the saved place, or the captured row gone with the attempt's window build (land-active-keep.test.ts executes the three)");
   assert.equal((land.match(/applyMeasure\(v\)/g) || []).length, 1, "one take in the land");
   const keep = RENDER.slice(RENDER.indexOf("function keepPlaceAcrossWindow("), RENDER.indexOf("\n}\n", RENDER.indexOf("function keepPlaceAcrossWindow(")));
-  assert.match(keep, /const under = captureScrollAnchor\(content, v\);\s*\n\s*if \(applyMeasure\(v\)\) \{ redrawGapUnits\(v\); sizeSpacers\(v\); \}\s*\n\s*if \(restoreScrollAnchor\(content, v, keep\)\) return true;/,
-    "keepPlaceAcrossWindow captures the row under the viewport top, then takes over its restore, spacers and gap units first (the take stays above the restores, which read the re-sized layout; land-active-keep.test.ts executes the roads and the double miss)");
-  assert.match(keep, /if \(!landed && under\) restoreScrollAnchor\(content, v, under\);/, "the double miss puts the captured row back over the take instead of writing nothing (review round 2)");
+  assert.match(keep, /const under = captureScrollAnchor\(content, v\);\s*\n\s*const figures = figuresBefore\(v\);[^\n]*\n\s*if \(applyMeasure\(v\)\) \{ redrawGapUnits\(v\); sizeSpacers\(v\); \}\s*\n\s*if \(restoreScrollAnchor\(content, v, keep\)\) return true;/,
+    "keepPlaceAcrossWindow captures the row under the viewport top and reads the figures, then takes over its restore, spacers and gap units first (the take stays above the restores, which read the re-sized layout; land-active-keep.test.ts executes the roads and the double miss)");
+  assert.match(keep, /if \(!landed && !\(under && restoreScrollAnchor\(content, v, under\)\)\) untakeMeasure\(v, figures\);/, "the double miss puts the captured row back over the take instead of writing nothing (the maintainer's round 2 ruling), and with that row gone too gives the take back (the maintainer's round 3 ruling B)");
   const calls = (RENDER.match(/(?<![\w.])applyMeasure\(v\)/g) || []).length;
   assert.equal(calls, 4, "four takers: syncViewInner, the window build, landActive and keepPlaceAcrossWindow (" + calls + "); the frame-end take asks for the first");
   // the census of callers, derived from the tree and keyed on the CALLER, not on a spelling (review round 2): every window build outside
@@ -504,7 +539,7 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   // handed on as a bare reference (a value passed on could reach a caller neither census reads). appendActive has no harness of its
   // own, so its line is pinned here as well; scroll-to-anchor-roads.test.ts and land-active-keep.test.ts execute the roads behind the
   // flagged builds and the land.
-  assert.match(RENDER, /const anchor = !stick && v \? captureScrollAnchor\(content, v\) : null;\n(?:\s*\/\/[^\n]*\n)*\s*syncView\(activeId, stick, stick \|\| !!anchor\);/, "appendActive's sync is flagged by its follow or the anchor it captured, never by atBottom alone");
+  assert.match(RENDER, /const anchor = !stick && v \? captureScrollAnchor\(content, v\) : null;\n\s*const figures = v \? figuresBefore\(v\) : null;[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*syncView\(activeId, stick, stick \|\| !!anchor\);/, "appendActive's sync is flagged by its follow or the anchor it captured, never by atBottom alone, and the figures are read before it for the raw road's untake (append-active-keep.test.ts executes the roads)");
   const lines = RENDER.split("\n").map((l, i) => [i + 1, l] as const);
   const fnOf = (line: number) => { for (let i = line - 1; i >= 0; i--) { const m = /^function (\w+)\(/.exec(RENDER.split("\n")[i]); if (m) return m[1]; } return ""; };
   const builds = RENDER.match(/(?<![\w.])renderWindowItems\(v, s, items, [^\n]*?\);/g) || [];
