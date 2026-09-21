@@ -125,7 +125,7 @@ test("a keep-offset re-land (keepPlaceAcrossWindow's, or the reload restore's): 
   assert.deepEqual(w.state().landTrail, ["pointer-keep-offset"]); assert.equal(w.state().pendingAnchorKeepY, null, "the offset is consumed");
 });
 
-test("the miss roads reached from markjump, replyjump and cmtjump: the build's re-query finds no row (pointer-not-rendered: the arm stays for the next pass, a landmiss row is filed), or the row is the wrong kind for a prompt-intent link (pointer-wrong-kind: the arm is dropped); neither writes, and the build's take is given back (the maintainer's round 3 ruling B: until then it stood, the take-then-no-write roads the body disclosed)", () => {
+test("the pointer-not-rendered miss road reached from markjump, replyjump and cmtjump: the build's re-query finds no row (the arm stays for the next pass, a landmiss row is filed), nothing is written, and the build's take is given back (the maintainer's round 3 ruling B: until then it stood, a take-then-no-write road the body disclosed); called after a taker of its own, the build finds nothing parked and gives nothing back", () => {
   // the build renders the window around the unit but no row answers to the uuid (a member the fold hides, a row minted under another key)
   const miss = world({ resident: [U(1), U(2)], events, rendersOnBuild: false });
   assert.equal(miss.jump(U(4)), false);
@@ -135,18 +135,21 @@ test("the miss roads reached from markjump, replyjump and cmtjump: the build's r
   assert.deepEqual(miss.calls.filter((c) => c[0] === "take" || c[0] === "untakeMeasure").map((c) => c[0]), ["take", "untakeMeasure"], "the build took, the re-query missed, the take was given back");
   assert.deepEqual(miss.state().landTrail, ["pointer-not-rendered"]); assert.equal(miss.state().pendingAnchor, U(4), "armed for the next pass");
   assert.deepEqual(miss.rows.map((r) => r[0]), ["landmiss"], "the miss files the state it saw");
-  // a prompt-intent link whose anchor resolves to an assistant row
-  const kind = world({ resident: [U(1), U(2)], events, rendersOnBuild: true, intent: "user" });
-  assert.equal(kind.jump(U(4)), false);
-  assert.deepEqual(builds(kind), [["renderWindowItems", 0, 4, true]], "the build took");
-  assert.deepEqual(lands(kind), []); assert.deepEqual(kind.writes, []);
-  assert.equal(kind.parked(), true, "the wrong kind: the figures wait (the property first)"); assert.deepEqual(kind.calls.filter((c) => c[0] === "take" || c[0] === "untakeMeasure").map((c) => c[0]), ["take", "untakeMeasure"], "the wrong kind: the take given back too");
-  assert.deepEqual(kind.state().landTrail, ["pointer-wrong-kind"]); assert.equal(kind.state().pendingAnchor, null, "the arm is dropped"); assert.equal(kind.state().pendingAnchorIntent, null);
   // called after a taker of its own (landActive's or keepPlaceAcrossWindow's attempt): nothing parked when the build runs, nothing given back
   const after = world({ resident: [U(1), U(2)], events, rendersOnBuild: false, parked: false });
   assert.equal(after.jump(U(4)), false);
   assert.deepEqual(after.calls.filter((c) => c[0] === "take").length, 0, "nothing parked: the build took nothing");
   assert.equal(after.parked(), false, "…and the untake gives nothing back (the caller's own take stands for the caller's restore to cover)");
+});
+
+test("the pointer-wrong-kind miss road: a prompt-intent link whose anchor resolves to an assistant row drops the arm, writes nothing and gives the build's take back, while a prompt-intent link onto a user row lands (its own test since the closing pass over the author's fixer pass, so its red at the head the maintainer's round 3 ruled on is observed apart from the not-rendered road's: node's assert ends a test at its first failing assertion, and in one test this road's assertions never ran at that head)", () => {
+  // a prompt-intent link whose anchor resolves to an assistant row
+  const kind = world({ resident: [U(1), U(2)], events, rendersOnBuild: true, intent: "user" });
+  assert.equal(kind.jump(U(4)), false);
+  assert.deepEqual(builds(kind), [["renderWindowItems", 0, 4, true]], "the build took");
+  assert.deepEqual(lands(kind), []); assert.deepEqual(kind.writes, []);
+  assert.equal(kind.parked(), true, "the wrong kind: the figures wait (the property first; at the head the maintainer's round 3 ruled on the take stood here too)"); assert.deepEqual(kind.calls.filter((c) => c[0] === "take" || c[0] === "untakeMeasure").map((c) => c[0]), ["take", "untakeMeasure"], "the wrong kind: the take given back too");
+  assert.deepEqual(kind.state().landTrail, ["pointer-wrong-kind"]); assert.equal(kind.state().pendingAnchor, null, "the arm is dropped"); assert.equal(kind.state().pendingAnchorIntent, null);
   // …and a prompt-intent link onto a user row lands
   const ok = world({ resident: [U(1), U(2)], events, rendersOnBuild: true, intent: "user" });
   assert.equal(ok.jump(U(3)), true);
