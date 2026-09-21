@@ -109,7 +109,8 @@ ROOT = os.path.dirname(HERE)
 # the rulings the maintainer had filed on PR 857 when pass 11 began (the maintainer's rounds 1 to 6), derived 2026-09-21; the
 # author raises it in the change that first credits a new round, and nothing outside the tree widens it
 MAINTAINER_ROUNDS = frozenset({1, 2, 3, 4, 5, 6})
-# how the PR body spells the author's own work, named in the helper's refusal of an uncredited round
+# how the PR body spells the author's own work, named in the helper's refusal of a misattributed round or pass so the writer knows
+# what to write
 AUTHOR_FORM = "the author's \"pass P\", \"pass P's fixer pass\" or \"the pass-P head\""
 FAMILY_GLOB = "test_federated_linkdrop*.py"   # the sibling pin's spelling, held equal to it by test_the_population_is_the_trees_and_the_sibling_pins
 ENTRY = "upstream/2026-09-19-tests-federated-linkdrop-served.md"
@@ -542,11 +543,14 @@ class RoundLabels(unittest.TestCase):
         self.assertIn(os.path.relpath(os.path.realpath(__file__), ROOT), _family_modules(HERE, ROOT))
 
     def test_no_mention_credits_a_round_the_maintainer_never_held(self):
-        """THE CALL. Every numbered round of the family is, by the shared rule, a credit in the maintainer's form to a round in
-        MAINTAINER_ROUNDS, and every form is classifiable; every numbered form the family uses is a class the rule's pin holds
-        probes for (a spelling outside that enumeration is a refusal, not a silent read). The guard against a vacuous census
-        counts the MODULES' mentions, not the entry's (the entry carries one credit, which is what satisfied the guard over an
-        empty module population before family() refused it). Each file's text is the COMMITTED one, _show at HEAD."""
+        """THE CALL. Every numbered round of the family is, by the shared rule, credited to the reviewer (by the qualifier before it,
+        "the maintainer's round N" in this family, or by the rule's stated default for an unqualified one) at a round in
+        MAINTAINER_ROUNDS; no round is credited to the author, no numbered pass to the reviewer or the maintainer (the rule keys
+        on misattribution: the reviewer's close-4 ruling of 2026-09-21); and every form is classifiable; every numbered form the
+        family uses is a class the rule's pin holds probes for (a spelling outside that enumeration is a refusal, not a silent
+        read). The guard against a vacuous census counts the MODULES' mentions, not the entry's (the entry carries one credit,
+        which is what satisfied the guard over an empty module population before family() refused it). Each file's text is the
+        COMMITTED one, _show at HEAD."""
         files, how = family()
         bad, seen, counted, outside = [], 0, {}, {}
         for rel in files:
@@ -560,9 +564,9 @@ class RoundLabels(unittest.TestCase):
                     outside.setdefault(tests.review_round_labels_rule.form_class(spelled), []).append("%s:%d %r" % (rel, line, spelled))
         self.assertGreater(seen, 0, "the census read no numbered round in any module over %s: the pattern or the population is broken (%r)" % (how, counted))
         self.assertEqual(outside, {}, "a numbered spelling the rule's form space does not enumerate (add its class to the helper's FORM_CLASSES with its probes): %r" % (outside,))
-        self.assertEqual(bad, [], "a numbered round that is not a ruled maintainer round (the maintainer's rounds %s, from MAINTAINER_ROUNDS; the population from %s); write "
-                                  "the author's pass (\"pass P\", \"pass P's fixer pass\", \"the pass-P head\") or \"the maintainer's round N\" for a round a ruling exists "
-                                  "for, and raise MAINTAINER_ROUNDS in the change that first credits a new ruling:\n%s"
+        self.assertEqual(bad, [], "a misattributed round or pass, or a form the rule cannot classify (the maintainer's rounds %s, from MAINTAINER_ROUNDS; the population "
+                                  "from %s); write the author's pass (\"pass P\", \"pass P's fixer pass\", \"the pass-P head\") for the author's own work or \"the "
+                                  "maintainer's round N\" for a round a ruling exists for, and raise MAINTAINER_ROUNDS in the change that first credits a new ruling:\n%s"
                                   % (", ".join(str(x) for x in sorted(MAINTAINER_ROUNDS)), how, "\n".join(bad)))
 
 
