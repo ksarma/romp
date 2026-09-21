@@ -8589,10 +8589,13 @@ bypassed: no request reaches a host the gate still holds. The build's record her
 the contract said the same; the claim was false, and the follow-on is a privacy surface, landing on the owner's word
 (open point 11). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui/webview, docs, plans, tools,
-upstream or tests alone (43 files, the ledger entry's where line; run 2026-09-21 at the head that carries the fixes for the
-file review's round 8, where the merge-base is 5e5ee79ed, the fork's main merged into the branch
-before landing, and the listing is the branch's whole delta over it; the run at 7f8684caf, the head that round took, one
-commit after that merge, listed 42 from the same merge-base, before ui/webview/file-view-place-blocks.test.ts joined the
+upstream or tests alone (45 files, the ledger entry's where line; run 2026-09-21 at the head that carries the fixes for the
+file review's round 10, where the merge-base is the fork's main the branch merged before the file review's round 9, the
+second parent of 41cda474e, and the listing is the branch's whole delta over it; the run at the head that carries the
+fixes for the file review's round 8, where the merge-base was 5e5ee79ed, the fork's main merged into the branch before
+landing, listed 43, before tools/css-rules.mjs and tools/css-rules.d.mts, the rule reader the closed set over the
+control's sheet rules stands on, joined the delta in the fixes for the file review's round 10; the run at 7f8684caf, the
+head the file review's round 8 took, one commit after the merge of 5e5ee79ed, listed 42 from that merge-base, before ui/webview/file-view-place-blocks.test.ts joined the
 delta in the round's fixes; the run at the head before that merge listed the same 42 from 01434a45b, the fork's main
 the branch had merged for the file review's round 5; the run at the head after that earlier merge, for the file review's
 round 5, listed 40, before the landing round's executed test re-aimed two more standing suites; the two earlier runs, at
