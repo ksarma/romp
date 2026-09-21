@@ -8574,7 +8574,7 @@ the contract said the same; the claim was false, and the follow-on is a privacy 
 (open point 11). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui/webview, docs, plans, tools,
 upstream or tests alone (42 files, the ledger entry's where line; run 2026-09-21 at the head that carries the file
-review's landing round's fixes, where the merge-base is the fork's main the branch last merged and the listing is the
+review's landing round's fixes, where the merge-base is the fork's main the branch had merged for the file review's round 5 and the listing is the
 branch's whole delta over it; the run at the head after that merge, for the file review's round 5, listed 40, before the
 landing round's executed test re-aimed two more standing suites; the two earlier runs, at the commit that built the one
 reader for the file review's round 4 and at the head
