@@ -258,21 +258,87 @@ def _call_name(call):
     return f.attr if isinstance(f, ast.Attribute) else f.id if isinstance(f, ast.Name) else None
 
 
-def _assignments(tree):
-    """Every `name = value`, `self.name = value` (annotated or augmented too) in the module, keyed by
-    the target's source text — one scope, since a test module's names are few."""
+def _bind(out, target, value):
+    """Record `target = value`: a name or attribute by its source text; a tuple or list target element by element when
+    the value is a tuple or list of the same length (a loop over rows binds each column). A value that is the target's
+    own name (`f(x)` passing `x` to a parameter named `x`) is not a binding, so a follow never cycles on it."""
+    if isinstance(target, (ast.Name, ast.Attribute)):
+        key = ast.unparse(target)
+        if ast.unparse(value) != key:
+            out.setdefault(key, []).append(value)
+    elif isinstance(target, (ast.Tuple, ast.List)) and isinstance(value, (ast.Tuple, ast.List)) \
+            and len(target.elts) == len(value.elts):
+        for t, v in zip(target.elts, value.elts):
+            _bind(out, t, v)
+
+
+def _assignments(tree, scope=None):
+    """Every value a name can hold, keyed by the target's source text (`name`, `self.name`): `name = value` (annotated
+    or augmented too); a `for name in (<literal>, ...)` loop's target, bound to each element (a tuple target over rows,
+    column by column); and a function's parameters, bound to what every call site in the MODULE passes for them (by
+    position, `self`/`cls` skipped; by keyword) and to their defaults, so a value that reaches a write through a
+    helper's argument is still read (2026-09-21). One scope per call: the module's when `scope` is None (a test
+    module's names are few), else the statements of that function only — hosts_on_labs resolves a write site in its
+    enclosing function first and falls back to the module (_Scope), since a 13,000-line module binds `root` to a
+    hundred things and only the enclosing function's binding is the write's. A `with open(...) as fh` handle is NOT
+    recorded here: it is scoped to its statement by _session_hosts_writes, since a module reuses `fh` for every file
+    it writes."""
     out = {}
+    calls = collections.defaultdict(list)
     for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and _call_name(node):
+            calls[_call_name(node)].append(node)
+    for node in ast.walk(scope if scope is not None else tree):
         if isinstance(node, ast.Assign):
-            targets, value = node.targets, node.value
+            for t in node.targets:
+                _bind(out, t, node.value)
         elif isinstance(node, (ast.AnnAssign, ast.AugAssign)) and node.value is not None:
-            targets, value = [node.target], node.value
-        else:
-            continue
-        for t in targets:
-            if isinstance(t, (ast.Name, ast.Attribute)):
-                out.setdefault(ast.unparse(t), []).append(value)
+            _bind(out, node.target, node.value)
+        elif isinstance(node, ast.For) and isinstance(node.iter, (ast.Tuple, ast.List)):
+            for elt in node.iter.elts:
+                _bind(out, node.target, elt)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            params = [a for a in node.args.posonlyargs + node.args.args]
+            if params and params[0].arg in ("self", "cls"):
+                params = params[1:]
+            defaults = node.args.defaults
+            for a, d in zip(params[len(params) - len(defaults):], defaults):
+                _bind(out, ast.Name(a.arg), d)
+            for a, d in zip(node.args.kwonlyargs, node.args.kw_defaults):
+                if d is not None:
+                    _bind(out, ast.Name(a.arg), d)
+            for call in calls.get(node.name, ()):
+                for a, v in zip(params, call.args):
+                    if isinstance(v, ast.Starred):
+                        break
+                    _bind(out, ast.Name(a.arg), v)
+                names = {a.arg for a in params + node.args.kwonlyargs}
+                for kw in call.keywords:
+                    if kw.arg in names:
+                        _bind(out, ast.Name(kw.arg), kw.value)
     return out
+
+
+class _Scope:
+    """A function's bindings first, the module's for a name the function never binds (`self.lab` set in setUp, a
+    module-level root): the one method the readers use, `.get(key, default)`."""
+
+    def __init__(self, local, module):
+        self.local, self.module = local, module
+
+    def get(self, key, default=()):
+        return self.local.get(key) or self.module.get(key, default)
+
+
+def _owners(tree):
+    """{node: the innermost function it sits in} for every node of the module (module-level nodes are absent). ast.walk
+    is breadth-first, so an inner function's pass overwrites the outer's for the nodes it holds."""
+    owner = {}
+    for f in ast.walk(tree):
+        if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for sub in ast.walk(f):
+                owner[sub] = f
+    return owner
 
 
 def _pinned(node, assigned, depth=3):
@@ -836,8 +902,10 @@ class BareRunLeavesNothing(unittest.TestCase):
 # the sweep's 17-byte TMPDIR: one more byte failed every session-host test under -n and passed it alone,
 # and 76 sweep logs read that as a flake. Nothing here is typed from that story: the level is measured on
 # roots the harness mints (a controller-shaped and a worker-shaped process, by execution), the lab shapes
-# are read from the tests' own text (every write of "on" into a `session-hosts` file, its state-root
-# expression followed through the module's assignments to the mkdtemp that made it), the socket tail
+# are read from the tests' own text (every write into a `session-hosts` file whose value is not the literal
+# off — a loop variable, a helper's argument and a with-open handle read through their bindings, a value
+# the reader cannot read listed by site and counted — its state-root expression followed through the
+# enclosing function's assignments, then the module's, to the mkdtemp that made it), the socket tail
 # comes from the kernel's own host_sock and sock_names, and the budget is the kernel's constant. The
 # canonical TMPDIR is the box rule's input, `mktemp -d /tmp/sweep-XXXXXX`, 17 bytes, and stated as such.
 Lab = collections.namedtuple("Lab", "bytes file line prefix comps note")
@@ -906,57 +974,128 @@ def _lab_shapes(expr, assigned, depth=4):
     return []
 
 
-def _hosts_on_state_root(call):
-    """(state expression, trailing literal components) when `call` writes "on" into a `session-hosts` file —
-    Path(<state>, ..., "session-hosts").write_text("on" ...), open(os.path.join(<state>, "session-hosts"), "w")
-    .write("on"), (Path(<state>) / "session-hosts").write_text(...) — else None. "on" may sit in a conditional
-    ("on" if hosts_on else "off"): any literal "on" in the written value counts."""
-    f = call.func
-    if not (isinstance(f, ast.Attribute) and f.attr in ("write_text", "write") and call.args):
+def _session_hosts_path(expr, assigned, depth=3):
+    """[(state expression, trailing literal components)] for every `session-hosts` file `expr` can name:
+    Path(<state>, ..., "session-hosts") or os.path.join(...) with literal middle components, `<state> / "session-hosts"`,
+    open(<one of those>, ...), Path(<name>), and a name or attribute bound to one of those (followed through the module's
+    assignments: `toggle = os.path.join(root, "session-hosts")` then `open(toggle, "w")`). [] when `expr` names no such
+    file. The LAST component decides: this reads paths, not values."""
+    if isinstance(expr, ast.Call) and expr.args:
+        name = _call_name(expr)
+        if name in ("Path", "join", "str", "fspath", "realpath", "abspath", "open"):
+            if len(expr.args) >= 2 and name != "open":
+                last, mid = expr.args[-1], expr.args[1:-1]
+                if (isinstance(last, ast.Constant) and last.value == "session-hosts"
+                        and all(isinstance(a, ast.Constant) and isinstance(a.value, str) for a in mid)):
+                    return [(expr.args[0], tuple(a.value for a in mid))]
+                return []
+            return _session_hosts_path(expr.args[0], assigned, depth)
+        return []
+    if (isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Div) and isinstance(expr.right, ast.Constant)
+            and expr.right.value == "session-hosts"):
+        return [(expr.left, ())]
+    if isinstance(expr, (ast.Name, ast.Attribute)) and depth:
+        out = []
+        for v in assigned.get(ast.unparse(expr), ()):
+            out += _session_hosts_path(v, assigned, depth - 1)
+        return out
+    return []
+
+
+def _written_word(expr, assigned, seen=()):
+    """What a session-hosts write puts in the file, read from its value expression: "off" for the literal off (case and
+    surrounding whitespace aside, str or bytes), "on" for ANY other literal — the kernel reads the on words and a blank
+    file as on and a stray word as off (kernel/host_transport.py session_hosts_read), but the derivation counts every
+    write that is not the literal off as a lab that may bind a socket, which is the conservative side; a conditional
+    (`"on" if x else "off"`) or a name bound to literals (an assignment, a loop over a literal tuple, a call site's
+    argument, a default) by the set of them, any "on" among them making it "on"; None when no literal can be read (a
+    call, a formatted string, a name never bound to a literal). None is the LOUD answer: hosts_on_labs lists the site."""
+    if isinstance(expr, ast.Constant):
+        if isinstance(expr.value, bytes):
+            return "off" if expr.value.strip().lower() == b"off" else "on"
+        if isinstance(expr.value, str):
+            return "off" if expr.value.strip().lower() == "off" else "on"
         return None
-    if not any(isinstance(n, ast.Constant) and isinstance(n.value, str) and n.value.strip() == "on"
-               for n in ast.walk(call.args[0])):
+    if isinstance(expr, ast.IfExp):
+        words = [_written_word(expr.body, assigned, seen), _written_word(expr.orelse, assigned, seen)]
+    elif isinstance(expr, (ast.Name, ast.Attribute)):
+        key = ast.unparse(expr)
+        if key in seen:
+            return None
+        words = [_written_word(v, assigned, seen + (key,)) for v in assigned.get(key, ())]
+    else:
         return None
-    recv = f.value
-    if isinstance(recv, ast.Call) and _call_name(recv) == "open" and recv.args:
-        recv = recv.args[0]
-    if isinstance(recv, ast.Call) and _call_name(recv) in ("Path", "join") and len(recv.args) >= 2:
-        last, mid = recv.args[-1], recv.args[1:-1]
-        if (isinstance(last, ast.Constant) and last.value == "session-hosts"
-                and all(isinstance(a, ast.Constant) and isinstance(a.value, str) for a in mid)):
-            return recv.args[0], tuple(a.value for a in mid)
-    if (isinstance(recv, ast.BinOp) and isinstance(recv.op, ast.Div) and isinstance(recv.right, ast.Constant)
-            and recv.right.value == "session-hosts"):
-        return recv.left, ()
-    return None
+    if not words or None in words:
+        return None
+    return "on" if "on" in words else "off"
+
+
+def _session_hosts_writes(tree, scope_of):
+    """(call, [(state expression, components)], value expression, scope) for every write into a `session-hosts` file the
+    module makes: `<path>.write_text(v)`, `<path>.write_bytes(v)`, `open(<path>, ...).write(v)`, `<name>.write(v)` for a
+    name assigned an open(<path>), and `fh.write(v)` inside a `with open(<path>, ...) as fh` (the handle scoped to that
+    statement's body, since a module reuses one handle name for every file it writes). `scope_of(node)` gives the
+    bindings a path or value at that node resolves through (its enclosing function's first)."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.With):
+            for item in node.items:
+                if (isinstance(item.optional_vars, ast.Name) and isinstance(item.context_expr, ast.Call)
+                        and _call_name(item.context_expr) == "open" and item.context_expr.args):
+                    assigned = scope_of(node)
+                    hits = _session_hosts_path(item.context_expr.args[0], assigned)
+                    if not hits:
+                        continue
+                    for sub in ast.walk(node):
+                        if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute) and sub.func.attr == "write"
+                                and isinstance(sub.func.value, ast.Name) and sub.func.value.id == item.optional_vars.id
+                                and sub.args):
+                            yield sub, hits, sub.args[0], assigned
+        elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr in ("write_text", "write_bytes", "write") and node.args):
+            assigned = scope_of(node)
+            hits = _session_hosts_path(node.func.value, assigned)
+            if hits:
+                yield node, hits, node.args[0], assigned
 
 
 def hosts_on_labs(sources, tail):
-    """(labs, unresolved): one Lab per shape of state root a test turns hosts ON in, read from `sources`
-    ([(label, text)]): bytes below the process temp root = `/` + prefix + mkdtemp's tail + each `/component`.
-    `unresolved` lists the hosts-on sites whose state root the reader could not follow to a mkdtemp (a hole in
-    the bound, for the caller to refuse)."""
-    labs, unresolved = [], []
+    """(labs, unresolved, opaque): one Lab per shape of state root a test turns hosts ON in, read from `sources`
+    ([(label, text)]): bytes below the process temp root = `/` + prefix + mkdtemp's tail + each `/component`. EVERY
+    write into a `session-hosts` file counts as hosts-on unless its value reads as the literal off (2026-09-21; until
+    then only a literal "on" counted, and a value the reader could not see — a loop variable, a helper's argument, a
+    handle — silently dropped its lab from the bound). `unresolved` lists the hosts-on sites whose state root the reader
+    could not follow to a mkdtemp; `opaque` lists the writes whose VALUE it could not read (their labs are counted all
+    the same, as hosts-on). Both are holes in the bound, for the caller to refuse by name."""
+    labs, unresolved, opaque = [], [], []
     for label, text in sources:
         if "session-hosts" not in text:
             continue
         tree = ast.parse(text)
-        assigned = _assignments(tree)
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
+        module_wide, owner, locals_of = _assignments(tree), _owners(tree), {}
+
+        def scope_of(node):
+            func = owner.get(node)
+            if func is not None and func not in locals_of:
+                locals_of[func] = _assignments(tree, func)
+            return _Scope(locals_of.get(func, {}), module_wide)
+        for node, hits, value, assigned in _session_hosts_writes(tree, scope_of):
+            word = _written_word(value, assigned)
+            if word == "off":
                 continue
-            hit = _hosts_on_state_root(node)
-            if hit is None:
-                continue
-            expr, comps = hit
-            shapes = [(p, c + comps, n) for p, c, n in _lab_shapes(expr, assigned)]
-            if not shapes or any(p is None for p, _, _ in shapes):
-                unresolved.append("%s:%d: %s" % (label, node.lineno, ast.unparse(expr)))
-                continue
-            for prefix, cs, note in shapes:
-                below = 1 + len(os.fsencode(prefix)) + tail + sum(1 + len(os.fsencode(c)) for c in cs)
-                labs.append(Lab(below, label, node.lineno, prefix, cs, note))
-    return labs, unresolved
+            if word is None:
+                opaque.append("%s:%d: %s" % (label, node.lineno, ast.unparse(value)))
+            for expr, comps in hits:
+                shapes = _lab_shapes(expr, assigned)              # the enclosing function's bindings first...
+                if not shapes:
+                    shapes = _lab_shapes(expr, assigned.module)   # ...then the module's, for a root a caller handed in
+                shapes = [(p, c + comps, n) for p, c, n in shapes]
+                if not shapes or any(p is None for p, _, _ in shapes):
+                    unresolved.append("%s:%d: %s" % (label, node.lineno, ast.unparse(expr)))
+                    continue
+                for prefix, cs, note in dict.fromkeys(shapes):
+                    below = 1 + len(os.fsencode(prefix)) + tail + sum(1 + len(os.fsencode(c)) for c in cs)
+                    labs.append(Lab(below, label, node.lineno, prefix, cs, note))
+    return labs, unresolved, opaque
 
 
 def longest_prefix(sources):
@@ -1129,11 +1268,15 @@ class HarnessSocketBudget(unittest.TestCase):
         self.assertEqual(own.bytes, harness.bytes)
         # The labs' share, read from the tests' text: every state root a test turns hosts on in, and the deepest wins.
         sources = tree_sources()
-        labs, unresolved = hosts_on_labs(sources, tail)
+        labs, unresolved, opaque = hosts_on_labs(sources, tail)
+        self.assertEqual(opaque, [], "a session-hosts write whose VALUE the reader cannot read is counted as hosts-on but is "
+                         "a hole in the reader: at each site write the literal (\"on\" or \"off\"), or bind the name to "
+                         "literals it can follow (an assignment, a loop over a literal tuple, a call site passing a "
+                         "literal, a default), or extend _written_word")
         self.assertEqual(unresolved, [], "a hosts-on state root the reader cannot follow to its mkdtemp is a hole in the "
                          "bound: mint it with a literal prefix (or none) and a literal suffix, or extend _lab_shapes")
-        self.assertTrue(labs, "no test turns hosts on? the reader found no session-hosts write of \"on\"")
-        lab = max(labs)
+        self.assertTrue(labs, "no test turns hosts on? the reader found no session-hosts write other than the literal off")
+        lab = max(labs, key=lambda l: l.bytes)
         print("\nHarnessSocketBudget: deepest hosts-on lab %s:%d (%r + %r, %d bytes below the root); harness %d bytes x %d level; "
               "socket tail %d; SOCK_PATH_MAX %d" % (lab.file, lab.line, lab.prefix, "/".join(lab.comps), lab.bytes, harness.bytes,
                                                      harness.levels, sock, budget), file=sys.stderr)
@@ -1187,9 +1330,9 @@ class HarnessSocketBudget(unittest.TestCase):
                 def run(self):
                     Path(self.state, "session-hosts").write_text("on" if True else "off")
         ''')
-        labs, unresolved = hosts_on_labs([("t.py", planted)], tail)
-        self.assertEqual(unresolved, [])
-        lab = max(labs)
+        labs, unresolved, opaque = hosts_on_labs([("t.py", planted)], tail)
+        self.assertEqual((unresolved, opaque), ([], []))
+        lab = max(labs, key=lambda l: l.bytes)
         self.assertEqual((lab.prefix, lab.comps, lab.bytes), ("host-served-", ("xdg", "romp"), 1 + 12 + tail + 9))
         total, margin = assert_socket_fits(self, "planted control", canonical, flat, lab, sock, budget, min_margin=level)
         self.assertGreaterEqual(margin, level)
@@ -1200,8 +1343,8 @@ class HarnessSocketBudget(unittest.TestCase):
         self.assertIn("the margin is %d" % (budget - (total + level)), str(cm.exception))
         # A longer prefix, read by the same reader: over the budget outright.
         longer = planted.replace('prefix="host-served-"', 'prefix="host-served-%s-"' % ("x" * (margin + 1 - level)))
-        labs2, _ = hosts_on_labs([("t.py", longer)], tail)
-        lab2 = max(labs2)
+        labs2, _, _ = hosts_on_labs([("t.py", longer)], tail)
+        lab2 = max(labs2, key=lambda l: l.bytes)
         self.assertEqual(lab2.bytes, lab.bytes + margin + 1 - level + 1)
         with self.assertRaises(AssertionError) as cm:
             assert_socket_fits(self, "planted prefix", canonical, flat, lab2, sock, budget, min_margin=level)
@@ -1209,10 +1352,103 @@ class HarnessSocketBudget(unittest.TestCase):
         with self.assertRaises(AssertionError):
             assert_socket_fits(self, "planted prefix, no margin asked", canonical + level, flat, lab2, sock, budget)
         # The reader itself: a hosts-on site whose root it cannot follow is reported, not dropped.
-        opaque = planted.replace('self.lab = tempfile.mkdtemp(prefix="host-served-")', "self.lab = make_lab()")
-        labs3, unresolved3 = hosts_on_labs([("t.py", opaque)], tail)
-        self.assertEqual(labs3, [])
+        unfollowable = planted.replace('self.lab = tempfile.mkdtemp(prefix="host-served-")', "self.lab = make_lab()")
+        labs3, unresolved3, opaque3 = hosts_on_labs([("t.py", unfollowable)], tail)
+        self.assertEqual((labs3, opaque3), ([], []))
         self.assertEqual(unresolved3, ["t.py:8: self.state"])
+
+    def test_the_reader_counts_every_write_that_is_not_the_literal_off_and_names_a_value_it_cannot_read(self):
+        """The reader's classification on planted sources (2026-09-21; until then only a literal "on" counted, and a value
+        it could not see dropped its lab from the bound in silence). Counted as hosts-on: a literal that is not off (an
+        on word, a stray word, a blank), a conditional with an on arm, a loop variable over literals with an on word, a
+        helper's parameter that some call site passes an on word, write_bytes, a with-open handle, a receiver bound to a
+        name, an unreadable value (listed in `opaque` too, by site). Not counted: the literal off in any case or padding,
+        str or bytes, through every one of those roads. The enclosing function's binding of a root wins over the module's
+        other bindings of the same name, and a root a caller hands in is followed through the module's."""
+        tail = _tmp_name_tail_bytes()
+        src = textwrap.dedent('''\
+            import os, tempfile
+            from pathlib import Path
+            OFF = "off"
+            def helper(state, word):
+                Path(state, "session-hosts").write_text(word)                       # a parameter, from the call sites
+            class T:
+                def setUp(self):
+                    self.lab = tempfile.mkdtemp(prefix="ab-")
+                    self.state = os.path.join(self.lab, "xdg")
+                def on_words(self):
+                    d = tempfile.mkdtemp(prefix="loop-")
+                    for word in ("on", "1", "true", "yes", "On\\n"):
+                        Path(d, "session-hosts").write_text(word)                   # a loop over on words
+                    for blank in ("", "  \\n\\t"):
+                        Path(d, "session-hosts").write_text(blank)                  # blank reads as on
+                    Path(d, "session-hosts").write_text("maybe")                    # a stray word: not the literal off
+                    Path(d, "session-hosts").write_bytes(b"ON")                     # bytes
+                def off_words(self):
+                    e = tempfile.mkdtemp(prefix="quiet-")
+                    for word in ("off", "OFF", " Off\\n"):
+                        Path(e, "session-hosts").write_text(word)                   # off in any case or padding
+                    Path(e, "session-hosts").write_bytes(b"off\\n")                 # off bytes
+                    Path(e, "session-hosts").write_text(OFF)                        # a name bound to off only
+                    with open(os.path.join(e, "session-hosts"), "w") as fh:
+                        fh.write("off\\n")                                          # a handle
+                    toggle = os.path.join(e, "session-hosts")
+                    with open(toggle, "w") as fh:
+                        fh.write("off")                                             # a receiver bound to a name
+                    with open(os.path.join(e, "notes"), "w") as fh:
+                        fh.write(os.environ["NOT_A_TOGGLE"])                        # another file's handle: not a write here
+                def handles(self):
+                    f = tempfile.mkdtemp(prefix="handle-")
+                    with open(os.path.join(f, "session-hosts"), "w") as fh:
+                        fh.write("on")                                              # a handle writing on
+                    toggle = os.path.join(f, "session-hosts")
+                    open(toggle, "w").write("on" if self.x else "off")              # a receiver bound to a name, a conditional
+                    helper(f, "on")
+                    helper(f, "off")
+                def unreadable(self):
+                    g = tempfile.mkdtemp(prefix="unread-")
+                    Path(g, "session-hosts").write_text(os.environ["WORD"])         # opaque, counted all the same
+                def own_root(self):
+                    lab = tempfile.mkdtemp(prefix="own-")                          # the enclosing function's `lab`, not setUp's
+                    Path(lab, "session-hosts").write_text("on")                     # own_root_write
+        ''')
+        line = lambda marker: next(i for i, l in enumerate(src.splitlines(), 1) if marker in l)
+        labs, unresolved, opaque = hosts_on_labs([("t.py", src)], tail)
+        self.assertEqual(unresolved, [])
+        self.assertEqual(opaque, ["t.py:%d: os.environ['WORD']" % line("opaque, counted")],
+                         "the unreadable value is named by site, with its expression")
+        by_line = collections.defaultdict(set)
+        for lab in labs:
+            by_line[lab.line].add((lab.prefix, lab.comps))
+        counted = ["a parameter, from the call sites", "a loop over on words", "blank reads as on", "a stray word",
+                   "bytes", "a handle writing on", "a conditional", "opaque, counted", "own_root_write"]
+        self.assertEqual(sorted(by_line), sorted(line(m) for m in counted), "every non-off write and only those")
+        self.assertEqual(by_line[line("a parameter, from the call sites")], {("handle-", ())},
+                         "a parameter: the call sites' roots, one on word among them")
+        self.assertEqual(by_line[line("a loop over on words")], {("loop-", ())})
+        self.assertEqual(by_line[line("a handle writing on")], {("handle-", ())})
+        self.assertEqual(by_line[line("a conditional")], {("handle-", ())})
+        self.assertEqual(by_line[line("opaque, counted")], {("unread-", ())})
+        self.assertEqual(by_line[line("own_root_write")], {("own-", ())}, "the enclosing function's binding, not setUp's `self.lab`")
+        self.assertEqual({lab.bytes for lab in labs if lab.line == line("opaque, counted")}, {1 + len("unread-") + tail})
+        # A parameter no call site passes an on word to reads as off, and a root handed in is followed to the caller's mint.
+        quiet = src.replace('helper(f, "on")', 'helper(f, "off")')
+        labs_q, unresolved_q, opaque_q = hosts_on_labs([("t.py", quiet)], tail)
+        self.assertEqual((unresolved_q, opaque_q), ([], opaque), "the same opaque site; nothing else changed")
+        self.assertNotIn(line("a parameter, from the call sites"), {lab.line for lab in labs_q})
+        # A helper whose root comes from a caller's variable: the module's bindings of that name give the shape.
+        handed = textwrap.dedent('''\
+            import tempfile
+            from pathlib import Path
+            def turn_on(state):
+                Path(state, "session-hosts").write_text("on")
+            def caller():
+                state = tempfile.mkdtemp(prefix="caller-")
+                turn_on(state)
+        ''')
+        labs_h, unresolved_h, opaque_h = hosts_on_labs([("h.py", handed)], tail)
+        self.assertEqual((unresolved_h, opaque_h), ([], []))
+        self.assertEqual([(lab.prefix, lab.line) for lab in labs_h], [("caller-", 4)])
 
 
 if __name__ == "__main__":
