@@ -82,6 +82,9 @@ const TEST_STEP = 'Test';
 const JOB = 'vscode-extension';
 const SWITCH = 'ROMP_BROWSER_LEGS_REQUIRE';
 const RUN_LINE = 'bash scripts/ci-browser-legs.sh';
+/** The phrase an engine reason carries (the census module exports the same as ENGINE_PHRASE and the census test reads it there;
+ *  this module runs without node_modules and reads the parse-free half, so it spells the phrase for its own message). */
+const ENGINE_PHRASE = 'the gating job installs Chromium only';
 const read = (p) => fs.readFileSync(p, 'utf8');
 
 // ── ci.yml by lines (no YAML library: the shell job installs nothing) ──────────────────────────────────
@@ -283,7 +286,7 @@ test('both files are well formed: each line is a bundle path naming a source in 
     assert.ok(!e.reason.includes(String.fromCharCode(0x2014)), where(EXCLUDED, e) + ': no em dash');
     // the parse-free half of the engine rule: a reason that names an engine says why the gating job cannot run the leg;
     // that the source reaches that engine, and only that one, is read from the tree by the census test
-    if (/Firefox|WebKit/.test(e.reason)) assert.ok(e.reason.includes('the gating job installs Chromium only'), where(EXCLUDED, e) + ': an engine reason says why the gating job cannot run the leg; ' + CENSUS_HOME);
+    if (/Firefox|WebKit/.test(e.reason)) assert.ok(e.reason.includes(ENGINE_PHRASE), where(EXCLUDED, e) + ': an engine reason carries the phrase ' + JSON.stringify(ENGINE_PHRASE) + ', why the gating job cannot run the leg; the reason reads: ' + e.reason + '; ' + CENSUS_HOME);
   }
   const rostered = new Set(roster.map((e) => e.bundle));
   for (const e of excluded) assert.ok(!rostered.has(e.bundle), where(EXCLUDED, e) + ' is also in ' + ROSTER + ': a leg is in one file or the other, keep one');

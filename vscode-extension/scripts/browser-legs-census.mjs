@@ -466,6 +466,9 @@ export function classOf(r) {
 }
 /** The sentence an exclusions reason carries for a leg of the embedded class, and no other leg's reason does. */
 export const EMBEDDED_PHRASE = "loads playwright in a child process it drives from a string; the switch never reaches it";
+/** The phrase an exclusions reason that names an engine carries, why the gating job cannot run the leg: the reason reads
+ *  "launches <Firefox and/or WebKit>; <this phrase>". The census test holds every engine reason to it and quotes it in the red. */
+export const ENGINE_PHRASE = "the gating job installs Chromium only";
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);

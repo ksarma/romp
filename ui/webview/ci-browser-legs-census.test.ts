@@ -49,6 +49,7 @@ type Census = {
   engineNames(r: Rec): string[];
   classOf(r: Rec): string;
   EMBEDDED_PHRASE: string;
+  ENGINE_PHRASE: string;
   LEG_DIRS: string[];
 };
 const load = (): Promise<Census> => import(pathToFileURL(MODULE).href) as Promise<Census>;
@@ -79,7 +80,7 @@ function promotionOf(c: Census, r: Rec | undefined, bundle: string): string {
 
 test("the roster plus the exclusions whose source is present equals the census's legs, with no refusal; every roster line passes the roster gate and reaches Chromium alone; an exclusions reason names Firefox or WebKit, or carries the embedded-driver sentence, when and only when the source does; a pending line names a PR and stands while its source is absent, and is red with the promotion remedy once it is present", async (t) => {
   const mod = await load();
-  const { census, rosterGap, engineNames, classOf, EMBEDDED_PHRASE } = mod;
+  const { census, rosterGap, engineNames, classOf, EMBEDDED_PHRASE, ENGINE_PHRASE } = mod;
   const c = census(REPO);
   assert.deepEqual(c.refusals, [], "the census refused a form it cannot classify (file:line above each): rewrite the form, or teach scripts/browser-legs-census.mjs to read it");
   assert.ok(c.legs.length > 100, "the tree holds browser legs (the census found " + c.legs.length + "; a count near zero means the rule stopped matching, not that the legs left)");
@@ -99,7 +100,10 @@ test("the roster plus the exclusions whose source is present equals the census's
     assert.ok(e.reason !== null && e.reason.trim() !== "", EXCLUDED + " line " + e.n + ": " + JSON.stringify(line) + " has no reason: write the bundle path, a tab, and why the gating job does not run it" + (WELL_FORMED.test(namesOf(line)) ? "; it names " + namesOf(line) + ", which is judged by that line and not called missing from both files" : ""));
     assert.match(e.bundle, WELL_FORMED, EXCLUDED + " line " + e.n + ": " + JSON.stringify(line) + " is not a bundle path, a tab and a reason (a leading or trailing space, tab or carriage return counts): fix the line" + (WELL_FORMED.test(namesOf(line)) ? "; it names " + namesOf(line) + ", which is judged by that line and not called missing from both files" : ""));
   }
+  // a source that is not in the tree is named as such (the census has no record of it) and never called "no browser leg"
+  const gone = (file: string, e: { n: number; bundle: string }) => { const src = sourceOf(e.bundle); assert.ok(fs.existsSync(src), where(file, e) + " names " + path.relative(REPO, src) + ", which is not in the tree (the source moved or was deleted): fix the line"); };
   for (const e of roster) {
+    gone(ROSTER, e);
     const r = c.byBundle.get(e.bundle);
     assert.ok(r && r.reaches, where(ROSTER, e) + " names no browser leg" + (r && r.launcherImported ? ": " + rosterGap(r) : " (the source reaches no browser by the census rule): remove the line"));
     assert.equal(rosterGap(r), null, where(ROSTER, e) + " does not launch through the one shared launcher (" + rosterGap(r) + "): only inBrowser reads ROMP_BROWSER_LEGS_REQUIRE, so a launch or a skip of the leg's own stands outside the switch; launch through inBrowser (ui/webview/real-viewer-leg.ts), with no launch, skip or playwright of the leg's own, before rostering it");
@@ -113,15 +117,16 @@ test("the roster plus the exclusions whose source is present equals the census's
   }
   for (const e of excluded) {
     if (e.pending) continue;   // its source is absent (asserted above), so the census has no record of it and the reason's engine and driver words are not about a source in the tree
+    gone(EXCLUDED, e);
     const r = c.byBundle.get(e.bundle);
     assert.ok(r && r.reaches, where(EXCLUDED, e) + " names no browser leg" + (r && r.launcherImported ? ": " + rosterGap(r) : " (the source reaches no browser by the census rule): remove the line"));
-    assert.ok(e.reason !== null, where(EXCLUDED, e) + " has no tab, so it has no reason to read here: tools/ci-browser-legs.test.mjs refuses it and says how to fix it");
+    assert.ok(e.reason !== null, where(EXCLUDED, e) + " has no tab, so it has no reason to read here (refused by name above and by tools/ci-browser-legs.test.mjs)");
     const engines = engineNames(r);
     for (const eng of ["Firefox", "WebKit"]) {
       const inReason = e.reason.includes(eng), inSource = engines.includes(eng);
-      assert.equal(inReason, inSource, where(EXCLUDED, e) + ": the reason " + (inReason ? "names " : "does not name ") + eng + " and the source " + (inSource ? "reaches it" : "does not reach it") + " (engines from playwright-derived expressions, comments and strings excluded); " + (inReason ? "drop the engine from the reason, or, if the source reaches it in a form the census does not read, write the read so the census sees it" : "write \"launches " + eng + "; the gating job installs Chromium only\" in the reason") + "; the reason reads: " + e.reason);
+      assert.equal(inReason, inSource, where(EXCLUDED, e) + ": the reason " + (inReason ? "names " : "does not name ") + eng + " and the source " + (inSource ? "reaches it" : "does not reach it") + " (engines from playwright-derived expressions, comments and strings excluded); " + (inReason ? "drop the engine from the reason, or, if the source reaches it in a form the census does not read, write the read so the census sees it" : "write \"launches " + eng + "; " + ENGINE_PHRASE + "\" in the reason") + "; the reason reads: " + e.reason);
     }
-    if (engines.length) assert.ok(e.reason.includes("the gating job installs Chromium only"), where(EXCLUDED, e) + ": an engine reason says why the gating job cannot run the leg");
+    if (engines.length) assert.ok(e.reason.includes(ENGINE_PHRASE), where(EXCLUDED, e) + ": an engine reason carries the phrase " + JSON.stringify(ENGINE_PHRASE) + ", why the gating job cannot run the leg; the reason reads: " + e.reason);
     const isEmbedded = classOf(r) === "embedded";
     assert.equal(e.reason.includes(EMBEDDED_PHRASE), isEmbedded, where(EXCLUDED, e) + ": the reason " + (e.reason.includes(EMBEDDED_PHRASE) ? "carries" : "does not carry") + " the embedded-driver sentence and the leg " + (isEmbedded ? "is one (its only playwright is in a driver string it runs as a child process)" : "is not one (class " + classOf(r) + ")") + "; the sentence is " + JSON.stringify(EMBEDDED_PHRASE) + "; the reason reads: " + e.reason);
   }
