@@ -77,15 +77,18 @@ MARKER = re.compile(r"^\s*(?:#|//|/\*|\*|<!--)?\s*")               # a comment m
 # Q opens with P the joined prose reads P P and the rest of Q. So: a word run opening with "the", immediately repeated (the run up
 # to ten words, longer than the qualifier's nine; the repeat's case free, as re.I reads a backreference; a hyphenated number is a
 # word of the run), where the text from the run's first word to the clause's end names the author's or the maintainer's (the
-# lookahead, anchored at the run's first word: the attribution's possessive inside the run or after it, before the next period,
-# semicolon or colon; a possessive BEFORE the run in its clause is outside the pin by choice, since the sweep's artefact keeps the
+# lookahead, anchored at the run's first word: the attribution's possessive inside the run or after it, before the clause's end,
+# which is a semicolon, or a period or colon followed by whitespace or the text's end, so the period of a filename or an
+# abbreviation and the colon of a time inside the clause do not end it (the fixer pass over the second closing lens after the
+# maintainer's round 6, F1-3: the bound had ended the clause at any period or colon, and a filename between the run and the
+# possessive hid the attribution); a possessive BEFORE the run in its clause is outside the pin by choice, since the sweep's artefact keeps the
 # possessive inside the repeated prefix, so the clause behind the run is not read; a doubled "the" run followed in its clause by
 # neither is not an attribution and is not this pin's, and one followed by the attribution is refused with it). The bound is the
 # clause and not the run because a run can be a whole added file, where a possessive stands somewhere after almost anything (the
 # pin read its own probe literal that way, in the pass that wrote it). A list of distinct forms
 # has no adjacent equal runs and is not a repeat. Two copies that differ by a word (the author's pass after, then the author's fixer
 # pass after) are not equal runs either: that shape is the read-back's to find, not this pin's.
-DOUBLED = re.compile(r"(?=[^.;:]*?\b(?:author's|maintainer's)\b)\b(the\b(?:\s+[\w'-]+){0,9}?)\s+\1\b", re.I)
+DOUBLED = re.compile(r"(?=(?:(?![.:](?:\s|$)|;).)*?\b(?:author's|maintainer's)\b)\b(the\b(?:\s+[\w'-]+){0,9}?)\s+\1\b", re.I)
 
 # a hunk header of a unified diff: the new side's first line number (and its count, absent for one line)
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
@@ -267,6 +270,9 @@ class RoundLabels(unittest.TestCase):
         self.assertEqual(DOUBLED.findall("%s census read %s lines" % (TT, A)), ["the"], "a doubled article followed in its clause by the attribution is refused with it")
         self.assertEqual(DOUBLED.findall("%s pass reads %s census" % (A, TT)), [], "a possessive before the run is outside the pin by choice: the sweep's "
                                                                                    "artefact keeps the possessive inside the repeated prefix")
+        self.assertEqual(DOUBLED.findall("%s census in federation.ts is %s read" % (TT, A)), ["the"], "a filename's period inside the clause does not end it")
+        self.assertEqual(DOUBLED.findall("%s ruling of 03:04Z is %s" % (TT, M)), ["the"], "nor does a time's colon")
+        self.assertEqual(DOUBLED.findall("%s census read. %s lines" % (TT, A)), [], "a period followed by whitespace ends the clause, as a semicolon does")
         self.assertEqual(joined_runs([(3, "# a"), (4, "#  b"), (7, "// c"), (8, " * d")]), [(3, 4, "a b"), (7, 8, "c d")], "runs by consecutive numbers, markers stripped")
 
     def test_the_diff_reader_numbers_added_lines_in_the_new_side(self):
