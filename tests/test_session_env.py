@@ -74,9 +74,11 @@ import stat
 import sys
 import tempfile
 import threading
+import time
 import types
 import unittest
 import uuid
+import warnings
 from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 from unittest import mock
@@ -1540,27 +1542,52 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
     # so a loud plant's CensusError still raises in this process with the worker's message. Each test plants first,
     # then builds its plants in one batch, then asserts in the order it always did; a batch's results are unpickled one
     # at a time as the test reads them (`_Pending`), never all at once, so the test process holds one Census at a time
-    # and its full garbage collections walk the heap the serial class left them. Degradation, never an error: when
-    # the pool cannot start, a worker fails to import, start or answer within the bound, the pool breaks under a
-    # batch, a result does not arrive within POOL_READ_TIMEOUT of being asked for, or a census cannot cross the
-    # boundary (BrokenProcessPool, OSError including PermissionError, the pickling errors, PoolTransportError, the
-    # timeouts), `_pool_lost` writes ONE line to stderr naming the reason and that the results are unchanged, the
-    # batch is built in this process, and so is every later one (a result the dropped pool never delivered is not
-    # waited for; one it did deliver is read); the module never fails for want of a pool. The start catches EVERY
-    # exception, not that tuple alone: the stdlib's own refusal of a constrained platform is a NotImplementedError
-    # from concurrent.futures.process._check_system_limits (a Python built without multiprocessing.synchronize, or
-    # fewer than 256 semaphores), and a worker that cannot spawn can raise ImportError or RuntimeError; the start
-    # path touches pool plumbing alone, so a broad catch there hides no census defect, and with the narrow tuple the
-    # class errored in setUpClass on either stdlib message (fork PR 781's runs verifier). The submit and the read
-    # keep the tuple: an exception there can be a construction's own, and those are carried to the test as they are.
+    # and its full garbage collections walk the heap the serial class left them. A failure of the POOL degrades the
+    # class, ANNOUNCED; a failure of the WORK is the test's own error and never a degradation (the reviewer's round 7
+    # on fork PR #781: the repo's standing rule is to fail loudly rather than degrade silently, and a degradation whose
+    # only trace was a captured stderr line read under CI's -q as "1 skipped"). By failure kind:
+    #   the pool cannot START (the stdlib's NotImplementedError from concurrent.futures.process._check_system_limits
+    #     on a Python built without multiprocessing.synchronize or with fewer than 256 semaphores, its ValueError on
+    #     a bad worker count, a worker that cannot spawn raising ImportError or RuntimeError): `_start_pool` catches
+    #     EVERY exception, since the start path touches pool plumbing alone (`_new_pool` builds the executor and runs
+    #     `pool_probe`, which returns a pid) and so hides no census defect; with the narrow tuple the class errored in
+    #     setUpClass on either stdlib message (fork PR #781's runs verifier). The class DEGRADES: every batch built here.
+    #   the pool BREAKS AT A SUBMIT (BrokenProcessPool, or another of POOL_FAILURES): `_censuses` catches the tuple.
+    #     The class DEGRADES: that batch and every later one built here.
+    #   a worker WEDGES (a result not delivered within POOL_READ_TIMEOUT of being asked for, the wait's TimeoutError)
+    #     or the pool FAILS UNDER A READ (BrokenProcessPool, CancelledError from the shutdown, OSError, the pickling
+    #     errors, PoolTransportError from a worker whose census could not be pickled): `_resolve` catches the tuple.
+    #     The class DEGRADES: that construction built here, a later undelivered one built here without a wait, a
+    #     delivered one still read. The bound never yields an empty result: on the timeout `_resolve` builds the
+    #     construction in this process, so what a read returns is a Census or the construction's own exception,
+    #     whichever road built it, never nothing.
+    #   the WORK RAISES (a CensusError over a loud plant, or an exception the census code should never raise, an
+    #     AttributeError say): not a pool failure, and caught by none of the three. The worker's `build_census`
+    #     carries it as DATA, a ("raised", exc) payload with the worker's traceback on it, so the read's catch never
+    #     sees it; `_unpack` wraps it in a `_Raised` and `_take` re-raises it in this process where the test asked for
+    #     the result, the worker's traceback as its cause; `_serial` carries a serial construction's exception the
+    #     same way. The class does NOT degrade for it: the pool stays, no line, no warning, and the test that drove
+    #     the work ERRORS with the exception itself. An exception at a read outside the tuple (pickle.loads raising
+    #     over a class this process cannot import, say) is a transport defect and propagates as itself too.
+    # Every degradation is announced two ways from the one place, `_pool_lost`: a RuntimeWarning carrying the reason
+    # (pytest records it, counts it on the -q summary line and prints it in the warnings section, so a degraded
+    # class reads "N passed, 2 skipped, 1 warning" and names its cause) and one stderr line naming the reason and
+    # that the results are unchanged; the two pins that need the pool road then skip naming the reason.
     # The two test-local Census subclasses below (Tracing, Sweeping) are not
     # importable by a worker and build in this process, as does the `census(CENSUS_FILES)` door with its own cache.
     # `roads` records the road each batch took and `built` counts constructions by road; the last two tests of the
     # class pin that the pool road is taken and that the fallback reads the same.
     POOL_WORKERS = min(os.cpu_count() or 1, 4)
     POOL_START_TIMEOUT = 120.0        # seconds the pool's first worker has to answer the start probe
-    POOL_READ_TIMEOUT = 240.0         # seconds a batch result has to arrive once the test asks for it; the module's per-test
-                                      # ceiling is 600 s, and the largest batch (29 constructions) rebuilds here in about 40 s
+    POOL_READ_TIMEOUT = 240.0         # seconds a batch result has to arrive once the test asks for it. Derived (the reviewer's
+                                      # round 7 on fork PR #781): the largest batch, 29 constructions, builds serially in 39.5 s
+                                      # on the development box (the class alone with the pool off, 2026-09-21; across four
+                                      # workers the same batch takes about a quarter of that), so a result six times that
+                                      # late is a wedged worker, not a slow one: 6 x 40 s = 240 s. The constraint is the
+                                      # module's per-test ceiling, 600 s (CI's --timeout): a test that waits the bound once
+                                      # and then rebuilds its largest batch here takes 240 + 40 = 280 s on this box, leaving
+                                      # 320 s, an eightfold slower rebuild, before the ceiling ends the run. No per-batch
+                                      # measurement exists from CI's runners; that eightfold is the margin for them.
     POOL_FAILURES = (BrokenProcessPool, OSError, pickle.PicklingError, pickle.UnpicklingError, concurrent.futures.TimeoutError,
                      concurrent.futures.CancelledError, erc.PoolTransportError)
     _pool = None                      # the class's executor, or None while unavailable
@@ -1590,13 +1617,17 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
 
     @classmethod
     def _pool_lost(cls, reason):
-        """The pool is gone for the rest of the class: one line on stderr, and every construction from here builds in this
-        process (a batch already submitted finishes serially as its results are read)."""
+        """The pool is gone for the rest of the class, ANNOUNCED: a RuntimeWarning carrying the reason (the block comment above
+        says why a warning: pytest counts it on the -q summary line and prints it, where a stderr line is captured) and the
+        same text as one line on stderr; every construction from here builds in this process (a batch already submitted
+        finishes serially as its results are read). Every degradation of the class comes through here, whatever its kind."""
         pool, cls._pool, cls._pool_reason = cls._pool, None, reason
         if pool is not None:
             pool.shutdown(wait=False, cancel_futures=True)
-        print("[%s] %s; building this class's censuses in the test process instead (the results are unchanged, the class is slower)"
-              % (cls.__name__, reason), file=sys.stderr, flush=True)
+        line = ("[%s] %s; building this class's censuses in the test process instead (the results are unchanged, the class is slower)"
+                % (cls.__name__, reason))
+        warnings.warn(line, RuntimeWarning, stacklevel=2)
+        print(line, file=sys.stderr, flush=True)
 
     def _censuses(self, specs):
         """The censuses over `specs`, one result per (files, sources) in the specs' order, each read through `_take`: on the
@@ -1622,7 +1653,9 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         POOL_READ_TIMEOUT, and one whose pool failed under it (the worker gone, the future cancelled by the shutdown, the
         transport refused, the result not delivered within the bound) is built in this process after `_pool_lost` has
         spoken once. Once the pool is gone, a result it never delivered is built here without a wait (a worker that
-        wedged is waited for once, for the bound, not once per result) and one it did deliver is read."""
+        wedged is waited for once, for the bound, not once per result) and one it did deliver is read. A timeout never
+        yields an empty result: the construction is built here, so the return is a Census or the construction's own
+        exception in a `_Raised`, whichever road built it."""
         if not isinstance(result, _Pending):
             return result
         cls = type(self)
@@ -2810,11 +2843,13 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         self.assertTrue(all(set(f.lexical) <= nodes for f in c.all_fns) and any(f.lexical for f in c.all_fns), "every lexical table does too")
 
     def test_a_pool_that_breaks_is_named_once_on_stderr_and_the_batch_is_built_here_with_the_same_results(self):
-        """Condition (2) of the ruling: the class degrades, never errors. With the pool broken (an executor whose submit
-        raises BrokenProcessPool, standing in for the class's for this test alone) a batch is built in this process,
-        ONE stderr line names the reason and says the results are unchanged, the class drops the pool so later batches
-        go the same way without a second line, and the results read the same as the pool's over the same inputs, the
-        loud plant's CensusError text included. The class's own pool comes back after the test."""
+        """Condition (2) of the ruling: the class degrades, never errors, and (the reviewer's round 7 on fork PR #781) the
+        degradation is ANNOUNCED. With the pool broken (an executor whose submit raises BrokenProcessPool, standing in for
+        the class's for this test alone) a batch is built in this process, ONE RuntimeWarning and ONE stderr line name the
+        kind (BrokenProcessPool) and say the results are unchanged, the class drops the pool so later batches go the same
+        way without a second of either, and the results read the same as the pool's over the same inputs, the loud
+        plant's CensusError text included. The class's own pool comes back after the test. Red with the warning removed
+        from `_pool_lost`: no RuntimeWarning recorded."""
         cls = type(self)
         specs = self._pool_specs()
         pooled = [self._resolve(r) for r in self._censuses(specs)] if cls._pool is not None else None
@@ -2828,7 +2863,9 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
 
         err = io.StringIO()
         with mock.patch.object(cls, "_pool", _Broken()), mock.patch.object(cls, "_pool_reason", None), \
-                mock.patch.object(cls, "roads", []), mock.patch.object(cls, "built", collections.Counter()), contextlib.redirect_stderr(err):
+                mock.patch.object(cls, "roads", []), mock.patch.object(cls, "built", collections.Counter()), contextlib.redirect_stderr(err), \
+                warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
             out = self._censuses(specs)
             self.assertIsNone(cls._pool, "the pool is dropped for the rest of the class")
             again = self._censuses(specs[1:])
@@ -2838,6 +2875,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         self.assertEqual(len(lines), 1, lines)
         self.assertTrue(lines[0].startswith("[EnvRowsCensusBlindSpots] the census pool failed under a batch of 2: BrokenProcessPool: planted: every worker is gone; "), lines[0])
         self.assertIn("the results are unchanged", lines[0])
+        self._assert_announced(caught, lines[0])
         self.assertEqual([type(r).__name__ for r in out], ["Census", "_Raised"])
         self.assertEqual(self._reads_of(out[1:]), self._reads_of(again))
         if pooled is not None:
@@ -2851,15 +2889,18 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         worker that cannot spawn can raise ImportError or RuntimeError; none is in POOL_FAILURES, and with the start
         catching that tuple alone the whole class ERRORED in setUpClass on either stdlib message (fork PR 781's runs
         verifier, `2 errors`). With `_new_pool` raising each, `_start_pool` leaves the pool unavailable, records the
-        reason, writes ONE stderr line naming it and saying the results are unchanged, and the batch built afterwards
-        goes the serial road with no second line and reads the same as the pool's over the same inputs. Red with the
-        start catching POOL_FAILURES: the NotImplementedError propagates out of `_start_pool`."""
+        reason, ANNOUNCES it (the reviewer's round 7: ONE RuntimeWarning and ONE stderr line, each naming the kind by its
+        class and saying the results are unchanged), and the batch built afterwards goes the serial road with no second
+        of either and reads the same as the pool's over the same inputs. The stdlib's ValueError for a bad worker count
+        is planted too, verbatim. Red with the start catching POOL_FAILURES: the NotImplementedError propagates out of
+        `_start_pool`; red with the warning removed from `_pool_lost`: no RuntimeWarning recorded."""
         cls = type(self)
         specs = self._pool_specs()
         pooled = [self._resolve(r) for r in self._censuses(specs)] if cls._pool is not None else None
         starts = [NotImplementedError("This Python build lacks multiprocessing.synchronize, usually due to named semaphores "
                                       "being unavailable on this platform."),
                   NotImplementedError("system provides too few semaphores (32 available, 256 necessary)"),
+                  ValueError("max_workers must be greater than 0"),
                   ImportError("This platform lacks a functioning sem_open implementation, therefore, the required "
                               "synchronization primitives needed will not function, see issue 3770."),
                   RuntimeError("planted: a start failure the pool's own failures do not name")]
@@ -2869,7 +2910,9 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
                 err = io.StringIO()
                 with mock.patch.object(cls, "_new_pool", mock.Mock(side_effect=exc)), mock.patch.object(cls, "_pool", None), \
                         mock.patch.object(cls, "_pool_reason", None), mock.patch.object(cls, "roads", []), \
-                        mock.patch.object(cls, "built", collections.Counter()), contextlib.redirect_stderr(err):
+                        mock.patch.object(cls, "built", collections.Counter()), contextlib.redirect_stderr(err), \
+                        warnings.catch_warnings(record=True) as caught:
+                    warnings.simplefilter("always")
                     cls._start_pool()
                     self.assertIsNone(cls._pool, "the pool is unavailable")
                     reason = "the census pool could not start: %s: %s" % (type(exc).__name__, exc)
@@ -2878,11 +2921,13 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
                     self.assertEqual(len(lines), 1, lines)
                     self.assertTrue(lines[0].startswith("[EnvRowsCensusBlindSpots] %s; " % reason), lines[0])
                     self.assertIn("the results are unchanged", lines[0])
+                    self._assert_announced(caught, lines[0])
                     if exc is starts[-1]:
                         out = self._censuses(specs)
                         self.assertEqual(cls.roads, ["serial (%s)" % reason])
                         self.assertEqual(cls.built, {"serial": 2})
                         self.assertEqual(err.getvalue().splitlines(), lines, "no second line for the batch")
+                        self._assert_announced(caught, lines[0])
                         self.assertEqual([type(r).__name__ for r in out], ["Census", "_Raised"])
                         if pooled is not None:
                             self.assertEqual(self._reads_of(pooled), self._reads_of(out))
@@ -2897,8 +2942,10 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         WITHOUT a wait (its future's `result` is a failure of this test if called), and one the pool did deliver before
         it was dropped is still read from the future. Planted: a `_Pending` over a future nothing completes with the
         bound at 0.2 s for this test, a second over a future that refuses to be waited on, a third over a done future
-        holding what a worker returns. Red with the read unbounded (the first read never returns) and with the no-wait
-        rule removed (the second read's `result` raises)."""
+        holding what a worker returns. The expiry is ANNOUNCED (the reviewer's round 7: ONE RuntimeWarning and ONE stderr
+        line, TimeoutError and the bound named) and never an empty result: the first read is a Census built here that
+        reads the same as a serial build over its spec. Red with the read unbounded (the first read never returns), with
+        the no-wait rule removed (the second read's `result` raises) and with the warning removed (no RuntimeWarning)."""
         cls = type(self)
         pool_up = cls._pool is not None
         specs = self._pool_specs()
@@ -2921,7 +2968,8 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         err = io.StringIO()
         with mock.patch.object(cls, "_pool", _Stub()), mock.patch.object(cls, "_pool_reason", None), mock.patch.object(cls, "roads", []), \
                 mock.patch.object(cls, "built", collections.Counter()), mock.patch.object(cls, "POOL_READ_TIMEOUT", 0.2), \
-                contextlib.redirect_stderr(err):
+                contextlib.redirect_stderr(err), warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
             first = self._resolve(_Pending(specs[0], never))
             self.assertIsNone(cls._pool, "the pool is dropped at the timeout")
             self.assertEqual(cls._pool_reason, "the census pool failed under a batch: TimeoutError: no result within 0.2 s")
@@ -2932,14 +2980,94 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         self.assertEqual(len(lines), 1, lines)
         self.assertTrue(lines[0].startswith("[EnvRowsCensusBlindSpots] the census pool failed under a batch: TimeoutError: no result within 0.2 s; "), lines[0])
         self.assertIn("the results are unchanged", lines[0])
+        self._assert_announced(caught, lines[0])
         self.assertFalse(never.done(), "the planted future was left alone")
         out = [first, second]
         self.assertEqual([type(r).__name__ for r in out], ["Census", "_Raised"])
+        self._assert_tenth_found(first, "self")
+        self.assertEqual(self._reads_of([first]), self._reads_of(self._serial([specs[0]])),
+                         "the timed-out read is the census built here, the serial build's equal, never an empty result")
         self.assertIsInstance(third, _Raised)
         self.assertIsInstance(third.exc.__cause__, _WorkerTraceback, "the delivered result was unpacked as a worker's")
         self.assertEqual(self._reads_of([third]), self._reads_of([second]), "the delivered result reads as the one built here")
         if pool_up:
             self.assertIsNotNone(cls._pool, "the class's own pool is back")
+
+    def _assert_announced(self, caught, line):
+        """The degradation announced as ONE RuntimeWarning carrying the stderr line's text (the kind's class name is in it), and
+        no other RuntimeWarning: what pytest counts on the -q summary line and prints in the warnings section."""
+        runtime = [w for w in caught if w.category is RuntimeWarning]
+        self.assertEqual([str(w.message) for w in runtime], [line],
+                         "one RuntimeWarning, the degradation's own text; no RuntimeWarning means the degradation was silent under -q")
+
+    def test_a_worker_that_sleeps_past_the_bound_is_a_timeout_announced_and_the_result_is_the_serial_one_never_empty(self):
+        """(b2) of the reviewer's round 7 on fork PR #781: the bound's expiry is distinguishable from a clean empty result,
+        shown end to end. A real pool of this class's shape (a fresh executor, the class's own set aside) is handed a worker
+        that sleeps past a bound of 0.2 s; the read times out while the worker still sleeps, the class degrades ANNOUNCED
+        (ONE RuntimeWarning and ONE stderr line naming TimeoutError and the bound), the construction is built here, and it
+        reads the same as a serial build over the same spec: a Census carrying the planted tenth row and BASE + 1 content
+        rows, so a timeout never yields an empty census silently. The class's own pool comes back after the test. Skips
+        naming the reason where no pool starts, as the pool-taken pin does (the road it pins did not run)."""
+        cls = type(self)
+        if cls._pool is None:
+            self.skipTest("the census pool is unavailable here, the class ran serial: %s" % cls._pool_reason)
+        spec = self._pool_specs()[0]
+        pool = cls._new_pool()
+        self.addCleanup(pool.shutdown, wait=True)          # joins the sleeper once it wakes; no worker outlives the test
+        wedged = pool.submit(time.sleep, 8.0)               # past the bound by far, short enough to join at cleanup
+        err = io.StringIO()
+        with mock.patch.object(cls, "_pool", pool), mock.patch.object(cls, "_pool_reason", None), mock.patch.object(cls, "roads", []), \
+                mock.patch.object(cls, "built", collections.Counter()), mock.patch.object(cls, "POOL_READ_TIMEOUT", 0.2), \
+                contextlib.redirect_stderr(err), warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            first = self._resolve(_Pending(spec, wedged))
+            self.assertFalse(wedged.done(), "the read gave up at the bound while the worker still slept")
+            self.assertIsNone(cls._pool, "the pool is dropped at the timeout")
+            reason = "the census pool failed under a batch: TimeoutError: no result within 0.2 s"
+            self.assertEqual(cls._pool_reason, reason)
+            self.assertEqual(cls.built, {"serial": 1}, "the timed-out construction was built here")
+        lines = err.getvalue().splitlines()
+        self.assertEqual(len(lines), 1, lines)
+        self.assertTrue(lines[0].startswith("[EnvRowsCensusBlindSpots] %s; " % reason), lines[0])
+        self._assert_announced(caught, lines[0])
+        self.assertIsInstance(first, Census, "a timeout yields the census built here, never an empty result: %r" % (first,))
+        self._assert_tenth_found(first, "self")
+        self.assertEqual(self._reads_of([first]), self._reads_of(self._serial([spec])), "the serial build's equal")
+        self.assertIsNotNone(cls._pool, "the class's own pool is back")
+
+    def test_a_construction_that_raises_inside_the_pooled_work_reaches_the_test_as_itself_and_never_degrades_the_class(self):
+        """(v3) of the reviewer's round 7 on fork PR #781: a programming error inside the pooled work, an AttributeError the
+        census code should never raise, is the test's own error and not a pool failure. The road, by reading: the worker's
+        `build_census` catches the construction's exception and returns it as DATA, a ("raised", exc) payload with the
+        worker's traceback on it, so `_resolve`'s catch of POOL_FAILURES never sees it; `_unpack` wraps it in a `_Raised`,
+        and `_take` re-raises it here where the test asked for the result, the worker's traceback as its cause; `_serial`
+        carries a serial construction's exception the same way. Planted: a spec whose sources carry a non-string qualifier,
+        which Census.__init__ splits as its first use of the sources. Asserted: the exception reaches this test as the
+        AttributeError it is, and the class did NOT degrade for it (the pool where it was, no reason recorded, no stderr
+        line, no RuntimeWarning, the construction counted to the road that built it). Red with the read's catch widened to
+        every exception and the worker's payload re-raised at the read: the class degraded and rebuilt here instead."""
+        cls = type(self)
+        pool_up, reason_before = cls._pool is not None, cls._pool_reason
+        broken = dict(DEFAULT_SOURCES, func={("sdk_backend.py", 5): "env"})    # a qualifier the census cannot split
+        spec = (self._pool_specs()[0][0], broken)                                # the tenth-row copy's files, the broken sources
+        err = io.StringIO()
+        with mock.patch.object(cls, "roads", []), mock.patch.object(cls, "built", collections.Counter()), \
+                contextlib.redirect_stderr(err), warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            results = self._censuses([spec])
+            with self.assertRaises(AttributeError) as cm:
+                self._take(results[0])
+            self.assertIs(cls._pool is not None, pool_up, "the pool is where it was: a failure of the work is not a pool failure")
+            self.assertEqual(cls._pool_reason, reason_before, "no degradation recorded for a failure of the work")
+            self.assertEqual(cls.roads, ["pool"] if pool_up else ["serial (%s)" % reason_before])
+            self.assertEqual(cls.built, {"pool": 1} if pool_up else {"serial": 1}, "counted to the road that built it")
+        self.assertIn("split", str(cm.exception), "the census's own error, as itself: %r" % (cm.exception,))
+        self.assertEqual(err.getvalue(), "", "no degradation line for a failure of the work")
+        self.assertEqual([str(w.message) for w in caught if w.category is RuntimeWarning], [],
+                         "no degradation warning for a failure of the work: the class degraded instead of raising it as itself")
+        if pool_up:
+            self.assertIsInstance(cm.exception.__cause__, _WorkerTraceback, "the worker's traceback travels as the cause")
+            self.assertIn("split", cm.exception.__cause__.args[0], "and names the line that raised")
 
 
 class CensusParseRetention(unittest.TestCase):
