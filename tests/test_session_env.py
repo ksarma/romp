@@ -247,7 +247,7 @@ def _true_callers(rows):
 CENSUS_FILES = (SDK_BACKEND, KERNEL_PY, CREDENTIALS_PY)
 # The content rows by identity: the writing function, the module-level format the ring text starts from, and whether
 # the call passes key= (the rows the launch files at every connect are keyed). Nine at review round 6; eleven since the
-# merge of main (the post-merge census, 2026-09-20): main's fork PR 777 added two refused-launch rows in
+# merge of main (the post-merge census, 2026-09-20): main's fork PR #777 added two refused-launch rows in
 # _host_transport_for, tainted through the host process, bounded by HOST_REFUSED_RING in the follow-up commit.
 # Re-derived: census content_identities() = [('flag_settings_path', 'FLAG_SID_RING', False), ('flag_settings_path',
 # 'FLAG_LINK_RING', False), ('flag_settings_path', 'FLAG_UNWRITABLE_RING', False), ('_host_transport_for',
@@ -1092,8 +1092,9 @@ class EnvRowsPopulation(unittest.TestCase):
         decides, not reduction) and is held here by identity, so a new one reds until it is reduced or named with its
         reason. One at this head: _lease_problem's problem_row call, whose prose is the host's own problem text, run-time
         data with no head to read. The four the round named reduce: problem_row's two inner calls through its
-        door-passing sites (twelve since the merge of main: the two refused-launch sites pass no log= and are no sites of
-        it), _log_quietly's through its callers, and the crash line, an f-string. The refused-launch rows' message is
+        door-passing sites (twelve in sdk_backend.py since the merge of main, thirteen with kernel.py's one through getattr,
+        as COUNTS's door-value entry counts them: the two refused-launch sites pass no log= and are no sites of it),
+        _log_quietly's through its callers, and the crash line, an f-string. The refused-launch rows' message is
         problem_row's RETURNED line, which the census reads as the caller's prose through the returned parameter (rule 7,
         the post-merge census): both rows reduce to their head and neither joins this set."""
         c = self.c
@@ -1472,7 +1473,7 @@ class EnvRowsPopulation(unittest.TestCase):
         for clause in ("cut_to and utf16_units",
                        "_log_quietly's two roads, problem=False for a line saying nothing and its declared problem=True road, and the four "
                        "routine lines declared so (fork-only: upstream has no _log_quietly)",
-                       "host_refused_ring_text and the two refused-launch rows in _host_transport_for (fork-only: fork PR 777's rows, which "
+                       "host_refused_ring_text and the two refused-launch rows in _host_transport_for (fork-only: fork PR #777's rows, which "
                        "upstream does not carry)"):
             self.assertIn(clause, where, "the where: line names the road: %r" % clause)
         formats = sorted({fmt for _owner, fmt, _keyed in self.c.content_identities() if fmt != "UNBOUNDED"})
@@ -1613,6 +1614,24 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         if pool is not None:
             pool.shutdown(wait=True)
 
+    def setUp(self):
+        self._pool_reason_at_start = type(self)._pool_reason    # read back in tearDown: a loss during this test is its failure
+
+    def tearDown(self):
+        """A pool lost DURING this test fails this test, naming the reason, wherever the test sits in the class's order (round
+        8 of the review on fork PR #781, extra6-2's second pass, by its mutation verifier: `_pool_or_fail` fails the pins that
+        need the pool road, but only for a pool lost before them in unittest's alphabetical order; a loss planted inside a
+        test sorted after them failed nothing, the run's only trace the RuntimeWarning). A reason recorded BEFORE the test
+        (the start failure, set in setUpClass) is not this test's to report: it is every pool-road pin's, through
+        `_pool_or_fail`, which alone knows the one environment limitation that may skip; a loss under a test is never a
+        start failure, so no limitation applies here. The class's pool is not restored: the loss stands for the rest of
+        the class and every later pool-road pin fails on it too."""
+        cls = type(self)
+        if cls._pool_reason != self._pool_reason_at_start:
+            self.fail("the census pool was lost during this test, so the pool road did not run for its constructions from the "
+                      "loss on (built in this process instead, the results unchanged; a failure of this test, not a skip, "
+                      "wherever it sits in the class's order): %s" % cls._pool_reason)
+
     def _copy(self, edit, name="sdk_backend.py"):
         new = edit(self.src)
         self.assertNotEqual(new, self.src, "the copy's edit must apply")
@@ -1633,7 +1652,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         return self._copy(lambda s: self._with_format(s).replace(
             self.METHOD_ANCHOR, extra_methods + "    def _tenth(self, sess):\n" + body + "\n\n" + self.METHOD_ANCHOR))
 
-    # ---- the census pool (fork PR 781, the reviewer's ruling of 2026-09-20 on the walk's cost on CI) ----
+    # ---- the census pool (fork PR #781, the reviewer's ruling of 2026-09-20 on the walk's cost on CI) ----
     # This class constructs about 180 censuses, each over a distinct sabotaged copy of kernel/sdk_backend.py, at about
     # 1.3 s each in one process; CI runs pytest serially under a 25-minute job ceiling, and at the head before this
     # commit the Python 3.10 job was cancelled by it. The ruling: build the class's censuses in worker processes and
@@ -1690,10 +1709,15 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
     # Every degradation is announced two ways from the one place, `_pool_lost`: a RuntimeWarning carrying the reason
     # (pytest records it, counts it on the -q summary line and prints it in the warnings section, so a degraded
     # class reads "N passed, 2 failed, 1 warning" and names its cause) and one stderr line naming the reason and
-    # that the results are unchanged. The two pins that need the pool road then FAIL naming the reason (round 8,
-    # extra6-2: a skip reports success, so a pool lost for a real reason left the run green and silent); the ONE
-    # environment limitation they skip on instead, asserted as such, is the stdlib's refusal to build a
-    # ProcessPoolExecutor at all (ENVIRONMENT_LIMITATION below).
+    # that the results are unchanged. A loss is then a FAILURE wherever in the class's order it happens (round 8,
+    # extra6-2: a skip reports success, so a pool lost for a real reason left the run green and silent; and round 8's
+    # mutation verifier: the pins that need the pool road fail only for a pool lost BEFORE them in unittest's
+    # alphabetical order, so a loss planted inside a test sorted after them failed nothing): every pin that needs the
+    # pool road fails naming the reason (`_pool_or_fail`), and the test during which the pool was lost fails in its
+    # tearDown naming the reason (setUp records the reason at the start of each test, tearDown compares). The ONE
+    # environment limitation the pool-road pins skip on instead, asserted as such, is the stdlib's refusal to build a
+    # ProcessPoolExecutor at all (ENVIRONMENT_LIMITATION below), a start failure, recorded in setUpClass before any test
+    # runs, which is why a start failure is theirs to report and never tearDown's.
     # The two test-local Census subclasses below (Tracing, Sweeping) are not
     # importable by a worker and build in this process, as does the `census(CENSUS_FILES)` door with its own cache.
     # `roads` records the road each batch took and `built` counts constructions by road; the last two tests of the
@@ -2861,7 +2885,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         """A helper reads `getattr(self, "_tenth_names", None)`, the names are stored on the attribute by a method
         written AFTER it, and the row's function reads the helper's return. In file order the helper is visited with
         the attribute clean; the store then grows the attribute, and only a re-visit of the helper carries the names
-        into its return and on to the row. Before fork PR 781 the module-wide sweep on a grown module name gave the
+        into its return and on to the row. Before fork PR #781 the module-wide sweep on a grown module name gave the
         helper that visit by accident: the attribute readers index knew `<x>._tenth_names` alone, not the reflected
         forms expr_taint reads through _reflected_attr, and the PR's differential over the real pair found
         _stamp_launch_login's `getattr(sess, "_launching", None)` losing its taint the moment the sweep went. The index
@@ -2888,7 +2912,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         file order the reader is visited with the list clean, the store then grows the module-level name, and only a
         re-visit of the reader carries the names to the row. The reader is a caller of the writer and nothing else, and
         the writer returns nothing, so no other event re-visits it: the row depends on the module name's readers index
-        (fork PR 781), where before the PR the module-wide sweep on the grown name visited every function."""
+        (fork PR #781), where before the PR the module-wide sweep on the grown name visited every function."""
         return self._copy(lambda s: s.replace(self.FMT_ANCHOR, self.TENTH + "_TENTH_SEEN = []\n" + self.FMT_ANCHOR).replace(
             self.METHOD_ANCHOR,
             '    def _tenth(self, sess):\n        names = ", ".join(_TENTH_SEEN)\n'
@@ -2950,7 +2974,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
 
     def test_the_readers_only_pass_reaches_the_module_wide_sweeps_fixpoint(self):
         """A census that restores the module-wide sweep (Census._global_growth_readers returning the module's every
-        function, the enqueue before fork PR 781) reaches the same taint stores and the same rows as the readers-only
+        function, the enqueue before fork PR #781) reaches the same taint stores and the same rows as the readers-only
         pass while visiting more, over the real pair and over the module-list plant, where the readers index is
         load-bearing. Over the real pair no function runs its inner loop out, so the two passes differ in the enqueue
         alone."""
@@ -2985,7 +3009,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         stray_loops alone, which fed their loop nodes to Fn.loops without their reads: a comprehension in a class
         keyword reading a module list a LATER method extends was in no readers index, so the readers-only enqueue on
         the grown name (the pin above) never re-visited its function, and the comprehension's variable stayed clean
-        where the module-wide sweep had tainted it. Found by fork PR 781's independent verifier on this copy: the
+        where the module-wide sweep had tainted it. Found by fork PR #781's independent verifier on this copy: the
         index held the store alone and the variable no taint. The reads under those fields are indexed now: both
         methods are readers of the list, and the variable carries the env after the store's growth. The copy is
         parsed, never run, like every copy here. Class keywords alone: a type parameter is a syntax error before
@@ -3008,7 +3032,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         """The taint fold stores a with item's target from its context expression: in flag_settings_path,
         `with os.fdopen(fd, "w") as f:` with fd carrying the env gives f the env, in tainted_names and carried_names.
         No test held that road: with the fold's With arm skipped the module stayed green while the real pair's dump
-        lost f's taint (fork PR 781's independent verifier). The plant copies the shape, a call on an env-carrying
+        lost f's taint (fork PR #781's independent verifier). The plant copies the shape, a call on an env-carrying
         local as the context expression and its target joined into the tenth row's message, so the row is found
         through the with-target alone and the target's taint is in both of the function's stores."""
         c = self._census(self._method('        held = sorted(sess.env_vars)\n'
@@ -3129,7 +3153,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         platform with a NotImplementedError from concurrent.futures.process._check_system_limits (its two messages are
         planted verbatim: a Python built without multiprocessing.synchronize, and fewer than 256 semaphores), and a
         worker that cannot spawn can raise ImportError or RuntimeError; none is in POOL_FAILURES, and with the start
-        catching that tuple alone the whole class ERRORED in setUpClass on either stdlib message (fork PR 781's runs
+        catching that tuple alone the whole class ERRORED in setUpClass on either stdlib message (fork PR #781's runs
         verifier, `2 errors`). With `_new_pool` raising each, `_start_pool` leaves the pool unavailable, records the
         reason, ANNOUNCES it (the reviewer's round 7: ONE RuntimeWarning and ONE stderr line, each naming the kind by its
         class and saying the results are unchanged), and the batch built afterwards goes the serial road with no second
@@ -3177,7 +3201,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
             self.assertIsNotNone(cls._pool, "the class's own pool is back")
 
     def test_a_result_the_pool_never_delivers_is_waited_for_once_within_the_bound_and_the_rest_of_its_batch_is_built_here(self):
-        """Condition (2) at a READ (fork PR 781's runs verifier: the read waited with no bound, so a worker wedged mid-batch
+        """Condition (2) at a READ (fork PR #781's runs verifier: the read waited with no bound, so a worker wedged mid-batch
         held the test until the module's per-test timeout ended the whole run, which is not the degrade road). A read
         waits POOL_READ_TIMEOUT for its result; on the timeout the pool is dropped with the one stderr line naming the
         bound and that construction is built here; a later result of the batch the pool never delivered is built here
@@ -3358,6 +3382,50 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         if cls._pool is not None:
             self.assertIs(self._pool_or_fail(), cls._pool, "with the pool up, the pool")
 
+    def test_a_pool_lost_inside_any_test_fails_that_test_in_its_teardown_naming_the_reason(self):
+        """The class's tearDown (round 8 of the review on fork PR #781, extra6-2's second pass, by its mutation verifier): a
+        pool lost DURING a test fails that test, naming the reason, whatever the test's place in the class's order. The pins
+        that need the pool road fail only for a loss before them (`_pool_or_fail`), and a loss planted inside a test sorted
+        after them left the run green, the RuntimeWarning its only trace. Run through unittest's own machinery on a probe
+        subclass with pool slots of its own (so the planted loss drops nothing of this class's): a test that loses the pool
+        through `_pool_lost`, the one road every degradation takes, FAILS in tearDown and the failure names the reason; a
+        test that loses nothing passes; and a test under a reason recorded BEFORE it (the start failure's shape, set in
+        setUpClass) passes, since that loss is the pool-road pins' to report and not every test's (a tearDown failing on
+        any recorded reason would fail the whole class at a start failure the pins already name). Red at round 8's
+        commit: the losing test passed, no failure recorded."""
+        cls = type(self)
+        reason = "the census pool failed under a batch: TimeoutError: planted: no result within 0.2 s"
+        start_failure = "the census pool could not start: RuntimeError: planted: a start failure recorded before the test"
+
+        class Probe(cls):
+            _pool = None                       # its own slots: the loss below is Probe's and drops nothing of the class's
+            _pool_reason = None
+
+            def test_loses_the_pool(self):
+                type(self)._pool_lost(reason)
+
+            def test_loses_nothing(self):
+                pass
+
+        def run_probe(name, reason_before=None):
+            Probe._pool_reason = reason_before
+            result = unittest.TestResult()
+            with contextlib.redirect_stderr(io.StringIO()), warnings.catch_warnings(record=True):
+                warnings.simplefilter("always")
+                Probe(name).run(result)
+            self.assertEqual(result.testsRun, 1)
+            return result
+
+        lost = run_probe("test_loses_the_pool")
+        self.assertEqual(len(lost.failures), 1, "the test that lost the pool fails: failures %r, errors %r" % (lost.failures, lost.errors))
+        self.assertEqual(lost.errors, [], "a failure (self.fail), never an error")
+        self.assertIn("the census pool was lost during this test", lost.failures[0][1])
+        self.assertIn(reason, lost.failures[0][1], "the failure names the reason")
+        self.assertTrue(run_probe("test_loses_nothing").wasSuccessful(), "a test that loses nothing passes")
+        before = run_probe("test_loses_nothing", reason_before=start_failure)
+        self.assertTrue(before.wasSuccessful(),
+                        "a reason recorded before the test is the pool-road pins' to report, not this test's: %r" % (before.failures,))
+
     WEDGED_EXIT_LIMIT = 150.0    # seconds the driver below has to EXIT. Its own work is a few seconds (the module's import,
                                  # one worker's start, a 0.5 s bound, one census built here, a 15 s join at most); the
                                  # planted sleep is 900 s, so an exit within the limit means the drop did not wait for it
@@ -3404,7 +3472,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
 
 
 class CensusParseRetention(unittest.TestCase):
-    """The parse cache's retention rule (fork PR 781, the reviewer's ruling of 2026-09-20): tests/env_ring_census.py
+    """The parse cache's retention rule (fork PR #781, the reviewer's ruling of 2026-09-20): tests/env_ring_census.py
     keeps a parsed tree for the process's life for the census's canonical inputs alone (retained_paths, derived from
     DEFAULT_FILES), any other path is parsed for the construction that asked and dropped after it, and the `census()`
     door keeps a Census under the same rule. Until the rule every parsed path stayed: the blind-spot class above
@@ -4054,7 +4122,7 @@ class EnvSecretsStayPrivate(unittest.TestCase):
 
 class RefusedLaunchRowsRingBounded(unittest.TestCase):
     """Ruling 1 (a) of the post-merge census (2026-09-20), by execution: main's two refused-launch rows in
-    _host_transport_for (fork PR 777) ring a text bounded by HOST_REFUSED_RING while the ledger row and the kernel log
+    _host_transport_for (fork PR #777) ring a text bounded by HOST_REFUSED_RING while the ledger row and the kernel log
     line keep the reason whole. The drivers are the host tests' (a fake _spawn_host that writes a host-crashed row and
     returns an exited process for the EXITED road; one whose process never exits and never serves its socket, with
     SOCKET_WAIT_S patched short, for the DEADLINE road, added in round 7 of the review, 2026-09-20, tests-1: until then

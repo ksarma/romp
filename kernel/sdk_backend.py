@@ -5412,7 +5412,7 @@ FLAG_SID_RING = "flag settings: %s (%s); no per-session settings file is written
 FLAG_LINK_RING = ("flag settings (%s): the per-session settings file is a symbolic link and is not written through: nothing "
                   "of romp's makes one, and a write through it would carry the env block outside the directory")
 FLAG_UNWRITABLE_RING = "flag settings (%s): the per-session settings file could not be written (%s); launching WITHOUT %s"
-# The refused-launch rows' short form (_host_transport_for's two roads, fork PR 777's: a session host that exited before
+# The refused-launch rows' short form (_host_transport_for's two roads, fork PR #777's: a session host that exited before
 # serving its socket, and one that never served it and was ended). The census taints their text through the host
 # process, spawned with the launch's credential-shaped names in its environment (the same taint the host-start notice
 # declares False), so each is a content row and owes a ring text bounded by a module-level format (the post-merge

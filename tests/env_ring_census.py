@@ -251,7 +251,7 @@ for _t in (str, bytes, dict, list, set, frozenset, tuple, int, float, bool, obje
 COMMON_METHODS.discard("_log")   # logging.Logger has one; the door's own name is never filtered
 
 # The parse cache: realpath -> (source, tree), for the census's canonical inputs ALONE, parsed once per process. The
-# retention rule (fork PR 781, the reviewer's ruling of 2026-09-20): a path in retained_paths() is kept for the
+# retention rule (fork PR #781, the reviewer's ruling of 2026-09-20): a path in retained_paths() is kept for the
 # process's life; any other path is parsed for the construction that asked and dropped after it (the Mod holds its
 # own tree for the Census's life, and no phase parses a path twice within one construction). Until the rule, every
 # path stayed: tests/test_session_env.py's blind-spot class constructs about 180 censuses, each over a distinct
@@ -343,7 +343,7 @@ class Fn:
     def loops(self):
         """The for loops, comprehensions and with items of this function's own body: every such node under the def's
         own node (its decorators, default arguments and annotations included) outside any nested def or lambda. The
-        walk below defines the set; Census._index fills it during its one pass (fork PR 781: the walk was a second full
+        walk below defines the set; Census._index fills it during its one pass (fork PR #781: the walk was a second full
         traversal per function, 0.12 s of a 0.9 s construction over the real pair), so the walk runs only for a Fn the
         index did not build. The two orders differ; _taint_fn unions its stores to a fixpoint, so the result does not."""
         if self._loops is None:
@@ -466,7 +466,7 @@ def pool_probe():
 
 def build_census(files, sources):
     """The worker side of the blind-spot class's census pool (tests/test_session_env.py, EnvRowsCensusBlindSpots._censuses,
-    fork PR 781): construct the Census over `files` under `sources` in this process and return the outcome PICKLED, a
+    fork PR #781): construct the Census over `files` under `sources` in this process and return the outcome PICKLED, a
     bytes object, so the executor's own result transport carries something that cannot fail to serialize; the client
     unpickles it (Census.__getstate__ says what the round trip re-keys). The outcome is ("census", the Census) or, when
     the construction raised (a CensusError for a second writer of the ring, or any other exception), ("raised", the
@@ -517,7 +517,7 @@ class Census:
         self._classify()
 
     # ------------------------------------------------------------------ pickling
-    # A Census crosses a process boundary in tests/test_session_env.py's blind-spot class (fork PR 781: the class builds
+    # A Census crosses a process boundary in tests/test_session_env.py's blind-spot class (fork PR #781: the class builds
     # its censuses in worker processes and reads the objects in the test process). Five tables and every Fn's `lexical`
     # are keyed by id(node), a process-local address that names nothing after a round trip: the state ships them
     # re-keyed by the nodes themselves (the same node objects the Mods' trees hold, so pickle's memo keeps every node one
@@ -647,7 +647,7 @@ class Census:
             elif isinstance(child, (ast.Call, ast.Subscript)):
                 # an attribute read by REFLECTION (`getattr(x, "n", d)`, `vars(x)["n"]`, `x.__dict__["n"]`, `x.__dict__.get("n")`)
                 # is a reader of `n` like `<x>.n` is, by the recognition expr_taint reads it through (_reflected_attr). Found
-                # by fork PR 781's differential when the module-wide sweep below went: _stamp_launch_login reads
+                # by fork PR #781's differential when the module-wide sweep below went: _stamp_launch_login reads
                 # `getattr(sess, "_launching", None)`, the attribute's taint grows after its first visit, and the sweep on a
                 # grown module name had been giving it the re-visit the attribute owed it
                 ra = self._reflected_attr(child)
@@ -2244,7 +2244,7 @@ class Census:
                 enqueue(fn)
             if returns_changed:
                 # a caller reads this function's returns at the call (expr_taint, _container_taint, _keyed_taint), and
-                # nothing else of it: until fork PR 781 a change of its locals alone enqueued every caller too, and the
+                # nothing else of it: until fork PR #781 a change of its locals alone enqueued every caller too, and the
                 # writer's parameters gaining taint sent every door-call function back through the walk for nothing
                 for call, caller, _via in self.callers.get(fn, []):
                     enqueue(caller)
@@ -2463,7 +2463,7 @@ class Census:
                     if c and not c <= cc.get(p, set()):
                         cc.setdefault(p, set()).update(c)
                         self._newly_tainted_callees.append(callee)
-        # two signals for two kinds of reader (fork PR 781): a nested def reads this function's locals (tainted_names,
+        # two signals for two kinds of reader (fork PR #781): a nested def reads this function's locals (tainted_names,
         # carried_names, through its scope chain) and a caller reads its returns (ret_taint, ret_whole, at the call);
         # _taint re-visits each kind on its own signal
         return (names != before or carried != before_carried,
