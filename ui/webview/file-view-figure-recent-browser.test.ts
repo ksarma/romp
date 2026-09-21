@@ -18,7 +18,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
-import { inBrowser as withBrowser } from "./real-viewer-leg";
+import { inBrowser } from "./real-viewer-leg";
 
 const EXT = process.cwd();                                        // npm test runs in vscode-extension
 const requireCjs = createRequire(path.join(EXT, "package.json"));
@@ -79,8 +79,8 @@ type H = {
 };
 /** This leg's harness over the shared launch (real-viewer-leg.ts inBrowser: the skip on either road,
  *  the close), so one home carries the stand-down; the page here is the leg's own, not the shared module's. */
-async function inBrowser(t: any, body: (h: H) => Promise<void>): Promise<void> {
-  await withBrowser(t, async (browser: any) => {
+async function inViewer(t: any, body: (h: H) => Promise<void>): Promise<void> {
+  await inBrowser(t, async (browser: any) => {
     const errors: string[] = [];
     const js = bundle();
     const ctx = await browser.newContext({ viewport: { width: 900, height: 600 } });
@@ -135,7 +135,7 @@ test("the Recent key this leg reads is files-recent.ts's", () => {
 });
 
 test("in a browser, the Files page: a picture opened from a figure, by the control and by the plain click, takes no Recent row while Back returns to the report at the reader's block; a Forward step to that picture mints its row (L2's rule, the exception open point 12 states); a link's open still takes its row", async (t) => {
-  await inBrowser(t, async (h) => {
+  await inViewer(t, async (h) => {
     await h.open(REPORT);
     assert.deepEqual(await h.recent(), ["report.md"], "the relay's open is the pane's: one row");
     await h.putAtTop("Paragraph 20");

@@ -17,7 +17,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
-import { inBrowser as withBrowser } from "./real-viewer-leg";
+import { inBrowser } from "./real-viewer-leg";
 
 const EXT = process.cwd();                                        // npm test runs in vscode-extension
 const requireCjs = createRequire(path.join(EXT, "package.json"));
@@ -95,8 +95,8 @@ type H = {
 };
 /** This leg's harness over the shared launch (real-viewer-leg.ts inBrowser: the skip on either road,
  *  the close), so one home carries the stand-down; the page here is the leg's own, not the shared module's. */
-async function inBrowser(t: any, host: "files" | "chat", body: (h: H) => Promise<void>): Promise<void> {
-  await withBrowser(t, async (browser: any) => {
+async function inViewer(t: any, host: "files" | "chat", body: (h: H) => Promise<void>): Promise<void> {
+  await inBrowser(t, async (browser: any) => {
     const errors: string[] = [];
     const js = bundle(host);
     const ctx = await browser.newContext({ viewport: { width: 900, height: 520 } });
@@ -163,7 +163,7 @@ const hiddenPair = (n: any, msg: string) => {
 };
 
 test("in a browser, the Files page: a link followed from the report replaces the card; Back is a glyph at the bar's left titled with the report's name and returns to the report at its block, its scrollTop and its view (a Raw open for a line target comes back Raw with the saved preference untouched); Forward then retraces the step", async (t) => {
-  await inBrowser(t, "files", async (h) => {
+  await inViewer(t, "files", async (h) => {
     await h.open(REPORT);
     let n = await h.nav();
     // (1) FAILS BEFORE: the unchanged viewer has no Back button
@@ -225,7 +225,7 @@ test("in a browser, the Files page: a link followed from the report replaces the
 });
 
 test("in a browser, the Files page: a wikilink pushes like any path link; an open from OUTSIDE the viewer starts the trail over (a Recent row after a close, the shell's relay over an open viewer), so Back and Forward are empty; closing the viewer ends the trail", async (t) => {
-  await inBrowser(t, "files", async (h) => {
+  await inViewer(t, "files", async (h) => {
     await h.open(REPORT);
     // a wikilink: md-config.ts renders `[[guide]]` as an anchor to guide.md beside the report, linkMarkdownAnchors marks it a path link, the delegate pushes
     await h.follow("guide", "guide.md");
@@ -266,7 +266,7 @@ test("in a browser, the Files page: a wikilink pushes like any path link; an ope
 });
 
 test("in a browser, the Files page: Alt+Left and Alt+Right step the trail while the viewer is open; a text field holding the keyboard keeps the chord, and so does a key another listener prevented first; the chord takes the browser's default while the viewer is up", async (t) => {
-  await inBrowser(t, "files", async (h) => {
+  await inViewer(t, "files", async (h) => {
     await h.open(REPORT);
     await h.putAtTop("Paragraph 40");
     const before = await h.top();
@@ -343,7 +343,7 @@ test("in a browser, the Files page: Alt+Left and Alt+Right step the trail while 
 });
 
 test("in a browser, the Files page: a section link scrolls and pushes nothing, a web address opens a tab and pushes nothing, and a same-file line target replaces the card without pushing", async (t) => {
-  await inBrowser(t, "files", async (h) => {
+  await inViewer(t, "files", async (h) => {
     await h.open(REPORT);
     const s0 = await h.shape();
     // (5) a same-document section link: the body scrolls, the trail stands
@@ -371,7 +371,7 @@ test("in a browser, the Files page: a section link scrolls and pushes nothing, a
 });
 
 test("in a browser, the chat modal (the viewer's default opener, no host): a link followed pushes, Back returns to the report at its place, Forward retraces, and the close ends the trail", async (t) => {
-  await inBrowser(t, "chat", async (h) => {
+  await inViewer(t, "chat", async (h) => {
     await h.open(REPORT);
     const n0 = await h.nav();
     assert.equal(n0.back.present, true, "the Back glyph over the chat too");
