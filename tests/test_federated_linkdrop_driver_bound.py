@@ -1029,10 +1029,14 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         may not hold; the pre-push check reads that delta. The cell is what scripts/upstream-ledger.py's render prints for the
         entry's row over the tree's entries (the renderer's own cut applied by the renderer, never spelled here), read from the
         row and brace-expanded (`tests/test_federated_linkdrop_{a,b}.py` names two paths: five full paths cannot fit under the
-        cut in any order, so the line is one stem), and the paths it names are held EQUAL to the family, so a module the cut
-        drops, a module the tree gained, or a stale path on the line is a red naming it. The entry's body points at the where
-        line and keeps no count of modules and no class list (correctness-2: both hand-kept lists went stale as the family
-        grew), and the pin reads the body for a count word before "module"."""
+        cut in any order, so the line is one stem); every module of the family is on the cell and every path on the cell is a
+        file of the tree, so a module the cut drops, a module the tree gained, or a stale path on the line is a red naming it.
+        The paths on the cell beyond the family (since the author's pass 11: the shared round-label rule
+        tests/review_round_labels_rule.py and its test, the branch's other files) are git's to derive, the branch's diff against
+        its merge base, which a CI checkout may not hold; the author's walk of the where line against that diff at each push
+        holds them complete, not this pin, which holds them to be files of the tree. The entry's body points at the where line
+        and keeps no count of modules and no class list (correctness-2: both hand-kept lists went stale as the family grew), and
+        the pin reads the body for a count word before "module"."""
         ledger = _ledger()
         entries, problems = ledger.load_entries(os.path.join(ROOT, "upstream"))
         self.assertEqual(problems, [], "the tree's ledger entries parse: %r" % (problems,))
@@ -1047,8 +1051,10 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         named = sorted(_expand_braces(cell))
         self.assertEqual(cell, entry.get("where"), "the rendered where cell is the entry's whole where value: the renderer cut it (%d characters), so a module is lost from "
                                                    "the table CI publishes; shorten the spelling (one brace-expanded stem) rather than the family: %r" % (len(entry.get("where") or ""), cell))
-        self.assertEqual(named, modules, "the rendered where cell names exactly the family in the tree; missing from the cell %r, on the cell and not in the tree %r (the cell: %r)"
-                         % (sorted(set(modules) - set(named)), sorted(set(named) - set(modules)), cell))
+        self.assertEqual(sorted(set(modules) - set(named)), [], "the rendered where cell names every module of the family in the tree; missing from the cell %r (the cell: %r)"
+                         % (sorted(set(modules) - set(named)), cell))
+        stale = [p for p in named if not os.path.isfile(os.path.join(ROOT, p))]
+        self.assertEqual(stale, [], "a path on the where line that is not a file of the tree (stale, misspelled, or a file the branch no longer carries): %r (the cell: %r)" % (stale, cell))
         with open(os.path.join(ROOT, "upstream", name), encoding="utf-8") as f:
             text = f.read()
         prose = text.split("---", 2)[2] if text.count("---") >= 2 else text
