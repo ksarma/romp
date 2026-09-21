@@ -8,8 +8,9 @@
 #   - a roster or exclusions line whose source is not in the tree (the source moved or was deleted): fix the line;
 #   - a browser leg in neither file: add it to the roster, or to ci-browser-legs-excluded.txt with a tab and a reason;
 #   - a line in both files, a duplicate line, an exclusions line with no reason, a line naming no browser leg: fix it;
-#   - a malformed line (trailing whitespace or a carriage return counts): printed with the whitespace visible, and the leg
-#     it names is reported as named by that line, not as missing from both files;
+#   - a malformed line (trailing whitespace or a carriage return counts) or an exclusions line with no reason: printed with
+#     the whitespace visible (as bash's %q spells it), and the leg it names (the line's first word after its leading
+#     whitespace) is reported as named by that refused line, not as missing from both files;
 #   - a roster line whose source does not pass the roster gate, with the gap the census read: it never imports the shared
 #     launcher, or imports it and never calls inBrowser through that import, or loads playwright itself, or holds a launch
 #     of its own, or drives playwright from a child process, or holds a skip or todo of its own. Only inBrowser reads the
@@ -106,20 +107,28 @@ red() { echo "ci-browser-legs: $*" >&2; fail=1; }
 source_of() { local rel=${1#out-tests/}; printf '%s/%s.test.ts' "$ROOT" "${rel%.test.js}"; }
 well_formed() { [[ "$1" =~ ^out-tests/[^[:space:]]+\.test\.js$ ]]; }
 # the lines seen so far in each file, one "bundle<TAB>line number" per line, for the duplicate and both-files checks; and
-# the bundle a malformed line names once its whitespace is stripped, "bundle<TAB><file> line <n>", so the census pass can
-# point at that line instead of calling the leg missing
+# the bundle a refused line names, "bundle<TAB><file> line <n>", recorded BEFORE the refusal so the census pass can point
+# at that line instead of calling the leg missing from both files
 roster_seen=""
 excluded_seen=""
-malformed_seen=""
+refused_seen=""
 pending_seen=""   # "bundle<TAB>line number" for each pending line whose source is present: red in the loop, not "in neither" too
 pending_n=0
 seen_at() { awk -v k="$1" -F '\t' '$1 == k { print $2; exit }' <<<"$2"; }
-malformed() {   # $1 the file, $2 the line number, $3 the line: red with the whitespace visible, and remember the bundle it names
-  local shown stripped
-  shown=$(printf '%q' "$3")
+# The bundle a refused line names: the line's leading whitespace trimmed, then cut at the first whitespace, so a tab before a
+# pasted reason, a trailing space, a carriage return, a leading tab and spaces before a tab all resolve to the path. The cut is
+# at the first WHITESPACE, not the first tab: a tab cut leaves "<path> " and "<path>\r" unattributed (executed in the tree
+# test). The condition that makes the cut safe: a bundle path cannot contain whitespace (well_formed requires
+# [^[:space:]]+), so the first word is the path or nothing well formed; if a path ever can, this cut breaks and moves with it.
+names_of() { local w=${1#"${1%%[![:space:]]*}"}; printf '%s' "${w%%[[:space:]]*}"; }
+remember() {   # $1 the file, $2 the line number, $3 the LINE: record the bundle it names, so the census pass points at this line
+  local named; named=$(names_of "$3")
+  if well_formed "$named"; then refused_seen="$refused_seen$named	$1 line $2"$'\n'; fi
+}
+malformed() {   # $1 the file, $2 the line number, $3 the LINE: red with the whitespace visible, and remember the bundle it names
+  local shown; shown=$(printf '%q' "$3")
   red "$1 line $2: $shown is not a bundle path (out-tests/<dir>/<name>.test.js; a trailing space, tab or carriage return counts and is shown here as bash's %q spells it): fix the line"
-  stripped=${3//[[:space:]]/}
-  if well_formed "$stripped"; then malformed_seen="$malformed_seen$stripped	$1 line $2"$'\n'; fi
+  remember "$1" "$2" "$3"
 }
 
 legs=()
@@ -148,8 +157,8 @@ while IFS= read -r line || [ -n "$line" ]; do
   [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
   bundle=${line%%$'\t'*}
   reason=${line#*$'\t'}
-  if [ "$bundle" = "$line" ] || [ -z "${reason//[[:space:]]/}" ]; then red "$EXCLUDED line $n: '$line' has no reason: write the bundle path, a tab, and why the gating job does not run it"; continue; fi
-  if ! well_formed "$bundle"; then malformed "$EXCLUDED" "$n" "$bundle"; continue; fi
+  if [ "$bundle" = "$line" ] || [ -z "${reason//[[:space:]]/}" ]; then red "$EXCLUDED line $n: $(printf '%q' "$line") has no reason (the line as bash's %q spells it): write the bundle path, a tab, and why the gating job does not run it"; remember "$EXCLUDED" "$n" "$line"; continue; fi
+  if ! well_formed "$bundle"; then malformed "$EXCLUDED" "$n" "$line"; continue; fi
   at=$(seen_at "$bundle" "$excluded_seen")
   if [ -n "$at" ]; then red "$EXCLUDED line $n: '$bundle' duplicates line $at: remove one"; continue; fi
   excluded_seen="$excluded_seen$bundle	$n"$'\n'
@@ -175,9 +184,9 @@ while IFS= read -r leg; do
   [ -n "$leg" ] || continue
   if [ -z "$(seen_at "$leg" "$roster_seen")" ] && [ -z "$(seen_at "$leg" "$excluded_seen")" ]; then
     if [ -n "$(seen_at "$leg" "$pending_seen")" ]; then continue; fi   # red above with the promotion remedy
-    at=$(seen_at "$leg" "$malformed_seen")
+    at=$(seen_at "$leg" "$refused_seen")
     if [ -n "$at" ]; then
-      red "browser leg '$leg' is named by a malformed line ($at, above): fix that line"
+      red "browser leg '$leg' is named by a line refused above ($at): fix that line"
     else
       red "browser leg '$leg' is in neither $ROSTER nor $EXCLUDED: add it to the roster (the gating job runs it with a browser), or to the exclusions with a tab and a reason"
     fi

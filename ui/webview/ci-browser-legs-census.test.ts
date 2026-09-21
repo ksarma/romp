@@ -83,6 +83,19 @@ test("the roster plus the exclusions whose source is present equals the census's
   const roster = parseRoster(read(path.join(EXT, ROSTER)));
   const excluded = parseExcluded(read(path.join(EXT, EXCLUDED)));
   const where = (file: string, e: { n: number; bundle: string }) => file + " line " + e.n + " (" + e.bundle + ")";
+  // a malformed line, or an exclusions line without a reason, is refused by name before any lookup: the LINE is shown with its
+  // whitespace visible (JSON spells a tab \t and a carriage return \r) and the leg it names, its first word after leading
+  // whitespace, is attributed to it, so the census never reports that leg as missing from both files. A bundle path holds no
+  // whitespace, so the first word is the path or nothing well formed (the script's names_of and tools/ci-browser-legs.test.mjs
+  // read the same shape).
+  const WELL_FORMED = /^out-tests\/\S+\.test\.js$/;
+  const namesOf = (line: string) => line.replace(/^\s+/, "").split(/\s/)[0];
+  for (const e of roster) assert.match(e.bundle, WELL_FORMED, ROSTER + " line " + e.n + ": " + JSON.stringify(e.bundle) + " is not a bundle path (out-tests/<dir>/<name>.test.js; a trailing space, tab or carriage return counts): fix the line" + (WELL_FORMED.test(namesOf(e.bundle)) ? "; it names " + namesOf(e.bundle) + ", which is judged by that line and not called missing from both files" : ""));
+  for (const e of excluded) {
+    const line = e.reason === null ? e.bundle : e.bundle + "\t" + e.reason;
+    assert.ok(e.reason !== null && e.reason.trim() !== "", EXCLUDED + " line " + e.n + ": " + JSON.stringify(line) + " has no reason: write the bundle path, a tab, and why the gating job does not run it" + (WELL_FORMED.test(namesOf(line)) ? "; it names " + namesOf(line) + ", which is judged by that line and not called missing from both files" : ""));
+    assert.match(e.bundle, WELL_FORMED, EXCLUDED + " line " + e.n + ": " + JSON.stringify(line) + " is not a bundle path, a tab and a reason (a leading or trailing space, tab or carriage return counts): fix the line" + (WELL_FORMED.test(namesOf(line)) ? "; it names " + namesOf(line) + ", which is judged by that line and not called missing from both files" : ""));
+  }
   for (const e of roster) {
     const r = c.byBundle.get(e.bundle);
     assert.ok(r && r.reaches, where(ROSTER, e) + " names no browser leg" + (r && r.launcherImported ? ": " + rosterGap(r) : " (the source reaches no browser by the census rule): remove the line"));

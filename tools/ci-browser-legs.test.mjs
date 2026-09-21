@@ -29,8 +29,11 @@
 //     spec reporter, and prints "no legs in the roster" on an empty roster; run on synthetic trees with a stub node on PATH
 //     that answers the census call from a TABLE this module writes (so what is executed here is the script's READING of a
 //     census, never the census), it refuses a stale line, a leg in neither file, a leg in both, a line without a reason, a
-//     duplicate, a line naming no leg, a missing bundle, a malformed line (shown with its whitespace visible, the leg it
-//     names attributed to it), a roster line whose census row carries a gap or an engine, naming the line, the census's
+//     duplicate, a line naming no leg, a missing bundle, a malformed line or a line without a reason (the LINE shown with its
+//     whitespace visible, and the leg it names, its first word after leading whitespace, attributed to it and never called
+//     missing from both files: eight shapes, a tab before a pasted reason on a roster line, a leading tab, spaces then a
+//     tab, a trailing space, a carriage return, a blank reason among them), a roster line whose census row carries a gap or
+//     an engine, naming the line, the census's
 //     sentence and the remedy; stops, judging nothing, when the census exits 1 (no compiler) or 2 (a refusal, whose lines
 //     it prints); and after node --test reads the reporter's record (the stub writes a record this module hands it) and
 //     derives, per rostered leg, that at least one result attributed to it is a pass with no skip or todo, a test and not a
@@ -350,7 +353,7 @@ test('the script runs the rostered legs through node --test when the roster and 
   assert.equal(empty.node, null, 'node was not started: with no file arguments node --test would run its default glob');
 });
 
-test('the script refuses, naming the line and the remedy, on: a missing file, a stale line, a leg in neither file, a leg in both, a line without a reason, a duplicate, a line naming no leg, a missing bundle, a malformed line, a roster line whose census row carries a gap (never imports the launcher; loads playwright itself; a skip of its own) or an engine (Firefox); and stops, judging nothing, when the census exits 1 or 2', (t) => {
+test('the script refuses, naming the line and the remedy, on: a missing file, a stale line, a leg in neither file, a leg in both, a line without a reason, a duplicate, a line naming no leg, a missing bundle, a malformed line (eight shapes, each shown with its whitespace visible and the leg it names attributed to it, never called missing from both files), a roster line whose census row carries a gap (never imports the launcher; loads playwright itself; a skip of its own) or an engine (Firefox); and stops, judging nothing, when the census exits 1 or 2', (t) => {
   const { run, A, B, P, M, K, F, PLAIN, GAP_P, GAP_M, GAP_K, TABLE } = syntheticTree(t);
   const C = 'out-tests/ui/webview/c-browser.test.js';
   const refused = (r, ...needles) => {
@@ -365,8 +368,13 @@ test('the script refuses, naming the line and the remedy, on: a missing file, a 
   refused(run('# header\n' + A + '\n' + C + '\n', B + '\treason\n' + rest), ROSTER + ' line 3: \'' + C + '\' names ui/webview/c-browser.test.ts, which is not in the tree (the source moved or was deleted): fix the roster line');
   refused(run(A + '\n', '# nothing excluded but the rest\n' + rest), 'browser leg \'' + B + '\' is in neither ' + ROSTER + ' nor ' + EXCLUDED, 'add it to the roster', 'or to the exclusions with a tab and a reason');
   refused(run(A + '\n', A + '\treason\n' + B + '\treason\n' + rest), EXCLUDED + ' line 1: \'' + A + '\' is also ' + ROSTER + ' line 1: a leg is in one file or the other, keep one');
-  refused(run(A + '\n', B + '\n' + rest), EXCLUDED + ' line 1: \'' + B + '\' has no reason: write the bundle path, a tab, and why the gating job does not run it');
-  refused(run(A + '\n', B + '\t  \n' + rest), EXCLUDED + ' line 1', 'has no reason');
+  // a line without a reason (no tab; a tab and a blank reason): the LINE is shown as bash's %q spells it, so the blank reason's
+  // whitespace is visible, and the leg it names is attributed to that line, not called missing from both files
+  const noReason = run(A + '\n', B + '\n' + rest);
+  refused(noReason, EXCLUDED + ' line 1: ' + B + ' has no reason (the line as bash\'s %q spells it): write the bundle path, a tab, and why the gating job does not run it', 'browser leg \'' + B + '\' is named by a line refused above (' + EXCLUDED + ' line 1): fix that line');
+  const blank = run(A + '\n', B + '\t  \n' + rest);
+  refused(blank, EXCLUDED + ' line 1: $\'' + B + '\\t  \' has no reason', 'browser leg \'' + B + '\' is named by a line refused above (' + EXCLUDED + ' line 1): fix that line');
+  for (const r of [noReason, blank]) assert.ok(!r.err.includes('is in neither'), 'the leg the refused line names is not reported as missing from both files:\n' + r.err);
   refused(run(A + '\n' + A + '\n', B + '\treason\n' + rest), ROSTER + ' line 2: \'' + A + '\' duplicates line 1: remove one');
   refused(run(A + '\n', B + '\treason\n' + B + '\tagain\n' + rest), EXCLUDED + ' line 2: \'' + B + '\' duplicates line 1: remove one');
   refused(run(A + '\n' + PLAIN + '\n', B + '\treason\n' + rest), ROSTER + ' line 2: \'' + PLAIN + '\' names no browser leg: ui/webview/plain.test.ts reaches no browser (the census rule in scripts/browser-legs-census.mjs): remove the line');
@@ -377,10 +385,26 @@ test('the script refuses, naming the line and the remedy, on: a missing file, a 
   refused(run('ui/webview/a-browser.test.ts\n', A + '\treason\n' + B + '\treason\n' + rest), ROSTER + ' line 1: ui/webview/a-browser.test.ts is not a bundle path (out-tests/<dir>/<name>.test.js; a trailing space, tab or carriage return counts', 'fix the line');
   // a carriage return at the end of the line: the line is shown as bash's %q spells it, so the invisible cause is visible,
   // and the leg it names is attributed to that line, not called missing from both files
+  const attributed = (r, file, bundle) => { assert.ok(r.err.includes('browser leg \'' + bundle + '\' is named by a line refused above (' + file + ' line 1): fix that line'), r.err); assert.ok(!r.err.includes('is in neither'), 'the leg the refused line names is not reported as missing from both files:\n' + r.err); };
   const crlf = run(A + '\r\n', B + '\treason\n' + rest);
-  refused(crlf, ROSTER + ' line 1: $\'' + A + '\\r\' is not a bundle path', 'browser leg \'' + A + '\' is named by a malformed line (' + ROSTER + ' line 1, above): fix that line');
-  assert.ok(!crlf.err.includes('is in neither'), 'the leg the malformed line names is not reported as missing from both files:\n' + crlf.err);
-  refused(run(A + '\n', B + '\treason\n' + P + '  \treason\n' + EXCLUDE_REST('a', 'b', 'p')), EXCLUDED + ' line 2: ' + P + '\\ \\  is not a bundle path', 'browser leg \'' + P + '\' is named by a malformed line (' + EXCLUDED + ' line 2, above): fix that line');
+  refused(crlf, ROSTER + ' line 1: $\'' + A + '\\r\' is not a bundle path'); attributed(crlf, ROSTER, A);
+  // the attribution is the line's first word after its leading whitespace: a roster line with a tab and a pasted reason (the
+  // shape a copy of an exclusions line leaves when a leg is promoted), a leading tab, spaces then a tab before the path, a
+  // trailing space, and a leading tab on a roster line all resolve to the path (a tab cut would leave "<path> " and "<path>\r")
+  const pasted = run(A + '\tpasted reason\n', B + '\treason\n' + rest);
+  refused(pasted, ROSTER + ' line 1: $\'' + A + '\\tpasted reason\' is not a bundle path'); attributed(pasted, ROSTER, A);
+  const leadTab = run(A + '\n', '\t' + B + '\treason\n' + rest);
+  refused(leadTab, EXCLUDED + ' line 1: $\'\\t' + B + '\\treason\' is not a bundle path'); attributed(leadTab, EXCLUDED, B);
+  const spacesTab = run(A + '\n', '  \t' + B + '\treason\n' + rest);
+  refused(spacesTab, EXCLUDED + ' line 1: $\'  \\t' + B + '\\treason\' is not a bundle path'); attributed(spacesTab, EXCLUDED, B);
+  const trailing = run(A + ' \n', B + '\treason\n' + rest);
+  refused(trailing, ROSTER + ' line 1: ' + A + '\\  is not a bundle path'); attributed(trailing, ROSTER, A);
+  const leadTabRoster = run('\t' + A + '\n', B + '\treason\n' + rest);
+  refused(leadTabRoster, ROSTER + ' line 1: $\'\\t' + A + '\' is not a bundle path'); attributed(leadTabRoster, ROSTER, A);
+  refused(run(A + '\n', B + '\treason\n' + P + '  \treason\n' + EXCLUDE_REST('a', 'b', 'p')), EXCLUDED + ' line 2: $\'' + P + '  \\treason\' is not a bundle path', 'browser leg \'' + P + '\' is named by a line refused above (' + EXCLUDED + ' line 2): fix that line');
+  // a refused line naming a bundle that is no leg: the line is refused and the real leg, unnamed by any line, is in neither
+  const noLeg = run(A + '\n', PLAIN + '\n' + EXCLUDE_REST('a', 'b'));
+  refused(noLeg, EXCLUDED + ' line 1: ' + PLAIN + ' has no reason', 'browser leg \'' + B + '\' is in neither ' + ROSTER + ' nor ' + EXCLUDED);
   // a roster line whose census row carries a gap: the row's sentence is printed between the line and the remedy (p never
   // imports the launcher; m loads playwright itself beside its inBrowser call; k keeps a skip of its own), so rostered, its
   // skip would stay a skip under the step and its private launch would never be the failure naming the switch
