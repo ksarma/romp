@@ -1317,5 +1317,60 @@ class RealTree(unittest.TestCase):
         self.assertIn("a name that already runs: `/new` re-asserts an explicit `--in`, the picker's op warns instead", text)
 
 
+class HostSocketModeWhereLine(unittest.TestCase):
+    """upstream/2026-09-18-host-socket-mode.md's `where:` line against the tree and against the PR's diff (round 4 of
+    fork PR #814's review, 2026-09-20: regression-3, kernel-6 and regression-2 found the line naming a pin its class no
+    longer had, a constant the round then withdrew, and one function twice, the third PR of the night with the same
+    defect; the round ruled the line DERIVED from the branch's diff). The line is generated: for each file the diff
+    touches, `path (name, name, ...)`, the names being the defs and classes whose bodies the -U0 hunks fall in (a
+    `Class.method` when a hunk lies inside one method, the class when it spans more; `text` for a non-Python file),
+    segments joined by `; `. Two rules hold it. Every file the PR's diff touches is named: the list below is
+    `git diff --name-only <merge-base>..HEAD` at the commit applying round 4's rulings, pasted, since the merge-base is
+    not derivable once the branch lands (a later PR that edits the entry re-derives it). And every name the line gives
+    for a Python file resolves to a def or class in that file at this head, by ast, so a withdrawn or renamed name reds
+    here where the ledger's own `check` (a format check) cannot see it."""
+
+    ENTRY = "upstream/2026-09-18-host-socket-mode.md"
+    FILES = ("docs/reference.md", "kernel/host_transport.py", "kernel/judge.py", "kernel/sdk_backend.py", "kernel/session_host.py",
+             "tests/README.md", "tests/test_host_transport.py", "tests/test_hosts_path_census.py", "tests/test_judge_scratch_private.py",
+             "tests/test_session_host.py", "tests/test_session_host_sdk_pin.py", "tests/test_tempdir_hygiene.py",
+             "tests/test_upstream_ledger.py", "upstream/2026-09-18-host-socket-mode.md")
+    SEGMENT = re.compile(r"(?P<path>[A-Za-z0-9_./-]+\.(?:py|md)) \((?P<names>[^)]*)\)")
+
+    def _segments(self):
+        entry, problems = L.parse_entry(Path(self.ENTRY).name, (ROOT / self.ENTRY).read_text(encoding="utf-8"))
+        self.assertEqual(problems, [], problems)
+        where = entry.header["where"]
+        segs = {m.group("path"): [n.strip() for n in m.group("names").split(",") if n.strip()] for m in self.SEGMENT.finditer(where)}
+        self.assertGreater(len(segs), 0, "the where: line has the generated shape: `path (names)` segments")
+        return where, segs
+
+    def test_every_file_the_diff_touches_is_named_once(self):
+        where, segs = self._segments()
+        self.assertEqual(sorted(segs), sorted(self.FILES), "the files the PR's diff touches, each named once, and no other")
+        for path in self.FILES:
+            self.assertEqual(where.count(path + " ("), 1, "%s named once" % path)
+
+    def test_every_name_the_line_gives_resolves_in_its_file_at_this_head(self):
+        import ast
+        _, segs = self._segments()
+        for path, names in segs.items():
+            self.assertTrue((ROOT / path).exists(), path)
+            if not path.endswith(".py"):
+                self.assertEqual(names, ["text"], "%s: a non-Python file's segment says text" % path)
+                continue
+            tree = ast.parse((ROOT / path).read_text(encoding="utf-8"))
+            top = {n.name: n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))}
+            for name in names:
+                if name == "module level":
+                    continue
+                head, _, tail = name.partition(".")
+                self.assertIn(head, top, "%s names %s, which %s does not define at top level" % (self.ENTRY, name, path))
+                if tail:
+                    kids = {c.name for c in top[head].body if isinstance(c, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))}
+                    self.assertIn(tail, kids, "%s names %s, which %s.%s does not define" % (self.ENTRY, name, path, head))
+            self.assertEqual(len(names), len(set(names)), "%s: no name twice" % path)
+
+
 if __name__ == "__main__":
     unittest.main()

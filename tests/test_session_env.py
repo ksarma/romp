@@ -248,22 +248,30 @@ CENSUS_FILES = (SDK_BACKEND, KERNEL_PY, CREDENTIALS_PY)
 # The content rows by identity: the writing function, the module-level format the ring text starts from, and whether
 # the call passes key= (the rows the launch files at every connect are keyed). Nine at review round 6; eleven since the
 # merge of main (the post-merge census, 2026-09-20): main's fork PR #777 added two refused-launch rows in
-# _host_transport_for, tainted through the host process, bounded by HOST_REFUSED_RING in the follow-up commit.
-# Re-derived: census content_identities() = [('flag_settings_path', 'FLAG_SID_RING', False), ('flag_settings_path',
-# 'FLAG_LINK_RING', False), ('flag_settings_path', 'FLAG_UNWRITABLE_RING', False), ('_host_transport_for',
-# 'HOST_REFUSED_RING', False), ('_host_transport_for', 'HOST_REFUSED_RING', False), ('_options', 'RESERVED_DROP_RING',
-# True), ('_options', 'STORED_OFFENDER_RING', True), ('fork', 'FORK_RESERVED_RING', False), ('fork', 'FORK_DROP_RING',
-# False), ('set_env', 'REFUSAL_RING_HEAD', False), ('set_env', 'REFUSAL_RING_HEAD', False)]
+# _host_transport_for, tainted through the host process, bounded by HOST_REFUSED_RING in the follow-up commit. Twelve
+# since the round-8 merge of main (2026-09-21): main's fork PR #814 added the directory-refused row in
+# _refused_directory_row, the same prose through problem_row's log= again (one explicit violation, one UNBOUNDED row),
+# bounded by HOST_REFUSED_RING inside that merge, the way the two sibling roads were.
+# Re-derived at the round-8 merge of main: census content_identities() = [('flag_settings_path', 'FLAG_SID_RING', False),
+# ('flag_settings_path', 'FLAG_LINK_RING', False), ('flag_settings_path', 'FLAG_UNWRITABLE_RING', False),
+# ('_host_transport_for', 'HOST_REFUSED_RING', False), ('_host_transport_for', 'HOST_REFUSED_RING', False),
+# ('_refused_directory_row', 'HOST_REFUSED_RING', False), ('_options', 'RESERVED_DROP_RING', True), ('_options',
+# 'STORED_OFFENDER_RING', True), ('fork', 'FORK_RESERVED_RING', False), ('fork', 'FORK_DROP_RING', False), ('set_env',
+# 'REFUSAL_RING_HEAD', False), ('set_env', 'REFUSAL_RING_HEAD', False)]
 ROWS = [
     ("flag_settings_path", "FLAG_SID_RING", False), ("flag_settings_path", "FLAG_LINK_RING", False),
     ("flag_settings_path", "FLAG_UNWRITABLE_RING", False),
     ("_host_transport_for", "HOST_REFUSED_RING", False), ("_host_transport_for", "HOST_REFUSED_RING", False),
+    ("_refused_directory_row", "HOST_REFUSED_RING", False),
     ("_options", "RESERVED_DROP_RING", True), ("_options", "STORED_OFFENDER_RING", True),
     ("fork", "FORK_RESERVED_RING", False), ("fork", "FORK_DROP_RING", False),
     ("set_env", "REFUSAL_RING_HEAD", False), ("set_env", "REFUSAL_RING_HEAD", False),
 ]
 # The tables: what the census finds at the head this block ships on, each entry an EXACT count asserted by EQUALITY
-# (round 8 of the review, 2026-09-21; derived at round 8's commit and pasted). Until round 8 these were FLOORS, and a floor
+# (round 8 of the review, 2026-09-21; derived at the round-8 merge of main and pasted: that merge, of fork PR #814, grew
+# the population over round 8's commit, doors 436 to 442, self calls 198 to 202, door-value sites 20 to 21, problem_row
+# sites 13 to 14, content rows 11 to 12, functions 3233 to 3241, and this equality fired on the growth before the tables
+# were re-derived there). Until round 8 these were FLOORS, and a floor
 # is silent slack: twice a merge of main grew the population under floors that stayed green (38 doors of slack at round
 # 6's head; three doors, a call, a door-value site, a problem_row site and a function at round 7's head), and at that
 # head a walk blinded to one param-kind door call passed every floor. The rule as enforced now: any growth or shrinkage
@@ -275,31 +283,34 @@ ROWS = [
 #   print(json.dumps(c.counts, sort_keys=True)); print(json.dumps(c.by_kind, sort_keys=True))
 #   print(len(c.existence_rows), len(c.mods["credentials.py"].fns))'
 COUNTS = {
-    "doors": 436,                  # 1 appender + 354 calls reaching it + 46 conduit and feeder call sites (_log_quietly 21,
-    #                                problem_row 13, _sdk_problem 8, _spend_guard_row 2, _note_ws_drop 2) + 20 door-as-argument
+    "doors": 442,                  # 1 appender + 358 calls reaching it + 47 conduit and feeder call sites (_log_quietly 21,
+    #                                problem_row 14, _sdk_problem 8, _spend_guard_row 2, _note_ws_drop 2) + 21 door-as-argument
     #                                sites + 10 parameter-bound functions + 2 feeder appends + 3 merge reads
-    "calls_reaching_writer": 354,  # self._log in SdkBackend 198, another receiver 109, ApiHealth's bound self._log 7,
+    "calls_reaching_writer": 358,  # self._log in SdkBackend 202, another receiver 109, ApiHealth's bound self._log 7,
     #                                a log= parameter 35, a local alias 5
     "log_param_fns": 10,           # problem_row, ApiHealth.__init__, flag_settings_path, cli_scope_supported, cli_scope_limits and
     #                                its pass-through _cli_scope_settle, helper_fast_org_env and its pass-through key_fast_org_env,
     #                                relocate_transcripts, sweep_dead_test_roots
-    "door_value_sites": 20,        # call sites passing a door as an argument: 13 problem_row (one in kernel.py, through getattr),
+    "door_value_sites": 21,        # call sites passing a door as an argument: 14 problem_row (one in kernel.py, through getattr),
     #                                ApiHealth, cli_scope_supported, cli_scope_limits, sweep_dead_test_roots, flag_settings_path,
     #                                helper_fast_org_env, relocate_transcripts
-    "problem_row_sites": 13,       # main's two refused-launch sites call problem_row without log=, so they are sites of it and
+    "problem_row_sites": 14,       # main's two refused-launch sites and the directory-refused row's call problem_row without log=,
+    #                                so they are sites of it and
     #                                not door-as-argument sites
     "sdk_problem_sites": 8,
     "feeder_appends": 2,           # _SDK_BOOT_PROBLEMS in _sdk_problem, _WS_DROPS in _note_ws_drop
     "merge_reads": 3,              # _sdk_problem_rows reads the two lists and be.problems()
-    "content_rows": 11,            # the ENV ROWS line's rows; content_identities() == ROWS holds them exactly, so this entry
+    "content_rows": 12,            # the ENV ROWS line's rows; content_identities() == ROWS holds them exactly, so this entry
     #                                carries no tension of its own and is here so the block is truthful
-    "functions": 3233,             # every def and lambda of the three files, nested ones included
+    "functions": 3241,             # every def and lambda of the three files, nested ones included
 }
-CALLS_BY_KIND = {"self": 198, "typed": 109, "bound-self": 7, "param": 35, "alias": 5}   # the 354's derivation, an equality each
-EXISTENCE_ROWS = 20      # the existence rows (tag "pick" alone, a fixed vocabulary plus names): derived at round 8's commit, like
-#                          the tables above; the vocabulary test holds the count exactly (a floor of 20 stood here until round 8)
+CALLS_BY_KIND = {"self": 202, "typed": 109, "bound-self": 7, "param": 35, "alias": 5}   # the 358's derivation, an equality each
+EXISTENCE_ROWS = 20      # the existence rows (tag "pick" alone, a fixed vocabulary plus names): derived at round 8's commit and
+#                          re-derived unchanged at the round-8 merge of main; the vocabulary test holds the count exactly (a
+#                          floor of 20 stood here until round 8)
 CREDENTIALS_FNS = 28     # every def and lambda of kernel/credentials.py, the census's proof that it read a file with no door:
-#                          derived at round 8's commit (a floor of 20 stood here until round 8)
+#                          derived at round 8's commit and unchanged at the round-8 merge of main (a floor of 20 stood here
+#                          until round 8)
 
 
 def _table_mismatches(counts, by_kind):
@@ -1073,7 +1084,10 @@ class EnvRowsPopulation(unittest.TestCase):
         two inner calls); closed by the sites taking problem_row's ledger row and returned line without log= and filing
         their own row, problem=True with HOST_REFUSED_RING, and by the census judging a conduit's inner calls at their
         sites (rule 3). The Counter is unchanged by that: the two rows are 'self' calls declared True, and the
-        re-derivation gives _host_transport_for: 2 (the host-start notice and the credential-names notice), as before."""
+        re-derivation gives _host_transport_for: 2 (the host-start notice and the credential-names notice), as before. The
+        round-8 merge of main (fork PR #814, 2026-09-21) brought a third row of the class, _refused_directory_row's
+        directory-refused row through problem_row's log=, one violation (no explicit problem=) and one UNBOUNDED content
+        row; closed the same way inside the merge, and the Counter is unchanged by it too."""
         c = self.c
         self.assertEqual([(dc.base, dc.lineno, dc.owner, why) for dc, why in c.explicit_violations], [],
                          "value-tainted door calls without an explicit constant problem= (or a content row with no single format)")
@@ -1092,8 +1106,9 @@ class EnvRowsPopulation(unittest.TestCase):
         decides, not reduction) and is held here by identity, so a new one reds until it is reduced or named with its
         reason. One at this head: _lease_problem's problem_row call, whose prose is the host's own problem text, run-time
         data with no head to read. The four the round named reduce: problem_row's two inner calls through its
-        door-passing sites (twelve in sdk_backend.py since the merge of main, thirteen with kernel.py's one through getattr,
-        as COUNTS's door-value entry counts them: the two refused-launch sites pass no log= and are no sites of it),
+        door-passing sites (thirteen in sdk_backend.py since the round-8 merge of main, fourteen with kernel.py's one through
+        getattr, as COUNTS's door-value entry counts them: the two refused-launch sites and the directory-refused row's
+        pass no log= and are no sites of it),
         _log_quietly's through its callers, and the crash line, an f-string. The refused-launch rows' message is
         problem_row's RETURNED line, which the census reads as the caller's prose through the returned parameter (rule 7,
         the post-merge census): both rows reduce to their head and neither joins this set."""
@@ -1102,6 +1117,9 @@ class EnvRowsPopulation(unittest.TestCase):
         host = [dc for dc in c.content_rows if dc.owner == "_host_transport_for"]
         self.assertEqual([(dc.kind, dc.heads, dc.unreduced) for dc in host], [("self", ["the session host for %s %s"], False)] * 2,
                          "the refused-launch rows' message is problem_row's returned line, read as the caller's prose")
+        directory = [dc for dc in c.content_rows if dc.owner == "_refused_directory_row"]
+        self.assertEqual([(dc.kind, dc.heads, dc.unreduced) for dc in directory], [("self", ["the session host for %s %s"], False)],
+                         "the directory-refused row's message is problem_row's returned line too (the round-8 merge of main)")
         self.assertEqual([dc.lineno for dc in c.unreduced if dc.taint], [], "an unreduced call carries no env taint")
         inner = {(dc.owner, dc.kind): dc.heads for dc in c.door_calls if dc.owner in ("problem_row", "_log_quietly") and dc.kind in ("param", "typed")}
         self.assertEqual(sorted(inner), [("_log_quietly", "typed"), ("problem_row", "param")])
@@ -1129,7 +1147,8 @@ class EnvRowsPopulation(unittest.TestCase):
         'live work (%s): %d background task%s'), the conduit's problem road (ruling 2 of the post-merge census)."""
         c = self.c
         ex = c.existence_rows
-        self.assertEqual(len(ex), EXISTENCE_ROWS, "the existence rows at round 8's commit (%d): fewer is a blind walk, more is growth "
+        self.assertEqual(len(ex), EXISTENCE_ROWS, "the existence rows at round 8's commit, unchanged at the round-8 merge of main (%d): "
+                         "fewer is a blind walk, more is growth "
                          "nobody re-derived; re-derive EXISTENCE_ROWS deliberately and name the head" % EXISTENCE_ROWS)
         for dc in ex:
             self.assertEqual(dc.taint, frozenset({"pick"}), (dc.lineno, dc.taint))
@@ -1168,18 +1187,19 @@ class EnvRowsPopulation(unittest.TestCase):
         defined = sorted(n for (b, n) in list(DEFAULT_SOURCES["name"]) + list(DEFAULT_SOURCES["func"])
                          if b == "credentials.py" and (n in cred.top_defs or n in cred.top_assigns))
         self.assertEqual(len(defined), 12, defined)
-        self.assertEqual(len(cred.fns), CREDENTIALS_FNS, "every def and lambda of credentials.py at round 8's commit; a different count "
+        self.assertEqual(len(cred.fns), CREDENTIALS_FNS, "every def and lambda of credentials.py at round 8's commit and at the round-8 "
+                         "merge of main; a different count "
                          "is a file the walk did not read whole, or growth to re-derive deliberately")
 
     def test_the_derivation_equals_its_committed_tables(self):
-        """The census's counts EQUAL the tables committed at round 8's commit (COUNTS, CALLS_BY_KIND). Fewer is a blind
+        """The census's counts EQUAL the tables committed at the round-8 merge of main (COUNTS, CALLS_BY_KIND). Fewer is a blind
         walk; more is growth nobody has re-derived; either reds, and the author re-derives the tables deliberately, naming
         the head. The floors this replaces were blind by construction: at round 7's head a walk with one param-kind door
         call removed passed every floor (the reviewer's round 7, extra8-1), and the same blinding reds this equality on
         three entries (param, calls_reaching_writer, doors), pasted in round 8's commit message."""
         c = self.c
         self.assertEqual(_table_mismatches(c.counts, c.by_kind), [],
-                         "the census disagrees with the committed tables: (entry, found, committed at round 8's commit); fewer is a blind "
+                         "the census disagrees with the committed tables: (entry, found, committed at the round-8 merge of main); fewer is a blind "
                          "walk, more is growth nobody re-derived: re-derive COUNTS and CALLS_BY_KIND deliberately and name the head")
         self.assertEqual(sum(c.by_kind.values()), c.counts["calls_reaching_writer"])
 
