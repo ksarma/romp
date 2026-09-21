@@ -34,6 +34,76 @@ const nameOf = (fn: ts.SignatureDeclaration): string | null => {
 };
 const ownerOf = (n: ts.Node): string => { for (let p: ts.Node | undefined = n.parent; p; p = p.parent) { if (ts.isFunctionLike(p)) { const nm = nameOf(p); if (nm) return nm; } } return "<module>"; };
 
+/** The take state: the fields of the view the take writes (applyMeasure), the untake restores (untakeMeasure) and the parked figures are
+ *  read from before a take (figuresBefore): `measured`, the figures parked since the last paint; `avgTurnH` and `pxPerTurn`, the figures the
+ *  spacers and gap units are drawn from. Stated once, here; the ordering window test derives the same three from render.ts's tree and asserts
+ *  them equal, and land-active-keep.test.ts's world traces a write of any of them (the maintainer's round 4 ruling, ordering-1: both halves
+ *  keyed on the field NAME `measured` alone, narrower than the state the site's exception rests on). Outside the set, by the same derivation:
+ *  `measureDue`, which arms the park and is read by measureUnits alone (a write to it in a window takes nothing), and `gapUnits`, the per-unit
+ *  heights redrawGapUnits derives from pxPerTurn (redrawGapUnits is a taker by the seed list). */
+const TAKE_STATE: ReadonlySet<string> = new Set(["measured", "avgTurnH", "pxPerTurn"]);
+/** The targets an assignment's left side writes: itself, or, for an object or array pattern, each of the pattern's targets (a property's
+ *  value, a shorthand's name, a spread's expression, an element, a default's left side), so a destructuring assignment writes every field
+ *  its pattern names. */
+const targetsOf = (e: ts.Expression): ts.Expression[] => {
+  if (ts.isParenthesizedExpression(e)) return targetsOf(e.expression);
+  if (ts.isObjectLiteralExpression(e)) return e.properties.flatMap((q) => ts.isPropertyAssignment(q) ? targetsOf(q.initializer) : ts.isShorthandPropertyAssignment(q) ? [q.name] : ts.isSpreadAssignment(q) ? targetsOf(q.expression) : []);
+  if (ts.isArrayLiteralExpression(e)) return e.elements.flatMap((x) => ts.isOmittedExpression(x) ? [] : ts.isSpreadElement(x) ? targetsOf(x.expression) : targetsOf(x));
+  if (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.EqualsToken) return targetsOf(e.left);
+  return [e];
+};
+/** The field of `fields` a node names at its end: a property access or a string element access on one; else null. */
+const namesField = (e: ts.Node, fields: ReadonlySet<string>): string | null =>
+  (ts.isPropertyAccessExpression(e) && fields.has(e.name.text)) ? e.name.text : (ts.isElementAccessExpression(e) && ts.isStringLiteralLike(e.argumentExpression) && fields.has(e.argumentExpression.text)) ? e.argumentExpression.text : null;
+/** The field of `fields` a write to `e` reaches: the one `e` names at its end, or one anywhere up its receiver chain (`v.measured.avg`, a
+ *  write THROUGH the field into the parked object; `(x as any).measured` through a parenthesis or an assertion), so the census keys on the
+ *  field written to, not on the spelling at the target's end. */
+const fieldOf = (e: ts.Node | undefined, fields: ReadonlySet<string>): string | null => {
+  for (let x: ts.Node | undefined = e; x;) {
+    const f = namesField(x, fields); if (f) return f;
+    if (ts.isParenthesizedExpression(x) || ts.isNonNullExpression(x) || ts.isAsExpression(x) || ts.isTypeAssertionExpression(x) || ts.isPropertyAccessExpression(x) || ts.isElementAccessExpression(x)) { x = x.expression; continue; }
+    return null;
+  }
+  return null;
+};
+type FieldWrite = { node: ts.Node; owner: string; field: string; describe: string };
+/** Every WRITE to a field of `fields` under `root`, keyed on the PROPERTY (the field written) and not on the assignment's form (the
+ *  maintainer's round 4 ruling, plants-1: a set that counted a simple or compound assignment or a delete whose left side was syntactically
+ *  the member let a writer of another form escape with the module green): an assignment of any operator (the compiler's FirstAssignment to
+ *  LastAssignment: `=`, `??=`, `||=`, `+=` and the rest), a destructuring assignment whose pattern holds the field as a target
+ *  (`({ avg: v.avgTurnH } = m)`, `[v.measured] = [x]`), a for-of or for-in over the field, an increment or a decrement, a delete, and a call
+ *  of `Object.assign`, `Object.defineProperty`, `Reflect.set`, `Reflect.defineProperty` or `Reflect.deleteProperty` whose receiver names the
+ *  field or whose literal source or key does (`Object.assign(v, { measured: x })`, `Reflect.set(v, "measured", x)`). The tree cannot read a
+ *  non-literal source's keys or a computed key, so `Object.assign(v, src)` and `v[k] = x` are outside this census by construction:
+ *  land-active-keep.test.ts's accessors on the world's view, which every such write reaches at run time, are the guard on those. Each
+ *  write is named by its owner (ownerOf) and described in the census's words (the right side of a plain assignment, else the whole form).
+ *  Provenance of the forms: the closing pass over the author's fixer pass (`v.avgTurnH ??= 5` planted in showActive escaped a count of `=`
+ *  alone) and the second closing lens (the pattern's `=` has an object literal on its left and the count read the left alone). */
+function writesOf(fields: ReadonlySet<string>, root: ts.Node): FieldWrite[] {
+  const out: FieldWrite[] = [];
+  const add = (node: ts.Node, field: string | null, describe: string): void => { if (field) out.push({ node, owner: ownerOf(node), field, describe }); };
+  const isAssign = (n: ts.Node): n is ts.BinaryExpression => ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && n.operatorToken.kind <= ts.SyntaxKind.LastAssignment;
+  const calleeOf = (n: ts.CallExpression): string | null => ts.isPropertyAccessExpression(n.expression) && ts.isIdentifier(n.expression.expression) ? n.expression.expression.text + "." + n.expression.name.text : null;
+  const literalKey = (p: ts.ObjectLiteralElementLike): string | null => (ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p)) && (ts.isIdentifier(p.name) || ts.isStringLiteralLike(p.name)) ? p.name.text : null;
+  const go = (n: ts.Node): void => {
+    if (isAssign(n)) {
+      if (ts.isObjectLiteralExpression(n.left) || ts.isArrayLiteralExpression(n.left)) { for (const t of targetsOf(n.left)) add(n, fieldOf(t, fields), n.getText(SF)); }
+      else { const f = fieldOf(n.left, fields); add(n, f, f && namesField(n.left, fields) === f ? (n.operatorToken.kind === ts.SyntaxKind.EqualsToken ? "" : n.operatorToken.getText(SF) + " ") + n.right.getText(SF) : n.getText(SF)); }
+    }
+    if ((ts.isForOfStatement(n) || ts.isForInStatement(n)) && !ts.isVariableDeclarationList(n.initializer)) for (const t of targetsOf(n.initializer)) add(n, fieldOf(t, fields), "for (" + n.initializer.getText(SF) + (ts.isForOfStatement(n) ? " of " : " in ") + n.expression.getText(SF) + ")");
+    if ((ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) && (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken)) add(n, fieldOf(n.operand, fields), n.getText(SF));
+    if (ts.isDeleteExpression(n)) add(n, fieldOf(n.expression, fields), n.getText(SF));
+    if (ts.isCallExpression(n)) {
+      const callee = calleeOf(n);
+      if (callee === "Object.assign") { add(n, fieldOf(n.arguments[0], fields), n.getText(SF)); for (const a of n.arguments.slice(1)) if (ts.isObjectLiteralExpression(a)) for (const p of a.properties) { const k = literalKey(p); if (k && fields.has(k)) add(n, k, n.getText(SF)); } }
+      else if (callee === "Object.defineProperty" || callee === "Reflect.set" || callee === "Reflect.defineProperty" || callee === "Reflect.deleteProperty") { add(n, fieldOf(n.arguments[0], fields), n.getText(SF)); const k = n.arguments[1]; if (k && ts.isStringLiteralLike(k) && fields.has(k.text)) add(n, k.text, n.getText(SF)); }
+    }
+    ts.forEachChild(n, go);
+  };
+  go(root);
+  return out;
+}
+
 /** The source with its comments removed and nothing else: the comment ranges are the compiler's own (every token's leading and trailing
  *  trivia over the parsed file), so a `//` or a `/*` inside a string, a template or a regular expression is text, never a comment. The
  *  regex stripper this replaces (the author's fixer pass over pass 3) cut a line at the `//` of a quoted URL, which hid an alias written after it on the same
@@ -501,38 +571,17 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   // and the spacer-follow check onto the tree after a planted comment naming the two calls turned the raw counts red)
   const sf = SF;   // parsed once at module level, with the owner rule (nameOf, ownerOf) the ordering window test below shares
   const NAMES = new Set(["renderWindowItems", "syncView", "untakeMeasure"]);
-  const allCalls: ts.CallExpression[] = [], refs: ts.Identifier[] = [], strings = new Set<string>(), avgWrites: string[] = [];
-  // a node that names the average: a property access or an element access on `avgTurnH`
-  const namesAvg = (e: ts.Node): boolean => (ts.isPropertyAccessExpression(e) && e.name.text === "avgTurnH") || (ts.isElementAccessExpression(e) && ts.isStringLiteralLike(e.argumentExpression) && e.argumentExpression.text === "avgTurnH");
-  // the targets an assignment's left side writes: itself, or, for an object or array pattern, each of the pattern's targets (a property's
-  // value, a shorthand's name, a spread's expression, an element, a default's left side), so a destructuring assignment writes every field
-  // its pattern names
-  const targetsOf = (e: ts.Expression): ts.Expression[] => {
-    if (ts.isParenthesizedExpression(e)) return targetsOf(e.expression);
-    if (ts.isObjectLiteralExpression(e)) return e.properties.flatMap((q) => ts.isPropertyAssignment(q) ? targetsOf(q.initializer) : ts.isShorthandPropertyAssignment(q) ? [q.name] : ts.isSpreadAssignment(q) ? targetsOf(q.expression) : []);
-    if (ts.isArrayLiteralExpression(e)) return e.elements.flatMap((x) => ts.isOmittedExpression(x) ? [] : ts.isSpreadElement(x) ? targetsOf(x.expression) : targetsOf(x));
-    if (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.EqualsToken) return targetsOf(e.left);
-    return [e];
-  };
+  const allCalls: ts.CallExpression[] = [], refs: ts.Identifier[] = [], strings = new Set<string>();
   const visit = (n: ts.Node): void => {
     if (ts.isCallExpression(n) && ts.isIdentifier(n.expression)) allCalls.push(n);
     if (ts.isIdentifier(n) && NAMES.has(n.text) && !(ts.isCallExpression(n.parent) && n.parent.expression === n) && !(ts.isFunctionDeclaration(n.parent) && n.parent.name === n)) refs.push(n);
     if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) strings.add(n.text);
-    // every WRITE to the average, whatever its operator: an assignment of any kind (the compiler's FirstAssignment to LastAssignment: `=`,
-    // `??=`, `||=`, `+=` and the rest), an increment or a delete (the closing pass over the author's fixer pass: `v.avgTurnH ??= 5` planted
-    // in showActive escaped a count of `=` alone), and a write with no operator on the field itself: a destructuring assignment whose
-    // pattern holds the field as a target (`({ avg: v.avgTurnH } = m)`, `[v.avgTurnH] = [5]`: the second closing lens over the closing pass,
-    // the pattern's `=` has an object literal on its left and the count read the left alone) and a for-of or for-in over the field
-    if (ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && n.operatorToken.kind <= ts.SyntaxKind.LastAssignment) {
-      if (ts.isObjectLiteralExpression(n.left) || ts.isArrayLiteralExpression(n.left)) { if (targetsOf(n.left).some(namesAvg)) avgWrites.push(ownerOf(n) + ": " + n.getText(sf)); }
-      else if (namesAvg(n.left)) avgWrites.push(ownerOf(n) + ": " + (n.operatorToken.kind === ts.SyntaxKind.EqualsToken ? "" : n.operatorToken.getText(sf) + " ") + n.right.getText(sf));
-    }
-    if ((ts.isForOfStatement(n) || ts.isForInStatement(n)) && !ts.isVariableDeclarationList(n.initializer) && targetsOf(n.initializer).some(namesAvg)) avgWrites.push(ownerOf(n) + ": for (" + n.initializer.getText(sf) + (ts.isForOfStatement(n) ? " of " : " in ") + n.expression.getText(sf) + ")");
-    if ((ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) && (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken) && namesAvg(n.operand)) avgWrites.push(ownerOf(n) + ": " + n.getText(sf));
-    if (ts.isDeleteExpression(n) && namesAvg(n.expression)) avgWrites.push(ownerOf(n) + ": " + n.getText(sf));
     ts.forEachChild(n, visit);
   };
   visit(sf);
+  // every WRITE to the average, in every form the tree can name, by owner (writesOf at module level, where the forms and their provenance
+  // are documented; the ordering window test below reads the take state's writers through the same census)
+  const avgWrites = writesOf(new Set(["avgTurnH"]), sf).map((w) => w.owner + ": " + w.describe);
   const callsTo = (name: string): ts.CallExpression[] => allCalls.filter((c) => (c.expression as ts.Identifier).text === name);
   const byOwner = (name: string): string[] => callsTo(name).map((c) => ownerOf(c) + "(" + c.arguments.map((a) => a.getText(sf)).join(", ") + ")").sort();
   const censusCalls = allCalls.filter((c) => NAMES.has((c.expression as ts.Identifier).text));
@@ -697,42 +746,61 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   ].sort(), "every write of the family that runs under a reader of the take state, by reader and writer, direct or one hop through a named conduit (an inner owner, a wrapper and the conduit named where they apply): a write added under one of these readers, under any writer name, inside any inner function, through any registered wrapper or through a helper a reader calls, reds here and owes a harness case for its road");
   // every reset that clears the average clears the parked figures with it (forgetAverage), and none clears the figure bare
   assert.match(RENDER, /function forgetAverage\(v: View\): void \{\s*\n\s*v\.avgTurnH = undefined; v\.measured = undefined;\s*\n\}/);
-  assert.deepEqual(avgWrites.sort(), ["applyMeasure: m.avg", "forgetAverage: undefined", "untakeMeasure: before.avg"], "the average is written by the take, the untake and the one bare clear, the helper's (by owner from the syntax tree, under every assignment operator, an increment, a delete, a destructuring pattern that names the field or a for-of or for-in over it)");
+  assert.deepEqual(avgWrites.sort(), ["applyMeasure: m.avg", "forgetAverage: undefined", "untakeMeasure: before.avg"], "the average is written by the take, the untake and the one bare clear, the helper's (by owner from the syntax tree, in every form the tree can name: every assignment operator, an increment, a delete, a destructuring pattern that names the field, a for-of or for-in over it, or an Object.assign, defineProperty or Reflect call whose receiver or literal key names it: writesOf)");
   assert.deepEqual(byOwner("forgetAverage"), ["chatHead(v)", "rerenderAll(v)", "runPrebuild(v)", "showActive(v)"], "four resets, by owner from the syntax tree: the older-history re-anchor, the compact toggle's rerender, the prebuild's and the switch's re-collapse");
   assert.match(RENDER, /import \{ rowsFor, meanRowHeight, perTurnEstimate \} from "\.\/turn-estimate";/);
   assert.match(RENDER, /interface View \{[^\n]*measured\?: \{ avg\?: number; per\?: number \};/, "the parked figures live on the view");
 });
 
-test("the reload restore's raw write of the persisted rs.top, on the tree: from the record's binding (takeReloadScroll reads the persisted top to admit the record: the value's first read) to the write, in landActive's statements, no taker is called and the take state is not written. The site needs no take-back because its value was measured in the state it lands in (the take before it re-derives the pre-reload page's figures), not because the site is special, and that holds only while this window stays closed. The takers are derived: every function that writes the take state or re-draws the spacers, and the closure over render.ts's named functions of everything that calls one, so a take through a helper the site calls is named here; a take through a callee the tree cannot name is caught by land-active-keep.test.ts's trace (the reviewer's answer to the author's tail-2 question, 2026-09-21)", () => {
+test("the reload restore's raw write of the persisted rs.top, on the tree: from the record's binding (takeReloadScroll reads the persisted top to admit the record: the value's first read) to the write, in landActive's statements, no taker is called and no field of the take state (`measured`, `avgTurnH`, `pxPerTurn`: the fields the take and the untake assign and the parked figures are read from, derived from render.ts and stated once at module level) is written, in any form the tree can name. The site needs no take-back because its value was measured in the state it lands in (the take before it re-derives the pre-reload page's figures), not because the site is special, and that holds only while this window stays closed. The takers are derived: every function that writes the take state or re-draws the spacers, and the closure over render.ts's named functions of everything that calls one, so a take through a helper the site calls is named here; a take through a callee the tree cannot name is caught by land-active-keep.test.ts's trace (the reviewer's answer to the author's tail-2 question, 2026-09-21)", () => {
   const sf = SF;
   const line = (n: ts.Node): number => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
-  // the take state's writers: every assignment to, or delete of, a `measured` field, by owner; then the spacer redraws; then the fixpoint
-  const namesMeasured = (e: ts.Node): boolean => (ts.isPropertyAccessExpression(e) && e.name.text === "measured") || (ts.isElementAccessExpression(e) && ts.isStringLiteralLike(e.argumentExpression) && e.argumentExpression.text === "measured");
-  const writesMeasured = (n: ts.Node): boolean => (ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && n.operatorToken.kind <= ts.SyntaxKind.LastAssignment && namesMeasured(n.left)) || (ts.isDeleteExpression(n) && namesMeasured(n.expression));
-  const callsIn = new Map<string, Set<string>>(); const setters = new Set<string>();
+  const fnNamed = (name: string): ts.FunctionDeclaration | undefined => sf.statements.find((st): st is ts.FunctionDeclaration => ts.isFunctionDeclaration(st) && st.name?.text === name);
+  // the take state, derived from render.ts: every field of `v` the take (applyMeasure) and the untake (untakeMeasure) assign, and every field
+  // of `v` the parked figures are read from (figuresBefore); asserted equal to the set stated once at module level (TAKE_STATE), so a field
+  // the take grows into reds here and is added there, and to land-active-keep.test.ts's world, which traces a write of each
+  const viewFields = (name: string, written: boolean): string[] => {
+    const fn = fnNamed(name); assert.ok(fn && fn.body, name + " is a function declaration at module level");
+    const out = new Set<string>();
+    const go = (n: ts.Node): void => {
+      if (written && ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && n.operatorToken.kind <= ts.SyntaxKind.LastAssignment) { for (const t of targetsOf(n.left)) if (ts.isPropertyAccessExpression(t) && ts.isIdentifier(t.expression) && t.expression.text === "v") out.add(t.name.text); }
+      if (!written && ts.isPropertyAccessExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "v") out.add(n.name.text);
+      ts.forEachChild(n, go);
+    };
+    go(fn!.body!); return [...out];
+  };
+  assert.deepEqual([...new Set([...viewFields("applyMeasure", true), ...viewFields("untakeMeasure", true), ...viewFields("figuresBefore", false)])].sort(), [...TAKE_STATE].sort(),
+    "the take state derived from render.ts (the fields of the view the take and the untake assign and the parked figures are read from) is the set stated once at module level; a field the take grows into is added there and traced in land-active-keep.test.ts's world");
+  // the takers: DERIVED, every function that writes a take-state field in any form the tree can name (writesOf), by owner; LISTED, the two
+  // spacer redraws, each checked to name a function declaration (a misspelled seed would be a dead seed and an open window); then the closure
+  // over render.ts's named functions of everything that calls a taker, to a fixpoint
+  const writers = writesOf(TAKE_STATE, sf);
+  const setters = new Set(writers.map((w) => w.owner));
+  const SPACER_REDRAWS = ["sizeSpacers", "redrawGapUnits"];
+  for (const s of SPACER_REDRAWS) assert.ok(fnNamed(s), s + ": a listed seed names a function declaration in render.ts (a rename here would leave a dead seed and the window open to the redraw)");
+  const callsIn = new Map<string, Set<string>>();
   const walk = (n: ts.Node): void => {
     if (ts.isCallExpression(n) && ts.isIdentifier(n.expression)) { const o = ownerOf(n); if (!callsIn.has(o)) callsIn.set(o, new Set()); callsIn.get(o)!.add(n.expression.text); }
-    if (writesMeasured(n)) setters.add(ownerOf(n));
     ts.forEachChild(n, walk);
   };
   walk(sf);
-  const takers = new Set<string>([...setters, "sizeSpacers", "redrawGapUnits"]);
+  const takers = new Set<string>([...setters, ...SPACER_REDRAWS]);
   for (let grew = true; grew;) { grew = false; for (const [fn, callees] of callsIn) if (fn !== "<module>" && !takers.has(fn) && [...callees].some((c) => takers.has(c))) { takers.add(fn); grew = true; } }
   // the site: landActive's raw reload-restore write (the follow-mode shape writes the bottom with stick and is not it) and the binding of
   // `rs`, the record whose top it writes; the window is the statements from the binding to the write, inclusive, less the write call itself,
   // so a take on a branch the raw write's path does not run (the follow-mode write's) reds here too: the trace half is exact about the path
   // and this half names the site
-  const landFn = sf.statements.find((st): st is ts.FunctionDeclaration => ts.isFunctionDeclaration(st) && st.name?.text === "landActive");
+  const landFn = fnNamed("landActive");
   assert.ok(landFn && landFn.body, "landActive is a function declaration at module level");
-  const reads: ts.PropertyAccessExpression[] = [], calls: ts.CallExpression[] = [], stateWrites: ts.Node[] = [], bindings: ts.VariableDeclaration[] = [];
+  const reads: ts.PropertyAccessExpression[] = [], calls: ts.CallExpression[] = [], bindings: ts.VariableDeclaration[] = [];
   const scan = (n: ts.Node): void => {
     if (ts.isPropertyAccessExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "rs" && n.name.text === "top") reads.push(n);
     if (ts.isCallExpression(n) && ts.isIdentifier(n.expression)) calls.push(n);
-    if (writesMeasured(n)) stateWrites.push(n);
     if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === "rs" && n.initializer && ts.isCallExpression(n.initializer) && ts.isIdentifier(n.initializer.expression) && n.initializer.expression.text === "takeReloadScroll") bindings.push(n);
     ts.forEachChild(n, scan);
   };
   scan(landFn!.body!);
+  const stateWrites = writesOf(TAKE_STATE, landFn!.body!);
   const rawWrites = calls.filter((c) => (c.expression as ts.Identifier).text === "writeScroll" && c.arguments[2] && ts.isStringLiteral(c.arguments[2]) && c.arguments[2].text === "reload-restore" && !(c.arguments[3] && c.arguments[3].kind === ts.SyntaxKind.TrueKeyword));
   assert.equal(rawWrites.length, 1, "one raw reload-restore write in landActive: " + rawWrites.map((c) => c.getText(sf) + " at line " + line(c)).join("; "));
   assert.equal(bindings.length, 1, "one binding of rs from takeReloadScroll in landActive: " + bindings.map((b) => b.getText(sf) + " at line " + line(b)).join("; "));
@@ -746,10 +814,10 @@ test("the reload restore's raw write of the persisted rs.top, on the tree: from 
   assert.ok(within(read) && read.getEnd() <= write.getEnd(), "the site's read of rs.top (line " + line(read) + ") lies in the window, no later than the write");
   const between = [
     ...calls.filter((c) => c !== write && within(c) && takers.has((c.expression as ts.Identifier).text)).map((c) => c.getText(sf) + " at line " + line(c) + " (a taker: it writes the take state or re-draws the spacers, or calls something that does)"),
-    ...stateWrites.filter(within).map((w) => w.getText(sf) + " at line " + line(w) + " (a write of the take state)"),
+    ...stateWrites.filter((w) => within(w.node)).map((w) => w.node.getText(sf) + " at line " + line(w.node) + " (a write of the take state: " + w.field + ")"),
   ];
   assert.deepEqual(between, [], "the reload restore's raw write: the window from the record's binding (line " + line(sB) + ") to the write (line " + line(write) + ") holds a take, so the persisted top, measured in the layout the take before it re-derives, would land in a layout it was not measured in; the site needs no take-back only while this window stays closed");
   // the derivation the window check rests on, pinned after it so a plant in the window is named by the window's message
-  assert.deepEqual([...setters].sort(), ["applyMeasure", "forgetAverage", "measureUnits", "untakeMeasure"], "the take state's writers, by owner from the tree: the take, the reset, the park and the untake; a fifth is a new writer of the take state and belongs with the censuses above");
+  assert.deepEqual([...setters].sort(), ["applyMeasure", "forgetAverage", "measureUnits", "untakeMeasure"], "the take state's writers, by owner from the tree, of any of its three fields in any form the tree can name (writesOf): the take, the reset, the park and the untake; a fifth is a new writer of the take state and belongs with the censuses above (a write through a computed key or a non-literal Object.assign source is outside this census by construction and is caught at run time by land-active-keep.test.ts's accessors on the world's view)");
   assert.ok(takers.has("landActive") && takers.has("renderWindowItems") && takers.has("scrollToAnchor") && takers.has("syncViewInner"), "the closure reaches the takers one and two hops out (the walk is not empty): " + [...takers].sort().join(", "));
 });

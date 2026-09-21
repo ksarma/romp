@@ -144,19 +144,24 @@ function world(o: Opts, arm: Arm = {}): World {
                    delta: D, arm,
                    land: (uuid: string) => { if (arm.rebuild) arm.rebuild(host); return !!arm.land; }, landT: (t: number) => !!arm.landT };
   // the take state, the persisted top and the geometry, traced in order with the writes (the ordering test below). The take state: the parked
-  // flag, which the stubs hold in place of production's `v.measured`, and the view's own `measured`, which nothing lifted here writes, so a
-  // write of either is a take at the site. The record: takeReloadScroll returns the persisted object ITSELF, the same object to the `saved`
+  // flag, which the stubs hold in place of production's parked figures, and the view's own three fields (`measured`, `avgTurnH`, `pxPerTurn`:
+  // the fields the take writes, the untake restores and the parked figures are read from, derived from render.ts's tree and stated once in
+  // spacer-measure.test.ts), each an accessor that traces its write as `<field>=<value>`, whatever the form of the write (an assignment of any
+  // operator, a destructuring pattern, Object.assign, Reflect.set), and refuses a delete (non-configurable, and the lifted code runs under
+  // strict mode, so the refusal throws rather than passing silently); nothing lifted here writes them, so a write of any is a take at the
+  // site (the maintainer's round 4 ruling, ordering-1: the world traced `measured` alone). The record: takeReloadScroll returns the persisted object ITSELF, the same object to the `saved`
   // decision's call and to the binding's, so the object's identity cannot tell the two records apart; the wrapper below gives each admitting
   // call a serial k, pushes `record#k`, and returns a per-call VIEW of the record whose `top` pushes `read rs.top#k` when read, so the read
   // that precedes the write names the binding whose value is written (the maintainer's round 4 ruling, ordering-2: a window anchored at the
   // last `record` label slid past a planted take whenever a later call admitted the record again). The geometry, every child by class and
   // height, is snapshotted at each record and at each write (`geometryAt`), so the ordering test compares the layout the write lands in
   // with the layout at the binding, over and above the events the model records between them.
-  let parkedFlag = o.parked ?? true, measuredField: unknown = undefined, recordCalls = 0;
+  let parkedFlag = o.parked ?? true, recordCalls = 0;
   const geometry = (): string[] => host.children.map((c) => c.className + ":" + c.h);
   H.geometry = geometry;
   Object.defineProperty(H, "parked", { get: () => parkedFlag, set: (x: boolean) => { H.trace.push("parked=" + x); parkedFlag = x; } });
-  Object.defineProperty(v, "measured", { configurable: true, get: () => measuredField, set: (x: unknown) => { H.trace.push("measured=" + JSON.stringify(x)); measuredField = x; } });
+  const takeState: Record<string, unknown> = { measured: undefined, avgTurnH: undefined, pxPerTurn: undefined };
+  for (const f of Object.keys(takeState)) Object.defineProperty(v, f, { configurable: false, enumerable: true, get: () => takeState[f], set: (x: unknown) => { H.trace.push(f + "=" + JSON.stringify(x)); takeState[f] = x; } });
   H.takeReloadScroll = (saved: unknown, id: string | null): ReloadScroll | null => {
     const r = takeReloadScroll(saved, id);
     if (!r) return null;
@@ -166,7 +171,7 @@ function world(o: Opts, arm: Arm = {}): World {
   };
   const js = liftBetween("function landActive(content: HTMLElement | null, v: View): void {", "// Scroll ANCHORING for scrolled-up re-renders")
            + liftBetween("function captureScrollAnchor(", "// Live tail-append to the ACTIVE view");
-  const prelude = `
+  const prelude = `"use strict";
     const H = HOOKS;
     let pendingAnchor = H.arm.anchor ?? null, pendingAnchorT = H.arm.t ?? null, pendingAnchorIntent = null, pendingAnchorKind = null;
     let pendingAnchorKeepY = H.arm.keepY ?? null, pendingAnchorClick = false, pendingReloadScroll = H.arm.reload ?? null;
@@ -274,7 +279,7 @@ test("the reload restore's raw write, the ordering its exception rests on: the t
     assert.deepEqual(r.trace.slice(record + 1, write).filter((e) => e !== readEv), [], shape + ": from the record's binding to its write the trace holds the site's read of that record's top and nothing else: no take-class event (a take, an untake, a spacer redraw, a write of the parked flag or of the view's take state), no geometry event (a height written on a row or the view element, a child inserted or removed), no other record; a change here would land the persisted top in a layout it was not measured in, and the site would owe a take-back like every other: " + JSON.stringify(r.trace));
     assert.deepEqual(r.geometryAt["write reload-restore"], r.geometryAt[recordEv], shape + ": the geometry the write lands in is the geometry at the binding, every child by class and height");
     assert.deepEqual(r.writes.map((x) => x.writer), ["reload-restore"], shape + ": the raw write is the land's one write");
-    assert.ok(!r.trace.some((e) => e.startsWith("measured=")), shape + ": the view's own take state is written by nothing on this road");
+    assert.ok(!r.trace.some((e) => /^(measured|avgTurnH|pxPerTurn)=/.test(e)), shape + ": the view's own take state (any of its three fields) is written by nothing on this road: " + JSON.stringify(r.trace));
   }
 });
 
@@ -369,7 +374,7 @@ function keepWorld(scrollTop: number, arm: KeepArm = {}, parked = true): KeepWor
   const H: any = { content, v, spacer, writes: [] as Write[], calls: [] as any[], parked, delta: D, arm };
   const js = liftBetween("function keepPlaceAcrossWindow(", "// Scroll/anchor landing + deep-link diagnostics + restamp")
            + liftBetween("function captureScrollAnchor(", "// Live tail-append to the ACTIVE view");
-  const prelude = `
+  const prelude = `"use strict";
     const H = HOOKS;
     let pendingAnchor = null, pendingAnchorKeepY = null, relandAsk = false, anchorPendingOlder = false;
     const applyMeasure = (v) => { H.calls.push("applyMeasure"); if (!H.parked) return false; H.parked = false; H.spacer.h += H.delta; return true; };
