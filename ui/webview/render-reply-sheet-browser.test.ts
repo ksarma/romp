@@ -21,11 +21,15 @@
 //
 // The browser legs (Chromium, Firefox, and WebKit when the box has them) open the page at the phone's width and drive
 // the viewport's HEIGHT as the keyboard would (inside the shell the chat iframe is sized to the visible height, so its
-// innerHeight is the keyboard's signal). On the base tree the first red differs by engine (Chromium and WebKit: the
-// answer box a 14px sliver; Firefox: the rows kept and the buttons clipped), and the detail's computed overflow-y,
-// visible there, is the red common to all three. Where they skip, the served leg tests/test_reply_sheet_served.py runs
-// the same composition against the served chat page in CI's browser step. Synthetic fixtures only: a placeholder sid,
-// an invented path.
+// innerHeight is the keyboard's signal). The composition tap is its own test per engine, its outcome asserted first,
+// so the deciding figure has a red of its own on a tree without the fix; the chip todo is also measured at 420, where
+// the chat's column fits the fold's cap (the pane's does not: waiting-reply-sheet-browser.test.ts measures that
+// backstop state). On the base tree at 508 the focus had scrolled the overflow-hidden box to the textarea, so the
+// title, the ask and most of the detail sat above the clip with no way to scroll back; the first red differs by engine
+// (Chromium and WebKit: the answer box a 14px sliver, and in WebKit the buttons below the clip too; Firefox: the rows
+// kept and the buttons in reach), and the detail's computed overflow-y, visible there, is the red common to all three.
+// Where they skip, the served leg tests/test_reply_sheet_served.py runs the same composition against the served chat
+// page in CI's browser step. Synthetic fixtures only: a placeholder sid, an invented path.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -105,7 +109,7 @@ type Sheet = {
   frameH: number; tight: boolean; alignItems: string; paddingTop: string;
   inputH: number; floorH: number; lineHeight: string; inputStyleH: string;
   detailScrollH: number; detailClientH: number; detailOverflowY: string; detailLineH: number; detailFontPx: number; detailScrolls: boolean;
-  detailTextRight: number; detailRight: number; detailOverflowX: string;
+  detailTextRight: number; detailRight: number; detailOverflowX: string; detailScrollW: number; detailOffsetW: number;
   actionsBottom: number; boxTop: number; boxBottom: number; boxScrollH: number; boxClientH: number; boxOverflowY: string;
   sendRect: Rect; cancelRect: Rect; hitAtSend: string; hitAtCancel: string; kinds: string[]; quoteChips: string[];
 };
@@ -170,8 +174,12 @@ async function boot(browser: any) {
       // the widest line of the detail's text against the detail's own right edge: an unbreakable token that does not wrap
       // runs far past it (a sideways scroller); scrollWidth is not the measure, since a classic vertical scrollbar (WebKit
       // headless) sits inside the padding box and reports as sideways overflow whatever the text does
+      // the detail's sideways overflow: scrollWidth against offsetWidth (the border box; clientWidth is narrowed by a classic
+      // scrollbar in WebKit headless while the text lays out to the border box); the widest text rect beside it for the
+      // record only, since a trailing space hanging at a soft wrap ends a few pixels past the line box
       detailTextRight: detail ? ((): number => { const rg = document.createRange(); rg.selectNodeContents(detail); return Array.from(rg.getClientRects()).reduce((w, x) => Math.max(w, x.right), 0); })() : 0,
       detailRight: detail ? detail.getBoundingClientRect().right : 0, detailOverflowX: detail ? cs(detail).overflowX : "",
+      detailScrollW: detail ? detail.scrollWidth : 0, detailOffsetW: detail ? detail.offsetWidth : 0,
       // the overflow declaration, live: a scroll container's scrollTop moves; with overflow visible it stays at 0
       detailScrolls: detail ? ((): boolean => { detail.scrollTop = 30; const moved = detail.scrollTop > 0; detail.scrollTop = 0; return moved; })() : false,
       actionsBottom: actions.getBoundingClientRect().bottom, boxTop: box.getBoundingClientRect().top, boxBottom: box.getBoundingClientRect().bottom,
@@ -288,24 +296,24 @@ for (const name of ["chromium", "firefox", "webkit"]) {
     try {
       const { page, setHeight, settle, measure, probeShort, openReply, cancelReply, fill, tapSend, dragTaller, waitTight, errors } = await boot(browser);
       await openReply(TODOS[0]);
-      // ── 508px: the keyboard up on a phone, above the fold's threshold — the squeeze fix alone
+      // ── 508px: the keyboard up on a phone, above the fold's threshold: the squeeze fix alone
       let m = (await measure())!;
       assert.ok(m, "the Reply sheet is up");
       assert.equal(m.frameH, KEYBOARD_UP);
       assert.equal(m.tight, false, "508px is not a short window: no fold, so what follows is the squeeze fix on its own");
       assert.deepEqual(m.kinds, ["confirm-title", "confirm-detail", "ut-detail", "ut-reply-input", "confirm-actions"], "the builder's tree: title, the quoted line, the detail, the answer box, the buttons");
       assert.ok(m.floorH > 30, `the probe laid out three rows (${m.floorH}px; line-height ${m.lineHeight})`);
-      assert.ok(m.inputH >= m.floorH - 1, `the answer box holds three rows: ${m.inputH}px against the ${m.floorH}px three-row probe (on the base tree it was a 14px sliver in Chromium and WebKit, the textarea taking the whole deficit; Firefox kept the rows there and the detail's overflow-y assertion below is the base tree's red in all three engines)`);
-      assert.equal(m.detailOverflowY, "auto", "the detail scrolls within itself (the base tree computes visible in Chromium, Firefox and WebKit alike: the red common to the three engines, reached first in Firefox, where the textarea kept its rows and the buttons were clipped instead)");
+      assert.ok(m.inputH >= m.floorH - 1, `the answer box holds three rows: ${m.inputH}px against the ${m.floorH}px three-row probe (on the base tree it was a 14px sliver in Chromium and WebKit, the textarea taking the whole deficit; Firefox kept the rows there, so the detail's overflow-y assertion below is its first red, and the base tree's red in all three engines)`);
+      assert.equal(m.detailOverflowY, "auto", "the detail scrolls within itself (the base tree computes visible in Chromium, Firefox and WebKit alike: the red common to the three engines, reached first in Firefox, where the textarea kept its rows and the buttons stayed in reach; there the focus had scrolled the overflow-hidden box to the textarea, so the title, the ask and most of the detail sat above the clip with no way to scroll back, in every engine)");
       assert.ok(m.detailScrolls, "the overflow declaration is LIVE: the detail's scrollTop moves (with overflow visible it stays at 0, and the detail's text paints over the answer box); the rule pin reads the sheet with comments stripped, this reads the engine");
       assert.ok(m.detailScrollH > m.detailClientH + 8, `the forty-line detail overflows its cap and is a scroll away (${m.detailClientH} of ${m.detailScrollH}px)`);
-      assert.ok(m.detailTextRight <= m.detailRight + 0.5, `no sideways scroller: the unbreakable token in the detail wraps inside the box (overflow-wrap: anywhere; the widest line ends at ${m.detailTextRight.toFixed(1)}, the detail at ${m.detailRight.toFixed(1)}px); without the wrap the token ran hundreds of pixels past it and a scroll container's overflow-x, computing to auto, scrolled sideways`);
+      assert.ok(m.detailScrollW <= m.detailOffsetW, `no sideways scroller: the unbreakable token in the detail wraps inside the box (overflow-wrap: anywhere), so the detail's content is no wider than its border box (scrollWidth ${m.detailScrollW} against offsetWidth ${m.detailOffsetW}; the widest text rect ends at ${m.detailTextRight.toFixed(1)} against the detail's ${m.detailRight.toFixed(1)}px, a figure a trailing space hanging at a soft wrap pushes a few pixels past the edge, so it is not the bar); without the wrap the token ran hundreds of pixels past it and a scroll container's overflow-x, computing to auto, scrolled sideways`);
       assert.equal(m.detailOverflowX, "hidden", "overflow-x: hidden, #pinned-notes's companion declaration, so a token the wrap cannot break is clipped, never a sideways scroll");
       assert.ok(m.detailClientH > 20, `the detail still shows some lines (${m.detailClientH}px)`);
       assert.ok(m.actionsBottom > 0 && m.actionsBottom <= m.frameH + 0.5, `Cancel and Send are inside the viewport (bottom edge ${m.actionsBottom.toFixed(1)} of ${m.frameH}px)`);
       assert.ok(m.boxBottom <= m.frameH + 0.5, `the whole box is inside the viewport (${m.boxBottom.toFixed(1)} of ${m.frameH}px)`);
       assert.equal(m.boxOverflowY, "auto", "the box scrolls at this height too, not only under the fold: the every-height backstop (#ut-reply-prompt .picker-box)");
-      // ── 420px: a short window — the builder's kbFit, on the window's own resize
+      // ── 420px: a short window: the builder's kbFit, on the window's own resize
       await setHeight(KEYBOARD_TIGHT);
       await waitTight(true);
       m = (await measure())!;
@@ -386,18 +394,24 @@ for (const name of ["chromium", "firefox", "webkit"]) {
       assertShort(await probeShort(), "300px, the chip todo");
       await setHeight(230);
       assertShort(await probeShort(), "230px, the chip todo");
+      // ── 420px with the chip todo (the fold on): the chat's chips sit inside the quoted line, so its column FITS the fold's cap
+      // at the floors and after fourteen lines (the fitted state; the pane's two chip rows put its floors past the cap, the
+      // backstop state waiting-reply-sheet-browser.test.ts measures). Measured, so the body's account of this window is read
+      // from the engine in both panes
+      await setHeight(KEYBOARD_TIGHT);
+      m = (await measure())!;
+      assert.equal(m.tight, true, "420px with the chip todo: under the fold");
+      assert.ok(m.detailClientH >= floorOf(m.detailLineH), `420px, the chip todo, at open: the detail keeps its floor of two lines (${m.detailClientH}px against a ${m.detailLineH}px line)`);
+      assertFits(m, "420px, the chip todo, at open");
+      await fill(ANSWER(14));
+      m = (await measure())!;
+      assert.ok(m.inputH >= m.floorH - 1, `420px, the chip todo, fourteen lines: three rows at least (${m.inputH} against ${m.floorH}px)`);
+      assert.ok(m.detailClientH >= floorOf(m.detailLineH), `420px, the chip todo, fourteen lines: the detail keeps its floor (${m.detailClientH}px against a ${m.detailLineH}px line)`);
+      assertFits(m, "420px, the chip todo, fourteen lines");
+      await fill("");
       await setHeight(KEYBOARD_UP);
       await waitTight(false);
-      await fill(ANSWER(14));
-      const tap = await tapSend();
-      const rec = JSON.stringify({ tapAt: tap.tapAt, inFrame: tap.inFrame, hitAtSend: tap.before.hitAtSend, sendRect: tap.before.sendRect, box: [tap.before.boxTop, tap.before.boxBottom, tap.before.boxClientH, tap.before.boxScrollH, tap.before.boxOverflowY], inputH: tap.before.inputH, detailH: tap.before.detailClientH, detailLineH: tap.before.detailLineH, after: { overlayUp: tap.overlayUp, posted: tap.posted } });
-      assert.ok(tap.before.detailClientH >= floorOf(tap.before.detailLineH), `composition: with the answer grown to the cap the detail keeps its floor of two lines (${tap.before.detailClientH}px against a ${tap.before.detailLineH}px line); on the round-1 tree it resolved to 0px here (${rec})`);
-      assert.ok(boxInsideFrame(tap.before), `composition: the box is inside the viewport (${where(tap.before)})`);
-      assert.ok(sendInsideBox(tap.before) && cancelInsideBox(tap.before), `composition: Cancel and Send are inside the box's clip (${where(tap.before)}); on the round-1 tree the answer box grown to 40% of the window laid them out below it`);
-      assert.equal(tap.before.hitAtSend, "target", `composition: a finger at Send's painted centre reaches Send, not the backdrop (${rec})`);
-      assert.ok(tap.inFrame, `composition: the tap point is inside the viewport (${rec})`);
-      assert.deepEqual(tap.posted.map((p) => [p.type, p.id, p.todoId, p.text.split("\n")[0]]), [["userTodoAnswer", SID, "t2", "line 1"]], `composition: the tap SENT the answer (one userTodoAnswer posted); on the round-1 tree it fell on the backdrop and posted nothing (${rec})`);
-      assert.equal(tap.overlayUp, false, `composition: the sheet closed by the send itself (${rec})`);
+      await cancelReply();
       // ── the onset of the old clip band, 490px, a todo with no detail and a fourteen-line answer
       await setHeight(ONSET);
       await openReply(TODOS[2]);
@@ -408,6 +422,37 @@ for (const name of ["chromium", "firefox", "webkit"]) {
       assert.ok(m.inputH > m.floorH + 20, `490px, no detail: fourteen lines grow the box (${m.inputH} against ${m.floorH}px)`);
       assertFits(m, "490px, no detail, the answer grown");
       await cancelReply();
+      assert.deepEqual(errors, [], "no script error on the page");
+    } finally { await browser.close(); }
+  });
+
+  // THE COMPOSITION, as its own test so the deciding figure has a red of its own: at 390 by 508 with the keyboard up, the
+  // ask wrapped to several lines with both chips inside it, the forty-line detail, the answer grown to the cap, a real click
+  // where Send is painted. The tap's outcome is asserted FIRST: on the round-1 tree (and the base) the answer box laid Send
+  // below the box's clip, so the finger found the backdrop and the sheet closed with nothing posted, and that is the
+  // assertion that goes red there, not a geometry read before it. The geometry follows, as the explanation of the outcome
+  test(`in ${name}: THE COMPOSITION at 390 by 508 with the keyboard up: a tap where Send is painted sends the answer, and the sheet closes by the send, never by the backdrop`, async (t) => {
+    if (!pw) { t.skip("playwright is not installed under vscode-extension, and the browser legs need it; the served leg tests/test_reply_sheet_served.py runs this composition in CI's browser step"); return; }
+    let browser: any;
+    try { browser = await pw[name].launch(); }
+    catch (e) { t.skip("no playwright " + name + " on this box, and this leg needs it; the served leg tests/test_reply_sheet_served.py is the guard where this skips (CI's browser step runs it in chromium): " + String((e as Error).message).split("\n")[0]); return; }
+    try {
+      const { measure, openReply, fill, tapSend, errors } = await boot(browser);
+      await openReply(TODOS[1]);
+      const open = (await measure())!;
+      await fill(ANSWER(14));
+      const tap = await tapSend();
+      const rec = JSON.stringify({ tapAt: tap.tapAt, inFrame: tap.inFrame, hitAtSend: tap.before.hitAtSend, sendRect: tap.before.sendRect, box: [tap.before.boxTop, tap.before.boxBottom, tap.before.boxClientH, tap.before.boxScrollH, tap.before.boxOverflowY], inputH: tap.before.inputH, detailH: tap.before.detailClientH, detailLineH: tap.before.detailLineH, after: { overlayUp: tap.overlayUp, posted: tap.posted } });
+      assert.deepEqual(tap.posted.map((p) => [p.type, p.id, p.todoId, p.text.split("\n")[0]]), [["userTodoAnswer", SID, "t2", "line 1"]], `composition: the tap SENT the answer (one userTodoAnswer posted); on the round-1 tree the finger found the backdrop in every engine and nothing was posted (${rec})`);
+      assert.equal(tap.overlayUp, false, `composition: the sheet closed by the send itself (${rec})`);
+      assert.ok(tap.inFrame, `composition: the tap point is inside the viewport (${rec})`);
+      assert.equal(tap.before.hitAtSend, "target", `composition: a finger at Send's painted centre reaches Send, not the backdrop (${rec})`);
+      assert.ok(sendInsideBox(tap.before) && cancelInsideBox(tap.before), `composition: Cancel and Send are inside the box's clip (${where(tap.before)}); on the round-1 tree the answer box grown to 40% of the window laid them out below it`);
+      assert.ok(boxInsideFrame(tap.before), `composition: the box is inside the viewport (${where(tap.before)})`);
+      assert.ok(tap.before.detailClientH >= floorOf(tap.before.detailLineH), `composition: with the answer grown to the cap the detail keeps its floor of two lines (${tap.before.detailClientH}px against a ${tap.before.detailLineH}px line); on the round-1 tree it resolved to 0px here (${rec})`);
+      assert.deepEqual(open.kinds, ["confirm-title", "confirm-detail", "ut-detail", "ut-reply-input", "confirm-actions"], "the chat's sheet: the chips are inside the quoted line, not children of the box (render.ts showUserTodoReply; the pane's builder appends them as flex children)");
+      assert.deepEqual(open.quoteChips, ["ut-file", "ut-link"], "both chips trail the quoted line, the file's first");
+      assert.equal(open.tight, false, "508px: no fold, so this is the room cap and the every-height scroll on their own");
       assert.deepEqual(errors, [], "no script error on the page");
     } finally { await browser.close(); }
   });
