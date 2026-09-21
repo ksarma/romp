@@ -14,10 +14,20 @@
 //              destructured or whole) and calls that module's inBrowser THROUGH the binding (an identifier bound to the
 //              export, or a literal inBrowser member of a namespace binding; through parentheses, !, as, .call/.apply/.bind).
 //              A type-only import binds nothing. The import without a call is recorded (launcherImported) and is not a leg.
+//   loaded:    every module of the tree the test loads by a relative specifier (an import, an export from, import =, require(),
+//              await import(), a loader bound by createRequire; a specifier that names no file beside the module resolves
+//              against the repo root and vscode-extension/, the bases loaders in this tree are anchored to) is read by this same
+//              walker, transitively, for what it BINDS: a module that binds the launcher's inBrowser (imports it, imports the
+//              launcher whole, or re-exports it) while the test itself never calls inBrowser, names a playwright package, holds
+//              a driver string, or holds a form the walker refuses, REFUSES the test at its import line with the chain. The
+//              walker follows nothing THROUGH such a module (it does not read what the test calls on it), so the verdict is a
+//              refusal with the remedy, never a silent non-leg. A file under node_modules is a package and binds nothing of
+//              the tree; a json or css file is not a script.
 //   playwright: the module names a playwright package (playwright, playwright-core, @playwright/test, or a subpath) by any
 //              specifier form, either quote; the engines it reaches from a playwright-derived expression (chromium, firefox,
 //              webkit: a property, a bracketed literal, a destructured binding, a named import, or a computed name FOLDED by
-//              lexical scope through four closed forms: a const bound to a literal, a for-of over an array literal, a parameter
+//              lexical scope through four closed forms: a const bound to a literal (a let or var too, when no statement of the
+//              module assigns to it), a for-of over an array literal, a parameter
 //              typed as a union of string literals, a string-typed parameter whose every direct call site in the module passes a
 //              literal); a launch of its own (launch, launchPersistentContext, launchServer, connect, connectOverCDP on a
 //              playwright-derived expression, by property, bracket, destructuring or .call/.apply). Derivation stops at a call
@@ -30,8 +40,11 @@
 //              as reaching a browser, on the safe side, and never rosterable (the switch never reaches a child process).
 //   REFUSALS:  a form the walker cannot classify refuses with file and line, never reports it absent: an import or loader
 //              specifier that is not a string literal and folds through no closed form; a computed member with a name it
-//              cannot fold on a playwright or launcher binding; the inBrowser binding used as a value, not called; a local
-//              declaration shadowing a launcher or playwright binding; a parse diagnostic. The CLI exits 2 on any refusal.
+//              cannot fold on a playwright or launcher binding; the inBrowser binding used as a value, not called (an
+//              initializer `const f = inBrowser` and a default value `{ x = inBrowser }` included; the NAME position of a
+//              declaration is the one exempt use); a local declaration shadowing a launcher or playwright binding; a parse
+//              diagnostic; a loaded module of the tree as the `loaded` clause states, or a relative specifier that names no
+//              file, or two. The CLI exits 2 on any refusal.
 // THE CENSUS RULE: a module is a browser leg when it calls the shared launcher through its binding, names a playwright
 // package, or holds a driver string that does. THE ROSTER GATE (rosterGap, null when the leg passes): a shared call, no
 // playwright package of its own, no launch of its own, no driver string, no skip or todo; the engines it names are a separate
@@ -39,7 +52,8 @@
 // Two residuals, stated: the fold of a string-typed parameter reads the module's own call sites only (no module imports a
 // .test.ts, so a caller from another module does not arise); and derivation stops at a non-loader call, so a launch made on a
 // wrapper function's return value is not a launch to the walker. Neither is a spelling list: each is a rule with a stated
-// boundary, and the census test prints the counts the tree gives them.
+// boundary, and the census test prints the counts the tree gives them (and how many modules of the tree the test modules load
+// it read).
 // CLI, from vscode-extension/: node scripts/browser-legs-census.mjs [--list|--tsv|--json] [--strict-computed] [root]. --list
 // prints the legs' bundle paths (out-tests/<dir>/<name>.test.js, the roster's spelling); --tsv one line per module read, leg
 // or not: bundle TAB 1 or 0 (a leg or not) TAB roster gap (- when it passes; for a module that is not a leg, the launcher
@@ -73,7 +87,7 @@ const isPwPackage = (spec) => PW_PACKAGES.some((p) => spec === p || spec.startsW
 /** Classify one module. `file` is absolute; `src` its text; `opts.strictComputed` refuses every computed member on a tracked binding. */
 export function classify(ts, file, src, opts = {}) {
   const rel = path.relative(opts.root || REPO, file);
-  const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, /\.[cm]?js$/.test(file) ? ts.ScriptKind.JS : ts.ScriptKind.TS);
   const lineOf = (n) => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
   const refusals = [];
   const refuse = (n, why) => { const msg = rel + ":" + lineOf(n) + ": " + why + ": " + n.getText(sf).split("\n")[0].slice(0, 120); if (!refusals.includes(msg)) refusals.push(msg); };
@@ -99,6 +113,9 @@ export function classify(ts, file, src, opts = {}) {
   let sharedCalls = 0;
   const playwright = new Set();
   const launcherImported = [];
+  const localImports = [];             // { line, spec, text }: every module of the tree this module loads by a relative specifier (census() reads them)
+  let launcherReexport = false;        // export { inBrowser } from / export * from the launcher: the module hands inBrowser on
+  const noteLocal = (n, r) => { if (r && r.kind === "local") localImports.push({ line: lineOf(n), spec: r.spec, folded: r.abs === undefined, text: n.getText(sf).split("\n")[0].slice(0, 120) }); };
 
   const unwrap = (e) => {
     for (;;) {
@@ -134,6 +151,8 @@ export function classify(ts, file, src, opts = {}) {
     for (let p = id.parent; p && !decl; p = p.parent) if (ts.isFunctionLike(p) || ts.isBlock(p) || ts.isForOfStatement(p) || ts.isForInStatement(p) || ts.isForStatement(p) || ts.isCatchClause(p) || ts.isSourceFile(p)) decl = declOf(p);
     if (!decl) return null;
     if (ts.isVariableDeclaration(decl)) {
+      // a let or var the module assigns to elsewhere (=, a compound assignment, ++ or --) is not bound to its initializer: null
+      if (!(decl.parent && ts.isVariableDeclarationList(decl.parent) && (decl.parent.flags & ts.NodeFlags.Const)) && assignedSomewhere(name)) return null;
       if (decl.initializer) { const v = literalName(unwrap(decl.initializer)); if (v !== null) return [v]; return null; }
       const p = decl.parent, fo = p && p.parent;
       if (fo && ts.isForOfStatement(fo) && fo.initializer === p) {
@@ -160,6 +179,18 @@ export function classify(ts, file, src, opts = {}) {
       return [...new Set(vals)];
     }
     return null;
+  };
+  /** Does any statement in the module assign to the identifier `name` (=, a compound assignment, ++ or --)? */
+  const assignedSomewhere = (name) => {
+    let hit = false;
+    const look = (n) => {
+      if (hit) return;
+      if (ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && n.operatorToken.kind <= ts.SyntaxKind.LastAssignment && ts.isIdentifier(n.left) && n.left.text === name) { hit = true; return; }
+      if ((ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) && (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken) && ts.isIdentifier(n.operand) && n.operand.text === name) { hit = true; return; }
+      ts.forEachChild(n, look);
+    };
+    look(sf);
+    return hit;
   };
   /** The member name(s) an access reaches: a literal property, a bracketed literal, or a folded identifier; null when unknowable. */
   const memberNames = (acc) => {
@@ -267,6 +298,7 @@ export function classify(ts, file, src, opts = {}) {
         if (r.kind === "playwright") playwright.add(spec);
         const c = n.importClause;
         if (r.kind === "launcher" && !(c && c.isTypeOnly)) launcherImported.push(lineOf(n));
+        if (!(c && c.isTypeOnly)) noteLocal(n, r);
         if (c && !c.isTypeOnly) {
           if (c.name) bindings.set(c.name.text, { module: r.kind, member: "default" });
           if (c.namedBindings) {
@@ -276,10 +308,19 @@ export function classify(ts, file, src, opts = {}) {
         }
       }
     } else if (ts.isImportEqualsDeclaration(n)) {
-      if (ts.isExternalModuleReference(n.moduleReference)) { const spec = literalName(n.moduleReference.expression); if (spec === null) refuse(n, "an import = require whose specifier is not a string literal"); else { const r = resolveSpec(spec); if (r.kind === "playwright") playwright.add(spec); if (r.kind === "launcher") launcherImported.push(lineOf(n)); bindings.set(n.name.text, { module: r.kind, member: null }); } }
+      if (ts.isExternalModuleReference(n.moduleReference)) { const spec = literalName(n.moduleReference.expression); if (spec === null) refuse(n, "an import = require whose specifier is not a string literal"); else { const r = resolveSpec(spec); if (r.kind === "playwright") playwright.add(spec); if (r.kind === "launcher") launcherImported.push(lineOf(n)); noteLocal(n, r); bindings.set(n.name.text, { module: r.kind, member: null }); } }
     } else if (ts.isExportDeclaration(n) && n.moduleSpecifier) {
       const spec = literalName(n.moduleSpecifier);
-      if (spec === null) refuse(n, "an export from whose specifier is not a string literal"); else if (isPwPackage(spec)) playwright.add(spec);
+      if (spec === null) refuse(n, "an export from whose specifier is not a string literal");
+      else {
+        const r = resolveSpec(spec);
+        if (r.kind === "playwright") playwright.add(spec);
+        if (!n.isTypeOnly) {
+          noteLocal(n, r);
+          // export * from the launcher, export * as ns from it, or a named export of inBrowser: the module hands inBrowser on
+          if (r.kind === "launcher") { launcherImported.push(lineOf(n)); const ec = n.exportClause; if (!ec || ts.isNamespaceExport(ec) || ec.elements.some((el) => !el.isTypeOnly && (el.propertyName || el.name).text === "inBrowser")) launcherReexport = true; }
+        }
+      }
     } else if (ts.isVariableDeclaration(n) && n.initializer) {
       const init = unwrap(n.initializer);
       // a createRequire(...) result is a loader
@@ -351,6 +392,7 @@ export function classify(ts, file, src, opts = {}) {
   const inTryWithCatch = (n) => { for (let p = n.parent; p; p = p.parent) { if (ts.isTryStatement(p) && p.catchClause && p.tryBlock.pos <= n.pos && n.end <= p.tryBlock.end) return true; if (ts.isFunctionLike(p)) return false; } return false; };
   const walk3 = (n) => {
     if (ts.isCallExpression(n)) {
+      { const l = loaderCall(n); if (l && l.kind === "local") noteLocal(n, l); }
       let c = unwrap(n.expression);
       // .call / .apply / .bind on the callee
       let viaCall = false;
@@ -384,7 +426,9 @@ export function classify(ts, file, src, opts = {}) {
       if (b && b.module === "launcher" && b.member === "inBrowser") {
         const p = n.parent;
         const isCallee = p && ts.isCallExpression(p) && unwrap(p.expression) === n;
-        const isDecl = p && (ts.isImportSpecifier(p) || ts.isBindingElement(p) || ts.isVariableDeclaration(p) || ts.isImportClause(p) || (ts.isBinaryExpression(p) && p.left === n));
+        // the NAME position of a declaration is exempt, never its initializer: `const f = inBrowser` and `const { x = inBrowser } = o`
+        // hand the binding on as a value and are refused
+        const isDecl = p && (ts.isImportSpecifier(p) || (ts.isBindingElement(p) && (p.name === n || p.propertyName === n)) || (ts.isVariableDeclaration(p) && p.name === n) || ts.isImportClause(p) || (ts.isBinaryExpression(p) && p.left === n));
         const isPropName = p && (ts.isPropertyAccessExpression(p) && p.name === n) || (p && ts.isPropertyAssignment(p) && p.name === n);
         if (!isCallee && !isDecl && !isPropName) refuse(n, "the launcher's inBrowser binding used as a value, not called (the walker cannot follow where it is called from)");
       }
@@ -406,30 +450,99 @@ export function classify(ts, file, src, opts = {}) {
   walkStr(sf);
   const seenL = new Set(); const launchesU = launches.filter((l) => { const k = l.line + "|" + l.how; if (seenL.has(k)) return false; seenL.add(k); return true; }); launches.length = 0; launches.push(...launchesU);
   const reaches = sharedCalls > 0 || playwright.size > 0 || embedded.length > 0;
-  return { rel, refusals, launcherImported: launcherImported.length > 0, sharedCalls, embedded, playwright: [...playwright].sort(), engines: [...engines].sort(), launches, skipTodo, swallow, reaches };
+  // the module holds inBrowser under a binding (named, whole-module or default) or re-exports it: what a module that imports THIS one reaches
+  let launcherBinds = launcherReexport;
+  for (const [, b] of bindings) if (b.module === "launcher" && (b.member === null || b.member === "default" || b.member === "inBrowser")) launcherBinds = true;
+  const seenI = new Set(); const localU = localImports.filter((l) => { const k = l.line + "|" + l.spec; if (seenI.has(k)) return false; seenI.add(k); return true; });
+  return { rel, refusals, launcherImported: launcherImported.length > 0, launcherBinds, sharedCalls, embedded, playwright: [...playwright].sort(), engines: [...engines].sort(), launches, skipTodo, swallow, reaches, localImports: localU };
+}
+
+const MODULE_EXT = /\.(d\.ts|[cm]?ts|[cm]?js)$/;
+const fileAt = (p) => { try { return fs.statSync(p).isFile() ? p : null; } catch { return null; } };
+/** The files a path names, tried in order: the .ts beside a .js spelling, the path itself, a .d.ts, a .js, a directory's index. */
+const candidatesOf = (raw) => /\.[cm]?js$/.test(raw) ? [raw.replace(/\.[cm]?js$/, ".ts"), raw.replace(/\.[cm]?js$/, ".d.ts"), raw]
+  : /\.[cm]?ts$/.test(raw) ? [raw]
+  : [raw + ".ts", raw + ".d.ts", raw + ".js", raw + ".mjs", raw + ".cjs", path.join(raw, "index.ts"), path.join(raw, "index.js"), raw];
+/** The file a local specifier names. A relative specifier resolves against the loading module's directory; a specifier that
+ *  names no file there (a loader bound elsewhere by createRequire, a path expression folded to its literal pieces with the
+ *  non-literal pieces dropped) resolves against the two bases loaders in this tree are anchored to, the repo root and
+ *  vscode-extension/ (process.cwd() under npm test). Returns { abs } (a file that is not a script, json or css, is returned
+ *  and read by nobody), { ambiguous: [a, b] } when the two bases name different files, or null when none does. */
+export function resolveLocal(fromFile, spec, root) {
+  const clean = spec.replace(/<[^>]*>/g, "").replace(/\/{2,}/g, "/").replace(/^\/+/, "");
+  const first = candidatesOf(path.resolve(path.dirname(fromFile), spec)).map(fileAt).find(Boolean);
+  if (first) return { abs: first };
+  const hits = [...new Set([root, path.join(root, "vscode-extension")].map((b) => candidatesOf(path.resolve(b, clean)).map(fileAt).find(Boolean)).filter(Boolean))];
+  if (hits.length === 1) return { abs: hits[0] };
+  if (hits.length > 1) return { ambiguous: hits };
+  return null;
+}
+const isPackagePath = (abs) => abs.split(path.sep).includes("node_modules");
+
+/** The refusals a test module owes to the modules of the tree it loads, read transitively (a cache of own records per module,
+ *  a walk over the import graph per test import, so a cycle is visited once): a test whose import reaches a module that binds
+ *  the launcher's inBrowser (and the test itself never calls inBrowser), names a playwright package, holds a driver string, or
+ *  a form the walker refuses, is refused at its import line with the chain. The walker follows nothing THROUGH such a module
+ *  (it does not read what the test calls on it), so the remedy is to import the launcher directly, or to teach the census. */
+export function localRefusals(ts, r, file, root, opts, ownCache) {
+  const own = (abs) => {
+    if (!ownCache.has(abs)) {
+      const rec = classify(ts, abs, fs.readFileSync(abs, "utf8"), { ...opts, root });
+      ownCache.set(abs, { rec, next: rec.refusals.length ? [] : rec.localImports.map((li) => ({ li, to: resolveLocal(abs, li.spec, root) })) });
+    }
+    return ownCache.get(abs);
+  };
+  const out = [];
+  const at = (li, why) => { const msg = r.rel + ":" + li.line + ": " + why + ": the walker reads a module of the tree for the launcher and playwright bindings it holds and follows nothing through it; import ui/webview/real-viewer-leg.ts directly in this module, or teach scripts/browser-legs-census.mjs the module: " + li.text; if (!out.includes(msg)) out.push(msg); };
+  const unresolved = (li, to, where) => (to === null ? "loads " + li.spec + ", which names no file in the tree (tried beside " + where + ", under the repo root and under vscode-extension/)" : "loads " + li.spec + ", which names two files (" + to.ambiguous.map((a) => path.relative(root, a)).join(" and ") + "), so the walker cannot tell which one it reads");
+  for (const li of r.localImports) {
+    const start = resolveLocal(file, li.spec, root);
+    if (start === null || start.ambiguous) { at(li, unresolved(li, start, r.rel)); continue; }
+    if (!MODULE_EXT.test(start.abs) || isPackagePath(start.abs)) continue;   // json, css: not a script; a package under node_modules binds nothing of the tree
+    const seen = new Set([start.abs]), queue = [{ abs: start.abs, chain: [] }];
+    let refused = false;
+    while (queue.length && !refused) {
+      const { abs, chain } = queue.shift();
+      const rel = path.relative(root, abs), via = [...chain, rel];
+      const link = via.map((x, i) => (i === 0 ? "loads " + x : ", which loads " + x)).join("");
+      const { rec, next } = own(abs);
+      if (rec.refusals.length) { at(li, link + ", which the census cannot classify (" + rec.refusals[0] + ")"); refused = true; break; }
+      if (rec.playwright.length) { at(li, link + ", which names a playwright package (" + rec.playwright.join(", ") + "), so this module reaches a browser through it"); refused = true; break; }
+      if (rec.embedded.length) { at(li, link + ", which holds a driver string that loads playwright (line " + rec.embedded[0].line + ")"); refused = true; break; }
+      if (rec.launcherBinds && r.sharedCalls === 0) { at(li, link + ", which binds the shared launcher's inBrowser, so this module may launch through it without the census seeing a call"); refused = true; break; }
+      for (const n of next) {
+        if (n.to === null || n.to.ambiguous) { at(li, link + ", which " + unresolved(n.li, n.to, rel) + " (" + rel + ":" + n.li.line + ")"); refused = true; break; }
+        if (!MODULE_EXT.test(n.to.abs) || isPackagePath(n.to.abs) || seen.has(n.to.abs)) continue;
+        seen.add(n.to.abs); queue.push({ abs: n.to.abs, chain: via });
+      }
+    }
+  }
+  return out;
 }
 
 const bundleOf = (dir, f) => "out-tests/" + dir + "/" + f.replace(/\.test\.ts$/, ".test.js");
 
 /** The census over a tree: { legs: [bundle...] sorted, byBundle: Map bundle -> classify record (every module read, leg or
- *  not), refusals: [...] }. */
+ *  not), refusals: [...], localModules: how many modules of the tree the test modules load were read }. */
 export function census(root = REPO, opts = {}) {
   root = path.resolve(root);
   const ts = loadTypescript();
   const legs = [], byBundle = new Map(), refusals = [];
+  const ownCache = new Map();   // the modules of the tree the test modules load, each read once
   for (const dir of LEG_DIRS) {
     const abs = path.join(root, dir);
     if (!fs.existsSync(abs)) continue;
     for (const f of fs.readdirSync(abs).filter((f) => f.endsWith(".test.ts")).sort()) {
       const file = path.join(abs, f);
       const r = classify(ts, file, fs.readFileSync(file, "utf8"), { ...opts, root });
+      if (r.localImports) r.refusals.push(...localRefusals(ts, r, file, root, opts, ownCache));
       const bundle = bundleOf(dir, f);
       byBundle.set(bundle, r);
       if (r.refusals.length) refusals.push(...r.refusals);
       if (r.reaches) legs.push(bundle);
     }
   }
-  return { legs: legs.sort(), byBundle, refusals };
+  return { legs: legs.sort(), byBundle, refusals, localModules: ownCache.size };
 }
 
 /** The gap between a leg and the roster gate, or null when it passes: the sentence both readers print. */

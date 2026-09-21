@@ -4,7 +4,9 @@
 # never neither. A browser leg is what the census, scripts/browser-legs-census.mjs, reads from a test module's tree
 # with the TypeScript compiler: it calls the shared launcher (inBrowser in ui/webview/real-viewer-leg.ts) through its
 # import under any binding, or names a playwright package by any specifier, or holds a driver string that loads one; a
-# form the census cannot classify is refused with file and line, never counted absent. ui/webview/ci-browser-legs-census.test.ts
+# form the census cannot classify is refused with file and line, never counted absent, and so is a module that reaches
+# inBrowser or playwright only through another module of the tree it loads (the census reads a loaded module for what it
+# binds, transitively, and follows nothing through it). ui/webview/ci-browser-legs-census.test.ts
 # (the vscode-extension job) holds the roster plus this file to that census and scripts/ci-browser-legs.sh checks the
 # same before it runs a leg; tools/ci-browser-legs.test.mjs (the Shell job) holds the two files' shape and reasons
 # without the compiler. A line whose source moved or was deleted turns all three red.

@@ -44,7 +44,7 @@ type Rec = {
   playwright?: string[]; engines?: string[]; launches?: Launch[]; skipTodo?: { line: number; what: string }[]; swallow?: number[]; reaches?: boolean;
 };
 type Census = {
-  census(root?: string, opts?: { strictComputed?: boolean }): { legs: string[]; byBundle: Map<string, Rec>; refusals: string[] };
+  census(root?: string, opts?: { strictComputed?: boolean }): { legs: string[]; byBundle: Map<string, Rec>; refusals: string[]; localModules: number };
   rosterGap(r: Rec): string | null;
   engineNames(r: Rec): string[];
   classOf(r: Rec): string;
@@ -143,7 +143,7 @@ test("the roster plus the exclusions whose source is present equals the census's
   for (const r of recs) classes[classOf(r)] = (classes[classOf(r)] || 0) + 1;
   const engineSets: Record<string, number> = {};
   for (const r of recs) { const k = (r.engines || []).join("+") || "none"; engineSets[k] = (engineSets[k] || 0) + 1; }
-  t.diagnostic("census: " + c.byBundle.size + " modules read, " + c.legs.length + " legs, " + roster.length + " rostered, " + (excluded.length - pending.length) + " excluded, " + pending.length + " pending (absent sources, PRs " + JSON.stringify([...new Set(pending.map((e) => "#" + (e.pending as { pr: string }).pr))]) + ")");
+  t.diagnostic("census: " + c.byBundle.size + " test modules read (and " + c.localModules + " modules of the tree they load), " + c.legs.length + " legs, " + roster.length + " rostered, " + (excluded.length - pending.length) + " excluded, " + pending.length + " pending (absent sources, PRs " + JSON.stringify([...new Set(pending.map((e) => "#" + (e.pending as { pr: string }).pr))]) + ")");
   t.diagnostic("classes: " + JSON.stringify(classes) + "; engines: " + JSON.stringify(engineSets));
   t.diagnostic("rosterable by the gate: " + count((r) => rosterGap(r) === null) + "; legs importing the launcher and never calling it: " + count((r) => !!r.launcherImported && r.sharedCalls === 0) + "; shared calls inside try/catch (admitted, reported): " + count((r) => (r.swallow || []).length > 0) + "; legs with a skip or todo: " + count((r) => (r.skipTodo || []).length > 0) + "; own launches: " + recs.reduce((n, r) => n + (r.launches || []).length, 0) + " sites in " + count((r) => (r.launches || []).length > 0) + " modules");
 });
@@ -188,6 +188,16 @@ const PLANT_TABLE: Plant[] = [
   { dir: W, file: "p26-embedded-driver.test.ts", leg: true, cls: "embedded", gap: "drives playwright from a child process whose source is held in a string (line 2)" },
   { dir: W, file: "p27-parse-error.test.ts", leg: false, cls: "refused", gap: null, refused: "p27-parse-error.test.ts:4: the parser reports a diagnostic" },
   { dir: W, file: "p28-string-param-callsites.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: ["chromium", "webkit"], strictRefused: true },
+  // the round-2 verifiers' forms: a value use in an initializer, a reassigned let, and the modules of the tree a test loads
+  { dir: W, file: "p29-value-alias.test.ts", leg: false, cls: "none", gap: "never calls its inBrowser through that import", launcherImported: true, refused: "p29-value-alias.test.ts:3: the launcher's inBrowser binding used as a value" }, // const f = inBrowser; f(t, ...)
+  { dir: W, file: "p30-default-value.test.ts", leg: false, cls: "none", gap: "never calls its inBrowser through that import", launcherImported: true, refused: "p30-default-value.test.ts:4: the launcher's inBrowser binding used as a value" }, // const { x = inBrowser } = o
+  { dir: W, file: "p31-let-reassigned.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: [], refused: "p31-let-reassigned.test.ts:5: a computed member with a name the walker cannot fold" }, // let name = "chromium"; name = "firefox"; pw[name]
+  { dir: W, file: "p32-barrel.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p32-barrel.test.ts:2: loads ui/webview/leg-barrel.ts, which binds the shared launcher's inBrowser" }, // export { inBrowser } from the launcher
+  { dir: W, file: "p33-wrapper.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p33-wrapper.test.ts:2: loads ui/webview/leg-wrap.ts, which binds the shared launcher's inBrowser" }, // a wrapper calling inBrowser
+  { dir: W, file: "p34-helper-playwright.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p34-helper-playwright.test.ts:2: loads ui/webview/pw-helper.ts, which names a playwright package (playwright)" },
+  { dir: W, file: "p35-chain.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p35-chain.test.ts:2: loads ui/webview/leg-chain.ts, which loads ui/webview/leg-wrap.ts, which binds the shared launcher's inBrowser" }, // two modules away
+  { dir: W, file: "p36-wrapper-beside-call.test.ts", leg: true, cls: "shared", gap: null },                                       // the wrapper beside a call of inBrowser itself: a shared leg, no refusal
+  { dir: W, file: "p37-missing-module.test.ts", leg: false, cls: "none", gap: null, launcherImported: false, refused: "p37-missing-module.test.ts:2: loads ./no-such-module, which names no file in the tree" },
 ];
 const bundleOf = (p: Plant): string => "out-tests/" + p.dir + "/" + p.file.replace(/\.test\.ts$/, ".test.js");
 
