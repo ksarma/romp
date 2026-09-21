@@ -144,9 +144,9 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   under `vscode-extension/node_modules` and github-slugger's rule slugs the h
   element's text. The suite holds the slugger to that table (a heading with no
   row, a row with no heading and any disagreement fail, named), since CI's
-  Python job has no node; CI's extension job, which has node and the
-  extension's marked, runs `--check` as a step of its own, so a table edited
-  to agree with a wrong slugger is caught there. Run
+  Python matrix installs no `vscode-extension/node_modules`, so no marked; CI's
+  extension job, which installs it (`npm ci`), runs `--check` as a step of its
+  own, so a table edited to agree with a wrong slugger is caught there. Run
   `python3 tests/docs-anchors-oracle.py` after adding or changing a heading in
   those files, changing the battery or moving marked, and `--check` to compare
   without writing. It exits 2 without node or marked (`npm ci` in

@@ -28,10 +28,10 @@ reference decoded once by decode_references below; the first table's node progra
 apos, and left any other's name in the slug, so the battery carries a `&copy;` and a `&nbsp;` since the third round-12
 fix-up, and the third fix-up's html.unescape decoded HTML's legacy forms too, so nineteen reference and number shapes join
 it at the fourth, the last paragraph here) and slugs it by github-slugger's rule. The test below fails on a heading with no row, a row with
-no heading, and any disagreement, naming each; CI's Python job has no node and no marked (the extension job alone installs
-vscode-extension/node_modules), so the table is the oracle there, and the recipe refuses to run without them rather than
-skipping; CI's extension job, which has both, runs its --check whether or not the test steps before it passed (a pin below
-reads the step and its condition). Round 11 checked seventeen headings somebody chose and an underscore arm that stripped
+no heading, and any disagreement, naming each; CI's Python matrix installs no vscode-extension/node_modules, so no marked
+(node is on the GitHub images; the extension job alone runs npm ci), and the table is the oracle there, the recipe refusing to
+run without marked rather than skipping; CI's extension job, which has it, runs its --check whether or not the test steps before
+it passed (a pin below reads the step and its condition). Round 11 checked seventeen headings somebody chose and an underscore arm that stripped
 unbalanced runs CommonMark leaves literal, admitted one intraword underscore inside a span and read no whitespace flanking;
 over the derived corpus that arm agreed on every real heading (none carries such a shape, at the round-12 commit and at the
 third fix-up's head) and disagreed on 123 of the battery's 457 shapes at the round-12 commit: 110 carrying an underscore,
@@ -43,9 +43,13 @@ and RoundEleven below recomputes the split from the table and the round-11 slugg
 had 111 and 12, remembered, not derived). The slugger below disagreed on none of the 987 rows at the round-12 commit,
 before the merge of main, on none of the 991 at the third fix-up and on none of the 1010 at the fourth (the table's corpus
 field names the counts at this head). What GitHub does that the oracle does not: it renders with cmark-gfm, which agrees
-with marked on everything the corpus and the battery hold; it replaces an emoji shortcode (`:name:`) before it slugs, so
-one contributes nothing where this module keeps the name (no heading here carries one); and it prefixes the id with
-user-content- and resolves the bare anchor by script, which the link never sees.
+with marked on everything the corpus and the battery hold but decodes a numeric character reference of one to eight digits in
+both forms where the spec, marked and decode_references below take one to seven decimal and one to six hex (by execution
+against cmark-gfm 0.29.0.gfm.13: `&#00000065;`, `&#x0000041;` and `&#x00000041;` are A there and literal here and in marked,
+nine digits literal on all three; latent, since no table row carries a numeric reference past the spec's bound, and stated
+rather than changed, since a wider bound here would break the agreement with marked the table pins); it replaces an emoji
+shortcode (`:name:`) before it slugs, so one contributes nothing where this module keeps the name (no heading here carries
+one); and it prefixes the id with user-content- and resolves the bare anchor by script, which the link never sees.
 
 The fourth round-12 fix-up: two latent disagreements no corpus heading reached. The decode: html.unescape, which decoded a
 heading's character references here and the h element's text in the oracle until then, is HTML's text decoder, and HTML
@@ -61,14 +65,19 @@ other number (No: a superscript, a vulgar fraction, a circled digit; 915 code po
 which github-slugger drops, so `x² y` slugged x²-y here and x-y there; _kept below keeps letters, marks, decimal numbers
 and letter numbers (L, M, Nd, Nl), the slugger's set as far as Unicode categories state it. What still differs, stated
 rather than hidden: github-slugger 2.0.0 reads Unicode 13.0 data, so a heading carrying a letter, mark or number assigned
-since is kept by this module under a newer table and dropped by the slugger (5187 code points against 15.0 by the round-12
-finding's count; CI's Python 3.10 reads 13.0 itself, its 3.13 reads 15.1); and the slugger's set is html-pipeline's
+since is kept by this module under a newer table and dropped by the slugger (5048 code points against 15.0, Python 3.12's
+tables, by a census of every code point against the slugger's regex: Lo 4608, Mn 147, Lm 137, Ll 78, Lu 40, Nd 30, Mc 8, every
+one of DerivedAge 14.0 (638) or 15.0 (4410) and none older, so all unassigned in the 13.0 tables CI's Python 3.10 reads; its
+3.13 reads 15.1; the fourth fix-up's 5187 was the whole symmetric difference between the two keep sets, this count and the 139
+next, conflated); and the slugger's set is html-pipeline's
 \\p{Word}, Alphabetic beside marks, decimal numbers and connector punctuation, which keeps 139 code points these categories
 drop, the nine connector punctuation marks beside the underscore (U+203F among them) and 130 enclosed Latin letter symbols
 (category So). No corpus or battery heading carries one. A pin below reads every table text against the two classes a
 category or a name can point at, connector punctuation and a symbol named an enclosed Latin letter (190 code points in
 15.0, the parenthesized letters both drop refused with the rest, since Python's tables carry no Alphabetic property), and
-reds naming the residual; the version delta it cannot see (unicodedata carries no age), so that part stays a statement."""
+reds naming the residual; the version delta it cannot see (unicodedata carries no age; the count above was read against the
+UCD's DerivedAge and confirmed by execution, the 5048 all unassigned under Python 3.10's 13.0 tables and 638 of them assigned
+under 3.11's 14.0), so that part stays a statement."""
 import html.entities
 import itertools
 import json
@@ -195,7 +204,10 @@ def _emphasis(tokens):
 # CommonMark's character references (0.31, section 6.2; fourth round-12 fix-up of fork PR #778): a name from the HTML5 set ended by
 # a semicolon (html.entities.html5's 2125 semicolon-ended keys; the 106 legacy names it also lists without one, `copy` for `copy;`,
 # are HTML's, which decodes `&copy` bare, and not CommonMark's), or one to seven decimal digits, or an x and one to six hex digits,
-# between `&#` and `;`; a code point of zero, above U+10FFFF or a surrogate decodes to U+FFFD. Anything else is literal text
+# between `&#` and `;`; a code point of zero, above U+10FFFF or a surrogate decodes to U+FFFD. Anything else is literal text.
+# cmark-gfm, GitHub's renderer, takes one to eight digits in both forms (fifth round-12 fix-up, by execution: `&#00000065;`,
+# `&#x0000041;` and `&#x00000041;` decode to A there and nine digits stay literal); marked takes the spec's bounds, as this does,
+# so the three are literal here and in the table's renderer alike, a latent difference no table row reaches (the module docstring)
 _NAMED_REFERENCES = {k: v for k, v in html.entities.html5.items() if k.endswith(";")}
 _REFERENCE = re.compile(r"&(?:([A-Za-z][A-Za-z0-9]*);|#([0-9]{1,7});|#[xX]([0-9A-Fa-f]{1,6});)")
 
