@@ -686,8 +686,8 @@ test("bodyReady reads the element children through `children`, else through `chi
 // hand-off or URL write it stands at, whatever the second declaration spells (a shadow wearing the listed declaration's exact
 // text passed the text compare); THE RECEIVER'S HOLD IS BY BINDING, NOT NAME (the maintainer's round-8 question, 2026-09-21,
 // after PR 850's census read a synthetic local named `p` as a kernel path, a silent false match; answered by executing 23
-// plants at the round-7 head, 13 refused with the planted line and 10 passed as expected, the loud ones kept as this module's
-// binding case): an entry is addressed by the tuple (the enclosing function's NAME, the receiver's spelling, the form, the
+// plants at the round-7 head, 13 refused with the planted line and 10 passed as expected, the 13 loud ones kept as this
+// module's binding case beside two of the passing ones and the residue plant named below): an entry is addressed by the tuple (the enclosing function's NAME, the receiver's spelling, the form, the
 // seated arguments), and the receiver is then resolved to its DECLARATION by the language's scopes (bindingOf: the innermost
 // scope declaring the name, a block, a function's parameters, a for or catch clause, the module), never by its name, and
 // held to the entry by that declaration's text (`decl`) and the per-function declaration count (shadowOf), so a same-named
@@ -702,7 +702,9 @@ test("bodyReady reads the element children through `children`, else through `chi
 // same-spelled seats collapse to one key that reds the count unless the entry says `times`, and with `times` reads N seats
 // across the same-named functions held to equal declaration text rather than to one node; and the hold is on the
 // declaration's TEXT (its initializer's first 80 characters), so a same-spelled declaration whose `el` is rebound in the
-// function, or two initializers that differ only past the 80th character, pass under the listed text; and a receiver bound
+// function, two initializers that differ only past the 80th character, or a same-spelled declaration added inside the nested
+// named function an entry names while the enclosing function keeps the listed one (the binding moves inward, the reported
+// declaration text does not, and nothing refuses; the k4 plants below), pass under the listed text; and a receiver bound
 // by `let` or `var`, or a parameter written to, is REASSIGNABLE and its seat fails
 // unless the entry pins what the binding HOLDS (`holds`: the one expression every write to it in the file assigns), since
 // its declaration says nothing about what it holds at the seat (the round-6 review's correctness-5; the viewer's session
@@ -2392,8 +2394,9 @@ test("the census refuses its unknown and derives its population, executed over m
 // plants at the round-7 head, 13 refused with the planted line, 10 passed as expected): the entry is addressed by (function
 // name, receiver spelling, form, seated arguments) and the receiver is then resolved to its DECLARATION by the language's
 // scopes and held to the entry by the declaration's text and a per-function declaration count, so every name collision the
-// probe planted refused loud. The plants below keep those failures loud; the header states the two text-keyed residues.
-test("the seat table's receiver hold is by binding, not name, executed over functions planted at the end of file-view.ts: a listed name declared in two blocks of the entry's function is refused at both seats, whatever each declaration spells and with its own entry per block; a callback parameter of the name is refused at every seat of the name in the function; a same-named local in ANOTHER function is an unlisted seat there, never read under the listed function's entry, with or without `times`; two functions' entries with their declarations swapped are refused at both seats naming both declarations; one entry over two function nodes sharing a name reds the count; and the header names the shared name the live tables use", () => {
+// probe planted refused loud. The plants below keep all 13 of those failures loud, with two of the probe's passing plants
+// (b1', c2') and the k4 family, the text hold's third face; the header states the text-keyed residues.
+test("the seat table's receiver hold is by binding, not name, executed over functions planted at the end of file-view.ts: a listed name declared in two blocks of the entry's function is refused at both seats, whatever each declaration spells and with its own entry per block; a callback parameter of the name is refused at every seat of the name in the function; a same-named local in ANOTHER function is an unlisted seat there, never read under the listed function's entry, with or without `times`; two functions' entries with their declarations swapped are refused at both seats naming both declarations; one entry over two function nodes sharing a name reds the count; the probe's six other loud plants refuse as it recorded (two blocks spelled alike under `times`, a second block that never seats, a nested named arrow's own declaration unlisted and then wearing the outer text, an unnamed callback's declaration, a nested named function's parameter, a property key); the text hold's stated residue passes (a same-text declaration added inside the nested named function an entry names); and the header names the shared name the live tables use", () => {
   const plant = (code: string): string => VIEWER_SRC + "\n" + code + "\n";
   const lineIn = (src: string, needle: string): number => { const i = src.indexOf(needle); assert.ok(i >= 0 && src.indexOf(needle, i + 1) < 0, needle + " is planted once"); return src.slice(0, i).split("\n").length; };
   assert.deepEqual(census(VIEWER_SRC).refused, [], "the unplanted file passes, so every refusal below is the plant's");
@@ -2437,6 +2440,49 @@ test("the seat table's receiver hold is by binding, not name, executed over func
   const h = plant("function probeH1(): void { " + innerFn + " }\nfunction probeH2(): void { " + innerFn + " }");
   const rh = census(h, [...SEATS_READ_BY_HAND, P("inner", D1, S1)]).refused;
   assert.deepEqual(rh, ["SEATS_READ_BY_HAND's entry `p.appendChild` seating `" + S1 + "` in inner matches 2 seats (lines " + lineIn(h, "function probeH1") + ", " + lineIn(h, "function probeH2") + ") where it reads 1: one entry is one seat, read by hand where it stands; a seat spelled alike in two branches says `times` and is read at each"], "h1: one entry over two function nodes named alike reds the count");
+  // a2: the two blocks spelled alike, declaration and seat, one entry `times: 2`: `times` admits no second declaration
+  const a2 = plant('function probeA2(): void {\n  { ' + D1 + '; p.appendChild(' + S1 + '); }\n  { ' + D1 + '; p.appendChild(' + S1 + '); }\n}');
+  const a2Lines = [lineIn(a2, "function probeA2") + 1, lineIn(a2, "function probeA2") + 2];
+  assert.deepEqual(census(a2, [...SEATS_READ_BY_HAND, P("probeA2", D1, S1, 2)]).refused, a2Lines.map((l) => "line " + l + ": p.appendChild(" + S1 + ") in probeA2: `p` is declared 2 times in probeA2 (lines " + a2Lines.join(", ") + "): a second declaration of a listed name in the entry's function is refused, whatever it spells"), "a2: both seats refused under the declaration count, `times` admitting neither");
+  // a3: the second block declares `p` and never seats it; the first block's entry alone is listed, and its seat is refused
+  const a3 = plant('function probeA3(): void {\n  { ' + D1 + '; p.appendChild(' + S1 + '); }\n  { ' + D2 + '; }\n}');
+  const a3Line = lineIn(a3, "function probeA3") + 1;
+  assert.deepEqual(census(a3, [...SEATS_READ_BY_HAND, P("probeA3", D1, S1)]).refused, ["line " + a3Line + ": p.appendChild(" + S1 + ") in probeA3: `p` is declared 2 times in probeA3 (lines " + a3Line + ", " + (a3Line + 1) + "): a second declaration of a listed name in the entry's function is refused, whatever it spells"], "a3: a second declaration that never seats still refuses the listed seat");
+  // b1: `p` declared again, with another initializer, in a nested NAMED arrow `inner` that seats it. The nested function is
+  // another entry's `in`: its seat is unlisted under the outer entry (b1), passes listed with its own declaration (b1'), and
+  // listed with the OUTER declaration's text is refused naming both (b1'')
+  const b1 = plant('function probeB1(): void {\n  ' + D1 + '; p.appendChild(' + S1 + ');\n  const inner = () => { ' + D2 + '; p.appendChild(' + S2 + '); }; inner();\n}');
+  const b1Line = lineIn(b1, "function probeB1") + 2;
+  const rb1 = census(b1, [...SEATS_READ_BY_HAND, P("probeB1", D1, S1)]).refused;
+  assert.equal(rb1.length, 1, "b1: the nested function's seat alone is refused: " + JSON.stringify(rb1));
+  assert.ok(rb1[0].startsWith("line " + b1Line + ": p.appendChild(" + S2 + ") seats `" + S2 + "` on `p` by appendChild in inner, a seat the census has not read by hand"), "b1: refused as inner's unlisted seat: " + rb1[0]);
+  assert.deepEqual(census(b1, [...SEATS_READ_BY_HAND, P("probeB1", D1, S1), P("inner", D2, S2)]).refused, [], "b1': listed under inner with inner's declaration, both seats pass");
+  assert.deepEqual(census(b1, [...SEATS_READ_BY_HAND, P("probeB1", D1, S1), P("inner", D1, S2)]).refused, ["line " + b1Line + ": p.appendChild(" + S2 + ") seats on `p` in inner, bound to `" + D2 + "`, where SEATS_READ_BY_HAND read `" + D1 + "`: the receiver is not the one read by hand"], "b1'': inner's entry wearing the outer declaration's text is refused, naming the declaration the seat resolved to");
+  // b2: the second declaration is inside an UNNAMED callback, both entries listed: the callback is the function's own, so the
+  // name is declared twice in probeB2 and both seats are refused
+  const b2 = plant('function probeB2(): void {\n  ' + D1 + '; p.appendChild(' + S1 + ');\n  [1].forEach(() => { ' + D2 + '; p.appendChild(' + S2 + '); });\n}');
+  const b2Lines = [lineIn(b2, "function probeB2") + 1, lineIn(b2, "function probeB2") + 2];
+  assert.deepEqual(census(b2, [...SEATS_READ_BY_HAND, P("probeB2", D1, S1), P("probeB2", D2, S2)]).refused, b2Lines.map((l, k) => "line " + l + ": p.appendChild(" + (k ? S2 : S1) + ") in probeB2: `p` is declared 2 times in probeB2 (lines " + b2Lines.join(", ") + "): a second declaration of a listed name in the entry's function is refused, whatever it spells"), "b2: both seats refused under the declaration count, the unnamed callback's declaration counted in probeB2");
+  // c2: a nested NAMED function's parameter named `p`: its seat is unlisted under the outer entry (c2) and passes listed as the
+  // parameter of innerC (c2')
+  const c2 = plant('function probeC2(): void {\n  ' + D1 + '; p.appendChild(' + S1 + ');\n  const innerC = (p: HTMLElement): void => { p.appendChild(' + S2 + '); }; innerC(p);\n}');
+  const rc2 = census(c2, [...SEATS_READ_BY_HAND, P("probeC2", D1, S1)]).refused;
+  assert.equal(rc2.length, 1, "c2: innerC's seat alone is refused: " + JSON.stringify(rc2));
+  assert.ok(rc2[0].startsWith("line " + (lineIn(c2, "function probeC2") + 2) + ": p.appendChild(" + S2 + ") seats `" + S2 + "` on `p` by appendChild in innerC, a seat the census has not read by hand"), "c2: refused as innerC's unlisted seat: " + rc2[0]);
+  assert.deepEqual(census(c2, [...SEATS_READ_BY_HAND, P("probeC2", D1, S1), P("innerC", "a parameter of innerC", S2)]).refused, [], "c2': listed as innerC's parameter, both seats pass");
+  // e1: a property key named `p` (`const q = { p: el(...) }`) is no declaration of `p`: the bare seat passes, and `q.p`'s seat
+  // is refused as its own unlisted seat on the member chain
+  const e1 = plant('function probeE(): void {\n  ' + D1 + '; p.appendChild(' + S1 + ');\n  const q = { p: el("div", "fileview-probe-2") }; q.p.appendChild(' + S2 + ');\n}');
+  const re1 = census(e1, [...SEATS_READ_BY_HAND, P("probeE", D1, S1)]).refused;
+  assert.equal(re1.length, 1, "e1: the `q.p` seat alone is refused: " + JSON.stringify(re1));
+  assert.ok(re1[0].startsWith("line " + (lineIn(e1, "function probeE") + 2) + ": q.p.appendChild(" + S2 + ") seats `" + S2 + "` on `q.p` by appendChild in probeE, a seat the census has not read by hand"), "e1: refused as the member chain's unlisted seat, the bare `p` seat passing: " + re1[0]);
+  // the text hold's third face, stated in the header (the round-8 verifier's k4 family): an entry naming a nested named arrow
+  // whose `p` is the ENCLOSING function's declaration passes (k4) and stays green when the arrow gains a same-text declaration
+  // of its own (k4'), the binding moving inward under the same reported text; another text inside is refused naming both (k4'')
+  const k4 = (inner: string): string => plant('function probeK4(): void {\n  ' + D1 + ';\n  const inner4 = () => { ' + inner + 'p.appendChild(' + S1 + '); }; inner4();\n}');
+  assert.deepEqual(census(k4(""), [...SEATS_READ_BY_HAND, P("inner4", D1, S1)]).refused, [], "k4: the enclosing function's declaration read through the nested named arrow passes");
+  assert.deepEqual(census(k4(D1 + "; "), [...SEATS_READ_BY_HAND, P("inner4", D1, S1)]).refused, [], "k4': a same-text declaration added inside inner4 passes under the listed text, the residue the header states");
+  assert.deepEqual(census(k4(D2 + "; "), [...SEATS_READ_BY_HAND, P("inner4", D1, S1)]).refused, ["line " + (lineIn(k4(D2 + "; "), "function probeK4") + 2) + ": p.appendChild(" + S1 + ") seats on `p` in inner4, bound to `" + D2 + "`, where SEATS_READ_BY_HAND read `" + D1 + "`: the receiver is not the one read by hand"], "k4'': another text inside inner4 is refused naming both declarations");
   // the live file: the names the three tables use that more than one function node bears, and the header's example among them
   const sf = ts.createSourceFile("file-view.ts", VIEWER_SRC, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const nodesNamed = new Map<string, number>();
@@ -2526,7 +2572,8 @@ test("P7's derived numbers are the tables this module runs: the seat-keyed table
   const triples = [...P7.matchAll(/the triple key gives (\d+) at the round-6 file and (\d+) at the round-7 file/g)];
   assert.equal(triples.length, 1, "the triple-key cells stand in P7 once");
   const tripleAtRound7 = Number(triples[0][2]);
-  const seatSentence = [...P7.matchAll(/the seat key gives (\d+) entries over (\d+) seats at both, (\w+) entries standing for two byte-identical seats each \(((?:[^()]|\([^()]*\))*)\), so the rise of (\d+) entries is what the triple hid and the site population, (\d+), moves in no cell/g)];
+  assert.equal(triples[0][1], triples[0][2], "the two triple cells are equal, so the rise across the change of key is the key's alone, as the sentence says (" + triples[0][1] + " at the round-6 file, " + triples[0][2] + " at the round-7 file)");
+  const seatSentence = [...P7.matchAll(/the seat key gives (\d+) entries over (\d+) seats at both, (\w+) entries standing for two byte-identical seats each \(((?:[^()]|\([^()]*\))*)\), so the rise of (\d+) entries is what the triple hid and the site population, (\d+), moves in neither file's cell/g)];
   assert.equal(seatSentence.length, 1, "the seat-keyed table's size stands in P7 once");
   const twice = SEATS_READ_BY_HAND.filter((e) => e.times !== undefined);
   assert.ok(twice.length > 0 && twice.every((e) => e.times === 2), "every entry with a `times` reads two seats (" + JSON.stringify(twice.map((e) => e.times)) + "), the sentence's two byte-identical seats each");

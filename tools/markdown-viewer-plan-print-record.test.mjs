@@ -542,8 +542,9 @@ test('P7: bodyReady classes each child against three closed lists and answers no
   const triples = [...P7.matchAll(/the triple key gives (\d+) at the round-6 file and (\d+) at the round-7 file/g)];
   assert.equal(triples.length, 1, 'the triple-key cells stand in P7 once');
   const tripleAtRound7 = Number(triples[0][2]);
+  assert.equal(triples[0][1], triples[0][2], 'the two triple cells are equal, so the rise across the change of key is the key\'s alone, as the sentence says (' + triples[0][1] + ' at the round-6 file, ' + triples[0][2] + ' at the round-7 file)');
   assert.ok(entries > tripleAtRound7 && seats >= entries, 'the table has more entries than the triple key held (' + entries + ' over ' + seats + ' seats, ' + tripleAtRound7 + ' triples)');
-  const seatSentence = [...P7.matchAll(/the seat key gives (\d+) entries over (\d+) seats at both, (\w+) entries standing for two byte-identical seats each \(((?:[^()]|\([^()]*\))*)\), so the rise of (\d+) entries is what the triple hid and the site population, (\d+), moves in no cell/g)];
+  const seatSentence = [...P7.matchAll(/the seat key gives (\d+) entries over (\d+) seats at both, (\w+) entries standing for two byte-identical seats each \(((?:[^()]|\([^()]*\))*)\), so the rise of (\d+) entries is what the triple hid and the site population, (\d+), moves in neither file's cell/g)];
   assert.equal(seatSentence.length, 1, 'the seat-keyed table\'s size stands in P7 once');
   assert.deepEqual([seatSentence[0][1], seatSentence[0][2], seatSentence[0][3], seatSentence[0][5], seatSentence[0][6]], [String(entries), String(seats), WORDS[twice.length], String(entries - tripleAtRound7), String(seats)], 'P7 states the seat-keyed table\'s size, its entries reading two seats, its rise over the round-7 triple count and the site population as derived from the census file (' + entries + ' entries over ' + seats + ' seats, ' + twice.length + ' reading two, a rise of ' + (entries - tripleAtRound7) + ')');
   const twiceEntries = [...tableSrc.matchAll(/^  \{ in: "([^"]+)", on: "([^"]+)", via: "([^"]+)", seats: "((?:[^"\\]|\\.)*)".*, times: \d+[,} ]/gm)];

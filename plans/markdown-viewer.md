@@ -8720,10 +8720,13 @@ a detached scratch copy's out-tests after `node esbuild.js --tests` in vscode-ex
 module under the systemd-run recipe): the triple key gives 60 at the round-6 file and 60 at the round-7 file, and the seat
 key gives 90 entries over 92 seats at both, two entries standing for two byte-identical seats each (codeBlock's
 `pre.appendChild(code)` and `wrap.appendChild(pre)`, spelled alike in the numbered and plain branches), so the rise of 30
-entries is what the triple hid and the site population, 92, moves in no cell; beside the total, the merge-base file (the
-round-7 head's base with origin/main) gives 90 non-body sites, 59 triples and 88 seat-key entries under the same walk (the
-refuter's run alone, one execution), so this PR's own contribution is two seats (the two `print.button` seats), one triple
-(openUrlView's `acts.insertBefore`; the fileGroup seat folds into an existing triple) and two seat-key entries; the
+entries is what the triple hid and the site population, 92, moves in neither file's cell; beside the total, the merge-base
+file (the round-7 head's base with origin/main) gives 90 non-body sites, 59 triples and 88 seat-key entries under the same
+walk (the refuter's run alone, one execution), so this PR's own contribution is two seats (the two `print.button` seats), one
+triple (openUrlView's `acts.insertBefore`; the fileGroup seat folds into an existing triple) and two seat-key entries, each a
+net count: the round-7 respelling of initFileView's `h` to `gh` puts one triple, one seat-key entry and one seat out and in,
+so the set differences between the two files are one triple out and two in, one entry out and three in, one seat out and
+three in (the author's closing pass over round 8, one execution of the same walk over both files); the
 triple-key and merge-base numbers are that run's, held as literals, and the seat-key numbers are the live table's, derived at
 every run and never carried, read as the two files' while the viewer gains no seat: the record test counts the table's
 entries, their `times` and the entries whose `times` is two in the census file by text and holds this sentence to them, and
