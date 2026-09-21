@@ -603,6 +603,15 @@ test('P7: bodyReady classes each child against three closed lists and answers no
   for (const m of twiceEntries) assert.ok(seatSentence[0][4].includes(m[1] + "'s") && seatSentence[0][4].includes('`' + m[2] + '.' + m[3] + '(' + m[4].replace(/\\(.)/g, '$1') + ')`'), 'the sentence names the entry reading two seats, ' + m[1] + "'s `" + m[2] + '.' + m[3] + '(' + m[4] + ')`: ' + seatSentence[0][4]);
   const base = [...P7.matchAll(/gives (\d+) non-body sites, (\d+) triples and (\d+) seat-key entries under the same walk/g)];
   assert.equal(base.length, 1, 'the merge-base cell stands in P7 once');
+  // the no-URL style list's count, by text (the author's closing pass over round 8, the verifiers' r8v-B-C-4): the word in P7's one
+  // sentence is the count of the literal's entries, each opening its line as `  { name: "`; the census module holds the same word
+  // to the list it runs
+  const styleSrc = between(census, 'const NON_URL_STYLE_PROPS: Array<{ name: string; why: string }> = [', '\n];');
+  const styleEntries = [...styleSrc.matchAll(/^  \{ name: "/gm)].length;
+  const styleCount = [...P7.matchAll(/\(`NON_URL_STYLE_PROPS`, (\w+) names;/g)];
+  assert.equal(styleCount.length, 1, 'the no-URL style list\'s count stands in P7 once, in the sentence\'s form (a sentence the pattern does not find is a loud failure here, never a default)');
+  assert.ok(styleEntries > 0 && styleEntries < WORDS.length, 'the list has entries the words can count: ' + styleEntries);
+  assert.equal(styleCount[0][1], WORDS[styleEntries], 'P7\'s count of the no-URL style names is the text count of the census module\'s literal (' + styleEntries + ')');
   const delta = [...P7.matchAll(/so this PR's own contribution is (\w+) seats \(the two `print\.button` seats\), one triple \([^)]*\) and (\w+) seat-key entries/g)];
   assert.equal(delta.length, 1, 'the PR\'s own contribution stands in P7 once');
   assert.deepEqual(delta[0].slice(1), [WORDS[seats - Number(base[0][1])], WORDS[entries - Number(base[0][3])]], 'the PR\'s own seats and entries are the text count over the merge-base cell (' + (seats - Number(base[0][1])) + ' seats, ' + (entries - Number(base[0][3])) + ' entries)');

@@ -8806,7 +8806,9 @@ naming `location`, swallow every other method there, `append` and `setHTMLUnsafe
 recording nothing; a write through `style` passed on the assignment axis by the rule and `setProperty` by its listing, so
 `el.style.backgroundImage = "url(" + x + ")"`, `el.style.cssText = ...` and `el.style.setProperty(...)` reached the network
 with no hand read while `el.setAttribute("style", ...)` was refused, and the style road is the URL axis's now, inverted, the
-seven no-URL names the only pass; and the URL push stood in the plain-assignment arm on the raw left side, so a URL member
+listed no-URL names the only pass (`NON_URL_STYLE_PROPS`, its count stated once, above, and derived), the CSS Typed OM
+spelling `attributeStyleMap.set` and a spread argument to `setProperty` read on it since the author's closing pass over
+round 8; and the URL push stood in the plain-assignment arm on the raw left side, so a URL member
 written through a parenthesised, array, object, for-of or for-in target was no URL write, and it is read on the peeled target
 in every arm now; the
 author's closing pass over the round-7 build, 2026-09-20, on the verifiers' findings: the URL axis read the assignment

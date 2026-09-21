@@ -797,7 +797,11 @@ test("bodyReady reads the element children through `children`, else through `chi
 // an imported helper handed the card, the bar or the markdown root, and a node inside an object literal, were read on no
 // axis while the promise named every axis); and AN ARGUMENT THE CENSUS CANNOT NAME BY SHAPE handed to a callee this file
 // does not declare is refused by the compiler's TYPE when that type can hold a node (a member assignable to Node or that
-// Node is assignable to, or any or unknown, which the compiler cannot vouch for) unless ARGS_READ_BY_HAND lists it marked
+// Node is assignable to, or any or unknown, which the compiler cannot vouch for, or ONE level into the type's structure by
+// the same test: a generic reference's type arguments, an array's elements among them, an object literal type's properties
+// and an anonymous function type's return, a named interface or class read by its own assignability alone and nothing
+// below the first level opened; the author's closing pass over round 8, 2026-09-21: `HTMLElement[]`, `{ root: HTMLElement }`,
+// `Promise<HTMLElement>` and `() => HTMLElement` bound to a name had passed) unless ARGS_READ_BY_HAND lists it marked
 // `unnamed`, the mark held to the road that reads it, so the two populations never blur (the round-8 fixes, the round-7
 // review's tests-2 and regression-1, 2026-09-21: the shape rule enumerated on the unsafe side and PASSED what it could
 // not name, and the merge deleted the entry reading the sanitized body handed to gateRemoteFigures rather than repointing
@@ -816,15 +820,21 @@ test("bodyReady reads the element children through `children`, else through `chi
 // a member of `location`, by setAttribute or setAttributeNS under any name but an `aria-*` or `data-*` one (neither fetched
 // nor navigated by) or one NON_URL_ATTRS lists as carrying no URL, by a CSS property written through an element's `style`
 // (an assignment through `style`, or `style.setProperty`, its value read like setAttribute's) under any name but one
-// NON_URL_STYLE_PROPS lists by hand as taking no url() value (a computed property name refused whatever the value; the
+// NON_URL_STYLE_PROPS lists by hand as taking no url() value (a computed property name refused whatever the value; a spread
+// or an unreadable name through `setProperty` with no value argument recorded as the write it is; the CSS Typed OM spelling
+// `el.attributeStyleMap.set(prop, value)` read like `setProperty`, its `set` passing on the call axis by the Map method's
+// listing: the author's closing pass over round 8, 2026-09-21, before which both spellings were read on no axis; the
 // round-8 fixes, the round-7 review's correctness-2, 2026-09-21: before this a write through `style` passed on the
 // assignment axis by the rule and `setProperty` by its listing, so `el.style.backgroundImage = "url(" + x + ")"`,
 // `el.style.cssText = ...` and `el.style.setProperty("background-image", ...)` reached the network with no hand read while
 // `el.setAttribute("style", ...)` was refused), by a method of `location` (assign, replace or reload, its own navigations;
 // every other method on a receiver whose chain names `location` is the call axis's and a seat there is refused as a seat:
 // the round-8 fixes, the round-7 review's correctness-1, before which an else-if chain let the URL arm, keyed on the
-// receiver alone, swallow `append`, `setHTMLUnsafe` and every other method there, a literal first argument recording nothing)
-// or by `window.open` (the global's `open` by binding), each call's first argument the value; and a setAttribute or
+// receiver alone, swallow `append`, `setHTMLUnsafe` and every other method there, a literal first argument recording nothing;
+// the `location` read is by the receiver chain's SPELLING, the undeclared global or a property so named, where the receiver
+// axis reads Object, Reflect and Function by binding, so a navigation through an alias of it, `const loc = window.location;
+// loc.assign(x)`, falls to the call axis's refusal of an unlisted method, loud, on the call axis: the author's closing pass
+// over round 8, 2026-09-21) or by `window.open` (the global's `open` by binding), each call's first argument the value; and a setAttribute or
 // setAttributeNS whose NAME is not a string literal (a constant resolved through its declaration counts as one) or names an
 // on<event> handler passes only as a site ATTR_NAMES_READ_BY_HAND lists. A listed site the source no longer has fails too (a
 // stale entry is removed, never kept). The resolved set is then held equal to the flow's three lists (READY_ROOTS, NOT_READY_ROOTS, LINE_ROOTS) and
@@ -883,10 +893,13 @@ const VIEWER_SRC = stripComments(VIEWER_RAW);
  *  2026-09-21: the argument axis names an element by its shape and passed what it could not name, so the compiler's TYPE is
  *  the namer of last resort now, seatSites.unnamedShape). The host serves `src` for file-view.ts's own path and the disk for
  *  every other file, so a mutant of the viewer type-checks against the real modules it imports; the options are
- *  vscode-extension's (strict, the DOM lib, `paths` into its node_modules for marked's types). ONE program per distinct
- *  source text (the maintainer's round-8 ruling on cluster C: the mutant case calls the census over the live source many
- *  times and over each mutant once, and a program per call took the case from 116 s to 288 s in the probe), the parsed
- *  files other than file-view.ts cached across programs and the last program handed to the next as its predecessor. This
+ *  vscode-extension's (strict, the DOM lib, `paths` into its node_modules for marked's types). One program per RUN of one
+ *  source text: the last program is kept and handed to the next as its predecessor, so consecutive reads of one text share
+ *  it and a text read again after another is rebuilt (the maintainer's round-8 ruling on cluster C asked that the mutant
+ *  case not double, a program per call having taken it from 116 s to 288 s in the probe; the case reads the live source
+ *  between mutants, so most of its reads share the last program; the author's closing pass over round 8 corrected this
+ *  docstring, which had said one program per distinct text: the cache holds one), the parsed files other than file-view.ts
+ *  cached across programs. This
  *  module reaches the compiler under npm test with node_modules present: see the census header's rider on where it lives. */
 const PROGRAM_OPTIONS: ts.CompilerOptions = { target: ts.ScriptTarget.ES2021, lib: ["lib.es2021.d.ts", "lib.dom.d.ts", "lib.dom.iterable.d.ts"], strict: true, module: ts.ModuleKind.CommonJS, moduleResolution: ts.ModuleResolutionKind.Node10, esModuleInterop: true, skipLibCheck: true, noEmit: true, types: [], baseUrl: process.cwd(), paths: { "*": ["node_modules/*"] } };
 const programFiles = new Map<string, ts.SourceFile>();
@@ -1269,7 +1282,9 @@ const SITE_RECEIVERS = ["Object", "Reflect", "Function"];
  *  call seats nothing, and what its arguments carry is read on the axis that reads values regardless of the listing. So `setProperty`
  *  stands here as seating nothing, and its VALUE is read on the URL axis by seatSites' style road like setAttribute's (a
  *  CSS property through `style.setProperty` is a URL write unless NON_URL_STYLE_PROPS lists the property); `setAttribute`
- *  stands here and its name and value are read on the URL axis; `assign` and `reload` are NOT here, and `replace` and
+ *  and `setAttributeNS` stand here and their name and value are read on the URL axis (the namespaced one listed by the
+ *  author's closing pass over round 8: unlisted, one write through it was refused twice, once as an unlisted method and once
+ *  as the URL write it is, one signal with two causes); `assign` and `reload` are NOT here, and `replace` and
  *  `open` are (the string's replace, the browser's and the viewer's open), because the URL axis owns the (location,
  *  navigation-method) PAIRS and the global `open`, not the names: a call of `assign`, `replace` or `reload` on a receiver
  *  whose chain names `location`, and of `open` on the global (window, globalThis, self, or the bare name), is a navigation
@@ -1281,7 +1296,7 @@ const SITE_RECEIVERS = ["Object", "Reflect", "Function"];
  *  a shorter list). */
 const NON_SEATING_METHODS = [
   // the DOM
-  ...NON_SEATING_CALLS, "setAttribute", "getAttribute", "hasAttribute", "removeAttribute", "getAttributeNS", "removeAttributeNS", "remove", "closest", "matches", "getElementById", "createElement", "scrollIntoView", "stopPropagation", "preventDefault", "click", "hasFocus", "toggle", "setProperty", "createRange", "setStart", "setEnd", "createTreeWalker", "nextNode", "getSelection", "setBaseAndExtent", "observe", "disconnect",
+  ...NON_SEATING_CALLS, "setAttribute", "setAttributeNS", "getAttribute", "hasAttribute", "removeAttribute", "getAttributeNS", "removeAttributeNS", "remove", "closest", "matches", "getElementById", "createElement", "scrollIntoView", "stopPropagation", "preventDefault", "click", "hasFocus", "toggle", "setProperty", "createRange", "setStart", "setEnd", "createTreeWalker", "nextNode", "getSelection", "setBaseAndExtent", "observe", "disconnect",
   // the language
   "push", "pop", "shift", "slice", "map", "filter", "forEach", "some", "every", "find", "join", "from", "includes", "indexOf", "lastIndexOf", "startsWith", "split", "replace", "trim", "toLowerCase", "toUpperCase", "toString", "repeat", "match", "test", "exec", "get", "set", "has", "add", "then", "catch", "finally", "all", "resolve", "reject", "max", "min", "floor", "abs", "sign", "isInteger", "now", "parse", "stringify",
   // the browser: fetch and its bodies, storage, the clipboard, windows, blobs, messages
@@ -1724,7 +1739,9 @@ function seatSites(src: string): SecondRead {
    *  of an untyped callback parameter, in the same gap, which no syntactic rule reaches). The road asks what the value CAN BE
    *  rather than how it was spelled: the argument's type, as the compiler reads it, with every non-nullish member tested for
    *  being assignable to `Node`, for `Node` being assignable to it (EventTarget, ParentNode, object, `{}`) or for being `any`
-   *  or `unknown` (a type the compiler cannot vouch for is the safe side). A function expression and a string literal are
+   *  or `unknown` (a type the compiler cannot vouch for is the safe side), and one level into the type's structure (a generic
+   *  reference's type arguments, an object literal type's properties, an anonymous function type's return) by the same test; a
+   *  named interface or class is read by its own assignability alone. A function expression and a string literal are
    *  never a node and are not asked; a property or element access on the `body` token is the first read's and yields, as
    *  nodeHanded does (a read there would red one signal twice). Null when the type can hold no node; else the text the
    *  hand-off is refused with until ARGS_READ_BY_HAND lists it, marked `unnamed`. */
@@ -1732,11 +1749,20 @@ function seatSites(src: string): SecondRead {
   const canHoldNode = (t: ts.Type): boolean => {
     if (nodeType === null) { const sym = checker.resolveName("Node", undefined, ts.SymbolFlags.Type, false); assert.ok(sym !== undefined, "the DOM lib's Node is in the program"); nodeType = checker.getDeclaredTypeOfSymbol(sym); }
     const node = nodeType;
-    return (t.isUnion() ? t.types : [t]).some((m) => {
+    const members = (x: ts.Type): ts.Type[] => (x.isUnion() ? x.types : [x]);
+    const holds = (m: ts.Type): boolean => {   // one member, by its own assignability
       if (m.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined | ts.TypeFlags.Void | ts.TypeFlags.Never)) return false;
       if (m.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) return true;
       return checker.isTypeAssignableTo(m, node) || checker.isTypeAssignableTo(node, m);
-    });
+    };
+    const inside = (m: ts.Type): ts.Type[] => {   // ONE level of structure (the author's closing pass over round 8, the verifiers' r8v-B-C-3: `HTMLElement[]`, `{ root: HTMLElement }`, `Promise<HTMLElement>` and `() => HTMLElement` bound to a name passed): a generic reference's type arguments (an array's or a tuple's elements, a Promise's, a Map's, a Set's), an object literal type's property types and an anonymous function type's return types; a named interface or class is read by its own assignability alone, and nothing below the first level is opened
+      if (!(m.flags & ts.TypeFlags.Object)) return [];
+      const of = (m as ts.ObjectType).objectFlags, out: ts.Type[] = [];
+      if (of & ts.ObjectFlags.Reference) out.push(...checker.getTypeArguments(m as ts.TypeReference));
+      if (of & (ts.ObjectFlags.Anonymous | ts.ObjectFlags.ObjectLiteral)) { for (const p of m.getProperties()) out.push(checker.getTypeOfSymbol(p)); for (const s of m.getCallSignatures()) out.push(s.getReturnType()); }
+      return out;
+    };
+    return members(t).some((m) => holds(m) || inside(m).some((i) => members(i).some(holds)));
   };
   const unnamedShape = (a: ts.Expression): string | null => {
     const r = peel(a);
@@ -1904,12 +1930,15 @@ function seatSites(src: string): SecondRead {
             else if (!NON_SEATING_METHODS.includes(name!) && !isBodyToken(obj)) unknown.push({ line: lineOf(n), text: text(n), name: name!, on: recv });
           }
         }
-        if (name === "setProperty" && !isBodyToken(obj)) {   // THE URL AXIS's style road through setProperty (the round-8 fixes, the round-7 review's correctness-2): the call passes on the call axis by its listing, which says nothing about the value; the property name a literal (a constant resolved through its declaration counts) is read against NON_URL_STYLE_PROPS in its `style.<name>` spelling, a computed name is recorded whatever the value, and the value is read like setAttribute's (a non-literal, or a literal spelling url( or javascript:, is a URL write on `<recv>.setProperty("<prop>")`)
+        const typedOm = name === "set" && ts.isPropertyAccessExpression(peel(obj)) && (peel(obj) as ts.PropertyAccessExpression).name.text === "attributeStyleMap";   // the CSS Typed OM spelling, `el.attributeStyleMap.set(prop, value)`: `set` passes on the call axis by the Map method's listing, and the value is the style road's (the author's closing pass over round 8, the verifiers' r8v-B-C-1: it reached the network read on no axis)
+        if ((name === "setProperty" || typedOm) && !isBodyToken(obj)) {   // THE URL AXIS's style road through setProperty (the round-8 fixes, the round-7 review's correctness-2): the call passes on the call axis by its listing, which says nothing about the value; the property name a literal (a constant resolved through its declaration counts) is read against NON_URL_STYLE_PROPS in its `style.<name>` spelling, a computed name is recorded whatever the value, and the value is read like setAttribute's (a non-literal, or a literal spelling url( or javascript:, is a URL write on `<recv>.setProperty("<prop>")`); a spread, or a name the census cannot read as a literal with no value argument to read, is recorded as the write it is, the spelled argument its value (the closing pass, r8v-B-C-2: `setProperty(...pair)` recorded nothing)
           const a = n.arguments[0], v = n.arguments[1];
-          const init = a ? initOf(a) : null;
-          const lit = a ? literalText(a) ?? (init !== null ? literalText(init) : null) : null;
+          const init = a && !ts.isSpreadElement(a) ? initOf(a) : null;
+          const lit = a && !ts.isSpreadElement(a) ? literalText(a) ?? (init !== null ? literalText(init) : null) : null;
           const vlit = v ? literalText(v) : null;
-          if (v && (lit === null || vlit === null || /url\(|javascript:/i.test(vlit))) { if (lit !== null && NON_URL_STYLE_PROPS.some((p) => p.name === camelProp(lit))) styleWrites.push({ line: lineOf(n), text: text(n), fn: fnOf(n), on: recv, name: camelProp(lit), through: "style" }); else urlWriteAt(n, recv + ".setProperty(" + (lit !== null ? JSON.stringify(lit) : flat(a.getText(sf))) + ")", flat(v.getText(sf)), v); }
+          const road = recv + "." + name + "(" + (a ? (lit !== null ? JSON.stringify(lit) : flat(a.getText(sf))) : "") + ")";
+          if (a && !v && lit === null) urlWriteAt(n, road, flat(a.getText(sf)), ts.isSpreadElement(a) ? a.expression : a);
+          else if (v && (lit === null || vlit === null || /url\(|javascript:/i.test(vlit))) { if (lit !== null && NON_URL_STYLE_PROPS.some((p) => p.name === camelProp(lit))) styleWrites.push({ line: lineOf(n), text: text(n), fn: fnOf(n), on: recv, name: camelProp(lit), through: "style" }); else urlWriteAt(n, road, flat(v.getText(sf)), v); }
         }
         if ((name === "setAttribute" || name === "setAttributeNS") && !isBodyToken(obj)) {   // the attribute's name: a literal (a constant resolved through its declaration counts) not naming a handler passes; the rest is a site read by hand
           const ai = name === "setAttributeNS" ? 1 : 0, a = n.arguments[ai], v = n.arguments[ai + 1];
@@ -2092,10 +2121,10 @@ const NON_URL_ATTRS: Array<{ name: string; why: string }> = [];
  *  refused, so the list is the live set. */
 const NON_URL_STYLE_PROPS: Array<{ name: string; why: string }> = [
   { name: "top", why: "an inset: a <length-percentage> or auto (CSS Positioned Layout 3); url() is not a value of it" },
-  { name: "right", why: "an inset, as top" },
-  { name: "left", why: "an inset, as top" },
+  { name: "right", why: "an inset: a <length-percentage> or auto (CSS Positioned Layout 3); url() is not a value of it" },
+  { name: "left", why: "an inset: a <length-percentage> or auto (CSS Positioned Layout 3); url() is not a value of it" },
   { name: "maxWidth", why: "a sizing limit: a <length-percentage>, none or a sizing keyword (CSS Sizing 3); url() is not a value of it" },
-  { name: "maxHeight", why: "a sizing limit, as maxWidth" },
+  { name: "maxHeight", why: "a sizing limit: a <length-percentage>, none or a sizing keyword (CSS Sizing 3); url() is not a value of it" },
   { name: "aspectRatio", why: "a <ratio> or auto (CSS Sizing 4); url() is not a value of it" },
   { name: "color", why: "a <color> (CSS Color 4): no image, so url() is not a value of it" },
 ];
@@ -2581,6 +2610,12 @@ test("the census refuses its unknown and derives its population, executed over m
   refusedMutant(seat('md.style.backgroundImage = "url(https://example.invalid/x.png)";'), "FAILS BEFORE (c2-g): a literal url() through style", STYLE_URL("md.style.backgroundImage", '"url(https://example.invalid/x.png)"'));
   refusedMutant(seat('md.style.setProperty("--fv-probe", path);'), "FAILS BEFORE (c2-h): a custom property from a non-literal through setProperty", STYLE_URL('md.style.setProperty("--fv-probe")', "path"));
   refusedMutant(seat('md.style.setProperty(propName, "red");'), "a computed property name through setProperty is recorded whatever the value", STYLE_URL("md.style.setProperty(propName)", '"red"'));
+  // the author's closing pass over round 8 (the verifiers' r8v-B-C-1, r8v-B-C-2 and r8v-B-C-7): two spellings of the style road
+  // reached the network read on no axis, and one write through setAttributeNS was refused twice
+  refusedMutant(seat('md.attributeStyleMap.set("background-image", "url(" + path + ")");'), "FAILS BEFORE (c2-n): the CSS Typed OM spelling from a non-literal (`set` passes on the call axis by the Map method's listing; the value is read here)", STYLE_URL('md.attributeStyleMap.set("background-image")', '"url(" + path + ")"'));
+  refusedMutant(seat('md.attributeStyleMap.set("background-image", path);'), "FAILS BEFORE (c2-z): the Typed OM spelling with a bare name as the value", STYLE_URL('md.attributeStyleMap.set("background-image")', "path"));
+  refusedMutant(seat('md.style.setProperty(...(["background-image", path] as [string, string]));'), "FAILS BEFORE (c2-m): one spread argument to setProperty, no name and no value to read: recorded as the write it is, the spread its value", STYLE_URL('md.style.setProperty(...(["background-image", path] as [string, string]))', '...(["background-image", path] as [string, string])'));
+  refusedMutant(seat('md.setAttributeNS(null, "style", "background:url(" + path + ")");'), "(c2-w) the style attribute set through setAttributeNS: one refusal, the URL write (FAILS BEFORE: two, the call axis refusing the unlisted name as well)", STYLE_URL('md.setAttributeNS("style")', '"background:url(" + path + ")"'));
   const styleClassed = seat('md.style.top = x + "px"; md.style.color = owner ? "red" : "blue"; md.style.setProperty("color", path); md.style.display = "none";');
   assert.deepEqual(census(styleClassed).refused, [], "a listed no-URL property (top, color) written from a non-literal, the same property through setProperty, and a literal that spells no url() pass");
   const classedStyle = seatSites(styleClassed);
@@ -2628,7 +2663,7 @@ test("the census refuses its unknown and derives its population, executed over m
   refusedMutant(seat('bar.setAttribute("href", "javascript:alert(1)");'), 'FAILS BEFORE: bar.setAttribute("href", "javascript:...")', URL_ATTR('"href"', '"javascript:alert(1)"'));
   refusedMutant(seat('bar.setAttribute("srcdoc", path);'), 'FAILS BEFORE: bar.setAttribute("srcdoc", path)', URL_ATTR('"srcdoc"', "path"));
   refusedMutant(seat('bar.setAttribute("src", path);'), 'FAILS BEFORE: bar.setAttribute("src", path)', URL_ATTR('"src"', "path"));
-  assert.match(refusedMutant(seat('bar.setAttributeNS(null, "href", path);'), 'bar.setAttributeNS(null, "href", path)', /calls setAttributeNS on `bar`, a method the census does not list/, 2)[1], /writes bar\.setAttributeNS\("href"\) from `path` in openFileView, a URL write/, "the namespaced spelling is a URL write too (and its name is unlisted, since the viewer never calls it: the call axis's own refusal comes first)");
+  refusedMutant(seat('bar.setAttributeNS(null, "href", path);'), 'bar.setAttributeNS(null, "href", path)', /writes bar\.setAttributeNS\("href"\) from `path` in openFileView, a URL write/);   // the namespaced spelling is a URL write, one refusal: setAttributeNS is listed as seating nothing since the author's closing pass over round 8 (before it the call axis refused the unlisted name too, two refusals for one write: the verifiers' r8v-B-C-7)
   refusedMutant(seat('bar.setAttribute("role", path);'), 'an attribute under a name that is neither aria-* nor data-* nor listed as carrying no URL, from a non-literal: refused until read (the inverted default on the URL axis\'s attribute road)', URL_ATTR('"role"', "path"));
   const attrClassed = seat('bar.setAttribute("aria-label", path); bar.setAttribute("data-fv-probe", path); bar.setAttribute("href", "/files"); bar.setAttribute("open", "");');
   assert.deepEqual(census(attrClassed).refused, [], "an aria-* or data-* attribute set from a non-literal passes by the rule, and a URL attribute set from a literal that is not javascript: passes");
@@ -2654,6 +2689,7 @@ test("the census refuses its unknown and derives its population, executed over m
   refusedMutant(seat(NAV + 'nav.location.foo("x");'), "FAILS BEFORE (c1-j): an unlisted method on a location-named receiver with a literal argument, silent", /calls foo on `nav\.location`, a method the census does not list as seating or as seating nothing/);
   refusedMutant(seat(NAV + 'nav.location.assign(path);'), "the navigation pair on a location-named receiver is the URL axis's alone, one refusal (the call axis does not read the pair)", /writes nav\.location\.assign from `path` in openFileView, a URL write/);
   refusedMutant(seat('md.assign(path);'), "`assign` on any other receiver is an unlisted method: the exclusion is keyed on the pair, never on the name", /calls assign on `md`, a method the census does not list as seating or as seating nothing/);
+  refusedMutant(seat('const loc = window.location; loc.assign(path);'), "(c1-z) a navigation through an alias of location: the location read is by the chain's spelling, so the alias falls to the call axis's refusal of an unlisted method, loud, on the call axis (the author's closing pass over round 8, the verifiers' r8v-B-C-8)", /calls assign on `loc`, a method the census does not list as seating or as seating nothing/);
   // census-3: the argument axis read direct arguments alone, so a node handed inside an object literal, an array literal or a
   // concise arrow passed, and an object literal in a seats key was `{...}`, so a property added to a listed call was no new seat
   refusedMutant(seat('wrapCodeLines({ up: main.parentElement } as any);'), "FAILS BEFORE: a node inside an object literal handed to a callee", /hands `\{ up: main\.parentElement \}`, a node of the tree read through parentElement, to wrapCodeLines\(\.\.\.\) in openFileView, a callee the census has not read by hand/);
@@ -3163,6 +3199,11 @@ test("P7's derived numbers are the tables this module runs: the seat-keyed table
   const names = (es: ArgRead[]): string => es.map((e) => e.in + "'s two `" + e.to + "`").join(", ");
   assert.deepEqual([sizes[0][4], sizes[0][5], sizes[0][6], sizes[0][7]], [COUNT_WORDS[identical.length], names(identical), COUNT_WORDS[differing.length], names(differing)], "the sentence counts and names the byte-identical pairs and the differing pairs, each group in table order (" + identical.length + " and " + differing.length + ")");
   assert.equal(urlSeats, urls, "no URL write is spelled alike twice at this head (the sentence carries one number for the URL writes; a `times` on an entry would make it two)");
+  // the no-URL style list's count (the author's closing pass over round 8, the verifiers' r8v-B-C-4: a typed "seven" in two homes of P7, held by nothing); one home now, derived
+  const styleCount = [...P7.matchAll(/\(`NON_URL_STYLE_PROPS`, (\w+) names;/g)];
+  assert.equal(styleCount.length, 1, "the no-URL style list's count stands in P7 once, in the sentence's form (a sentence the pattern does not find is a loud failure here, never a default)");
+  assert.equal(styleCount[0][1], COUNT_WORDS[NON_URL_STYLE_PROPS.length], "P7's count of the no-URL style names is the list's (" + NON_URL_STYLE_PROPS.length + ")");
+  assert.equal(P7.split("no-URL names").length - 1, 1, "the count's word stands once: the second home, in the cluster-B history, names the list without it");
   assert.ok(P7.includes("the census module holds to the tables it runs and prints in its `second read:` diagnostic"), "P7 says this module holds the sentence to the tables it runs");
   const setAttr = URL_WRITES_READ_BY_HAND.filter((e) => /\.setAttribute(?:NS)?\(/.test(e.on)).length;
   const setAttrSentence = [...P7.matchAll(/(\w+) `setAttribute` writes/g)];
@@ -3195,7 +3236,7 @@ test("P7's derived numbers are the tables this module runs: the seat-keyed table
 // population that road passed is derived here and held to the marked entries by set and by count, the deletion is executed as
 // the mutant it was, and the four shapes the refuters said no syntactic rule reaches (a conditional, a cast of an untyped
 // callback parameter, a bare `||`, a property access) are held live: dropping each entry reds its own hand-offs
-test("the argument axis refuses what elementShape cannot name (the round-8 fixes on the round-7 review's cluster C): the hand-offs the compiler's type refuses over the live viewer are exactly the entries marked `unnamed`, by key set and by count, the count P7 carries is the run's, the mark follows the road (an entry marked for a hand-off the shape names, or unmarked for one it cannot, is refused), the entry fef739ca7 deleted is restored and its deletion reds the two gateRemoteFigures lines and nothing else (FAILS BEFORE: the two hand-offs were read on no axis), the sanitized body handed to a third imported callee under a cast is refused with the compiler's type (FAILS BEFORE: passed, the diagnostic unchanged), each of the four shapes no syntactic rule reaches is held by its entry, a chain on the body token yields to the first read, and a program is built once per source", () => {
+test("the argument axis refuses what elementShape cannot name (the round-8 fixes on the round-7 review's cluster C): the hand-offs the compiler's type refuses over the live viewer are exactly the entries marked `unnamed`, by key set and by count, the count P7 carries is the run's, the mark follows the road (an entry marked for a hand-off the shape names, or unmarked for one it cannot, is refused), the entry fef739ca7 deleted is restored and its deletion reds the two gateRemoteFigures lines and nothing else (FAILS BEFORE: the two hand-offs were read on no axis), the sanitized body handed to a third imported callee under a cast is refused with the compiler's type (FAILS BEFORE: passed, the diagnostic unchanged), each of the four shapes no syntactic rule reaches is held by its entry, a chain on the body token yields to the first read, and a program is built once per run of one source text, the last kept as the next's predecessor", () => {
   const live = seatSites(VIEWER_SRC);
   assert.deepEqual(census(VIEWER_SRC).refused, [], "the live viewer passes under the table, so every refusal below is the plant's or the dropped entry's");
   const unnamed = live.elementsHanded.filter((h) => h.unnamed), marked = ARGS_READ_BY_HAND.filter((e) => e.unnamed);
@@ -3235,6 +3276,23 @@ test("the argument axis refuses what elementShape cannot name (the round-8 fixes
   assert.match(plant.refused[0], new RegExp("^line " + plantLine + ": addCopyBtn\\(clean as HTMLElement, \"\"\\) hands `clean as HTMLElement`, an argument the census cannot name by shape, typed `HTMLElement` by the compiler, a type that can hold a node \\(bound by `const clean = sanitizeMd\\(dirty, mintHeadingIds\\)`\\), to addCopyBtn\\(\\.\\.\\.\\) in mdBlock"));
   const aliased = census(VIEWER_SRC.slice(0, plantAt) + '    const c2 = clean; addCopyBtn(c2, "");\n' + VIEWER_SRC.slice(plantAt));
   assert.equal(aliased.refused.length, 1, "...and through an alias, which the seam test's pin does not read either: " + JSON.stringify(aliased.refused)); assert.match(aliased.refused[0], /hands `c2`, an argument the census cannot name by shape, typed `HTMLElement` by the compiler, a type that can hold a node \(bound by `const c2 = clean`\), to addCopyBtn/);
+  // one level into the type's structure (the author's closing pass over round 8, the verifiers' r8v-B-C-3): an element inside a typed
+  // container bound to a name passed, the container's own type being neither assignable to Node nor from it (FAILS BEFORE: c-3, c-4,
+  // c-5 and c-13 each 0 refusals); a named class with no type arguments and a string pass, classed
+  const plantC = (line: string): string[] => census(VIEWER_SRC.slice(0, plantAt) + "    " + line + "\n" + VIEWER_SRC.slice(plantAt)).refused;
+  for (const [label, line, typed, bound] of [
+    ["c-3", "const wrapped = [document.activeElement as HTMLElement]; String(wrapped);", "HTMLElement[]", "const wrapped = [document.activeElement as HTMLElement]"],
+    ["c-4", "const opts = { root: document.activeElement as HTMLElement }; String(opts);", "{ root: HTMLElement; }", "const opts = { root: document.activeElement as HTMLElement }"],
+    ["c-5", "const pr = Promise.resolve(document.activeElement as HTMLElement); String(pr);", "Promise<HTMLElement>", "const pr = Promise.resolve(document.activeElement as HTMLElement)"],
+    ["c-13", "const fn4 = () => document.activeElement as HTMLElement; String(fn4);", "() => HTMLElement", "const fn4 = () => document.activeElement as HTMLElement"],
+  ] as const) {
+    const r = plantC(line);
+    assert.equal(r.length, 1, "FAILS BEFORE (" + label + "): " + JSON.stringify(r));
+    assert.match(r[0], new RegExp("^line " + plantLine + ": String\\(\\w+\\) hands `\\w+`, an argument the census cannot name by shape, typed `" + typed.replace(/[()[\]{}.*+?^$|\\]/g, "\\$&") + "` by the compiler, a type that can hold a node \\(bound by `" + bound.replace(/[()[\]{}.*+?^$|\\]/g, "\\$&") + "`\\), to String\\(\\.\\.\\.\\) in mdBlock, a callee this file does not declare"), label + ": the compiler's type, one level in");
+  }
+  assert.deepEqual(plantC("const box2 = new DOMRect(); String(box2);"), [], "(c-10) a named class that holds no node passes, classed by its own assignability");
+  assert.deepEqual(plantC("const s2 = document.title; String(s2);"), [], "(c-11) a string passes");
+  assert.deepEqual(plantC("const deep2 = { a: { b: document.activeElement as HTMLElement } }; String(deep2);"), [], "(c-14) two levels down is not opened: the limit the header states (a reader who needs it widens `inside`)");
   // the four shapes the refuters said no syntactic rule reaches, each a live hand-off held by its entry: dropping the entry reds its line(s) alone
   for (const [inFn, to, arg, what] of [["mdBlock", "addCopyBtn", "host", "a conditional"], ["mdBlock", "wrapCodeLines", "codeEl", "a cast of an untyped callback parameter"], ["scrollToFragment", "fragmentTarget", 'box.querySelector(".fileview-md") || box', "a bare `||`"], ["gateKeys", "gateOf", "ev.target", "a property access"]] as const) {
     const e = ARGS_READ_BY_HAND.find((x) => x.in === inFn && x.to === to && x.arg === arg)!;
@@ -3246,7 +3304,7 @@ test("the argument axis refuses what elementShape cannot name (the round-8 fixes
   // a chain on the body token yields to the first read (the round-8 build's run 4: without the yield, `pick(body.firstChild)` red twice)
   assert.ok(!live.elementsHanded.some((h) => /^body\./.test(h.arg)), "no hand-off of a chain on the body token is on this axis");
   // the program is built once per source text: two reads of one source share it, a second source gets its own
-  assert.strictEqual(programOver(VIEWER_SRC), programOver(VIEWER_SRC), "one program for one source text");
+  assert.strictEqual(programOver(VIEWER_SRC), programOver(VIEWER_SRC), "one program for two consecutive reads of one source text (the cache holds the last program: a text read again after another is rebuilt)");
   assert.notStrictEqual(programOver(planted), programOver(VIEWER_SRC), "another source, another program (the last one handed on as the predecessor)");
 });
 
