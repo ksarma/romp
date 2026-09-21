@@ -684,7 +684,26 @@ test("bodyReady reads the element children through `children`, else through `chi
 // `body` passes only as the viewer's own `el("div", "fileview-body")` or as the parameter of a callee BODY_HANDED_TO lists as
 // reading the body under its own parameter, and a listed name declared twice in the entry's function fails at every seat,
 // hand-off or URL write it stands at, whatever the second declaration spells (a shadow wearing the listed declaration's exact
-// text passed the text compare); and a receiver bound by `let` or `var`, or a parameter written to, is REASSIGNABLE and its seat fails
+// text passed the text compare); THE RECEIVER'S HOLD IS BY BINDING, NOT NAME (the maintainer's round-8 question, 2026-09-21,
+// after PR 850's census read a synthetic local named `p` as a kernel path, a silent false match; answered by executing 23
+// plants at the round-7 head, 13 refused with the planted line and 10 passed as expected, the loud ones kept as this module's
+// binding case): an entry is addressed by the tuple (the enclosing function's NAME, the receiver's spelling, the form, the
+// seated arguments), and the receiver is then resolved to its DECLARATION by the language's scopes (bindingOf: the innermost
+// scope declaring the name, a block, a function's parameters, a for or catch clause, the module), never by its name, and
+// held to the entry by that declaration's text (`decl`) and the per-function declaration count (shadowOf), so a same-named
+// local in another function is another entry's `in` and an unlisted seat there, never read under the listed function's
+// entry, with or without `times`; a listed name declared twice in the entry's function, in a block, an unnamed callback or a
+// callback's parameter, is refused at every seat of the name whatever `times` says and whatever the second declaration
+// spells; two functions' entries with their declarations swapped are refused at both seats naming both declarations; and a
+// string, a comment or a property key (`q.p`) is no declaration. Two things stay keyed on TEXT, each reached only through the
+// author's own hand (a `times` written over same-named functions, or a declaration spelled exactly as the listed one whose
+// meaning changed underneath it): the `in` is the nearest named function's bare name, which two distinct function nodes can
+// share (`apply` is such a name in file-view.ts, textSizeControl's inner arrow and githubLinkAction's method), so their
+// same-spelled seats collapse to one key that reds the count unless the entry says `times`, and with `times` reads N seats
+// across the same-named functions held to equal declaration text rather than to one node; and the hold is on the
+// declaration's TEXT (its initializer's first 80 characters), so a same-spelled declaration whose `el` is rebound in the
+// function, or two initializers that differ only past the 80th character, pass under the listed text; and a receiver bound
+// by `let` or `var`, or a parameter written to, is REASSIGNABLE and its seat fails
 // unless the entry pins what the binding HOLDS (`holds`: the one expression every write to it in the file assigns), since
 // its declaration says nothing about what it holds at the seat (the round-6 review's correctness-5; the viewer's session
 // tag moved from a `let` onto a const for it). Object, Reflect and Function are read BY THEIR BINDING (globalOf: the bare
@@ -2368,6 +2387,71 @@ test("the census refuses its unknown and derives its population, executed over m
   assert.deepEqual(census(seat('const label = "the body. The next paint seats it: body.append(x)"; const re = /body\\.append\\(/;')).refused, [], "a body token inside a string or a regular-expression literal is text, not code");
 });
 
+// the maintainer's round-8 question (2026-09-21): is the seat table keyed on a receiver's NAME rather than its binding? PR 850's
+// census read a synthetic local named `p` as a kernel path, a silent false match. Answered by execution (the round-8 probe: 23
+// plants at the round-7 head, 13 refused with the planted line, 10 passed as expected): the entry is addressed by (function
+// name, receiver spelling, form, seated arguments) and the receiver is then resolved to its DECLARATION by the language's
+// scopes and held to the entry by the declaration's text and a per-function declaration count, so every name collision the
+// probe planted refused loud. The plants below keep those failures loud; the header states the two text-keyed residues.
+test("the seat table's receiver hold is by binding, not name, executed over functions planted at the end of file-view.ts: a listed name declared in two blocks of the entry's function is refused at both seats, whatever each declaration spells and with its own entry per block; a callback parameter of the name is refused at every seat of the name in the function; a same-named local in ANOTHER function is an unlisted seat there, never read under the listed function's entry, with or without `times`; two functions' entries with their declarations swapped are refused at both seats naming both declarations; one entry over two function nodes sharing a name reds the count; and the header names the shared name the live tables use", () => {
+  const plant = (code: string): string => VIEWER_SRC + "\n" + code + "\n";
+  const lineIn = (src: string, needle: string): number => { const i = src.indexOf(needle); assert.ok(i >= 0 && src.indexOf(needle, i + 1) < 0, needle + " is planted once"); return src.slice(0, i).split("\n").length; };
+  assert.deepEqual(census(VIEWER_SRC).refused, [], "the unplanted file passes, so every refusal below is the plant's");
+  const P = (fn: string, decl: string, seats: string, times?: number): SeatRead => ({ in: fn, on: "p", via: "appendChild", seats, is: "a probe's entry for a planted receiver named p", decl, ...(times === undefined ? {} : { times }) });
+  const D1 = 'const p = el("div", "fileview-probe-1")', D2 = 'const p = el("div", "fileview-probe-2")', S1 = 'el("span", "fileview-probe-1")', S2 = 'el("span", "fileview-probe-2")';
+  // a1: one function, `p` declared in two blocks with different initializers, an entry per block carrying its own declaration
+  const a1 = plant('function probeA(): void {\n  { ' + D1 + '; p.appendChild(' + S1 + '); }\n  { ' + D2 + '; p.appendChild(' + S2 + '); }\n}');
+  const a1Lines = [lineIn(a1, "{ " + D1), lineIn(a1, "{ " + D2)];
+  const ra = census(a1, [...SEATS_READ_BY_HAND, P("probeA", D1, S1), P("probeA", D2, S2)]).refused;
+  assert.equal(ra.length, 2, "a1: both seats refused, nothing else: " + JSON.stringify(ra));
+  for (const [k, l] of a1Lines.entries()) assert.equal(ra[k], "line " + l + ": p.appendChild(" + (k ? S2 : S1) + ") in probeA: `p` is declared 2 times in probeA (lines " + a1Lines.join(", ") + "): a second declaration of a listed name in the entry's function is refused, whatever it spells", "a1: the seat at line " + l);
+  // c1: the second declaration is an unnamed callback's parameter; both entries listed, the inner one as the callback's parameter
+  const c1 = plant('function probeC(): void {\n  ' + D1 + '; p.appendChild(' + S1 + ');\n  [p].forEach((p) => { p.appendChild(' + S2 + '); });\n}');
+  const c1Lines = [lineIn(c1, D1 + "; p.appendChild"), lineIn(c1, "[p].forEach")];
+  const rc = census(c1, [...SEATS_READ_BY_HAND, P("probeC", D1, S1), P("probeC", "a parameter of the callback handed to [p].forEach", S2)]).refused;
+  assert.equal(rc.length, 2, "c1: both seats refused, nothing else: " + JSON.stringify(rc));
+  for (const [k, l] of c1Lines.entries()) assert.equal(rc[k], "line " + l + ": p.appendChild(" + (k ? S2 : S1) + ") in probeC: `p` is declared 2 times in probeC (lines " + c1Lines.join(", ") + "): a second declaration of a listed name in the entry's function is refused, whatever it spells", "c1: the seat at line " + l);
+  // g1, g2: another function declares `p` with the same text and seats the same thing; only probeG1 is listed. The PR-850 shape:
+  // the same-named local is never read under probeG1's entry, and a `times: 2` on that entry does not admit it either
+  const body1 = "{ " + D1 + "; p.appendChild(" + S1 + "); }";
+  const g = plant("function probeG1(): void " + body1 + "\nfunction probeG2(): void " + body1);
+  const g2Line = lineIn(g, "function probeG2"), g1Line = lineIn(g, "function probeG1");
+  const UNLISTED_G2 = "line " + g2Line + ": p.appendChild(" + S1 + ") seats `" + S1 + "` on `p` by appendChild in probeG2, a seat the census has not read by hand: read the site for what p is (the body under another name, or a node whose seat lands as a child of the body, seats a root the lists must know) and what it seats, and list the seat in SEATS_READ_BY_HAND with the receiver's declaration";
+  const rg1 = census(g, [...SEATS_READ_BY_HAND, P("probeG1", D1, S1)]).refused;
+  assert.equal(rg1.length, 1, "g1: the other function's seat is unlisted, and probeG1's passes: " + JSON.stringify(rg1));
+  assert.ok(rg1[0].startsWith(UNLISTED_G2.slice(0, UNLISTED_G2.indexOf(": read the site"))), "g1: refused as probeG2's unlisted seat: " + rg1[0]);
+  const rg2 = census(g, [...SEATS_READ_BY_HAND, P("probeG1", D1, S1, 2)]).refused;
+  assert.equal(rg2.length, 2, "g2: `times: 2` on probeG1's entry admits nothing in probeG2: " + JSON.stringify(rg2));
+  assert.ok(rg2[0].startsWith(UNLISTED_G2.slice(0, UNLISTED_G2.indexOf(": read the site"))), "g2: probeG2's seat stays unlisted: " + rg2[0]);
+  assert.equal(rg2[1], "SEATS_READ_BY_HAND's entry `p.appendChild` seating `" + S1 + "` in probeG1 matches 1 seats (lines " + g1Line + ") where it reads 2: one entry is one seat, read by hand where it stands; a seat spelled alike in two branches says `times` and is read at each", "g2: and probeG1's entry reds its count");
+  // f2: two functions each declaring `p` with its own initializer, the two entries carrying each other's declaration
+  const f = plant("function probeF1(): void { " + D1 + "; p.appendChild(" + S1 + "); }\nfunction probeF2(): void { " + D2 + "; p.appendChild(" + S1 + "); }");
+  const rf = census(f, [...SEATS_READ_BY_HAND, P("probeF1", D2, S1), P("probeF2", D1, S1)]).refused;
+  assert.deepEqual(rf, [
+    "line " + lineIn(f, "function probeF1") + ": p.appendChild(" + S1 + ") seats on `p` in probeF1, bound to `" + D1 + "`, where SEATS_READ_BY_HAND read `" + D2 + "`: the receiver is not the one read by hand",
+    "line " + lineIn(f, "function probeF2") + ": p.appendChild(" + S1 + ") seats on `p` in probeF2, bound to `" + D2 + "`, where SEATS_READ_BY_HAND read `" + D1 + "`: the receiver is not the one read by hand",
+  ], "f2: both seats refused, each naming the declaration it resolved to and the one read by hand");
+  // h1: two nested arrows both named `inner`, in two functions, same declaration text and seat; one entry `in: "inner"`. The
+  // `in` is a bare function name two nodes can share, so the seats collapse to one key, and the count reds it
+  const innerFn = "const inner = () => { " + D1 + "; p.appendChild(" + S1 + "); }; inner();";
+  const h = plant("function probeH1(): void { " + innerFn + " }\nfunction probeH2(): void { " + innerFn + " }");
+  const rh = census(h, [...SEATS_READ_BY_HAND, P("inner", D1, S1)]).refused;
+  assert.deepEqual(rh, ["SEATS_READ_BY_HAND's entry `p.appendChild` seating `" + S1 + "` in inner matches 2 seats (lines " + lineIn(h, "function probeH1") + ", " + lineIn(h, "function probeH2") + ") where it reads 1: one entry is one seat, read by hand where it stands; a seat spelled alike in two branches says `times` and is read at each"], "h1: one entry over two function nodes named alike reds the count");
+  // the live file: the names the three tables use that more than one function node bears, and the header's example among them
+  const sf = ts.createSourceFile("file-view.ts", VIEWER_SRC, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const nodesNamed = new Map<string, number>();
+  const nameOf = (f: ts.Node): string | null => ts.isFunctionDeclaration(f) && f.name ? f.name.text : (ts.isArrowFunction(f) || ts.isFunctionExpression(f)) && (ts.isVariableDeclaration(f.parent) || ts.isPropertyAssignment(f.parent)) && ts.isIdentifier(f.parent.name) ? f.parent.name.text : ts.isMethodDeclaration(f) && ts.isIdentifier(f.name) ? f.name.text : null;
+  const walk = (n: ts.Node): void => { const name = nameOf(n); if (name) nodesNamed.set(name, (nodesNamed.get(name) ?? 0) + 1); ts.forEachChild(n, walk); };
+  walk(sf);
+  const used = new Set([...SEATS_READ_BY_HAND, ...ARGS_READ_BY_HAND, ...URL_WRITES_READ_BY_HAND].map((e) => e.in));
+  const shared = [...nodesNamed].filter(([name, n]) => n > 1 && used.has(name)).map(([name]) => name).sort();
+  assert.ok(shared.includes("apply"), "`apply` names more than one function node in file-view.ts and the tables use it (the shared names today: " + JSON.stringify(shared) + ")");
+  const header = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "file-print.test.ts"), "utf8").replace(/\n\/\/ /g, " ");
+  assert.ok(header.includes("THE RECEIVER'S HOLD IS BY BINDING, NOT NAME") && header.includes("`apply` is such a name in file-view.ts, textSizeControl's inner arrow and githubLinkAction's method") && header.includes("the hold is on the declaration's TEXT (its initializer's first 80 characters)"), "the census header states the binding hold and its two text-keyed residues");
+  const P7 = sectionPart("P7. **", "**Derivations and their unknown cases.**");
+  assert.ok(P7.includes("the receiver's hold is by binding, not name (the maintainer's round-8 question, 2026-09-21") && P7.includes("two things stay keyed on text and are stated in the census header, the entry's `in`, a bare function name two function nodes can share"), "P7 states the answer and points at the header for the residues");
+});
+
 test("disabled until the body is in: the driver's start, where a press (the button's or the chord's), an Escape, a choice, a prepare, a ready and a printed change nothing; the body arriving rests; the body going out from rest, armed, the wait or the print disarms and disables; the body's arrival elsewhere changes nothing", () => {
   assert.equal(DISABLED.phase, "disabled");
   for (const ev of [{ kind: "press", gated: 0, pending: 0 }, { kind: "press", gated: 2, pending: 1 }, { kind: "press", gated: 0, pending: 0, file: "pdf" }, { kind: "escape" },
@@ -2433,17 +2517,48 @@ const COUNT_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seve
 const ORDINAL_WORDS = ["", "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth", "eleventh", "twelfth"];
 const tableTimes = (rows: ReadonlyArray<{ times?: number }>): number => rows.reduce((n, e) => n + (e.times ?? 1), 0);
 
-test("P7's derived numbers are the tables this module runs: the seat-keyed table's entries and seats and the rise over the 60, the argument axis's sites, hand-offs and URL writes, and the setAttribute writes the URL table lists, each read from the sentence in plans/markdown-viewer.md and held to the table by execution; and the record test's text count over this file's array literals, which is what CI's shell job holds the sentences by, counts the same tables", () => {
+test("P7's derived numbers are the tables this module runs: the seat-keyed table's entries, seats, entries reading two seats and the rise over the round-7 triple count, the PR's own seats and entries over the merge-base cell, the argument axis's sites, hand-offs, entries reading two hand-offs and URL writes, and the setAttribute writes the URL table lists, each read from the sentence in plans/markdown-viewer.md and held to the table by execution; and the record test's text count over this file's array literals, which is what CI's shell job holds the sentences by, counts the same tables", () => {
   const P7 = sectionPart("P7. **", "**Derivations and their unknown cases.**");
   const entries = SEATS_READ_BY_HAND.length, seats = tableTimes(SEATS_READ_BY_HAND);
-  const seatSentence = [...P7.matchAll(/(\d+) entries over (\d+) seats at the round-7 head, a rise of (\d+) entries/g)];
+  const live = seatSites(VIEWER_SRC);
+  // the triple-key cells and the merge-base cell are the round-7 pre-answers' run, literals the sentence carries once; the rise
+  // and the PR's own contribution are computed from those cells and the live table, so no cell is carried here a second time
+  const triples = [...P7.matchAll(/the triple key gives (\d+) at the round-6 file and (\d+) at the round-7 file/g)];
+  assert.equal(triples.length, 1, "the triple-key cells stand in P7 once");
+  const tripleAtRound7 = Number(triples[0][2]);
+  const seatSentence = [...P7.matchAll(/the seat key gives (\d+) entries over (\d+) seats at both, (\w+) entries standing for two byte-identical seats each \(((?:[^()]|\([^()]*\))*)\), so the rise of (\d+) entries is what the triple hid and the site population, (\d+), moves in no cell/g)];
   assert.equal(seatSentence.length, 1, "the seat-keyed table's size stands in P7 once");
-  assert.deepEqual(seatSentence[0].slice(1).map(Number), [entries, seats, entries - 60], "P7's entries, seats and rise are the table's (" + entries + " over " + seats + ", a rise of " + (entries - 60) + ")");
+  const twice = SEATS_READ_BY_HAND.filter((e) => e.times !== undefined);
+  assert.ok(twice.length > 0 && twice.every((e) => e.times === 2), "every entry with a `times` reads two seats (" + JSON.stringify(twice.map((e) => e.times)) + "), the sentence's two byte-identical seats each");
+  const [, sEntries, sSeats, sTwice, sNamed, sRise, sPopulation] = seatSentence[0];
+  assert.deepEqual([sEntries, sSeats, sTwice, sRise, sPopulation], [String(entries), String(seats), COUNT_WORDS[twice.length], String(entries - tripleAtRound7), String(seats)], "P7's entries, seats, entries reading two seats, rise and site population are the table's (" + entries + " over " + seats + ", " + twice.length + " reading two, a rise of " + (entries - tripleAtRound7) + " over the round-7 triple count)");
+  assert.equal(live.sites.filter((x) => !x.body).length, seats, "the site population the sentence names is the live non-body seats, which the entries' `times` sum to");
+  for (const e of twice) {
+    assert.ok(sNamed.includes(e.in + "'s") && sNamed.includes("`" + e.on + "." + e.via + "(" + e.seats + ")`"), "the sentence names the entry reading two seats, " + e.in + "'s `" + e.on + "." + e.via + "(" + e.seats + ")`: " + sNamed);
+    const texts = live.sites.filter((x) => !x.body && x.fn === e.in && x.on === e.on && x.via === e.via && x.seats === e.seats).map((x) => x.text);
+    assert.equal(texts.length, 2, "the entry reads two live seats: " + JSON.stringify(texts)); assert.equal(new Set(texts).size, 1, "and the two are byte-identical calls: " + JSON.stringify(texts));
+  }
+  const base = [...P7.matchAll(/gives (\d+) non-body sites, (\d+) triples and (\d+) seat-key entries under the same walk/g)];
+  assert.equal(base.length, 1, "the merge-base cell stands in P7 once");
+  const delta = [...P7.matchAll(/so this PR's own contribution is (\w+) seats \(the two `print\.button` seats\), one triple \([^)]*\) and (\w+) seat-key entries/g)];
+  assert.equal(delta.length, 1, "the PR's own contribution stands in P7 once");
+  assert.deepEqual(delta[0].slice(1), [COUNT_WORDS[seats - Number(base[0][1])], COUNT_WORDS[entries - Number(base[0][3])]], "the PR's own seats and entries are the live table's over the merge-base cell (" + (seats - Number(base[0][1])) + " seats, " + (entries - Number(base[0][3])) + " entries)");
+  assert.equal(tripleAtRound7 - Number(base[0][2]), 1, "one triple over the merge-base cell, as the sentence says");
+  const printSeats = SEATS_READ_BY_HAND.filter((e) => e.seats === "print.button");
+  assert.deepEqual(printSeats.map((e) => e.in + " " + e.on + "." + e.via).sort(), ["openFileView fileGroup.appendChild", "openUrlView acts.insertBefore"], "the two print.button seats are the table's, openUrlView's acts.insertBefore the triple the sentence names as new");
+  assert.equal(printSeats.length, seats - Number(base[0][1]), "the PR's own seats over the merge-base cell are the print.button seats");
   assert.ok(P7.includes("the census module holds it to the table it runs and prints the same two in its `second read:` diagnostic"), "P7 says this module holds the sentence to the table it runs");
   const args = ARGS_READ_BY_HAND.length, argSeats = tableTimes(ARGS_READ_BY_HAND), urls = URL_WRITES_READ_BY_HAND.length, urlSeats = tableTimes(URL_WRITES_READ_BY_HAND);
-  const sizes = [...P7.matchAll(/(\d+) argument sites over (\d+) hand-offs and (\d+) URL writes today/g)];
+  const sizes = [...P7.matchAll(/(\d+) argument sites over (\d+) hand-offs, (\w+) entries standing for two byte-identical hand-offs each \(([^)]*)\), and (\d+) URL writes today/g)];
   assert.equal(sizes.length, 1, "today's table sizes stand in P7 once");
-  assert.deepEqual(sizes[0].slice(1).map(Number), [args, argSeats, urls], "P7's argument sites, hand-offs and URL writes are the tables' (" + args + " over " + argSeats + ", " + urls + ")");
+  const argTwice = ARGS_READ_BY_HAND.filter((e) => e.times !== undefined);
+  assert.ok(argTwice.length > 0 && argTwice.every((e) => e.times === 2), "every argument entry with a `times` reads two hand-offs (" + JSON.stringify(argTwice.map((e) => e.times)) + ")");
+  assert.deepEqual([sizes[0][1], sizes[0][2], sizes[0][3], sizes[0][5]], [String(args), String(argSeats), COUNT_WORDS[argTwice.length], String(urls)], "P7's argument sites, hand-offs, entries reading two hand-offs and URL writes are the tables' (" + args + " over " + argSeats + ", " + argTwice.length + " reading two, " + urls + ")");
+  assert.equal(sizes[0][4], argTwice.map((e) => e.in + "'s two `" + e.to + "`").join(", "), "the sentence names each entry reading two hand-offs, in table order");
+  for (const e of argTwice) {
+    const texts = [...live.handedNodes, ...live.elementsHanded].filter((h) => h.fn === e.in && h.to === e.to && h.arg === e.arg).map((h) => h.text);
+    assert.equal(texts.length, 2, "the entry reads two live hand-offs: " + JSON.stringify(texts)); assert.equal(new Set(texts).size, 1, "and the two are byte-identical calls: " + JSON.stringify(texts));
+  }
   assert.equal(urlSeats, urls, "no URL write is spelled alike twice at this head (the sentence carries one number for the URL writes; a `times` on an entry would make it two)");
   assert.ok(P7.includes("the census module holds to the tables it runs and prints in its `second read:` diagnostic"), "P7 says this module holds the sentence to the tables it runs");
   const setAttr = URL_WRITES_READ_BY_HAND.filter((e) => /\.setAttribute(?:NS)?\(/.test(e.on)).length;
@@ -2452,17 +2567,23 @@ test("P7's derived numbers are the tables this module runs: the seat-keyed table
   assert.ok(setAttr > 0 && setAttr < COUNT_WORDS.length, "the URL table lists setAttribute writes (" + setAttr + ")");
   assert.equal(setAttrSentence[0][1], COUNT_WORDS[setAttr], "P7's count of the setAttribute writes the closing pass listed is the URL table's (" + setAttr + ")");
   // the record test counts each table's array literal by text (an entry opens a line as `  { in: "`, a `times` adds to the
-  // seats); that read is what the shell job holds the sentences by, and it is held here to the tables it counts
+  // seats and counts as an entry reading two); that read is what the shell job holds the sentences by, and it is held here to
+  // the tables it counts. The count is TWO-SIDED and must stay so (the maintainer's round-8 ruling, 2026-09-21): the sentence is
+  // held to the table this module runs above and to the text count in the record test, and the text count is held EQUAL to
+  // the run table here, so each side is read by the other; a single-sided count (the text count alone holding the sentence,
+  // with nothing holding it to the run table) would let the form keying pass silently, since an entry spelled so the text
+  // pattern misses it, or a `times` the run table reads and the pattern does not, would drop from the text count and from the
+  // sentence together and nothing would read the run table.
   const self = readRepo("ui", "webview", "file-print.test.ts");
   const literal = (start: string): string => sectionBetween(self, start, "\n];");
-  const textCount = (src: string): { entries: number; seats: number } => {
-    const n = [...src.matchAll(/^  \{ in: "/gm)].length;
-    return { entries: n, seats: n + [...src.matchAll(/, times: (\d+)[,} ]/g)].reduce((sum, m) => sum + Number(m[1]) - 1, 0) };
+  const textCount = (src: string): { entries: number; seats: number; twice: number } => {
+    const n = [...src.matchAll(/^  \{ in: "/gm)].length, times = [...src.matchAll(/, times: (\d+)[,} ]/g)].map((m) => Number(m[1]));
+    return { entries: n, seats: n + times.reduce((sum, t) => sum + t - 1, 0), twice: times.filter((t) => t === 2).length };
   };
-  assert.deepEqual(textCount(literal("const SEATS_READ_BY_HAND: SeatRead[] = [")), { entries, seats }, "the text count of the seat table's literal is the table run here (an entry not opening its line as the pattern expects would be missed by the text and is caught here)");
-  assert.deepEqual(textCount(literal("const ARGS_READ_BY_HAND: ArgRead[] = [")), { entries: args, seats: argSeats }, "the text count of the argument table's literal is the table run here");
+  assert.deepEqual(textCount(literal("const SEATS_READ_BY_HAND: SeatRead[] = [")), { entries, seats, twice: twice.length }, "the text count of the seat table's literal is the table run here (an entry not opening its line as the pattern expects would be missed by the text and is caught here)");
+  assert.deepEqual(textCount(literal("const ARGS_READ_BY_HAND: ArgRead[] = [")), { entries: args, seats: argSeats, twice: argTwice.length }, "the text count of the argument table's literal is the table run here");
   const urlLiteral = literal("const URL_WRITES_READ_BY_HAND: UrlWriteRead[] = [");
-  assert.deepEqual(textCount(urlLiteral), { entries: urls, seats: urlSeats }, "the text count of the URL table's literal is the table run here");
+  assert.deepEqual(textCount(urlLiteral), { entries: urls, seats: urlSeats, twice: 0 }, "the text count of the URL table's literal is the table run here");
   assert.equal([...urlLiteral.matchAll(/^  \{ in: "[^"]*", on: "[^"]*\.setAttribute(?:NS)?\(/gm)].length, setAttr, "the text count of the URL table's setAttribute entries is the table's");
 });
 

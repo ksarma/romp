@@ -8712,13 +8712,35 @@ entry reads ONE binding and ONE seat: a second declaration of a listed name insi
 rather than passing under the entry's claim (the branch's verification pass finding census-2); a second seat at a listed
 site is a second entry and fails until read (the round-6 review's cluster A, 2026-09-20: keyed on the function, receiver
 and form alone, one entry admitted every seat sharing the triple, so a second `main.appendChild` seating an unlisted root
-in the viewer's body passed under the entry hand-read for `main.appendChild(body)`; the table went from 60 entries keyed on
-the triple to 90 entries over 92 seats at the round-7 head, a rise of 30 entries, which is what the triple hid; the three
-numbers after the 60 are derived at every run and never carried: the record test counts the table's entries and their
-`times` in the census file by text and holds this sentence to them, and the census module holds it to the table it runs
-and prints the same two in its `second read:` diagnostic, `node esbuild.js --tests` in vscode-extension and then
-`node --test out-tests/ui/webview/file-print.test.js` (the record test runs in CI's shell job with no node_modules, so the
-check by execution is the census module's));
+in the viewer's body passed under the entry hand-read for `main.appendChild(body)`; the rise across the change of key is
+the key's alone, four numbers from one walk (the round-7 pre-answers, 2026-09-21, an analyst's and a refuter's independent
+runs agreeing in every cell: each head's census code over each head's comment-stripped file-view.ts, the non-body sites of
+`seatSites` counted by distinct (function, receiver, form) and by distinct (function, receiver, form, seated arguments), from
+a detached scratch copy's out-tests after `node esbuild.js --tests` in vscode-extension and `node --test` over the probe
+module under the systemd-run recipe): the triple key gives 60 at the round-6 file and 60 at the round-7 file, and the seat
+key gives 90 entries over 92 seats at both, two entries standing for two byte-identical seats each (codeBlock's
+`pre.appendChild(code)` and `wrap.appendChild(pre)`, spelled alike in the numbered and plain branches), so the rise of 30
+entries is what the triple hid and the site population, 92, moves in no cell; beside the total, the merge-base file (the
+round-7 head's base with origin/main) gives 90 non-body sites, 59 triples and 88 seat-key entries under the same walk (the
+refuter's run alone, one execution), so this PR's own contribution is two seats (the two `print.button` seats), one triple
+(openUrlView's `acts.insertBefore`; the fileGroup seat folds into an existing triple) and two seat-key entries; the
+triple-key and merge-base numbers are that run's, held as literals, and the seat-key numbers are the live table's, derived at
+every run and never carried, read as the two files' while the viewer gains no seat: the record test counts the table's
+entries, their `times` and the entries whose `times` is two in the census file by text and holds this sentence to them, and
+the census module holds it to the table it runs and prints the same two in its `second read:` diagnostic, `node esbuild.js
+--tests` in vscode-extension and then `node --test out-tests/ui/webview/file-print.test.js` (the record test runs in CI's
+shell job with no node_modules, so the check by execution is the census module's); the receiver's hold is by binding, not
+name (the maintainer's round-8 question, 2026-09-21, after PR 850's census read a synthetic local named `p` as a kernel path:
+answered by executing 23 plants at the round-7 head, 13 refused with the planted line and 10 passed as expected, the loud
+ones kept as the census module's binding case: an entry is addressed by the enclosing function's name, the receiver's
+spelling, the form and the seated arguments, and the receiver is then resolved to its declaration by the language's scopes,
+never by its name, so a listed name declared twice in the entry's function, in a block, an unnamed callback or a callback
+parameter, is refused at every seat of the name whatever `times` says, a same-named local in another function is an unlisted
+seat there, two functions' entries with their declarations swapped are refused at both seats naming both declarations, and a
+string, a comment and a property key are not declarations; two things stay keyed on text and are stated in the census
+header, the entry's `in`, a bare function name two function nodes can share (the probe counted ten such names over 260
+function nodes in file-view.ts, `apply` the one the tables use), reached only through an author-written `times`, and the
+declaration's 80-character text));
 and a receiver bound by `let` or `var`, or a parameter written to, is
 reassignable and fails unless the entry pins what every write to it assigns (`holds`; the round-6 review's correctness-5:
 the entry for the viewer's `let sess = null` pinned its declaration and nothing about what it held at the seat, and the
@@ -8764,9 +8786,10 @@ bundle's origin; the download route, a same-origin click the code makes; the Git
 reached on the person's click alone; the URL viewer's own document URL, same-origin by the caller's test, reached on a
 click), and no string road: the count that run printed as its refusals, recorded here as that run's fact and held as a
 literal. The tables have outgrown it since the closing pass widened both rules: they list 26 argument sites over 29
-hand-offs and 17 URL writes today, three numbers the record test counts from the census file by text and holds this
-sentence to, and the census module holds to the tables it runs and prints in its `second read:` diagnostic; each is listed
-with the reason. The derived set is printed with its lines as a
+hand-offs, three entries standing for two byte-identical hand-offs each (scrollToSourceOffset's two `renderedBlockElements`,
+codeBlock's two `linkifyFileText`, failedSource's two `pictureDest`), and 17 URL writes today, four numbers the record test
+counts from the census file by text and holds this sentence to, and the census module holds to the tables it runs and prints
+in its `second read:` diagnostic; each is listed with the reason. The derived set is printed with its lines as a
 diagnostic, held equal to the three lists, and `bodyReady` is executed over each root as its list says, over an unlisted
 child alone and beside every content root (not in), and under the PDF kind over each wait and line root (the loader
 alone in, the rest not). A root the viewer gains fails the census until it is listed, a `body` token the census
