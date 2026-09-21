@@ -81,8 +81,8 @@ function deltaOf(repo, module) {
   try { base = git('merge-base', 'origin/main', 'HEAD'); main = git('rev-parse', 'origin/main'); } catch { base = null; }
   const status = base && base !== main ? git('diff', '--name-status', base, 'HEAD').split('\n').filter(Boolean).map((l) => l.split('\t')) : [];
   const gate = gateOf(base, main, status.filter((s) => s[0] === 'A').map((s) => s[1]), module);
-  if (!gate.ran) return { gate, base, files: [], kernel: '' };
-  return { gate, base, files: status.map((s) => s[s.length - 1]), kernel: git('diff', '--stat', base, 'HEAD', '--', 'kernel/') };
+  if (!gate.ran) return { gate, base, files: [], modified: [], kernel: '' };
+  return { gate, base, files: status.map((s) => s[s.length - 1]), modified: status.filter((s) => s[0] === 'M').map((s) => s[1]), kernel: git('diff', '--stat', base, 'HEAD', '--', 'kernel/') };
 }
 
 const plan = read('plans', 'markdown-viewer.md');
@@ -389,7 +389,7 @@ test('the guide\'s Links in a file paragraph ends with the two sentences, whole,
 
 // ── the tests the section names, two-way ───────────────────────────────────────────────────────────
 
-const NUMBER_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+const NUMBER_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20 };
 /** A test module's text with its comment wraps joined (a `//` or ` * ` line continues the sentence before it), so a
  *  claim wrapped across two comment lines is read as one. */
 const claimText = (...parts) => flat(read(...parts).replace(/\r?\n[ \t]*(?:\/\/|\*(?!\/)) ?/g, ' '));
@@ -426,6 +426,25 @@ test('every test module that names the follow-on in its own text is named in the
   for (const f of legs) assert.ok(tests.includes('ui/webview/' + f), 'ui/webview/' + f + ' names the follow-on and is named in the Tests paragraph');
   for (const f of pins) assert.ok(tests.includes('tools/' + f), 'tools/' + f + ' names the follow-on and is named in the Tests paragraph');
   for (const f of py) assert.ok(tests.includes('tests/' + f), 'tests/' + f + ' names the follow-on and is named in the Tests paragraph');
+});
+
+test('the re-aimed sentence: its count is the number of pre-existing test modules the diff since the merge-base modifies, each named in it (behind L6\'s two-part gate, since the count is a claim about the branch\'s delta; the file review\'s landing round, tests-3: the text-keyed rule cannot see a module whose own text does not name the follow-on)', (t) => {
+  const m = /(?:^| )(\w+) standing suites were re-aimed, not undone:/.exec(section);   // `section` is flat: one space where the line broke
+  assert.ok(m, 'the Tests paragraph counts the re-aimed suites');
+  const count = NUMBER_WORDS[m[1].toLowerCase()] ?? Number(m[1]);
+  assert.ok(Number.isInteger(count) && count > 0, 'the count is a number word: ' + m[1]);
+  const end = section.indexOf("The guide's Links in a file paragraph gained", m.index);
+  assert.ok(end > m.index, 'the sentence runs to the guide\'s sentence');
+  const sentence = flat(section.slice(m.index, end));
+  const named = [...new Set([...sentence.matchAll(/\b((?:ui\/webview|tools|tests)\/[\w-]+\.(?:test\.ts|test\.mjs|py))\b/g)].map((x) => x[1]))];
+  assert.equal(named.length, count, 'the sentence names as many test modules as it counts: ' + named.join(', '));
+  const d = deltaOf(REPO, THIS_MODULE);
+  if (!d.gate.ran) { t.diagnostic(HELD[d.gate.held](d.base, THIS_MODULE) + '; the re-aimed count is held to the sentence\'s own list alone here'); return; }
+  const TEST_MODULE = /^(?:ui\/webview\/[\w-]+\.test\.ts|tools\/[\w-]+\.test\.mjs|tests\/test_\w+\.py)$/;
+  const reAimed = d.modified.filter((f) => TEST_MODULE.test(f)).sort();
+  assert.equal(reAimed.length, count, 'the sentence says ' + m[1] + ' standing suites were re-aimed; the diff since the merge-base ' + d.base + ' modifies ' + reAimed.length + ' pre-existing test modules: ' + reAimed.join(', '));
+  for (const f of reAimed) assert.ok(named.includes(f), f + ' is modified since the merge-base and named in the re-aimed sentence');
+  t.diagnostic('the re-aimed count ran: ' + reAimed.length + ' pre-existing test modules modified since the merge-base ' + d.base);
 });
 
 // ── the gate on L6's verifications ─────────────────────────────────────────────────────────────────

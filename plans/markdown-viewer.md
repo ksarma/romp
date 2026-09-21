@@ -8158,7 +8158,9 @@ rule on. The file review's rounds are named the file review's round 1 to round 5
 rulings are kept outside the repo in the maintainer's notes, one pair per round); the author's own verification after each
 round's fixes, by a verifier of the author's, is named the author's closing pass after that round, never a round of either
 review, and its findings carry the ids behaviour-N, records-N, coverage-N, guards-N, attribution-and-gates-N, reader-N and
-tree-N, which no fixlist of the file review holds. A record naming a
+tree-N, which no fixlist of the file review holds. The maintainer's read of the whole PR at one head before landing is named
+the file review's landing round, with no number, and the findings its fixlist carries keep that fixlist's own ids (fresh-N,
+rules-N, regression-N, tests-N and extra-N with a digit before the hyphen), none of the author's family. A record naming a
 round names the review it belongs to first (ui/webview/linknav-records-attribution.test.ts holds this, in every checkout,
 over every unit of the files the branch created and over every unit in the tree that names the file review, names the
 author's closing pass, or carries an id of the author's family, a phrase outside the created files judged where the review
@@ -8635,7 +8637,7 @@ opens the source's file, and since its round 2 a failed local figure with a box 
 nothing) and ui/webview/file-view-figure-recent-browser.test.ts (Chromium over the real Files page: a picture
 opened from a figure, by the control and by the plain click, takes no Recent row while Back returns to the report at the
 reader's block, a Forward step onto the picture mints its row, and a link's open still takes its row).
-Eleven standing suites were re-aimed, not undone:
+Thirteen standing suites were re-aimed, not undone:
 ui/webview/file-view-text-size.test.ts (its real-module bar leg at 380, 420, 480 and 600 px in the chat and feed modals
 reads the group hidden on a fresh open and, once a link is followed, measures the two glyphs among the actions, case 8), ui/webview/file-view.test.ts and ui/webview/file-view-links.test.ts
 (the delegate's open through openFromViewer; the model import), ui/webview/file-view-figure-error.test.ts and
@@ -8650,7 +8652,13 @@ finally) and tests/test_guide_files_failures.py (both walks' control lists carry
 text-free neighbour, as the seventh entry), and in the sweep after the review ui/webview/pdf-new-tab.test.ts (its count
 of the gesture reads inside openFileView, which held the links' two, counts the links' two and the figure's four as two
 regions and the stretches before, between and after them as none, so a read anywhere else in the function, its own
-open's, still fails). The guide's Links in a file paragraph gained two sentences, the trail's and
+open's, still fails), and at the merge of the fork's main and in the file review's landing round
+ui/webview/file-view-seam.test.ts (its re-parse census: the callee list gained addFigureControls, this follow-on's pass,
+with the local functions it reaches, and since the landing round the walk follows a reached local's imported callees and
+every import form transitively, judging the sites it finds per module, with the whole file's count in its one home) and
+tools/markdown-viewer-plan-gate-adopt.test.mjs (main's pin of the "Fix: the gate before adoption (2026-09-20)" section: its
+held copy of that section's re-parse paragraph, re-derived, with the derived figures filled from the seam test's pins). The
+guide's Links in a file paragraph gained two sentences, the trail's and
 the figure control's, and the browser plan's navigation-stack section (plans/file-browser.md) a pointer sentence.
 tools/markdown-viewer-plan-linknav.test.mjs holds this section to the tree: the section is present once after "## Out of
 scope" and carries the ask, what existed, the six decisions, the tests and the open points in that order; the trail
@@ -8672,7 +8680,11 @@ round 5, tests-7, since a hold-off is a pass and a misspelt path would have held
 diagnostic); the guide's two sentences are whole and the old
 wording is gone; the browser plan's pointer stands in its navigation-stack section; and the module list is two-way
 (every module the listing above produces is named here and the count in that sentence is the listing's, read from the
-sentence; every test module under ui/webview, tools or tests whose own text names this follow-on is named here; every
+sentence; every test module under ui/webview, tools or tests whose own text names this follow-on is named here; the
+re-aimed sentence's count is the number of pre-existing test modules the diff since the merge-base with `origin/main`
+modifies, read from the sentence and compared, with each of them named in that sentence, behind the same two-part gate as
+L6's verifications, since a module's own text need not name this follow-on for the branch to have changed it, which is
+why the text-keyed rule alone let the count stand short by two (the file review's landing round, tests-3); every
 module named here exists, this one included). L6's two verifications and the attribution module's second road (below) run
 in no checkout that gates landing, and in none after the merge: the fork's CI checks the pull request out at depth 1 in the
 jobs that run `node --test tools/*.test.mjs` and `npm test` (no `origin/main` there, so the gate's first part holds them
@@ -8694,13 +8706,17 @@ exist; L6 names tests among the directories and the two files
 under it, which this paragraph names too, and derives its verifications from the merge-base.
 tools/markdown-viewer-plan-gate-adopt.test.mjs, the pin of the "Fix: the gate before adoption (2026-09-20)" section
 above, names this follow-on for one fact about its own section, that it follows "## Out of scope" and is not held to be
-the plan's last because this section lands at the same place; it pins nothing of this follow-on's.
+the plan's last because this section lands at the same place, and holds that section's re-parse paragraph whole, which
+since the merge of the fork's main records this follow-on's two sites in file-view.ts (the bar's trail arrows and the
+figure control's glyph) within the whole file's count, and since the file review's landing round the census widened
+through this follow-on's pass, addFigureControls, with the modules it reaches and the sites judged there, the derived
+figures filled from file-view-seam.test.ts's pins.
 ui/webview/linknav-records-attribution.test.ts holds the rounds every record of this follow-on names to the convention in
 this section's opening paragraph (the file review's round 3, tests-2, re-ruled onto the structural rule in its round 4,
 rules-1, after a pin keyed on one string missed the misattribution in the commits that built it: a round belongs to the
 review named nearest before it in its unit of text and is one the convention enumerates for that review; a pass of the
-author's has no rounds; an id of the author's family stands only after a pass is named; a round with no review named
-fails), reading in every checkout, as a rule over the tree, every file git lists at the repo root, tracked or untracked
+author's has no rounds; an id of the author's family stands only where the review named nearest before it is the author's
+pass; a round with no review named fails), reading in every checkout, as a rule over the tree, every file git lists at the repo root, tracked or untracked
 and not ignored, whose text names the file review, names the author's closing pass, or carries an id of the author's
 family, together with the files the branch created (an existence roster, each judged in full, every unit of it) and this
 section, the guide's paragraph and
