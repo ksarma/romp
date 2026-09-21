@@ -655,9 +655,10 @@ SWITCH_LISTED = {
         "the switch declares that the interpreter running pytest has the SDK the Python job's install step put there, "
         "and this job installs none (its pip line names pip, pytest, pytest-timeout and cryptography; run 35535192879's "
         "served step installed nine packages, no SDK), so setting it would declare something untrue; and its two globs "
-        "collect no module that reads the switch, nor does any helper module under tests/ they could import, so the "
-        "switch would change nothing there today. Premises checked: no SDK install in the job's run blocks; no "
-        "collected or helper file under tests/ spells the switch's name."),
+        "collect no module that spells the switch's name, nor does any helper module under tests/ they could import, so "
+        "the switch would change nothing there today. Premises checked: no SDK install in the job's run blocks; no "
+        "collected or helper file under tests/ spells the switch's name (keyed on the spelling in the file's text, not on "
+        "an environment read)."),
 }
 # names an SDK install would carry in a run block
 SDK_INSTALL_TOKENS = ("claude-agent-sdk", "claude_agent_sdk", "romp-sdk-setup")
@@ -970,6 +971,20 @@ def _describe(inv):
         inv["job"], inv["step"], inv["line"], SWITCH, inv["env"].get(SWITCH), inv["args"].strip(), " and ".join(lacks) or "nothing")
 
 
+def switch_spellers(directory):
+    """The *.py files directly under `directory` whose TEXT spells ROMP_SDK_REQUIRE, as realpaths: keyed on the
+    spelling, docstrings and comments included, not on an environment read. A module that reads the switch under a
+    name it assembles (os.environ.get("ROMP_" + "SDK_REQUIRE")) is outside this read, and the message that uses this
+    says so; a module that only mentions the name is inside it, which is why tests/sdk_blocker.py's docstring does
+    not spell it. Run against a docstring-only speller and an indirect reader in ListedInvocations (2026-09-21)."""
+    out = set()
+    for path in glob.glob(os.path.join(directory, "*.py")):
+        with open(path, encoding="utf-8") as f:
+            if SWITCH in f.read():
+                out.add(os.path.realpath(path))
+    return out
+
+
 def _positional_paths(inv):
     """The path arguments of the invocation (tokens that are not an option or an option's value), resolved against its
     working directory, `${{ github.workspace }}` and no directory both reading as the repo root."""
@@ -1065,16 +1080,14 @@ class ListedInvocations(unittest.TestCase):
         for inv in self.served:
             self.assertNotIn(SWITCH, inv["env"], "the served step's pytest line %d sets %s: it declares an SDK it does not install" % (inv["line"], SWITCH))
 
-    def test_the_served_steps_globs_collect_no_module_that_reads_the_switch(self):
-        # keyed on the switch's name spelled in the file's text: the modules the step's globs collect, plus every
-        # non-test module under tests/ (conftest, __init__, the helpers a collected module may import); a reader that
-        # spells the name indirectly is outside this read
-        readers = set()
-        for path in glob.glob(os.path.join(HERE, "*.py")):
-            with open(path, encoding="utf-8") as f:
-                if SWITCH in f.read():
-                    readers.add(os.path.realpath(path))
-        self.assertIn(os.path.realpath(__file__), readers, "the census missed this file, which reads the switch")
+    def test_the_served_steps_globs_collect_no_module_that_spells_the_switch(self):
+        # keyed on the switch's name spelled in the file's text (switch_spellers), not on an environment read: the
+        # modules the step's globs collect, plus every non-test module under tests/ (conftest, __init__, the helpers a
+        # collected module may import); a reader that spells the name indirectly is outside this read, and the
+        # message says what the check keys on (until 2026-09-21 it said the module "reads" the switch, which a
+        # docstring that spells the name does not)
+        readers = switch_spellers(HERE)
+        self.assertIn(os.path.realpath(__file__), readers, "the census missed this file, which spells (and reads) the switch")
         helpers = {os.path.realpath(p) for p in glob.glob(os.path.join(HERE, "*.py")) if not os.path.basename(p).startswith("test_")}
         self.assertIn(os.path.realpath(os.path.join(HERE, "conftest.py")), helpers, "the helper census missed conftest.py")
         collected = set()
@@ -1083,8 +1096,23 @@ class ListedInvocations(unittest.TestCase):
                 collected.update(os.path.realpath(p) for p in glob.glob(pattern))
         self.assertTrue(collected, "the served step's globs resolve to no file at the repo root: %r" % [i["args"] for i in self.served])
         hit = sorted(os.path.relpath(p, ROOT) for p in readers & (collected | helpers))
-        self.assertEqual(hit, [], "the served step collects or could load a module that reads %s, and it runs without the "
-                         "switch: %s" % (SWITCH, hit))
+        self.assertEqual(hit, [], "the served step collects or could load a module that spells %s in its text (keyed on the "
+                         "spelling, docstrings and comments included, not on an environment read; a reader that spells the "
+                         "name indirectly is outside this read), and it runs without the switch: %s" % (SWITCH, hit))
+
+    def test_the_spelling_check_names_a_docstring_that_spells_the_switch_and_misses_an_indirect_reader(self):
+        # the check against what it refuses, and its stated limit, over a scratch directory: a served-named module whose
+        # docstring alone spells the name is named (it reads nothing, which is why the message says "spells"); a module
+        # that reads the switch under an assembled name is not, and the message says such a reader is outside the read
+        d = tempfile.mkdtemp(prefix="switch-spellers-")
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        with open(os.path.join(d, "test_zz_synthetic_served.py"), "w") as f:
+            f.write('"""A synthetic served module whose docstring spells %s and whose code reads no environment."""\n' % SWITCH)
+        with open(os.path.join(d, "test_plain_served.py"), "w") as f:
+            f.write("import os\nVALUE = os.environ.get('ROMP_SERVED_TESTS_REQUIRE')\n")
+        with open(os.path.join(d, "conftest.py"), "w") as f:
+            f.write("import os\nINDIRECT = os.environ.get('ROMP_' + 'SDK_' + 'REQUIRE')\n")
+        self.assertEqual({os.path.basename(p) for p in switch_spellers(d)}, {"test_zz_synthetic_served.py"})
 
 
 THIRD_STEP = ("      - name: Kernel smoke (pytest)\n"

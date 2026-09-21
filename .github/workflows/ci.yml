@@ -484,7 +484,8 @@ jobs:
         # untrue; the population check lists this step for the switch with that reason and checks its
         # premises (no SDK install in this job's run blocks; no file the two globs collect, and no helper
         # module under tests/ they could import, conftest included, spells the switch's name), so the day a
-        # served module reads the switch the listing goes red.
+        # served module spells the switch's name the listing goes red (keyed on the spelling in the file's
+        # text: a reader that spells the name indirectly is outside that read).
         working-directory: ${{ github.workspace }}
         env:
           ROMP_SERVED_TESTS_REQUIRE: "1"
