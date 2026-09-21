@@ -169,7 +169,13 @@ function world(o: Opts, arm: Arm = {}): World {
   if (o.bottomSpacerH) host.add(new Node(o.bottomSpacerH, "tx-spacer tx-spacer-bot"));
   trace.length = 0;
   content.scrollTop = o.scrollTop ?? o.saved;
-  const v: any = { el: host, scrollTop: o.saved, shown: o.shown ?? true, stick: o.stick ?? false };
+  const takeState: Record<string, unknown> = { measured: undefined, avgTurnH: undefined, pxPerTurn: undefined };
+  const vRaw: any = { el: host, scrollTop: o.saved, shown: o.shown ?? true, stick: o.stick ?? false };
+  // the view the lifted code holds: a Proxy over the record whose deleteProperty trap throws for every key, so a delete of the take state in
+  // ANY form fails closed (the `delete` operator; `Reflect.deleteProperty`, which returns false and throws nothing on a non-configurable
+  // property, under strict mode too; either with a computed key): until the author's fixer pass over the pass after the maintainer's round 4
+  // ruling (VT21) the accessors below were the whole refusal and a Reflect.deleteProperty of a take-state field passed in silence
+  const v: any = new Proxy(vRaw, { deleteProperty: (_t, k) => { throw new Error("v." + String(k) + " deleted" + (Object.prototype.hasOwnProperty.call(takeState, k) ? ": a delete of the view's take state is a take at the site, refused in every form (the delete operator, Reflect.deleteProperty, a computed key)" : ": the model's view has no deletable field, so this fails closed rather than passing as a silent no-op")); } });
   const H: any = { content, v, spacer, writes: [] as Write[], calls: [] as any[], rows: [] as any[], toasts: [] as string[], deferred: [] as any[], trace, geometryAt: {} as Record<string, string[]>,
                    delta: D, arm,
                    land: (uuid: string) => { if (arm.rebuild) arm.rebuild(host); return !!arm.land; }, landT: (t: number) => !!arm.landT };
@@ -177,8 +183,9 @@ function world(o: Opts, arm: Arm = {}): World {
   // flag, which the stubs hold in place of production's parked figures, and the view's own three fields (`measured`, `avgTurnH`, `pxPerTurn`:
   // the fields the take writes, the untake restores and the parked figures are read from, derived from render.ts's tree and stated once in
   // spacer-measure.test.ts), each an accessor that traces its write as `<field>=<value>`, whatever the form of the write (an assignment of any
-  // operator, a destructuring pattern, Object.assign, Reflect.set), and refuses a delete (non-configurable, and the lifted code runs under
-  // strict mode, so the refusal throws rather than passing silently); nothing lifted here writes them, so a write of any is a take at the
+  // operator, a destructuring pattern, Object.assign, Reflect.set), and refuses a delete in every form (the view's Proxy above throws on a
+  // deleteProperty, whether the `delete` operator's or Reflect.deleteProperty's, with a literal or a computed key; the accessors are
+  // non-configurable besides, so a defineProperty over one throws); nothing lifted here writes them, so a write of any is a take at the
   // site (the maintainer's round 4 ruling, ordering-1: the world traced `measured` alone). The record: takeReloadScroll returns the persisted object ITSELF, the same object to the `saved`
   // decision's call and to the binding's, so the object's identity cannot tell the two records apart; the wrapper below gives each admitting
   // call a serial k, pushes `record#k`, and returns a per-call VIEW of the record whose `top` pushes `read rs.top#k` when read, so the read
@@ -194,8 +201,7 @@ function world(o: Opts, arm: Arm = {}): World {
   // rather than a bare TypeError (the author's fixer pass over the pass after the maintainer's round 4 ruling, VE-4)
   H.document = failClosed({ getElementById: (id: string) => (id === "content" ? content : null) }, "document");
   Object.defineProperty(H, "parked", { get: () => parkedFlag, set: (x: boolean) => { H.trace.push("parked=" + x); parkedFlag = x; } });
-  const takeState: Record<string, unknown> = { measured: undefined, avgTurnH: undefined, pxPerTurn: undefined };
-  for (const f of Object.keys(takeState)) Object.defineProperty(v, f, { configurable: false, enumerable: true, get: () => takeState[f], set: (x: unknown) => { H.trace.push(f + "=" + JSON.stringify(x)); takeState[f] = x; } });
+  for (const f of Object.keys(takeState)) Object.defineProperty(vRaw, f, { configurable: false, enumerable: true, get: () => takeState[f], set: (x: unknown) => { H.trace.push(f + "=" + JSON.stringify(x)); takeState[f] = x; } });
   H.takeReloadScroll = (saved: unknown, id: string | null): ReloadScroll | null => {
     const r = takeReloadScroll(saved, id);
     if (!r) return null;
