@@ -265,7 +265,7 @@ ROWS = [
 # The tables: what the census finds at the head this block ships on, each entry an EXACT count asserted by EQUALITY
 # (round 8 of the review, 2026-09-21; derived at round 8's commit and pasted). Until round 8 these were FLOORS, and a floor
 # is silent slack: twice a merge of main grew the population under floors that stayed green (38 doors of slack at round
-# 7's commit; three doors, a call, a door-value site, a problem_row site and a function at round 7's head), and at that
+# 6's head; three doors, a call, a door-value site, a problem_row site and a function at round 7's head), and at that
 # head a walk blinded to one param-kind door call passed every floor. The rule as enforced now: any growth or shrinkage
 # of the population reds this equality, and the author re-derives deliberately, stating the new head in this sentence.
 # The expected value is NEVER read from the census at run time (a pin whose expected value comes from the artifact it

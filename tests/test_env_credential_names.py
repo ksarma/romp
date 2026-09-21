@@ -558,6 +558,23 @@ def _casings(name):
     return {name, name.upper(), name.lower(), name.title(), alternating}
 
 
+SHELL_ALPHABET_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+# The characters a door's alphabet check could admit or trim while the rule reads the name as spelled (round 8 of fork PR
+# #781's review, 2026-09-21): a line feed, which a regex end anchor of `$` in place of `\Z` matches before; a carriage return,
+# a vertical tab and a form feed, which a strip trims and str.splitlines breaks on; and the no-break space, which a
+# Unicode-aware blank test (str.isspace, `\s`) counts as whitespace. _population places each leading, trailing and inside a name.
+CONTROL_CHARS = ("\n", "\r", "\v", "\f", " ")
+
+
+def _in_shell_alphabet(name):
+    """The doors' alphabet as this module spells it, matched over the WHOLE name (re.fullmatch): the expected side of every
+    alphabet verdict below. Never a door's own regex: until round 8 of fork PR #781's review the expectation was read from
+    sb.ENV_NAME_RE, the artifact under test, so a door whose end anchor admitted a trailing line feed moved the expectation
+    with it, the rule read that spelling as unshaped (no suffix ends it), and every pin stayed green while such a pick would
+    have been written to both files with its value."""
+    return bool(SHELL_ALPHABET_RE.fullmatch(name))
+
+
 def _fixture_name_census():
     """Every quoted identifier in tests/*.py that carries TOKEN or API_KEY, or begins OP_, in any letter case: the
     names the suite's fixtures use, shaped and near miss alike, read at run time so a fixture written later joins the
@@ -581,9 +598,9 @@ def _population(cred):
     1Password spelling the rule names, continued, truncated and as the tail of another name; the session prefix with
     accounts, bare, without its underscore, as an infix, and a name that only begins like it; the control token; the
     three Claude credential names (AUTH_ENV_NAMES) and the two reserved identity names; names outside the shell
-    alphabet (the empty name, a leading digit, a dash, and a space or a tab leading, trailing or inner); all of it in
-    every casing; and the fixture census. Every entry is a NAME: the values beside them are assembled at run time by
-    the test."""
+    alphabet (the empty name, a leading digit, a dash, and a space, a tab or one of CONTROL_CHARS leading, trailing or
+    inner); all of it in every casing; and the fixture census. Every entry is a NAME: the values beside them are
+    assembled at run time by the test."""
     suffixes = tuple(cred.CREDENTIAL_ENV_SUFFIXES)
     names = set()
     for stem in ("NOTES", "HF", "MY_SECRET", "SVC_00", "X9", "OPENROUTER", "ROMP_SERVE", "OP", "OP_SESSION", "A_B_C",
@@ -619,14 +636,19 @@ def _population(cred):
     # leading or an inner one leaves the suffix where endswith finds it. A door that trimmed before its alphabet check,
     # or a rule that stripped, judges the trimmed spelling instead, and with no such name in the population that
     # trimming was invisible to every reader here. A space and a tab, leading, trailing and in place of the first
-    # underscore, on a name of each half, the session prefix and two unshaped names.
+    # underscore, on a name of each half, the session prefix and two unshaped names. Since round 8 (2026-09-21) the control
+    # characters and the no-break space of CONTROL_CHARS take the same three places on the same names: a door whose regex ends
+    # in `$` admits NOTES_API_KEY followed by a line feed (that anchor matches before a trailing newline), the rule reads the
+    # spelling as unshaped, and the pick is written to both files with its value; until this round the population left every
+    # line-feed name out, so such a door passed every reader here. The two drivers that read a line-oriented output leave the
+    # line-feed names out themselves and say why (_lister_verdicts, _notice_verdicts); the rule, both doors, the writer and
+    # the notice's wrapper are held to them like any other name.
     for n in ("NOTES" + suffixes[0], "HF" + suffixes[-1], cred.OP_ENV_NAMES[0], prefix + "TESTACCT", "PATH", "FEATURE_FLAG"):
-        for blank in (" ", "\t"):
+        for blank in (" ", "\t") + CONTROL_CHARS:
             names.update(_casings(blank + n) | _casings(n + blank) | _casings(n.replace("_", blank, 1)))
     names.update(_fixture_name_census())
-    # "=" and NUL cannot name a variable (putenv refuses both); a line break is left out too: the lister prints one name
-    # per line and the boot notice is one log row, so neither output could carry such a name whole
-    return sorted(n for n in names if "=" not in n and "\0" not in n and "\n" not in n)
+    # "=" and NUL cannot name a variable (putenv refuses both)
+    return sorted(n for n in names if "=" not in n and "\0" not in n)
 
 
 class FourReaders(unittest.TestCase):
@@ -680,8 +702,9 @@ class FourReaders(unittest.TestCase):
     # ── one driver per reader ──
     def _door_verdict(self, door, name, value, cred):
         err = door({name: value})
-        if not sb.ENV_NAME_RE.match(name):
-            return self.BEFORE_SHAPE_ALPHABET if err.startswith("env: bad name") else "unexpected: " + err
+        if not _in_shell_alphabet(name):     # this module's alphabet, never the door's regex (see _in_shell_alphabet)
+            return (self.BEFORE_SHAPE_ALPHABET if err.startswith("env: bad name")
+                    else "unexpected: " + (err or "accepted, no refusal"))
         if name in sb.ENV_RESERVED_NAMES:
             return (self.BEFORE_SHAPE_IDENTITY if "is reserved" in err and "identity env" in err
                     else "unexpected: " + err)
@@ -695,7 +718,7 @@ class FourReaders(unittest.TestCase):
         return "unexpected: " + err
 
     def _door_expected(self, name, shaped):
-        if not sb.ENV_NAME_RE.match(name):
+        if not _in_shell_alphabet(name):
             return self.BEFORE_SHAPE_ALPHABET
         if name in sb.ENV_RESERVED_NAMES:
             return self.BEFORE_SHAPE_IDENTITY
@@ -722,25 +745,37 @@ class FourReaders(unittest.TestCase):
 
     def _lister_verdicts(self, values):
         snippet = ReferenceLister._snippet()
+        # The listing is one name per line, so a name carrying a line feed cannot be read back from it whole: those names are
+        # left out of the file here, the one reader not held to them (round 8 of fork PR #781's review, 2026-09-21; the rule,
+        # both doors, the writer and the notice's wrapper are). The output is read as bytes and split on the line feed alone,
+        # so a carriage return, a vertical tab or a form feed inside a name stays on its line: a text-mode read folds a
+        # carriage return into a line end, and str.splitlines breaks on all three.
+        listable = {n: v for n, v in values.items() if "\n" not in n}
         d = os.path.join(self.root, "sdk-flag-settings")
         os.makedirs(d)
         p = os.path.join(d, self.SID + ".json")
-        Path(p).write_text(json.dumps({"env": values}) + "\n", encoding="utf-8")
+        Path(p).write_text(json.dumps({"env": listable}) + "\n", encoding="utf-8")
         env = {"PATH": os.path.dirname(sys.executable) + os.pathsep + os.environ.get("PATH", ""),
                "ROMP_STATE_DIR": self.root, "HOME": self.root}
-        r = subprocess.run(["/bin/sh", "-c", snippet], env=env, capture_output=True, text=True, timeout=120)
-        self.assertEqual(r.returncode, 0, "%s runs as fenced (exit %d)" % (self.LISTER, r.returncode))
+        r = subprocess.run(["/bin/sh", "-c", snippet], env=env, capture_output=True, timeout=120)
+        self.assertEqual(r.returncode, 0, "%s runs as fenced (exit %d): %s"
+                         % (self.LISTER, r.returncode, r.stderr.decode("utf-8", "replace")))
+        lines = r.stdout.decode("utf-8").split("\n")
+        self.assertEqual(lines[-1], "", "%s ends every listed line, the last included, with a line feed" % self.LISTER)
         listed = set()
-        for ln in r.stdout.splitlines():
+        for ln in lines[:-1]:
             self.assertTrue(ln.startswith(p + " "), "%s prints the file, then the name" % self.LISTER)
             listed.add(ln[len(p) + 1:])
-        return {n: (n in listed) for n in values}
+        return {n: (n in listed) for n in listable}
 
     def _notice_verdicts(self, values, cred):
         named = set(sb.env_credential_names(values))                 # the wrapper over the population as an environ
         # the method reads os.environ: the population is staged on top of it for the call, the empty name left out
-        # (putenv refuses it) and any name the process already carries left out too, so no live variable is touched
-        stageable = {n: v for n, v in values.items() if n and n not in os.environ}
+        # (putenv refuses it), any name the process already carries left out too, so no live variable is touched, and a
+        # name carrying a line feed left out as well (round 8 of fork PR #781's review, 2026-09-21): the line is one log
+        # row, read below to its values sentence, and a row cannot carry such a name whole; the wrapper's verdict, which
+        # this driver returns, covers every name of the population, the line-feed names included
+        stageable = {n: v for n, v in values.items() if n and "\n" not in n and n not in os.environ}
         be = sb.SdkBackend.__new__(sb.SdkBackend)
         rows = []
         be._log = lambda m, problem=None, **kw: rows.append((m, problem))
@@ -777,6 +812,17 @@ class FourReaders(unittest.TestCase):
         self.assertIn("1Password", clause, "%s, %s: names the 1Password half" % (self.LISTER, where))
         self.assertIn("in any letter case", clause, "%s, %s: says the fold" % (self.LISTER, where))
 
+    def _suffix_clause(self, clause, cred, where):
+        """The suffix half alone, as the roads passage spells it (round 8 of fork PR #781's review, 2026-09-21, the prebuild
+        verifier: the sentence saying where a provider's variable belongs named the suffixes and was parsed by no pin, so a
+        suffix planted there in place of the rule's left every test green): the backticked names it lists are exactly the
+        rule's suffixes, and it names no 1Password, since the 1Password half has its own road two sentences on."""
+        tokens = re.findall(r"`([^`]+)`", clause)
+        self.assertEqual(set(tokens), set(cred.CREDENTIAL_ENV_SUFFIXES),
+                         "%s, %s: the suffixes the suffix half's road names are the rule's, and nothing else: %r"
+                         % (self.LISTER, where, tokens))
+        self.assertNotIn("1Password", clause, "%s, %s: the suffix half's road names no 1Password" % (self.LISTER, where))
+
     def _pin_lister_spellings(self, cred):
         snippet = ReferenceLister._snippet()
         ends = re.search(r"u\.endswith\(\((.*?)\)\)", snippet)
@@ -791,12 +837,15 @@ class FourReaders(unittest.TestCase):
         self.assertEqual(set(ast.literal_eval("(" + exact.group(1) + ",)")), set(cred.OP_ENV_NAMES),
                          "%s: the 1Password names the fenced listing spells are the rule's" % self.LISTER)
         flat = " ".join((ROOT / "docs" / "reference.md").read_text(encoding="utf-8").split())
-        for where, pattern in (("the boot line's sentence", r"shaped like credentials \(([^)]*)\)"),
-                               ("the --env passage", r"credential-shaped variable with a non-empty value \((.*?);"),
-                               ("the spawn.json sentence", r"carrying a value that ends (.*?) is left out of the file")):
+        for where, pattern, parse in (
+                ("the boot line's sentence", r"shaped like credentials \(([^)]*)\)", self._shape_clause),
+                ("the --env passage", r"credential-shaped variable with a non-empty value \((.*?);", self._shape_clause),
+                ("the spawn.json sentence", r"carrying a value that ends (.*?) is left out of the file", self._shape_clause),
+                # the roads passage, the suffix half's road (round 8, 2026-09-21): where another provider's variable belongs
+                ("the roads passage", r"Another provider's (.*?) variable goes in the process environment", self._suffix_clause)):
             m = re.search(pattern, flat)
             self.assertTrue(m, "%s: %s is where this test reads the shape" % (self.LISTER, where))
-            self._shape_clause(m.group(1), cred, where)
+            parse(m.group(1), cred, where)
         op = re.search(r"1Password CLI's names \(([^:]*):", flat)
         self.assertTrue(op, "%s: the boot check's paragraph lists the 1Password spellings" % self.LISTER)
         self.assertEqual(set(re.findall(r"`([^`]+)`", op.group(1))), set(cred.OP_ENV_NAMES) | {cred.OP_ENV_PREFIX + "*"},
@@ -930,7 +979,7 @@ class FourReaders(unittest.TestCase):
         self.assertGreater(len(population) - len(shaped), 150, "unshaped names in it")
         for witness in (cred.CONTROL_TOKEN_VAR,) + tuple(sb.AUTH_ENV_NAMES) + tuple(cred.OP_ENV_NAMES) + tuple(sb.ENV_RESERVED_NAMES):
             self.assertIn(witness, population, witness)
-        outside = [n for n in population if not sb.ENV_NAME_RE.match(n)]
+        outside = [n for n in population if not _in_shell_alphabet(n)]
         self.assertGreaterEqual(len(outside), 4, "names outside the shell alphabet: %r" % (outside,))
         self.assertTrue(any(rule[n] for n in outside) and any(not rule[n] for n in outside),
                         "the alphabet's outsiders are shaped and unshaped alike: %r" % (outside,))
@@ -967,9 +1016,17 @@ class FourReaders(unittest.TestCase):
             self.LISTER: dict(rule),
             self.NOTICE: {n: rule[n] and n != cred.CONTROL_TOKEN_VAR for n in population},
         }
+        # every reader answers over the whole population but the lister, which is not held to the line-feed names alone (its
+        # driver says why) and to no other; the names it is held to are compared like every other reader's
+        for reader in verdicts:
+            left_out = set(population) - set(verdicts[reader])
+            self.assertEqual(left_out, {n for n in population if "\n" in n} if reader == self.LISTER else set(),
+                             "%s: the names it is not held to" % reader)
+        self.assertTrue(set(population) - set(verdicts[self.LISTER]), "the line-feed names the lister leaves out exist")
         report = []
         for reader in verdicts:
-            bad = [(n, verdicts[reader][n], expected[reader][n]) for n in population if verdicts[reader][n] != expected[reader][n]]
+            bad = [(n, verdicts[reader][n], expected[reader][n]) for n in population if n in verdicts[reader]
+                   and verdicts[reader][n] != expected[reader][n]]
             if bad:
                 report.append("%s drifted on %d of %d names, the first %d: %s"
                               % (reader, len(bad), len(population), min(len(bad), 8),
@@ -978,6 +1035,51 @@ class FourReaders(unittest.TestCase):
             self.fail("readers drifting from the rule (every drifting reader named, with the names it drifted on):\n"
                       + "\n".join(report))
         self._pin_the_one_difference(cred, verdicts, values)
+
+    def test_every_door_refuses_a_name_carrying_a_control_character_or_a_no_break_space(self):
+        """Round 8 of fork PR #781's review (2026-09-21, the prebuild verifier): the population carried no name with a line
+        feed, a carriage return, a vertical tab, a form feed or a no-break space in it, and the verdict table's expected side
+        read the alphabet from the door's own regex, so a door whose end anchor was `$` in place of `\\Z`, an anchor that
+        matches before a trailing line feed, admitted NOTES_API_KEY followed by a newline with every pin green: the rule reads
+        that spelling as unshaped (no suffix ends it), and the pick would have been written to the registry and the
+        flag-settings file with its value. Here each door is driven over every such name of the population (CONTROL_CHARS,
+        each leading, trailing and inside a name, shaped and unshaped alike) and must refuse it with its alphabet sentence,
+        the value never quoted; and each door's own regex, read from its module, must admit none of them. The expected side
+        is this module's alphabet, matched whole (_in_shell_alphabet), never the door's."""
+        cred = sb._cred
+        km = _kernel_module()
+        population = _population(cred)
+        control = [n for n in population if any(c in n for c in CONTROL_CHARS)]
+        self.assertGreaterEqual(len(control), len(CONTROL_CHARS) * 3 * 6,
+                                "a name per character, place and stem at least (a derived set must fail on empty): %d" % len(control))
+        for c in CONTROL_CHARS:
+            for kind, has in (("leading", lambda n: n[0] == c), ("trailing", lambda n: n[-1] == c),
+                              ("inner", lambda n: c in n[1:-1])):
+                some = [n for n in control if has(n)]
+                self.assertTrue(any(cred.is_credential_env_name(n) for n in some)
+                                and any(not cred.is_credential_env_name(n) for n in some),
+                                "%s %r names, shaped and unshaped alike: %r" % (kind, c, some[:6]))
+        doors = ((self.DOOR_KM, km._env_error, km._ENV_NAME_RE), (self.DOOR_SB, sb.env_request_error, sb.ENV_NAME_RE))
+        admitted = {label: [] for label, _door, _regex in doors}
+        regex_admits = {label: [] for label, _door, _regex in doors}
+        for n in control:
+            self.assertFalse(_in_shell_alphabet(n), "%r is outside the alphabet this module spells" % (n,))
+            value = "synthetic-" + os.urandom(8).hex()
+            for label, door, regex in doors:
+                err = door({n: value})
+                if not err.startswith("env: bad name"):
+                    admitted[label].append((n, err or "accepted, no refusal"))
+                    continue
+                self.assertIn("[A-Za-z_][A-Za-z0-9_]*", err, "%s: the refusal teaches the alphabet: %r" % (label, err))
+                self.assertNotIn(value, err, "%s: never a value" % label)
+                if regex.match(n):
+                    regex_admits[label].append(n)
+        for label, bad in admitted.items():
+            self.assertEqual(bad, [], "%s admits %d names outside the shell alphabet (an end anchor of `$` matches before a "
+                             "trailing line feed; `\\Z` holds the whole name), the first %d as (name, what the door said): %r"
+                             % (label, len(bad), min(len(bad), 8), bad[:8]))
+        for label, bad in regex_admits.items():
+            self.assertEqual(bad, [], "%s: its own alphabet regex, matched from the start, admits %r" % (label, bad[:8]))
 
 
 class BootRefusalMirror(unittest.TestCase):
