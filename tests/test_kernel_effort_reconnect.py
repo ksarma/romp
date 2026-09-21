@@ -294,10 +294,10 @@ class EffortReconnect(unittest.TestCase):
         is a call into its session's _mirror_auth; SdkSession._mirror_auth and _mirror_auth_pending each hold exactly
         one call to self.backend._update_reg and no write_reg or _write_reg_locked call, and neither does set_auth or
         _mirror_pick.
-        Covers those five bodies, nested functions and every branch included: a bare write anywhere in them, the
-        dormant road's keywords, and the chain from the live roads to the RMW. Does not cover a record write through
-        a helper under another name that takes no auth keyword (a dict handed positionally), the mirrors' other
-        callers (the landing, the walk's steps, the guard's retry; _mirror_pick's docstring lists them), or what
+        Covers those four bodies (set_auth, _mirror_pick, SdkSession._mirror_auth, SdkSession._mirror_auth_pending), nested functions
+        and every branch included: a bare write anywhere in them, the dormant road's keywords, and the chain from the live roads to
+        the RMW. Does not cover a record write through a helper under another name that takes no auth keyword (a dict handed
+        positionally), the mirrors' other callers (the landing, the walk's steps, the guard's retry; _mirror_pick's docstring lists them), or what
         happens at run time, which test_set_auth_dormant_road_writes_the_record_inside_the_locked_rmw executes."""
         mod = ast.parse(BACKEND_SRC)
         classes = {n.name: n for n in mod.body if isinstance(n, ast.ClassDef)}
