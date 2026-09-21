@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """Every round label in the lazy-panes branch's own lines credits a round the reviewer held (the author's pass 8, 2026-09-21).
 
+TEMPORARY. This module is a per-branch guard over the mentions this branch adds over its merge base, deleted when the PR
+lands, its job done (the lines it vetted are right by then; the next branch's guard vets the next additions). The rule it
+implements, the form space of a numbered-round mention and what credits one, is to live once in a shared helper under tests/
+that PR 857 lands; after that this module becomes a few-line caller of that helper with its own population and its own
+rounds (the maintainer's ruling of 2026-09-21, which puts the sibling guards on PRs 857 and 860 on the same helper, so three
+guards are one rule and not three requirements).
+
 THE PROPERTY. A label credits a round to someone. The REVIEWER's rounds on this PR are numbered 1 to N in the review
 notes, outside this repository; REVIEWER_ROUNDS below is the number of the highest ruling the reviewer has filed (the PR
 body's convention paragraph lists the same rounds by head and date), a tree-resident constant the author raises when a
