@@ -84,7 +84,7 @@ test("a hover's rail band as the thread's last child is not the tail when the un
   assert.deepEqual(byChild.map((x) => [x.cls, x.dh, x.fromTail]), [["turn turn-tool", 30, 1]], "no unit index: the spacer rule, the band the tail (kept for callers that pass none)");
 });
 
-test("a view with no unit-carrying child files nothing when the unit index is given, as the spacer rule did: the empty transcript's placeholder alone, and the deferred build's loading hint under a spacer (the maintainer's round 3 ruling A: the unit-aware scan left tail at -1 and the pane's unitOf threw on children[-1])", () => {
+test("a view with no unit-carrying child files nothing when the unit index is given, as the spacer rule did: the empty transcript's placeholder alone, and the deferred build's loading hint alone (the maintainer's round 3 ruling A: the unit-aware scan left tail at -1 and the pane's unitOf threw on children[-1])", () => {
   // the pane's unitOf reaches into dataset (render.ts ensureView: `(n as HTMLElement).dataset?.unit`, the `?.` guarding dataset and not n), so
   // an undefined child THROWS rather than answering undefined: the predicate here has the same shape on purpose, and says so, so a scan that
   // reads children[tail] with tail at -1 is a red here and not a quiet undefined
@@ -95,10 +95,10 @@ test("a view with no unit-carrying child files nothing when the unit index is gi
   const h1 = new Map<N, number>([[placeholder, 120]]);
   assert.deepEqual(unitChanges([{ target: placeholder, height: 96 }], [placeholder], h1, paneUnitOf), [], "the placeholder shrinking: no unit-carrying child, so no tail unit and nothing filed (the rail's row names the change)");
   assert.equal(h1.get(placeholder), 96, "…and its baseline moved on, as for every observed child");
-  const top: N = { className: "tx-spacer tx-spacer-top", dataset: {} }, loader: N = { className: "tx-loading", dataset: {} };   // showActive's loading hint, the only child of a non-empty session's view for the frame its heavy build is deferred
-  const h2 = new Map<N, number>([[top, 10], [loader, 40]]);
-  assert.deepEqual(unitChanges([{ target: loader, height: 64 }], [top, loader], h2, paneUnitOf), [], "the loading hint growing under a spacer: no tail unit, nothing filed");
-  assert.deepEqual(unitChanges([{ target: loader, height: 80 }], [top, loader], h2), [], "…and with no predicate the loader is the tail under the spacer rule, whose own change is the rail's: nothing filed either way");
+  const loader: N = { className: "tx-loading", dataset: {} };   // showActive's loading hint: appended to an EMPTY view (render.ts appends it under childNodes.length === 0), so it is the view's only child, never under a spacer, for the frame its heavy build is deferred (the author's fixer pass over pass 4: the pinned world had it under a spacer, a shape the pane never draws)
+  const h2 = new Map<N, number>([[loader, 40]]);
+  assert.deepEqual(unitChanges([{ target: loader, height: 64 }], [loader], h2, paneUnitOf), [], "the loading hint alone, growing: no unit-carrying child, so no tail unit and nothing filed");
+  assert.deepEqual(unitChanges([{ target: loader, height: 80 }], [loader], h2), [], "…and with no predicate the loader is the tail under the spacer rule, whose own change is the rail's: nothing filed either way");
 });
 
 test("a foreign child below the tail as the ENTRY (a hover's band re-sized by the rail's repaint): no row and never a negative fromTail, where the spacer rule skipped it and the unit-aware scan filed it at tail minus index (the maintainer's round 3 ruling A, the second face)", () => {
