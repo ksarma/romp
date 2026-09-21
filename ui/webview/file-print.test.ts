@@ -3,6 +3,8 @@
 // stalled phase the deadline's ask stands in, among them), the words, the chord, and settlePictures over fake pictures and a
 // fake clock (the deadline is the one timer in the module, and it is injected; Keep waiting's wait sets none). The DOM driver, the button,
 // the line and window.print run over the real viewer in file-print-browser.test.ts. Synthetic values only.
+// The print record's pins that need the TypeScript compiler stand at the end of this module (the record test,
+// tools/markdown-viewer-plan-print-record.test.mjs, runs in CI's shell job with no node_modules and holds the same sentences by text).
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -2391,4 +2393,216 @@ test("disabled until the body is in: the driver's start, where a press (the butt
     assert.equal(stay.state, s);
   }
   assert.equal(step(step(printing, { kind: "body", in: false }).state, { kind: "printed" }).act, "none", "a print's end after the body went out leaves the button disabled");
+});
+
+// ── the print record's pins that need the compiler ────────────────────────────────────────────────────────────────────────
+// tools/markdown-viewer-plan-print-record.test.mjs holds the plan's print follow-on (plans/markdown-viewer.md, "## Follow-on:
+// Print (2026-09-19)") to the tree. It runs in CI's shell job (`node --test tools/*.test.mjs` from the repo root) with no
+// node_modules, so it reaches no compiler: a `require("typescript")` there failed the job at load (2026-09-21). The three
+// derivations that need one run here, under npm test, and the record test holds the same sentences by text, each of its
+// messages naming this module as where the equality is checked by execution: P7's table sizes against the tables this module
+// runs (and the record test's text count of their array literals against the same tables), the figure leg's table built from
+// `shapes()` for the shape count, the two-URL count and the per-engine list, and the post-filter-index census by syntax over
+// the print test modules. The plan is read from the repo root the way file-view.ts is above.
+
+const REPO_ROOT = path.resolve(process.cwd(), "..");
+const readRepo = (...parts: string[]): string => fs.readFileSync(path.join(REPO_ROOT, ...parts), "utf8");
+/** The print follow-on section of the plan, its hard wraps collapsed so a pin survives a rewrap; read on first use so a
+ *  missing section fails the pin that needs it and not the module's load. */
+let printSectionText: string | null = null;
+function printSection(): string {
+  if (printSectionText === null) {
+    const plan = readRepo("plans", "markdown-viewer.md");
+    const head = "## Follow-on: Print (2026-09-19)";
+    const at = plan.indexOf("\n" + head + "\n");
+    assert.ok(at >= 0, "the follow-on section is in the plan");
+    printSectionText = plan.slice(at).replace(/\s+/g, " ");
+  }
+  return printSectionText;
+}
+/** `text` from `start` up to the `end` that follows it; a missing mark fails, which is the failure wanted. */
+function sectionBetween(text: string, start: string, end: string): string {
+  const a = text.indexOf(start);
+  assert.ok(a >= 0, JSON.stringify(start) + " is in the text");
+  const b = text.indexOf(end, a + start.length);
+  assert.ok(b > a, JSON.stringify(end) + " follows it");
+  return text.slice(a, b);
+}
+const sectionPart = (from: string, to: string): string => sectionBetween(printSection(), from, to);
+const COUNT_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"];
+const ORDINAL_WORDS = ["", "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth", "eleventh", "twelfth"];
+const tableTimes = (rows: ReadonlyArray<{ times?: number }>): number => rows.reduce((n, e) => n + (e.times ?? 1), 0);
+
+test("P7's derived numbers are the tables this module runs: the seat-keyed table's entries and seats and the rise over the 60, the argument axis's sites, hand-offs and URL writes, and the setAttribute writes the URL table lists, each read from the sentence in plans/markdown-viewer.md and held to the table by execution; and the record test's text count over this file's array literals, which is what CI's shell job holds the sentences by, counts the same tables", () => {
+  const P7 = sectionPart("P7. **", "**Derivations and their unknown cases.**");
+  const entries = SEATS_READ_BY_HAND.length, seats = tableTimes(SEATS_READ_BY_HAND);
+  const seatSentence = [...P7.matchAll(/(\d+) entries over (\d+) seats at the round-7 head, a rise of (\d+) entries/g)];
+  assert.equal(seatSentence.length, 1, "the seat-keyed table's size stands in P7 once");
+  assert.deepEqual(seatSentence[0].slice(1).map(Number), [entries, seats, entries - 60], "P7's entries, seats and rise are the table's (" + entries + " over " + seats + ", a rise of " + (entries - 60) + ")");
+  assert.ok(P7.includes("the census module holds it to the table it runs and prints the same two in its `second read:` diagnostic"), "P7 says this module holds the sentence to the table it runs");
+  const args = ARGS_READ_BY_HAND.length, argSeats = tableTimes(ARGS_READ_BY_HAND), urls = URL_WRITES_READ_BY_HAND.length, urlSeats = tableTimes(URL_WRITES_READ_BY_HAND);
+  const sizes = [...P7.matchAll(/(\d+) argument sites over (\d+) hand-offs and (\d+) URL writes today/g)];
+  assert.equal(sizes.length, 1, "today's table sizes stand in P7 once");
+  assert.deepEqual(sizes[0].slice(1).map(Number), [args, argSeats, urls], "P7's argument sites, hand-offs and URL writes are the tables' (" + args + " over " + argSeats + ", " + urls + ")");
+  assert.equal(urlSeats, urls, "no URL write is spelled alike twice at this head (the sentence carries one number for the URL writes; a `times` on an entry would make it two)");
+  assert.ok(P7.includes("the census module holds to the tables it runs and prints in its `second read:` diagnostic"), "P7 says this module holds the sentence to the tables it runs");
+  const setAttr = URL_WRITES_READ_BY_HAND.filter((e) => /\.setAttribute(?:NS)?\(/.test(e.on)).length;
+  const setAttrSentence = [...P7.matchAll(/(\w+) `setAttribute` writes/g)];
+  assert.equal(setAttrSentence.length, 1, "the setAttribute count stands in P7 once");
+  assert.ok(setAttr > 0 && setAttr < COUNT_WORDS.length, "the URL table lists setAttribute writes (" + setAttr + ")");
+  assert.equal(setAttrSentence[0][1], COUNT_WORDS[setAttr], "P7's count of the setAttribute writes the closing pass listed is the URL table's (" + setAttr + ")");
+  // the record test counts each table's array literal by text (an entry opens a line as `  { in: "`, a `times` adds to the
+  // seats); that read is what the shell job holds the sentences by, and it is held here to the tables it counts
+  const self = readRepo("ui", "webview", "file-print.test.ts");
+  const literal = (start: string): string => sectionBetween(self, start, "\n];");
+  const textCount = (src: string): { entries: number; seats: number } => {
+    const n = [...src.matchAll(/^  \{ in: "/gm)].length;
+    return { entries: n, seats: n + [...src.matchAll(/, times: (\d+)[,} ]/g)].reduce((sum, m) => sum + Number(m[1]) - 1, 0) };
+  };
+  assert.deepEqual(textCount(literal("const SEATS_READ_BY_HAND: SeatRead[] = [")), { entries, seats }, "the text count of the seat table's literal is the table run here (an entry not opening its line as the pattern expects would be missed by the text and is caught here)");
+  assert.deepEqual(textCount(literal("const ARGS_READ_BY_HAND: ArgRead[] = [")), { entries: args, seats: argSeats }, "the text count of the argument table's literal is the table run here");
+  const urlLiteral = literal("const URL_WRITES_READ_BY_HAND: UrlWriteRead[] = [");
+  assert.deepEqual(textCount(urlLiteral), { entries: urls, seats: urlSeats }, "the text count of the URL table's literal is the table run here");
+  assert.equal([...urlLiteral.matchAll(/^  \{ in: "[^"]*", on: "[^"]*\.setAttribute(?:NS)?\(/gm)].length, setAttr, "the text count of the URL table's setAttribute entries is the table's");
+});
+
+/** A row of the figure leg's table as `shapes()` builds it: the fields the record's pins read (the leg's own `Shape` type
+ *  has more; a per-engine column is an object keyed by engine). */
+type FigureRow = { name: string; html: (url: string, url2: string) => string; hidden?: boolean | Record<string, boolean>; paints: boolean | Record<string, boolean>; fetches?: unknown; twinReads?: Record<string, boolean | undefined>; flowReads?: { in: Record<string, boolean | undefined>; why: string } };
+/** The figure leg's table, BUILT: `shapes()` and the helpers it reads (`svgOf`, `image`, `HIDE_RULE`), cut from the leg's
+ *  source, transpiled with the compiler and run, so a count here is of the rows the leg builds (rows come from loops, so a
+ *  `name:` grep undercounts them). A cut that misses either mark fails, which is the failure wanted. */
+function figureRows(): FigureRow[] {
+  const src = readRepo("ui", "webview", "file-print-figure-browser.test.ts");
+  const start = src.indexOf("const svgOf = ");
+  const fnAt = src.indexOf("function shapes(): Shape[] {", start);
+  const end = src.indexOf("\n}\n", fnAt);
+  assert.ok(start >= 0 && fnAt > start && end > fnAt, "the leg declares svgOf, then shapes()");
+  const js = ts.transpileModule(src.slice(start, end + 2) + "\nreturn shapes();", { compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.None } }).outputText;
+  const rows = new Function(js)() as FigureRow[];
+  assert.ok(Array.isArray(rows) && rows.length > 0 && rows.every((r) => typeof r.name === "string" && typeof r.html === "function"), "the built table: rows with a name and an html builder");
+  return rows;
+}
+/** The figure leg's per-engine rows, derived from the table it builds: every row whose ink (`paints`), root answer
+ *  (`hidden`), twin oracle reading (`twinReads`) or flow answer (`flowReads`) is recorded per engine, each as the words the
+ *  Tests list carries for it, the row's name and the engines named (the round-6 review's cluster E, 2026-09-20: the roster
+ *  bullet stated single answers for rows the leg holds per engine, and a literal-sentence pin held the stale sentence; the
+ *  bullet now carries this list and the pin below derives it, so a row the leg gains with a per-engine column reds until the
+ *  bullet names it). */
+const ENGINE_NAMES: Record<string, string> = { chromium: "Chromium", firefox: "Firefox", webkit: "WebKit" };
+const ENGINE_ORDER = ["chromium", "firefox", "webkit"];
+const engineList = (engines: string[]): string => engines.length <= 1 ? engines.map((e) => ENGINE_NAMES[e]).join("") : engines.slice(0, -1).map((e) => ENGINE_NAMES[e]).join(", ") + " and " + ENGINE_NAMES[engines[engines.length - 1]];
+function divergenceNotes(rows: FigureRow[]): string[] {
+  const out: string[] = [];
+  for (const r of rows) {
+    const parts: string[] = [];
+    const paints = r.paints, hidden = r.hidden, twin = r.twinReads, flow = r.flowReads;
+    if (typeof paints === "object") parts.push("ink in " + engineList(ENGINE_ORDER.filter((e) => paints[e])) + ", none in " + engineList(ENGINE_ORDER.filter((e) => !paints[e])));
+    if (typeof hidden === "object") parts.push("the root read hidden in " + engineList(ENGINE_ORDER.filter((e) => hidden[e])) + " alone");
+    if (twin !== undefined) {
+      const on = ENGINE_ORDER.filter((e) => twin[e] === true), off = ENGINE_ORDER.filter((e) => twin[e] === false);
+      if (on.length) parts.push("the twin oracle reads a box in " + engineList(on));
+      if (off.length) parts.push("the twin oracle reads none in " + engineList(off));
+    }
+    if (flow !== undefined) {
+      const on = ENGINE_ORDER.filter((e) => flow.in[e] === true), off = ENGINE_ORDER.filter((e) => flow.in[e] === false);
+      if (on.length) parts.push("the flow counts it in " + engineList(on));
+      if (off.length) parts.push("the flow reads it off in " + engineList(off));
+    }
+    if (parts.length) out.push("`" + r.name + "` (" + parts.join("; ") + ")");
+  }
+  return out;
+}
+
+test("the figure leg's table, built from the leg's own source: the shape count P2 and the Tests list state is the number of rows `shapes()` builds, the two-URL count is the rows whose html takes the second URL, and the Tests list's figure-leg entry names every row the leg holds per engine, per engine, from the built table (the record test holds these sentences by text and cannot build the table: it runs with no node_modules)", () => {
+  const rows = figureRows();
+  const P2 = sectionPart("P2. **", "P3. **"), TESTS = sectionPart("**Tests.**", "**Open points for the owner.**");
+  const p2 = P2.match(/file-print-figure-browser\.test\.ts, in Chromium, Firefox and WebKit since the round-5 review: every one of (\d+) gated shapes built twice on one page, (\d+) at the round-3 review and (\w+) more since the round-4 review/);
+  assert.ok(p2 !== null && Number(p2[1]) === rows.length, "P2's sentence around the shape count carries the number of rows the leg builds (" + rows.length + ")");
+  const tests = TESTS.match(/every one of (\d+) gated shapes built twice on one page \((\d+) at the round-3 review, (\w+) added since the round-4 review, below\)/);
+  assert.ok(tests !== null && Number(tests[1]) === rows.length, "the Tests list's sentence around the shape count carries the number of rows the leg builds (" + rows.length + ")");
+  // the two-URL qualifier (the round-5 review's regression-5 and extra6-4): the rows whose html takes the second URL
+  const twoUrl = rows.filter((r) => r.html("URL", "URL2").includes("URL2"));
+  assert.ok(twoUrl.length >= 2 && twoUrl.length < COUNT_WORDS.length, "two-URL rows exist and their count has a word: " + twoUrl.length);
+  assert.ok(twoUrl.every((r) => r.fetches !== undefined), "every two-URL row carries a measured `fetches` column");
+  assert.ok(TESTS.includes("over " + COUNT_WORDS[twoUrl.length] + " added shapes with two URLs on two hosts, and a " + ORDINAL_WORDS[twoUrl.length + 1] + " for the display read below the root"), "the Tests list counts the two-URL shapes as the leg builds them (" + twoUrl.length + ") and the one-URL addition as the next");
+  // the per-engine list (the round-6 review's cluster E, regression-1 and extra7-1)
+  const bullet = sectionBetween(TESTS, "- ui/webview/file-print-figure-browser.test.ts, headless Chromium, Firefox and WebKit", "- ui/webview/file-view-print-takings-browser.test.ts");
+  const notes = divergenceNotes(rows);
+  const perEngine = rows.filter((r) => typeof r.paints === "object" || typeof r.hidden === "object" || r.twinReads !== undefined || r.flowReads !== undefined);
+  assert.equal(notes.length, perEngine.length, "one note per row with a per-engine column (paints or hidden per engine, twinReads, flowReads)");
+  assert.ok(notes.length >= 3 && notes.length < rows.length, "the population at this head: " + notes.length + " of " + rows.length + " rows hold a per-engine column");
+  const list = "The rows the leg holds per engine, each held to its record and named here from the leg's built table (file-print.test.ts derives this list from `shapes()` under npm test, so a row the leg gains with a per-engine column reds until it is named): " + notes.join("; ") + ".";
+  assert.ok(bullet.includes(list), "the figure-leg entry names every per-engine row per engine, in the leg's order: the population derived is the rows with per-engine paints or hidden, twinReads or flowReads, read in the entry's slice of the Tests list (its head to the takings leg's entry). Expected in the entry: " + list);
+});
+
+/** The array methods whose callback takes the element's index (the index is the third parameter of reduce and reduceRight,
+ *  the second of the rest). */
+const INDEXED_ITERATORS = ["map", "forEach", "flatMap", "filter", "some", "every", "find", "findIndex", "findLast", "findLastIndex", "reduce", "reduceRight"];
+/** Every chain in `src` that indexes a filter's result by its POST-FILTER index, by its syntax, so `i` counts the rows the
+ *  filter KEPT and no longer names the row of any table the callback indexes. The shape space read (the round-6 review's
+ *  tests-4, 2026-09-20: before this the census matched one shape, a `.map` with an indexed callback directly on a `.filter`
+ *  call): a call of any INDEXED_ITERATORS method whose callback declares the index parameter, on a receiver that is a
+ *  `.filter(...)` call or an identifier a variable declaration anywhere in the module binds to one (a `!` or parentheses
+ *  between them unwrapped), and `Array.from(<filter result>, (row, i) => ...)`. NOT read, so a chain written these ways
+ *  passes unseen: a filter result handed to a function as an argument and indexed inside it, returned from a function,
+ *  reassigned after its declaration, reached through a property or an element access, or spread into another array; a
+ *  binding is matched by NAME across the module, not by scope, so a name bound to a filter in one function marks that
+ *  name everywhere. Each as `line: text`. */
+function postFilterIndexChains(name: string, src: string): string[] {
+  const sf = ts.createSourceFile(name, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const out: string[] = [];
+  const unwrap = (n: ts.Node): ts.Node => { while (ts.isNonNullExpression(n) || ts.isParenthesizedExpression(n) || ts.isAsExpression(n) || ts.isTypeAssertionExpression(n)) n = n.expression; return n; };
+  const isFilterCall = (n: ts.Node): boolean => ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === "filter";
+  const filterBound = new Set<string>();
+  const collect = (n: ts.Node): void => { if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.initializer !== undefined && isFilterCall(unwrap(n.initializer))) filterBound.add(n.name.text); ts.forEachChild(n, collect); };
+  collect(sf);
+  const fromFilter = (n: ts.Node): boolean => { const r = unwrap(n); return isFilterCall(r) || (ts.isIdentifier(r) && filterBound.has(r.text)); };
+  const indexed = (fn: ts.Expression | undefined, min: number): boolean => fn !== undefined && (ts.isArrowFunction(fn) || ts.isFunctionExpression(fn)) && fn.parameters.length >= min;
+  const at = (n: ts.Node): string => (sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1) + ": " + n.getText(sf);
+  const walk = (n: ts.Node): void => {
+    if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression)) {
+      const method = n.expression.name.text, recv = n.expression.expression;
+      if (INDEXED_ITERATORS.includes(method) && fromFilter(recv) && indexed(n.arguments[0], /^reduce/.test(method) ? 3 : 2)) out.push(at(n));
+      else if (method === "from" && ts.isIdentifier(recv) && recv.text === "Array" && n.arguments.length >= 2 && fromFilter(n.arguments[0]) && indexed(n.arguments[1], 2)) out.push(at(n));
+    }
+    ts.forEachChild(n, walk);
+  };
+  walk(sf);
+  return out;
+}
+/** The print follow-on's test modules under ui/webview: the `ls ui/webview/file-print*.test.ts` listing the Tests paragraph
+ *  names, the gate's node module, the takings leg and the legs' shared harness. Read from the directory, so a module added
+ *  under the pattern joins the census on its own (the record test lists them the same way for its text census). */
+const printTestModules = (): string[] => [...fs.readdirSync(path.join(REPO_ROOT, "ui", "webview")).filter((f) => /^file-print.*\.test\.ts$/.test(f)), "figure-gate.test.ts", "file-view-print-takings-browser.test.ts", "real-viewer-leg.ts"].sort();
+/** The chains sanctioned by hand, each the executed record of the defect inside the node case that holds the helper
+ *  replacing it, keyed by module and by the chain's exact text (a line number would move). The record test carries the same
+ *  two texts and holds this literal to its list. */
+type PostFilterRecord = { file: string; text: string; why: string };
+const POST_FILTER_INDEX_RECORDS: PostFilterRecord[] = [
+  { file: "file-print-figure-browser.test.ts", text: "rows.filter((r, i) => r.twinPaints !== expected[i]).map((r, i) => r.name + \": the browser paints the twin \" + r.twinPaints + \", the leg expected \" + expected[i])", why: "paperMismatches' fails-before record (the round-4 review's correctness-4)" },
+  { file: "file-print-figure-browser.test.ts", text: "restored.filter(holds).map((_, i) => names[i])", why: "namesWhere's fails-before record (the round-5 review's correctness-3)" },
+];
+
+test("the post-filter index (the round-4 review's correctness-4, tests-7 and regression-3; the round-5 review's correctness-3, tests-2, regression-2 and extra7-1, one defect filed seven times; the round-6 review's tests-4: the shape space widened from one form): a census over the print test modules by syntax finds every chain that indexes a filter's result by the post-filter index in the forms its docstring names, passes the two fails-before records by their exact text and refuses any other with its module and line, saying what it does not read (run here, where the compiler is; the record test holds the records by text)", () => {
+  const modules = printTestModules();
+  assert.ok(modules.length >= 9 && modules.includes("file-print-figure-browser.test.ts") && modules.includes("file-print.test.ts"), "the listing is the follow-on's, this module in it: " + modules.join(", "));
+  const refused: string[] = [], found: PostFilterRecord[] = [];
+  for (const file of printTestModules()) {
+    for (const chain of postFilterIndexChains(file, readRepo("ui", "webview", file))) {
+      const text = chain.slice(chain.indexOf(": ") + 2);
+      const record = POST_FILTER_INDEX_RECORDS.find((r) => r.file === file && r.text === text);
+      if (record) found.push(record); else refused.push(file + ":" + chain);
+    }
+  }
+  assert.deepEqual(refused, [], "a post-filter-index chain the census has not read by hand: a message built from it names a row other than the one that failed (namesWhere or paperMismatches carry the row with its name). Read: an indexed callback of " + INDEXED_ITERATORS.join(", ") + " or Array.from on a filter call or a name a declaration binds to one, through !, parentheses and casts. Not read: a filter result handed as an argument, returned, reassigned, reached through a property or an element access, or spread");
+  assert.deepEqual(found.map((r) => r.text).sort(), POST_FILTER_INDEX_RECORDS.map((r) => r.text).sort(), "each sanctioned record stands once, none stale");
+  assert.equal(found.length, 2, "the population of the class at the round-6 head: the two records, no live chain");
+  // the census's own shape space is executed over a synthetic module: each named form is found, each unread form is not
+  const synthetic = [
+    "const kept = rows.filter((r) => r.ok);", "kept.map((r, i) => i);", "kept!.forEach((r, i) => i);", "(kept as T[]).some((r, i) => i > 0);",
+    "rows.filter((r) => r.ok).reduce((a, r, i) => a + i, 0);", "Array.from(rows.filter((r) => r.ok), (r, i) => i);",
+    "kept.map((r) => r.name);", "take(rows.filter((r) => r.ok)).map((r, i) => i);", "[...kept].map((r, i) => i);", "o.kept.map((r, i) => i);",
+  ].join("\n");
+  assert.deepEqual(postFilterIndexChains("synthetic.ts", synthetic).map((c) => c.slice(0, c.indexOf(":"))), ["2", "3", "4", "5", "6"], "the five named forms are found by their lines; the one-parameter callback, the argument road, the spread and the property road are not, as the docstring says");
 });

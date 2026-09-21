@@ -8715,8 +8715,10 @@ and form alone, one entry admitted every seat sharing the triple, so a second `m
 in the viewer's body passed under the entry hand-read for `main.appendChild(body)`; the table went from 60 entries keyed on
 the triple to 90 entries over 92 seats at the round-7 head, a rise of 30 entries, which is what the triple hid; the three
 numbers after the 60 are derived at every run and never carried: the record test counts the table's entries and their
-`times` in the census file and holds this sentence to them, and the census case prints the same two in its `second read:`
-diagnostic, `node esbuild.js --tests` in vscode-extension and then `node --test out-tests/ui/webview/file-print.test.js`);
+`times` in the census file by text and holds this sentence to them, and the census module holds it to the table it runs
+and prints the same two in its `second read:` diagnostic, `node esbuild.js --tests` in vscode-extension and then
+`node --test out-tests/ui/webview/file-print.test.js` (the record test runs in CI's shell job with no node_modules, so the
+check by execution is the census module's));
 and a receiver bound by `let` or `var`, or a parameter written to, is
 reassignable and fails unless the entry pins what every write to it assigns (`holds`; the round-6 review's correctness-5:
 the entry for the viewer's `let sess = null` pinned its declaration and nothing about what it held at the seat, and the
@@ -8762,8 +8764,9 @@ bundle's origin; the download route, a same-origin click the code makes; the Git
 reached on the person's click alone; the URL viewer's own document URL, same-origin by the caller's test, reached on a
 click), and no string road: the count that run printed as its refusals, recorded here as that run's fact and held as a
 literal. The tables have outgrown it since the closing pass widened both rules: they list 26 argument sites over 29
-hand-offs and 17 URL writes today, three numbers the record test counts from the census file and holds this sentence to,
-and the census case prints in its `second read:` diagnostic; each is listed with the reason. The derived set is printed with its lines as a
+hand-offs and 17 URL writes today, three numbers the record test counts from the census file by text and holds this
+sentence to, and the census module holds to the tables it runs and prints in its `second read:` diagnostic; each is listed
+with the reason. The derived set is printed with its lines as a
 diagnostic, held equal to the three lists, and `bodyReady` is executed over each root as its list says, over an unlisted
 child alone and beside every content root (not in), and under the PDF kind over each wait and line root (the loader
 alone in, the rest not). A root the viewer gains fails the census until it is listed, a `body` token the census
@@ -8885,15 +8888,23 @@ count in the Tests list recomputed by the listing it names,and, since the round-
 it also holds the computed read over every painting element against the flow's `offPaper`, `paintsOf` and `shows`, the
 probe drop shared by the two repaint roads and absent from the settle's, the ask written into the wait's row, the
 census's classes and its refusal, the editor's loader seated before its mount, and the legs and cases the round added,
-by their titles. Since the round-6 fixes (2026-09-20, after the round-5 review) it also runs the figure leg's table from
-the leg's own source and holds the shape count and the two-URL count in this section to the rows built, and it derives
-two populations over the print test modules rather than recalling them, the sources read with their comments for these
+by their titles. Since the round-6 fixes (2026-09-20, after the round-5 review) the figure leg's table is run from the
+leg's own source and the shape count and the two-URL count in this section are held to the rows built, and two
+populations over the print test modules are derived rather than recalled, the sources read with their comments for these
 two: every filter-then-map-by-index chain, by the modules' syntax, and every line carrying a spelling of the retired
 sentence; each passes the sites read by hand and refuses every other with its module and line. Since the round-7 fixes
-(2026-09-20, after the round-6 review) it also derives the seat-keyed table's size and the argument axis's listed sites
-from the census file, the figure leg's per-engine rows from the table the leg builds, scans the whole section by slice and
-the ledger entry for the shape count, pins each of the two count sentences as one composition with the count inside it,
-and reads the post-filter census's shape space, saying what it does not read. Two pins the round-6 pre-answers proposed
+(2026-09-20, after the round-6 review) the seat-keyed table's size and the argument axis's listed sites are derived from
+the census file and the figure leg's per-engine rows from the table the leg builds, the whole section is scanned by slice
+and the ledger entry for the shape count, each of the two count sentences is pinned as one composition with the count
+inside it, and the post-filter census reads its shape space, saying what it does not read. The record test runs in CI's
+shell job with no node_modules (`node --test tools/*.test.mjs` from the repo root), so it reaches no compiler, and the
+derivations that need one are the census module's, ui/webview/file-print.test.ts under npm test: it builds the figure
+leg's table from `shapes()` and holds the shape count, the two-URL count and the per-engine list to it, holds P7's table
+sizes to the tables it runs, and reads the post-filter census's shape space by syntax; the record test holds the same
+sentences by text, the two count sentences as compositions with every copy in the section held to one number, the table
+sizes counted over the census file's array literals, the retired sentence's population, the per-engine list's frame and
+entries, and the two fails-before records by their exact text, each message naming the census module as where the
+equality with the built table or the walked syntax is checked. Two pins the round-6 pre-answers proposed
 were dropped on the maintainer's word: a scan of P1 through this list for the shape count, and a guard refusing a heading
 of any level after the Print head. Fork PR #862 appends a section of its own to this plan, so either pin would collide
 with it and be re-cut around it; both are revisited after that PR lands, and the whole-section scan above covers the count
@@ -9134,9 +9145,10 @@ the plan's last because this section lands at the same place; it pins nothing of
   A second node case holds `namesWhere`, the restore assert's message, the same way: the row travels with its name
   through the filter, where the form before it indexed the unfiltered table by the post-filter index and named the
   first shape whichever row failed (the round-5 review's correctness-3, tests-2, regression-2 and extra7-1, the same
-  defect filed seven times over two rounds); the record test's census over the print test modules refuses every
-  filter-then-map-by-index chain but the two cases' fails-before records, by the modules' syntax, so the population
-  is read at each run rather than recalled. Since the round-7 fixes (2026-09-20): the `paints` column is the ink the twin
+  defect filed seven times over two rounds); file-print.test.ts's census over the print test modules (under npm test,
+  where the compiler is) refuses every filter-then-map-by-index chain but the two cases' fails-before records, by the
+  modules' syntax, so the population is read at each run rather than recalled. Since the round-7 fixes (2026-09-20): the
+  `paints` column is the ink the twin
   puts on the page, measured per row in each engine from a full-page screenshot decoded in the page (a pixel inside the
   twin's box that is not white; each twin stands at a fixed offset from the row's left edge and the leg asserts that no
   element of the row lays out over the box), the twin oracle's and the flow's readings recorded on the row where they
@@ -9146,8 +9158,8 @@ the plan's last because this section lands at the same place; it pins nothing of
   probed, and the render itself requested every one of the nine (FAILS BEFORE in its title, in Firefox and WebKit: eight
   pictures and seven probes against Chromium's two and one), with `rendered` read per container and held to the
   per-engine reading the docstrings state. The rows the leg holds per engine, each held to its record and named here
-  from the leg's built table (the record test derives this list from `shapes()`, so a row the leg gains with a
-  per-engine column reds until it is named): `opacity="1e-9"` (the root read hidden in WebKit alone; the twin oracle
+  from the leg's built table (file-print.test.ts derives this list from `shapes()` under npm test, so a row the leg gains
+  with a per-engine column reds until it is named): `opacity="1e-9"` (the root read hidden in WebKit alone; the twin oracle
   reads a box in Chromium, Firefox and WebKit; the flow counts it in Chromium and Firefox); `video>img (fallback)`
   (the twin oracle reads a box in Chromium, Firefox and WebKit; the flow counts it in Chromium, Firefox and WebKit);
   `svg>defs>image` (the twin oracle reads a box in Firefox and WebKit); `svg>symbol>image` (the twin oracle reads a
