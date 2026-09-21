@@ -90,7 +90,8 @@ TRAIL = ("each at the place and in the view you left it (while you are not editi
          "page open in a browser tab of its own; in the dashboard those two keys move the keyboard between the "
          "panes); a file opened from the chat, from a listing or from the Files pane's **Recent** list starts the "
          "trail over, and closing the viewer ends it, as does, in the chat, following a link to a page on the "
-         "dashboard's own web address that ends in .md: the page opens in the viewer in the file's place as a web "
+         "dashboard's own web address that ends in .md or .markdown: the page opens in the viewer in the file's place "
+         "as a web "
          "document rather than a file of the session, and the trail ends there (in the Files pane such a link opens "
          "a tab, as any web address does, and the trail stands).")
 # the whole figure sentence, byte for byte the copy tools/markdown-viewer-plan-linknav.test.mjs holds as SECOND (checked below)
