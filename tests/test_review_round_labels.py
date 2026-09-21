@@ -385,8 +385,8 @@ class ReviewRoundLabels(unittest.TestCase):
     def test_the_derivation_over_a_scratch_repository(self):
         """The derivation's git reads driven against a repository built here, under a git configuration that would reshape
         an unpinned diff: a deleted file is outside the population, a renamed file contributes its edited lines alone, a
-        token-free untracked file joins nothing, an untracked file with a token joins the list and the population, and
-        the manifest writer refuses an empty derivation."""
+        token-free untracked file joins nothing, an untracked file with a token joins the list and the population, two added
+        lines in one hunk are numbered from the hunk's start, and the manifest writer refuses an empty derivation."""
         R = "round"
         tmp = tempfile.mkdtemp(prefix="review-round-labels-")
         self.addCleanup(shutil.rmtree, tmp, True)
@@ -408,7 +408,8 @@ class ReviewRoundLabels(unittest.TestCase):
         self.assertIsNotNone(g("commit", "--quiet", "-m", "base"))
         self.assertIsNotNone(g("checkout", "--quiet", "-b", "branch"))
         os.remove(os.path.join(tmp, "gone.md"))
-        put("kept.md", "line one\nthe reviewer's %s 1 ruling\nline three\nsince %s 3 the park has a bound\n" % (R, R))
+        put("kept.md", "line one\nthe reviewer's %s 1 ruling\nline three\nsince %s 3 the park has a bound\nthe reviewer's %s 2 ruling closed it\n"
+            % (R, R, R))
         self.assertIsNotNone(g("mv", "moved.md", "renamed.md"))
         put("renamed.md", "the reviewer's %s 2 ruling\nsecond line\nthe maintainer's %s 4 ruled it\n" % (R, R))
         self.assertIsNotNone(g("add", "-A"))
@@ -420,10 +421,11 @@ class ReviewRoundLabels(unittest.TestCase):
         self.assertEqual(files, ["kept.md", "new_module.py", "renamed.md"],
                          "the deleted file and the token-free scratch file are outside the list; the renamed file is under its new path")
         self.assertEqual(sorted((p, t) for p, _, t in lines),
-                         [("kept.md", "since %s 3 the park has a bound" % R), ("new_module.py", "# review %s 4b reworded it too" % R),
-                          ("renamed.md", "the maintainer's %s 4 ruled it" % R)],
+                         [("kept.md", "since %s 3 the park has a bound" % R), ("kept.md", "the reviewer's %s 2 ruling closed it" % R),
+                          ("new_module.py", "# review %s 4b reworded it too" % R), ("renamed.md", "the maintainer's %s 4 ruled it" % R)],
                          "the added lines alone, under a git configuration that renames the diff header, drops the prefix and disables rename detection")
-        self.assertEqual([ln for p, ln, _ in lines if p == "kept.md"], [4], "the line number is the head's")
+        self.assertEqual([ln for p, ln, _ in lines if p == "kept.md"], [4, 5],
+                         "the line numbers are the head's: the hunk's start for the first added line and the per-line advance for the second")
         with self.assertRaises(ValueError):
             write_manifest(files, [], reason, path=os.path.join(tmp, "manifest.txt"))
         self.assertFalse(os.path.exists(os.path.join(tmp, "manifest.txt")), "nothing written for an empty derivation")
