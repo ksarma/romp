@@ -174,8 +174,18 @@ function world(o: Opts, arm: Arm = {}): World {
   // the view the lifted code holds: a Proxy over the record whose deleteProperty trap throws for every key, so a delete of the take state in
   // ANY form fails closed (the `delete` operator; `Reflect.deleteProperty`, which returns false and throws nothing on a non-configurable
   // property, under strict mode too; either with a computed key): until the author's fixer pass over the pass after the maintainer's round 4
-  // ruling (VT21) the accessors below were the whole refusal and a Reflect.deleteProperty of a take-state field passed in silence
-  const v: any = new Proxy(vRaw, { deleteProperty: (_t, k) => { throw new Error("v." + String(k) + " deleted" + (Object.prototype.hasOwnProperty.call(takeState, k) ? ": a delete of the view's take state is a take at the site, refused in every form (the delete operator, Reflect.deleteProperty, a computed key)" : ": the model's view has no deletable field, so this fails closed rather than passing as a silent no-op")); } });
+  // ruling (VT21) the accessors below were the whole refusal and a Reflect.deleteProperty of a take-state field passed in silence. Its
+  // defineProperty trap throws for every key the same way (Object.defineProperty, Object.defineProperties, Reflect.defineProperty, a computed
+  // key): until the closing fixer over the author's fixer pass over pass 5 (CL-2) a define of a take-state field reddened by the engine's own
+  // TypeError on the non-configurable accessor, and Reflect.defineProperty, which returns false instead of throwing, passed in silence. The
+  // set trap forwards a write to the record itself (a write through a Proxy with no set trap ends in its defineProperty trap, the receiver
+  // being the Proxy), so the lifted code's own writes of `stick` and `shown` land and a write of a take-state field reaches its accessor.
+  const isTakeState = (k: string | symbol): boolean => Object.prototype.hasOwnProperty.call(takeState, k);
+  const v: any = new Proxy(vRaw, {
+    set: (t, k, val) => Reflect.set(t, k, val),
+    deleteProperty: (_t, k) => { throw new Error("v." + String(k) + " deleted" + (isTakeState(k) ? ": a delete of the view's take state is a take at the site, refused in every form (the delete operator, Reflect.deleteProperty, a computed key)" : ": the model's view has no deletable field, so this fails closed rather than passing as a silent no-op")); },
+    defineProperty: (_t, k) => { throw new Error("v." + String(k) + " defined" + (isTakeState(k) ? ": a define of the view's take state is a take at the site, refused in every form (Object.defineProperty, Object.defineProperties, Reflect.defineProperty, a computed key)" : ": the model's view has no definable field, so this fails closed rather than passing as a silent no-op")); },
+  });
   const H: any = { content, v, spacer, writes: [] as Write[], calls: [] as any[], rows: [] as any[], toasts: [] as string[], deferred: [] as any[], trace, geometryAt: {} as Record<string, string[]>,
                    delta: D, arm,
                    land: (uuid: string) => { if (arm.rebuild) arm.rebuild(host); return !!arm.land; }, landT: (t: number) => !!arm.landT };
@@ -183,9 +193,10 @@ function world(o: Opts, arm: Arm = {}): World {
   // flag, which the stubs hold in place of production's parked figures, and the view's own three fields (`measured`, `avgTurnH`, `pxPerTurn`:
   // the fields the take writes, the untake restores and the parked figures are read from, derived from render.ts's tree and stated once in
   // spacer-measure.test.ts), each an accessor that traces its write as `<field>=<value>`, whatever the form of the write (an assignment of any
-  // operator, a destructuring pattern, Object.assign, Reflect.set), and refuses a delete in every form (the view's Proxy above throws on a
-  // deleteProperty, whether the `delete` operator's or Reflect.deleteProperty's, with a literal or a computed key; the accessors are
-  // non-configurable besides, so a defineProperty over one throws); nothing lifted here writes them, so a write of any is a take at the
+  // operator, a destructuring pattern, Object.assign, Reflect.set, an accessor or a method member of an Object.assign source, whose value the
+  // assign reads and sets), and refuses a delete and a define in every form (the view's Proxy above throws on a deleteProperty and on a
+  // defineProperty, whether the operator's, Object's or Reflect's, with a literal or a computed key, so a define reds by the model's message
+  // and not by the engine's on the non-configurable accessor); nothing lifted here writes them, so a write of any is a take at the
   // site (the maintainer's round 4 ruling, ordering-1: the world traced `measured` alone). The record: takeReloadScroll returns the persisted object ITSELF, the same object to the `saved`
   // decision's call and to the binding's, so the object's identity cannot tell the two records apart; the wrapper below gives each admitting
   // call a serial k, pushes `record#k`, and returns a per-call VIEW of the record whose `top` pushes `read rs.top#k` when read, so the read

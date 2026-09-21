@@ -74,11 +74,14 @@ type FieldWrite = { node: ts.Node; at: ts.Node; owner: string; field: string; de
  *  the member let a writer of another form escape with the module green): an assignment of any operator (the compiler's FirstAssignment to
  *  LastAssignment: `=`, `??=`, `||=`, `+=` and the rest), a destructuring assignment whose pattern holds the field as a target
  *  (`({ avg: v.avgTurnH } = m)`, `[v.measured] = [x]`), a for-of or for-in over the field, an increment or a decrement, a delete, and a call
- *  of `Object.assign`, `Object.defineProperty`, `Reflect.set`, `Reflect.defineProperty` or `Reflect.deleteProperty` whose receiver names the
- *  field or whose literal source or key does (`Object.assign(v, { measured: x })`, `Reflect.set(v, "measured", x)`, a literal key under a
- *  spread of a literal). Outside this census by construction, because the tree reads spellings and resolves no binding: a non-literal
- *  source's keys and a computed key (`Object.assign(v, src)`, `v[k] = x`), a call through an alias of the callee (`const oa = Object.assign;
- *  oa(v, ...)`), and a write through an alias of the parked object (`const pm = v.measured; pm.avg = x`). Who holds those depends on WHERE
+ *  of `Object.assign`, `Object.defineProperty`, `Object.defineProperties`, `Reflect.set`, `Reflect.defineProperty` or `Reflect.deleteProperty`
+ *  whose receiver names the field or whose literal source, map or key does (`Object.assign(v, { measured: x })`, `Reflect.set(v, "measured",
+ *  x)`, `Object.defineProperties(v, { pxPerTurn: { value: 5 } })`, a literal key under a spread of a literal; a literal's member of any kind,
+ *  a property, a shorthand, a method or an accessor, under an identifier, a string or a computed name whose expression is a string literal).
+ *  Outside this census by construction, because the tree reads spellings and resolves no binding: a non-literal source's or map's keys and a
+ *  computed key of any expression but a string literal (`Object.assign(v, src)`, `v[k] = x`, `{ [k]: x }`), a call through an alias of the
+ *  callee (`const oa = Object.assign; oa(v, ...)`), and a write through an alias of the parked object (`const pm = v.measured; pm.avg = x`).
+ *  Who holds those depends on WHERE
  *  the write is: inside the span land-active-keep.test.ts lifts (landActive, captureScrollAnchor, restoreScrollAnchor) the first two reach
  *  the world's accessors at run time and are named there; by an owner outside that span (another function of render.ts) they are outside
  *  both halves, a residual the body names (the author's fixer pass over the pass after the maintainer's round 4 ruling, VT8: until then
@@ -101,9 +104,15 @@ function writeSites(root: ts.Node): WriteSite[] {
   const site = (node: ts.Node, targets: Array<ts.Node | undefined>, keys: string[] = [], at: ts.Node = node, plain: ts.BinaryExpression | null = null, describe: string | null = null): void => { out.push({ node, at, targets: targets.filter((t): t is ts.Node => !!t), keys, plain, describe }); };
   const isAssign = (n: ts.Node): n is ts.BinaryExpression => ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && n.operatorToken.kind <= ts.SyntaxKind.LastAssignment;
   const calleeOf = (n: ts.CallExpression): string | null => ts.isPropertyAccessExpression(n.expression) && ts.isIdentifier(n.expression.expression) ? n.expression.expression.text + "." + n.expression.name.text : null;
-  // the literal keys of an object literal, through a spread of another literal (`{ ...{ measured: x } }` names `measured`: the author's fixer
-  // pass over the pass after the maintainer's round 4 ruling, VT20); a spread of anything else names nothing the tree can read
-  const literalKeys = (a: ts.Node): string[] => ts.isObjectLiteralExpression(a) ? a.properties.flatMap((p) => ts.isSpreadAssignment(p) ? literalKeys(p.expression) : (ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p)) && (ts.isIdentifier(p.name) || ts.isStringLiteralLike(p.name)) ? [p.name.text] : []) : [];
+  // the literal keys of an object literal: every member whose name the tree can read, whatever the member's kind (a property, a shorthand, a
+  // method, a getter or a setter: Object.assign reads a member's value and sets it, and a defineProperties map defines each key), under an
+  // identifier, a string, or a computed name whose expression is a string literal (`{ ["measured"]: x }`); through a spread of another
+  // literal (`{ ...{ measured: x } }` names `measured`: the author's fixer pass over the pass after the maintainer's round 4 ruling, VT20). A
+  // spread of anything else, and a computed name of any other expression, name nothing the tree can read. Until the closing fixer over the
+  // author's fixer pass over pass 5 (CL-2) a property or a shorthand under an identifier or a string was the whole census, so a computed
+  // literal name, an accessor or a method member passed the tree, and an Object.defineProperties call was no write to it.
+  const memberKey = (n: ts.PropertyName | undefined): string[] => !n ? [] : ts.isIdentifier(n) || ts.isStringLiteralLike(n) ? [n.text] : ts.isComputedPropertyName(n) && ts.isStringLiteralLike(n.expression) ? [n.expression.text] : [];
+  const literalKeys = (a: ts.Node): string[] => ts.isObjectLiteralExpression(a) ? a.properties.flatMap((p) => ts.isSpreadAssignment(p) ? literalKeys(p.expression) : memberKey(p.name)) : [];
   const go = (n: ts.Node): void => {
     if (isAssign(n)) {
       if (ts.isObjectLiteralExpression(n.left) || ts.isArrayLiteralExpression(n.left)) site(n, targetsOf(n.left));
@@ -115,6 +124,7 @@ function writeSites(root: ts.Node): WriteSite[] {
     if (ts.isCallExpression(n)) {
       const callee = calleeOf(n);
       if (callee === "Object.assign") site(n, [n.arguments[0]], n.arguments.slice(1).flatMap(literalKeys));
+      else if (callee === "Object.defineProperties") site(n, [n.arguments[0]], n.arguments[1] ? literalKeys(n.arguments[1]) : []);   // the map's keys are the fields defined
       else if (callee === "Object.defineProperty" || callee === "Reflect.set" || callee === "Reflect.defineProperty" || callee === "Reflect.deleteProperty") { const k = n.arguments[1]; site(n, [n.arguments[0]], k && ts.isStringLiteralLike(k) ? [k.text] : []); }
     }
     ts.forEachChild(n, go);
@@ -144,7 +154,8 @@ const fieldOnParam = (e: ts.Node, param: string): string | null => {
   return null;
 };
 /** The fields of the parameter `param` written under `root`, in every form writeSites names (a plain or compound assignment, a destructuring
- *  pattern, a for-of or for-in, an increment, a delete, an Object.assign or a defineProperty or Reflect call with a literal key or source),
+ *  pattern, a for-of or for-in, an increment, a delete, an Object.assign, defineProperty, defineProperties or Reflect call with a literal key,
+ *  source or map),
  *  through a parenthesis or an assertion on the receiver. The derivation of the take state (the ordering pin) reads the take's and the
  *  untake's writes through this and the parked figures' reads through fieldsReadOn, so it keys on the PROPERTY, the field of the view written
  *  or read, not on the spelling `v.<field>` (until the author's fixer pass over the pass after the maintainer's round 4 ruling, VT14, the
@@ -818,7 +829,7 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   ].sort(), "every write of the family that runs under a reader of the take state, by reader and writer, direct or one hop through a named conduit (an inner owner, a wrapper and the conduit named where they apply): a write added under one of these readers, under any writer name, inside any inner function, through any registered wrapper or through a helper a reader calls, reds here and owes a harness case for its road");
   // every reset that clears the average clears the parked figures with it (forgetAverage), and none clears the figure bare
   assert.match(RENDER, /function forgetAverage\(v: View\): void \{\s*\n\s*v\.avgTurnH = undefined; v\.measured = undefined;\s*\n\}/);
-  assert.deepEqual(avgWrites.sort(), ["applyMeasure: m.avg", "forgetAverage: undefined", "untakeMeasure: before.avg"], "the average is written by the take, the untake and the one bare clear, the helper's (by owner from the syntax tree, in every form the tree can name: every assignment operator, an increment, a delete, a destructuring pattern that names the field, a for-of or for-in over it, or an Object.assign, defineProperty or Reflect call whose receiver or literal key names it: writesOf)");
+  assert.deepEqual(avgWrites.sort(), ["applyMeasure: m.avg", "forgetAverage: undefined", "untakeMeasure: before.avg"], "the average is written by the take, the untake and the one bare clear, the helper's (by owner from the syntax tree, in every form the tree can name: every assignment operator, an increment, a delete, a destructuring pattern that names the field, a for-of or for-in over it, or an Object.assign, defineProperty, defineProperties or Reflect call whose receiver or literal key names it: writesOf)");
   assert.deepEqual(byOwner("forgetAverage"), ["chatHead(v)", "rerenderAll(v)", "runPrebuild(v)", "showActive(v)"], "four resets, by owner from the syntax tree: the older-history re-anchor, the compact toggle's rerender, the prebuild's and the switch's re-collapse");
   assert.match(RENDER, /import \{ rowsFor, meanRowHeight, perTurnEstimate \} from "\.\/turn-estimate";/);
   assert.match(RENDER, /interface View \{[^\n]*measured\?: \{ avg\?: number; per\?: number \};/, "the parked figures live on the view");
@@ -896,6 +907,6 @@ test("the reload restore's raw write of the persisted rs.top, on the tree: from 
   ];
   assert.deepEqual(between, [], "the reload restore's raw write: the window from the record's binding (line " + line(sB) + ") to the write (line " + line(write) + ") holds a take, so the persisted top, measured in the layout the take before it re-derives, would land in a layout it was not measured in; the site needs no take-back only while this window stays closed (this check keys on taker calls by name and take-state writes in the forms the tree can name; a geometry change in the window is held by land-active-keep.test.ts's model, which records it and fails closed)");
   // the derivation the window check rests on, pinned after it so a plant in the window is named by the window's message
-  assert.deepEqual([...setters].sort(), ["applyMeasure", "forgetAverage", "measureUnits", "untakeMeasure"], "the take state's writers, by owner from the tree, of any of its three fields in any form the tree can name (writesOf): the take, the reset, the park and the untake; a fifth is a new writer of the take state and belongs with the censuses above (outside this census by construction, the tree reading spellings and resolving no binding: a write through a computed key or a non-literal Object.assign source, a call through an alias of the callee, a write through an alias of the parked object; inside the ordering window the first two reach land-active-keep.test.ts's accessors at run time, and by an owner outside the span that test lifts they are outside both halves, a residual the body names)");
+  assert.deepEqual([...setters].sort(), ["applyMeasure", "forgetAverage", "measureUnits", "untakeMeasure"], "the take state's writers, by owner from the tree, of any of its three fields in any form the tree can name (writesOf): the take, the reset, the park and the untake; a fifth is a new writer of the take state and belongs with the censuses above (outside this census by construction, the tree reading spellings and resolving no binding: a write through a computed key of any expression but a string literal or a non-literal Object.assign source or defineProperties map, a call through an alias of the callee, a write through an alias of the parked object; inside the ordering window the first two reach land-active-keep.test.ts's accessors at run time, and by an owner outside the span that test lifts they are outside both halves, a residual the body names)");
   assert.ok(takers.has("landActive") && takers.has("renderWindowItems") && takers.has("scrollToAnchor") && takers.has("syncViewInner"), "the closure reaches the takers one and two hops out (the walk is not empty): " + [...takers].sort().join(", "));
 });
