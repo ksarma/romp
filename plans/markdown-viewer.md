@@ -8676,7 +8676,10 @@ which runs before that job installs Chromium (the gate-before-adoption section's
 and tools/markdown-viewer-plan-gate-adopt.test.mjs holds it), and run in the step after that install under
 `ROMP_FILEVIEW_BROWSER_REQUIRE`, where a runner without the browser turns the job red rather than green with the coverage
 gone; tools/markdown-viewer-plan-linknav.test.mjs derives those legs from the tree, as the browser modules whose own text
-names this follow-on, and holds the step's run line to them and the step's place after the install and after the Test step
+names this follow-on, and holds the step's run line to them, the step's place after the install and after the Test step
+and its bound in minutes, reads each leg's route to the one launching helper comment-stripped, and, behind L6's gate,
+holds that every browser leg the diff since the merge-base adds or modifies is among them, since a leg the branch adds
+whose text names no follow-on would run in no gating step with both text-keyed derivations of the roster agreeing
 (the file review's landing round's second read, extra8-2: the legs were the feature's evidence and none of them ran where landing is
 gated, the gating run's log showing every browser scenario of theirs as SKIP). Sixteen standing suites were re-aimed, not undone:
 ui/webview/file-view-text-size.test.ts (its real-module bar leg at 380, 420, 480 and 600 px in the chat and feed modals
@@ -8740,16 +8743,17 @@ re-aimed sentence's count is the number of pre-existing test modules the diff si
 modifies, read from the sentence and compared, with each of them named in that sentence, behind the same two-part gate as
 L6's verifications, since a module's own text need not name this follow-on for the branch to have changed it, which is
 why the text-keyed rule alone let the count stand short by two (the file review's landing round, tests-3); every
-module named here exists, this one included). The three checks keyed on the diff since the merge-base with
+module named here exists, this one included). The four checks keyed on the diff since the merge-base with
 `origin/main` (L6's kernel stat and listing, one check with two claims; the re-aimed count's comparison with the
-delta; and the attribution module's second road, below; the re-aimed count's list-vs-count half is not among them and
-runs in every checkout) run in no checkout that gates landing, and in none after the merge: the fork's CI checks the pull request out at depth 1 in the
+delta; the browser legs' comparison with the delta; and the attribution module's second road, below; the re-aimed
+count's list-vs-count half is not among them and runs in every checkout) run in no checkout that gates landing, and in
+none after the merge: the fork's CI checks the pull request out at depth 1 in the
 jobs that run `node --test tools/*.test.mjs` and `npm test` (no `origin/main` there, so the gate's first part holds them
 off; only the secrets job fetches history, and tools/markdown-viewer-plan-linknav.test.mjs holds those two jobs to a
 checkout with no `fetch-depth: 0`, so a change there names this sentence), and once the follow-on has landed every later
 branch's diff since its merge-base adds that branch's files and not these modules, so the guard that lands is the
-attribution module's first road, the rule over the tree, and every claim about the delta, L6's two and the re-aimed
-count's comparison, holds by the prose alone, re-derived by hand at the merged head (the file review's round 5, extra5-1 with tests-1, correctness-4 and extra5-3: this
+attribution module's first road, the rule over the tree, and every claim about the delta, L6's two, the re-aimed
+count's comparison and the browser legs' comparison, holds by the prose alone, re-derived by hand at the merged head (the file review's round 5, extra5-1 with tests-1, correctness-4 and extra5-3: this
 page had stated the gate and the stand-down apart and never composed them, so a reader was never told what the enduring
 guard is). tools/markdown-viewer-plan-linknav-review.test.mjs holds the review's
 corrections to this record: L3 names the floor by the source's constant and the number the source gives it, its two

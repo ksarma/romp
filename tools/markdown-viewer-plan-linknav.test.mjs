@@ -11,8 +11,8 @@
 // trail, the reload keeping it, the delegate's push, the buttons' open with no target, the capture-phase chord
 // listener); the words quoted in the section and the guide are the sources' literals; both sheets carry L3's rules
 // under `screen` and the print block names the control nowhere; no history API call stands in the trail or the viewer
-// (L5); the trail module imports nothing and fetches nothing, and the checks keyed on the delta (L6's two verifications, and
-// the re-aimed count's comparison with it, below) are run from the merge-base with origin/main where that base tells this
+// (L5); the trail module imports nothing and fetches nothing, and the checks keyed on the delta (L6's two verifications, the
+// re-aimed count's comparison with it, and the browser legs' comparison with it, below) are run from the merge-base with origin/main where that base tells this
 // branch's delta from main's tip, behind a two-part gate read off git: the
 // merge-base is not origin/main itself, and the diff since it adds this module (the file review's round 4, extra8-1: the
 // verifications are claims about this follow-on's delta, and the diff since the merge-base is that delta only on the open
@@ -93,6 +93,7 @@ function deltaOf(repo, module) {
 /** The checks this module keys on the delta since the merge-base, by the names the plan's stand-down sentence gives them. */
 const L6_CHECK = "L6's kernel stat and listing";
 const REAIMED_CHECK = "the re-aimed count's comparison with the delta";
+const LEGS_CHECK = "the browser legs' comparison with the delta";
 /** Every check of this module keyed on the delta, by name, once it has been run or held off through `gated` below. */
 const GATED_RAN = new Set();
 /** The one door for a check keyed on the delta: deltaOf over this repository is called here and nowhere else (asserted in the
@@ -487,8 +488,39 @@ test('the re-aimed sentence: its count is the number of pre-existing test module
 /** The follow-on's browser legs, derived from the tree: the `*-browser.test.ts` modules under ui/webview whose own text names the
  *  follow-on (claimants, above). Two derivations must agree: the Tests paragraph's list of browser modules is the same set. */
 const browserLegs = () => claimants(['ui', 'webview'], /-browser\.test\.ts$/);
+/** A leg's source with its comments removed by their line shape, for the route checks below: a line whose text starts with `//`
+ *  goes, and a block comment opened at a line's start goes through the line that closes it. The tools job runs this module with
+ *  no node_modules, so the compiler's comment ranges (ui/test-code-only.ts) are out of reach here. A comment opened after code
+ *  on its line stays: a `launch(` quoted there reds the launch check, the safe side and never a false green, and an import
+ *  quoted there is not at a line's start, which the import check requires (the author's closing pass after the file review's
+ *  landing round's second read: the checks had read the raw source with an unanchored import regex and one launch spelling, so a
+ *  leg with the import in a comment and a private `pw["chromium"]["launch"]()` was green). */
+const codeLines = (src) => {
+  const out = []; let inBlock = false;
+  for (const line of src.split('\n')) {
+    const t = line.trim();
+    if (inBlock) { if (t.includes('*/')) inBlock = false; continue; }
+    if (t.startsWith('//')) continue;
+    if (t.startsWith('/*')) { if (!t.includes('*/', 2)) inBlock = true; continue; }
+    out.push(line);
+  }
+  return out.join('\n');
+};
+/** Why a leg's code is not routed through the helper, or null: it imports inBrowser from real-viewer-leg.ts in an import
+ *  statement at a line's start, and calls launch on nothing, under any access spelling (a property access, an optional chain, a
+ *  bracket holding a string literal) followed by a call. A launch reached through a name computed at run time
+ *  (`pw.chromium["la" + "unch"]()`) is outside this read; a `launch` key in an object (the stand-down test's throwing stub) is no
+ *  call and passes. */
+const offRoute = (code) => {
+  if (!/^import \{[^}]*\binBrowser\b[^}]*\} from "\.\/real-viewer-leg";/m.test(code)) return 'no import of inBrowser from real-viewer-leg.ts at a line\'s start';
+  const m = /(?:\.|\?\.)\s*launch\s*\(|\[\s*(["'`])launch\1\s*\]\s*\(/.exec(code);
+  return m ? 'a launch outside the helper: ' + m[0] : null;
+};
+/** The browser legs among `files` (paths from the repo root, the delta's) that `legs` (the roster, basenames) does not hold:
+ *  a leg the branch touched that runs in no gating step and is named in no record. */
+const legsOffRoster = (files, legs) => files.filter((f) => /^ui\/webview\/[\w-]+-browser\.test\.ts$/.test(f)).map((f) => f.replace(/^ui\/webview\//, '')).filter((f) => !legs.includes(f)).sort();
 
-test('the follow-on\'s browser legs run in the job that gates a landing: the step that sets the switch real-viewer-leg.ts exports runs, as compiled files under out-tests, every browser leg whose own text names the follow-on and no other, stands after that job\'s Chromium install and after its Test step (which runs the legs first, where they skip) inside the one job that runs npm test, and each leg launches through the helper that reads the switch; the Tests paragraph says so, naming the switch and no count', () => {
+test('the follow-on\'s browser legs run in the job that gates a landing: the step that sets the switch real-viewer-leg.ts exports runs, as compiled files under out-tests, every browser leg whose own text names the follow-on and no other, stands after that job\'s Chromium install and after its Test step (which runs the legs first, where they skip) inside the one job that runs npm test, is bounded in minutes so a wedged leg reds the step rather than cancelling the job, and each leg, read comment-stripped, launches through the helper that reads the switch under any access spelling; behind L6\'s gate every browser leg the delta adds or modifies is in that roster; the Tests paragraph says so, naming the switch and no count', (t) => {
   const legs = browserLegs();
   assert.ok(legs.length > 0, 'browser legs naming the follow-on are on disk');
   const tests = section.slice(section.indexOf('**Tests.**'));
@@ -498,12 +530,19 @@ test('the follow-on\'s browser legs run in the job that gates a landing: the ste
   const sw = /^export const BROWSER_REQUIRE = "(ROMP_[A-Z_]+)";$/m.exec(helper);
   assert.ok(sw, 'real-viewer-leg.ts exports the switch\'s name as BROWSER_REQUIRE');
   const SWITCH = sw[1];
-  assert.ok(/if \(env\[BROWSER_REQUIRE\]\) assert\.fail\(/.test(helper), 'the helper fails under the switch (file-figure-open-browser.test.ts drives both roads under both settings)');
-  for (const f of legs) {
-    const src = read('ui', 'webview', f);
-    assert.ok(/import \{[^}]*\binBrowser\b[^}]*\} from "\.\/real-viewer-leg";/.test(src), f + ' imports inBrowser from real-viewer-leg.ts, the one helper that reads the switch (a private launch would skip under it)');
-    assert.ok(!/chromium\.launch\(/.test(src), f + ' launches through the helper alone');
+  // that the helper fails under the switch on both roads is driven, not read: file-figure-open-browser.test.ts's stand-down test
+  // runs inBrowser with no module and with a throwing launch, under both settings and with an empty value (a grep of the helper's
+  // `assert.fail` line stood here and a comment quoting it would have satisfied it)
+  // the route: each leg's code, comment-stripped, imports the helper at a line's start and launches nothing itself; the read is
+  // armed on the shape that passed the raw read and on the spellings the one-spelling check missed
+  assert.equal(offRoute(codeLines('import { inBrowser, openViewer } from "./real-viewer-leg";\ntest("x", (t) => inBrowser(t, async (b) => { const stub = { chromium: { launch: async () => {} } }; void stub; }));\n')), null, 'the head\'s shape passes: the import at a line\'s start, no launch call, a launch KEY in a stub allowed');
+  assert.equal(offRoute(codeLines('// import { inBrowser as withBrowser } from "./real-viewer-leg";\nasync function withBrowser(t, body) { const pw = requireCjs("playwright"); const browser = await pw["chromium"]["launch"](); await body(browser); }\n')), 'no import of inBrowser from real-viewer-leg.ts at a line\'s start', 'the import moved into a comment is no import (the plant the raw read passed)');
+  assert.equal(offRoute(codeLines('/*\nimport { inBrowser } from "./real-viewer-leg";\n*/\nconst x = 1;\n')), 'no import of inBrowser from real-viewer-leg.ts at a line\'s start', 'nor one quoted in a block comment');
+  for (const [spelling, want] of [['const b = await pw.chromium.launch();', '.launch('], ['const b = await pw?.chromium?.launch();', '?.launch('], ['const b = await pw["chromium"]["launch"]();', '["launch"]('], ["const b = await pw.chromium['launch']();", "['launch']("]]) {
+    assert.equal(offRoute(codeLines('import { inBrowser } from "./real-viewer-leg";\n' + spelling + '\n')), 'a launch outside the helper: ' + want, 'a private launch is refused under the spelling ' + spelling);
   }
+  assert.equal(offRoute(codeLines('import { inBrowser } from "./real-viewer-leg";\nconst b = 1; // pw.chromium.launch()\n')), 'a launch outside the helper: .launch(', 'a launch quoted in a comment after code reds too: the stripper reads line shapes, and this is its safe side');
+  for (const f of legs) assert.equal(offRoute(codeLines(read('ui', 'webview', f))), null, f + ' launches through the helper alone: it imports inBrowser from real-viewer-leg.ts at a line\'s start and calls launch on nothing (a private launch would skip under the switch)');
   const ci = read('.github', 'workflows', 'ci.yml');
   const lines = ci.split('\n');
   const at = lines.flatMap((l, i) => (l.trim() === SWITCH + ': "1"' ? [i] : []));
@@ -512,6 +551,15 @@ test('the follow-on\'s browser legs run in the job that gates a landing: the ste
   let k = step;
   while (k < lines.length && !/^\s+run:/.test(lines[k]) && !/^\s+- /.test(lines[k])) k++;
   assert.ok(k < lines.length && /^\s+run:/.test(lines[k]), 'the step that sets the switch has a run line before the next step');
+  // the step's block, from its `- name:` to the next step, carries a bound in minutes (a hung launch or page in one leg reds the step
+  // naming the leg in its log instead of running to the job's cap and showing as a cancelled job)
+  let from = step;
+  while (from > 0 && !/^\s+- name:/.test(lines[from])) from--;
+  let to = step + 1;
+  while (to < lines.length && !/^\s+- /.test(lines[to])) to++;
+  const bound = lines.slice(from, to).flatMap((l) => (/^\s+timeout-minutes: (\d+)\s*$/.exec(l) ? [Number(/(\d+)/.exec(l)[1])] : []));
+  assert.deepEqual(bound.length, 1, 'the step carries one timeout-minutes line: ' + JSON.stringify(bound));
+  assert.ok(bound[0] >= 1 && bound[0] <= 10, 'the bound is minutes, at most ten (the legs run in about 11 s here at concurrency 4): ' + bound[0]);
   const run = lines[k].replace(/^\s+run:\s*/, '');
   const m = /^node --test((?: out-tests\/ui\/webview\/[\w-]+\.test\.js)+)$/.exec(run);
   assert.ok(m, 'the run line is node --test over compiled files under out-tests/ui/webview and nothing else: ' + run);
@@ -535,8 +583,19 @@ test('the follow-on\'s browser legs run in the job that gates a landing: the ste
   const sentence = tests.slice(sentenceAt, tests.indexOf('. ', sentenceAt) + 1);
   assert.ok(sentence.includes('in the Test step of the job that gates a landing too, which runs before that job installs Chromium'), 'and that the gating job\'s Test step is such a place: ' + sentence);
   assert.ok(sentence.includes('run in the step after that install under `' + SWITCH + '`'), 'and that they run in the step after the install under the switch, by its name: ' + sentence);
+  assert.ok(sentence.includes('every browser leg the diff since the merge-base adds or modifies is among them'), 'and that the roster is compared with the delta behind L6\'s gate: ' + sentence);
   assert.equal((tests.match(new RegExp('`' + SWITCH + '`', 'g')) || []).length, 1, 'the switch is named once in the Tests paragraph');
   assert.ok(!/\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|\d+) browser legs\b/i.test(sentence), 'the sentence counts no legs (the roster is derived here, never typed there): ' + sentence);
+  // the roster against the delta, behind L6's gate: a browser leg the branch adds or modifies whose text names no follow-on is in
+  // the roster of no step and named in no record while the two text-keyed derivations above agree (the author's closing pass after
+  // the file review's landing round's second read: a committed quiet leg left this test green and only L6's count red)
+  assert.deepEqual(legsOffRoster(['ui/webview/zz-quiet-browser.test.ts', 'ui/webview/file-trail-browser.test.ts', 'ui/webview/file-trail.test.ts', 'docs/guide.md'], ['file-trail-browser.test.ts']), ['zz-quiet-browser.test.ts'], 'the comparison, driven: a browser leg in the delta and not in the roster is named; a leg in both, a node module and a doc are not');
+  gated(t, LEGS_CHECK, (d) => {
+    const inTree = d.files.filter((f) => exists(...f.split('/')));
+    const off = legsOffRoster(inTree, legs);
+    assert.deepEqual(off, [], 'every browser leg the diff since the merge-base ' + d.base + ' adds or modifies names the follow-on and is in the roster the step runs (a quiet leg runs in no gating step): ' + off.join(', '));
+    t.diagnostic('the browser legs\' comparison ran: ' + inTree.filter((f) => /-browser\.test\.ts$/.test(f)).length + ' browser legs in the delta since the merge-base ' + d.base + ', every one in the roster');
+  }, '; the roster is held to the tree\'s text and the Tests paragraph alone here');
 });
 
 // ── the gate on L6's verifications ─────────────────────────────────────────────────────────────────
@@ -595,8 +654,11 @@ test('L6\'s gate (the file review\'s round 5, tests-7): a pure function over git
 // ── the stand-down sentence, held to the checks that stand down ────────────────────────────────────
 
 test('the plan\'s stand-down sentence is a rule over the checks keyed on the delta since the merge-base, and its count is derived: the number word equals the checks this module ran through `gated` plus the attribution module\'s exported count, each check is named in it, and it says they run in no checkout that gates landing and in none after the merge; deltaOf over this repository is called through `gated` alone, and every held-off diagnostic names its check (the file review\'s landing round\'s second read, extra6-1: the sentence had named two of three and its pin held the bytes, so the short enumeration could never go red)', () => {
-  const own = read(...THIS_MODULE.split('/'));
-  assert.equal((own.match(/deltaOf\(REPO, /g) || []).length, 1, 'deltaOf over the repository is called in gated alone, so GATED_RAN is every check this module keys on the delta');
+  // this module's own source, its `//` comment lines dropped (the tools job runs without the compiler, so ui/test-code-only.ts is
+  // out of reach); a block comment or a comment after code quoting one of the two calls counts here and reds this test, a false
+  // red and never a false green, which the message then explains
+  const own = read(...THIS_MODULE.split('/')).split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+  assert.equal((own.match(/deltaOf\(REPO, /g) || []).length, 1, 'deltaOf over the repository is called in gated alone, so GATED_RAN is every check this module keys on the delta (a comment after code quoting the call counts here too: read comment-stripped by line shape)');
   assert.equal((own.match(/\bgated\(t, [A-Z0-9_]+_CHECK, /g) || []).length, GATED_RAN.size, 'every gated call in this module ran before this test (a check declared and not run is red here): ' + [...GATED_RAN].join('; '));
   assert.ok(GATED_RAN.size >= 2, 'at least two checks ran through the door (an empty set cannot satisfy the count): ' + [...GATED_RAN].join('; '));
   const road2 = /^export const ROAD_TWO_GATED_CHECKS = (\d+);$/m.exec(read('ui', 'webview', 'linknav-records-attribution.test.ts'));
@@ -608,7 +670,7 @@ test('the plan\'s stand-down sentence is a rule over the checks keyed on the del
   for (const name of GATED_RAN) assert.ok(m[2].includes(name), 'the sentence names the check ' + JSON.stringify(name));
   assert.ok(m[2].includes("the attribution module's second road"), "the sentence names the attribution module's second road");
   assert.ok(m[2].includes("the re-aimed count's list-vs-count half is not among them and runs in every checkout"), 'and says which half of the re-aimed check is not gated (both refuters of extra6-1)');
-  assert.ok(section.includes("and every claim about the delta, L6's two and the re-aimed count's comparison, holds by the prose alone, re-derived by hand at the merged head"), 'the closing clause covers every gated claim, the re-aimed count\'s among them');
+  assert.ok(section.includes("and every claim about the delta, L6's two, the re-aimed count's comparison and the browser legs' comparison, holds by the prose alone, re-derived by hand at the merged head"), 'the closing clause covers every gated claim, the re-aimed count\'s and the browser legs\' among them');
   // the held-off diagnostics name the check, whichever part of the gate held it (extra6-1: the re-aimed count's stand-down had
   // been reported as L6's)
   for (const held of Object.keys(HELD)) for (const name of GATED_RAN) assert.ok(HELD[held](name, 'aaaa', THIS_MODULE).startsWith(name + ' did not run: '), 'the diagnostic for ' + JSON.stringify(held) + ' names ' + JSON.stringify(name));
