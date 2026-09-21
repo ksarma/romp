@@ -2237,14 +2237,24 @@ function initGear(post, opts) {
 // next open shows the feed), 'unfetched' (no attempt yet). Each reason is worded on its own: a fetch in flight is
 // not "nothing fetched yet", which after a landed or failed fetch would be false (review round 1). On either source
 // `overrides` counts the rows the user's model-prices.json put in effect, and the line says so: those rows price
-// their models whichever table the line names. A block without a newer key (an older kernel) is worded as the
-// older shape. tests/test_price_feed_vocabulary.py holds these words and the kernel's to one set.
+// their models whichever table the line names. On either source too, `unrecognised` is the kernel's boolean for a
+// ROMP_PRICE_FEED value that is neither off nor unset (the review of PR 878: only off turns the feed off, so such a
+// value leaves it on, and until this key it read the same as an unset variable on every surface): the line says
+// so, as one clause last before the override count, naming the variable so the reader knows what to fix and never
+// the value, since the block rides the auth-exempt /version and carries no environment text. A block without a
+// newer key (an older kernel) is worded as the older shape. tests/test_price_feed_vocabulary.py holds these words
+// and the kernel's to one set.
 function raPriceNote(pf) {
   if (!pf || typeof pf !== 'object') return '';
   // rows from the user's model-prices.json price their models whichever table the line names, so the count is said
   // on either source, last (a block without `overrides`, an older kernel, says nothing about the file)
   var ovr = typeof pf.overrides === 'number' && pf.overrides > 0
     ? pf.overrides + (pf.overrides === 1 ? ' row' : ' rows') + ' overridden by model-prices.json' : '';
+  // the switch set to a value that is not off (the kernel's `unrecognised`, true only as its boolean; the kernel reads
+  // off and this as exclusive): the feed stays on, and the line says so on either source, naming the variable and
+  // the rule so the reader knows what to change, never the value (a block without the key, an older kernel, says nothing)
+  var unrec = pf.unrecognised === true
+    ? 'ROMP_PRICE_FEED is set to a value that is not off, so the feed stays on (only off turns it off)' : '';
   if (pf.source === 'feed') {
     // fewer matched than the table knows: the rest are priced from the built-in defaults, and the line says so instead
     // of calling the whole table live (a block without `known`, an older kernel, is the plain line)
@@ -2260,6 +2270,7 @@ function raPriceNote(pf) {
     // the refresh's own state beside the rows it did not or will not replace: the switch outranks a failure it predates
     if (pf.off === true) tails.push('refresh off (ROMP_PRICE_FEED=off)');
     else if (pf.lastError) tails.push('the last refresh failed (' + pf.lastError + ')');
+    if (unrec) tails.push(unrec);
     if (ovr) tails.push(ovr);
     return line + (tails.length ? '; ' + tails.join('; ') : '');
   }
@@ -2274,7 +2285,7 @@ function raPriceNote(pf) {
     : pf.reason === 'inflight' ? 'fetching the feed now'
     : pf.reason === 'unfetched' ? 'nothing fetched from the feed yet'
     : '';
-  return 'prices: built-in defaults' + (why ? '; ' + why : '') + (ovr ? '; ' + ovr : '');
+  return 'prices: built-in defaults' + (why ? '; ' + why : '') + (unrec ? '; ' + unrec : '') + (ovr ? '; ' + ovr : '');
 }
 function raAgo(s) {   // an age in seconds as plain words: 'just now' under a minute, then whole minutes, then whole hours
   s = Math.max(0, Math.floor(Number(s) || 0));

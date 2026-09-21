@@ -6,7 +6,10 @@ credential the process carries — so under pytest the switch is off for every t
 use; a developer's exported key must not change that), and it STAYS off across a test that pops it
 (the catalog suite's own fetch tests do exactly that in setUp/tearDown, and a module-level pop would
 otherwise hold for the rest of the run). Synthetic throughout; the kernel is loaded only to prove the
-refresh is inert under the floor."""
+refresh is inert under the floor. Both cases read the value inside a test body, where the fixture has already
+set it, so they pin the per-test half by execution and the import-time line by nothing; that half, and the
+fixture's statement, are pinned on conftest's source by tests/test_price_feed_floor.py
+TheFloorsAreOnConftestsSource, for this switch beside the price feed's (a review of PR 878)."""
 import os
 import tempfile
 import unittest

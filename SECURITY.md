@@ -166,17 +166,54 @@ and per-machine, from this trust level).
 
 ## Network access
 
-romp makes one outbound request by default: it fetches a public model-pricing
-table (`raw.githubusercontent.com/.../model_prices_and_context_window.json`)
-every few hours to label context/cost. The response is parsed strictly as
-numeric pricing. No telemetry or session data is sent anywhere.
+By default the kernel opens one connection of its own to a host other than the
+model provider: it fetches a public model-pricing table
+(`raw.githubusercontent.com/.../model_prices_and_context_window.json`) when
+the Token usage view opens and the table it holds is more than six hours old,
+with no credential. The response is parsed strictly as numeric pricing. The
+kernel's other connections, and the programs it runs that connect on their
+own, are listed below.
 
 `ROMP_PRICE_FEED=off` in the kernel's environment (`service.env` for the
 installed service, then a manager restart) stops that fetch: the Token usage
 modal then prices tokens from the built-in defaults and says so on the line
-under its footnote, and `/version` says the same in its `priceFeed` block. The
-reference documents the switch under
+under its footnote, and `/version` says the same in its `priceFeed` block.
+Only the value `off`, whitespace and case ignored, turns the feed off; any
+other value leaves it on, and the kernel says so on its stderr, on that line
+and in that block. The reference documents the switch under
 [The price feed](docs/reference.md#the-price-feed).
+
+The kernel's other connections of its own by default go to the model provider:
+the Models API catalog refresh, on the apiKeyHelper's key or else the
+`ANTHROPIC_AUTH_TOKEN` bearer from its environment (`ROMP_MODEL_CATALOG=off`
+stops it; with neither credential it sends nothing), and, when an apiKeyHelper
+is configured, the fast-mode probe on that key at every key-billed session
+connect and, for the judges, once per judge process and again after a fast
+refusal. By default the kernel also runs programs that
+connect on their own: `git ls-remote` against the release remote for the
+release check, and for the drift check on a clone that tracks main
+(`ROMP_UPDATE_CHECK=off`, or the gear's update mode off, stops both);
+`git ls-remote --heads origin` in a viewed file's checkout when its branch has
+no local tracking ref; the session CLIs and the judge CLIs, which talk to
+their providers on the session's or the call's billing; and one `npm install`
+when a bundle rebuild fails at boot. Every other connection opens once you set
+it up: an attached machine (ssh commands and tunnels to it, and everything
+over them), a PR watch (`gh`) or a watch predicate a session registered, a
+subscribed phone (web push, encrypted end to end), the apiKeyHelper or
+stored-login command you configured, an update taken from the banner or by the
+auto mode (`git fetch`, then for a release `install.sh` with pip and npm), and
+the pictures a viewed file loads in the browser from the hosts on the gear's
+Pictures from the web in files list. Installing by hand (`bootstrap.sh`,
+`install.sh`) fetches from GitHub, PyPI and the npm registry, and
+`bin/romp-codex-setup`, run by hand for Codex sessions, fetches the Codex SDK
+from PyPI and the pinned Codex CLI from GitHub.
+
+What those programs send is theirs, not the kernel's: a session's own CLI, the
+judges' CLIs, a watch predicate, the API key helper, a login's token program,
+`gh`, `git`, `ssh`, `npm` and the browser open connections of their own. romp
+sends no telemetry. Session text goes only to the model provider the session
+or the judge call is billed to and, encrypted end to end, to the push service
+of a phone you subscribed.
 
 ## Reporting a vulnerability
 

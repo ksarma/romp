@@ -13,13 +13,25 @@ whenever a fetch lands, so a landed fetch replaces them with the rows it parsed,
 moved), and only a failed fetch leaves them (stale-while-revalidate). The doc now says both, and these pins hold
 the doc's words to the code's shape: a wording change in either reddens here first.
 
+The review of PR 878 (2026-09-21) added a third claim to the same paragraph. The subsection sends a feed-off box to
+~/.config/romp/model-prices.json, and one try wraps the merge's loop over the file's rows, so a row the kernel cannot
+read (not an object, or a rate that is not a finite number) voids itself and every row after it, and a file it cannot
+read or parse as a JSON object is ignored whole; until that review both were silent, and the paragraph said nothing.
+The doc now says what happens and that the kernel says so (once per kernel life on stderr, with the class in the
+priceFeed block as `overrideFault`, never the file's text or its path); AnUnreadableRowOrFileIsSaid pins the
+sentence and ties it to the kernel's fault classes, the two stderr heads and the say-once latch, naming the executed
+cases in tests/test_price_feed_off.py TheOverrideFileIsSaid. Red over a git archive of the reviewed head d1026b768 at
+the first doc assertion (the paragraph there ends at "whichever table it names."); green at the tree.
+
 Text only, the tests/test_reference_price_feed.py precedent: the doc and the kernel are read as files, nothing
 loads romp code, and no state root is minted. A pin keyed on where the code lives says in its message what it
 guards and names the executed test that proves the behaviour. Every case asserts the doc's text FIRST, so a run
 over a tree without the round's wording fails at that assertion and never at a missing symbol.
 """
+import ast
 import os
 import re
+import textwrap
 import unittest
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -61,6 +73,28 @@ def _indent(line):
     return len(line) - len(line.lstrip(" "))
 
 
+def _fault_classes(src):
+    """The string constants assigned to `prices.fault` in `src` (a def's text), through a plain or a tuple assignment
+    (`cfg, prices.fault = None, "file"`): the property the doc's classes rest on, keyed on what is assigned and not
+    on the assignment's spelling. An empty set when the text does not parse."""
+    try:
+        tree = ast.parse(textwrap.dedent(src))
+    except SyntaxError:
+        return set()
+    out = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            pairs = (zip(target.elts, node.value.elts) if isinstance(target, ast.Tuple) and isinstance(node.value, ast.Tuple)
+                     else [(target, node.value)])
+            for t, v in pairs:
+                if (isinstance(t, ast.Attribute) and t.attr == "fault" and isinstance(t.value, ast.Name) and t.value.id == "prices"
+                        and isinstance(v, ast.Constant) and isinstance(v.value, str)):
+                    out.add(v.value)
+    return out
+
+
 REFERENCE = _read("docs", "reference.md")
 SECTION = _section(REFERENCE, "The price feed")
 KERNEL = _read("kernel", "kernel.py")
@@ -84,6 +118,21 @@ TABLE_UNDER = "table.update({k: dict(v) for k, v in remote.items()})"
 ASSIGN = '_price_cache["remote"] = out'
 LANDED_NEXT = '_price_feed["fetchedAt"] = now'
 FAIL_CLASS = "_price_feed_error_class(e)"
+# the unreadable-row sentence (the review of PR 878), and the kernel's shape behind each clause
+VOIDS = "A row the kernel cannot read (not an object, or a rate that is not a finite number) voids that row and every row after it"
+WHOLE = "a file it cannot read or parse as a JSON object is ignored whole"
+SAID_ONCE = "the kernel says so once per kernel life on its stderr"
+CLASSED = "the `priceFeed` block carries the class as `overrideFault` (`row` or `file`, else null), never the file's text or its path"
+FAULT_KEY = '"overrideFault": merged.fault'
+FAULT_CLASSES = {"row", "file"}   # the two classes the doc names, each assigned to the merged table's `fault`
+REJECT_OBJECT = 'raise ValueError("a row that is not an object")'
+REJECT_FINITE = 'raise ValueError("a rate that is not a finite number")'
+LATCH = '_price_feed_first("overrideSaid")'
+ROW_HEAD = "price feed: a row in model-prices.json could not be read (not an object, or a rate that is not a finite "
+FILE_HEAD = "price feed: model-prices.json could not be read as a JSON object, so the file is ignored whole"
+OVERRIDE_CASES = ("tests/test_price_feed_off.py TheOverrideFileIsSaid (a bad middle row voids the rows after it and is classed row "
+                  "and said once; a non-object row; a non-finite rate; a file that is not a JSON object is classed file; no file "
+                  "is no fault)")
 
 
 class _Pins(unittest.TestCase):
@@ -166,6 +215,48 @@ class TheCachedRowsLiveUntilARestartOrTheNextLandedFetch(_Pins):
                         "%s: the failure branch returns before the cache assignment, so a failed fetch leaves the rows in "
                         "memory (the doc's 'a failed fetch leaves them'); executed in %s FailedFetch."
                         "test_a_failed_refresh_after_a_landed_fetch_says_the_cached_rows_still_serve" % (where, EXECUTED))
+
+
+class AnUnreadableRowOrFileIsSaid(_Pins):
+    """The paragraph that sends a feed-off box to the override file says what a row the kernel cannot read does, and
+    the kernel classes and says it (the review of PR 878). Red over the d1026b768 archive at the first doc assertion
+    (the paragraph there carries none of these sentences); green at the tree. Executed in %s.""" % OVERRIDE_CASES
+
+    def test_the_doc_says_what_an_unreadable_row_and_file_do_and_the_kernel_classes_and_says_it(self):
+        self.assertSection()
+        flat = _flat(SECTION)
+        self.assertQuoted(VOIDS, flat, DOC, "one try wraps the loop, so the rows after a rejected one are lost with it")
+        self.assertQuoted(WHOLE, flat, DOC)
+        self.assertQuoted(SAID_ONCE, flat, DOC)
+        self.assertQuoted(CLASSED, flat, DOC, "a class, since the block rides the auth-exempt /version")
+        status = _pydef(KERNEL, "_price_feed_status")
+        self.assertTrue(status, "kernel/kernel.py defines _price_feed_status at the top level")
+        self.assertQuoted(FAULT_KEY, status, "kernel/kernel.py _price_feed_status",
+                          "the block carries the merged table's own fault class as a literal key; executed in %s" % OVERRIDE_CASES)
+        prices = _pydef(KERNEL, "_model_prices")
+        self.assertTrue(prices, "kernel/kernel.py defines _model_prices at the top level")
+        where = "kernel/kernel.py _model_prices"
+        self.assertEqual(_fault_classes(prices), FAULT_CLASSES,
+                         "%s assigns exactly the two classes the doc names to the merged table's fault: row for a rejected row, "
+                         "file for a file that cannot be read or parsed as a JSON object (read by ast, so a tuple assignment "
+                         "counts); a third class is a doc change" % where)
+        self.assertQuoted(LATCH, prices, where, "said once per kernel life: the latch every price feed line shares")
+        self.assertQuoted(ROW_HEAD, KERNEL, "kernel/kernel.py", "the stderr line for a rejected row states the consequence the doc states")
+        self.assertQuoted(FILE_HEAD, KERNEL, "kernel/kernel.py", "the stderr line for an unreadable file states the consequence the doc states")
+
+    def test_the_consequence_the_doc_states_is_the_codes_one_try_around_the_loop(self):
+        self.assertSection()
+        self.assertQuoted(VOIDS, _flat(SECTION), DOC)
+        prices = _pydef(KERNEL, "_model_prices")
+        self.assertTrue(prices, "kernel/kernel.py defines _model_prices at the top level")
+        where = "kernel/kernel.py _model_prices"
+        # a rejected row RAISES out of the loop (the doc's 'and every row after it'); a `continue` there would skip one row
+        # and keep the rest, which is the other documented shape and not this one
+        self.assertQuoted(REJECT_OBJECT, prices, where, "a row that is not an object ends the loop, as the doc says")
+        self.assertQuoted(REJECT_FINITE, prices, where, "a rate that is not a finite number ends the loop, as the doc says")
+        self.assertNotIn("continue", prices, "%s: the merge's loop has no continue; a rejected row ends it and the rows after it "
+                         "are ignored, the consequence the doc states (a skip is a different contract the doc must follow)" % where)
+        self.assertBefore(REJECT_FINITE, 'prices.fault = "row"', prices, where, "the except that classes the row follows the loop that raises")
 
 
 class TheNewProse(_Pins):

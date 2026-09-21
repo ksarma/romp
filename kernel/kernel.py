@@ -52413,10 +52413,14 @@ _price_cache = {"t": 0, "remote": {}}   # remote feed prices, refreshed on a TTL
 # starting, a failure recorded) takes it too, and _price_feed_status reads the cache, the fields and the merge it
 # counts overrides from under the same lock, so a read between two of the worker's writes, or a landing between two
 # of the reader's, cannot happen (review round 2: such reads rendered `live feed for 0 of 6 models` and `the feed's
-# rows for 6 known models could not be read`). `offSaid` is one fact on its own and needs no lock. There is no cache
-# FILE: this is process memory and dies with the kernel.
+# rows for 6 known models could not be read`). The say-once latches (`offSaid` for the off line, `unrecognisedSaid`
+# for a switch value that is not off, `overrideSaid` for an override file the kernel could not read) take the lock
+# too: each is a read-modify-write (test, then set), which the torn-read argument for a lone store does not cover,
+# and two cost-view builds arriving together both wrote the off line (the review of PR 878). _price_feed_first is
+# the one test-and-set, and the line is written OUTSIDE the lock (_price_feed_line re-enters it through
+# _price_feed_status). There is no cache FILE: this is process memory and dies with the kernel.
 _price_feed = {"fetchedAt": None, "attemptedAt": None, "lastError": None, "rows": 0, "matched": 0, "inflight": False,
-               "offSaid": False}
+               "offSaid": False, "unrecognisedSaid": False, "overrideSaid": False}
 _price_feed_lock = threading.Lock()
 # OpenSSL 3.0's verify-error table: the strings X509_verify_cert_error_string returns for verify codes 1 to 94, copied
 # from OpenSSL 3.0.13 on the build box (a ctypes probe over libcrypto, in scratch, never here: the ssl module exposes no
@@ -52476,11 +52480,41 @@ _price_feed_verify_errors = {
 
 
 def _price_feed_off():
-    """ROMP_PRICE_FEED=off: the price feed's off switch, read per call. The model catalog's spelling (stripped
-    and case-folded, `_refresh_model_catalog`), NOT the update check's exact match (`_update_check_off`): the
-    two precedents disagree and the catalog is the one this switch copies. The user sets it in the service's
-    env and restarts the manager; with it off the kernel makes no request to the feed's host at all."""
+    """ROMP_PRICE_FEED=off: the price feed's off switch, read per call. The RULE: only the value off, whitespace
+    and case ignored, turns the feed off; every other value leaves it on, and a value that is set and not off is
+    SAID (_price_feed_unrecognised: one stderr line per kernel life at the first attempt that reads it, and the
+    boolean `unrecognised` in the status block) instead of reading like an unset variable. The spelling is the
+    model catalog's (`_refresh_model_catalog`: the value stripped and case-folded), the switch this one sits
+    beside in /version; the update check's (`_update_checks_off`) compares the raw value for equality and was
+    not copied. The user sets it in the service's env and restarts the manager; with it off the kernel makes no
+    request to the feed's host at all."""
     return (os.environ.get("ROMP_PRICE_FEED") or "").strip().lower() == "off"
+
+
+def _price_feed_unrecognised():
+    """ROMP_PRICE_FEED set to a value that is not off: True when the variable's value, stripped, is non-empty and
+    its case-fold is not `off`; False for unset, empty or whitespace only, and for off in any case or padding
+    (_price_feed_off's rule). Read per call like its sibling. Such a value leaves the feed ON, exactly as an unset
+    variable does, and the difference is said rather than swallowed: _refresh_remote_prices writes one stderr line
+    per kernel life at the first attempt that reads it, naming the value (the kernel's own log), and
+    _price_feed_status carries this boolean as `unrecognised` to the modal's line and /version, never the value
+    itself (an environment value can be any text, and /version is auth-exempt). Until this a misspelt switch was
+    byte for byte an unset one on every surface, and the request went out with nothing saying why (the review of
+    PR 878)."""
+    v = (os.environ.get("ROMP_PRICE_FEED") or "").strip()
+    return bool(v) and v.lower() != "off"
+
+
+def _price_feed_first(key):
+    """The test-and-set of a say-once latch in _price_feed (`offSaid`, `unrecognisedSaid`, `overrideSaid`), under
+    _price_feed_lock: True for the ONE caller that flipped it, which then writes its line OUTSIDE the lock
+    (_price_feed_line re-enters the lock through _price_feed_status, so a line written inside it deadlocks). The
+    check-then-set these latches used to do with no lock let two cost-view builds arriving together both write the
+    off line: a lone store needs no lock, a read followed by a write does (the review of PR 878)."""
+    with _price_feed_lock:
+        first = not _price_feed[key]
+        _price_feed[key] = True
+    return first
 
 
 def _price_feed_error_class(e):
@@ -52573,11 +52607,20 @@ def _price_feed_status(now=None, prices=None):
     table is the one this snapshot holds, else None, meaning no block describes those figures, because the table
     moved between the pricing and this read (the fetch the build started landed during the sessions walk) and
     the caller builds again from the table as it is now rather than naming the new table over the old table's
-    dollars. Compared through json.dumps, so a NaN a hand-written override put in the file compares equal to
-    itself and cannot make every build look moved."""
+    dollars. Compared through json.dumps (a rate that is not a finite number never reaches either table: both
+    parses reject it, so no NaN can make every build look moved). `unrecognised` is _price_feed_unrecognised's
+    boolean: the switch is set to a value that is not off, so the feed is on and the modal's line and /version say
+    so, never the value itself (an environment value is arbitrary text and /version is auth-exempt). `overrideFault`
+    is the class of what the merge could not read in the user's PRICE_CONFIG, None when the file is absent or read
+    whole, "file" when it exists and could not be read or parsed as a JSON object (ignored whole), "row" when a row
+    was rejected (not an object, or a rate that is not a finite number: that row and every row after it are
+    ignored); the class travels with the merged table (_PriceTable), so it is the fault of the very merge the
+    overrides are counted from, and a class, never the file's text or its path (the review of PR 878: a bad row
+    voided itself and every later row while the block counted the rows before it and stderr said nothing)."""
     if now is None:
         now = int(time.time())
     off = _price_feed_off()
+    unrecognised = _price_feed_unrecognised()
     with _price_feed_lock:
         remote = _price_cache["remote"]
         fetched, err = _price_feed["fetchedAt"], _price_feed["lastError"]
@@ -52595,10 +52638,10 @@ def _price_feed_status(now=None, prices=None):
     table.update({k: dict(v) for k, v in remote.items()})
     overrides = sum(1 for k, v in merged.items() if table.get(k) != v)
     known = len({_price_sig(k) for k in DEFAULT_MODEL_PRICES if _price_sig(k)})
-    return {"off": off, "source": source, "reason": reason, "fetchedAt": fetched,
+    return {"off": off, "unrecognised": unrecognised, "source": source, "reason": reason, "fetchedAt": fetched,
             "ageS": (int(now) - int(fetched)) if fetched is not None else None,
             "attemptedAt": attempted, "lastError": err, "rows": len(remote),
-            "matched": matched, "known": known, "overrides": overrides}
+            "matched": matched, "known": known, "overrides": overrides, "overrideFault": merged.fault}
 
 
 def _price_feed_line(now, head):
@@ -52663,12 +52706,26 @@ def _refresh_remote_prices(now):
     _price_feed_status reads under, so no read sees one fetch's rows with another's counts; when the landing
     changed the rows it clears the analytics memo, the event that makes a memoized payload's figures stale, so
     the next open prices from the table the block names instead of relabelling the old table's dollars (review
-    round 2)."""
+    round 2). A switch value that is SET and not off (_price_feed_unrecognised) leaves the feed on, as the
+    catalog's rule has it, and is said too, once per kernel life at the first attempt that reads it: the arm sits
+    after the off arm (so a refused attempt never reads as unrecognised) and before the TTL check (so the first
+    attempt, which always fetches, is the one that says it), and its line names the variable, the value it read
+    (through repr, clipped, so padding, case and a trailing character show: this is the kernel's own log) and that
+    only off turns the feed off; the status carries the boolean, never the value (the review of PR 878: a misspelt
+    switch read as unset on every surface and the request went out). Each say-once latch is a test-and-set under
+    _price_feed_lock (_price_feed_first) and its line is written outside the lock. A feed row whose rate is not a
+    finite number (JSON NaN or Infinity, which json.loads accepts) is a row the parser REJECTS, counted in
+    `matched` and never cached: cached, it priced a session's cost as NaN and the /analytics body would not parse
+    in the browser while the status read live feed."""
     if _price_feed_off():
-        if not _price_feed["offSaid"]:
-            _price_feed["offSaid"] = True
+        if _price_feed_first("offSaid"):               # the latch under the lock, the line outside it
             _price_feed_line(now, "price feed: off (ROMP_PRICE_FEED=off)")
         return
+    if _price_feed_unrecognised():                     # set and not off: the feed stays on, and that is said once
+        if _price_feed_first("unrecognisedSaid"):
+            value = repr(os.environ.get("ROMP_PRICE_FEED") or "")
+            _price_feed_line(now, "price feed: ROMP_PRICE_FEED is set to %s, which is not off, so the feed stays on"
+                             % (value if len(value) <= 40 else value[:37] + "..."))
     if now - _price_cache["t"] < PRICE_TTL:
         return
     _price_cache["t"] = now                          # stamp first so a slow/failing fetch isn't hammered
@@ -52699,9 +52756,12 @@ def _refresh_remote_prices(now):
                 matched.add(want[sig])               # signed to a built-in id, parsed or not: the status tells the two apart
                 try:
                     inp = float(v["input_cost_per_token"])
-                    out[want[sig]] = {"in": inp, "out": float(v["output_cost_per_token"]),
-                                      "cache_w": float(v.get("cache_creation_input_token_cost") or inp),
-                                      "cache_r": float(v.get("cache_read_input_token_cost") or inp)}
+                    row = {"in": inp, "out": float(v["output_cost_per_token"]),
+                           "cache_w": float(v.get("cache_creation_input_token_cost") or inp),
+                           "cache_r": float(v.get("cache_read_input_token_cost") or inp)}
+                    if not all(math.isfinite(x) for x in row.values()):   # JSON NaN or Infinity parses: a rejected row,
+                        raise ValueError("a rate that is not a finite number")   # never a cached one (the review of PR 878)
+                    out[want[sig]] = row
                 except Exception:
                     continue
             with _price_feed_lock:                   # the landing, whole: the rows and the fields that describe them
@@ -52732,25 +52792,67 @@ def _refresh_remote_prices(now):
         _price_feed_line(now, "price feed: fetch failed (%s), the worker thread did not start" % _price_feed["lastError"])
 
 
+class _PriceTable(dict):
+    """The merged $/token map _model_prices returns: a plain dict to every reader, carrying beside its rows the one
+    fact about the user's override file the rows cannot carry, `fault`: None when PRICE_CONFIG is absent or was read
+    whole, "file" when it exists and could not be read or parsed as a JSON object (the file is ignored whole), "row"
+    when a row was rejected (a row that is not an object, or a rate that is not a finite number: that row and every
+    row after it are ignored, since one try wraps the loop). It travels with the table it describes, the way the
+    priceFeed block travels with the payload it priced, so _price_feed_status reports the fault of the very merge it
+    counts overrides from and never a class read at another moment."""
+    fault = None
+
+
+_PRICE_OVERRIDE_FAULT_LINES = {   # the head of the one stderr line per kernel life for each class, the consequence stated
+    "row": "price feed: a row in model-prices.json could not be read (not an object, or a rate that is not a finite "
+           "number), so that row and every row after it are ignored",
+    "file": "price feed: model-prices.json could not be read as a JSON object, so the file is ignored whole",
+}
+
+
 def _model_prices(now=None, refresh=True):
     """The merged $/token price map: baked-in DEFAULT < best-effort remote feed < user config override. `refresh`
     (the default) lets a stale feed cache kick its background fetch; the spend guard passes False, since it runs on
     the pusher's path in every kernel (a hermetic test kernel included) and must never start a network fetch: it
-    merges whatever the cost view's last refresh left in the cache (T350)."""
+    merges whatever the cost view's last refresh left in the cache (T350). The override file is read whole under one
+    try: a row the kernel cannot read (not an object, or a rate that is not a finite number: JSON NaN and Infinity
+    parse) is rejected together with every row after it, and a file that cannot be read or parsed as a JSON object
+    is ignored whole. Neither is silent (the review of PR 878: the reference sends a feed-off box to this file, and
+    a bad row dropped itself and every later row with nothing said): the returned table carries the fault class
+    (_PriceTable.fault), which _price_feed_status puts in the block as `overrideFault`, and the cost view's road
+    (refresh=True, the one caller that holds no lock: _price_feed_status calls this under _price_feed_lock and
+    _price_feed_line would re-enter it) says it once per kernel life on stderr with the consequence, the latch a
+    test-and-set under the lock (_price_feed_first) and the line written outside it. A rate the row omits keeps
+    the table's for an id the table names (`base` is that id's row), and is zero for any other id: the merge
+    resolves `base` by the exact id, never through _price_for's signature or family fallback."""
     if now is None:
         now = int(time.time())
     if refresh:
         _refresh_remote_prices(now)
-    prices = {k: dict(v) for k, v in DEFAULT_MODEL_PRICES.items()}
+    prices = _PriceTable((k, dict(v)) for k, v in DEFAULT_MODEL_PRICES.items())
     prices.update({k: dict(v) for k, v in _price_cache["remote"].items()})
     try:
         cfg = json.loads(PRICE_CONFIG.read_text())
-        for k, v in (cfg.items() if isinstance(cfg, dict) else []):
-            if isinstance(v, dict):
-                base = prices.get(k, {})
-                prices[k] = {kk: float(v.get(kk, base.get(kk, 0)) or 0) for kk in ("in", "out", "cache_w", "cache_r")}
+    except FileNotFoundError:
+        cfg = None                                       # no file: nothing to apply, and nothing to say
     except Exception:
-        pass
+        cfg, prices.fault = None, "file"                 # exists and cannot be read or parsed: ignored whole
+    else:
+        if not isinstance(cfg, dict):
+            cfg, prices.fault = None, "file"             # parses, but not as a table of rows: ignored whole
+    try:
+        for k, v in (cfg.items() if cfg else []):
+            if not isinstance(v, dict):
+                raise ValueError("a row that is not an object")
+            base = prices.get(k, {})
+            row = {kk: float(v.get(kk, base.get(kk, 0)) or 0) for kk in ("in", "out", "cache_w", "cache_r")}
+            if not all(math.isfinite(x) for x in row.values()):
+                raise ValueError("a rate that is not a finite number")
+            prices[k] = row
+    except Exception:
+        prices.fault = "row"                             # that row and every row after it are ignored: one try wraps the loop
+    if refresh and prices.fault is not None and _price_feed_first("overrideSaid"):
+        _price_feed_line(now, _PRICE_OVERRIDE_FAULT_LINES[prices.fault])   # the cost view's road, outside every lock
     return prices
 
 
@@ -52781,7 +52883,8 @@ def _session_cost(path, t0, prices):
     return _session_usage(path, t0, prices)["cost"]
 
 
-_ANALYTICS_MEMO = {}   # window -> {"t": epoch, "jkey": judge-usage cache size, "resp": the payload}
+_ANALYTICS_MEMO = {}   # window -> {"t": epoch, "jkey": judge-usage cache size, "resp": the payload, "prices": the merged
+#                        table the payload's session dollars were priced with (the memo road serves the entry only for that table)}
 _ANALYTICS_REPRICING = threading.local()   # `on` while a build is the one rebuild _token_analytics allows itself when the
 #                                            price table moved under it (the recursion's bound; see its last statement)
 
@@ -53280,19 +53383,32 @@ def _token_analytics(now, window):
     row cache, so this re-sums memory. `priceFeed` (_price_feed_status) says where the session-dollar table
     came from, the live feed or the built-in defaults and why, and rides OUTSIDE the memo on both roads (a
     shallow copy, the memoized dict never mutated), so its age and its switch read live; and it describes the
-    table that priced the figures beside it, on both roads: a landing that changes the rows clears the memo
-    (the worker, _refresh_remote_prices), so a click after the first open's fetch landed prices from the feed
-    instead of serving the defaults-priced figures under a block that reads live (review round 2's high), and a
-    build whose fetch landed during its sessions walk, after `prices` was merged, finds no block for its figures
-    (_price_feed_status with `prices` returns None when the table moved) and builds once more from the table
-    now, the recursion bounded to that one rebuild by _ANALYTICS_REPRICING."""
+    table that priced the figures beside it, on both roads, because the SERVE is guarded, not the store: the memo
+    entry carries the merged table its figures were priced with (`prices`), and the memo road returns the block
+    only while that table is the table now (_price_feed_status with `prices` returns None when it moved: a landing
+    this reader captured the entry ahead of, or the user's model-prices.json edited inside the 15 s), else it drops
+    the entry and builds fresh below; a landing that changes the rows clears the memo as well (the worker,
+    _refresh_remote_prices), so a click after the first open's fetch landed prices from the feed instead of serving
+    the defaults-priced figures under a block that reads live (review round 2's high); the miss road memoizes its
+    payload only once a block describes it, so no entry ever holds figures its block does not describe; and a build
+    whose fetch landed during its sessions walk, after `prices` was merged, finds no block for its figures and
+    builds once more from the table now, the recursion bounded to that one rebuild by _ANALYTICS_REPRICING. The
+    residual, disclosed and not hidden: a table that moves AGAIN under that one rebuild (a hand-edited override
+    file saved twice inside one build) is served with its figures and NO block (`priceFeed` None, which the modal
+    words as no line) and memoizes nothing, never a freshly read status over dollars it did not price (the review
+    of PR 878)."""
     # a tiny TTL memo: the modal refetches on every period click and every reopen, and the recompute is
     # honest-but-pointless within seconds of itself (the user 2026-08-13's fast-and-visible rule); a new
     # judge row (cache size moved) invalidates early so the numbers never sit stale behind live judging
     memo = _ANALYTICS_MEMO.get(window)
     jkey = _JUDGE_USAGE_CACHE["size"]
     if memo and memo["jkey"] == jkey and now - memo["t"] < 15:
-        return dict(memo["resp"], priceFeed=_price_feed_status(now))
+        pf = _price_feed_status(now, memo["prices"])     # the table the memoized figures were priced with (never .get:
+        if pf is not None:                               # a writer that forgets to store it fails here, loudly)
+            return dict(memo["resp"], priceFeed=pf)
+        _ANALYTICS_MEMO.pop(window, None)                # the table moved under the entry (an override edit, a landing this
+        #                                                  reader captured the entry ahead of): no block describes its
+        #                                                  figures, so it goes and the payload is built fresh below
     kind, _keys, t0 = _analytics_edges(now, window)
     # the rail's arm for the session dollars: a key beside a login → the keyed split (login turns'
     # computed cost is billed to no one) — but, as on the rail, only once the key has RECORDED turns in
@@ -53325,22 +53441,25 @@ def _token_analytics(now, window):
         resp["fromDate"] = _keys[-1]   # the oldest local DATE as the kernel names it — the modal prints this,
         #                                not `from` through the browser's zone (a browser west of the kernel
         #                                showed the day before the period's first date, 2026-09-06)
-    _ANALYTICS_MEMO[window] = {"t": now, "jkey": _JUDGE_USAGE_CACHE["size"], "resp": resp}
     pf = _price_feed_status(now, prices)
     if pf is None and not getattr(_ANALYTICS_REPRICING, "on", False):
         # the price table moved while this payload was priced (the fetch the build started landed during the
-        # sessions walk): the figures are the old table's, the block would name the new one, and the memo just
-        # stored would serve that pairing for 15 s. Drop it and build once more, priced from the table now; the
-        # worker lands once per attempt, so one rebuild is the event's whole extent, and the guard keeps a table
-        # that keeps moving (a hand-edited override file saved mid-build, again) from recursing further: that
-        # build returns its figures under the block for the table now, the pre-existing memo lag.
-        _ANALYTICS_MEMO.pop(window, None)
+        # sessions walk): the figures are the old table's and the block would name the new one, so nothing is
+        # memoized and the payload is built once more, priced from the table now; the worker lands once per
+        # attempt, so one rebuild is the event's whole extent, and the guard bounds a table that keeps moving (a
+        # hand-edited override file saved mid-build, again) to that one rebuild
         _ANALYTICS_REPRICING.on = True
         try:
             return _token_analytics(now, window)
         finally:
             _ANALYTICS_REPRICING.on = False
-    return dict(resp, priceFeed=pf if pf is not None else _price_feed_status(now))
+    if pf is None:
+        # the one rebuild's table moved again under it: these figures have no block that describes them, and none is
+        # served (the modal words a missing block as no line) rather than a status read now over dollars priced from
+        # a table that is gone; nothing is memoized, so the next click prices from the table as it is then
+        return dict(resp, priceFeed=None)
+    _ANALYTICS_MEMO[window] = {"t": now, "jkey": _JUDGE_USAGE_CACHE["size"], "resp": resp, "prices": prices}   # stored only
+    return dict(resp, priceFeed=pf)                      # once a block describes it: no entry ever holds figures its block does not
 
 
 # Usage/error logs carry one name per distinct prompt (the user 2026-07-08): gister, opener, placer,

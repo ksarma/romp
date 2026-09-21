@@ -12,6 +12,19 @@ pins hold it there: the variable it names is the one the kernel reads, the /vers
 line are the ones the code emits, the link's target heading exists, and the section carries no em or en
 dash and not the word the repo's CLAUDE.md bans.
 
+The review of PR 878 (2026-09-21) found the section's first sentence, that romp makes one outbound request
+by default, false by the code: with the price feed off and nothing configured the kernel's own Models API
+catalog refresh and the release check's `git ls-remote` still run, so the switch hung under a promise the
+section could not keep. The sentence is now the one a derivation over kernel/, cli/, postal/, bin/ and ui/
+supports (one connection of the kernel's own to a host other than the model provider by default, the price
+feed's), the section names the kernel's other default connections and the programs it runs with the switch
+that gates each, the roads that open once set up, and that what a program the kernel starts sends is that
+program's; the telemetry sentence is scoped to what the table supports (session text goes to the model
+provider and, encrypted, to a subscribed phone's push service). TheSectionScopesItsClaimToWhatTheCodeDoes
+pins that positively, phrase by phrase, and ties each named switch to the variable the kernel reads. Those
+cases are red over a git archive of the reviewed head d1026b768 at their first SECURITY.md assertion (the
+section there carries the old quantifier and none of the scoped phrases) and green at the tree.
+
 Text only: the behaviour is pinned in tests/test_price_feed_off.py (the kernel), the reference's prose in
 tests/test_reference_price_feed.py. The documents and the sources are read as files; nothing loads romp
 code, so no state root is minted. Every case asserts SECURITY.md's text FIRST, so a run over a tree
@@ -54,6 +67,19 @@ TARGET = "### The price feed"
 # gear.js raPriceNote's reading under the switch: 'prices: built-in defaults' + '; ' + why
 DEFAULTS_HEAD = "prices: built-in defaults"
 WHY_OFF = "live feed off (%s=off)" % VAR
+KERNEL_SDK = _read("kernel", "sdk_backend.py")
+# the quantifier the review of PR 878 retired, and the scoped claim that replaced it (the derivation's sentence)
+OLD_QUANTIFIER = "one outbound request by default"
+OLD_TELEMETRY = "No telemetry or session data is sent anywhere"
+SCOPED = "By default the kernel opens one connection of its own to a host other than the model provider"
+PARSED = "The response is parsed strictly as numeric pricing"
+# the other default roads the section names, each with the switch that gates it, and the kernel's read of that switch
+CATALOG_SWITCH, CATALOG_READ = "`ROMP_MODEL_CATALOG=off`", 'os.environ.get("ROMP_MODEL_CATALOG")'
+UPDATE_SWITCH, UPDATE_READ = "`ROMP_UPDATE_CHECK=off`", 'os.environ.get("ROMP_UPDATE_CHECK"'
+RELEASE_ARGV = '"ls-remote", "--tags"'
+VIEWER_ARGV = '"ls-remote", "--heads", "origin"'
+NPM_ARGV = '["npm", "install"'
+PICTURES = "Pictures from the web in files"
 
 
 class _Pins(unittest.TestCase):
@@ -93,6 +119,92 @@ class TheNetworkSectionNamesTheSwitch(_Pins):
         self.assertQuoted(LINK, _flat(NETWORK), self.DOC, "how to stop the fetch is one link away")
         self.assertQuoted(TARGET, REFERENCE, "docs/reference.md", "the heading the link's anchor resolves to")
         self.assertQuoted("`%s=off`" % VAR, REFERENCE, "docs/reference.md", "the target documents the same switch")
+
+
+class TheSectionScopesItsClaimToWhatTheCodeDoes(_Pins):
+    """The review of PR 878: the section's claim is the derivation's, stated positively. Each case asserts the
+    section's text first; over the d1026b768 archive every case is red at that assertion (the section there says
+    romp makes one outbound request by default and carries none of these phrases), and green at the tree."""
+
+    def test_the_old_quantifier_is_gone_and_the_scoped_sentence_stands(self):
+        self.assertNetwork()
+        flat = _flat(NETWORK)
+        self.assertQuoted(SCOPED, flat, self.DOC, "the claim is scoped to the kernel's own connections, by the derivation")
+        self.assertQuoted(PARSED, flat, self.DOC, "the section keeps saying what the response is")
+        self.assertQuoted("`%s=off`" % VAR, NETWORK, self.DOC)
+        self.assertNotIn(OLD_QUANTIFIER, flat,
+                         "%s: 'romp makes one outbound request by default' was false with the feed off and nothing "
+                         "configured (the catalog refresh and the release check's git ls-remote still run)" % self.DOC)
+
+    def test_it_names_the_kernels_other_default_connections_and_the_switch_the_kernel_reads(self):
+        self.assertNetwork()
+        flat = _flat(NETWORK)
+        self.assertQuoted("The kernel's other connections of its own by default go to the model provider", flat, self.DOC)
+        self.assertQuoted("Models API catalog refresh", flat, self.DOC)
+        self.assertQuoted(CATALOG_SWITCH, flat, self.DOC, "the switch that gates the refresh, named beside it")
+        self.assertQuoted("fast-mode probe", flat, self.DOC)
+        self.assertQuoted(CATALOG_READ, KERNEL, "kernel/kernel.py", "the switch the section names is the one the kernel reads")
+        self.assertQuoted("def _refresh_model_catalog(", KERNEL, "kernel/kernel.py", "the refresh the section names")
+        self.assertQuoted("def _fetch_key_fast_org(", KERNEL_SDK, "kernel/sdk_backend.py", "the probe the section names")
+
+    def test_it_names_the_programs_the_kernel_runs_by_default_and_the_switch_that_gates_the_checks(self):
+        self.assertNetwork()
+        flat = _flat(NETWORK)
+        self.assertQuoted("By default the kernel also runs programs that connect on their own", flat, self.DOC)
+        self.assertQuoted("`git ls-remote` against the release remote for the release check", flat, self.DOC)
+        self.assertQuoted("drift check", flat, self.DOC)
+        self.assertQuoted(UPDATE_SWITCH, flat, self.DOC, "the switch that gates both checks, named beside them")
+        self.assertQuoted("update mode off", flat, self.DOC, "the gear's setting that gates them too")
+        self.assertQuoted("`git ls-remote --heads origin` in a viewed file's checkout", flat, self.DOC,
+                          "the file viewer's origin check runs with no switch on a viewer open")
+        self.assertQuoted("the session CLIs and the judge CLIs", flat, self.DOC)
+        self.assertQuoted("one `npm install` when a bundle rebuild fails at boot", flat, self.DOC)
+        self.assertQuoted(UPDATE_READ, KERNEL, "kernel/kernel.py", "the switch the section names is the one the kernel reads")
+        self.assertQuoted("def _update_checks_off():", KERNEL, "kernel/kernel.py")
+        for argv, road in ((RELEASE_ARGV, "the release check's git ls-remote --tags"),
+                           (VIEWER_ARGV, "the file viewer's git ls-remote --heads origin"),
+                           (NPM_ARGV, "the boot rebuild's npm install")):
+            self.assertQuoted(argv, KERNEL, "kernel/kernel.py", "%s is a program the kernel runs" % road)
+
+    def test_it_names_the_roads_that_open_once_set_up_and_the_settings_that_hold_them(self):
+        self.assertNetwork()
+        flat = _flat(NETWORK)
+        self.assertQuoted("Every other connection opens once you set it up", flat, self.DOC)
+        for phrase in ("an attached machine", "a PR watch (`gh`) or a watch predicate a session registered",
+                       "a subscribed phone (web push, encrypted end to end)",
+                       "the apiKeyHelper or stored-login command you configured",
+                       "an update taken from the banner or by the auto mode", PICTURES,
+                       "Installing by hand (`bootstrap.sh`, `install.sh`)"):
+            self.assertQuoted(phrase, flat, self.DOC)
+        self.assertQuoted("### Pictures from the web in a viewed file", REFERENCE, "docs/reference.md",
+                          "the setting the section names is documented under that heading")
+        self.assertQuoted("**%s**" % PICTURES, REFERENCE, "docs/reference.md", "the gear's name for the setting")
+        for name in ("def _spawn_tunnel(", "def _pr_watch_read(", "def _watch_run(", "def _push_post("):
+            self.assertQuoted(name, KERNEL, "kernel/kernel.py", "a road the section names, by the function that runs it")
+
+    def test_what_a_program_the_kernel_starts_sends_is_that_programs_and_the_telemetry_claim_is_scoped(self):
+        self.assertNetwork()
+        flat = _flat(NETWORK)
+        self.assertQuoted("What those programs send is theirs, not the kernel's", flat, self.DOC)
+        for name in ("a session's own CLI", "the judges' CLIs", "a watch predicate", "the API key helper",
+                     "a login's token program", "`gh`, `git`, `ssh`, `npm` and the browser"):
+            self.assertQuoted(name, flat, self.DOC, "a program that opens connections the kernel does not see")
+        self.assertQuoted("romp sends no telemetry", flat, self.DOC)
+        self.assertQuoted("Session text goes only to the model provider the session or the judge call is billed to", flat, self.DOC)
+        self.assertQuoted("encrypted end to end, to the push service of a phone you subscribed", flat, self.DOC)
+        self.assertNotIn(OLD_TELEMETRY, flat,
+                         "%s: session text does reach the model provider (the sessions and the judges) and, encrypted, a "
+                         "subscribed phone's push service; the claim is scoped to what the code does" % self.DOC)
+
+    def test_the_switch_paragraph_states_the_value_rule_the_kernel_applies(self):
+        self.assertNetwork()
+        flat = _flat(NETWORK)
+        self.assertQuoted("Only the value `off`, whitespace and case ignored, turns the feed off", flat, self.DOC)
+        self.assertQuoted("any other value leaves it on, and the kernel says so on its stderr, on that line and in that block",
+                          flat, self.DOC, "a misspelt switch fails open and is said, never silent")
+        self.assertQuoted("def _price_feed_unrecognised():", KERNEL, "kernel/kernel.py",
+                          "the read that says so; executed in tests/test_price_feed_off.py OffSwitch")
+        self.assertQuoted('.strip().lower() == "off"', KERNEL, "kernel/kernel.py", "the rule: stripped and case-folded, equal to off")
 
 
 class TheNewProse(_Pins):

@@ -9,7 +9,10 @@
 // - the feed's rows keep serving under the switch or after a failed refresh (traffic stops, data does not), and the
 //   line says which, where it used to say "live feed, fetched N hours ago" alone;
 // - a feed that matched some of the table's ids prices those and no more, and the line says so instead of calling
-//   the whole table live; a block without `known` (an older kernel) is the plain line.
+//   the whole table live; a block without `known` (an older kernel) is the plain line;
+// - a ROMP_PRICE_FEED value that is neither off nor unset leaves the feed on (only off turns it off), and the line
+//   says so on either source from the kernel's boolean `unrecognised`, naming the variable and never the value (the
+//   review of PR 878: such a value read the same as an unset variable on every surface, and the fetch went out).
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 
@@ -102,4 +105,46 @@ test("review round 2: rows the feed had for known models that could not be read 
   assert.equal(note({ off: true, source: "feed", ageS: 600, rows: 1, matched: 2, known: 6, overrides: 1 }),
     "prices: live feed for 1 of 6 models, fetched 10 minutes ago; built-in defaults for the rest; the feed's rows for 1 known model could not be read; refresh off (ROMP_PRICE_FEED=off); 1 row overridden by model-prices.json",
     "the tails keep their order: the share, the unread rows, the refresh's state, the override count");
+});
+
+// The switch's value read as neither off nor unset (the review of PR 878, 2026-09-20): the kernel compares
+// ROMP_PRICE_FEED against off alone, so `of`, `false` or `0` leaves the feed on and, until the kernel's `unrecognised`,
+// read on every surface exactly as an unset variable. The clause names the variable and the rule and never the
+// value: the block rides the auth-exempt /version, and an environment value is the user's own text.
+const UNREC = "ROMP_PRICE_FEED is set to a value that is not off, so the feed stays on (only off turns it off)";
+
+test("a ROMP_PRICE_FEED value that is not off: the feed stays on, and the line says so on either source, last before the override count", () => {
+  assert.equal(note({ off: false, unrecognised: true, source: "feed", reason: null, fetchedAt: 1_700_000_000, ageS: 240, lastError: null, rows: 6, matched: 6, known: 6, overrides: 0 }),
+    "prices: live feed, fetched 4 minutes ago; " + UNREC, "the feed line: the rows and their age, then that the switch did not take");
+  assert.equal(note({ off: false, unrecognised: true, source: "defaults", reason: "inflight", fetchedAt: null, ageS: null, lastError: null, rows: 0 }),
+    "prices: built-in defaults; fetching the feed now; " + UNREC,
+    "the first open under a misspelt switch: the fetch is under way, and the line says why the switch did not stop it");
+  assert.equal(note({ unrecognised: true, source: "defaults", reason: "unfetched" }), "prices: built-in defaults; nothing fetched from the feed yet; " + UNREC,
+    "before the first attempt (reachable on /version): the value is already read, and said");
+  assert.equal(note({ unrecognised: true, source: "defaults", reason: "failed", lastError: "HTTPError: HTTP 500", overrides: 2 }),
+    "prices: built-in defaults; the feed could not be fetched (HTTPError: HTTP 500); " + UNREC + "; 2 rows overridden by model-prices.json",
+    "after the reason, before the override count");
+  assert.equal(note({ unrecognised: true, source: "feed", ageS: 7_200, lastError: "HTTPError: HTTP 500", overrides: 1 }),
+    "prices: live feed, fetched 2 hours ago; the last refresh failed (HTTPError: HTTP 500); " + UNREC + "; 1 row overridden by model-prices.json",
+    "after the refresh's state, before the override count");
+  assert.equal(note({ unrecognised: true, source: "feed", ageS: 240, rows: 1, matched: 2, known: 6 }),
+    "prices: live feed for 1 of 6 models, fetched 4 minutes ago; built-in defaults for the rest; the feed's rows for 1 known model could not be read; " + UNREC,
+    "after every clause about the rows: the share, the unread rows, then the switch");
+});
+
+test("the switch's other readings word nothing new: `unrecognised` false or absent is the older line byte for byte, and no value a block might carry is echoed", () => {
+  assert.equal(note({ off: false, unrecognised: false, source: "feed", ageS: 240 }), "prices: live feed, fetched 4 minutes ago", "the variable unset or empty: the plain line");
+  assert.equal(note({ off: false, unrecognised: false, source: "defaults", reason: "inflight" }), "prices: built-in defaults; fetching the feed now");
+  assert.equal(note({ off: true, unrecognised: false, source: "defaults", reason: "off" }), "prices: built-in defaults; live feed off (ROMP_PRICE_FEED=off)", "off took: that is what is said");
+  assert.equal(note({ off: true, unrecognised: false, source: "feed", ageS: 600 }), "prices: live feed, fetched 10 minutes ago; refresh off (ROMP_PRICE_FEED=off)");
+  for (const pf of [{ source: "feed", ageS: 240 }, { source: "defaults", reason: "inflight" }, { source: "defaults", reason: "unfetched", overrides: 1 }])
+    assert.equal(note(pf), note({ ...pf, unrecognised: false }), "an older kernel's block, with no such key, and a current kernel's false read the same: " + JSON.stringify(pf));
+  assert.equal(note({ unrecognised: "disabled", source: "feed", ageS: 240 }), "prices: live feed, fetched 4 minutes ago", "the kernel's flag is a boolean; a string is not read as it");
+  assert.equal(note({ unrecognised: 1, source: "defaults", reason: "unfetched" }), "prices: built-in defaults; nothing fetched from the feed yet", "nor is a number");
+  // no kernel puts the value in the block (it rides the auth-exempt /version and carries no environment text), and a
+  // block that did would not be echoed: the clause is fixed text keyed on the boolean, and reads no other key for it
+  const withValue = note({ unrecognised: true, value: "disabled", ROMP_PRICE_FEED: "disabled", source: "feed", ageS: 240 });
+  assert.equal(withValue, "prices: live feed, fetched 4 minutes ago; " + UNREC);
+  assert.ok(!withValue.includes("disabled"), "the value is on no line");
+  assert.equal(UNREC.indexOf(";"), -1, "the clause holds no semicolon of its own: the line's tails are semicolon-joined, and one clause reads as one");
 });

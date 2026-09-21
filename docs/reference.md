@@ -1117,28 +1117,45 @@ yes. The gear reports a machine that is missing node or the comment tools.
   opens and the last fetch attempt is more than six hours old, or there has
   been none, the kernel fetches the public LiteLLM price list from
   `raw.githubusercontent.com`, a third-party host, with no credential, and
-  keeps the rows it matched in memory until the next restart or the next
-  fetch that lands: a landed fetch replaces them with the rows it parsed,
-  even when that is none, and a failed fetch leaves them. Set the variable
-  where the kernel's service sees it (`service.env`, then a manager
-  restart), and the kernel sends no request to that host. With the variable set,
-  the table is the built-in defaults and the modal says so: the line under its
-  footnote reads `prices: built-in defaults; live feed off (ROMP_PRICE_FEED=off)`,
-  `/version` carries a `priceFeed` block that says the same beside
-  `modelCatalog`, and the kernel logs one line, naming the variable, the
-  first time it would have fetched. The spend ceiling's check never fetches:
-  it prices with the rows the modal's last fetch left in memory, else the
-  defaults, with the switch or without it. A rate you want current with the
-  feed off goes in `~/.config/romp/model-prices.json`, a JSON object keyed
-  by model id whose rows carry `in`, `out`, `cache_w` and `cache_r` in
-  dollars per token; a row there replaces that model's row in the feed's
-  table and the defaults alike, and a rate the row omits keeps the table's.
-  The line under the footnote and the `priceFeed` block count the rows the
-  file puts in effect: a row that changes or adds a model's rates counts; a
-  row equal to the table's row for that model does not, so the count says
-  what the file changed, not whether it was read. With one counted row in
-  the file, the line ends `; 1 row overridden by model-prices.json`,
-  whichever table it names.
+  keeps the rows it parsed in memory until the next restart or the next fetch
+  that lands: a landed fetch replaces them with the rows it parsed, even when
+  that is none, and a failed fetch leaves them. Set the variable to `off`
+  where the kernel's service sees it (`service.env`, then a manager restart),
+  and the kernel sends no request to that host. Only `off`, whitespace and
+  case ignored, turns the feed off; any other value, `0`, `false` and `no`
+  included, leaves the feed on, and the kernel says so: one line on its stderr
+  naming the value the first time it would have fetched, and the line under
+  the footnote and `/version`'s `priceFeed` block say the variable is set to a
+  value that is not off (the line ends
+  `; ROMP_PRICE_FEED is set to a value that is not off, so the feed stays on (only off turns it off)`,
+  and the block carries the fact as the boolean `unrecognised`; the value
+  itself is in the kernel's log and nowhere else). With the variable set to
+  `off`, the table is the built-in defaults and the modal says so: the line
+  under its footnote reads
+  `prices: built-in defaults; live feed off (ROMP_PRICE_FEED=off)`, `/version`
+  carries a `priceFeed` block that says the same beside `modelCatalog`, and
+  the kernel logs one line, naming the variable, the first time it would have
+  fetched. The spend ceiling's check never fetches: it prices with the rows
+  the modal's last fetch left in memory, else the defaults, with the switch or
+  without it. A rate you want current with the feed off goes in
+  `~/.config/romp/model-prices.json`, a JSON object keyed by model id whose
+  rows carry `in`, `out`, `cache_w` and `cache_r` in dollars per token; a row
+  there replaces that model's row in the feed's table and the defaults alike;
+  a rate the row omits keeps the table's only for an id the table itself names
+  (a built-in id, or one the feed's rows priced), and for any other id (a
+  dated id, a model the table lacks) the omitted rates are zero, not a related
+  model's: the row is matched by its exact id and inherits nothing. The line
+  under the footnote and the `priceFeed` block count the rows the file puts in
+  effect: a row that changes or adds a model's rates counts; a row equal to
+  the table's row for that model does not, so the count says what the file
+  changed, not whether it was read. With one counted row in the file, the line
+  ends `; 1 row overridden by model-prices.json`, whichever table it names. A
+  row the kernel cannot read (not an object, or a rate that is not a finite
+  number) voids that row and every row after it, and a file it cannot read or
+  parse as a JSON object is ignored whole; the kernel says so once per kernel
+  life on its stderr, and the `priceFeed` block carries the class as
+  `overrideFault` (`row` or `file`, else null), never the file's text or its
+  path.
 
 ### Fast mode for the judges
 

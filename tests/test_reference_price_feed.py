@@ -16,6 +16,18 @@ reading as the table alone); and the new prose carries no em or en dash
 and not the word the repo's CLAUDE.md bans. A wording change in gear.js or a moved constant reddens here before
 the reference goes stale.
 
+The review of PR 878 (2026-09-21) corrected two claims and added one. The subsection stated the guarantee's
+condition as the variable being SET, wider than the code's (only the value off, stripped and case-folded, turns the
+feed off; any other value leaves it on and, since that review, is SAID: one stderr line naming the value at the
+first attempt that reads it, the boolean `unrecognised` in the priceFeed block, and one clause on the modal's line);
+TheSwitchValueRule pins the condition, the other-values clause and the said-so clause, each tied to the kernel's
+_price_feed_unrecognised, the status literal's key, the stderr line's head and the gear.js clause. The subsection
+said a rate an override row omits keeps the table's, where _model_prices resolves the base by the exact id alone
+(`base = prices.get(k, {})`), so an id the table does not name zeroes its omitted rates; ThePartialRowRule pins the
+corrected sentence and names the executed guard (tests/test_price_feed_off.py APartialOverrideRow). Both classes
+are red over a git archive of the reviewed head d1026b768 at their first doc assertion (the subsection there says
+"With the variable set" and "a rate the row omits keeps the table's.") and green at the tree.
+
 Text only: the behaviour is pinned in tests/test_price_feed_off.py (the kernel) and
 ui/webview/analytics-price-source.test.ts (the view). The doc and the sources are read as files; nothing loads
 romp code, so no state root is minted. Every case asserts the doc's text FIRST, so a run over a tree without
@@ -82,6 +94,22 @@ FILE_READ = "PRICE_CONFIG.read_text()"
 # the analytics paragraph's new sentence, and the anchor it links
 SENTENCE_HEAD = "A line under the footnote says where the table's prices came from"
 LINK = "[The price feed](#the-price-feed)"
+# the switch's value rule (the review of PR 878): the condition, what any other value does, and how that is said
+RULE = "Only `off`, whitespace and case ignored, turns the feed off"
+OTHER_VALUES = "any other value, `0`, `false` and `no` included, leaves the feed on, and the kernel says so"
+SAID_STDERR = "one line on its stderr naming the value the first time it would have fetched"
+SAID_SURFACES = "the line under the footnote and `/version`'s `priceFeed` block say the variable is set to a value that is not off"
+UNREC_CLAUSE = "ROMP_PRICE_FEED is set to a value that is not off, so the feed stays on (only off turns it off)"
+UNREC_KEY = '"unrecognised": unrecognised'
+UNREC_STDERR = "price feed: ROMP_PRICE_FEED is set to %s, which is not off, so the feed stays on"
+OLD_CONDITION = "With the variable set, the table"
+# the override row's omitted rates (the review of PR 878): the table's only for an id the table names, zero otherwise
+OMITS_NAMED = "a rate the row omits keeps the table's only for an id the table itself names"
+OMITS_OTHER = "for any other id (a dated id, a model the table lacks) the omitted rates are zero, not a related model's"
+OMITS_EXACT = "the row is matched by its exact id and inherits nothing"
+OLD_OMITS = "and a rate the row omits keeps the table's."
+BASE_EXACT = "base = prices.get(k, {})"
+PARTIAL_GUARD = "tests/test_price_feed_off.py APartialOverrideRow.test_an_omitted_rate_keeps_the_tables_only_for_an_id_the_table_names"
 
 
 class _Pins(unittest.TestCase):
@@ -163,12 +191,13 @@ class TheReferenceCarriesTheSubsection(_Pins):
         # status counts the rows in effect from that merge (`overrides`, through _model_prices with refresh=False,
         # the road that never fetches) and the line ends with the count; the entry says so rather than promising
         # the built-in defaults. Review round 1: the first draft documented the line as blind to the file, which
-        # left the visible statement false in the configuration the entry itself recommends.
+        # left the visible statement false in the configuration the entry itself recommends. The omitted-rate tie moved to
+        # ThePartialRowRule with the corrected words (the review of PR 878), so this case is green over that head's archive
+        # and records nothing.
         self.assertSection()
         flat = _flat(SECTION)
         self.assertQuoted("count the rows the file puts in effect", flat, self.DOC)
         self.assertQuoted("`; 1 row overridden by model-prices.json`", flat, self.DOC)
-        self.assertQuoted("a rate the row omits keeps the table's", flat, self.DOC)
         status, prices = _pydef(KERNEL, "_price_feed_status"), _pydef(KERNEL, "_model_prices")
         self.assertTrue(status and prices, "kernel/kernel.py defines _price_feed_status and _model_prices at the top level")
         self.assertQuoted("_model_prices(now, refresh=False)", status, "kernel/kernel.py _price_feed_status",
@@ -183,7 +212,80 @@ class TheReferenceCarriesTheSubsection(_Pins):
         self.assertQuoted(FILE_READ, prices, "kernel/kernel.py _model_prices")
         self.assertLess(prices.find(FEED_MERGE), prices.find(FILE_READ),
                         "the override is applied after the feed's rows, so a row there replaces the table's")
-        self.assertQuoted("v.get(kk, base.get(kk, 0))", prices, "kernel/kernel.py _model_prices", "a rate the row omits keeps the table's")
+
+
+class TheSwitchValueRule(_Pins):
+    """The condition is the code's, not setness (the review of PR 878). Red over the d1026b768 archive at the first
+    doc assertion of each case (the subsection there reads "With the variable set" and states no value rule); green
+    at the tree. The behaviour is executed in tests/test_price_feed_off.py OffSwitch (the spelling, the said-once
+    line naming the value, off in any case or padding never read as unrecognised) and
+    ui/webview/analytics-price-source-states.test.ts (the clause on either source)."""
+    DOC = "docs/reference.md (The price feed)"
+
+    def test_it_states_that_only_off_turns_the_feed_off_and_the_kernel_reads_it_that_way(self):
+        self.assertSection()
+        flat = _flat(SECTION)
+        self.assertQuoted(RULE, flat, self.DOC, "the condition as the code has it, in the sibling bullets' value-rule voice")
+        self.assertQuoted(OTHER_VALUES, flat, self.DOC, "what any other value does, the three a reader would try named")
+        self.assertQuoted("Set the variable to `off` where the kernel's service sees it", flat, self.DOC)
+        self.assertQuoted("With the variable set to `off`, the table is the built-in defaults", flat, self.DOC)
+        self.assertNotIn(OLD_CONDITION, flat,
+                         "%s: 'With the variable set' stated the condition as setness, wider than the code's equality "
+                         "against off after strip and case-fold" % self.DOC)
+        off = _pydef(KERNEL, "_price_feed_off")
+        self.assertTrue(off, "kernel/kernel.py defines _price_feed_off at the top level")
+        self.assertQuoted('.strip().lower() == "off"', off, "kernel/kernel.py _price_feed_off",
+                          "only off, stripped and case-folded, turns the feed off; executed in tests/test_price_feed_off.py "
+                          "OffSwitch.test_the_spelling_is_the_catalogs_stripped_and_case_folded")
+        unrec = _pydef(KERNEL, "_price_feed_unrecognised")
+        self.assertTrue(unrec, "kernel/kernel.py defines _price_feed_unrecognised at the top level: the read that says so")
+        self.assertQuoted('v.lower() != "off"', unrec, "kernel/kernel.py _price_feed_unrecognised",
+                          "set, non-empty after strip and not off in any case is the value the doc's clause describes")
+
+    def test_it_says_a_value_that_is_not_off_is_said_and_each_surface_carries_it(self):
+        self.assertSection()
+        flat = _flat(SECTION)
+        self.assertQuoted(SAID_STDERR, flat, self.DOC, "the stderr line, at the first attempt that reads the value")
+        self.assertQuoted(SAID_SURFACES, flat, self.DOC, "the modal's line and /version")
+        self.assertQuoted("`; %s`" % UNREC_CLAUSE, flat, self.DOC, "the clause as the modal renders it, quoted whole")
+        self.assertQuoted("the block carries the fact as the boolean `unrecognised`", flat, self.DOC)
+        self.assertQuoted("the value itself is in the kernel's log and nowhere else", flat, self.DOC,
+                          "/version is auth-exempt and an environment value is arbitrary text")
+        self.assertQuoted(UNREC_STDERR, KERNEL, "kernel/kernel.py", "the stderr line's head names the variable and the value; "
+                          "executed in tests/test_price_feed_off.py OffSwitch."
+                          "test_a_value_that_is_not_off_leaves_the_feed_on_and_is_said_once_naming_the_value")
+        status = _pydef(KERNEL, "_price_feed_status")
+        self.assertTrue(status, "kernel/kernel.py defines _price_feed_status at the top level")
+        self.assertQuoted(UNREC_KEY, status, "kernel/kernel.py _price_feed_status", "the block carries the boolean as a literal key")
+        self.assertNotIn("os.environ", status, "kernel/kernel.py _price_feed_status reads the switch through its two boolean "
+                         "readers and never puts an environment value in the block")
+        src = "ui/webview/gear.js"
+        self.assertQuoted("'%s'" % UNREC_CLAUSE, GEAR, src, "the clause the doc quotes, on either source")
+        self.assertQuoted("pf.unrecognised === true", GEAR, src, "worded only for the boolean true, so an older kernel's block says nothing")
+
+
+class ThePartialRowRule(_Pins):
+    """An omitted override rate keeps the table's only for an id the table names (the review of PR 878). Red over the
+    d1026b768 archive at the first doc assertion (the subsection there says "a rate the row omits keeps the table's."
+    for every id); green at the tree. The code is unchanged: the ruling took the prose branch, and the executed guard
+    named below pins the base resolution by mutation."""
+    DOC = "docs/reference.md (The price feed)"
+
+    def test_it_says_an_omitted_rate_keeps_the_tables_only_for_an_id_the_table_names(self):
+        self.assertSection()
+        flat = _flat(SECTION)
+        self.assertQuoted(OMITS_NAMED, flat, self.DOC)
+        self.assertQuoted(OMITS_OTHER, flat, self.DOC, "a partial row for an id the six built-in rows do not name zeroes what it omits")
+        self.assertQuoted(OMITS_EXACT, flat, self.DOC, "no inheritance through the signature or family fallback")
+        self.assertNotIn(OLD_OMITS, flat, "%s: the unconditional clause overstated the merge" % self.DOC)
+        prices = _pydef(KERNEL, "_model_prices")
+        self.assertTrue(prices, "kernel/kernel.py defines _model_prices at the top level")
+        where = "kernel/kernel.py _model_prices"
+        self.assertQuoted(BASE_EXACT, prices, where, "the base is the exact id's row, never _price_for's fallback; executed in %s" % PARTIAL_GUARD)
+        self.assertNotIn("_price_for(", prices, "%s resolves the base by the exact id: a fallback here is the contract change the "
+                         "doc's sentence, this pin and %s must follow" % (where, PARTIAL_GUARD))
+        self.assertQuoted("v.get(kk, base.get(kk, 0))", prices, where,
+                          "a rate the row omits reads the base row's, which is the table's for an id it names and empty otherwise")
 
 
 class TheAnalyticsParagraphPointsAtTheLine(_Pins):
