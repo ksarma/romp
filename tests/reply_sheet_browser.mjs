@@ -17,8 +17,9 @@
 // centre is under a finger; the chat's column fits); the detail's scrollWidth against its offsetWidth, the border box,
 // with the unbreakable token wrapped (overflow-wrap: anywhere); the answer typed at 900px and the window then shrunk to
 // 508 (kbFit re-runs grow on the resize: the answer box re-fits to the room). After the tap, on the other todo: an
-// inline height written as the resize grip writes it, then one keystroke (the drag guard: the height stands); then the
-// grip pulled past the box's bottom edge and released over the backdrop (the click that ends a drag of the grip is not a
+// inline height written as the resize grip writes it, then one keystroke (the drag guard: the height stands); the height
+// written to 215px and the frame taken to 420 and back (the dragged height is a preference: clamped to the room under the
+// fold, not to the content, and returned to at 508); then the grip pulled past the box's bottom edge and released over the backdrop (the click that ends a drag of the grip is not a
 // dismissal: the sheet stands with its text; Chromium and WebKit dispatch that click to the overlay, Firefox to the
 // textarea), and a plain tap on the backdrop (it dismisses).
 //
@@ -259,6 +260,23 @@ try {
       const typed = await measure();
       out.drag = { openStyleH: at.inputStyleH, openH: at.inputH, draggedStyleH: dragged.inputStyleH, draggedH: dragged.inputH, afterKeyStyleH: typed.inputStyleH, afterKeyH: typed.inputH };
     } catch (e) { out.drag = { error: String(e).slice(0, 400) }; }
+    // the dragged height is a PREFERENCE clamped to the room (composition-3): written to 215px as the grip leaves it, it stands at
+    // 508 (the room holds it); the frame at 420 clamps it to the room the box has, not to the content; back at 508 it returns to
+    // 215. Recorded whole (the three measurements), its own failure recorded and never fatal
+    if (!out.drag.error) {
+      try {
+        await page.evaluate(() => { document.querySelector("#ut-reply-prompt .ut-reply-input").style.height = "215px"; });
+        await settle();
+        const set = await measure();
+        await setHeight(TIGHT);
+        await waitTight(true);
+        const clamped = await measure();
+        await setHeight(KEYBOARD_UP);
+        await waitTight(false);
+        const back = await measure();
+        out.pref = { set, clamped, back };
+      } catch (e) { out.pref = { error: String(e).slice(0, 400) }; }
+    }
     // the click that ends a grip drag is not a tap on the backdrop (composition-2): on the same sheet the grip is pulled past the
     // box's bottom edge and released over the backdrop; the sheet stands with its text, and a plain tap on the backdrop then
     // dismisses. Its own failure is recorded, never fatal, so the records above reach the Python side whole

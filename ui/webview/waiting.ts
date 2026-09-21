@@ -309,7 +309,7 @@ function showReply(sid: string, todoId: string, todoText: string, todoDetail = "
   // .picker-overlay.kb-tight rules the class shares). The same resize re-runs grow: the answer's cap is the room the
   // box has left, and the keyboard opening or closing changes the room. Gone with the modal: close() drops it, and it
   // drops itself when the overlay was removed some other way (a second Reply replacing this one), as onFocus does.
-  const kbFit = () => { if (!overlay.isConnected) { window.removeEventListener("resize", kbFit); return; } overlay.classList.toggle("kb-tight", window.innerHeight < 480); grow(); };
+  const kbFit = () => { if (!overlay.isConnected) { window.removeEventListener("resize", kbFit); return; } overlay.classList.toggle("kb-tight", window.innerHeight < 480); grow(true); };
   const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey, true); window.removeEventListener("focus", onFocus); window.removeEventListener("resize", kbFit); };
   const go = () => {
     const text = input.value.trim();
@@ -330,25 +330,31 @@ function showReply(sid: string, todoId: string, todoText: string, todoDetail = "
   // cap read, and the height gives that overflow back, never under the floor. Run on the window's resize too (kbFit),
   // so a keyboard opening or closing re-fits an answer already grown; the box's own scroll (styles.css
   // #ut-reply-prompt .picker-box) is the backstop for a window the floors alone overflow. A height the person DRAGGED
-  // stands (the textarea keeps resize: vertical): the guard is file-comments.ts autosize's, compared string to string,
-  // an inline height that is not what this handler last wrote was dragged there, before the first keystroke or since,
-  // and the handler stands down until the sheet closes (the maintainer's round 1 ruling: without it every keystroke
-  // snapped a dragged box back to its content). growComposer is the precedent for the auto-then-measure idiom only: it
-  // discards a dragged height too (only its cap survives a drag). render.ts showUserTodoReply carries the same block,
-  // byte for byte (reply-sheet-keyboard.test.ts pins the two equal).
+  // stands against typing (the textarea keeps resize: vertical): the guard is file-comments.ts autosize's, compared
+  // string to string, an inline height that is not what this handler last wrote was dragged there, before the first
+  // keystroke or since (the maintainer's round 1 ruling: without it every keystroke snapped a dragged box back to its
+  // content). On the window's resize (kbFit) that height is the person's PREFERENCE: clamped to the room the box has,
+  // never under the floor, and returned toward when the room comes back, never re-fit to the content (the author's pass
+  // after the maintainer's round 1, composition-3: before, a box dragged at 900 kept its height under the keyboard and
+  // Send lay below the frame). growComposer is the precedent for the auto-then-measure idiom only: it discards a dragged
+  // height too (only its cap survives a drag). render.ts showUserTodoReply carries the same block, byte for byte
+  // (reply-sheet-keyboard.test.ts pins the two equal).
   let sizedTo = "";   // what grow last wrote ("" before its first write): an inline height that is not it is the person's drag
-  const grow = () => {
-    if (input.style.height !== sizedTo) return;   // dragged (resize: vertical writes the inline height, fires no input): the person's height stands
+  let pref = 0;   // the height the person dragged to, in px (0 until a drag): their preference, which a keystroke leaves alone and a resize clamps to the room
+  const grow = (resized = false) => {
+    const stood = input.style.height;
+    if (stood !== sizedTo) pref = parseFloat(stood) || 0;   // dragged since the last write (resize: vertical writes the inline height, fires no input): the person's height is the preference from here on
+    if (pref > 0 && !resized) return;   // and it stands against typing; only the room's change (kbFit) re-fits it, to the room and back toward the preference
     input.style.height = "auto";
     const floor = input.offsetHeight;
-    if (!(floor > 0)) { input.style.height = sizedTo; return; }   // no layout to measure (a box not laid out): keep what stood
-    const want = input.scrollHeight + floor - input.clientHeight;
+    if (!(floor > 0)) { input.style.height = stood; return; }   // no layout to measure (a box not laid out): keep what stood
+    const want = pref > 0 ? Math.max(floor, pref) : input.scrollHeight + floor - input.clientHeight;   // the preference, or the content's height plus the border
     input.style.height = want + "px";
-    const over = box.scrollHeight - box.clientHeight;   // the box past its own cap with the answer at its content's height
+    const over = box.scrollHeight - box.clientHeight;   // the box past its own cap with the answer at that height
     if (over > 0) input.style.height = Math.max(floor, want - over) + "px";
     sizedTo = input.style.height;
   };
-  input.addEventListener("input", grow);
+  input.addEventListener("input", () => grow());
   // NOT a tap on the backdrop: the click that ends a drag of the answer box's grip. Chromium and WebKit dispatch a click
   // whose press and release targets differ to their common ancestor, here the overlay, so a grip pull released past the
   // box's bottom edge (the box at its cap cannot grow with the answer box, so the pointer leaves it) arrived as a backdrop

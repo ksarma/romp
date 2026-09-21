@@ -25,7 +25,9 @@
 // closing IS a resize here; render.ts's picker keys on the same event, at the same 480px) and re-runs grow, and
 // close() removes the listener, which also removes itself when the overlay was replaced by a second Reply; grow lets
 // the box follow the answer up to the room the box has left, never under the three-row floor, and stands down for a
-// height the person dragged (file-comments.ts autosize's guard). The backdrop's click dismisses, except the click that
+// height the person dragged (file-comments.ts autosize's guard); on the resize path (kbFit's grow(true)) that height is
+// the person's preference, clamped to the room and returned toward when the room comes back, never re-fit to the
+// content (the author's pass after the maintainer's round 1, composition-3). The backdrop's click dismisses, except the click that
 // ends a drag of the answer box's grip: the press began on the box and the box's inline height changed under it (the
 // author's pass after the maintainer's round 1, composition-2; the record and the click line are executed below out of
 // each builder).
@@ -63,18 +65,19 @@ function line(src: string, re: RegExp, what: string, name: string): string {
 const KBFIT = /^\s*const kbFit = .*$/m;
 const CLOSE = /^\s*const close = .*$/m;
 const KB_ARM = /window\.addEventListener\("resize", kbFit\);\n\s*kbFit\(\);/;
-const GROW_ARM = /input\.addEventListener\("input", grow\);/;
+const GROW_ARM = /input\.addEventListener\("input", \(\) => grow\(\)\);/;   // the keystroke path: grow with no argument (kbFit's resize path is grow(true))
 // the backdrop's click and the record it reads: whether the last press began on the answer box and the box's inline height
 // then (a drag of the grip changes it under the press), the press listener that writes the record, and the click line
 const PRESS_RECORD = /^\s*const press = \{ on: false, at: "" \};.*$/m;
 const PRESS_ARM = /^\s*overlay\.addEventListener\("pointerdown", .*$/m;
 const DISMISS = /^\s*overlay\.addEventListener\("click", .*$/m;
-// the grow handler is a BLOCK (its head, its statements, the `};` that closes it), sliced whole; a builder whose head or
-// close moved is a loud failure here, and the browser legs slice the same block
+// the grow handler is a BLOCK (its records, its head, its statements, the `};` that closes it), sliced whole; a builder
+// whose head or close moved is a loud failure here
+const GROW_HEAD = "\n  const grow = (resized = false) => {\n";   // resized: kbFit's path, where a dragged height is clamped to the room
 function growBlock(src: string, name: string): string {
   const head = src.indexOf("\n  let sizedTo = \"\";");   // the drag guard's record, declared right above the handler
   assert.ok(head >= 0, "the grow block's head (let sizedTo) not found in " + name + ": re-anchor");
-  assert.ok(src.indexOf("\n  const grow = () => {\n", head) > head && src.indexOf("\n  const grow = () => {\n", head) < head + 200, name + ": the grow handler follows its sizedTo line");
+  assert.ok(src.indexOf(GROW_HEAD, head) > head && src.indexOf(GROW_HEAD, head) < head + 400, name + ": the grow handler follows its sizedTo and pref lines");
   const end = src.indexOf("\n  };\n", head);
   assert.ok(end > head, "the grow block's close not found in " + name + ": re-anchor");
   return src.slice(head + 1, end + "\n  };".length);
@@ -210,7 +213,7 @@ for (const [name, src] of BUILDERS) {
     const b = boxNode({ scroll: 400, client: 400 });
     const win = new Win(); win.innerHeight = 900;
     const grow = grower(name, src, g.input, b.box, win);
-    assert.equal(g.input._listeners.input === grow, true, "armed on the box's input event");
+    assert.equal(typeof g.input._listeners.input, "function", "armed on the box's input event (the listener calls grow with no argument, the keystroke path; kbFit calls grow(true), the resize path, executed below)");
     g.input._listeners.input({ type: "input" });
     assert.deepEqual(g.fresh(), ["auto", "78px"], "measured at auto first, then the floor: an empty box is three rows");
     // a long answer: the content's scroll height plus the border a border-box height carries (the composer's growComposer
@@ -241,7 +244,7 @@ for (const [name, src] of BUILDERS) {
     // measuring auto, as file-comments.ts autosizeComposer stands down when the scroll height reads 0
     g.mark(); g.geom.offset = 0; g.geom.client = 0; g.geom.scroll = 0;
     grow();
-    assert.deepEqual(g.fresh(), ["auto", "100px"], "no layout: the measuring auto, then the height the handler last wrote put back");
+    assert.deepEqual(g.fresh(), ["auto", "100px"], "no layout: the measuring auto, then what stood put back");
     // THE DRAG GUARD (file-comments.ts autosize's): the textarea keeps resize: vertical, and a drag writes the inline height
     // and fires no input, so the handler knows a drag as an inline height that is not what it last wrote; the next
     // keystroke writes nothing and the person's height stands until the sheet closes
@@ -259,6 +262,68 @@ for (const [name, src] of BUILDERS) {
     const grow2 = grower(name, src, g2.input, boxNode({ scroll: 400, client: 400 }).box, win);
     grow2();
     assert.deepEqual(g2.writes, ["120px"], "dragged before the first write: the handler stands down too (the case the second comparison alone cannot see)");
+  });
+}
+
+// ── the dragged height as a preference, executed out of each builder ─────────────────────────────
+// A height the person dragged stands against typing (F's guard, above). On the resize path, kbFit's grow(true), it is
+// their PREFERENCE (the author's pass after the maintainer's round 1, composition-3): the keyboard opening clamps the box
+// to min(preference, room), never under the floor, so Send stays inside the clip; the keyboard closing returns the box
+// toward the preference, up to it and never past; and neither path re-fits the box to its content while a preference
+// stands. Before: a box dragged to 215px at 900 kept 215px under the keyboard, the box overflowed its cap by about 130px
+// and Send lay below the frame (the browser legs and tests/test_reply_sheet_served.py measure the real sheet)
+for (const [name, src] of BUILDERS) {
+  test(`${name}: on the resize path a dragged height is a preference clamped to the room, returned toward when the room comes back, never re-fit to the content`, () => {
+    const g = inputNode({ offset: 78, client: 76, scroll: 76 });
+    const b = boxNode({ scroll: 400, client: 400 });
+    const win = new Win(); win.innerHeight = 900;
+    const grow = grower(name, src, g.input, b.box, win) as (resized?: boolean) => void;
+    grow();
+    assert.deepEqual(g.fresh(), ["auto", "78px"], "an empty box at the floor, on record");
+    // the drag, as the browser serializes it, then a resize with the box fitting (900): the preference stands, written as such
+    g.mark(); g.writes.push("215px");
+    grow(true);
+    assert.deepEqual(g.fresh(), ["215px", "auto", "215px"], "the room holds the dragged height: the resize writes the preference itself");
+    // the keyboard opens: with the answer at 215px the box runs 132px past its cap, and the box is clamped to the room, never
+    // re-fit to the content (the content is the floor here: a re-fit would write 78px)
+    g.mark(); b.geom.scroll = 532; b.geom.client = 400;
+    grow(true);
+    assert.deepEqual(g.fresh(), ["auto", "215px", "83px"], "clamped to the room: the preference written, the box's 132px of overflow read, and the height is the preference less the overflow (before the clamp the dragged height stood through the resize)");
+    // typing under the clamp: the handler stands down (F's guard), the clamped height is not re-fit to the content
+    g.mark(); g.geom.scroll = 300;
+    grow();
+    assert.deepEqual(g.fresh(), [], "a keystroke under the clamp writes nothing: the dragged height stands against typing, clamped or not");
+    // the keyboard closes: the box returns to the preference, not stuck at the clamp
+    g.mark(); b.geom.scroll = 400;
+    grow(true);
+    assert.deepEqual(g.fresh(), ["auto", "215px"], "the room back, the box returns to the preference (before, nothing returned it: a clamped height stood until the sheet closed)");
+    // a later drag is the new preference, clamped the same way
+    g.mark(); g.writes.push("180px"); b.geom.scroll = 497;
+    grow(true);
+    assert.deepEqual(g.fresh(), ["180px", "auto", "180px", "83px"], "a later drag replaces the preference: 180px, clamped by the 97px overflow the box then has");
+    g.mark(); b.geom.scroll = 400;
+    grow(true);
+    assert.deepEqual(g.fresh(), ["auto", "180px"], "and the room back returns to the new preference, not the old one");
+    // the clamp never goes under the floor: a box whose fixed rows alone overflow keeps three rows (the box itself scrolls)
+    g.mark(); b.geom.scroll = 600;
+    grow(true);
+    assert.deepEqual(g.fresh(), ["auto", "180px", "78px"], "180 less 200 is under the floor: the floor stands");
+    // no layout to measure: what stood is put back, the preference kept for the next resize
+    g.mark(); g.geom.offset = 0; g.geom.client = 0;
+    grow(true);
+    assert.deepEqual(g.fresh(), ["auto", "78px"], "no layout: the measuring auto, then what stood put back");
+    g.mark(); g.geom.offset = 78; g.geom.client = 76; b.geom.scroll = 400;
+    grow(true);
+    assert.deepEqual(g.fresh(), ["auto", "180px"], "the preference survived the no-layout call");
+    // a preference under the floor is the floor
+    g.mark(); g.writes.push("40px");
+    grow(true);
+    assert.deepEqual(g.fresh(), ["40px", "auto", "78px"], "a dragged height under the floor lays out at the floor, and the handler writes the floor");
+    // without a drag the resize path is the content fit, unchanged
+    const g2 = inputNode({ offset: 78, client: 76, scroll: 200 });
+    const grow2 = grower(name, src, g2.input, boxNode({ scroll: 400, client: 400 }).box, win) as (resized?: boolean) => void;
+    grow2(true);
+    assert.deepEqual(g2.writes, ["auto", "202px"], "no drag: the resize path fits the content, as the room case above");
   });
 }
 
@@ -316,8 +381,8 @@ test("the two builders stay twins for this fix: the same kbFit line, the same gr
   for (const [name, src] of BUILDERS) {
     assert.match(line(src, KBFIT, "kbFit", name), /overlay\.classList\.toggle\("kb-tight", window\.innerHeight < 480\)/, name + ": the picker's 480px threshold (render.ts showPicker), so the two folds agree on what a short window is");
     assert.match(line(src, KBFIT, "kbFit", name), /if \(!overlay\.isConnected\) \{ window\.removeEventListener\("resize", kbFit\); return; \}/, name + ": the listener drops itself when the overlay was replaced");
-    assert.match(line(src, KBFIT, "kbFit", name), /window\.innerHeight < 480\); grow\(\); \};$/, name + ": the fold re-runs grow after its own toggle, so the room is read with the fold's cap applied (executed above: one grow per resize)");
-    assert.ok(src.search(KBFIT) < src.indexOf("\n  const grow = () => {\n"), name + ": kbFit is declared before grow and reads it only when called; the first call is kbFit() after the append, past grow's declaration");
+    assert.match(line(src, KBFIT, "kbFit", name), /window\.innerHeight < 480\); grow\(true\); \};$/, name + ": the fold re-runs grow after its own toggle, on the resize path (grow(true): a dragged height is clamped to the room there and returned toward when the room comes back; executed above), so the room is read with the fold's cap applied (one grow per resize)");
+    assert.ok(src.search(KBFIT) < src.indexOf(GROW_HEAD), name + ": kbFit is declared before grow and reads it only when called; the first call is kbFit() after the append, past grow's declaration");
     assert.match(line(src, CLOSE, "close", name), /window\.removeEventListener\("resize", kbFit\)/, name + ": close() removes it too");
     const armAt = src.search(KB_ARM), appendAt = src.indexOf("document.body.appendChild(overlay);");
     assert.ok(appendAt >= 0 && armAt > appendAt, name + ": armed after the overlay is in the document, so the first kbFit() reads a connected overlay");

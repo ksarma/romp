@@ -30,7 +30,9 @@ pixels and Send's centre stays under a finger (the backstop state, measured as i
 fitted state); the unbreakable token wraps, so the detail's scrollWidth is no wider than its offsetWidth, the border box
 (overflow-wrap: anywhere); the answer typed at 900px and the window then shrunk to 508 re-fits the answer box (kbFit
 re-runs grow on the resize); and on the other todo's sheet an inline height written as the resize grip writes it stands
-through a keystroke (the drag guard), then the grip pulled past the box's bottom edge and released over the backdrop
+through a keystroke (the drag guard); written to 215px and the frame taken to 420, the dragged height is clamped to the
+room the box has under the fold, not to the content, and returns to 215px at 508 (a dragged height is the person's
+preference on the resize path); then the grip pulled past the box's bottom edge and released over the backdrop
 leaves the sheet up with its text (the click that ends a drag of the grip is not a dismissal: Chromium and WebKit
 dispatch it to the overlay, the common ancestor of the press and the release, and before the guard it closed the sheet
 with the answer; Firefox retargets it to the textarea), and a plain tap on the backdrop then dismisses. And the tree each
@@ -296,6 +298,23 @@ class ReplySheetServed(unittest.TestCase):
         self.assertGreater(d["draggedH"], d["openH"] + 30, where + "the written height laid out taller than the floor: %r" % (d,))
         self.assertEqual(d["afterKeyStyleH"], "150px", where + "one keystroke after the drag: the inline height the person set stands, grow stood down (before the guard it snapped back to the content's height): %r" % (d,))
         self.assertGreaterEqual(d["afterKeyH"], d["draggedH"] - 1, where + "and the box keeps the dragged height: %r" % (d,))
+        # the dragged height is a PREFERENCE clamped to the room (the author's pass after the maintainer's round 1,
+        # composition-3): written to 215px as the grip leaves it, on this todo's sheet it stands at 508 (the room holds it); the
+        # frame at 420 clamps it to the room the box has, not to the content's height, the box fitting its cap and Send inside
+        # the clip under a finger; back at 508 the box returns to the 215px the person set, not stuck at the clamp. Before, the
+        # dragged height stood through the resize and the box overflowed its cap
+        p = r.get("pref", {"error": "the preference step did not run"})
+        self.assertNotIn("error", p, where + "the preference step ran to its end: %r" % (p,))
+        self.assertEqual(p["set"]["inputStyleH"], "215px", where + "508px: the dragged 215px stands, the room holds it: %r" % (p["set"],))
+        c = p["clamped"]
+        self.assertTrue(c["tight"], where + "420px after the drag: under the fold: %r" % (c,))
+        self.assertLess(c["inputH"], p["set"]["inputH"] - 8, where + "420px after the drag: the box is clamped to the room (%d against the %d the drag laid out); before the clamp the dragged height stood through the resize and the box overflowed its cap: %r" % (c["inputH"], p["set"]["inputH"], c))
+        self.assertGreater(c["inputH"], c["floorH"] + 20, where + "420px after the drag: clamped to the room, not reset to the content's height (%d against the %d floor): %r" % (c["inputH"], c["floorH"], c))
+        self.assertLessEqual(c["boxScrollH"], c["boxClientH"] + 1, where + "420px after the drag: the clamp gave the box's overflow back exactly, nothing is a scroll away: %r" % (c,))
+        for b in ("send", "cancel"):
+            self.assertTrue(self._inside_clip(c, b), where + "420px after the drag: %s is inside the box's clip: %r" % (b, c))
+        self.assertEqual(c["hitAtSend"], "target", where + "420px after the drag: a finger at Send's painted centre reaches Send: %r" % (c,))
+        self.assertEqual(p["back"]["inputStyleH"], "215px", where + "back at 508: the box returns to the height the person set, not stuck at the clamp: %r" % (p["back"],))
         # the click that ends a drag of the grip, released over the backdrop, is not a dismissal (the author's pass after the
         # maintainer's round 1, composition-2): the sheet stands with its text in every engine (Chromium and WebKit dispatch
         # the click to the overlay, the common ancestor of the press and the release; Firefox to the textarea), and a plain

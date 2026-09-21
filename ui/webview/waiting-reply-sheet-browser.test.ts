@@ -27,7 +27,10 @@
 // is at its cap, so a grip pull released past its bottom edge leaves the pointer over the backdrop, and Chromium and
 // WebKit dispatch that click to the overlay, the common ancestor of the press and the release, which before the guard
 // closed the sheet with the answer (Firefox retargets it to the textarea); now the sheet stands with its text in every
-// engine, and a plain tap on the backdrop still dismisses.
+// engine, and a plain tap on the backdrop still dismisses. A dragged height is the person's PREFERENCE on the resize
+// path (composition-3): pulled to 215px at 900, the keyboard opening clamps the box to the room, not to its content, and
+// the keyboard closing returns it to 215px; before, the dragged height stood through the resize and Send lay below the
+// frame.
 //
 // The browser legs (Chromium, Firefox, and WebKit when the box has them) load the kernel's /waiting page as it is
 // served (styles.css, then the pane's sheet) with the worktree's waiting.ts bundle in a 390px-wide frame, the
@@ -498,6 +501,30 @@ for (const name of ["chromium", "firefox", "webkit"]) {
       s = await probeShort();
       assert.ok(s.sendInBoxAtBottom && s.sendHitAtBottom === "target", `420px, the chip todo, fourteen lines: scrolled to the box's bottom, Send is inside the clip and under a finger (${JSON.stringify(s)})`);
       await fill("");
+      await setHeight(KEYBOARD_UP);
+      await waitTight(false);
+      // ── the dragged height is a PREFERENCE clamped to the room (the author's pass after the maintainer's round 1, composition-3):
+      // the box pulled to 215px at 900 (the inline height written as the grip leaves it, so the preference is the same in every
+      // engine), the keyboard then opens (508): the box is clamped to the room the sheet has, not reset to the content's height,
+      // Send inside the clip and under a finger; the keyboard closes (900): the box returns to the 215px the person set, not stuck
+      // at the clamp. Before, the dragged height stood through the resize, the box overflowed its cap and Send lay below the frame
+      await setHeight(TALL);
+      await waitTight(false);
+      await page.evaluate(() => { const win = (document.getElementById("f-waiting") as HTMLIFrameElement).contentWindow!; (win.document.querySelector("#ut-reply-prompt .ut-reply-input") as HTMLElement).style.height = "215px"; });
+      await settle();
+      m = (await measure())!;
+      assert.equal(m.inputStyleH, "215px", `900px: the dragged 215px stands, the room holds it (${where(m)})`);
+      const draggedTall = m.inputH;
+      await setHeight(KEYBOARD_UP);
+      m = (await measure())!;
+      assert.ok(m.inputH < draggedTall - 20, `508px after the drag: the box is clamped to the room (${m.inputH}px against the ${draggedTall}px the drag laid out); before the clamp the dragged height stood through the resize and Send lay below the frame (${where(m)})`);
+      assert.ok(m.inputH > m.floorH, `508px after the drag: clamped to the room, not reset to the content's height (${m.inputH}px against the ${m.floorH}px floor of an empty box) (${where(m)})`);
+      assertFits(m, "508px after the drag, clamped to the room");
+      await setHeight(TALL);
+      await waitTight(false);
+      m = (await measure())!;
+      assert.equal(m.inputStyleH, "215px", `900px again: the box returns to the height the person set, not stuck at the clamp (${where(m)})`);
+      assert.ok(m.inputH >= draggedTall - 1, `and lays out at it (${m.inputH} against ${draggedTall}px)`);
       await setHeight(KEYBOARD_UP);
       await waitTight(false);
       // ── the click that ends a drag of the grip is not a tap on the backdrop (the author's pass after the maintainer's round 1,
