@@ -31,7 +31,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
-import { takeReloadScroll } from "./reload-restore";
+import { takeReloadScroll, type ReloadScroll } from "./reload-restore";
 import { hideEdges } from "../test-dom-shim";
 
 const requireCjs = createRequire(__filename);
@@ -44,31 +44,84 @@ function liftBetween(startAnchor: string, endAnchor: string): string {
 }
 
 /** The layout model: the scroller holds one view whose children stack from offset 0, each of a known height; a row's client rect is its
- *  offset less the scroller's scrollTop (the scroller's own rect top is 0). */
+ *  offset less the scroller's scrollTop (the scroller's own rect top is 0). Geometry is OBSERVABLE here and the model FAILS CLOSED on what it
+ *  cannot represent (the maintainer's round 4 ruling, closure-6: until this pass a row had no `style`, the view element's `style` was an
+ *  untracked bag and a production-shaped `style.height` write was a silent no-op, while a spacer query planted in the window reddened on
+ *  selector text rather than on the geometry it wrote). A row's `style.height` is routed into its `h` and recorded on the world's trace; the
+ *  view element's `style.height`, which the model has no figure for (its height is its children's sum), throws; any other style key throws
+ *  on a read or a write. A child inserted or removed through the DOM's methods (appendChild, insertBefore, removeChild, replaceChildren, a
+ *  node's remove) is recorded; the children collection is read-only like the DOM's. A selector is resolved for what the lifted code and
+ *  production's spacer code are entitled to query among the children (every uuid-carrying row, one uuid, one class with or without
+ *  `:scope > `), and any other selector throws, so an unmodelled query fails closed instead of matching nothing. The geometry events on the
+ *  trace: `style <class> height=<px> (was <px>)`, `child +<class>:<px>`, `child -<class>:<px>`, beside the take-class events the stubs and
+ *  the accessors push (the world below). */
 type Write = { writer: string; top: number; stick: boolean; from: number | undefined };
+const px = (v: unknown, what: string): number => { const m = /^(-?\d+(?:\.\d+)?)px$/.exec(String(v)); assert.ok(m, what + ": the model reads a height in px, not " + JSON.stringify(v)); return Number(m![1]); };
+/** A `style` whose `height` reads `read()` and writes through `write`; every other key throws on a read, a write or a delete (a write there
+ *  would change nothing the model measures, so it fails closed rather than passing silently). `name` names the element in the errors. */
+function styleOf(name: string, read: () => number, write: (h: number) => void): Record<string, string> {
+  const refuse = (k: string | symbol, what: string): never => { throw new Error(name + ".style." + String(k) + " " + what + ": the model carries a height and nothing else, so this fails closed rather than passing as a silent no-op"); };
+  return new Proxy({} as Record<string, string>, {
+    get: (_t, k) => k === "height" ? read() + "px" : typeof k === "symbol" || k === "toJSON" || k === "then" ? undefined : refuse(k, "read"),
+    set: (_t, k, v) => { if (k === "height") { write(px(v, name + ".style.height")); return true; } return refuse(k, "written as " + JSON.stringify(v)); },
+    deleteProperty: (_t, k) => refuse(k, "deleted"),
+  });
+}
 class Content {
   scrollTop = 0; host: Host | null = null;
-  constructor(public clientHeight: number) { hideEdges(this); }
-  get scrollHeight(): number { return this.host ? this.host.children.reduce((a, c) => a + c.h, 0) : 0; }
+  constructor(public clientHeight: number, public trace: string[]) { hideEdges(this); }
+  get scrollHeight(): number { return this.host ? this.host.height() : 0; }
   getBoundingClientRect() { return { top: 0, bottom: this.clientHeight }; }
 }
 class Node {
-  dataset: Record<string, string> = {}; host: Host | null = null;
-  constructor(public h: number, public className: string, uuid?: string) { if (uuid) this.dataset.uuid = uuid; hideEdges(this); }
+  dataset: Record<string, string> = {}; host: Host | null = null; readonly style: Record<string, string>;
+  constructor(public h: number, public className: string, uuid?: string) {
+    if (uuid) this.dataset.uuid = uuid;
+    // a height written on a row moves the model's geometry and is recorded on the trace of the view the row is in (a detached row's write
+    // reaches the trace when the row is inserted, with its height)
+    this.style = styleOf("<" + className + ">", () => this.h, (h) => { this.host?.content.trace.push("style " + this.className + " height=" + h + " (was " + this.h + ")"); this.h = h; });
+    hideEdges(this);
+  }
   getBoundingClientRect() { const top = this.host!.offsetOf(this) - this.host!.content.scrollTop; return { top, bottom: top + this.h }; }
+  remove(): void { this.host?.removeChild(this); }
 }
 class Host {
-  children: Node[] = []; style: Record<string, string> = { display: "" };
-  constructor(public content: Content) { content.host = this; hideEdges(this); }
-  add(n: Node): Node { n.host = this; this.children.push(n); return n; }
-  offsetOf(n: Node): number { let y = 0; for (const c of this.children) { if (c === n) return y; y += c.h; } throw new Error("not a child"); }
-  querySelectorAll(sel: string): Node[] { assert.equal(sel, "[data-uuid]", "captureScrollAnchor's selector"); return this.children.filter((c) => c.dataset.uuid != null); }
-  querySelector(sel: string): Node | null { const m = /^\[data-uuid="([^"]*)"\]$/.exec(sel); assert.ok(m, "restoreScrollAnchor's selector: " + sel); return this.children.find((c) => c.dataset.uuid === m![1]) ?? null; }
+  private kids: Node[] = []; readonly style: Record<string, string>;
+  constructor(public content: Content) {
+    content.host = this;
+    const noHeight = (): never => { throw new Error("v.el.style.height: the view element's height is its children's sum and the model has no figure of its own for it, so a read or a write here fails closed rather than passing as a silent no-op"); };
+    this.style = styleOf("v.el", noHeight, noHeight);
+    hideEdges(this);
+  }
+  /** The children, read-only like the DOM's collection: insertion and removal go through the methods below, which record them. */
+  get children(): readonly Node[] { return Object.freeze([...this.kids]); }
+  height(): number { return this.kids.reduce((a, c) => a + c.h, 0); }
+  add(n: Node): Node { return this.appendChild(n); }
+  appendChild(n: Node): Node { return this.insertBefore(n, null); }
+  insertBefore(n: Node, ref: Node | null): Node {
+    if (n.host === this) this.removeChild(n);   // the DOM moves a node already in the tree
+    const i = ref ? this.kids.indexOf(ref) : this.kids.length; assert.ok(i >= 0, "insertBefore: the reference node is a child");
+    n.host = this; this.kids.splice(i, 0, n); this.content.trace.push("child +" + n.className + ":" + n.h); return n;
+  }
+  removeChild(n: Node): Node { const i = this.kids.indexOf(n); assert.ok(i >= 0, "removeChild: the node is a child"); this.kids.splice(i, 1); n.host = null; this.content.trace.push("child -" + n.className + ":" + n.h); return n; }
+  replaceChildren(...ns: Node[]): void { for (const c of [...this.kids]) this.removeChild(c); for (const n of ns) this.appendChild(n); }
+  offsetOf(n: Node): number { let y = 0; for (const c of this.kids) { if (c === n) return y; y += c.h; } throw new Error("not a child"); }
+  /** What a caller is entitled to query among the children: every uuid-carrying row (`[data-uuid]`, captureScrollAnchor's), one uuid
+   *  (restoreScrollAnchor's), or one class with or without `:scope > ` (production's spacer and gap redraws: `.tx-spacer-top`,
+   *  `:scope > .tx-gap`); any other selector throws. Until this pass the two methods asserted their one caller's selector text, so a spacer
+   *  query planted in the window reddened on the text, an accidental guard standing in for the geometry check (closure-6). */
+  querySelectorAll(sel: string): Node[] {
+    if (sel === "[data-uuid]") return this.kids.filter((c) => c.dataset.uuid != null);
+    const byUuid = /^\[data-uuid="([^"]*)"\]$/.exec(sel); if (byUuid) return this.kids.filter((c) => c.dataset.uuid === byUuid[1]);
+    const byClass = /^(?::scope > )?\.([A-Za-z0-9_-]+)$/.exec(sel); if (byClass) return this.kids.filter((c) => c.className.split(/\s+/).includes(byClass[1]));
+    throw new Error("the model resolves [data-uuid], [data-uuid=\"…\"] and one class among the view's children; not " + JSON.stringify(sel) + " (an unmodelled query fails closed rather than matching nothing)");
+  }
+  querySelector(sel: string): Node | null { return this.querySelectorAll(sel)[0] ?? null; }
 }
 
 type Arm = { anchor?: string; t?: number; keepY?: number; seek?: { sid: string; uuid: string; kind: string }; reload?: unknown; land?: boolean; landT?: boolean; rebuild?: (host: Host) => void };
 type Opts = { spacerH?: number; n?: number; rowH?: number; clientHeight?: number; saved: number; scrollTop?: number; shown?: boolean; stick?: boolean; parked?: boolean; bottomSpacerH?: number };
-type World = { content: Content; host: Host; v: any; spacer: Node; rows: Node[]; writes: Write[]; calls: any[]; rows_: any[]; toasts: string[]; trace: string[]; land: (content: Content | null, v: any) => void; parked: () => boolean };
+type World = { content: Content; host: Host; v: any; spacer: Node; rows: Node[]; writes: Write[]; calls: any[]; rows_: any[]; toasts: string[]; trace: string[]; geometryAt: Record<string, string[]>; land: (content: Content | null, v: any) => void; parked: () => boolean };
 const D = 300;   // the take's delta: the head spacer re-sized by the re-measured figure over the head gap's turns
 
 /** A view of `n` rows of `rowH` under a head spacer of `spacerH` (uuids r0..), in a scroller of `clientHeight`; `saved` is the view's
@@ -79,31 +132,37 @@ const D = 300;   // the take's delta: the head spacer re-sized by the re-measure
  *  over the host before scrollToAnchor answers: the window rebuilt around the anchor's unit, rows leaving). */
 function world(o: Opts, arm: Arm = {}): World {
   const spacerH = o.spacerH ?? 2000, n = o.n ?? 10, rowH = o.rowH ?? 100, clientHeight = o.clientHeight ?? 600;
-  const content = new Content(clientHeight); const host = new Host(content);
+  const trace: string[] = [];   // the land's events in order; the world's own construction below is cut from it
+  const content = new Content(clientHeight, trace); const host = new Host(content);
   const spacer = host.add(new Node(spacerH, "tx-spacer tx-spacer-top"));
   const rows: Node[] = []; for (let i = 0; i < n; i++) rows.push(host.add(new Node(rowH, "turn", "r" + i)));
   if (o.bottomSpacerH) host.add(new Node(o.bottomSpacerH, "tx-spacer tx-spacer-bot"));
+  trace.length = 0;
   content.scrollTop = o.scrollTop ?? o.saved;
   const v: any = { el: host, scrollTop: o.saved, shown: o.shown ?? true, stick: o.stick ?? false };
-  const H: any = { content, v, spacer, writes: [] as Write[], calls: [] as any[], rows: [] as any[], toasts: [] as string[], deferred: [] as any[], trace: [] as string[],
+  const H: any = { content, v, spacer, writes: [] as Write[], calls: [] as any[], rows: [] as any[], toasts: [] as string[], deferred: [] as any[], trace, geometryAt: {} as Record<string, string[]>,
                    delta: D, arm,
                    land: (uuid: string) => { if (arm.rebuild) arm.rebuild(host); return !!arm.land; }, landT: (t: number) => !!arm.landT };
-  // the take state and the persisted top, traced in order with the writes (the ordering test below): the parked flag, which the stubs hold in
-  // place of production's `v.measured`, and the view's own `measured`, which nothing lifted here writes, so a write of either is a take at the
-  // site; a record takeReloadScroll admits is one `record` event (its own typeof check reads the persisted top, the value's first read, quiet
-  // here so the site's read is the one the accessor traces), and the record's `top` is read through an accessor after that, so the trace
-  // holds the moment the write's value is read at the site
-  let parkedFlag = o.parked ?? true, measuredField: unknown = undefined;
+  // the take state, the persisted top and the geometry, traced in order with the writes (the ordering test below). The take state: the parked
+  // flag, which the stubs hold in place of production's `v.measured`, and the view's own `measured`, which nothing lifted here writes, so a
+  // write of either is a take at the site. The record: takeReloadScroll returns the persisted object ITSELF, the same object to the `saved`
+  // decision's call and to the binding's, so the object's identity cannot tell the two records apart; the wrapper below gives each admitting
+  // call a serial k, pushes `record#k`, and returns a per-call VIEW of the record whose `top` pushes `read rs.top#k` when read, so the read
+  // that precedes the write names the binding whose value is written (the maintainer's round 4 ruling, ordering-2: a window anchored at the
+  // last `record` label slid past a planted take whenever a later call admitted the record again). The geometry, every child by class and
+  // height, is snapshotted at each record and at each write (`geometryAt`), so the ordering test compares the layout the write lands in
+  // with the layout at the binding, over and above the events the model records between them.
+  let parkedFlag = o.parked ?? true, measuredField: unknown = undefined, recordCalls = 0;
+  const geometry = (): string[] => host.children.map((c) => c.className + ":" + c.h);
+  H.geometry = geometry;
   Object.defineProperty(H, "parked", { get: () => parkedFlag, set: (x: boolean) => { H.trace.push("parked=" + x); parkedFlag = x; } });
   Object.defineProperty(v, "measured", { configurable: true, get: () => measuredField, set: (x: unknown) => { H.trace.push("measured=" + JSON.stringify(x)); measuredField = x; } });
-  H.quiet = false;
-  H.takeReloadScroll = (saved: unknown, id: string | null) => {
-    H.quiet = true; const r = takeReloadScroll(saved, id); H.quiet = false;
-    if (r) {
-      H.trace.push("record");
-      if (!Object.getOwnPropertyDescriptor(r, "top")?.get) { const top = r.top; Object.defineProperty(r, "top", { configurable: true, enumerable: true, get: () => { if (!H.quiet) H.trace.push("read rs.top"); return top; } }); }
-    }
-    return r;
+  H.takeReloadScroll = (saved: unknown, id: string | null): ReloadScroll | null => {
+    const r = takeReloadScroll(saved, id);
+    if (!r) return null;
+    const k = ++recordCalls;
+    H.trace.push("record#" + k); H.geometryAt["record#" + k] = geometry();
+    return { id: r.id, stick: r.stick, anchor: r.anchor, get top(): number { H.trace.push("read rs.top#" + k); return r.top; } };
   };
   const js = liftBetween("function landActive(content: HTMLElement | null, v: View): void {", "// Scroll ANCHORING for scrolled-up re-renders")
            + liftBetween("function captureScrollAnchor(", "// Live tail-append to the ACTIVE view");
@@ -126,11 +185,11 @@ function world(o: Opts, arm: Arm = {}): World {
     const landNearestMoment = (t) => { H.calls.push(["landNearestMoment", t]); return H.landT(t); };
     const revealProgressTick = () => {}; const clearSeek = () => { H.calls.push("clearSeek"); }; const showSeekNote = () => { H.calls.push("showSeekNote"); };
     const settleSample = () => {}; const landToast = (m) => { H.toasts.push(m); }; const notifyShell = () => {};
-    const writeScroll = (c, top, writer, stick = false, from) => { H.writes.push({ writer, top, stick, from }); H.trace.push("write " + writer); c.scrollTop = Math.max(0, Math.min(top, c.scrollHeight - c.clientHeight)); };
+    const writeScroll = (c, top, writer, stick = false, from) => { H.writes.push({ writer, top, stick, from }); H.trace.push("write " + writer); H.geometryAt["write " + writer] = H.geometry(); c.scrollTop = Math.max(0, Math.min(top, c.scrollHeight - c.clientHeight)); };
     const scheduleRailSticky = () => {}; const updateJumpBtn = () => {}; const cssEscape = (s) => s;
   `;
   const land = new Function("HOOKS", prelude + js + "\nreturn landActive;")(H) as (content: Content | null, v: any) => void;
-  return { content, host, v, spacer, rows, writes: H.writes, calls: H.calls, rows_: H.rows, toasts: H.toasts, trace: H.trace, land, parked: () => H.parked };
+  return { content, host, v, spacer, rows, writes: H.writes, calls: H.calls, rows_: H.rows, toasts: H.toasts, trace: H.trace, geometryAt: H.geometryAt, land, parked: () => H.parked };
 }
 const takes = (w: World) => w.calls.filter((c) => c === "applyMeasure").length;
 const attemptAfterTake = (w: World) => { const t = w.calls.indexOf("applyMeasure"), a = w.calls.findIndex((c) => Array.isArray(c)); return t >= 0 && a >= 0 && t < a; };
@@ -196,18 +255,24 @@ test("the reload restore with no anchor row (the reader's place inside a spacer 
   assert.equal(r.v.stick, false); assert.equal(r.parked(), false);
 });
 
-test("the reload restore's raw write, the ordering its exception rests on: the take, then the record read for the restore (takeReloadScroll admits it by reading the persisted top, the value's first read), then the site's read of rs.top, then the write, with nothing taken from the record's read to the write, on both raw shapes (no anchor row; an anchor row the fresh window lacks). The site needs no take-back because its value was measured in the state it lands in, the pre-reload page's layout that the take before it re-derives, not because the site is special: a take in that window would land the value in a layout it was not measured in, so this pin reds the moment the window opens (the reviewer's answer to the author's tail-2 question, 2026-09-21; spacer-measure.test.ts checks the window on the tree)", () => {
-  const isTake = (e: string) => e === "take" || e === "untake" || e === "redrawGapUnits" || e === "sizeSpacers" || e.startsWith("parked=") || e.startsWith("measured=");
+test("the reload restore's raw write, the ordering its exception rests on: the take, then the record bound for the restore (takeReloadScroll admits it by reading the persisted top, the value's first read), then the site's read of that record's top, then the write, with nothing between the binding and the write but that read, on both raw shapes (no anchor row; an anchor row the fresh window lacks). The window is anchored on the IDENTITY of the binding whose value is written: the read that precedes the write names its call, and the window runs from that call's record, so a later call that admits the record again cannot slide the window's start past a planted take (the maintainer's round 4 ruling, ordering-2). The site needs no take-back because its value was measured in the state it lands in, the pre-reload page's layout that the take before it re-derives, not because the site is special: a change in that window would land the value in a layout it was not measured in, so this pin reds the moment the window opens, on a take-class event, on a geometry event (a height written on a row or the view element, a child inserted or removed: the model records them and fails closed on what it cannot represent, closure-6 of the same ruling), on another record, and on the geometry at the write differing from the geometry at the binding (the reviewer's answer to the author's tail-2 question, 2026-09-21; spacer-measure.test.ts checks the window on the tree)", () => {
   for (const reload of [{ id: "A", top: 2350, stick: false, anchor: null }, { id: "A", top: 2350, stick: false, anchor: { uuid: "11111111-2222-4333-8444-000000000007", y: -50 } }]) {
     const shape = reload.anchor ? "an anchor row the fresh window lacks" : "no anchor row";
     const r = world({ saved: 2350, scrollTop: 0 }, { reload, land: false });
     r.land(r.content, r.v);
-    // the record is taken twice: once to decide the take (before it: nothing armed but the record) and once for the restore; the window
-    // starts at the second, the one whose value is written
-    const take = r.trace.indexOf("take"), record = r.trace.lastIndexOf("record"), read = r.trace.indexOf("read rs.top"), write = r.trace.indexOf("write reload-restore");
-    assert.ok(take >= 0 && record > take, shape + ": the take runs before the record is taken for the restore (the take stands, by measurement): " + JSON.stringify(r.trace));
-    assert.ok(read > record && write > read, shape + ": the site reads rs.top after the record is taken, and writes after the read: " + JSON.stringify(r.trace));
-    assert.deepEqual(r.trace.slice(record + 1, write).filter(isTake), [], shape + ": nothing is taken between the record's read and its write (a take here would land a figure measured in one layout in another, and the site would owe a take-back like every other): " + JSON.stringify(r.trace));
+    const write = r.trace.indexOf("write reload-restore");
+    assert.ok(write >= 0, shape + ": the raw write ran: " + JSON.stringify(r.trace));
+    // the record is admitted twice: once to decide the take (before it: nothing armed but the record) and once for the restore, and both
+    // calls return the same persisted object, so the binding whose value is written is named by its CALL: the last read of a record's top
+    // before the write is the site's, and its serial is the binding's
+    const readEv = r.trace.slice(0, write).reverse().find((e) => e.startsWith("read rs.top#"));
+    assert.ok(readEv, shape + ": the write's value was read from a record's top: " + JSON.stringify(r.trace));
+    const recordEv = "record#" + readEv!.slice("read rs.top#".length);
+    const take = r.trace.indexOf("take"), record = r.trace.indexOf(recordEv), read = r.trace.indexOf(readEv!);
+    assert.ok(take >= 0 && record > take, shape + ": the take runs before the record is bound for the restore (the take stands, by measurement): " + JSON.stringify(r.trace));
+    assert.ok(read > record && write > read, shape + ": the site reads its record's top after the binding, and writes after the read: " + JSON.stringify(r.trace));
+    assert.deepEqual(r.trace.slice(record + 1, write).filter((e) => e !== readEv), [], shape + ": from the record's binding to its write the trace holds the site's read of that record's top and nothing else: no take-class event (a take, an untake, a spacer redraw, a write of the parked flag or of the view's take state), no geometry event (a height written on a row or the view element, a child inserted or removed), no other record; a change here would land the persisted top in a layout it was not measured in, and the site would owe a take-back like every other: " + JSON.stringify(r.trace));
+    assert.deepEqual(r.geometryAt["write reload-restore"], r.geometryAt[recordEv], shape + ": the geometry the write lands in is the geometry at the binding, every child by class and height");
     assert.deepEqual(r.writes.map((x) => x.writer), ["reload-restore"], shape + ": the raw write is the land's one write");
     assert.ok(!r.trace.some((e) => e.startsWith("measured=")), shape + ": the view's own take state is written by nothing on this road");
   }
@@ -215,7 +280,7 @@ test("the reload restore's raw write, the ordering its exception rests on: the t
 
 test("an armed miss whose attempt REBUILT the window around the anchor's unit (scrollToAnchor's pointer-not-rendered and pointer-wrong-kind roads): the captured row left with the old rows, so the restore misses, the take is undone and the raw land-saved write of the saved scrollTop lands in the layout it was saved in, the third of the raw write's roads; a rebuild that renders the saved place's row again under its uuid is restored over the take", () => {
   // the build removes every child and renders the units around the anchor's: rows 20..29 stand where 0..9 stood, and r3 is gone
-  const gone = (host: Host) => { host.children = [host.children[0]]; for (let i = 20; i < 30; i++) host.add(new Node(100, "turn", "r" + i)); };
+  const gone = (host: Host) => { host.replaceChildren(host.children[0]); for (let i = 20; i < 30; i++) host.add(new Node(100, "turn", "r" + i)); };
   const w = world({ saved: 2350 }, { anchor: "11111111-2222-4333-8444-000000000006", land: false, rebuild: gone });
   w.land(w.content, w.v);
   assert.equal(takes(w), 1, "the take is on the arm");
@@ -227,7 +292,7 @@ test("an armed miss whose attempt REBUILT the window around the anchor's unit (s
   assert.deepEqual(w.toasts, ["couldn't locate this in the transcript"], "the error road it was");
   // the same rebuild rendering the saved place's row again (a fresh node, the same uuid): the restore finds it, so the rule is the
   // restore's answer, not whether a rebuild ran
-  const again = (host: Host) => { host.children = [host.children[0]]; for (let i = 0; i < 10; i++) host.add(new Node(100, "turn", "r" + i)); };
+  const again = (host: Host) => { host.replaceChildren(host.children[0]); for (let i = 0; i < 10; i++) host.add(new Node(100, "turn", "r" + i)); };
   const w2 = world({ saved: 2350 }, { anchor: "11111111-2222-4333-8444-000000000006", land: false, rebuild: again });
   w2.land(w2.content, w2.v);
   assert.equal(takes(w2), 1);
@@ -296,7 +361,7 @@ type KeepWorld = { content: Content; host: Host; spacer: Node; rows: Node[]; wri
 /** The reader at `scrollTop` over the same view; `parked` a figure waiting; the stubbed scrollToAnchor answers `land`, marks an older fetch
  *  when `older`, and runs `rebuild` over the host first (the window rebuilt around the anchor's unit: rows leave). */
 function keepWorld(scrollTop: number, arm: KeepArm = {}, parked = true): KeepWorld {
-  const content = new Content(600); const host = new Host(content);
+  const content = new Content(600, []); const host = new Host(content);
   const spacer = host.add(new Node(2000, "tx-spacer tx-spacer-top"));
   const rows: Node[] = []; for (let i = 0; i < 10; i++) rows.push(host.add(new Node(100, "turn", "r" + i)));
   content.scrollTop = scrollTop;
@@ -369,7 +434,7 @@ test("keepPlaceAcrossWindow, BOTH restores missing (the reader's row gone and th
   assert.deepEqual(w2.state(), { pendingAnchor: null, pendingAnchorKeepY: null, relandAsk: false });
   // the attempt rebuilt the window around the anchor's unit (every row replaced) and its re-query missed: the captured row is gone too,
   // nothing is written, the take is undone, and the reader is where the rebuild left them in the layout it was built in
-  const w3 = keepWorld(2350, { land: false, rebuild: (host) => { host.children = [host.children[0]]; for (let i = 20; i < 30; i++) host.add(new Node(100, "turn", "r" + i)); } });
+  const w3 = keepWorld(2350, { land: false, rebuild: (host) => { host.replaceChildren(host.children[0]); for (let i = 20; i < 30; i++) host.add(new Node(100, "turn", "r" + i)); } });
   assert.equal(w3.keep({ uuid: "11111111-2222-4333-8444-000000000012", y: R3_OFFSET }), false);
   assert.equal(keepTakes(w3), 1); assert.deepEqual(w3.writes, [], "no row of the captured DOM is left to put back: nothing written");
   assert.equal(w3.spacer.h, 2000, "…and the take is undone: the head spacer back (at the head it stood 300 px taller under a reader nothing had placed)");
