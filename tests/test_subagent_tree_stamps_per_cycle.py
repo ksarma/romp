@@ -33,7 +33,9 @@ the own tree's note was a fresh stat, one per walk); the scope is closed after t
 outside any cycle (a handler thread's) still pays per call, with dirStats now counting the stats of both validators;
 (2) per cycle, not sticky: a directory and a fourth agent landing between two cycles are seen by the second cycle's
 first read (a re-walk; the listing equals os.walk's and the sidecar reaches the map) while its later reads that cycle
-cost nothing, and, the contract, a directory created after a cycle's validation waits for the next cycle; (3) two
+cost nothing, a launch appended to an agent's transcript between two cycles is folded by the second cycle's first read
+(A folds, the launch folds being the cycle's) and nests its command there, and, the contract, a directory created after a
+cycle's validation waits for the next cycle; (3) two
 threads: a pusher cycle and a jobs pass running at once each validate once with their own scope object, never served
 by the other's; (4) the guards, each against the input it refuses and the input it accepts: a forget that evicts the
 root makes the next read in the same scope walk again while a forget that evicts nothing leaves the scope serving; a
@@ -593,6 +595,40 @@ class PerCycleNotSticky(_World):
                          "the later reads in cycle two cost no directory stat at all (lstat, stat per call): %r; each paid D = %d "
                          "lstats and (A + 1) x D stats before the scope" % (later, D + 1))
         self.assertGreaterEqual(per[0]["dir_lstat"], D + 1, "the first read paid the walk (the root and each child by lstat)")
+
+    def test_a_launch_appended_between_cycles_is_folded_by_the_next_cycle_and_nests_its_command_there(self):
+        """The launch half of the rule, the contract _awaiting_nest states (a launch appended mid-cycle nests on the next
+        cycle): the launch folds are the cycle's, released with the scope, so a launch appended to agent 0's transcript
+        between two cycles is folded by the second cycle's first read (one fold per agent, A) and the command it names nests
+        under agent 0 there. Keys on the folds in cycle two and on the nesting: a launches map carried from one cycle to the
+        next folds nothing in cycle two (0) and leaves the command top-level for as long as it is carried. Until this case no
+        case counted folds in a second cycle, so the release edge at the cycle's end had no pin of its own."""
+        cmd = {"tid": "toolu_stamps_cmd2", "desc": "run the parser test chunk", "t": 130, "type": "local_bash"}
+        km._bg_live_norm = lambda sid, path, live=None: [cmd]
+        names = sorted("agent-%s.jsonl" % a for a in self.aids)
+        rec1, rec2, folded = {}, {}, []
+        km._turn_notify_tick = lambda now, live_map, **kw: rec1.setdefault("aw", km._session_awaiting(SID, self.path, True))
+        with self._counting_fold(folded):
+            km._pusher_cycle()                            # cycle one: the folds held, the command attributed to nobody
+        self.assertEqual(((rec1.get("aw") or {}).get("count"), sorted(folded)), (A + 1, names),
+                         "cycle one: the A agents and the command, top-level, one fold per agent: %r" % (rec1.get("aw"),))
+        ap = self.wfroot / ("wf_%016x" % 0) / ("agent-%s.jsonl" % self.aids[0])
+        ap.write_text(json.dumps({"type": "assistant", "timestamp": "2026-09-10T10:00:00.000Z", "message": {"content": [
+            {"type": "tool_use", "id": cmd["tid"], "name": "Bash",
+             "input": {"run_in_background": True, "command": "uv run pytest tests/test_parser.py -q", "description": cmd["desc"]}}]}}) + "\n")
+        del folded[:]
+        km._turn_notify_tick = lambda now, live_map, **kw: rec2.setdefault("aw", km._session_awaiting(SID, self.path, True))
+        with self._counting_fold(folded):
+            km._pusher_cycle()                            # cycle two: every fold redone, agent 0's names the launch
+        aw2 = rec2.get("aw") or {}
+        self.assertEqual(sorted(folded), names,
+                         "folds in cycle two: %r; keyed on every agent's fold redone (A = %d, one each), since the launch folds are the "
+                         "cycle's and the next cycle's first read folds again; a launches map carried across cycles folds nothing (0) and "
+                         "the launch appended between the cycles is never seen" % (sorted(folded), A))
+        self.assertEqual(aw2.get("count"), A, "cycle two: the command nests under agent 0, whose fresh fold names its launch: %r" % (aw2,))
+        agent0 = [it for it in aw2.get("items", []) if it.get("agentId") == self.aids[0]]
+        self.assertEqual([w["id"] for w in (agent0[0].get("waits", []) if agent0 else [])], [cmd["tid"]],
+                         "the command row nested under agent 0 in cycle two: %r" % (agent0,))
 
     def test_a_directory_created_after_a_cycles_validation_is_listed_by_the_next_cycle_not_this_one(self):
         """The contract the fix accepts, stated as a pin: within one cycle the first reader's validation stands, so a
