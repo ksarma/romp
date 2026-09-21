@@ -40,6 +40,12 @@ builder emits, read from the real pages: the pane's chips are
 flex children of the box, the chat's sit inside the quoted line, and the elements the fix's four rules key on match
 their selectors in both.
 
+After the composition's send the chat page's card is rebuilt by the kernel's pushes that follow it (the other todo's
+Reply button becomes a new node), so the driver waits for that rebuild before it opens the other todo's sheet and records
+a button that vanished under its click as its own failure line naming the element (PR 859's CI red at the pass's pushed
+head, chromium chat: a scroll-into-view on a handle resolved before the rebuild). The sheet's own node survives the
+rebuild in both panes (the reviewer's forcing, in the review record).
+
 The lab: one kernel from test_ship_reship_served.kernel_env (a private XDG root, `session-hosts` floored off,
 ROMP_MANAGER_PORT=1, no catalog or update fetch, a hermetic postal bus), a private dist (lab_dist.copy_dist), the three
 synthetic notes-api sessions test_return_from_background_served seeds (placeholder uuids, host TESTHOST), the todo store

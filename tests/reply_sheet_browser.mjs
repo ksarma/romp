@@ -23,6 +23,14 @@
 // dismissal: the sheet stands with its text; Chromium and WebKit dispatch that click to the overlay, Firefox to the
 // textarea), and a plain tap on the backdrop (it dismisses).
 //
+// After the send the chat page's card is REBUILT by the kernel's pushes that follow it (askLiveClear and chatTail frames,
+// 0.8 to 2.6 s later in the lab; the pane's list gets no push after the send here): the other todo's Reply button becomes
+// a new node, and a driver that resolved the old one and then acted on it died with "Element is not attached to the DOM"
+// (PR 859's CI at the pass's pushed head, chromium chat; the reviewer's forcings: the sheet's own node survives that
+// rebuild in both panes, so this is the driver's race, not the sheet's). So the driver tags the other todo's button before
+// the tap, waits for it to be replaced after the send where the card is rebuilt (the chat), opens the sheet with one
+// fresh click on the button, and records a button that vanished under it or did not open the sheet as its own failure
+// line naming the element, never a bare exception.
 // Prints one `RESULT:` JSON line; exits 3 when the browser does not launch (the Python side turns that into a skip), 4
 // when the LAB kernel is not healthy (cfg.healthz names the lab port, asserted before any request; never a live kernel).
 // Synthetic sessions and todos only.
@@ -190,11 +198,28 @@ const openReply = async (tid) => {
     }, replySel);
     throw e;
   }
-  const btn = page.locator(replySel).first();
-  await btn.scrollIntoViewIfNeeded();
-  await btn.click();
-  await page.waitForSelector("#ut-reply-prompt .ut-reply-input", { timeout: 10000 });
+  // one fresh resolution at the click itself (a locator resolves when it acts, and the click scrolls the button into view):
+  // a separate scroll-into-view on a handle resolved earlier is what a rebuild of the card under it detached (PR 859's CI)
+  try {
+    await page.locator(replySel).first().click({ timeout: 10000 });
+    await page.waitForSelector("#ut-reply-prompt .ut-reply-input", { timeout: 10000 });
+  } catch (e) {
+    const now = await page.evaluate((sel) => ({ button: !!document.querySelector(sel), sheet: !!document.getElementById("ut-reply-prompt") }), replySel);
+    throw new Error(`the Reply button for ${tid} (${replySel}) ${now.sheet ? "opened no sheet the driver could read" : now.button ? "is in the page but the click did not open the sheet" : "vanished under the driver: the card was rebuilt between the button's resolution and the click"} (${String(e).split("\n")[0].slice(0, 160)})`);
+  }
   await settle();
+};
+// the card's rebuild the send causes: the other todo's Reply button, tagged before the tap, is a NEW node once the kernel's
+// pushes have been rendered (the chat; 0.8 to 2.6 s in the lab). Waited for where the card is rebuilt, so the sheet is opened
+// on a card that is not about to be replaced under the click; the wait's outcome is recorded, never asserted (the kernel's
+// response to a send is its business), and its absence within the bound is recorded as such
+const tagButton = (tid) => page.evaluate((sel) => { window.__tagged = document.querySelector(sel); return !!window.__tagged; }, `.ut-reply[data-tid="${tid}"]`);
+const waitForRebuild = async (tid) => {
+  const t0 = Date.now();
+  try {
+    await page.waitForFunction((sel) => { const b = document.querySelector(sel); return !!b && b !== window.__tagged; }, `.ut-reply[data-tid="${tid}"]`, { timeout: 10000 });
+    return { replaced: true, ms: Date.now() - t0 };
+  } catch (e) { return { replaced: false, ms: Date.now() - t0, note: "no rebuild of the card replaced the other todo's Reply button within 10 s of the send" }; }
 };
 
 try {
@@ -234,9 +259,13 @@ try {
   out.tapAt = c;
   out.tapInFrame = c.y >= 0 && c.y <= out.typed.frameH && c.x >= 0 && c.x <= W;
   out.sentBefore = await page.evaluate((tid) => window.__wsSent.filter((f) => f.includes('"userTodoAnswer"') && f.includes(tid)).length, cfg.tid);
+  if (cfg.tid2) out.otherTagged = await tagButton(cfg.tid2);
   if (out.tapInFrame) await page.mouse.click(c.x, c.y);
   await settle();
   await page.waitForTimeout(300);
+  // the chat page's card is rebuilt by the pushes that follow the send (the pane's list gets none here): wait for the rebuild
+  // before anything is located on the card, and record what came
+  if (cfg.tid2 && cfg.pane === "chat" && out.otherTagged) out.rebuild = await waitForRebuild(cfg.tid2);
   out.after = await page.evaluate((tid) => ({
     overlayUp: !!document.getElementById("ut-reply-prompt"),
     rowUp: !!document.querySelector(`.ut-reply[data-tid="${tid}"]`),
