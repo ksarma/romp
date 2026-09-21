@@ -3671,7 +3671,14 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   every later reader of the tree on that thread, the agent-file lookup's
   stamp re-check included, pays no stat; a change on disk after the
   validation is seen by the next cycle's first reader, one cycle later at
-  most; a root that leaves the memo mid-cycle (an ownership eviction, most
+  most, and the key a chat build records for a subagents tree the
+  agent-file miss walk looked through is the served read's stamp per
+  directory, never a stat taken after it, so a file landing after the
+  hold under a directory the served listing lacked leaves the recorded
+  key behind the next signature's re-stat and the tab is rebuilt (round 2
+  of #882: a fresh stat there recorded the post-landing key of the root
+  alone, and the tab that showed the file missing was never rebuilt); a
+  root that leaves the memo mid-cycle (an ownership eviction, most
   often of an unowned sibling root an agent-file miss scan inserted; a tree
   found missing or replaced; a session departing is one such root) drops
   from every open scope that root's pair, the stamps indexed from it and the

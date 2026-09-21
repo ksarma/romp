@@ -24,7 +24,9 @@ any hold it was folded once per owner lookup, A x (A - 1) times per read where t
 Pinned here, through the REAL cycle functions so the clearing point tested is the wired one: (1) the bound: one pusher
 cycle and one jobs pass with three _session_awaiting calls each cost D os.lstat on the tree's directories (the one
 validation), 0 os.stat on them, dirStats plus D - 1, one hit and A agent-file stats (one fold per agent), where before
-the scope each call paid A x D os.stat, D lstats and A file stats; the scope is closed after the cycle; and a read
+the scope each call paid A x D os.stat, D lstats and A file stats; with an agent row whose file is nowhere the miss walk
+runs once per cycle and its dependency notes to the chat build cost no stat on the tree's directories (round 2 of #882:
+the own tree's note was a fresh stat, one per walk); the scope is closed after the cycle; and a read
 outside any cycle (a handler thread's) still pays per call, with dirStats now counting the stats of both validators;
 (2) per cycle, not sticky: a directory and a fourth agent landing between two cycles are seen by the second cycle's
 first read (a re-walk; the listing equals os.walk's and the sidecar reaches the map) while its later reads that cycle
@@ -45,6 +47,11 @@ answered after another thread found its tree gone (the stamps of the removed tre
 re-read when their own root leaves the memo (the attribution changes), and the table of evicted roots at its cap is
 cleared with every held entry dropped once. Before round 2 one process-wide generation emptied every scope's three maps on
 any root's eviction: every held tree paid its D lstats again, every held stamp its stat, every awaiting agent its fold.
+(6) The dependency key (round 2 of #882): the key a chat build records for a subagents tree the agent-file miss walk looked
+through is the served read's (mtime, size) per directory, so a file landing after the hold under a directory the served
+listing lacked leaves the recorded key behind the next signature's re-stat and the tab is rebuilt, whether the landing moved
+the root's stamp or a listed child's; a fresh stat taken after the served listing recorded the post-landing key, equal to
+every later re-stat, and the tab that showed the file missing was never rebuilt.
 
 Every count is derived from D and A in the test, never written out. The cycle's jobs that read the tree through
 mechanisms of their own (the fold checkpoint writer's realpath per checkpointed file, the spend guard's window-file
@@ -402,6 +409,50 @@ class BoundPerCycleAndPerPass(_World):
             km._jobs_cycle()
         self._assert_bound("jobs pass", sp.total(), self._delta(b), rec)
         self.assertIn(str(self.sub), km._SUBAGENT_TREES, "the interrupt tick's forget kept the alive session's root")
+
+    def test_one_pusher_cycle_with_an_agent_whose_file_is_nowhere_walks_once_and_its_notes_cost_no_stat(self):
+        """The miss path inside the bound (fresh-4 of the round-1 review: no case entered it): a live agent row whose file
+        exists nowhere, under the own tree or a sibling's. The first read's owner lookups resolve it, the walk misses and the
+        scope's launches map holds set() for it, so the walk runs once per cycle; the walk's dependency notes to the running
+        chat build (the absent own place, every directory of each tree it looked through) come from the pair the lookup was
+        answered, the served tree, so they cost no stat on the tree's directories: 0 os.stat (round 2 of #882: the own tree's
+        note was a fresh _chat_stat_key stat, 1 per walk). The walk's other costs, derived: W lstats of the own root, its two
+        symlink checks (os.path.islink, and os.path.realpath's lstat per component), counted by running those two calls; one
+        os.stat per candidate file, the flat place and one per served directory (D + 1); the project directory's one stamp
+        stat, in dirStats and outside the tree. The asks on the root carry one served read more than the calls: the walk's."""
+        ghost = "a%016x" % 0x7cf1
+        self.live_aids.append(ghost)                          # in the live row; no sidecar and no file anywhere
+        own = str(self.sub)
+        with self._spy() as sp0:
+            os.path.islink(own); os.path.realpath(own)
+        W = sp0.total()["dir_lstat"]
+        rec = {}
+        km._turn_notify_tick = self._awaiting_job(rec)
+        b = self._stats()
+        with self._spy() as sp:
+            km._pusher_cycle()
+        t, d = sp.total(), self._delta(b)
+        self.assertEqual(rec.get("counts"), [A + 1] * CALLS, "each of the %d reads saw the A agents and the row nobody owns: %r" % (CALLS, rec))
+        asked = rec.get("asked") or []
+        self.assertEqual((asked[:1], asked[1:]), (["validated"], ["served"] * CALLS),
+                         "the asks on the root: %r; keyed on the first read validating and every later ask served, one ask more than the "
+                         "%d reads, the miss walk's own read of the tree (a walk that validated again would show a second 'validated')"
+                         % (asked, CALLS))
+        self.assertEqual(t["dir_stat"], 0,
+                         "os.stat on the tree's %d directories over one pusher cycle with the miss walk: %d; keyed on 0, the walk's notes "
+                         "to the chat build taken from the served pair and the stamp re-checks served as in the bound (round 2 of #882: "
+                         "the own tree's note was a fresh stat, 1 per walk)" % (D, t["dir_stat"]))
+        self.assertEqual(t["dir_lstat"], D + W,
+                         "os.lstat on the tree's directories: %d; expected D + W = %d + %d, the one validation plus the walk's symlink "
+                         "checks of the own root" % (t["dir_lstat"], D, W))
+        self.assertEqual(t["file_stat"], A + D + 1,
+                         "os.stat on files under the tree: %d; expected A + D + 1 = %d, one fold per agent with a file plus the walk's "
+                         "candidate stats, the flat place and one per served directory" % (t["file_stat"], A + D + 1))
+        self.assertEqual((d["hit"], d["miss"], d["evict"]), (1, 0, 0), "one validated hit, no walk of the tree, nothing evicted: %r" % (d,))
+        self.assertEqual(d["dirStats"], D,
+                         "dirStats %d; expected (D - 1) + 1 = %d: the validation's lstats plus the project directory's one stamp stat, "
+                         "the walk's, held for the cycle under no root" % (d["dirStats"], D))
+        self.assertIsNone(km._SUBAGENT_FILE_CACHE.get((self.path, ghost), ("unset",))[-1], "the miss is memoized: the file is nowhere")
 
     def test_outside_a_cycle_every_reader_validates_for_itself_and_dirstats_counts_both_validators(self):
         """A handler thread's read (a WS or HTTP build, the act-now nudge pass) holds no scope and pays what it paid: the
@@ -988,6 +1039,117 @@ class ScopedInvalidation(_World):
             with self._spy() as sp:
                 km._subagent_tree(str(self.sub))
             self.assertEqual(sp.total()["dir_lstat"], 0, "held again under the new generation: served")
+
+
+class DependencyKey(_World):
+    """(6) The key a chat build records for a subagents tree the agent-file miss walk looked through is the served read's
+    stamp (round 2 of #882). Two sessions share a project directory (a /clear fork's, the case the sibling scan exists for);
+    an agent row of this session names a file that exists nowhere yet; earlier in the cycle a build read the sibling's tree,
+    so the scope holds it; then the file lands under the sibling's root in a directory the held listing lacks; then this
+    session's chat build resolves the agent, is answered the held listing, finds the file nowhere and shows it missing. The
+    tab is cached under the dependencies the build recorded (_chat_build_deps) and rebuilt when the next cycle's signature
+    re-stats one of them to a different key (_chat_sig_deps). Before round 2 the walk recorded the sibling's root under a
+    FRESH os.stat taken after the served listing, the post-landing key, equal to every later re-stat, so the tab stayed
+    stale until something else moved; and it recorded the root alone, which a landing under a listed child never moves. Now
+    every directory of the tree is recorded under the (mtime, size) of the stat the served read was taken with (the shape
+    _subagent_meta_map records: _subagent_tree_dep_note), so the key is behind the re-stat and the tab is rebuilt, whether
+    the landing moved the root's stamp or a listed child's. Driven through the real _pusher_cycle, with the build's record
+    shape (build_session's literal) open around the real _session_awaiting."""
+
+    def _sibling(self, workflows):
+        """A second session's transcript beside this one's in the project directory and its subagents tree: the root alone,
+        or the root and workflows/, aged; no entry in the walk memo yet. Returns the root."""
+        other_t = Path(self.path).parent / (OTHER_SID + ".jsonl")
+        other_t.write_text("")
+        other = km._subagents_dir(other_t)
+        ((other / "workflows") if workflows else other).mkdir(parents=True)
+        _age(other)
+        self.addCleanup(km._SUBAGENT_TREES.pop, str(other), None)
+        self.addCleanup(km._SUBAGENT_META_CACHE.pop, str(other), None)
+        self.addCleanup(setattr, km._chat_dep_scope, "deps", None)
+        return other
+
+    def _landing_probe(self, other, land_in):
+        """One pusher cycle: a build reads the sibling's tree (held); the agent's file lands in a new workflow directory
+        created under `land_in` (its parent's stamp moves; the held listing lacks the new directory); this session's build
+        resolves the agent with the record open. Returns (the agent id, what the job saw: the served listing and its keys,
+        every served directory's fresh key after the landing, the record, the resolution, the landed file)."""
+        aid = "a%016x" % 0x7cf0
+        self.live_aids.append(aid)
+        rec = {}
+
+        def job(now, live_map, **kw):
+            dirs, stats = km._subagent_tree(str(other))            # a build earlier in the cycle: the sibling's tree, held
+            rec["dirs"] = list(dirs)
+            rec["served"] = {sd: (st.st_mtime, st.st_size) for sd, st in zip(dirs, stats)}
+            wf = land_in / ("wf_%016x" % 0x7cf0)
+            wf.mkdir(parents=True)                               # the landing, after the hold
+            self._add_agent(wf, 240, aid)
+            rec["fresh"] = {sd: km._chat_stat_key(sd) for sd in dirs}
+            km._chat_dep_scope.deps = {"task_outs": [], "postal_any": False}   # build_session's record for this build
+            try:
+                aw = km._session_awaiting(SID, self.path, True)
+                rec["deps"] = km._chat_build_deps(SID, {"events": []})
+            finally:
+                km._chat_dep_scope.deps = None
+            rec["count"] = (aw or {}).get("count")
+            rec["found"] = km._SUBAGENT_FILE_CACHE.get((self.path, aid), ("unset",))[-1]
+            rec["file"] = wf / ("agent-%s.jsonl" % aid)
+        km._turn_notify_tick = job
+        km._pusher_cycle()
+        self.assertIn("deps", rec, "the job ran to its end: %r" % (rec,))
+        self.assertEqual(rec["count"], A + 1)
+        self.assertIsNone(rec["found"], "premise: the build's lookup, answered the held listing, found the file nowhere (the tab "
+                                        "shows the agent's file missing): %r" % (rec["found"],))
+        return aid, rec
+
+    @staticmethod
+    def _keys(rec, sd):
+        """(the key the build recorded for `sd`, the served read's key for it, the next signature's re-stat of it)."""
+        recorded = dict(rec["deps"]["task_outs"])
+        touts = dict(km._chat_sig_deps(SID, rec["deps"])[0])
+        return recorded.get(sd, "unrecorded"), rec["served"].get(sd), touts.get(sd, "unrecorded")
+
+    def test_the_key_recorded_for_a_sibling_root_is_the_served_reads_so_a_landing_that_moved_the_root_re_arms_the_tab(self):
+        other = self._sibling(workflows=False)                     # the held listing is the root alone
+        aid, rec = self._landing_probe(other, other / "workflows")   # workflows/ is created by the landing: the ROOT's stamp moves
+        root = str(other)
+        self.assertEqual(rec["dirs"], [root], "premise: the held listing is the sibling's root alone")
+        self.assertNotEqual(rec["fresh"][root], rec["served"][root], "premise: the landing moved the root's (mtime, size)")
+        recorded, served, restat = self._keys(rec, root)
+        self.assertEqual(recorded, served,
+                         "the key the build recorded for the sibling's root: %r; keyed on the served read's %r, the stamp of the listing "
+                         "the lookup was answered with; a fresh stat taken after that listing recorded the post-landing key %r"
+                         % (recorded, served, rec["fresh"][root]))
+        self.assertNotEqual(restat, recorded,
+                         "the next signature's re-stat of the root, %r, against the recorded key %r: keyed on a difference (the taskout "
+                         "component moves and the tab is rebuilt); equal means the tab that shows the file missing is served until "
+                         "something else moves" % (restat, recorded))
+        self.assertEqual(restat, rec["fresh"][root], "the re-stat is the post-landing key")
+        # the rebuilt tab: the next cycle's lookup re-checks the miss's stamps, the sibling root's has moved, and the walk finds the file
+        nxt = {}
+        km._turn_notify_tick = lambda now, live_map, **kw: nxt.setdefault("found", km._subagent_file(self.path, aid))
+        km._pusher_cycle()
+        self.assertEqual(nxt.get("found"), rec["file"], "the next cycle's lookup finds the file the landing put under the sibling")
+
+    def test_every_directory_of_a_served_sibling_tree_is_recorded_so_a_landing_under_a_listed_child_re_arms_the_tab(self):
+        other = self._sibling(workflows=True)                      # the held listing: the root and workflows/
+        aid, rec = self._landing_probe(other, other / "workflows")   # wf_<id>/ lands in workflows/: THAT stamp moves, the root's does not
+        root, wfdir = str(other), str(other / "workflows")
+        self.assertEqual(rec["dirs"], [root, wfdir], "premise: the held listing is the root and workflows/")
+        self.assertEqual(rec["fresh"][root], rec["served"][root], "premise: the landing left the root's stamp where it was")
+        self.assertNotEqual(rec["fresh"][wfdir], rec["served"][wfdir], "premise: the landing moved workflows/'s stamp")
+        recorded, served, restat = self._keys(rec, wfdir)
+        self.assertEqual(recorded, served,
+                         "the key recorded for the served tree's child workflows/: %r; keyed on the served read's %r, since every directory "
+                         "of a tree the lookup looked through is a dependency; a record of the root alone has none for it, and the root's "
+                         "key %r cannot move for a landing under a child" % (recorded, served, rec["served"][root]))
+        self.assertNotEqual(restat, recorded,
+                         "the next signature's re-stat of workflows/, %r, against the recorded key %r: keyed on a difference (the tab is "
+                         "rebuilt)" % (restat, recorded))
+        r_root, s_root, rs_root = self._keys(rec, root)
+        self.assertEqual((r_root, rs_root), (s_root, s_root),
+                         "the root is recorded too, under its served key, and its re-stat holds: nothing landed in it")
 
 
 if __name__ == "__main__":
