@@ -101,19 +101,30 @@ def _doc_row(doc, name):
 # spellings of a quarter-microsecond figure into a pinned region and fourteen passed the `<number> us` pattern). Derived
 # over units rather than sampled from spellings: any number before a micro or nano unit in any spelling is a microsecond
 # figure; a number before a milli unit is one when under a millisecond; a number of seconds is one when under a
-# millisecond (the scientific spelling included); and a number WORD before microsecond(s) or nanosecond(s) is one. The
-# number may be decimal, comma-decimal, scientific or a fraction glyph; the separator may be spaces, a hyphen or the
-# literal `&nbsp;` entity; the unit is read case-insensitively and must not run on into a word (`5 sessions` is no figure).
+# millisecond (the scientific spelling included); and a number WORD before microsecond(s) or nanosecond(s), spelled out
+# or abbreviated (`half a microsecond`, `ten ns`, `half a us`), is one. The number may be a decimal (a leading dot
+# included: `.25 us`), comma-decimal, scientific or a fraction glyph; the separator may be spaces, a hyphen or the named
+# `&nbsp;` entity, the only entity read (a numeric entity for the micro sign, `&#181;s`, is not); after a digit the unit is
+# read case-insensitively and must not run on into a word (`5 sessions` is no figure), while after a number word an
+# abbreviation is read lower-case only (`a US company`, `one US dollar` are prose), takes no `of` (`one of us`, `a few
+# of us` are prose) and, spelled out or abbreviated, must not run on into a hyphen compound (`microsecond-resolution`,
+# `nanosecond-scale`, `a US-based host` are none). An article or number word before a unit used as a noun modifier (`a
+# nanosecond timestamp`, `three nanosecond fields`) reads as a figure, because the predicate cannot tell it from `about a
+# nanosecond per stat`; the pin refuses it by design and its message names the reword (`three st_*_ns fields`, a field
+# name rather than a duration).
 _TIME_UNITS = (                # (the unit's spellings, the value below which a figure in that unit is a microsecond figure)
     (r"microseconds?|microsecs?|[uµμ]secs?|[uµμ]s", float("inf")),
     (r"nanoseconds?|nanosecs?|nsecs?|ns", float("inf")),
     (r"milliseconds?|millisecs?|msecs?|ms", 1.0),
     (r"seconds?|secs?|s", 1e-3),
 )
-_TIME_FIGURE = re.compile(r"(?<![\w.])(\d+(?:[.,]\d+)?(?:e[-+]?\d+)?|[¼½¾⅓⅔⅛])(?:\s|-|&nbsp;)*(%s)(?![a-z])"
+_TIME_FIGURE = re.compile(r"(?<![\w.])(\d+(?:[.,]\d+)?(?:e[-+]?\d+)?|[.,]\d+|[¼½¾⅓⅔⅛])(?:\s|-|&nbsp;)*(%s)(?![a-z])"
                           % "|".join(u for u, _ in _TIME_UNITS), re.I)
 _TIME_WORDS = re.compile(r"\b(?:an?|one|two|three|four|five|six|seven|eight|nine|ten|half|quarter|third|tenth|hundredth|"
-                         r"thousandth|few|several|couple|dozen)\b(?:\s+of)?(?:\s+an?)?\s+(?:micro|nano)seconds?\b", re.I)
+                         r"thousandth|few|several|couple|dozen)\b"
+                         r"(?:(?:\s+of)?(?:\s+an?)?\s+(?:micro|nano)seconds?"      # spelled out: `of` and an article may sit between
+                         r"|(?:\s+an?)?\s+(?-i:[uµμ]s|ns|[uµμ]secs?|nsecs?))"     # abbreviated: no `of` (`one of us`), lower-case only (`a US company`)
+                         r"(?![\w-])", re.I)                                      # not `\b`: `microsecond-resolution` is a compound, not a figure
 _FRACTION_GLYPHS = {"¼": 0.25, "½": 0.5, "¾": 0.75, "⅓": 1 / 3, "⅔": 2 / 3, "⅛": 0.125}
 
 
@@ -131,6 +142,19 @@ def _microsecond_figures(text):
             out.append(m.group(0))
     out.extend(m.group(0) for m in _TIME_WORDS.finditer(text))
     return out
+
+
+# The remedy both refusals of the reference-alone pin name (one copy, so the two sites cannot drift apart); the %s slot
+# names the pointer's home, `here` for a kernel region and `this paragraph` for the reference's memos.chatSig paragraph.
+_MICROSECOND_REMEDY = (
+    "The stages_cpu_ms entry of docs/reference.md is the only home for a measured cost: to pass, state the figure there "
+    "and point at it from %s, or write the sentence without a sub-millisecond time figure (a figure of a millisecond or "
+    "more, or a unit word with no number, reads as none; a number word counts as a number, and an article before "
+    "microsecond or nanosecond reads as one, so a unit used as a noun modifier, three nanosecond fields, a nanosecond "
+    "timestamp, is refused too: reword the noun phrase, three st_*_ns fields or a nanosecond-resolution timestamp, when "
+    "you meant a field name or a resolution rather than a duration; a hyphen compound, microsecond-resolution, reads as "
+    "none). The reader is _microsecond_figures in "
+    "tests/test_perf_stats.py; the comment above it says what counts.")
 
 
 _ONES = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
@@ -3517,15 +3541,18 @@ class GoalIoCounters(unittest.TestCase):
         """The instrumentation's measured cost is stated in ONE place, the stages_cpu_ms entry of docs/reference.md, and the
         kernel's copies point there (the 2026-09-19 round-2 rulings on rules-2, tests-4, extra5-3, extra8-2 and extra8-7:
         three hand-kept copies of one benchmark disagreed on two terms, so reduce the copies rather than reconcile them;
-        the round-3 fix made the reduction and this pin refuses the next copy). A microsecond figure is `<number> us`; none may
-        stand in the kernel's stages_cpu_ms block comment (its header line to the `try:` that imports resource), in
-        _stat_counting_install's docstring, in the memos.chatSig block comment (its header to class _ChatSigLocal) or in
-        the _PerfStats docstring's stages_cpu_ms and memos rows (the chatSig row is inside the latter); the reference's
-        stages_cpu_ms entry carries at least ten and its memos.chatSig paragraph none. A figure is what
-        _microsecond_figures reads (the module comment above it says what counts): a number in any spelling before a
-        micro or nano unit in any spelling, a sub-millisecond number before a milli unit, a sub-millisecond number of
-        seconds, or a number word before microsecond(s). The first pattern read `<number> us` alone (the round-3 review
-        pasted `0.25us` and `0.25 microseconds` past it); the closing check of 2026-09-19 planted twenty-four spellings
+        the round-3 fix made the reduction and this pin refuses the next copy). None may stand in the kernel's stages_cpu_ms
+        block comment (its header line to the `try:` that imports resource), in _stat_counting_install's docstring, in the
+        memos.chatSig block comment (its header to class _ChatSigLocal) or in the _PerfStats docstring's stages_cpu_ms and
+        memos rows (the chatSig row is inside the latter); the reference's stages_cpu_ms entry carries at least ten and its
+        memos.chatSig paragraph none. A figure is what _microsecond_figures reads (the module comment above it says what
+        counts): a number in any spelling before a micro or nano unit in any spelling, a sub-millisecond number before a
+        milli unit, a sub-millisecond number of seconds, or a number word before microsecond(s) or nanosecond(s), spelled
+        out or abbreviated (`half a microsecond`, `ten ns`); a unit used as a noun modifier after an article or number word
+        (`a nanosecond timestamp`) reads as a figure too, since the predicate cannot tell it from a duration, and the
+        message names the reword; a hyphen compound (`microsecond-resolution`) reads as none. The first pattern read
+        `<number> us` alone (the round-3 review pasted `0.25us` and `0.25 microseconds` past it); the closing check of
+        2026-09-19 planted twenty-four spellings
         into _stat_counting_install's docstring and fourteen passed the second (`250 ns`, `0.00025 ms`, `2.5e-7 s`,
         `a quarter of a microsecond`, `0.25 usec`, `0.25-us`, `0.25 US` and the literal `&nbsp;` entity among them); the
         test after this one pins every spelling tried. The figures themselves are not pinned: InstrumentationCostTerms
@@ -3544,11 +3571,7 @@ class GoalIoCounters(unittest.TestCase):
         for where, text in regions:
             self.assertGreater(len(text), 200, "premise: %s was found" % where)
             found = _microsecond_figures(" ".join(text.split()))
-            self.assertEqual(found, [], "%s states a microsecond figure %r. The stages_cpu_ms entry of docs/reference.md is the "
-                             "only home for a measured cost: to pass, state the figure there and point at it from here, or "
-                             "write the sentence without a sub-millisecond time figure (a figure of a millisecond or more, "
-                             "or a unit word with no number, reads as none). The reader is _microsecond_figures in "
-                             "tests/test_perf_stats.py; the comment above it says what counts." % (where, found))
+            self.assertEqual(found, [], ("%s states a microsecond figure %r. " + _MICROSECOND_REMEDY) % (where, found, "here"))
         doc = Path(HERE).parent.joinpath("docs", "reference.md").read_text(encoding="utf-8")
         cpu_entry = " ".join(self._reference_entry(doc, doc.index("- `stages_cpu_ms`:")).split())
         n = len(_microsecond_figures(cpu_entry))
@@ -3556,14 +3579,26 @@ class GoalIoCounters(unittest.TestCase):
         memos = doc.index("- `memos`:")
         sig_entry = " ".join(self._reference_entry(doc, doc.index("`chatSig`", memos)).split())
         found = _microsecond_figures(sig_entry)
-        self.assertEqual(found, [], "the reference's memos.chatSig paragraph states a microsecond figure %r" % (found,))
+        self.assertEqual(found, [], ("the reference's memos.chatSig paragraph states a microsecond figure %r. " + _MICROSECOND_REMEDY)
+                         % (found, "this paragraph"))
 
     def test_the_microsecond_predicate_reads_every_spelling_the_closing_check_planted(self):
         """The corpus behind the pin above (the closing check of 2026-09-19): the twenty-four spellings planted into a pinned
         region, the ten the `<number> us` pattern caught and the fourteen it passed, each read as a figure once
-        whitespace-normalized the way the pin normalizes; and a SAMPLE of the legitimate figures the pinned regions and the
-        reference carry (a millisecond count, a seconds backstop, the bare unit word, a version, a plural noun after a
-        digit, the pronoun), each read as none. The sample is not the population: the population is every sentence
+        whitespace-normalized the way the pin normalizes; the seven spellings the closing check's own review found the
+        derived predicate still passing, a number word before an abbreviated unit (`ten ns`, `half a us`, `a quarter us`,
+        the mu spelling, a hyphenated number word, `a quarter of a us`) and a leading-dot decimal (`.25 us`), each read as
+        one; and a SAMPLE of the legitimate figures the pinned regions and the reference carry (a millisecond count, a
+        seconds backstop, the bare unit word, a version, a plural noun after a digit, the pronoun, and now the hyphen
+        compounds `microsecond-resolution`, `microsecond-scale` and `nanosecond-resolution`, the pronoun after `of` and
+        the upper-case `US`), each read as none. A third list is REFUSED BY DESIGN: a unit used as a noun modifier after
+        an article or number word (`three nanosecond fields`, `a nanosecond timestamp`, `4 ns fields`). Those sentences
+        state no duration, but no predicate over the text tells `a nanosecond timestamp` from `about a nanosecond per
+        stat`, the very figure the pin exists to refuse, so each reads as one figure and the pin's message names the
+        reword (`three st_*_ns fields`, a field name rather than a duration); this list is the guard that a later
+        predicate change admitting the class is a decision made beside the message that describes it. The closing check
+        confirmed nine such noun-modifier and hyphen-compound constructions and named five; the five are the ones here,
+        and the other four are not in the record. The sample is not the population: the population is every sentence
         written in those regions from now on, so the pin's failure message names the remedy (state the cost in the
         reference, or write the sentence without a sub-millisecond figure) rather than this list growing by one each time
         innocent prose trips it. Dropping a unit from _TIME_UNITS reds the escaped spelling of that unit."""
@@ -3572,16 +3607,28 @@ class GoalIoCounters(unittest.TestCase):
         escaped = ["250 ns", "250ns", "0.00025 ms", "2.5e-7 s", "a quarter of a microsecond", "0.25&nbsp;us", "\u00bc us",
                    "0.25 usec", "0.25 \u00b5sec", "250 nanoseconds", "0.25 microsecs", "half a microsecond", "0.25-us", "0.25 US"]
         self.assertEqual((len(caught), len(escaped)), (10, 14), "the corpus is the closing check's twenty-four spellings")
-        for sp in caught + escaped:
-            text = " ".join(("the wrapper costs about %s per stat." % sp).split())
-            self.assertEqual(len(_microsecond_figures(text)), 1, "not read as one microsecond figure: %r" % sp)
+        escaped_after_the_closing_check = ["ten ns", "half a us", "a quarter us", "half a \u03bcs", "one-quarter us",
+                                           "a quarter of a us", ".25 us"]
+        for sp in caught + escaped + escaped_after_the_closing_check:
+            with self.subTest(spelling=sp):
+                text = " ".join(("the wrapper costs about %s per stat." % sp).split())
+                self.assertEqual(len(_microsecond_figures(text)), 1, "not read as one microsecond figure: %r" % sp)
+        noun_modifier_refused = ["The stat result carries three nanosecond fields: st_atime_ns, st_mtime_ns and st_ctime_ns.",
+                                 "st_mtime_ns hands back a nanosecond timestamp, so the comparison needs no float rounding.",
+                                 "4 ns fields are copied verbatim."]
+        for sentence in noun_modifier_refused:
+            with self.subTest(refused=sentence):
+                self.assertEqual(len(_microsecond_figures(sentence)), 1, "not read as one microsecond figure: %r" % sentence)
         legitimate_sample = ("157 ms per cycle", "a tick, 1 ms at HZ=1000, or a context switch", "the 0.5 s backstop ran it",
                       "how the loop's 3 s wait ended", "what each term costs in microseconds is stated once",
                       "38 tabs and four clients", "Python 3.12, a 30-core (60-thread) dev box", "the count tells us",
                       "over 300 sub-millisecond spins", "2.9 to 7.1 percent", "since the 1970s", "5 sessions", "12 GB resident",
-                      "a 5-second grace")
+                      "a 5-second grace", "A microsecond-resolution mtime is what the coarse fallback loses",
+                      "Two microsecond-scale counters would disagree", "a nanosecond-resolution clock", "one of us",
+                      "a few of us", "two of us agree", "a US-based host", "a US company", "one US dollar")
         for legit in legitimate_sample:
-            self.assertEqual(_microsecond_figures(legit), [], "a legitimate figure read as a microsecond one: %r" % legit)
+            with self.subTest(legitimate=legit):
+                self.assertEqual(_microsecond_figures(legit), [], "a legitimate figure read as a microsecond one: %r" % legit)
 
     def test_the_per_push_denominator_rule_lives_in_the_reference_alone_and_the_kernel_copies_point_there(self):
         """correctness-1 (the 2026-09-19 round-2 review): the sentence saying which memos.chatSig keys are a delta over
@@ -4997,6 +5044,15 @@ class PerfRoutes(unittest.TestCase):
         undocumented = sorted(k for k in dyn_kinds if "`%s`" % k not in para)
         self.assertEqual(undocumented, [], "every kind family with a payload (sdk, codex, end-host, peer, ...) is in the reference's kind list; a constant name is its own kind")
         self.assertGreaterEqual(len(dyn_kinds), 5, sorted(dyn_kinds))
+        # _thread_kind's OWN docstring enumerates the registered prefixes exhaustively (no ellipsis), and nothing pinned
+        # it, so a prefix added to the constant could drift out of the prose (round 4 of the reviewer's review,
+        # 2026-09-19; its regression-3: sdk-slot was added to _THREAD_KIND_PREFIXES in this PR and not to the docstring).
+        # The clause is `... is a registered prefix (sdk, sdk-intr, ...)`; every prefix must appear in it.
+        doc = km._thread_kind.__doc__ or ""
+        m = re.search(r"is a registered prefix \(([^)]*)\)", " ".join(doc.split()))
+        self.assertIsNotNone(m, "the docstring names its registered-prefix clause")
+        named = {w.strip() for w in m.group(1).split(",") if w.strip()}
+        self.assertEqual(sorted(km._THREAD_KIND_PREFIXES - named), [], "every registered prefix is named in _thread_kind's docstring")
 
     def test_the_judge_pools_workers_carry_their_tier(self):
         """Round three, low 2: the pin on the pool prefix was a substring check on the source; the behaviour is pinned instead:
