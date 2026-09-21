@@ -698,9 +698,12 @@ def sock_names(sid: str) -> tuple[str, str]:
     the fixed `<sid8>.tmp` of the first cut was the shared-name hazard (the review of this fix, 2026-09-19: a second
     host for the sid unlinking and rebinding that name between the first host's bind and its rename made the first
     publish, and report ready on, a socket it never created). Exactly the published name's length, 13 bytes for the
-    uuid sids the kernel mints (host_sock takes the first 8 characters), because the published path IS the socket path
-    budget on the box's deepest test root (SOCK_PATH_MAX; the sweep's xdist nesting puts `hosts/<sid8>.sock` at 107
-    exactly), so a temp longer than the published name would fail the bind where the published name fits. A sid shorter
+    uuid sids the kernel mints (host_sock takes the first 8 characters), because the published path is what the socket
+    path budget (SOCK_PATH_MAX) is spent on: under the test harness's deepest hosts-on root it sits at TMPDIR + 70 bytes
+    (one `romp-tests-*` level per process since 2026-09-21; two under xdist before, which put `hosts/<sid8>.sock` at 107
+    exactly under a 17-byte TMPDIR — tests/test_tempdir_hygiene.py HarnessSocketBudget derives the figure), so wherever
+    the published path fits the budget exactly a temp longer than it would fail the bind where the published name fits.
+    A sid shorter
     than 8 characters is not a shape the kernel produces: its temp is longer than its published name, and a temp over
     the budget fails the bind loudly (socket-bind-failed) rather than publishing anything. tests/test_session_host.py
     SocketMode pins the form, the length and the uniqueness."""
