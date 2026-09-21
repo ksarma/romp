@@ -35318,12 +35318,26 @@ def _subagent_tree_charge(kind, t0):
 # listing, and _subagent_file's hit path re-stats every directory its walk read, which for a nested or missing agent's file is
 # the whole tree; so one _session_awaiting over A such agents paid (A+1) x D directory stats with nothing changed: the tree's D
 # lstats plus D stats per agent whose launches() is consulted, which is every agent when there are two or more (each is
-# excluded from its own owner lookup, so a single agent with no command row paid D alone) or when a command row's owner is
-# read from the agents' transcripts; and it runs up to five times per session per pusher cycle (the chat, feed and timeline
-# builds and the chips) and once per jobs pass (the nudge look). Measured on two deployed kernels (2026-09-19): on one,
-# _dir_stamp's one os.stat was the top self frame of a 20 s py-spy profile, 28% of the samples by that profile's reading; on
-# the other, the memo's own counters showed 24.5 million validation lstats in 6.8 hours over 1,294 directories (the user
-# 2026-09-05, who wanted the one-core kernel investigated). The cycle and the pass
+# excluded from its own owner lookup, so a single agent with no command row paid D alone and folded nothing) or when a
+# command row's owner is read from the agents' transcripts; and it runs up to five times per session per pusher cycle (the
+# chat, feed and timeline builds and the chips) and once per jobs pass (the nudge look). THE COST, DERIVED (round 2 of #882:
+# it was stated per call and per tree, with two production kernels' totals as its evidence, and two kernels cannot separate
+# the directories from the sessions, the agents and the reads; the lab can): per pusher cycle or jobs pass, for the two
+# loops' own reads, with N the _session_awaiting reads per session in the cycle, A_s the agents of session s whose launches
+# are consulted, D_s the directories of its tree and D_r those of each of the R roots read, the cost before the scope was
+# N x sum_s D_s lstats, N x sum_s A_s x D_s stamp stats and N x sum_s A_s folds, linear in the reads, the sessions, the
+# agents and the directories at once; with the scope it is sum_r D_r lstats (each root's one validation, whatever the
+# readers, agents and reads consult it), 0 stamp stats (D_r for a root whose command row's owner lookup re-checked stamps
+# before the tree was read) and sum_s A_s folds, plus the eviction term above and, while a fold faults, A_s folds per read.
+# Evidence, the lab (tests/test_subagent_tree_stamps_per_cycle.py's world at R sessions of D directories, A agents and N
+# reads, through the real _pusher_cycle and _jobs_cycle): at N in {1, 3, 5}, R in {1, 3, 9}, D in {8, 32, 96, 156} and A in
+# {3, 8} the cost before was N x R x A x D stats (72; 2,592; 12,636; 21,060; 33,696) and N x R x D lstats in every cell, and
+# with the scope R x D lstats and 0 stats in every cell, nine roots of 32 directories costing what three of 96 cost (288
+# lstats; before, 864 lstats and 2,592 stats both): the total directories decide, not their split over roots. Motivation, a
+# dated reading and not the law's evidence: on two deployed kernels (2026-09-19), on one _dir_stamp's one os.stat was the top
+# self frame of a 20 s py-spy profile, 28% of the samples by that profile's reading, and on the other the memo's own counters
+# showed 24.5 million validation lstats in 6.8 hours over 1,294 directories (the user 2026-09-05, who wanted the one-core
+# kernel investigated). The cycle and the pass
 # are the events a time window would have stood in for (the repo's design rule): the thread's slot opens at the cycle's start
 # and closes in its finally, the first reader of a tree in the cycle validates or walks it, and every later reader on that
 # thread in the cycle is served the pair, stat for stat what the first reader saw. A change on disk after that validation (a
@@ -35564,11 +35578,17 @@ def _subagent_tree_memo_report():
     happens at most once per pusher cycle and once per jobs pass since 2026-09-19 (_subagent_scope), plus, per root that
     left the memo in the cycle (an ownership eviction, a missing or replaced root), one read of that root at its next lookup
     and one fold per awaiting agent under it, with every other held root untouched (round 2 of #882; the comment block at
-    _subagent_scope_open derives it), so the two loops' own reads pay per cycle or pass about `dirs` less the roots in the
-    common order (a tree read before its agent-file lookups), up to twice that when a command row's lookup re-checks stamps
-    before the tree is read, plus the project and sibling directory stats an agent-file miss pays; the reads a handler
-    thread makes (per call, as before) land in the same counter, so dirStats over an interval is bounded per scoped reader
-    set, not per interval. Written from several threads; a resize under the sum is read again."""
+    _subagent_scope_open derives it), so the two loops' own reads pay per cycle or pass, in dirStats, the sum over the roots
+    read of D_r - 1 (`dirs` less `roots` when every held root is read: one validation per root, whatever the readers, agents
+    and reads consult it; before the scope N x that for N reads per session, and N x A x D stamp re-check stats per session
+    besides, which the counter did not see), plus D_r for a root whose command row's owner lookup re-checked stamps before
+    the tree was read, plus, per agent whose file is nowhere or under a sibling's tree, one stat of the project directory and
+    one per directory of each sibling subagents tree that no read of the cycle holds (the cold walk, which lists the project
+    directory and reads each sibling's tree, is paid once, when the agent-file memo has no entry for the agent or a stamp it
+    read moved); the reads a handler thread makes (per call, as before) and the re-read of a root that left the memo
+    mid-cycle land in the same counter, so dirStats over an interval is bounded per scoped reader set, not per interval. The
+    derivation and the lab cells behind it are in the comment block at _subagent_scope_open. Written from several threads; a
+    resize under the sum is read again."""
     for _ in range(3):
         try:
             dirs = sum(len(v[0]) for v in list(_SUBAGENT_TREES.values()))

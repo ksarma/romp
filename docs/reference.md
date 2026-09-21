@@ -3712,12 +3712,27 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   the agent-file lookup's stat per directory its stamp re-check takes;
   before 2026-09-19 it counted the lstat half alone, so a figure from
   before that change and one from after are not one series; since then the
-  two loops' own reads
-  pay per cycle or pass about `dirs` less the roots in the common order, a
-  tree read before its agent-file lookups, up to twice that when a command
-  row's owner lookup re-checks stamps before the tree is read, plus the
-  project and sibling directory stats an agent-file miss pays, and a
-  handler thread's per-call reads and the re-read of a root that left the
+  two loops' own reads pay per cycle or pass the sum over the roots read of
+  one lstat per directory below the root (`dirs` less `roots` when every
+  held root is read: one validation per root, whatever the readers, the
+  agents and the reads per cycle that consult it, where before each of a
+  session's N reads in the cycle paid its tree's D lstats and D stamp stats
+  per agent whose launches were consulted, N x (A + 1) x D per session, a
+  cost linear in the reads, the sessions, the agents and the directories at
+  once; the lab in `tests/test_subagent_tree_stamps_per_cycle.py`'s world,
+  R sessions of D directories with A agents and N reads driven through the
+  real cycle functions, measured N x R x A x D stats and N x R x D lstats
+  before in every cell of N in {1, 3, 5}, R in {1, 3, 9}, D in {8, 32, 96,
+  156} and A in {3, 8}, and R x D lstats with 0 stats after, the same 288
+  at nine roots of 32 directories as at three of 96: the total directories
+  decide, not their split over roots), plus D more for a root whose command
+  row's owner lookup re-checks stamps before the tree is read, plus, per
+  agent whose file is nowhere or under a sibling's tree, one stat of the
+  project directory and one per directory of each sibling subagents tree
+  that no read of the cycle holds (the cold walk, which lists the project
+  directory and reads each sibling's tree, is paid once, when the
+  agent-file memo has no entry for the agent or a stamp it read moved), and
+  a handler thread's per-call reads and the re-read of a root that left the
   memo mid-cycle land in the same counter, so the figure is bounded per
   scoped reader set, not per interval), `walkMs`
   and `validateMs` (the time in each, every thread), and the gauges `roots`
