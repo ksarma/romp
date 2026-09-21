@@ -21,6 +21,18 @@ import * as ts from "typescript";
 
 const requireCjs = createRequire(__filename);
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
+// the compiler's syntax tree of render.ts, parsed once for the censuses below, and the owner rule they share: the nearest NAMED enclosing
+// function (a declaration, a method or a named function expression, else the variable or property an anonymous function is assigned to),
+// walking out past anonymous callbacks, the rule writer-census.ts reads writeScroll's callers by
+const SF = ts.createSourceFile("render.ts", RENDER, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+const nameOf = (fn: ts.SignatureDeclaration): string | null => {
+  if ((ts.isFunctionDeclaration(fn) || ts.isMethodDeclaration(fn) || ts.isFunctionExpression(fn)) && fn.name) return fn.name.getText(SF);
+  const p = fn.parent;
+  if (p && ts.isVariableDeclaration(p) && ts.isIdentifier(p.name)) return p.name.text;
+  if (p && (ts.isPropertyAssignment(p) || ts.isPropertyDeclaration(p))) return p.name.getText(SF);
+  return null;
+};
+const ownerOf = (n: ts.Node): string => { for (let p: ts.Node | undefined = n.parent; p; p = p.parent) { if (ts.isFunctionLike(p)) { const nm = nameOf(p); if (nm) return nm; } } return "<module>"; };
 
 /** The source with its comments removed and nothing else: the comment ranges are the compiler's own (every token's leading and trailing
  *  trivia over the parsed file), so a `//` or a `/*` inside a string, a template or a regular expression is text, never a comment. The
@@ -484,15 +496,7 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   // text count read a doc comment naming a call as a call; here a call, an assignment or a string literal is a node and a comment is not, so
   // the stripper stays for the text scans alone: the author's fixer pass over pass 4 moved the applyMeasure, forgetAverage and avgTurnH counts
   // and the spacer-follow check onto the tree after a planted comment naming the two calls turned the raw counts red)
-  const sf = ts.createSourceFile("render.ts", RENDER, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-  const nameOf = (fn: ts.SignatureDeclaration): string | null => {
-    if ((ts.isFunctionDeclaration(fn) || ts.isMethodDeclaration(fn) || ts.isFunctionExpression(fn)) && fn.name) return fn.name.getText(sf);
-    const p = fn.parent;
-    if (p && ts.isVariableDeclaration(p) && ts.isIdentifier(p.name)) return p.name.text;
-    if (p && (ts.isPropertyAssignment(p) || ts.isPropertyDeclaration(p))) return p.name.getText(sf);
-    return null;
-  };
-  const ownerOf = (n: ts.Node): string => { for (let p: ts.Node | undefined = n.parent; p; p = p.parent) { if (ts.isFunctionLike(p)) { const nm = nameOf(p); if (nm) return nm; } } return "<module>"; };
+  const sf = SF;   // parsed once at module level, with the owner rule (nameOf, ownerOf) the ordering window test below shares
   const NAMES = new Set(["renderWindowItems", "syncView", "untakeMeasure"]);
   const allCalls: ts.CallExpression[] = [], refs: ts.Identifier[] = [], strings = new Set<string>(), avgWrites: string[] = [];
   // a node that names the average: a property access or an element access on `avgTurnH`
@@ -693,4 +697,55 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   assert.deepEqual(byOwner("forgetAverage"), ["chatHead(v)", "rerenderAll(v)", "runPrebuild(v)", "showActive(v)"], "four resets, by owner from the syntax tree: the older-history re-anchor, the compact toggle's rerender, the prebuild's and the switch's re-collapse");
   assert.match(RENDER, /import \{ rowsFor, meanRowHeight, perTurnEstimate \} from "\.\/turn-estimate";/);
   assert.match(RENDER, /interface View \{[^\n]*measured\?: \{ avg\?: number; per\?: number \};/, "the parked figures live on the view");
+});
+
+test("the reload restore's raw write of the persisted rs.top, on the tree: from the record's binding (takeReloadScroll reads the persisted top to admit the record: the value's first read) to the write, in landActive's statements, no taker is called and the take state is not written. The site needs no take-back because its value was measured in the state it lands in (the take before it re-derives the pre-reload page's figures), not because the site is special, and that holds only while this window stays closed. The takers are derived: every function that writes the take state or re-draws the spacers, and the closure over render.ts's named functions of everything that calls one, so a take through a helper the site calls is named here; a take through a callee the tree cannot name is caught by land-active-keep.test.ts's trace (the reviewer's answer to the author's tail-2 question, 2026-09-21)", () => {
+  const sf = SF;
+  const line = (n: ts.Node): number => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
+  // the take state's writers: every assignment to, or delete of, a `measured` field, by owner; then the spacer redraws; then the fixpoint
+  const namesMeasured = (e: ts.Node): boolean => (ts.isPropertyAccessExpression(e) && e.name.text === "measured") || (ts.isElementAccessExpression(e) && ts.isStringLiteralLike(e.argumentExpression) && e.argumentExpression.text === "measured");
+  const writesMeasured = (n: ts.Node): boolean => (ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && n.operatorToken.kind <= ts.SyntaxKind.LastAssignment && namesMeasured(n.left)) || (ts.isDeleteExpression(n) && namesMeasured(n.expression));
+  const callsIn = new Map<string, Set<string>>(); const setters = new Set<string>();
+  const walk = (n: ts.Node): void => {
+    if (ts.isCallExpression(n) && ts.isIdentifier(n.expression)) { const o = ownerOf(n); if (!callsIn.has(o)) callsIn.set(o, new Set()); callsIn.get(o)!.add(n.expression.text); }
+    if (writesMeasured(n)) setters.add(ownerOf(n));
+    ts.forEachChild(n, walk);
+  };
+  walk(sf);
+  const takers = new Set<string>([...setters, "sizeSpacers", "redrawGapUnits"]);
+  for (let grew = true; grew;) { grew = false; for (const [fn, callees] of callsIn) if (fn !== "<module>" && !takers.has(fn) && [...callees].some((c) => takers.has(c))) { takers.add(fn); grew = true; } }
+  // the site: landActive's raw reload-restore write (the follow-mode shape writes the bottom with stick and is not it) and the binding of
+  // `rs`, the record whose top it writes; the window is the statements from the binding to the write, inclusive, less the write call itself,
+  // so a take on a branch the raw write's path does not run (the follow-mode write's) reds here too: the trace half is exact about the path
+  // and this half names the site
+  const landFn = sf.statements.find((st): st is ts.FunctionDeclaration => ts.isFunctionDeclaration(st) && st.name?.text === "landActive");
+  assert.ok(landFn && landFn.body, "landActive is a function declaration at module level");
+  const reads: ts.PropertyAccessExpression[] = [], calls: ts.CallExpression[] = [], stateWrites: ts.Node[] = [], bindings: ts.VariableDeclaration[] = [];
+  const scan = (n: ts.Node): void => {
+    if (ts.isPropertyAccessExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "rs" && n.name.text === "top") reads.push(n);
+    if (ts.isCallExpression(n) && ts.isIdentifier(n.expression)) calls.push(n);
+    if (writesMeasured(n)) stateWrites.push(n);
+    if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === "rs" && n.initializer && ts.isCallExpression(n.initializer) && ts.isIdentifier(n.initializer.expression) && n.initializer.expression.text === "takeReloadScroll") bindings.push(n);
+    ts.forEachChild(n, scan);
+  };
+  scan(landFn!.body!);
+  const rawWrites = calls.filter((c) => (c.expression as ts.Identifier).text === "writeScroll" && c.arguments[2] && ts.isStringLiteral(c.arguments[2]) && c.arguments[2].text === "reload-restore" && !(c.arguments[3] && c.arguments[3].kind === ts.SyntaxKind.TrueKeyword));
+  assert.equal(rawWrites.length, 1, "one raw reload-restore write in landActive: " + rawWrites.map((c) => c.getText(sf) + " at line " + line(c)).join("; "));
+  assert.equal(bindings.length, 1, "one binding of rs from takeReloadScroll in landActive: " + bindings.map((b) => b.getText(sf) + " at line " + line(b)).join("; "));
+  assert.ok(reads.length >= 1, "landActive reads rs.top");
+  const write = rawWrites[0], read = reads.sort((a, b) => a.getStart(sf) - b.getStart(sf))[0];
+  const stmtOf = (n: ts.Node): ts.Statement => { let p: ts.Node = n; while (!(ts.isStatement(p) && !ts.isBlock(p))) { assert.ok(p.parent, "a statement encloses the node"); p = p.parent; } return p as ts.Statement; };
+  const sB = stmtOf(bindings[0]), sW = stmtOf(write);
+  assert.ok(sB.getEnd() <= sW.getStart(sf), "the binding's statement comes before the write's (line " + line(sB) + " against line " + line(sW) + ")");
+  const lo = sB.getStart(sf), hi = sW.getEnd();
+  const within = (n: ts.Node): boolean => n.getStart(sf) >= lo && n.getEnd() <= hi;
+  assert.ok(within(read) && read.getEnd() <= write.getEnd(), "the site's read of rs.top (line " + line(read) + ") lies in the window, no later than the write");
+  const between = [
+    ...calls.filter((c) => c !== write && within(c) && takers.has((c.expression as ts.Identifier).text)).map((c) => c.getText(sf) + " at line " + line(c) + " (a taker: it writes the take state or re-draws the spacers, or calls something that does)"),
+    ...stateWrites.filter(within).map((w) => w.getText(sf) + " at line " + line(w) + " (a write of the take state)"),
+  ];
+  assert.deepEqual(between, [], "the reload restore's raw write: the window from the record's binding (line " + line(sB) + ") to the write (line " + line(write) + ") holds a take, so the persisted top, measured in the layout the take before it re-derives, would land in a layout it was not measured in; the site needs no take-back only while this window stays closed");
+  // the derivation the window check rests on, pinned after it so a plant in the window is named by the window's message
+  assert.deepEqual([...setters].sort(), ["applyMeasure", "forgetAverage", "measureUnits", "untakeMeasure"], "the take state's writers, by owner from the tree: the take, the reset, the park and the untake; a fifth is a new writer of the take state and belongs with the censuses above");
+  assert.ok(takers.has("landActive") && takers.has("renderWindowItems") && takers.has("scrollToAnchor") && takers.has("syncViewInner"), "the closure reaches the takers one and two hops out (the walk is not empty): " + [...takers].sort().join(", "));
 });

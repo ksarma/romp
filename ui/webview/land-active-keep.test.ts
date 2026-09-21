@@ -12,7 +12,13 @@
 // spacer's delta: the maintainer's round 1 ruling's HIGH 2 shape one road over, while the comment in the source said the road could not
 // happen); until this pass the two no-row roads took and wrote raw, disclosed (the third road named by the author's own verifiers after
 // pass 3, where the comment, the pin and the body had named two). The reload restore with no anchor row is the one raw write after a take
-// that KEEPS the take: its scrollTop was measured on the page before the reload, whose figures the take re-derives. landActive,
+// that KEEPS the take: its scrollTop was measured on the page before the reload, whose figures the take re-derives. That exception is the
+// VALUE's, not the site's: a write of a figure measured in the state it lands in needs no take-back only while nothing is taken between the
+// read of that figure and the write, so the world traces every take-class event (the take, the untake, the spacer redraws, every write of
+// the parked flag and of the view's `measured`) in order with the record's read (takeReloadScroll reads the persisted top to admit the
+// record: the first read of the value), the site's own read of `rs.top` and the writes, and the ordering is pinned on both raw reload
+// shapes (the reviewer's answer to the author's tail-2 question, 2026-09-21; spacer-measure.test.ts checks the same window on the tree,
+// where a take through a helper the site calls is named). landActive,
 // captureScrollAnchor and restoreScrollAnchor are lifted from render.ts and run over a layout model (the toggle harness's: a head spacer,
 // rows of known heights, a scroller with a viewport); the stubs record the take, the untake, the landing attempt and every write, and
 // scrollToAnchor answers what the world says. keepPlaceAcrossWindow, the other taker pinned by source text alone until the author's pass
@@ -62,7 +68,7 @@ class Host {
 
 type Arm = { anchor?: string; t?: number; keepY?: number; seek?: { sid: string; uuid: string; kind: string }; reload?: unknown; land?: boolean; landT?: boolean; rebuild?: (host: Host) => void };
 type Opts = { spacerH?: number; n?: number; rowH?: number; clientHeight?: number; saved: number; scrollTop?: number; shown?: boolean; stick?: boolean; parked?: boolean; bottomSpacerH?: number };
-type World = { content: Content; host: Host; v: any; spacer: Node; rows: Node[]; writes: Write[]; calls: any[]; rows_: any[]; toasts: string[]; land: (content: Content | null, v: any) => void; parked: () => boolean };
+type World = { content: Content; host: Host; v: any; spacer: Node; rows: Node[]; writes: Write[]; calls: any[]; rows_: any[]; toasts: string[]; trace: string[]; land: (content: Content | null, v: any) => void; parked: () => boolean };
 const D = 300;   // the take's delta: the head spacer re-sized by the re-measured figure over the head gap's turns
 
 /** A view of `n` rows of `rowH` under a head spacer of `spacerH` (uuids r0..), in a scroller of `clientHeight`; `saved` is the view's
@@ -79,9 +85,26 @@ function world(o: Opts, arm: Arm = {}): World {
   if (o.bottomSpacerH) host.add(new Node(o.bottomSpacerH, "tx-spacer tx-spacer-bot"));
   content.scrollTop = o.scrollTop ?? o.saved;
   const v: any = { el: host, scrollTop: o.saved, shown: o.shown ?? true, stick: o.stick ?? false };
-  const H: any = { content, v, spacer, writes: [] as Write[], calls: [] as any[], rows: [] as any[], toasts: [] as string[], deferred: [] as any[],
-                   parked: o.parked ?? true, delta: D, arm, takeReloadScroll,
+  const H: any = { content, v, spacer, writes: [] as Write[], calls: [] as any[], rows: [] as any[], toasts: [] as string[], deferred: [] as any[], trace: [] as string[],
+                   delta: D, arm,
                    land: (uuid: string) => { if (arm.rebuild) arm.rebuild(host); return !!arm.land; }, landT: (t: number) => !!arm.landT };
+  // the take state and the persisted top, traced in order with the writes (the ordering test below): the parked flag, which the stubs hold in
+  // place of production's `v.measured`, and the view's own `measured`, which nothing lifted here writes, so a write of either is a take at the
+  // site; a record takeReloadScroll admits is one `record` event (its own typeof check reads the persisted top, the value's first read, quiet
+  // here so the site's read is the one the accessor traces), and the record's `top` is read through an accessor after that, so the trace
+  // holds the moment the write's value is read at the site
+  let parkedFlag = o.parked ?? true, measuredField: unknown = undefined;
+  Object.defineProperty(H, "parked", { get: () => parkedFlag, set: (x: boolean) => { H.trace.push("parked=" + x); parkedFlag = x; } });
+  Object.defineProperty(v, "measured", { configurable: true, get: () => measuredField, set: (x: unknown) => { H.trace.push("measured=" + JSON.stringify(x)); measuredField = x; } });
+  H.quiet = false;
+  H.takeReloadScroll = (saved: unknown, id: string | null) => {
+    H.quiet = true; const r = takeReloadScroll(saved, id); H.quiet = false;
+    if (r) {
+      H.trace.push("record");
+      if (!Object.getOwnPropertyDescriptor(r, "top")?.get) { const top = r.top; Object.defineProperty(r, "top", { configurable: true, enumerable: true, get: () => { if (!H.quiet) H.trace.push("read rs.top"); return top; } }); }
+    }
+    return r;
+  };
   const js = liftBetween("function landActive(content: HTMLElement | null, v: View): void {", "// Scroll ANCHORING for scrolled-up re-renders")
            + liftBetween("function captureScrollAnchor(", "// Live tail-append to the ACTIVE view");
   const prelude = `
@@ -94,20 +117,20 @@ function world(o: Opts, arm: Arm = {}): World {
     const vscodeApi = { postMessage: (row) => { H.rows.push(row); } };
     const whenChatVisible = (cb) => { H.deferred.push(cb); };
     const takeReloadScroll = H.takeReloadScroll;
-    const applyMeasure = (v) => { H.calls.push("applyMeasure"); if (!H.parked) return false; H.parked = false; H.spacer.h += H.delta; return true; };
+    const applyMeasure = (v) => { H.calls.push("applyMeasure"); H.trace.push("take"); if (!H.parked) return false; H.parked = false; H.spacer.h += H.delta; return true; };
     const figuresBefore = (v) => ({ parked: H.parked });   // production's: what is parked before the take (spacer-measure.test.ts executes the real pair)
-    const untakeMeasure = (v, fig) => { H.calls.push("untakeMeasure"); if (!fig.parked || H.parked) return false; H.parked = true; H.spacer.h -= H.delta; return true; };   // the take undone: the figures parked again, the spacer back
-    const redrawGapUnits = () => { H.calls.push("redrawGapUnits"); };
-    const sizeSpacers = () => { H.calls.push("sizeSpacers"); };
+    const untakeMeasure = (v, fig) => { H.calls.push("untakeMeasure"); H.trace.push("untake"); if (!fig.parked || H.parked) return false; H.parked = true; H.spacer.h -= H.delta; return true; };   // the take undone: the figures parked again, the spacer back
+    const redrawGapUnits = () => { H.calls.push("redrawGapUnits"); H.trace.push("redrawGapUnits"); };
+    const sizeSpacers = () => { H.calls.push("sizeSpacers"); H.trace.push("sizeSpacers"); };
     const scrollToAnchor = (uuid) => { H.calls.push(["scrollToAnchor", uuid]); return H.land(uuid); };
     const landNearestMoment = (t) => { H.calls.push(["landNearestMoment", t]); return H.landT(t); };
     const revealProgressTick = () => {}; const clearSeek = () => { H.calls.push("clearSeek"); }; const showSeekNote = () => { H.calls.push("showSeekNote"); };
     const settleSample = () => {}; const landToast = (m) => { H.toasts.push(m); }; const notifyShell = () => {};
-    const writeScroll = (c, top, writer, stick = false, from) => { H.writes.push({ writer, top, stick, from }); c.scrollTop = Math.max(0, Math.min(top, c.scrollHeight - c.clientHeight)); };
+    const writeScroll = (c, top, writer, stick = false, from) => { H.writes.push({ writer, top, stick, from }); H.trace.push("write " + writer); c.scrollTop = Math.max(0, Math.min(top, c.scrollHeight - c.clientHeight)); };
     const scheduleRailSticky = () => {}; const updateJumpBtn = () => {}; const cssEscape = (s) => s;
   `;
   const land = new Function("HOOKS", prelude + js + "\nreturn landActive;")(H) as (content: Content | null, v: any) => void;
-  return { content, host, v, spacer, rows, writes: H.writes, calls: H.calls, rows_: H.rows, toasts: H.toasts, land, parked: () => H.parked };
+  return { content, host, v, spacer, rows, writes: H.writes, calls: H.calls, rows_: H.rows, toasts: H.toasts, trace: H.trace, land, parked: () => H.parked };
 }
 const takes = (w: World) => w.calls.filter((c) => c === "applyMeasure").length;
 const attemptAfterTake = (w: World) => { const t = w.calls.indexOf("applyMeasure"), a = w.calls.findIndex((c) => Array.isArray(c)); return t >= 0 && a >= 0 && t < a; };
@@ -171,6 +194,23 @@ test("the reload restore with no anchor row (the reader's place inside a spacer 
   assert.equal(r.spacer.h, 2000 + D, "the take stands");
   assert.deepEqual(r.writes, [{ writer: "reload-restore", top: 2350, stick: false, from: undefined }], "the persisted top, raw, over the re-derived figures (the first guess; a record with an anchor row arms the deep-link land after it)");
   assert.equal(r.v.stick, false); assert.equal(r.parked(), false);
+});
+
+test("the reload restore's raw write, the ordering its exception rests on: the take, then the record read for the restore (takeReloadScroll admits it by reading the persisted top, the value's first read), then the site's read of rs.top, then the write, with nothing taken from the record's read to the write, on both raw shapes (no anchor row; an anchor row the fresh window lacks). The site needs no take-back because its value was measured in the state it lands in, the pre-reload page's layout that the take before it re-derives, not because the site is special: a take in that window would land the value in a layout it was not measured in, so this pin reds the moment the window opens (the reviewer's answer to the author's tail-2 question, 2026-09-21; spacer-measure.test.ts checks the window on the tree)", () => {
+  const isTake = (e: string) => e === "take" || e === "untake" || e === "redrawGapUnits" || e === "sizeSpacers" || e.startsWith("parked=") || e.startsWith("measured=");
+  for (const reload of [{ id: "A", top: 2350, stick: false, anchor: null }, { id: "A", top: 2350, stick: false, anchor: { uuid: "11111111-2222-4333-8444-000000000007", y: -50 } }]) {
+    const shape = reload.anchor ? "an anchor row the fresh window lacks" : "no anchor row";
+    const r = world({ saved: 2350, scrollTop: 0 }, { reload, land: false });
+    r.land(r.content, r.v);
+    // the record is taken twice: once to decide the take (before it: nothing armed but the record) and once for the restore; the window
+    // starts at the second, the one whose value is written
+    const take = r.trace.indexOf("take"), record = r.trace.lastIndexOf("record"), read = r.trace.indexOf("read rs.top"), write = r.trace.indexOf("write reload-restore");
+    assert.ok(take >= 0 && record > take, shape + ": the take runs before the record is taken for the restore (the take stands, by measurement): " + JSON.stringify(r.trace));
+    assert.ok(read > record && write > read, shape + ": the site reads rs.top after the record is taken, and writes after the read: " + JSON.stringify(r.trace));
+    assert.deepEqual(r.trace.slice(record + 1, write).filter(isTake), [], shape + ": nothing is taken between the record's read and its write (a take here would land a figure measured in one layout in another, and the site would owe a take-back like every other): " + JSON.stringify(r.trace));
+    assert.deepEqual(r.writes.map((x) => x.writer), ["reload-restore"], shape + ": the raw write is the land's one write");
+    assert.ok(!r.trace.some((e) => e.startsWith("measured=")), shape + ": the view's own take state is written by nothing on this road");
+  }
 });
 
 test("an armed miss whose attempt REBUILT the window around the anchor's unit (scrollToAnchor's pointer-not-rendered and pointer-wrong-kind roads): the captured row left with the old rows, so the restore misses, the take is undone and the raw land-saved write of the saved scrollTop lands in the layout it was saved in, the third of the raw write's roads; a rebuild that renders the saved place's row again under its uuid is restored over the take", () => {
