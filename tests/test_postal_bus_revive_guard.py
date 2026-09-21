@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""The kernel's bus revive guard and the ensure ROADS (the fold 3 review, 2026-09-21: regression-2, kernel-2, regression-3).
+"""The kernel's bus revive guard and the ensure ROADS (the fold 3 review, 2026-09-21: regression-2, kernel-2, regression-3; round
+2's fresh-3, the unowned-road line said once).
 
 _revive_postal_bus reads the environment's client-only word as "this kernel must start no bus", a stricter gate than the
 postal service's own mode on purpose: the suite's floor sets the word with peers ON, and a guard that mirrored
@@ -223,12 +224,13 @@ class KernelReadsTheRoad(unittest.TestCase):
         self.assertEqual(km._ensure_road("road=up\n"), "", "a line that is not the verb's is no road")
 
     def test_the_record_trust_is_armed_on_the_owned_roads_alone(self):
-        saved_run, saved_flag, saved_err = km.subprocess.run, km._BUS_ENSURED[0], sys.stderr
+        saved_run, saved_flag, saved_said, saved_err = km.subprocess.run, km._BUS_ENSURED[0], km._BUS_ROAD_SAID[0], sys.stderr
         class R:
             def __init__(self, code, out): self.returncode, self.stdout, self.stderr = code, out, ""
         try:
             for road in ROADS:
                 km._BUS_ENSURED[0] = False
+                km._BUS_ROAD_SAID[0] = None            # each road said fresh here; the said-once case below owns the latch
                 km.subprocess.run = lambda *a, road=road, **kw: R(0, "ensure: road=%s\n" % road)
                 sys.stderr = err = io.StringIO()
                 km._ensure_postal_bus()
@@ -238,7 +240,34 @@ class KernelReadsTheRoad(unittest.TestCase):
                 else:
                     self.assertEqual(err.getvalue(), "")
         finally:
-            km.subprocess.run, km._BUS_ENSURED[0], sys.stderr = saved_run, saved_flag, saved_err
+            km.subprocess.run, km._BUS_ENSURED[0], km._BUS_ROAD_SAID[0], sys.stderr = saved_run, saved_flag, saved_said, saved_err
+
+    def test_an_unowned_road_is_said_once_and_a_road_change_said_again(self):
+        # the fold 3 review, round 2 (fresh-3): _revive_postal_bus re-runs the ensure on every refused notify, so a kernel whose
+        # bus answers the ensure's ping but refuses the notify (an answerer slower than the notify's 2 s dial and faster than
+        # the ping's 15 s) took the unowned road once per supervisor pass, and the line repeated without bound. The line now
+        # has the port census's memory (_BUS_ROAD_SAID beside _BUS_PORT_SAID): a road said once, a change said again.
+        saved_run, saved_flag, saved_said, saved_err = km.subprocess.run, km._BUS_ENSURED[0], km._BUS_ROAD_SAID[0], sys.stderr
+        class R:
+            def __init__(self, code, out): self.returncode, self.stdout, self.stderr = code, out, ""
+        def ensure(road):
+            km.subprocess.run = lambda *a, road=road, **kw: R(0, "ensure: road=%s\n" % road)
+            km._ensure_postal_bus()
+            return [ln for ln in err.getvalue().splitlines() if ln.startswith("postal bus ensure took the ")]
+        try:
+            km._BUS_ENSURED[0] = False
+            km._BUS_ROAD_SAID[0] = None
+            sys.stderr = err = io.StringIO()
+            self.assertEqual(len(ensure("answering")), 1, "the first ensure on an unowned road: said")
+            self.assertEqual(len(ensure("answering")), 1, "a second ensure on the same unowned road: nothing more")
+            self.assertEqual(len(ensure("client-only")), 2, "a road change: said again")
+            self.assertEqual(len(ensure("client-only")), 2, "the same road again: nothing more")
+            lines = ensure("answering")
+            self.assertEqual(len(lines), 3, "back to the first road: a change, said again")
+            self.assertEqual([ln.split(" road:")[0].rsplit(" ", 1)[1] for ln in lines], ["answering", "client-only", "answering"])
+            self.assertFalse(km._BUS_ENSURED[0], "no unowned road arms the record trust")
+        finally:
+            km.subprocess.run, km._BUS_ENSURED[0], km._BUS_ROAD_SAID[0], sys.stderr = saved_run, saved_flag, saved_said, saved_err
 
     def test_the_words_the_verb_prints_are_the_words_the_kernel_arms_on_end_to_end(self):
         saved = pm.ensure_road

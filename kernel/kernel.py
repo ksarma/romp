@@ -25123,6 +25123,7 @@ def _note_tunnel_teardown(r, now):
 BUS_PORT = int(os.environ.get("ROMP_POSTAL_PORT", "25302"))      # the environment's word for this machine's bus port: the tunnel's
 #                                                                    local side (the -L target, the legacy -R) and the FALLBACK of _bus_port()
 _BUS_PORT_SAID = [None]                                           # the census line's memory: (port, source) said once, a change said again
+_BUS_ROAD_SAID = [None]                                           # the unowned-road line's memory: the road said once, a change said again
 _BUS_ENSURED = [False]                                            # this kernel ENSURED a bus of its own (the ensure took the spawned or the up road,
 #                                                                    postal_service.ensure_road; never a client-only ping): the bus whose record it may trust
 
@@ -25130,7 +25131,7 @@ _BUS_ENSURED = [False]                                            # this kernel 
 def _bus_port():
     """The port this machine's bus BOUND, for every loopback dial of it: the bus's own record STATE/postal/postal-port ({"port",
     "pid", "tok"}, written after its bind, removed on a clean exit; postal_service.py PORTFILE) ahead of the environment, which is
-    the fallback when the record is absent, stale (its pid no longer runs), another bus's (its token mark is not this kernel's),
+    the fallback when the record is absent or unreadable, stale (its pid no longer runs), another bus's (its token mark is not this kernel's),
     or when this kernel ensured no bus of its own (_BUS_ENSURED: a client-only host, whose ensure only pings the tunnel, a
     lab kernel, an in-process test kernel, an ensure that found a tunnel or another environment's bus answering the port; the
     whole test suite showed a record one world left under the shared state root redirecting a later world's dial, and the
@@ -25241,7 +25242,8 @@ def _ensure_postal_bus():
     this machine owns a local bus (it spawned one, or found the machine's own answering) arms
     _BUS_ENSURED, the trust _bus_port() puts in the bus's port record: a client-only host's ping of its
     tunnel, or a tunnel or another environment's bus answering the port, arms nothing (the fold 3
-    review, 2026-09-21: any exit 0 armed it)."""
+    review, 2026-09-21: any exit 0 armed it). An unowned road is said once in the kernel's log, a change said again
+    (_BUS_ROAD_SAID): _revive_postal_bus re-runs this ensure on every refused notify."""
     try:
         r = subprocess.run([sys.executable, str(BIN / "romp-postal-service"), "ensure"],
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30)
@@ -25252,8 +25254,11 @@ def _ensure_postal_bus():
             if road in _BUS_OWNED_ROADS:
                 _BUS_ENSURED[0] = True   # a bus of this kernel's own: the one whose port record _bus_port() may trust
             elif not _BUS_ENSURED[0]:
-                sys.stderr.write("postal bus ensure took the %s road: this kernel owns no bus, and its dials read ROMP_POSTAL_PORT\n"
-                                 % (road or "unnamed"))
+                cur = road or "unnamed"
+                if _BUS_ROAD_SAID[0] != cur:     # said once per road, a change said again (the port census's memory, _BUS_PORT_SAID):
+                    _BUS_ROAD_SAID[0] = cur      # the revive re-runs this ensure on every refused notify (the fold 3 review, round 2)
+                    sys.stderr.write("postal bus ensure took the %s road: this kernel owns no bus, and its dials read ROMP_POSTAL_PORT\n"
+                                     % cur)
     except Exception:
         sys.stderr.write("postal bus ensure failed:\n%s" % traceback.format_exc())
 

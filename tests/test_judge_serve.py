@@ -246,11 +246,11 @@ class OnePass(Harness):
         self.assertEqual(_tree(root).keys() - {"names/" + SID}, set(), "no store written")
         c.send({"op": "quit"}); c.proc.wait(timeout=60); self.assertEqual(c.proc.returncode, 0)
 
-    def test_a_request_without_a_clock_runs_the_tiers_on_their_own_clock_the_kernels_default(self):
+    def test_a_request_without_a_clock_runs_the_tiers_on_their_own_clock(self):
         """The request's `now` is optional (2026-09-18): absent or null, the tiers read their own clock during the pass, the
-        in-process producer's behaviour and the kernel side's default; a number is the explicit variant, handed to both tiers
+        in-process producer's behaviour; a number is the explicit variant, handed to both tiers
         truncated to the second. Green at the base too (the child never required the field), said as such: this pins the
-        contract the kernel's default now relies on, and the source that passes the clock through only when it is a number."""
+        contract, and the source that passes the clock through only when it is a number."""
         root = self.state_root("noclock"); c = self.child(root)
         self.assertEqual(c.line()["op"], "ready")
         c.send({"op": "pass", "seq": 1, "mayStart": True})                                # no clock at all

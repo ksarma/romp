@@ -20242,7 +20242,7 @@ def _dump_goals():
 #
 #   child  -> {"op":"ready","pid":<int>,"judgeVersion":<str>,"protocolVersion":<int>}          once, at start
 #   kernel -> {"op":"pass","seq":<int>,"mayStart":<bool>[,"now":<epoch>]}                       one per wake; `now` is the explicit
-#                                                                                               clock variant, absent by default
+#                                                                                               clock variant
 #   child  -> {"op":"done","seq":<int>,"wallMs":..,"tierStarts":0|2,"tierCpuMs":..,"workerCpuMs":..,
 #              "failures":null|{"count":<int>,"first":<str>},"recovered":<bool>,
 #              "recordCache":{..},"asmCheckpoint":{..},"parses":{..},"goalIo":{..},"tierGate":{..}}    one per pass
@@ -20529,7 +20529,7 @@ def _serve_pass(req, emit):
     _set_stage("producer")                        # the pass thread's own parses count under the producer, as the kernel's do
     seq = req.get("seq")
     now = req.get("now")                          # OPTIONAL: absent or null, the tiers read their own clock during the pass, the
-    #                                               in-process producer's behaviour and the kernel side's default (2026-09-18: a
+    #                                               in-process producer's behaviour (2026-09-18: a
     #                                               `now` truncated to the second and handed to both tiers for a whole pass is a
     #                                               different admittance input from two live clocks; it stays as the explicit
     #                                               variant a measurement can send)
