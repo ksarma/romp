@@ -29,11 +29,19 @@ to end, in both shapes: a child run of a leaking module shaped like `python -m u
 (the package first) and one shaped like `python3 tests/test_x.py` (nothing before the module; its
 `from romp_load import load_source` is where the direct run's floor comes from, since 2026-09-14) each
 leave their system temp dir as they found it, and killed mid-test each leave exactly one marked root,
-which the kernel's sweep removes. The conftest-only
-classes skip under a bare unittest run, where conftest never loaded and there is nothing to pin;
-the rest run either way. This module loads romp code in one test only (the sweep), never at import.
+which the kernel's sweep removes. And the socket path budget (2026-09-21): under xdist a worker's root
+sits BESIDE the controller's in the recorded system temp dir, never inside it, so every process spends
+one `romp-tests-XXXXXXXX` level; HarnessSocketBudget proves the placement by execution (a worker-shaped
+process minted against a controller-shaped root, a killed one cleaned by its parent) and DERIVES the
+longest hosts-on socket path the harness can produce — the level measured on roots it makes, the lab
+shapes read from the tests' own text by AST, the socket tail from the kernel's builders — against the
+kernel's SOCK_PATH_MAX, with the margin in the message and a red check on planted inputs. The
+conftest-only classes skip under a bare unittest run, where conftest never loaded and there is nothing
+to pin; the rest run either way. This module loads romp code in two tests only (the sweep and the
+budget), never at import.
 """
 import ast
+import collections
 import contextlib
 import glob
 import importlib.util
@@ -42,12 +50,14 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
 import textwrap
 import time
 import unittest
+import uuid
 from unittest.mock import patch
 
 from git_fixture import git, init_repo
@@ -607,6 +617,71 @@ class RunLeavesNothing(unittest.TestCase):
         # its own root at exit (until then the nesting made the controller's removal enough).
         self._nested("-n", "2")
 
+    @unittest.skipUnless(importlib.util.find_spec("xdist"), "pytest-xdist not installed")
+    def test_under_xdist_a_worker_killed_mid_test_leaves_nothing_once_the_controller_exits(self):
+        """The parent-side sweep, end to end under pytest: a worker SIGKILLed mid-test (no hooks, no atexit, as
+        pytest-timeout's os._exit, an OOM kill or a crashed node leave it) leaves its root standing beside the
+        controller's, and the controller's run-end removal reads `romp-tests-children` and takes it. Until
+        2026-09-21 the nesting gave this for free; beside, it is the children file's job, and xdist tears the
+        nodes down before the controller's unconfigure runs. The kill waits on the worker's own ready-file."""
+        fresh = tempfile.mkdtemp()
+        case = os.path.join(fresh, "case")
+        os.makedirs(case)
+        with open(os.path.join(case, "test_leak.py"), "w") as f:
+            f.write(KILLED_WORKER_MODULE)
+        ready = os.path.join(tempfile.mkdtemp(prefix="romp-hygiene-ready-"), "ready")   # tracked, outside `fresh`
+        env = dict(os.environ, TMPDIR=fresh, PYTHONDONTWRITEBYTECODE="1", ROMP_HYGIENE_READY=ready)
+        for var in ("PYTEST_ADDOPTS", "PYTEST_PLUGINS", "PYTEST_DISABLE_PLUGIN_AUTOLOAD", "PYTEST_CURRENT_TEST",
+                    "PYTEST_XDIST_WORKER", "PYTEST_XDIST_WORKER_COUNT", "ROMP_TESTS_SYSTEM_TMPDIR"):
+            env.pop(var, None)
+        proc = subprocess.Popen([sys.executable, "-m", "pytest", "-p", "tests.conftest", "-p", "no:cacheprovider", "-q",
+                                 "-n", "2", "--max-worker-restart=0", os.path.join(case, "test_leak.py")],
+                                cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+
+        def _reap():
+            if proc.poll() is None:
+                proc.kill()
+            if proc.stdout is not None and not proc.stdout.closed:
+                proc.communicate()
+            else:
+                proc.wait()
+        self.addCleanup(_reap)
+        deadline = time.monotonic() + 120
+        while not os.path.exists(ready):           # loop-ok: bounded wait on the worker's ready-file, the event itself
+            if proc.poll() is not None:
+                self.fail("the nested run ended before its worker was ready:\n" + proc.communicate()[0])
+            self.assertLess(time.monotonic(), deadline, "the worker never said it was ready")
+            time.sleep(0.05)
+        with open(ready) as fh:
+            worker_pid, worker_root = fh.read().split("\n")[:2]
+        worker_pid = int(worker_pid)
+        self.assertEqual(os.path.dirname(worker_root), fresh, "the worker minted beside the controller: " + worker_root)
+        self.assertTrue(os.path.isdir(worker_root))
+        os.kill(worker_pid, signal.SIGKILL)
+        out, _ = proc.communicate(timeout=120)
+        self.assertNotEqual(proc.returncode, 0, "a crashed worker is a failed run:\n" + out)
+        self.assertIn("crashed", out)
+        self.assertEqual(sorted(os.listdir(fresh)), ["case"],
+                         "the controller removed the dead worker's root along with its own:\n" + out)
+
+
+KILLED_WORKER_MODULE = textwrap.dedent('''\
+    import os, tempfile, time, unittest
+    STATE = tempfile.mkdtemp()            # a module preamble's state root, inside this worker's root
+
+    class Leak(unittest.TestCase):
+        def test_waits_to_be_killed(self):
+            tempfile.mkdtemp()
+            ready = os.environ["ROMP_HYGIENE_READY"]
+            with open(ready + ".tmp", "w") as fh:            # pid and root, then an atomic rename: the parent reads whole lines
+                fh.write("%d\\n%s\\n" % (os.getpid(), os.environ["TMPDIR"]))
+            os.replace(ready + ".tmp", ready)
+            time.sleep(600)                                  # the kill ends this
+
+        def test_the_other_worker_finishes(self):
+            self.assertTrue(os.path.basename(os.environ["TMPDIR"]).startswith("romp-tests-"))
+''')
+
 
 BARE_LEAKY_MODULE = textwrap.dedent('''\
     import os, subprocess, sys, tempfile, time, unittest
@@ -748,6 +823,397 @@ class BareRunLeavesNothing(unittest.TestCase):
     def test_a_direct_run_killed_mid_test_leaves_one_marked_root_the_sweep_removes(self):
         # Red before it too: the same four entries, none of them a marked root the sweep would take.
         self._killed_run_leaves_one_marked_root_the_sweep_removes(direct=True)
+
+
+# The harness's socket path budget, DERIVED (2026-09-21). A session host binds an AF_UNIX socket at
+# `<state root>/hosts/<sid8>.sock`, and sun_path holds 107 usable bytes on Linux (kernel/session_host.py
+# SOCK_PATH_MAX, itself measured by tests/test_session_host.py SocketBudget). Under the harness the state
+# root of a hosts-on lab is `<TMPDIR>/<the process's romp-tests-* root>/<the lab's mkdtemp dir>/<its
+# state suffix>`, so the budget is spent four ways: the TMPDIR the run was handed, the root level(s)
+# the harness adds, the lab's own shape, and the socket tail. Until 2026-09-21 an xdist worker's root
+# nested inside the controller's, a second 20-byte level, and the deepest hosts-on lab
+# (tests/test_session_host_restart.py: `host-served-XXXXXXXX/xdg/romp`) came to 107 bytes exactly under
+# the sweep's 17-byte TMPDIR: one more byte failed every session-host test under -n and passed it alone,
+# and 76 sweep logs read that as a flake. Nothing here is typed from that story: the level is measured on
+# roots the harness mints (a controller-shaped and a worker-shaped process, by execution), the lab shapes
+# are read from the tests' own text (every write of "on" into a `session-hosts` file, its state-root
+# expression followed through the module's assignments to the mkdtemp that made it), the socket tail
+# comes from the kernel's own host_sock and sock_names, and the budget is the kernel's constant. The
+# canonical TMPDIR is the box rule's input, `mktemp -d /tmp/sweep-XXXXXX`, 17 bytes, and stated as such.
+Lab = collections.namedtuple("Lab", "bytes file line prefix comps note")
+Harness = collections.namedtuple("Harness", "bytes levels controller worker system")
+SWEEP_TMPDIR_TEMPLATE = "/tmp/sweep-XXXXXX"           # the box rule: a full sweep's TMPDIR is `mktemp -d` of this, 17 bytes
+_MINTING_CHILD = textwrap.dedent('''\
+    import json, os, sys
+    sys.path.insert(0, %r)
+    import tests
+    # getattr: run against a package without the beside placement (the red check at the nesting head), the child still
+    # reports where it minted, so the assertions fail on the property and not on a missing name
+    print(json.dumps({"root": tests.TMP_ROOT, "parent": getattr(tests, "PARENT_ROOT", None),
+                      "system": getattr(tests, "SYSTEM_TMPDIR", os.environ["ROMP_TESTS_SYSTEM_TMPDIR"]),
+                      "pid": os.getpid()}), flush=True)
+    sys.stdin.readline()                              # held here until the parent releases it, so its root stands
+''') % ROOT
+
+
+def _tmp_name_tail_bytes():
+    """The bytes mkdtemp appends to a prefix (its random tail), measured on one directory minted here."""
+    d = tempfile.mkdtemp(prefix="tail-")
+    try:
+        return len(os.fsencode(os.path.basename(d))) - len(b"tail-")
+    finally:
+        os.rmdir(d)
+
+
+def _prefix_of(call):
+    """The literal prefix a mkdtemp/TemporaryDirectory call names, "tmp" (the module default) when it names none,
+    None when it is not a literal."""
+    for kw in call.keywords:
+        if kw.arg == "prefix":
+            return kw.value.value if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str) else None
+    if len(call.args) > 1 and not any(isinstance(a, ast.Starred) for a in call.args):
+        a = call.args[1]
+        return a.value if isinstance(a, ast.Constant) and isinstance(a.value, str) else None
+    return "tmp"
+
+
+def _lab_shapes(expr, assigned, depth=4):
+    """[(prefix, comps, note)] for every temp directory `expr` can name: a mkdtemp/TemporaryDirectory call gives
+    its prefix (and a note when it passes `dir=`, since that dir may sit above or below the root); os.path.join,
+    Path, `/` and str(...) over one carry their literal components; a name or attribute is followed through the
+    module's assignments (every value it is ever bound to, so a shared local like `d` yields each of its shapes)."""
+    if isinstance(expr, ast.Call):
+        name = _call_name(expr)
+        if name in ("mkdtemp", "TemporaryDirectory"):
+            d = _dir_argument(expr)
+            note = None if d is None or (isinstance(d, ast.Constant) and d.value is None) else "dir=" + ast.unparse(d)
+            return [(_prefix_of(expr), (), note)]
+        if name in ("Path", "join", "str", "realpath", "abspath", "fspath") and expr.args:
+            rest = expr.args[1:]
+            if all(isinstance(a, ast.Constant) and isinstance(a.value, str) for a in rest):
+                comps = tuple(a.value for a in rest)
+                return [(p, c + comps, n) for p, c, n in _lab_shapes(expr.args[0], assigned, depth)]
+            return []
+    if isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Div) and isinstance(expr.right, ast.Constant):
+        return [(p, c + (expr.right.value,), n) for p, c, n in _lab_shapes(expr.left, assigned, depth)]
+    if isinstance(expr, ast.Attribute) and expr.attr == "name":          # TemporaryDirectory().name
+        return _lab_shapes(expr.value, assigned, depth)
+    if isinstance(expr, (ast.Name, ast.Attribute)) and depth:
+        out = []
+        for v in assigned.get(ast.unparse(expr), ()):
+            out += _lab_shapes(v, assigned, depth - 1)
+        return out
+    return []
+
+
+def _hosts_on_state_root(call):
+    """(state expression, trailing literal components) when `call` writes "on" into a `session-hosts` file —
+    Path(<state>, ..., "session-hosts").write_text("on" ...), open(os.path.join(<state>, "session-hosts"), "w")
+    .write("on"), (Path(<state>) / "session-hosts").write_text(...) — else None. "on" may sit in a conditional
+    ("on" if hosts_on else "off"): any literal "on" in the written value counts."""
+    f = call.func
+    if not (isinstance(f, ast.Attribute) and f.attr in ("write_text", "write") and call.args):
+        return None
+    if not any(isinstance(n, ast.Constant) and isinstance(n.value, str) and n.value.strip() == "on"
+               for n in ast.walk(call.args[0])):
+        return None
+    recv = f.value
+    if isinstance(recv, ast.Call) and _call_name(recv) == "open" and recv.args:
+        recv = recv.args[0]
+    if isinstance(recv, ast.Call) and _call_name(recv) in ("Path", "join") and len(recv.args) >= 2:
+        last, mid = recv.args[-1], recv.args[1:-1]
+        if (isinstance(last, ast.Constant) and last.value == "session-hosts"
+                and all(isinstance(a, ast.Constant) and isinstance(a.value, str) for a in mid)):
+            return recv.args[0], tuple(a.value for a in mid)
+    if (isinstance(recv, ast.BinOp) and isinstance(recv.op, ast.Div) and isinstance(recv.right, ast.Constant)
+            and recv.right.value == "session-hosts"):
+        return recv.left, ()
+    return None
+
+
+def hosts_on_labs(sources, tail):
+    """(labs, unresolved): one Lab per shape of state root a test turns hosts ON in, read from `sources`
+    ([(label, text)]): bytes below the process temp root = `/` + prefix + mkdtemp's tail + each `/component`.
+    `unresolved` lists the hosts-on sites whose state root the reader could not follow to a mkdtemp (a hole in
+    the bound, for the caller to refuse)."""
+    labs, unresolved = [], []
+    for label, text in sources:
+        if "session-hosts" not in text:
+            continue
+        tree = ast.parse(text)
+        assigned = _assignments(tree)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            hit = _hosts_on_state_root(node)
+            if hit is None:
+                continue
+            expr, comps = hit
+            shapes = [(p, c + comps, n) for p, c, n in _lab_shapes(expr, assigned)]
+            if not shapes or any(p is None for p, _, _ in shapes):
+                unresolved.append("%s:%d: %s" % (label, node.lineno, ast.unparse(expr)))
+                continue
+            for prefix, cs, note in shapes:
+                below = 1 + len(os.fsencode(prefix)) + tail + sum(1 + len(os.fsencode(c)) for c in cs)
+                labs.append(Lab(below, label, node.lineno, prefix, cs, note))
+    return labs, unresolved
+
+
+def longest_prefix(sources):
+    """(bytes, prefix, label, line) of the longest literal prefix any tempfile.mkdtemp or TemporaryDirectory
+    in `sources` names — every test module, whether or not its lab turns hosts on."""
+    best = (0, "", "", 0)
+    for label, text in sources:
+        if "mkdtemp" not in text and "TemporaryDirectory" not in text:
+            continue
+        for node in ast.walk(ast.parse(text)):
+            if isinstance(node, ast.Call) and _call_name(node) in ("mkdtemp", "TemporaryDirectory"):
+                p = _prefix_of(node)
+                if p is not None and len(os.fsencode(p)) > best[0]:
+                    best = (len(os.fsencode(p)), p, label, node.lineno)
+    return best
+
+
+def tree_sources():
+    """(label, text) for every tests/*.py: the same glob the literal-pin rule reads."""
+    return [(os.path.relpath(path, ROOT), open(path, encoding="utf-8").read())
+            for path in sorted(glob.glob(os.path.join(HERE, "*.py")))]
+
+
+def harness_bytes(root, system):
+    """(bytes, levels) the harness spends between the recorded system dir and a process's root: the `/`-led
+    relative path's byte length and its component count, measured on the root itself."""
+    rel = os.path.relpath(os.path.realpath(root), os.path.realpath(system))
+    return len(os.fsencode(rel)) + 1, len(rel.split(os.sep))
+
+
+def deepest_socket_path(tmpdir_bytes, harness, lab, sock_bytes):
+    return tmpdir_bytes + harness.bytes + lab.bytes + sock_bytes
+
+
+def assert_socket_fits(case, what, tmpdir_bytes, harness, lab, sock_bytes, budget, min_margin=0):
+    """The one assertion, with the whole derivation in its message; returns (total, margin)."""
+    total = deepest_socket_path(tmpdir_bytes, harness, lab, sock_bytes)
+    margin = budget - total
+    shape = "`%s` + mkdtemp tail%s" % (lab.prefix, "".join("/" + c for c in lab.comps) and " + `%s`" % "".join("/" + c for c in lab.comps))
+    case.assertGreaterEqual(
+        margin, min_margin,
+        "%s: the deepest hosts-on socket path the harness can produce is %d bytes = %d (TMPDIR) + %d (%d romp-tests-* root "
+        "level(s), measured on roots the harness minted) + %d (the lab: %s, %s:%d%s) + %d (`/hosts/<sid8>.sock`, the "
+        "kernel's host_sock and sock_names); SOCK_PATH_MAX is %d, so the margin is %d and at least %d is required. Every "
+        "process must mint its root directly under the recorded system temp dir (beside its parent, never inside), and "
+        "the run's TMPDIR may be at most %d bytes."
+        % (what, total, tmpdir_bytes, harness.bytes, harness.levels, lab.bytes, shape, lab.file, lab.line,
+           "; " + lab.note if lab.note else "", sock_bytes, budget, margin, min_margin, budget - (total - tmpdir_bytes)))
+    return total, margin
+
+
+class HarnessSocketBudget(unittest.TestCase):
+    """Beside, not inside, proven by execution; and the longest hosts-on socket path the harness can produce,
+    derived and held against the kernel's budget. Not under_conftest: the placement is the package's."""
+
+    def _child(self, env_overrides, hold_dir):
+        """A Python process that imports the tests package under the environment given and reports its root, its
+        parent link and the record; held on stdin (release() lets it exit and remove its root)."""
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith(("PYTEST_", "ROMP_TESTS_")) and k not in (MARKER_ENV, "ROMP_HYGIENE_READY")}
+        env.update(PYTHONDONTWRITEBYTECODE="1", **env_overrides)
+        proc = subprocess.Popen([sys.executable, "-c", _MINTING_CHILD], cwd=hold_dir, env=env, text=True,
+                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+        def _reap():
+            if proc.poll() is None:
+                proc.kill()
+            proc.communicate()
+        self.addCleanup(_reap)
+        line = proc.stdout.readline()
+        if not line:
+            self.fail("the child minted no root: " + proc.communicate()[1])
+        return proc, json.loads(line)
+
+    @staticmethod
+    def _release(proc):
+        proc.stdin.write("\n")
+        proc.stdin.flush()
+        proc.wait(timeout=60)
+
+    def _mint_pair(self, synthetic):
+        """A controller-shaped process handed `synthetic` as its TMPDIR (the record cleared, as a run's first
+        process has it), then a worker-shaped one handed the controller's root as its TMPDIR with the controller's
+        record and xdist's worker variables, exactly the environment xdist spawns a worker with. Returns
+        (controller proc, controller record, worker proc, worker record)."""
+        ctl, c = self._child({"TMPDIR": synthetic}, synthetic)
+        self.assertEqual(os.path.realpath(c["system"]), os.path.realpath(synthetic), "the first process records what it was handed")
+        self.assertIsNone(c["parent"])
+        wrk, w = self._child({"TMPDIR": c["root"], "ROMP_TESTS_SYSTEM_TMPDIR": c["system"], "PYTEST_XDIST_WORKER": "gw0",
+                              "PYTEST_XDIST_WORKER_COUNT": "1", "PYTEST_XDIST_TESTRUNUID": uuid.uuid4().hex}, synthetic)
+        return ctl, c, wrk, w
+
+    def test_a_worker_shaped_root_is_minted_beside_the_controllers_not_inside_it(self):
+        """Red at the nesting head: the worker's root was `<controller root>/romp-tests-*`."""
+        synthetic = tempfile.mkdtemp(prefix="harness-")
+        ctl, c, wrk, w = self._mint_pair(synthetic)
+        for rec in (c, w):
+            self.assertTrue(os.path.basename(rec["root"]).startswith("romp-tests-"), rec)
+            self.assertTrue(os.path.isdir(rec["root"]), rec)
+        self.assertEqual(os.path.dirname(w["root"]), synthetic, "the worker minted directly in the recorded system dir")
+        self.assertNotEqual(os.path.commonpath([c["root"], w["root"]]), c["root"], "beside, not inside: %r" % (w["root"],))
+        self.assertEqual(w["parent"], c["root"], "the worker knows whose root it was handed")
+        self.assertEqual(w["system"], c["system"], "and keeps the controller's record")
+        self.assertEqual(len(os.path.basename(w["root"])), len(os.path.basename(c["root"])), "the same 19-byte name: the gain is the level")
+        with open(os.path.join(c["root"], "romp-tests-children"), encoding="utf-8") as fh:
+            self.assertEqual([json.loads(l) for l in fh.read().splitlines()], [{"pid": w["pid"], "root": w["root"]}],
+                             "the worker listed itself in the controller's root")
+        self.assertEqual(sorted(os.listdir(synthetic)), sorted(os.path.basename(r["root"]) for r in (c, w)))
+        self._release(wrk)
+        self.assertEqual(os.listdir(synthetic), [os.path.basename(c["root"])], "the worker removed its own root at exit")
+        self._release(ctl)
+        self.assertEqual(os.listdir(synthetic), [], "the controller removed its own; nothing of either is left")
+
+    def test_a_worker_killed_without_its_hooks_is_removed_by_the_controller_at_exit(self):
+        """The parent-side sweep at the package level (RunLeavesNothing has it under pytest): the worker SIGKILLed,
+        its root stands with a dead owner; the controller's exit takes it, then its own."""
+        synthetic = tempfile.mkdtemp(prefix="harness-")
+        ctl, c, wrk, w = self._mint_pair(synthetic)
+        os.kill(wrk.pid, signal.SIGKILL)
+        wrk.wait(timeout=60)
+        self.assertTrue(os.path.isdir(w["root"]), "a killed worker leaves its root standing")
+        self._release(ctl)
+        self.assertEqual(os.listdir(synthetic), [], "the controller removed the dead worker's root along with its own")
+
+    def test_a_live_child_keeps_its_root_when_the_parent_exits(self):
+        """The other direction: a child still alive at the parent's exit owns its root; the parent leaves it, and the
+        child removes it itself. (A nested pytest that outlives its test is such a child.)"""
+        synthetic = tempfile.mkdtemp(prefix="harness-")
+        ctl, c, wrk, w = self._mint_pair(synthetic)
+        self._release(ctl)
+        self.assertEqual(os.listdir(synthetic), [os.path.basename(w["root"])], "the live worker's root stands after the controller's exit")
+        self._release(wrk)
+        self.assertEqual(os.listdir(synthetic), [])
+
+    def _kernel(self):
+        # Loaded here, not at import: this module loads no romp code before a test asks (a private name shared with
+        # BareRunLeavesNothing's load, so the backend is read once per process).
+        from romp_load import load_source
+        sb = load_source("romp_sdk_backend_hygiene", os.path.join(ROOT, "bin", "romp_sdk_backend.py"))
+        ht = sb._ht()
+        return ht, ht.sh
+
+    def _socket_tail(self, ht, sh):
+        """`/hosts/<sid8>.sock` from the kernel's two builders, for a uuid sid: host_sock builds the path the kernel
+        connects to, sock_names the name the host publishes, and they must agree."""
+        sid = str(uuid.uuid4())
+        published = sh.sock_names(sid)[0]
+        tail = "/" + os.path.relpath(str(ht.host_sock("", sid)), "")
+        self.assertEqual(os.path.basename(tail), published, "host_sock and sock_names name the same socket")
+        self.assertEqual(os.path.dirname(tail), "/hosts")
+        return len(os.fsencode(tail))
+
+    def test_the_deepest_hosts_on_socket_path_the_harness_can_produce_fits_sun_path_with_the_margin_stated(self):
+        ht, sh = self._kernel()
+        budget = sh.SOCK_PATH_MAX
+        tail = _tmp_name_tail_bytes()
+        sock = self._socket_tail(ht, sh)
+        # The harness's share, measured on roots it minted: a worker-shaped process against a controller-shaped one.
+        synthetic = tempfile.mkdtemp(prefix="harness-")
+        ctl, c, wrk, w = self._mint_pair(synthetic)
+        harness = Harness(*harness_bytes(w["root"], synthetic), c["root"], w["root"], synthetic)
+        self._release(wrk)
+        self._release(ctl)
+        self.assertEqual(harness.levels, 1, "one romp-tests-* level for a worker: %r" % (harness,))
+        level = harness.bytes // harness.levels
+        # ...and on THIS process's root, whatever shape the run has (serial, a worker, a nested child).
+        own = Harness(*harness_bytes(tempfile.gettempdir(), os.environ["ROMP_TESTS_SYSTEM_TMPDIR"]), None, tempfile.gettempdir(),
+                      os.environ["ROMP_TESTS_SYSTEM_TMPDIR"])
+        self.assertEqual(own.levels, 1, "one romp-tests-* level for this process: %r" % (own,))
+        self.assertEqual(own.bytes, harness.bytes)
+        # The labs' share, read from the tests' text: every state root a test turns hosts on in, and the deepest wins.
+        sources = tree_sources()
+        labs, unresolved = hosts_on_labs(sources, tail)
+        self.assertEqual(unresolved, [], "a hosts-on state root the reader cannot follow to its mkdtemp is a hole in the "
+                         "bound: mint it with a literal prefix (or none) and a literal suffix, or extend _lab_shapes")
+        self.assertTrue(labs, "no test turns hosts on? the reader found no session-hosts write of \"on\"")
+        lab = max(labs)
+        print("\nHarnessSocketBudget: deepest hosts-on lab %s:%d (%r + %r, %d bytes below the root); harness %d bytes x %d level; "
+              "socket tail %d; SOCK_PATH_MAX %d" % (lab.file, lab.line, lab.prefix, "/".join(lab.comps), lab.bytes, harness.bytes,
+                                                     harness.levels, sock, budget), file=sys.stderr)
+        canonical = len(os.fsencode(SWEEP_TMPDIR_TEMPLATE))
+        with self.subTest(arm="the sweep convention: TMPDIR = mktemp -d %s (%d bytes), margin of at least one root level"
+                          % (SWEEP_TMPDIR_TEMPLATE, canonical)):
+            # A margin under one level means a re-nesting (the shape before 2026-09-21) would break the bind: red there.
+            assert_socket_fits(self, "under the box rule's %d-byte TMPDIR" % canonical, canonical, harness, lab, sock, budget,
+                               min_margin=level)
+        with self.subTest(arm="this run's TMPDIR"):
+            system = os.path.realpath(os.environ["ROMP_TESTS_SYSTEM_TMPDIR"])
+            if sys.platform == "darwin" and deepest_socket_path(len(os.fsencode(system)), own, lab, sock) > budget:
+                # The Darwin per-user TMPDIR (/var/folders/.../T, about 49 bytes) is over the bound for the deepest lab,
+                # which needs romp's SDK venv and skips on a checkout without it, so a Mac run without the venv is not
+                # invalid for anything it runs; a Mac run with the venv sees that lab's own failure.
+                self.skipTest("the Darwin per-user TMPDIR %s is over the bound for %s; run under a shorter TMPDIR" % (system, lab.file))
+            # A run under a TMPDIR too long for the deepest lab is INVALID for the session-host tests, not red: this
+            # names the cause and the remedy where a sweep log would otherwise show only the host failing to bind.
+            assert_socket_fits(self, "under this run's TMPDIR %s (%d bytes)" % (system, len(os.fsencode(system))),
+                               len(os.fsencode(system)), harness, lab, sock, budget)
+        with self.subTest(arm="the longest prefix any test module names, as if its lab turned hosts on"):
+            # Conservative: a lab that never binds a socket, but any lab may turn hosts on tomorrow and a prefix is
+            # arbitrary; the deepest hosts-on suffix in the tree stands in for its state root's.
+            n, prefix, label, line = longest_prefix(sources)
+            widest = Lab(1 + n + tail + sum(1 + len(os.fsencode(c)) for c in lab.comps), label, line, prefix, lab.comps, None)
+            assert_socket_fits(self, "under the box rule's %d-byte TMPDIR with the tree's longest mkdtemp prefix" % canonical,
+                               canonical, harness, widest, sock, budget)
+
+    def test_the_derivation_reds_on_a_planted_extra_level_or_a_longer_prefix(self):
+        """The pin against planted inputs, not the tree: a nested worker root (the shape before 2026-09-21) measured
+        by the same function fails the sweep arm at margin 0, and a hosts-on lab with a longer prefix read by the
+        same reader overruns the budget; the tree's own shapes pass both."""
+        ht, sh = self._kernel()
+        budget, tail, sock = sh.SOCK_PATH_MAX, _tmp_name_tail_bytes(), self._socket_tail(ht, sh)
+        canonical = len(os.fsencode(SWEEP_TMPDIR_TEMPLATE))
+        system = tempfile.mkdtemp(prefix="planted-")
+        one = tempfile.mkdtemp(prefix="romp-tests-", dir=system)                    # a controller-shaped root
+        nested = tempfile.mkdtemp(prefix="romp-tests-", dir=one)                    # a worker's, INSIDE it: the old shape
+        beside = tempfile.mkdtemp(prefix="romp-tests-", dir=system)                 # a worker's beside: the shape now
+        flat, deep = Harness(*harness_bytes(beside, system), one, beside, system), Harness(*harness_bytes(nested, system), one, nested, system)
+        self.assertEqual((flat.levels, deep.levels), (1, 2))
+        self.assertEqual(deep.bytes, 2 * flat.bytes)
+        level = flat.bytes
+        planted = textwrap.dedent('''\
+            import os, tempfile
+            from pathlib import Path
+            class T:
+                def setUp(self):
+                    self.lab = tempfile.mkdtemp(prefix="host-served-")
+                    self.state = os.path.join(self.lab, "xdg", "romp")
+                def run(self):
+                    Path(self.state, "session-hosts").write_text("on" if True else "off")
+        ''')
+        labs, unresolved = hosts_on_labs([("t.py", planted)], tail)
+        self.assertEqual(unresolved, [])
+        lab = max(labs)
+        self.assertEqual((lab.prefix, lab.comps, lab.bytes), ("host-served-", ("xdg", "romp"), 1 + 12 + tail + 9))
+        total, margin = assert_socket_fits(self, "planted control", canonical, flat, lab, sock, budget, min_margin=level)
+        self.assertGreaterEqual(margin, level)
+        # An extra level: the sweep arm fails, and its message carries the shape and the margin.
+        with self.assertRaises(AssertionError) as cm:
+            assert_socket_fits(self, "planted nesting", canonical, deep, lab, sock, budget, min_margin=level)
+        self.assertIn("2 romp-tests-* root level(s)", str(cm.exception))
+        self.assertIn("the margin is %d" % (budget - (total + level)), str(cm.exception))
+        # A longer prefix, read by the same reader: over the budget outright.
+        longer = planted.replace('prefix="host-served-"', 'prefix="host-served-%s-"' % ("x" * (margin + 1 - level)))
+        labs2, _ = hosts_on_labs([("t.py", longer)], tail)
+        lab2 = max(labs2)
+        self.assertEqual(lab2.bytes, lab.bytes + margin + 1 - level + 1)
+        with self.assertRaises(AssertionError) as cm:
+            assert_socket_fits(self, "planted prefix", canonical, flat, lab2, sock, budget, min_margin=level)
+        self.assertIn("host-served-x", str(cm.exception))
+        with self.assertRaises(AssertionError):
+            assert_socket_fits(self, "planted prefix, no margin asked", canonical + level, flat, lab2, sock, budget)
+        # The reader itself: a hosts-on site whose root it cannot follow is reported, not dropped.
+        opaque = planted.replace('self.lab = tempfile.mkdtemp(prefix="host-served-")', "self.lab = make_lab()")
+        labs3, unresolved3 = hosts_on_labs([("t.py", opaque)], tail)
+        self.assertEqual(labs3, [])
+        self.assertEqual(unresolved3, ["t.py:8: self.state"])
+
 
 if __name__ == "__main__":
     unittest.main()      # the package import for a direct run is at the top of the module, with the reason
