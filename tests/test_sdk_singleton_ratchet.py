@@ -2702,6 +2702,57 @@ NUMBER_WORDS = ("zero", "one", "two", "three", "four", "five", "six", "seven", "
 RATCHET_COMMENT_OPENS = "No test may leave the kernel's backend singleton changed"
 
 
+def number_word(n, what):
+    """The number word for a count, spelled from NUMBER_WORDS: the sentences the wording pins hold state their counts
+    as words, so every count is spelled here (every subscript of NUMBER_WORDS in this module sits in this function,
+    held by the binding in TheStatedLimitIsWorded through number_word_sites). The table's last word is the ceiling;
+    the pins that read a count from the tree call this, so a tree grown past the ceiling, or a count below zero, reds
+    them with a failure naming the ceiling, the count and what it counts (`what`, a noun phrase that reads before
+    "is <n>"), never an index error: the round-8 review found the three tree-count sites indexing the table bare, so
+    a count past twelve ended the pin in a bare IndexError that named none of that."""
+    if not 0 <= n < len(NUMBER_WORDS):
+        raise AssertionError("the count word table stops at %s (NUMBER_WORDS); %s is %d, so the sentence cannot be "
+                             "spelled%s" % (NUMBER_WORDS[-1], what, n,
+                                            ": extend NUMBER_WORDS" if n >= 0 else " (no count is below zero)"))
+    return NUMBER_WORDS[n]
+
+
+def number_word_sites(source=None):
+    """Where a module subscripts NUMBER_WORDS: [(line, the enclosing def's name, or None at module level), ...] in line
+    order, keyed on the binding (Bindings, tests/ast_bindings.py): a subscript's receiver is a Name resolved in the
+    scope it is read in to the module's declarations of NUMBER_WORDS, through any chain of names bound to a bare name
+    (WORDS = NUMBER_WORDS; WORDS[n]); a name of the same spelling bound in a function is another binding and no site;
+    a receiver that is not a name (an attribute, a call) and a table handed through a call's parameter are not read,
+    which the pin's message states. `source` is a synthetic module's text for a test; None reads this module. A module
+    that binds no NUMBER_WORDS at module level raises: the sites would be derived against nothing."""
+    tree = ast.parse(inspect.getsource(sys.modules[__name__]) if source is None else source)
+    bindings = Bindings.of(tree)
+    table = bindings.declarations("NUMBER_WORDS")
+    if not table:
+        raise AssertionError("the module binds no NUMBER_WORDS at module level: the sites would be derived against nothing")
+    sites = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name)):
+            continue
+        todo, seen, hit = [(node.value.id, bindings.scope_of(node.value))], set(), False
+        while todo and not hit:
+            name, scope = todo.pop()
+            if (name, id(scope)) in seen:
+                continue
+            seen.add((name, id(scope)))
+            for declaration in scope.resolve(name)[0]:
+                if any(declaration.node is entry.node for entry in table):
+                    hit = True
+                elif isinstance(declaration.value, ast.Name):
+                    todo.append((declaration.value.id, bindings.scope_of(declaration.value)))
+        if hit:
+            scope = bindings.scope_of(node)
+            while scope.kind not in ("module", "function"):
+                scope = scope.parent
+            sites.append((node.lineno, scope.node.name if scope.kind == "function" else None))
+    return sorted(sites, key=lambda site: (site[0], site[1] or ""))
+
+
 def private_kernel_census(sources=None):
     """The test files that load the kernel under each private name, derived from the tree: {name: [tests/<file>, ...]},
     the files sorted, for every name a call loads. The call is read by AST: a file loads a name when some Call in it
@@ -2821,7 +2872,10 @@ class TheStatedLimitIsWorded(unittest.TestCase):
     by its spelling, so a fourth loader left the sentence false with the pin green; the round-7 review found the
     census a regex over the double-quoted spelling, so a fourth loader written single-quoted was outside it with the
     count word green, and the reading count still pinned as the word two, so a third reader left it false with the
-    pin green."""
+    pin green. Every count word is spelled through number_word, which refuses a count the table does not reach with
+    a failure naming the ceiling, the count and what it counts (the round-8 review found the three tree-count sites
+    indexing NUMBER_WORDS bare, so a count past twelve ended the pin in an index error naming none of that), and
+    every subscript of the table in this module is held inside that function by the binding (number_word_sites)."""
 
     def _assert_worded(self, text, where):
         for needle in (LIMIT_UNPROTECTED, LIMIT_BLOCKER, LIMIT_ORDER, LIMIT_MEASURED) + LIMIT_READING:
@@ -2841,7 +2895,7 @@ class TheStatedLimitIsWorded(unittest.TestCase):
         loaders = private_kernel_loaders()
         self.assertGreaterEqual(len(loaders), 1, "no test file loads %s: a derived population that comes back empty is "
                                 "a failure, not a pass" % PRIVATE_KERNEL_NAME)
-        word = NUMBER_WORDS[len(loaders)]
+        word = number_word(len(loaders), "the tree's count of files that load %s" % PRIVATE_KERNEL_NAME)
         text = ratchet_comment_text()
         m = re.search(re.escape(PRIVATE_KERNEL_NAME) + r" is loaded by (\w+) files \(([^()]*)\)", text)
         self.assertIsNotNone(m, "the design comment states no 'is loaded by <count> files (<the files>)' for %s"
@@ -2850,7 +2904,7 @@ class TheStatedLimitIsWorded(unittest.TestCase):
                          % (m.group(1), len(loaders), loaders))
         self.assertEqual(set(re.split(r", | and ", m.group(2))), set(loaders),
                          "the design comment's loaders and the tree's differ: %r against %r" % (m.group(2), loaders))
-        word_read = NUMBER_WORDS[len(LIMIT_READING)]
+        word_read = number_word(len(LIMIT_READING), "the length of LIMIT_READING")
         key = ("the reading count is the number word of len(LIMIT_READING), the loader count the number word of the "
                "derived set's length")
         needle = "%s of the %s read" % (word_read, word)
@@ -2902,12 +2956,87 @@ class TheStatedLimitIsWorded(unittest.TestCase):
                                 % sorted(census))
         self.assertIn(PRIVATE_KERNEL_NAME, shared, "the name the limit is measured on is loaded by fewer than two files "
                       "(private_kernel_census over the tree): %r" % census.get(PRIVATE_KERNEL_NAME))
-        each = " or ".join(NUMBER_WORDS[n] for n in sorted({len(files) for files in shared.values()}))
-        needle = "%s private names are shared by %s files each" % (NUMBER_WORDS[len(shared)], each)
+        each = " or ".join(number_word(n, "the file count of the shared private names %s"
+                                       % ", ".join(sorted(name for name, files in shared.items() if len(files) == n)))
+                           for n in sorted({len(files) for files in shared.values()}))
+        needle = "%s private names are shared by %s files each" % (
+            number_word(len(shared), "the count of private names shared by two or more files"), each)
         self.assertTrue(needle in ratchet_comment_text(),
                         "the ratchet's design comment in tests/conftest.py does not say: %s (the count of names two or "
                         "more files load and their distinct file counts, as number words, from private_kernel_census: %r)"
                         % (needle, {name: len(files) for name, files in sorted(shared.items())}))
+
+    def test_a_count_past_the_word_table_is_a_named_failure_and_not_an_index_error(self):
+        """number_word spells a count from NUMBER_WORDS and refuses one the table does not reach with an AssertionError
+        naming the ceiling, the count and what it counts, so the four sites that spell a count fail that way and not
+        with an index error (the round-8 review found the three tree-count sites indexing the table bare); the ceiling
+        is pinned as written (twelve), so a table extended past it moves this pin's counts with it."""
+        self.assertEqual(number_word(12, "x"), "twelve", "number_word(12) is not twelve: this pin keys on the table's "
+                         "ceiling as written, NUMBER_WORDS' last word; a table extended past twelve moves the 12 and 13 here")
+        self.assertEqual(number_word(0, "x"), "zero", "number_word(0) is not zero, the table's first word")
+        what = "the count of private names shared by two or more files"
+        with self.assertRaises(AssertionError) as caught:     # an IndexError is not caught here: it is the red-before shape
+            number_word(13, what)
+        text = str(caught.exception)
+        for part in ("the count word table stops at twelve (NUMBER_WORDS)", "%s is 13" % what, "extend NUMBER_WORDS"):
+            self.assertTrue(part in text, "the ceiling failure does not say %r; it says %r (keyed on the text naming the "
+                            "ceiling, the count with what it counts, and the repair)" % (part, text))
+        with self.assertRaises(AssertionError) as caught:
+            number_word(-1, what)
+        text = str(caught.exception)
+        self.assertTrue("%s is -1" % what in text and "no count is below zero" in text,
+                        "a count below zero is not refused naming the count and the reason: %r" % text)
+
+    def test_every_count_word_in_this_module_is_spelled_through_number_word(self):
+        """number_word_sites over this module: every subscript of NUMBER_WORDS, the receiver resolved to the module's
+        table by the binding, sits inside number_word, so no count is spelled past the ceiling check (the round-8
+        review found the three tree-count sites indexing the table bare). The derivation is proven over a synthetic
+        module first: the helper's own site, a bare site in another def, a site through two aliases and a
+        module-level site are the sites; a local of the same spelling and another table's subscript are not; a module
+        with no NUMBER_WORDS raises."""
+        synthetic = textwrap.dedent('''\
+            NUMBER_WORDS = ("zero", "one")
+            WORDS = NUMBER_WORDS
+
+
+            def number_word(n, what):
+                return NUMBER_WORDS[n]
+
+
+            def bare(n):
+                return NUMBER_WORDS[n]
+
+
+            def aliased(n):
+                words = WORDS
+                return words[n]
+
+
+            def shadowed(n):
+                NUMBER_WORDS = ["nought"]
+                return NUMBER_WORDS[0]
+
+
+            def another(n):
+                return OTHER[n]
+
+
+            FIRST = NUMBER_WORDS[0]
+            ''')
+        self.assertEqual(number_word_sites(synthetic), [(6, "number_word"), (10, "bare"), (15, "aliased"), (27, None)],
+                         "number_word_sites does not key on the binding: the helper's own site, the bare site, the site "
+                         "through two aliases and the module-level one are the sites, as (line, enclosing def); the "
+                         "local of the same spelling and the other table are not")
+        with self.assertRaisesRegex(AssertionError, "binds no NUMBER_WORDS"):
+            number_word_sites("X = 1\n")
+        sites = number_word_sites()
+        self.assertGreaterEqual(len(sites), 1, "this module subscripts NUMBER_WORDS nowhere: a derived population that "
+                                "comes back empty is a failure, not a pass")
+        outside = [(line, where) for line, where in sites if where != "number_word"]
+        self.assertEqual(outside, [], "NUMBER_WORDS is subscripted outside number_word, as (line, the enclosing def or "
+                         "None at module level): %r; spell the count through number_word so a count past the table is a "
+                         "named failure (keyed on the receiver name's binding: a subscript through an attribute, a call or a "
+                         "parameter is not read here)" % outside)
 
 
 RESIDUAL_GREEN = "proves no leak occurred in that run and not that no test would leak alone"
