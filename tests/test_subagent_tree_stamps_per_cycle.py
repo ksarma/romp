@@ -62,7 +62,8 @@ answered after another thread found its tree gone (the stamps of the removed tre
 tree or taken as own stats by a lookup that preceded any tree read), a stamp the scope took itself, vouched by no root, is
 re-taken after any eviction (1 stat) where a tree-indexed one is served (0), held launch folds are
 re-read when their own root leaves the memo (the attribution changes), and the table of evicted roots at its cap is
-cleared with every held entry dropped once. Before 2026-09-21 one process-wide generation emptied every scope's three maps on
+cleared with every held entry dropped once, each map by execution (the pair D lstats, an indexed stamp 1 stat, the launch
+folds A folds), not through the shared predicate alone. Before 2026-09-21 one process-wide generation emptied every scope's three maps on
 any root's eviction: every held tree paid its D lstats again, every held stamp its stat, every awaiting agent its fold.
 (6) The dependency key (since 2026-09-21, round 1 of #882's ruling): the key a chat build records for a subagents tree the agent-file miss walk looked
 through is the served read's (mtime, size) per directory, so a file landing after the hold under a directory the served
@@ -1400,10 +1401,16 @@ class ScopedInvalidation(_World):
         """The table is bounded: an eviction of a root not in it while it holds _SUBAGENT_ROOT_EVICTED_MAX roots clears it
         and records the clear's generation, so every entry held under an older generation is dropped at its next lookup
         (one re-validation, the safe side: never a stale serve) and entries held after it are vouched by the table again.
-        Keys on the held pair costing D lstats once on the read after the clearing eviction, and 0 before it and after
-        that: a clear that recorded no generation would leave the held pair vouched (0 where D is owed), and a table that
-        never cleared would grow by one entry per root ever evicted."""
+        Keys on each of the three maps at the clear edge, by execution and not through the shared predicate alone: the held
+        pair costs D lstats once on the read after the clearing eviction (0 before it and after that), a stamp indexed from
+        the held tree costs 1 stat once, and the held launch folds are redone once (A folds), where a clear that recorded no
+        generation would leave every one of them vouched (0 where D, 1 and A are owed), a stamp or launch lookup blind to the
+        clear (a vouch inlined without the cleared-generation check) finds no eviction record for the root, which never left
+        the memo, and serves what was held before the clear (0), and a table that never cleared would grow by one entry per
+        root ever evicted."""
         cap = 4
+        target = self.dirs[3]
+        names = sorted("agent-%s.jsonl" % a for a in self.aids)
         with mock.patch.object(km, "_SUBAGENT_ROOT_EVICTED_MAX", cap), mock.patch.dict(km._SUBAGENT_ROOT_EVICTED, {}, clear=True), \
                 mock.patch.object(km, "_SUBAGENT_ROOTS_CLEARED_GEN", [0]):
             others = [self._other_root("other%d" % i) for i in range(cap + 1)]   # cap + 1 unowned roots, one transcript each
@@ -1411,6 +1418,11 @@ class ScopedInvalidation(_World):
             with self._spy() as sp:
                 km._subagent_tree(str(self.sub))
             self.assertEqual(sp.total()["dir_lstat"], D, "the hold")
+            folded = []
+            with self._counting_fold(folded), self._spy() as sp:
+                aw = km._session_awaiting(SID, self.path, True)   # the launch folds held, the stamps served from the held tree
+            self.assertEqual(((aw or {}).get("count"), sorted(folded), sp.total()["dir_lstat"], sp.total()["dir_stat"]), (A, names, 0, 0),
+                             "the hold, launches half: one fold per agent, the tree and its stamps served: %r" % ((aw or {}).get("count"),))
             for i in range(cap):                          # cap evictions of distinct roots fill the table; the held pair survives each
                 self._evict([others[i][1]], [p for p, _r in others[i + 1:]])
                 with self._spy() as sp:
@@ -1420,6 +1432,13 @@ class ScopedInvalidation(_World):
             self._evict([others[cap][1]], [])             # one more distinct root: the table is cleared
             self.assertEqual(sorted(km._SUBAGENT_ROOT_EVICTED), [str(others[cap][1])], "cleared, then the clearing root recorded")
             self.assertEqual(km._SUBAGENT_ROOTS_CLEARED_GEN[0], km._SUBAGENT_TREES_GEN[0], "the clear recorded the generation it happened at")
+            self.assertNotIn(str(self.sub), km._SUBAGENT_ROOT_EVICTED, "premise: the held tree's root has no eviction record (it never left the memo)")
+            with self._spy() as sp:
+                km._dir_stamp(target)                     # BEFORE the tree's re-read, which would re-index it under the new generation
+            self.assertEqual(sp.total()["dir_stat"], 1,
+                             "os.stat for a stamp indexed from the held tree on the read after the clearing eviction: %d; keyed on 1, dropped "
+                             "once by the clear (the cleared generation outranks the hold's); a stamp lookup blind to the clear finds no "
+                             "eviction record for its root and serves what was held before the clear (0)" % sp.total()["dir_stat"])
             with self._spy() as sp:
                 dirs, _stats = km._subagent_tree(str(self.sub))
             self.assertEqual(sp.total()["dir_lstat"], D,
@@ -1427,9 +1446,18 @@ class ScopedInvalidation(_World):
                              "dropped once (D = %d, a validation), since a cleared table can no longer vouch for what was held before the "
                              "clear; a clear that recorded no generation leaves it served (0)" % (sp.total()["dir_lstat"], D))
             self.assertEqual(len(dirs), D)
+            del folded[:]
+            with self._counting_fold(folded), self._spy() as sp:
+                aw = km._session_awaiting(SID, self.path, True)
+            self.assertEqual(sorted(folded), names,
+                             "folds on the read after the clearing eviction: %r; keyed on every held launch fold redone once (A = %d), since the "
+                             "folds were held before the clear; a launch lookup blind to the clear finds no eviction record for the own root "
+                             "and serves the folds held before it (0)" % (sorted(folded), A))
+            self.assertEqual(((aw or {}).get("count"), sp.total()["dir_lstat"], sp.total()["dir_stat"]), (A, 0, 0),
+                             "the read after the clear costs the tree nothing more: re-held by the read above, its stamps re-indexed")
             with self._spy() as sp:
-                km._subagent_tree(str(self.sub))
-            self.assertEqual(sp.total()["dir_lstat"], 0, "held again under the new generation: served")
+                km._subagent_tree(str(self.sub)); km._dir_stamp(target)
+            self.assertEqual((sp.total()["dir_lstat"], sp.total()["dir_stat"]), (0, 0), "held again under the new generation: served, pair and stamp")
 
 
 class DependencyKey(_World):
