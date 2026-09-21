@@ -67,10 +67,11 @@ resolves a name from the string it is handed (`mock.patch("sub" + "process.run")
 mock). The modules whose own source does so are DERIVED, the second family `_foreign_reflective_roads` scans for and the
 disclosure cell prints (on this Python `subprocess`, which reads a frame, and `unittest.mock`, which runs exec and resolves
 names); which call of the censused set hands which string to one of them is not read, and that is the class.
-On the recorder's side the residual is FOUR roads, and the rule over them: the recorder sees a call only through the lab
-module's own `subprocess` attribute, and only while it is installed, and the census reads only the censused set's own
-sources, so a spawning call whose source is outside both, or whose time is before the recorder, is unseen, however far out
-the import that reaches it. (1) A program a censused module's own function starts through that module's own subprocess
+On the recorder's side the residual is FIVE roads, and the rule over them: the recorder sees a call only through the lab
+module's own `subprocess` attribute, and only while it is installed, and it records the argv the lab module hands that
+attribute and nothing of what the program then does; the census reads only the censused set's own Python sources; so a
+spawning call whose source is outside both, whose time is before the recorder, or whose spawner is the RECORDED PROGRAM
+itself is unseen, however far out the import that reaches it. (1) A program a censused module's own function starts through that module's own subprocess
 binding when the lab module calls the function (the recorder patches the lab module's attribute alone, and the census reads
 that call as the module's own). (2) A program a function of an IMPORTED module starts through that module's own binding,
 the same road one import further out, which pass 8 named and pass 9 narrowed away. (3) A program a foreign module the
@@ -80,7 +81,17 @@ execs, `os.popen` is a Python body that calls `subprocess.Popen`, `subprocess` i
 `os.posix_spawn`, and `unittest.mock` imports asyncio, a spawner family's module, which the scan's own rule counts as a
 road. (4) A program started at IMPORT time, before any recorder is installed, by code the census cannot resolve as running
 then: the module-level statements of the censused set run at import, a spawning call and a callable handed to a call there
-are refused, and what a module-level call does inside its callee is the callee's own source, road (2) or (3) at import time.
+are refused, and what a module-level call does inside its callee is the callee's own source, road (2) or (3) at import time;
+the package's own `__init__.py` and the sibling modules only it imports run before the lab module under both entry points
+and are outside the censused set (`_lab_modules` walks the lab module's imports, not the package's), so they are derived and
+printed as an UNWALKED item (`_package_init_unwalked`) beside the unread modules, never counted as read (the maintainer's
+round 6, extra6-4: the import-time docstring called its list everything that could start a program before a recorder).
+(5) A program a RECORDED program starts: the record is the argv of the lab module's own call, and a static census over
+Python source reads nothing of what git, node or a kernel then runs, so a program started by one of them is in no derived
+list by construction. The tree's own live instance is the mint: its clone starts git-upload-pack against the source (a
+read-only child the refuters traced) and its checkout starts none under the runner's config, which is why the mint cell pins
+that conftest.py's git floor (GIT_CONFIG_GLOBAL at os.devnull, GIT_CONFIG_NOSYSTEM set) is in place when the mint runs: a
+hook in a user's or the system's git config would be such a program, and the floor is what keeps git from reading one.
 The lists are derived and printed by the disclosure cell, none counted here: `_own_spawn_sites` for road (1) (module,
 line, function); `_foreign_spawn_roads` for roads (2) and (3), its attribute arm being (2) at the direct depth (a spawner
 named on a foreign module's own os, subprocess, pty, asyncio or _posixsubprocess binding) and the whole scan (3), over every
@@ -99,9 +110,12 @@ FOREIGN_ROADS by the road cell, so a new road is a red until it is read; `_forei
 its import statements BIND (an alias, a from-imported name) and spelled by the module's name (`uuid.uuid4`,
 `http.server.ThreadingHTTPServer`, `unittest.mock.patch.dict`), by module and line, so the reader sees where the residual is
 reachable from (os and subprocess are the census's own subject: os.popen and os.fork are refused as attributes, and
-subprocess is the recorder's); `_import_time_statements` for road (4), the module-level statements that are not a def, a
-class, an import or a constant; `_unread_member_reads` for the members read on the source-less modules, held equal to
-UNREAD_MEMBERS; and the identity walk's boundary (path, kind) with the depth it reached against its bound. A green run
+subprocess is the recorder's); `_import_time_statements` for road (4), the module-level statements of the censused set that
+are not a def, a class, an import or a constant, and `_package_init_unwalked` for the package's `__init__` and the siblings
+only it imports, which no derivation here reads; road (5) has no list, since what a recorded program starts is not in any
+source the census parses, and is stated as the rule above; `_unread_member_reads` for the members read on the source-less
+modules, held equal to UNREAD_MEMBERS; and the identity walk's boundary (path, kind) with the depth it reached against its
+bound. A green run
 shows them under pytest's -rA or -s and a red run carries them in its message; no site, module or count of them is written
 here.
 
@@ -623,10 +637,13 @@ def _unread_member_reads(mods, unread):
 
 
 def _import_time_statements(mods):
-    """The module-level statements of the censused set that RUN at import and are not a def, a class, an import or an
-    assignment of a constant, as (module, line, text): the import-time surface, everything that could start a program before
-    any recorder is installed. The census refuses a spawning call and a callable handed to a call there; the rest is printed
-    by the disclosure cell as the derived list of what runs then, never counted."""
+    """The module-level statements of the CENSUSED SET that RUN at import and are not a def, a class, an import or an
+    assignment of a constant, as (module, line, text): the part of the import-time surface this census reads. It is not all
+    of it (the maintainer's round 6, extra6-4: the earlier sentence called this list everything that could start a program
+    before a recorder): the package's own __init__.py and the siblings only it imports run first under both entry points and
+    are outside the set (_package_init_unwalked derives and prints them as unwalked), and what a module-level call does
+    inside its callee is the callee's own source. The census refuses a spawning call and a callable handed to a call here;
+    the rest is printed by the disclosure cell as the derived list of what runs then, never counted."""
     out = []
     for name, src in sorted(mods.items()):
         for n in ast.parse(src).body:
@@ -636,6 +653,23 @@ def _import_time_statements(mods):
                 continue   # a constant assignment, a docstring
             out.append((name, n.lineno, ast.unparse(n).splitlines()[0][:90]))
     return out
+
+
+def _package_init_unwalked(mods, here=HERE):
+    """The package's own `__init__.py` and the sibling modules ONLY it imports (by _sibling_imports over its source, every
+    spelling), as sorted module names, none of them in the censused set `mods`: the import-time surface that runs before the
+    lab module under both entry points (pytest imports the package first; `python -m unittest tests.x` too) and that
+    _lab_modules never walks, since it follows the lab module's imports and not the package's. Derived and printed by the
+    disclosure cell as an UNWALKED item beside the unread modules, never read as clean (the maintainer's round 6, extra6-4:
+    tests/__init__.py imports a sibling that binds and calls subprocess, and a spawn planted at package import ran with every
+    cell green). Empty when the directory is no package."""
+    init = os.path.join(here, "__init__.py")
+    if not os.path.isfile(init):
+        return []
+    with open(init, encoding="utf-8") as f:
+        names = _sibling_imports(f.read(), os.path.basename(here))
+    siblings = sorted(n for n in names if n not in mods and os.path.isfile(os.path.join(here, n + ".py")))
+    return ["__init__"] + siblings
 
 
 def _dotted(node):
@@ -968,6 +1002,12 @@ class OldHubMintIsPrivate(unittest.TestCase):
                 self.assertTrue(cmd[2].startswith(self.lab + os.sep), "…to a path under the lab, never the source: %r" % (cmd,))
 
     def test_the_mint_registers_nothing_in_the_source_and_borrows_its_objects(self):
+        # the fifth road's live instance (the module docstring): the recorded clone and checkout start programs of git's own, which
+        # no census here reads, and a hook in a user's or the system's git config would be one; the floor conftest.py sets for
+        # every pytest process is what keeps git from reading such a config, pinned here as the precondition of the mint
+        self.assertEqual(os.environ.get("GIT_CONFIG_GLOBAL"), os.devnull, "the mint runs under the git floor: GIT_CONFIG_GLOBAL at os.devnull (tests/conftest.py), so the recorded "
+                                                                              "commands read no user config and start no hook from one")
+        self.assertTrue(os.environ.get("GIT_CONFIG_NOSYSTEM"), "the mint runs under the git floor: GIT_CONFIG_NOSYSTEM set (tests/conftest.py), so no system config is read either")
         seen, recorder = self._spy()
         with mock.patch.object(L, "subprocess", recorder):
             wt = self.Mint._mint_old_hub()
@@ -1423,7 +1463,9 @@ class OldHubMintIsPrivate(unittest.TestCase):
                 print("the census's side, the second family, derived by _foreign_reflective_roads (module: [(line, form)]; a foreign module whose own source resolves a name from a string): %r" % (reflective,))
                 print("where the censused set touches the road modules other than os and subprocess, derived by _foreign_touch_sites over the import bindings (module, line, dotted name): %r" % (touches,))
                 print("the members the censused set reads on the modules the scan cannot read, derived by _unread_member_reads (held equal to UNREAD_MEMBERS): %r" % (unread_reads,))
-                print("the residual on the recorder's side, road 4, derived by _import_time_statements (module, line, statement): what runs at import before any recorder: %r" % (at_import,))
+                print("the residual on the recorder's side, road 4, derived by _import_time_statements (module, line, statement): what runs at import before any recorder, in the censused set: %r" % (at_import,))
+                unwalked = _package_init_unwalked(mods)
+                print("the package's own __init__ and the siblings only it imports, derived by _package_init_unwalked: UNWALKED (they run before the lab module under both entry points and no derivation here reads them): %r" % (unwalked,))
                 stats = {}
                 bound, boundary = _bound_spawners(L, stats=stats)
                 print("the identity walk's boundary over the lab module, derived by _bound_spawners (path, kind): %r; the walk entered to depth %d of its bound %d"
@@ -1433,8 +1475,12 @@ class OldHubMintIsPrivate(unittest.TestCase):
         shown = buf.getvalue()
         for label, text in (("road 1 (the sites)", repr(sites)), ("roads 2 and 3 (the foreign roads)", repr(roads)), ("road 3 (the unread modules)", repr(unread)),
                             ("the reflective roads", repr(reflective)), ("the touches", repr(touches)), ("the unread member reads", repr(unread_reads)),
-                            ("road 4 (the import-time statements)", repr(at_import)), ("the boundary", repr(sorted(boundary)))):
+                            ("road 4 (the import-time statements)", repr(at_import)), ("the unwalked package init and its own siblings", repr(unwalked)), ("the boundary", repr(sorted(boundary)))):
             self.assertIn(text, shown, "the disclosure cell prints its %s list, so a run's record carries the derived residual: %r" % (label, shown[:300]))
+        self.assertGreaterEqual(len(unwalked), 2, "the package's __init__ and at least one sibling only it imports are derived as unwalked (this directory is a package whose "
+                                                  "__init__ imports siblings; a list of nothing where something is due proves nothing): %r" % (unwalked,))
+        self.assertEqual([n for n in unwalked if n in mods], [], "an unwalked name inside the censused set: the derivation and the census disagree: %r" % (unwalked,))
+        self.assertEqual([n for n in unwalked if not os.path.isfile(os.path.join(HERE, n + ".py"))], [], "every unwalked name is a module file here: %r" % (unwalked,))
         self.assertTrue(sites, "the derivation reads the censused modules' own spawning calls: %r" % (sites,))
         self.assertEqual([site for site in sites if site[0] == LAB_MODULE], [],
                          "the derivation files no site for the lab module by construction: its own calls are the recorder's (pinned by "
