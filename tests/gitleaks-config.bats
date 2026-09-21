@@ -88,12 +88,12 @@ probe_token() { printf 'gh%s_%s%s' p "$(printf '0123456789%.0s' 1 2 3)" abcdef; 
 
 @test "a credential in a path a committed .gitattributes marks -diff is caught by CI's configured history scan" {
     # `gitleaks git` runs `git log -p`, and git reads the checkout's .gitattributes for it: a path
-    # marked -diff prints as "Binary files differ" with no hunk, so a credential committed there and
-    # removed in a later commit is text the history scan never sees, while the tree scan reads HEAD,
-    # where the file is gone. CI's line carries an option for this. What is asserted is that CI's
-    # CONFIGURED invocation, whatever its spelling, surfaces the secret: the arguments are read from
-    # .github/workflows/ci.yml itself, not copied here, since a copied string stays green while CI
-    # drifts.
+    # marked -diff prints a `Binary files ... differ` line with no hunk, so a credential committed
+    # there and removed in a later commit is text the history scan never sees, while the tree scan
+    # reads HEAD, where the file is gone. CI's line carries an option for this. What is asserted is
+    # that CI's CONFIGURED invocation, whatever its spelling, surfaces the secret: the arguments are
+    # read from .github/workflows/ci.yml itself, not copied here, since a copied string stays green
+    # while CI drifts.
     R="$TEST_DIR/repo"; mkdir -p "$R"
     git -C "$R" init -q
     git -C "$R" symbolic-ref HEAD refs/heads/main     # whatever init.defaultBranch says
