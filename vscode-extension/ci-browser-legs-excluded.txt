@@ -27,7 +27,9 @@
 # (the vscode-extension job) reads the commit and the sentence from here, fetches the commit at depth 1 when the checkout
 # lacks it (a fetch or object read that fails is a red naming the reason, never a pass), and refuses a row carrying the
 # sentence whose source is not in the tree at that commit; tools/ci-browser-legs.test.mjs (the Shell job, a depth-1
-# checkout that fetches nothing) holds this header to one such line and does not run that history read.
+# checkout that fetches nothing) holds this header to one such line and does not run that history read. Both read the
+# claim by property, not spelling: a reason that makes the before-the-roster claim in any other spelling (a letter, a
+# punctuation mark or a space changed, or the word grandfather) is refused by name, never read as a reason of its own.
 # To move a leg, delete its line here and add
 # the bundle path to ci-browser-legs.txt (a leg in both files turns the checkers red); a leg that launches through
 # its own playwright copy first switches its launch to inBrowser in ui/webview/real-viewer-leg.ts, the one shared

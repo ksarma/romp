@@ -66,6 +66,17 @@ const parseExcluded = (text: string): Excluded[] => text.split("\n").map((line, 
   if (e.reason !== null && /^\s*pending/.test(e.reason)) { const m = /^\s*pending #(\d+): \S/.exec(e.reason); e.pending = { pr: m ? m[1] : null }; }
   return e;
 });
+/** A reason's before-the-roster claim, read by property, not spelling: "bound" when it carries the header's sentence as the
+ *  header quotes it; "claim" when its letters, case-folded with punctuation and whitespace collapsed to one space, hold
+ *  "before the roster" or "grandfather" in any other form (one letter, a comma or a space changed: the same permanent exemption
+ *  under a temporary word, which the bound would otherwise not read); null for a reason of its own. */
+const normalise = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+const grandfatherClaim = (reason: string, sentence: string): "bound" | "claim" | null => reason.includes(sentence) ? "bound" : /\b(before the roster|grandfather)\b/.test(normalise(reason)) ? "claim" : null;
+/** The exclusions rows by claim: { bound, claims } (a row with no reason is neither; the well-formed test refuses it). */
+const grandfatherRows = (text: string, sentence: string) => {
+  const rows = parseExcluded(text).filter((e) => e.reason !== null);
+  return { bound: rows.filter((e) => grandfatherClaim(e.reason as string, sentence) === "bound"), claims: rows.filter((e) => grandfatherClaim(e.reason as string, sentence) === "claim") };
+};
 /** The promotion remedy for a pending line whose source has arrived, derived from the census's record of the source (the
  *  script's promotion_of states the same rule over the same record). */
 function promotionOf(c: Census, r: Rec | undefined, bundle: string): string {
@@ -216,7 +227,8 @@ test("every grandfather row's source existed at the commit the exclusions header
     assert.equal(have.status, 0, "the grandfather check could not run: after `git fetch --depth=1 origin " + sha + "` the commit is still not readable (git cat-file -e exit " + have.status + "): " + have.stderr.trim() + "; a red hold-off, not a pass");
     t.diagnostic("fetched commit " + sha + " at depth 1 (the clone lacked it; shallow: " + shallow + ")");
   }
-  const rows = parseExcluded(text).filter((e) => e.reason !== null && e.reason.includes(sentence));
+  const { bound: rows, claims } = grandfatherRows(text, sentence);
+  assert.deepEqual(claims.map((e) => EXCLUDED + " line " + e.n + " (" + e.bundle + "): " + e.reason), [], "these rows make the before-the-roster claim in a spelling that is not the header's sentence, so the bound would not read them and the exemption would stand on a new leg: write the sentence as the header quotes it (then this test reads history for the row), or a reason of its own");
   assert.ok(rows.length > 0, "the exclusions hold grandfather rows (" + rows.length + "); zero means the sentence stopped matching, not that the rows left");
   for (const e of rows) {
     const rel = path.relative(REPO, sourceOf(e.bundle));
@@ -227,6 +239,18 @@ test("every grandfather row's source existed at the commit the exclusions header
     assert.fail(where + ": the grandfather check could not read " + sha + ":" + rel + " (git cat-file -e exit " + r.status + ": " + r.stderr.trim() + "); a red hold-off, not a pass");
   }
   t.diagnostic(rows.length + " grandfather rows bound to " + sha + ", every source in the tree at that commit");
+});
+
+test("the before-the-roster claim is read by property: the header's sentence binds; a one-letter, punctuation, spacing or 'grandfather' variant is a claim the bound would not read and is refused by name; a reason of its own is neither", () => {
+  const sentence = "existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers";
+  const B = "out-tests/ui/webview/zz-bound.test.js", V1 = "out-tests/ui/webview/zz-capital.test.js", V2 = "out-tests/ui/webview/zz-comma.test.js", V3 = "out-tests/ui/webview/zz-spaces.test.js", V4 = "out-tests/ui/webview/zz-word.test.js", O = "out-tests/ui/webview/zz-own.test.js";
+  const text = "# header\n" + B + "\t" + sentence + "\n" + V1 + "\tExisting before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers\n"
+    + V2 + "\texisting before the roster; unmeasured in the gating job, its owner moves it to the roster with measured numbers\n" + V3 + "\texisting  before the\troster, unmeasured\n"
+    + V4 + "\tthe grandfather clause: measured later\n" + O + "\tlaunches Firefox; the gating job installs Chromium only\n";
+  const { bound, claims } = grandfatherRows(text, sentence);
+  assert.deepEqual(bound.map((e) => e.bundle), [B], "the sentence as quoted binds, and only it");
+  assert.deepEqual(claims.map((e) => [e.n, e.bundle]), [[3, V1], [4, V2], [5, V3], [6, V4]], "each variant is a claim, named by line: a capital letter, a comma for a semicolon, doubled and tabbed spacing, the word grandfather");
+  assert.equal(grandfatherClaim("launches Firefox; the gating job installs Chromium only", sentence), null, "a reason of its own is neither");
 });
 
 test("every planted form under tests/fixtures/browser-legs-plants is classified or refused as recorded, none is silent; a form the census cannot classify refuses with file and line; the plants in neither file are exactly the plants that are legs", async () => {

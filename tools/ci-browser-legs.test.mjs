@@ -168,7 +168,7 @@ test('the step exists once in the ' + JOB + ' job, directly after the Chromium i
   assert.ok(/\b\d+ s\b/.test(comment), 'the step\'s comment carries the step\'s seconds');
   const minutes = /\b(\d+) min\b/.exec(comment);
   assert.ok(minutes, 'the step\'s comment carries the job\'s minutes');
-  assert.ok(new RegExp('\\b' + cap + '-minute cap\\b').test(comment), 'the comment names the job\'s cap as ci.yml sets it (' + cap + ' minutes): a cap change rewrites the sentence');
+  assert.ok(new RegExp('\\b' + cap + '-minute cap\\b').test(comment), 'the comment names the job\'s cap as ci.yml sets it (' + cap + ' minutes): a cap change rewrites the sentence; this pin holds the sentence to the line, whatever the cap, while a LOWERED cap is tests/test_ci_bats_bound.py::ExtensionJobCeiling\'s red (it floors the cap at 40): two guards, two properties');
   assert.ok(Number(minutes[1]) < cap, 'the stated job minutes (' + minutes[1] + ') sit under the cap (' + cap + ')');
   assert.ok(comment.includes(ROSTER) && comment.includes(EXCLUDED), 'the comment names both files');
   assert.ok(!step.lines.join('\n').includes(String.fromCharCode(0x2014)), 'no em dash');
@@ -305,6 +305,16 @@ test('the grep the exclusions header spells for the pending lines lists exactly 
   assert.ok(read(path.join(REPO, 'CONTRIBUTING.md')).includes('`' + m[1] + '`'), 'CONTRIBUTING.md spells the same command as the header: ' + m[1]);
 });
 
+/** A reason's before-the-roster claim, read by property, not spelling (the census test holds the same rule): 'bound' when it
+ *  carries the header's sentence as quoted; 'claim' when its letters, case-folded with punctuation and whitespace collapsed,
+ *  hold "before the roster" or "grandfather" in any other form; null for a reason of its own. */
+const normalise = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+const grandfatherClaim = (reason, sentence) => (reason.includes(sentence) ? 'bound' : /\b(before the roster|grandfather)\b/.test(normalise(reason)) ? 'claim' : null);
+const grandfatherRows = (text, sentence) => {
+  const rows = parseExcluded(text).filter((e) => e.reason !== null);
+  return { bound: rows.filter((e) => grandfatherClaim(e.reason, sentence) === 'bound'), claims: rows.filter((e) => grandfatherClaim(e.reason, sentence) === 'claim') };
+};
+
 /** The exclusions header's one bound line: the grandfather sentence and the commit it is bound to, [sentence, sha]. */
 const BOUND_LINE = /^# Every grandfather reason, "([^"]+)", is bound to commit ([0-9a-f]{40}):/;
 function grandfatherBound(text) {
@@ -317,19 +327,38 @@ test('the exclusions header binds the grandfather reason to one commit, in one l
   const text = read(path.join(EXT, EXCLUDED));
   const { sentence, sha } = grandfatherBound(text);
   assert.ok(sentence.length > 20, 'the bound line quotes the grandfather sentence: ' + JSON.stringify(sentence));
-  const rows = parseExcluded(text).filter((e) => e.reason !== null && /existing before the roster/.test(e.reason));
+  const { bound: rows, claims } = grandfatherRows(text, sentence);
   assert.ok(rows.length > 0, 'the exclusions hold grandfather rows (' + rows.length + '); zero means the wording stopped matching, not that the rows left');
-  for (const e of rows) assert.ok(e.reason.includes(sentence), EXCLUDED + ' line ' + e.n + ' (' + e.bundle + ') carries a grandfather wording that is not the header\'s bound sentence, so the bound does not read it: write the sentence as the header quotes it, or a reason of its own; the reason reads: ' + e.reason);
+  for (const e of claims) assert.fail(EXCLUDED + ' line ' + e.n + ' (' + e.bundle + ') carries a grandfather wording that is not the header\'s bound sentence (a letter, a punctuation mark, a space or the word grandfather changed), so the bound does not read it and the exemption would stand on a new leg: write the sentence as the header quotes it, or a reason of its own; the reason reads: ' + e.reason);
   assert.ok(text.includes('does not run that history read'), 'the header says which checker reads history and which does not');
+  assert.ok(text.includes('in any other spelling'), 'the header says a before-the-roster claim in another spelling is refused, not read as a reason of its own');
+  // the property, executed over a synthetic file: the sentence binds; a capital letter, a comma for a semicolon, doubled spacing
+  // and the word grandfather are claims named by line; a reason of its own is neither
+  const V = (n) => 'out-tests/ui/webview/zz-' + n + '.test.js';
+  const synthetic = V('bound') + '\t' + sentence + '\n' + V('capital') + '\tExisting before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers\n'
+    + V('comma') + '\texisting before the roster; unmeasured in the gating job, its owner moves it to the roster with measured numbers\n' + V('spaces') + '\texisting  before the\troster\n' + V('word') + '\tthe grandfather clause\n' + V('own') + '\tlaunches Firefox; ' + ENGINE_PHRASE + '\n';
+  const s = grandfatherRows(synthetic, sentence);
+  assert.deepEqual(s.bound.map((e) => e.bundle), [V('bound')], 'the sentence as quoted binds, and only it');
+  assert.deepEqual(s.claims.map((e) => [e.n, e.bundle]), [[2, V('capital')], [3, V('comma')], [4, V('spaces')], [5, V('word')]], 'each variant is a claim, by line');
   // the history read itself (git cat-file -e <sha>:<source> for each row, after a depth-1 fetch when the clone lacks the commit)
   // is ' + path.relative(REPO, CENSUS_TEST) + '\'s: this module states it does not run it, so a green here is the header\'s shape alone
   assert.ok(read(CENSUS_TEST).includes('is bound to commit'), path.relative(REPO, CENSUS_TEST) + ' reads the bound line (a presence pin: the executed check lives there, in the vscode-extension job, and this module does not run it because the Shell job\'s depth-1 checkout lacks commit ' + sha + ' and fetches nothing)');
 });
 
-/** vscode-extension/.vscodeignore's patterns hold a relative path: the glob semantics tests/test_lab_dist.py reads the same file
- *  with (`**` any run of path characters including /, `*` a run inside one segment), anchored to the whole path. */
+/** vscode-extension/.vscodeignore's patterns hold a relative path, anchored to the whole path: `**` any run of path characters
+ *  including /, `*` a run inside ONE segment. That is minimatch's reading, which vsce applies to .vscodeignore when it packs the
+ *  VSIX (not executed here: the Shell job has no node_modules). tests/test_lab_dist.py reads the same file with Python's fnmatch,
+ *  whose `*` crosses `/` (fnmatched below spells that reading), so the two readers part on a single `*` against a path with more
+ *  segments; the pin below executes that divergence and asserts the two readers AGREE on every path it asks about, so a pattern
+ *  that parts them on one of those paths is red here rather than a VSIX that differs from what the Python pin read. */
+const escapeRe = (piece) => piece.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
 function vscodeignored(patterns, rel) {
-  return patterns.some((p) => new RegExp('^' + p.split(/(\*\*|\*)/).map((piece) => piece === '**' ? '.*' : piece === '*' ? '[^/]*' : piece.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('') + '$').test(rel));
+  return patterns.some((p) => new RegExp('^' + p.split(/(\*\*|\*)/).map((piece) => piece === '**' ? '.*' : piece === '*' ? '[^/]*' : escapeRe(piece)).join('') + '$').test(rel));
+}
+/** The same file under Python's fnmatch (tests/test_lab_dist.py's `fnmatch.fnmatchcase(rel, p)`): `*` and `**` any run including /,
+ *  `?` one character; the file holds no bracket class. */
+function fnmatched(patterns, rel) {
+  return patterns.some((p) => new RegExp('^' + p.split(/(\*\*|\*|\?)/).map((piece) => piece === '**' || piece === '*' ? '.*' : piece === '?' ? '.' : escapeRe(piece)).join('') + '$').test(rel));
 }
 
 test('the CI-only files under vscode-extension/ (the roster, the exclusions, the script, the census module and the reporter) are named by .vscodeignore, so vsce ships none of them in the extension people install', () => {
@@ -339,6 +368,15 @@ test('the CI-only files under vscode-extension/ (the roster, the exclusions, the
     assert.ok(vscodeignored(patterns, rel), rel + ' would ship in the VSIX: name it in vscode-extension/.vscodeignore (a pattern the file\'s glob semantics match: ' + JSON.stringify(patterns) + ')');
   }
   assert.ok(!vscodeignored(patterns, 'package.json') && !vscodeignored(patterns, 'dist/extension.js'), 'the matcher does not swallow shipped files (a pattern over-matching would pass the pin for the wrong reason)');
+  // the two readers' `*`, executed: this matcher keeps `*` inside one segment where fnmatch's crosses `/`, so `scripts/*` reaches
+  // scripts/a/b.sh under fnmatch and not under minimatch; on every path this pin asks about the two readers must agree, else the
+  // VSIX vsce packs differs from what tests/test_lab_dist.py read from the same file
+  assert.equal(vscodeignored(['scripts/*'], 'scripts/a/b.sh'), false, 'minimatch\'s reading: * stays inside one segment');
+  assert.equal(fnmatched(['scripts/*'], 'scripts/a/b.sh'), true, 'fnmatch\'s reading: * crosses /');
+  assert.equal(vscodeignored(['scripts/**'], 'scripts/a/b.sh'), true, '** crosses segments in both readers');
+  for (const rel of [ROSTER, EXCLUDED, path.relative(EXT, SCRIPT), path.relative(EXT, CENSUS), path.relative(EXT, REPORTER), 'package.json', 'dist/extension.js']) {
+    assert.equal(vscodeignored(patterns, rel), fnmatched(patterns, rel), rel + ': the two readers of .vscodeignore part on this path (minimatch, vsce\'s: ' + vscodeignored(patterns, rel) + '; fnmatch, tests/test_lab_dist.py\'s: ' + fnmatched(patterns, rel) + '), so a pattern in the file leans on a single * across a /: write it so both readers agree, or re-derive this pin and the Python one together: ' + JSON.stringify(patterns));
+  }
 });
 
 // ── the script ────────────────────────────────────────────────────────────────────────────────────────
