@@ -70,7 +70,8 @@ from the tree, and once the source is present (the PR merged main, or the checke
 branch) every checker turns the line red with the promotion remedy (a roster line, a reason of its
 own, or no line), so the owner promotes it in that merge. A pending line whose PR closes without the
 leg never turns red on its own and is removed by hand;
-`grep 'pending #' vscode-extension/ci-browser-legs-excluded.txt` lists the pending lines.
+`grep '^out-tests.*pending #' vscode-extension/ci-browser-legs-excluded.txt` lists the pending lines (the rows; the
+file's header spells the form too, which a grep for the bare prefix would list).
 Before you push, `node --test tools/ci-browser-legs.test.mjs` from the repo root runs the tree checks
 CI's shell job runs (no `npm ci` needed); from `vscode-extension/`, after `npm ci`,
 `node esbuild.js --tests && node --test out-tests/ui/webview/ci-browser-legs-census.test.js` runs the

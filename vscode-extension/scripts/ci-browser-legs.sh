@@ -114,7 +114,6 @@ well_formed() { [[ "$1" =~ ^out-tests/[^[:space:]]+\.test\.js$ ]]; }
 roster_seen=""
 excluded_seen=""
 refused_seen=""
-pending_seen=""   # "bundle<TAB>line number" for each pending line whose source is present: red in the loop, not "in neither" too
 pending_n=0
 seen_at() { awk -v k="$1" -F '\t' '$1 == k { print $2; exit }' <<<"$2"; }
 # The bundle a refused line names: the line's leading whitespace trimmed, then cut at the first whitespace, so a tab before a
@@ -163,6 +162,8 @@ while IFS= read -r line || [ -n "$line" ]; do
   if ! well_formed "$bundle"; then malformed "$EXCLUDED" "$n" "$line"; continue; fi
   at=$(seen_at "$bundle" "$excluded_seen")
   if [ -n "$at" ]; then red "$EXCLUDED line $n: '$bundle' duplicates line $at: remove one"; continue; fi
+  # recorded before the pending branch below, so a pending line whose source has arrived is red there with the promotion
+  # remedy and is listed here for the census pass, which therefore never calls that leg missing from both files too
   excluded_seen="$excluded_seen$bundle	$n"$'\n'
   at=$(seen_at "$bundle" "$roster_seen")
   if [ -n "$at" ]; then red "$EXCLUDED line $n: '$bundle' is also $ROSTER line $at: a leg is in one file or the other, keep one"; continue; fi
@@ -171,7 +172,6 @@ while IFS= read -r line || [ -n "$line" ]; do
     if [[ ! "$reason" =~ $pending_re ]]; then red "$EXCLUDED line $n: '$bundle' has a pending reason that names no PR ('$reason'): a pending line reads 'pending #<PR>: <why>', the PR whose merge of main brings the leg and promotes the line"; continue; fi
     pr=${BASH_REMATCH[1]}
     if [ -f "$src" ]; then
-      pending_seen="$pending_seen$bundle	$n"$'\n'
       red "$EXCLUDED line $n: '$bundle' is pending #$pr and its source ${src#"$ROOT/"} is in the tree, so the leg has arrived (#$pr merged main, or this is #$pr's branch) and the line's condition has passed: promote it: $(promotion_of "$bundle")"
     else
       pending_n=$((pending_n + 1))
@@ -185,7 +185,6 @@ done < "$EXCLUDED"
 while IFS= read -r leg; do
   [ -n "$leg" ] || continue
   if [ -z "$(seen_at "$leg" "$roster_seen")" ] && [ -z "$(seen_at "$leg" "$excluded_seen")" ]; then
-    if [ -n "$(seen_at "$leg" "$pending_seen")" ]; then continue; fi   # red above with the promotion remedy
     at=$(seen_at "$leg" "$refused_seen")
     if [ -n "$at" ]; then
       red "browser leg '$leg' is named by a line refused above ($at): fix that line"

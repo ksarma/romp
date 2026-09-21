@@ -292,6 +292,19 @@ test('both files are well formed: each line is a bundle path naming a source in 
   for (const e of excluded) assert.ok(!rostered.has(e.bundle), where(EXCLUDED, e) + ' is also in ' + ROSTER + ': a leg is in one file or the other, keep one');
 });
 
+test('the grep the exclusions header spells for the pending lines lists exactly the pending rows when run as written from the repo root, and CONTRIBUTING.md spells the same command (residual 1 of the landing condition: a pending line whose PR closes without the leg is found by this command and removed by hand)', () => {
+  const text = read(path.join(EXT, EXCLUDED));
+  const header = text.split('\n').filter((l) => l.startsWith('#')).join('\n');
+  const m = /`(grep [^`]*pending #[^`]*)`/.exec(header);
+  assert.ok(m, 'the exclusions header spells, in backticks, a grep for the pending lines');
+  const r = spawnSync('bash', ['-c', m[1]], { cwd: REPO, encoding: 'utf8' });
+  assert.equal(r.status, 0, 'the command runs from the repo root and finds the rows: ' + r.stderr);
+  const rows = parseExcluded(text).filter((e) => e.pending).map((e) => e.bundle + '\t' + e.reason);
+  assert.ok(rows.length > 0, 'the exclusions hold pending rows (' + rows.length + '); with none this pin proves nothing');
+  assert.deepEqual(r.stdout.split('\n').filter(Boolean), rows, 'the command lists the pending rows and no other line (the header spells the form "pending #<PR>: <why>" twice, which a grep for the bare prefix would list too)');
+  assert.ok(read(path.join(REPO, 'CONTRIBUTING.md')).includes('`' + m[1] + '`'), 'CONTRIBUTING.md spells the same command as the header: ' + m[1]);
+});
+
 /** The exclusions header's one bound line: the grandfather sentence and the commit it is bound to, [sentence, sha]. */
 const BOUND_LINE = /^# Every grandfather reason, "([^"]+)", is bound to commit ([0-9a-f]{40}):/;
 function grandfatherBound(text) {

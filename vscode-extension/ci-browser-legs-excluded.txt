@@ -40,7 +40,9 @@
 # remedy derived from the source (a roster line, a reason of its own here, or no line), so the owner promotes it in
 # that merge; a pending reason that names no PR is red. A pending line whose PR closes without the leg never turns red
 # on its own (nothing in the tree reads a PR's state) and is removed by hand;
-# `grep 'pending #' vscode-extension/ci-browser-legs-excluded.txt` lists the pending lines.
+# `grep '^out-tests.*pending #' vscode-extension/ci-browser-legs-excluded.txt` lists the pending lines (the rows alone: a
+# grep for the bare prefix would list this header's two lines that spell the form as well); tools/ci-browser-legs.test.mjs
+# runs that command as written here and holds its output to the pending rows.
 out-tests/ui/timeline-tags-scale-browser.test.js	launches Firefox; the gating job installs Chromium only
 out-tests/ui/webview/anchor-map-cells-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
 out-tests/ui/webview/anchor-map-code-lines-browser.test.js	existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers
@@ -234,6 +236,7 @@ out-tests/ui/webview/render-reply-sheet-browser.test.js	pending #859: the Reply 
 out-tests/ui/webview/gear-sub-focus-browser.test.js	pending #860: launches through inBrowser; at its merge of main the owner moves it to the roster with the step's measured seconds
 out-tests/ui/webview/file-figure-open-browser.test.js	pending #862: launches through inBrowser; at its merge of main the owner moves it to the roster with the step's measured seconds
 out-tests/ui/webview/file-trail-browser.test.js	pending #862: launches through inBrowser; at its merge of main the owner moves it to the roster with the step's measured seconds
+out-tests/ui/webview/file-trail.test.js	pending #862: launches through inBrowser; at its merge of main the owner moves it to the roster with the step's measured seconds
 out-tests/ui/webview/file-view-figure-chosen-browser.test.js	pending #862: launches through inBrowser; at its merge of main the owner moves it to the roster with the step's measured seconds
 out-tests/ui/webview/file-view-figure-floor-browser.test.js	pending #862: launches through inBrowser; at its merge of main the owner moves it to the roster with the step's measured seconds
 out-tests/ui/webview/file-view-figure-recent-browser.test.js	pending #862: launches through inBrowser; at its merge of main the owner moves it to the roster with the step's measured seconds
