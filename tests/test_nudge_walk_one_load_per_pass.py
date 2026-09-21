@@ -4370,11 +4370,23 @@ class TheWalkersRefuseAStrangerByExecution(unittest.TestCase):
         plantable = _plantable(positions)
         self.assertTrue(plantable, "the derived population offers node positions to plant (a derived expectation fails on empty)")
         real = ast.parse
-        accept = []
+        accept, labels, parsed = [], [], []           # parsed: (row label, source) for every source a drive handed a parse
+
+        def recording(label):
+            def recording_parse(source, *a, **k):
+                parsed.append((label, source))
+                return real(source, *a, **k)
+            return recording_parse
         for i, (name, shape, drive) in enumerate(_CENSUSES):
             label = "%s (row %d, shape %s)" % (name, i, shape)
+            labels.append(label)
+            recording_parse = recording(label)
             try:
-                got = drive(real)
+                if shape == "parses":                   # the row parses inside, ast.parse by attribute at call time, patched as the refuse side patches it
+                    with unittest.mock.patch.object(ast, "parse", recording_parse):
+                        got = drive(recording_parse)
+                else:
+                    got = drive(recording_parse)
             except Exception as e:                      # noqa: BLE001  the accept side collects whatever an entry point raised
                 accept.append("%s raised %s: %s" % (label, type(e).__name__, str(e)[:160]))
                 continue
@@ -4382,6 +4394,52 @@ class TheWalkersRefuseAStrangerByExecution(unittest.TestCase):
                 accept.append("%s answered None" % label)
         self.assertEqual(accept, [], "the accept side: every census entry point, driven unplanted over the tree it really reads, returns an "
                                      "answer: %s" % "; ".join(accept))
+        # what each drive parsed, held real (review round 7, extra6-1: the rewrite dropped the round-6 per-row line, and a row narrowed
+        # to a stand-in source kept every case green; that line was one bit per row, so it is not restored in its shape). The sources a
+        # roster row may read are derived from live objects and no table: the text of the module files the censuses read, the real
+        # source of a function the kernel or the judge binds (the def's own name, defined in that module's file, its dedented
+        # inspect.getsource the text the source censuses parse), or a grammar-corpus row
+        module_files = (__file__, km.__file__, jd.__file__)
+        files = {Path(os.path.realpath(f)).read_text(encoding="utf-8"): os.path.basename(os.path.realpath(f)) for f in module_files}
+        corpus = {row[0] for row in _GRAMMAR_CORPUS}
+
+        def real_source(source):
+            """What `source` is the real text of: 'file <name>', 'function <module>.<name>' or 'corpus row'; else 'not real: <why>'."""
+            if source in files:
+                return "file %s" % files[source]
+            if source in corpus:
+                return "corpus row"
+            first = real(source).body[:1]              # the def's name off the first statement; nothing walks this tree
+            if not first or not isinstance(first[0], (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return "not real: neither a module file nor a corpus row, and its first statement is no def"
+            name, why = first[0].name, []
+            for owner, mod in (("kernel", km), ("judge", jd)):
+                fn = inspect.unwrap(vars(mod).get(name))
+                if not isinstance(fn, types.FunctionType):
+                    continue
+                if os.path.realpath(fn.__code__.co_filename) != os.path.realpath(mod.__file__):
+                    why.append("the %s binds it to a function defined outside its file" % owner)
+                elif textwrap.dedent(inspect.getsource(fn)) != source:
+                    why.append("the %s binds it, and its real source differs" % owner)
+                else:
+                    return "function %s.%s" % (owner, name)
+            return "not real: a def named %s (%s)" % (name, "; ".join(why) or "bound in neither the kernel nor the judge")
+        silent = [label for label in labels if label not in {row for row, _source in parsed}]
+        self.assertEqual(silent, [], "every roster row hands at least one source to the parse the accept side records (a derived expectation "
+                                     "fails on empty): a row that recorded none parses under another road than ast.parse by attribute or the "
+                                     "parse it is handed, and what it read is unheld: %r" % silent)
+        verdicts = [(row, source, real_source(source)) for row, source in parsed]
+        unreal = ["%s parsed %s; first line %r" % (row, verdict, (source.splitlines() or [""])[0])
+                  for row, source, verdict in verdicts if verdict.startswith("not real")]
+        self.assertEqual(unreal, [], "every source a roster drive parsed is real: one of the module files the censuses read, the real source of "
+                                     "a function the kernel or the judge binds (the def's own name, defined in that module's file, its dedented "
+                                     "inspect.getsource equal to the source) or a grammar-corpus row, each derived from the live objects. A "
+                                     "stand-in source is a census over nothing, and a def of this module is no kernel or judge function under "
+                                     "the rule. Which real source a row reads is its drive's, held here only to be real: %s" % "; ".join(unreal))
+        read = sorted({verdict for _row, _source, verdict in verdicts if verdict.startswith("file ")})
+        self.assertEqual(read, sorted("file %s" % os.path.basename(os.path.realpath(f)) for f in module_files),
+                         "every module file the censuses read (this module's, the kernel's and the judge's, named from each module's own "
+                         "__file__) is parsed by some roster row; a file no row parses is a census that stopped reading it: parsed %r" % read)
         # the refuse side, per position ALONE: a census that walks one position through _walk and reads another by hand refuses the
         # plant _walk meets and passes over the one in the hand-read position, so one refusal over a plant at several positions is not
         # the contract (a verifier of the round-5 fixes, for sites; review round 6, lens one, for positions). The parse is cached per
@@ -4487,8 +4545,10 @@ class TheWalkersRefuseAStrangerByExecution(unittest.TestCase):
                                                              # (the parse is the row's argument), and reads the finder's own def through
                                                              # _walk for the forms it reports, a subtree of that def and no census
             "TheWalkersRefuseAStrangerByExecution.test_every_census_entry_point_refuses_a_planted_stranger_and_returns_unplanted":
-                ["ast.parse"],                               # keeps the real parse as a value: the accept side hands it to every drive and
-                                                             # the planting parse wraps it; the case parses nothing itself
+                ["ast.parse", "inspect.getsource"],          # keeps the real parse as a value: the recording parse (the accept side) and the
+                                                             # planting parse (the refuse side) wrap it; the accept side's source check parses a
+                                                             # function source through it for the def's name off .body[0] and reads a kernel or
+                                                             # judge function's source to hold the drive's equal to it; walks nothing
             "TheWalkersRefuseAStrangerByExecution.test_a_hand_rolled_recursion_passes_the_stranger_over_and_the_finder_does_not_see_it":
                 ["ast.parse", "inspect.getsource"],          # parses a census's source for the finder, a row, and the planted tree for the
                                                              # negative control; its nested recursion folds into the case
