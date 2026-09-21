@@ -19,9 +19,10 @@
 // 508 (kbFit re-runs grow on the resize: the answer box re-fits to the room). After the tap, on the other todo: an
 // inline height written as the resize grip writes it, then one keystroke (the drag guard: the height stands); the height
 // written to 215px and the frame taken to 420 and back (the dragged height is a preference: clamped to the room under the
-// fold, not to the content, and returned to at 508); then the grip pulled past the box's bottom edge and released over the backdrop (the click that ends a drag of the grip is not a
-// dismissal: the sheet stands with its text; Chromium and WebKit dispatch that click to the overlay, Firefox to the
-// textarea), and a plain tap on the backdrop (it dismisses).
+// fold, not to the content, and returned to at 508); then the grip pulled past the box's bottom edge and released over the backdrop, then a
+// text selection dragged from inside the box onto the backdrop and released (a click whose press began inside the sheet is
+// not a backdrop tap: the sheet stands with its text after both; Chromium and WebKit dispatch that click to the overlay,
+// Firefox to the textarea), and a plain tap on the backdrop, press and release both on it (it dismisses).
 //
 // After the send the chat page's card is REBUILT by the kernel's pushes that follow it (askLiveClear and chatTail frames,
 // 0.8 to 2.6 s later in the lab; the pane's list gets no push after the send here): the other todo's Reply button becomes
@@ -209,6 +210,21 @@ const openReply = async (tid) => {
   }
   await settle();
 };
+// a text selection dragged out of the box (the reviewer's ruling on the pass's observation): the press inside the textarea's
+// text, dragged past the box's bottom edge and released over the backdrop; the same common-ancestor click as the grip's with
+// the box's height unchanged. The clicks are recorded as for the pull
+const selectRelease = async (past = 20) => {
+  await page.evaluate(() => { window.__clicks = []; });
+  const r = await page.evaluate(() => { const i = document.querySelector("#ut-reply-prompt .ut-reply-input").getBoundingClientRect(); const b = document.querySelector("#ut-reply-prompt .confirm-box").getBoundingClientRect(); return { left: i.left, top: Math.max(i.top, b.top), boxBottom: b.bottom }; });
+  await page.mouse.move(r.left + 20, r.top + 12);
+  await page.mouse.down();
+  await page.mouse.move(r.left + 60, r.boxBottom + past, { steps: 10 });
+  await page.mouse.up();
+  await settle();
+  await page.waitForTimeout(300);
+  const after = await page.evaluate(() => { const i = document.querySelector("#ut-reply-prompt .ut-reply-input"); return { overlayUp: !!document.getElementById("ut-reply-prompt"), value: i ? i.value : null, clicks: window.__clicks }; });
+  return { endY: r.boxBottom + past, ...after };
+};
 // the card's rebuild the send causes: the other todo's Reply button, tagged before the tap, is a NEW node once the kernel's
 // pushes have been rendered (the chat; 0.8 to 2.6 s in the lab). Waited for where the card is rebuilt, so the sheet is opened
 // on a card that is not about to be replaced under the click; the wait's outcome is recorded, never asserted (the kernel's
@@ -306,13 +322,15 @@ try {
         out.pref = { set, clamped, back };
       } catch (e) { out.pref = { error: String(e).slice(0, 400) }; }
     }
-    // the click that ends a grip drag is not a tap on the backdrop (composition-2): on the same sheet the grip is pulled past the
-    // box's bottom edge and released over the backdrop; the sheet stands with its text, and a plain tap on the backdrop then
-    // dismisses. Its own failure is recorded, never fatal, so the records above reach the Python side whole
+    // a click whose press began inside the sheet is not a backdrop tap (composition-2, and the reviewer's ruling on the
+    // selection): on the same sheet the grip is pulled past the box's bottom edge and released over the backdrop, then a text
+    // selection is dragged from inside the box onto the backdrop; the sheet stands with its text after both, and a plain tap on
+    // the backdrop then dismisses. Its own failure is recorded, never fatal, so the records above reach the Python side whole
     if (!out.drag.error) {
       try {
         out.release = await dragRelease();
-        if (out.release.overlayUp) {
+        if (out.release.overlayUp) out.selectRelease = await selectRelease();
+        if (out.release.overlayUp && out.selectRelease.overlayUp) {
           const at = { x: W / 2, y: Math.max(4, Math.round(out.release.boxTop / 2)) };
           await page.mouse.click(at.x, at.y);
           await settle();

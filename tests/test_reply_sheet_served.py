@@ -32,10 +32,11 @@ fitted state); the unbreakable token wraps, so the detail's scrollWidth is no wi
 re-runs grow on the resize); and on the other todo's sheet an inline height written as the resize grip writes it stands
 through a keystroke (the drag guard); written to 215px and the frame taken to 420, the dragged height is clamped to the
 room the box has under the fold, not to the content, and returns to 215px at 508 (a dragged height is the person's
-preference on the resize path); then the grip pulled past the box's bottom edge and released over the backdrop
-leaves the sheet up with its text (the click that ends a drag of the grip is not a dismissal: Chromium and WebKit
-dispatch it to the overlay, the common ancestor of the press and the release, and before the guard it closed the sheet
-with the answer; Firefox retargets it to the textarea), and a plain tap on the backdrop then dismisses. And the tree each
+preference on the resize path); then the grip pulled past the box's bottom edge and released over the backdrop,
+and a text selection dragged from inside the box onto the backdrop, each leave the sheet up with its text (a click whose
+press began inside the sheet is not a backdrop tap: Chromium and WebKit dispatch it to the overlay, the common ancestor
+of the press and the release, and before the guard both gestures closed the sheet with the answer; Firefox retargets it
+to the textarea), and a plain tap on the backdrop, press and release both on it, then dismisses. And the tree each
 builder emits, read from the real pages: the pane's chips are
 flex children of the box, the chat's sit inside the quoted line, and the elements the fix's four rules key on match
 their selectors in both.
@@ -321,14 +322,20 @@ class ReplySheetServed(unittest.TestCase):
             self.assertTrue(self._inside_clip(c, b), where + "420px after the drag: %s is inside the box's clip: %r" % (b, c))
         self.assertEqual(c["hitAtSend"], "target", where + "420px after the drag: a finger at Send's painted centre reaches Send: %r" % (c,))
         self.assertEqual(p["back"]["inputStyleH"], "215px", where + "back at 508: the box returns to the height the person set, not stuck at the clamp: %r" % (p["back"],))
-        # the click that ends a drag of the grip, released over the backdrop, is not a dismissal (the author's pass after the
-        # maintainer's round 1, composition-2): the sheet stands with its text in every engine (Chromium and WebKit dispatch
-        # the click to the overlay, the common ancestor of the press and the release; Firefox to the textarea), and a plain
-        # tap on the backdrop still dismisses (what a dismiss does with the text is the filed discard item's, untouched)
+        # a click whose press began inside the sheet is not a backdrop tap (the author's pass after the maintainer's round 1,
+        # composition-2, and the reviewer's ruling on the selection: a backdrop tap is press and release both on the backdrop):
+        # after a grip drag released over the backdrop, and after a text selection dragged from inside the box onto it, the
+        # sheet stands with its text in every engine (Chromium and WebKit dispatch the click to the overlay, the common ancestor
+        # of the press and the release; Firefox to the textarea), and a plain tap on the backdrop still dismisses (what a
+        # dismiss does with the text is the filed discard item's, untouched)
         rel = r.get("release", {"error": "the release step did not run"})
         self.assertNotIn("error", rel, where + "the release step ran to its end: %r" % (rel,))
-        self.assertTrue(rel["overlayUp"], where + "the click that ends a grip drag released over the backdrop (%s; the clicks' targets %r) is not a dismissal: the sheet stands; before the guard Chromium and WebKit closed it with the answer: %r" % (rel["road"], rel["clicks"], rel))
+        self.assertTrue(rel["overlayUp"], where + "a grip drag released over the backdrop (%s; the clicks' targets %r) is not a backdrop tap: the sheet stands; before the guard Chromium and WebKit closed it with the answer: %r" % (rel["road"], rel["clicks"], rel))
         self.assertEqual(rel["value"], "a", where + "the answer is intact through the release: %r" % (rel,))
+        sel = r.get("selectRelease", {"error": "the selection step did not run"})
+        self.assertNotIn("error", sel, where + "the selection step ran to its end: %r" % (sel,))
+        self.assertTrue(sel["overlayUp"], where + "a text selection dragged from inside the box onto the backdrop (the clicks' targets %r) is not a backdrop tap either: the sheet stands; before the widened predicate Chromium and WebKit closed it with the answer, the same common-ancestor click with the box's height unchanged: %r" % (sel["clicks"], sel))
+        self.assertEqual(sel["value"], "a", where + "the answer is intact through the selection's release: %r" % (sel,))
         self.assertFalse(r["backdropTap"]["overlayUp"], where + "a plain tap on the backdrop still dismisses: %r" % (r["backdropTap"],))
 
     def test_waiting_chromium(self):

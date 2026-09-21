@@ -22,12 +22,13 @@
 // with a todo that has no detail and a fourteen-line answer, and at 900. At 420 with the chip todo the pane's two chip
 // rows put the floors alone a few pixels past the fold's cap: that state is measured as the backstop state it is (the
 // box scrolls the difference, Send's centre under a finger, Send inside the clip once the box is scrolled), never
-// presented as fitted; the chat's column fits there (render-reply-sheet-browser.test.ts). The click that ends a drag of
-// the grip is not a tap on the backdrop (the author's pass after the maintainer's round 1, composition-2): at 508 the box
-// is at its cap, so a grip pull released past its bottom edge leaves the pointer over the backdrop, and Chromium and
-// WebKit dispatch that click to the overlay, the common ancestor of the press and the release, which before the guard
-// closed the sheet with the answer (Firefox retargets it to the textarea); now the sheet stands with its text in every
-// engine, and a plain tap on the backdrop still dismisses. A dragged height is the person's PREFERENCE on the resize
+// presented as fitted; the chat's column fits there (render-reply-sheet-browser.test.ts). A click whose press began
+// inside the sheet is not a backdrop tap (the author's pass after the maintainer's round 1, composition-2, and the
+// reviewer's ruling on the selection): at 508 the box is at its cap, so a grip pull released past its bottom edge, or a
+// text selection dragged out of the box, leaves the pointer over the backdrop, and Chromium and WebKit dispatch that
+// click to the overlay, the common ancestor of the press and the release, which before the guard closed the sheet with
+// the answer (Firefox retargets it to the textarea); now a backdrop tap is press and release both on the backdrop, the
+// sheet stands with its text after either gesture in every engine, and a plain tap on the backdrop still dismisses. A dragged height is the person's PREFERENCE on the resize
 // path (composition-3): pulled to 215px at 900, the keyboard opening clamps the box to the room, not to its content, and
 // the keyboard closing returns it to 215px; before, the dragged height stood through the resize and Send lay below the
 // frame.
@@ -328,6 +329,29 @@ async function boot(browser: any) {
     });
     return { road, endY: r.boxBottom + past, boxBottom: r.boxBottom, inputStyleHMid: mid.inputStyleH, ...after };
   };
+  // a text selection dragged out of the box (the reviewer's ruling on the pass's observation): the press inside the textarea's
+  // text, the pointer dragged past the box's bottom edge and released over the backdrop; the same common-ancestor click as the
+  // grip's, with the box's height unchanged. The clicks are recorded as for the pull
+  const selectRelease = async (past = 20) => {
+    await page.evaluate(() => { const w = (document.getElementById("f-waiting") as HTMLIFrameElement).contentWindow! as any; w.__clicks = []; });
+    const r = await page.evaluate(() => {
+      const d = (document.getElementById("f-waiting") as HTMLIFrameElement).contentWindow!.document;
+      const i = d.querySelector("#ut-reply-prompt .ut-reply-input")!.getBoundingClientRect(); const b = d.querySelector("#ut-reply-prompt .confirm-box")!.getBoundingClientRect();
+      return { left: i.left, top: Math.max(i.top, b.top), boxBottom: b.bottom };
+    });
+    await page.mouse.move(r.left + 20, r.top + 12);
+    await page.mouse.down();
+    await page.mouse.move(r.left + 60, r.boxBottom + past, { steps: 10 });
+    await page.mouse.up();
+    await settle();
+    await page.waitForTimeout(300);
+    const after: { overlayUp: boolean; value: string | null; clicks: string[] } = await page.evaluate(() => {
+      const w = (document.getElementById("f-waiting") as HTMLIFrameElement).contentWindow! as any; const d = w.document;
+      const i = d.querySelector("#ut-reply-prompt .ut-reply-input") as HTMLTextAreaElement | null;
+      return { overlayUp: !!d.getElementById("ut-reply-prompt"), value: i ? i.value : null, clicks: w.__clicks as string[] };
+    });
+    return { endY: r.boxBottom + past, ...after };
+  };
   // a plain tap on the backdrop, above the box
   const tapBackdrop = async () => {
     const top: number = await page.evaluate(() => (document.getElementById("f-waiting") as HTMLIFrameElement).contentWindow!.document.querySelector("#ut-reply-prompt .confirm-box")!.getBoundingClientRect().top);
@@ -338,7 +362,7 @@ async function boot(browser: any) {
     const overlayUp: boolean = await page.evaluate(() => !!(document.getElementById("f-waiting") as HTMLIFrameElement).contentWindow!.document.getElementById("ut-reply-prompt"));
     return { at, overlayUp };
   };
-  return { page, W, setHeight, settle, measure, probeShort, openReply, cancelReply, fill, tapSend, dragTaller, dragRelease, tapBackdrop, waitTight, errors };
+  return { page, W, setHeight, settle, measure, probeShort, openReply, cancelReply, fill, tapSend, dragTaller, dragRelease, selectRelease, tapBackdrop, waitTight, errors };
 }
 // a short window with the chip todo open: the box scrolls; the detail keeps its floor and scrolls within itself; its
 // first line's address and Send are each under a finger once the box is scrolled to them
@@ -377,7 +401,7 @@ for (const name of ["chromium", "firefox", "webkit"]) {
     try { browser = await pw[name].launch(); }
     catch (e) { t.skip("no playwright " + name + " on this box, and this leg needs it; the served leg tests/test_reply_sheet_served.py is the guard where this skips (CI's browser step runs it in chromium): " + String((e as Error).message).split("\n")[0]); return; }
     try {
-      const { page, W, setHeight, settle, measure, probeShort, openReply, cancelReply, fill, tapSend, dragTaller, dragRelease, tapBackdrop, waitTight, errors } = await boot(browser);
+      const { page, W, setHeight, settle, measure, probeShort, openReply, cancelReply, fill, tapSend, dragTaller, dragRelease, selectRelease, tapBackdrop, waitTight, errors } = await boot(browser);
       await openReply("t1");
       // ── 508px: the keyboard up on a phone, above the fold's threshold: the squeeze fix alone
       let m = (await measure())!;
@@ -527,17 +551,23 @@ for (const name of ["chromium", "firefox", "webkit"]) {
       assert.ok(m.inputH >= draggedTall - 1, `and lays out at it (${m.inputH} against ${draggedTall}px)`);
       await setHeight(KEYBOARD_UP);
       await waitTight(false);
-      // ── the click that ends a drag of the grip is not a tap on the backdrop (the author's pass after the maintainer's round 1,
-      // composition-2). At 508 the box is at its cap, so a grip pull released past its bottom edge leaves the pointer over the
-      // backdrop; Chromium and WebKit dispatch that click to the overlay, the common ancestor of the press and the release, and
-      // before the guard it closed the sheet with the answer (Firefox retargets the click to the textarea). The sheet stands with
-      // its text in every engine, and a plain tap on the backdrop still dismisses (what a dismiss does is the filed discard item's)
+      // ── a click whose press began inside the sheet is not a backdrop tap (the author's pass after the maintainer's round 1,
+      // composition-2, and the reviewer's ruling on the selection: a backdrop tap is press and release both on the backdrop). At
+      // 508 the box is at its cap, so a grip pull released past its bottom edge, or a text selection dragged out of the box, leaves
+      // the pointer over the backdrop; Chromium and WebKit dispatch that click to the overlay, the common ancestor of the press and
+      // the release, and before the guard it closed the sheet with the answer (Firefox retargets the click to the textarea). The
+      // sheet stands with its text after either gesture in every engine, and a plain tap on the backdrop still dismisses (what a
+      // dismiss does is the filed discard item's)
       await fill(ANSWER(3));
       const rel = await dragRelease();
       t.diagnostic(`${name}: the drag's release: ${rel.road}; released at y ${rel.endY.toFixed(1)}, past the box's bottom ${rel.boxBottom.toFixed(1)}; the clicks' targets ${JSON.stringify(rel.clicks)}`);
-      assert.equal(rel.overlayUp, true, `the click that ends a grip drag released over the backdrop (${rel.road}; the clicks' targets ${JSON.stringify(rel.clicks)}) is not a dismissal: the sheet stands (before the guard Chromium and WebKit closed it with the answer; Firefox retargets the click to the textarea)`);
+      assert.equal(rel.overlayUp, true, `a click whose press began inside the sheet is not a backdrop tap: the sheet stands after a grip drag released over the backdrop (${rel.road}; the clicks' targets ${JSON.stringify(rel.clicks)}); before the guard Chromium and WebKit closed it with the answer; Firefox retargets the click to the textarea`);
       assert.equal(rel.value, ANSWER(3), "and the answer is intact");
       assert.equal(rel.posted, 0, "the release posted nothing");
+      const sel = await selectRelease();
+      t.diagnostic(`${name}: the selection's release: from inside the textarea to y ${sel.endY.toFixed(1)}; the clicks' targets ${JSON.stringify(sel.clicks)}`);
+      assert.equal(sel.overlayUp, true, `a text selection dragged out of the box and released over the backdrop (the clicks' targets ${JSON.stringify(sel.clicks)}) is not a backdrop tap either: the sheet stands (before the widened predicate Chromium and WebKit closed it with the answer, the same common-ancestor click with the box's height unchanged; Firefox retargets the click to the textarea)`);
+      assert.equal(sel.value, ANSWER(3), "and the answer is intact through the selection's release");
       const tapped = await tapBackdrop();
       assert.equal(tapped.overlayUp, false, `a plain tap on the backdrop (at ${tapped.at.x}, ${tapped.at.y}) still dismisses; what a dismiss does with the text is the filed discard item's, untouched here`);
       // ── the onset of the old clip band, 490px, a todo with no detail and a fourteen-line answer: the room cap and the box's
