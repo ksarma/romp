@@ -984,3 +984,23 @@ test("round 5's fifth addendum, third fix-up: the lexer resolves a substitution 
   assert.deepEqual(targets("echo x > $(echo 'a docs/report.md')"), [report].concat(targets('echo x > a')).concat(targets("echo x > 'a docs/report.md'")).sort(), 'the tracked field is a target by name');
   assert.deepEqual(targets("echo x > $(echo 'docs/report.md ')"), [report, report + ' '].sort(), 'a trailing blank: the stripped field is the tracked file, beside the whole text dash opens (a name ending in a blank)');
 });
+
+test("round 6, sixth commit: THE APPLIED RESOLVER at the lexer, a printer with a redirection or an operator inside a list is UNRESOLVABLE, never null, and a list with no printer stays null; THE SPECIAL PARAMETER's forms; THE ASSIGNED DEFAULT on the segment; THE EMPTY ALTERNATIVE's mark", () => {
+  const printedOf = (c) => lex(c).segments.filter((s) => s.printed).pop();   // the last: a printer before a `|` inside the list carries its own reading, the closer the list's
+  const whyOf = (c) => { const s = printedOf(c); return s && s.printed && s.printed.unresolvableReading ? s.printed.unresolvableReading.why : `(no unresolvable reading placed: ${s ? JSON.stringify(s.printed) : 'no printed segment'})`; };   // the mark's reason, or a text that says what was placed instead, so a missing mark fails the assertion that follows
+  for (const c of ["echo 'cp a b' 2>/dev/null | bash", "printf '%s\\n' 'cp a b' </dev/null | bash", "echo 'cp a b' 3>/dev/null | bash", "echo 'cp a b' >/dev/null | bash", "echo 'cp a b' <<< x | bash"]) assert.ok(whyOf(c).includes('whether its text reaches the stream'), `a redirection on the printer: ${c}`);
+  for (const c of ["(echo 'cp a b' && true) | bash", "(echo 'cp a b' || true) | bash", "(echo 'cp a b' & wait) | bash", "(echo 'cp a b' | cat) | bash", "{ echo 'cp a b' && true; } | bash"]) assert.ok(whyOf(c).includes('an operator outside the model'), `a printer followed by an operator inside the list: ${c}`);
+  for (const c of ["(echo 'cp a b') 2>/dev/null | bash", "{ echo 'cp a b'; } 2>/dev/null | bash", "(time echo 'cp a b') 2>/dev/null | bash", "(cat <<'EOF'\ncp a b\nEOF\n) </dev/null | bash"]) assert.ok(whyOf(c).includes('stands on the'), `a redirection on the closer: ${c}`);
+  assert.equal(printedOf("(cat f) 2>/dev/null | bash"), undefined, 'no printer in the list: null, the residual');
+  assert.equal(printedOf("(cat f && true) | bash"), undefined, 'an operator after a non-printer: null');
+  assert.ok(lex("bash -c \"$(echo 'cp a b' 2>/dev/null)\"").segments[0].words[2].unresolvableReading, 'the same inside a $(..): the word is marked');
+  assert.deepEqual(lex('${#:+cp} a b').segments[0].words[0].readings, ['cp'], 'THE SPECIAL PARAMETER: a + form over `#` is the word alone');
+  assert.deepEqual(lex('${?:+cp} a b').segments[0].words[0].readings, ['cp'], "over `?` too (the `?` is the name, not a glob character of the word)");
+  for (const c of ['${#:-cp} a b', '${?-cp} a b', '${0:=cp} a b', '${$:-cp} a b', '${-:-cp} a b', '${!:-cp} a b', '${@:-cp} a b', '${*:-cp} a b']) assert.ok(lex(c).segments[0].words[0].unresolvableReading, `a -, = or ? form over a special parameter is UNRESOLVABLE: ${c}`);
+  assert.deepEqual(lex('${1:-cp} a b').segments[0].words[0].readingParams, [{ name: '1', op: ':-', before: '', after: '' }], 'a positional parameter carries its name for THE POSITIONAL VALUE');
+  assert.deepEqual(lex('${10:+cp} a b').segments[0].words[0].readings, ['cp'], 'a digit run');
+  assert.deepEqual(lex(': ${e:=cp}; x=${f=cat}').segments.flatMap((s) => s.paramAssigns), [{ name: 'e', texts: ['cp'] }, { name: 'f', texts: ['cat'] }], 'THE ASSIGNED DEFAULT: `:=` and `=` are recorded with the word\'s texts');
+  assert.deepEqual(lex('echo ${e:-cp}').segments[0].paramAssigns, [], 'a `:-` assigns nothing');
+  assert.deepEqual(lex('{cp,} a b').segments[0].words.map((x) => [x.text, !!x.braceEmpty]), [['cp', false], ['', true], ['a', false], ['b', false]], 'THE EMPTY ALTERNATIVE: the empty word is marked');
+  assert.deepEqual(lex("cp '' a b").segments[0].words.map((x) => !!x.braceEmpty), [false, false, false, false], 'a quoted empty operand is not');
+});

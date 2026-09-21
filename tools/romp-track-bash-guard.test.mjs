@@ -4049,12 +4049,12 @@ test('found with the fix, four more live overwrites of the same rule at 86c0643e
   const savedHome = process.env.HOME;
   process.env.HOME = w.HOME;
   try {
-    const evalRow = w.fill("e=$(printf 'HO%s' ME={NA}/notes | cat); eval \"$e\"; printf poison > ~/n1.md");   // a pipeline: a literal printf alone resolves since the third fix-up, and the mention of HOME in the resolved value refuses before the eval is reached (the rows test pins that twin)
+    const evalRow = w.fill("e=$(yes HOME={NA}/notes | head -1); eval \"$e\"; printf poison > ~/n1.md");   // a pipeline whose producer is no printer (the residual): a literal printf alone resolves since the third fix-up, and one before a pipe is UNRESOLVABLE since round 6's sixth commit (THE APPLIED RESOLVER), so a `yes | head` value keeps the eval's own reason
     const h1 = w.hook(evalRow, w.NA);
     assert.equal(h1.status, 2, `refused: ${evalRow}: ${h1.reason}`);
     assert.ok(/an earlier `eval` may assign any name/.test(h1.reason) && /(I cannot read here|no longer name a directory I can read)/.test(h1.reason), `the reason names the eval: ${h1.reason.split('\n')[0]}`);
     for (const shell of shellsFor(['bash', 'zsh', 'dash'], 'the eval HOME row')) assert.equal(w.run(evalRow, w.NA, shell).changed, true, `${shell} writes the tracked note through the eval'd HOME`);
-    assert.equal(w.hook(w.fill("e=$(printf 'HO%s' ME={NA}/notes | cat); echo \"$e\"; printf x > ~/n1.md"), w.NA).status, 0, 'the twin that only echoes the string resolves ~ through the guard\'s home, outside every project: allowed');
+    assert.equal(w.hook(w.fill("e=$(yes HOME={NA}/notes | head -1); echo \"$e\"; printf x > ~/n1.md"), w.NA).status, 0, 'the twin that only echoes the string resolves ~ through the guard\'s home, outside every project: allowed');
     const groupRow = '{ cd docs; } | cat; cp base/report.md docs/report.md';
     const h2 = w.hook(groupRow, w.NA);
     assert.equal(h2.status, 2, `refused: ${groupRow}: ${h2.reason}`);
@@ -4287,8 +4287,8 @@ test("round 5's fifth addendum, fourth fix-up: a row whose command names a progr
 
 // ── the seventh pass's attacker (2026-09-19, on 93bb93b68): the rule's own boundary ──
 //
-// Two misses, 0 structural (its report in the sweep notes, `quickfix-track-guard-attack1-pass7.md`, its rows in
-// `quickfix-track-guard-atk7-rows.json`), and a sibling found while closing them. F2: a `{ }` group nested in a piped or
+// Two misses, 0 structural (its report and its rows are in the review's sweep notes, outside the repo), and a sibling found
+// while closing them. F2: a `{ }` group nested in a piped or
 // backgrounded group (the frame opened for the first `{` and popped on the first `}`, so the piped outer brace was never a
 // subshell boundary). F1: zsh's precommand modifiers `noglob`, `nocorrect` and `-`, read as commands named so, hiding the
 // writer behind them. RO: a name made readonly then written by a declaration, an export or an unset, which bash and dash
@@ -4512,7 +4512,7 @@ test("the seventh pass's mutation lens: the unpinned claims of the readability r
       ['U7b', "y=scratch/keep.md; h=$(echo y | cat); printf 'docs/report.md\\n' > scratch/line; read $h < scratch/line; cp base/report.md $y", A, lit("the command's `read` takes a variable name the shell fills in when it runs ($h), and a name I cannot read may be any name")],   // M1's per-segment detector alone (no `=` for taintWord's poison)
       ['U8', 'x=scratch/keep.md; env() { :; }; env true; cp base/report.md $x', [], lit('an earlier call of `env`, a function the command defines, may assign any name')],   // an inert body: the call alone poisons (a cost)
       ['U9', 'env() { cd ..; }; env true; cp notes-api/base/report.md notes-api/notes/n1.md', A, ['dir', 'an earlier call of the function `env` may change the directory, which I do not follow']],
-      ['U10a', "e=$(printf 'HO%s' ME=notes | cat); eval \"$e\"; x=~/n1.md; printf poison > $x", A, TILDE('~')],   // U2, U2b, U10a: a pipeline, since a literal printf alone resolves since the third fix-up (the rows test pins the resolved twins)
+      ['U10a', "e=$(yes HOME=notes | head -1); eval \"$e\"; x=~/n1.md; printf poison > $x", A, TILDE('~')],   // U2, U2b, U10a: a pipeline whose producer is no printer, since a literal printf alone resolves since the third fix-up and one before a pipe is UNRESOLVABLE since round 6's sixth commit (the rows tests pin both)
       ['U10b', 'eval true; x=~/n1.md; printf poison > $x', [], TILDE('~')],   // the guard reads no HOME after an eval: the write lands in the home (a cost)
       ['U10c', "eval 'cd docs'; x=~+/report.md; cp ../base/report.md $x", BZ, TILDE('~+')],
       ['U10d', 'eval true; x=~+/scratch/keep.md; cp base/report.md $x', [], TILDE('~+')],
@@ -6457,7 +6457,7 @@ test("round 5's fifth addendum, second fix-up, the rows: an expansion nested in 
       ['R-subshell', 'nad', "(echo 'cp ../base/report.md report.md') | bash", A, 'name'],   // round 6's second commit: THE OUTPUT MODEL reads the subshell's list (round 5's tests-1 found this row pinned allowed as a residual)
       ['R-group', 'nad', "{ echo 'cp ../base/report.md report.md'; } | bash", A, 'name'],   // and the group's
       ['R-subshell-true', 'nad', "(true; echo 'cp ../base/report.md report.md') | bash", A, 'name'],   // a silent command beside the echo prints nothing
-      ['R-inner-pipe', 'nad', "(echo 'cp ../base/report.md report.md' | cat) | bash", A, 'allow'],   // the echo's output goes to cat, whose output the model does not read: outside the model, as `cat f | bash` is
+      ['R-inner-pipe', 'nad', "(echo 'cp ../base/report.md report.md' | cat) | bash", A, ['text', 'followed by `|`']],   // round 6's sixth commit (THE APPLIED RESOLVER): the printer inside the list is followed by `|`, an operator outside the model: UNRESOLVABLE, refused (it was the residual)
       ['R-function', 'nad', "f() { echo 'cp ../base/report.md report.md'; }; f | bash", A, 'allow'],   // a call of a function the command defines: outside the model (its body is not read as the call's output)
       // a shell outside SHELLS: busybox's sh and ash, whose `[[` is a builtin that performs the redirection (measured), each named on decision 47
       ['R-busybox-sh-c', 'nad', "busybox sh -c 'cp ../base/report.md report.md'", A, 'allow'],
@@ -6597,7 +6597,7 @@ test("round 5's fifth addendum, third fix-up, the rows: an unquoted here-documen
       ['D-colon-minus-plain', 'nad', `bash -c "\${x:-${CP}}"`, A, ['text', UNSET]],
       ['D-colon-minus-plain-unquoted', 'nad', `bash -c \${x:-${CP}}`, Z, ['text', UNSET]],   // zsh splits no expansion's result; bash and dash hand cp alone to bash
       ['D-minus', 'nad', `bash -c "\${x-${CP}}"`, A, ['text', UNSET]],
-      ['D-colon-eq', 'nad', `bash -c "\${x:=${CP}}"`, A, ['text', UNSET]],
+      ['D-colon-eq', 'nad', `bash -c "\${x:=${CP}}"`, A, 'name'],   // round 6's sixth commit (THE ASSIGNED DEFAULT): the `:=` gives x the word, a candidate the script road reads, so the copy is refused by name (it refused as an unset name before)
       ['D-colon-plus-set', 'nad', `x=1; bash -c "\${x:+${CP}}"`, A, 'name'],
       ['D-colon-plus-unset', 'nad', `bash -c "\${x:+${CP}}"`, N, ['name', 'stands for']],   // x unset: no shell runs the word (the cost: the reading is read whatever the state)
       ['D-set-skips', 'nad', `x=1; bash -c "\${x:-${CP}}"`, N, ['name', 'stands for']],   // the cost's twin
@@ -7109,8 +7109,8 @@ test("round 6, the rows: the four readings round 5 found allowing a write the ba
       ['R6-O-echo-zero-octal-twin', 'nad', "echo poison > $(echo 'repor\\0164.md')", ['zsh', 'dash'], ['literal', 'echo']],
       ['R6-O-fmt-octal-twin', 'nad', "echo poison > $(printf 'repor\\164.md')", A, ['literal', 'printf']],   // a backslash in the format is an interpretation: the script road only, the target keeps the non-literal rule
       // (4) THE SPLIT OPERAND inside double quotes: every `@` form of every shell, zsh's splitting flags, and the single-field twins
-      ['R6-S-at', 'nad', `set -- ../base/report.md report.md; cp "$@"`, A, ['text', SPLIT]],
-      ['R6-S-brace-at', 'nad', `set -- ../base/report.md report.md; cp "\${@}"`, A, ['text', SPLIT]],
+      ['R6-S-at', 'nad', `set -- ../base/report.md report.md; cp "$@"`, A, 'name'],   // round 6's sixth commit (THE POSITIONAL VALUE): the `set --` binds them and `"$@"` stands for the operands, so the copy is refused by name (as split before)
+      ['R6-S-brace-at', 'nad', `set -- ../base/report.md report.md; cp "\${@}"`, A, 'name'],
       ['R6-S-at-offset', 'nad', `set -- x ../base/report.md report.md; cp "\${@:2}"`, BZ, ['text', SPLIT]],
       ['R6-S-at-offset-len', 'nad', `set -- ../base/report.md report.md x; cp "\${@:1:2}"`, BZ, ['text', SPLIT]],
       ['R6-S-at-strip', 'nad', `set -- x../base/report.md xreport.md; cp "\${@#x}"`, BZ, ['text', SPLIT]],
@@ -7125,9 +7125,9 @@ test("round 6, the rows: the four readings round 5 found allowing a write the ba
       ['R6-S-zsh-f-flag', 'nad', `s=$'../base/report.md\\nreport.md'; cp "\${(f)s}"`, Z, ['text', SPLIT]],
       ['R6-S-zsh-z-flag', 'nad', `s='../base/report.md report.md'; cp "\${(z)s}"`, Z, ['text', SPLIT]],
       ['R6-S-zsh-unbraced-at', 'nad', `arr=(../base/report.md report.md); cp "$arr[@]"`, Z, ['text', SPLIT]],
-      ['R6-S-mv-at', 'nad', `set -- ../base/report.md report.md; mv "$@"`, A, ['text', SPLIT]],
-      ['R6-S-install-at', 'nad', `set -- ../base/report.md report.md; install "$@"`, A, ['text', SPLIT]],
-      ['R6-S-ln-at', 'nad', `set -- ../base/report.md report.md; ln -f "$@"`, A, ['text', SPLIT]],
+      ['R6-S-mv-at', 'nad', `set -- ../base/report.md report.md; mv "$@"`, A, 'name'],   // by name since round 6's sixth commit (THE POSITIONAL VALUE binds the `set --` operands)
+      ['R6-S-install-at', 'nad', `set -- ../base/report.md report.md; install "$@"`, A, 'name'],   // by name since round 6's sixth commit (THE POSITIONAL VALUE binds the `set --` operands)
+      ['R6-S-ln-at', 'nad', `set -- ../base/report.md report.md; ln -f "$@"`, A, 'name'],   // by name since round 6's sixth commit (THE POSITIONAL VALUE binds the `set --` operands)
       ['R6-S-twin-name', 'nad', `x='../base/report.md report.md'; cp "$x"`, N, 'allow'],
       ['R6-S-twin-brace-name', 'nad', `x='../base/report.md report.md'; cp "\${x}"`, N, 'allow'],
       ['R6-S-twin-star', 'nad', `set -- ../base/report.md report.md; cp "$*"`, N, 'allow'],
@@ -7304,9 +7304,9 @@ test("round 6, second commit, THE OUTPUT MODEL: a subshell or a `{ }` group of e
       // outside the model with no printer: the residual, allowed while every shell writes (its label on the surfaces: a producer outside the output model)
       ['OM-function', 'nad', `f() { echo ${CP}; }; f | bash`, A, 'allow'],
       ['OM-tee', 'nad', `echo ${CP} | tee /dev/null | bash`, A, 'allow'],
-      ['OM-inner-pipe', 'nad', `(echo ${CP} | cat) | bash`, A, 'allow'],
+      ['OM-inner-pipe', 'nad', `(echo ${CP} | cat) | bash`, A, ['text', 'followed by `|`']],   // round 6's sixth commit (THE APPLIED RESOLVER): a printer followed by `|` inside the list is UNRESOLVABLE, refused (it was the residual)
       ['OM-cat-file', 'nad', 'cat ../scratch/other.md | bash', N, 'allow'],
-      ['OM-echo-redirected', 'nad', `(echo ${CP} > /dev/null) | bash`, N, 'allow'],   // the echo's output goes to the file: nothing on the pipe
+      ['OM-echo-redirected', 'nad', `(echo ${CP} > /dev/null) | bash`, N, ['text', 'whether its text reaches the stream']],   // the echo's output goes to the file and nothing reaches the pipe: a stated cost since round 6's sixth commit (THE APPLIED RESOLVER: a redirection on the printer is UNRESOLVABLE, whichever stream it takes)
       // controls: ordinary lists stay allowed
       ['OM-control-cat', 'nad', '(echo hi) | cat', N, 'allow'],
       ['OM-control-wc', 'nad', '{ echo a; echo b; } | wc -l', N, 'allow'],
@@ -7356,9 +7356,9 @@ test("round 6, second commit, THE OUTPUT MODEL: a subshell or a `{ }` group of e
 // property carries), and a row that stops writing, or that the hook starts refusing, reds here (a rule to state, not drift).
 const RESIDUAL_CLASSES = {
   'a writer outside the model': 'a program, or a write form of a program the hook models, that writes the file by its own nature and is not among the write forms the hook reads (rsync, patch, tar -x, ed, ex, vim, make, shuf -o, gawk -i inplace, awk\'s print redirect, uniq, scp, openssl -out, shred, curl -o, wget -O, find -exec, a git alias or a subcommand that writes the tree, bash\'s history -w, zsh\'s sysopen and mapfile modules, sed\'s e command and a w command in a sed script the resolver cannot read, busybox\'s applets)',
-  'a reader outside the roads': 'a program that runs a command or a script the hook does not follow into it (xargs, an interpreter\'s system, exec or subprocess call, a wrapper outside the set, a shell outside SHELLS, a file the command writes and then runs or sources)',
-  'a command name the resolver never reads': 'a command whose name is an expansion of a kind the resolver does not read ("$@", $1, $*, "${a[@]}", a loop variable, a name read or filled by getopts, printf -v or a nameref, ${SHELL}, a substitution outside the output model such as $(which cp), a ${...} operator form the resolver does not read)',
-  'a script held in a variable': 'a value the command gives a name through a construct the resolver does not read (`read`, `printf -v`, a positional parameter), run as a command or handed to a shell (`$c` after `read c`, `eval "$1"`, `bash -c "$c"` after `printf -v c`; a value an assignment word gives, whitespace included, is read through THE HEAD CANDIDATES since round 6\'s fourth commit)',
+  'a reader outside the roads': 'a program that runs a command or a script the hook does not follow into it (xargs, an interpreter\'s system, exec or subprocess call, a wrapper outside the set, a shell outside SHELLS, a file the command writes and then runs or sources, a function\'s call of itself, which the replay does not follow again)',
+  'a command name the resolver never reads': 'a command whose name is an expansion of a kind the resolver does not read ("${a[@]}", a loop variable, a name read or filled by getopts, printf -v or a nameref, ${SHELL}, a substitution outside the output model such as $(which cp), a ${...} operator form the resolver does not read, a positional parameter of a script handed to a fresh shell with arguments of its own; "$@", $1 and $* stand for the operands of a called function or of a `set` this shell ran since round 6\'s sixth commit)',
+  'a script held in a variable': 'a value the command gives a name through a construct the resolver does not read (`read`, `printf -v`, a positional parameter of a fresh shell\'s script), run as a command or handed to a shell (`$c` after `read c`, `eval "$1"` inside a `bash -c` given arguments, `bash -c "$c"` after `printf -v c`; a value an assignment word gives, whitespace included, is read through THE HEAD CANDIDATES since round 6\'s fourth commit, and a `${name:=word}` gives word since the sixth)',
   'a producer outside the output model': 'a pipe into a shell from anything but a literal echo or printf, alone or in a subshell or group of such commands, or a plain cat passing such a text through (a call of a function the command defines, a tee or a pipe through another command, a cat of a file)',
   'zsh\'s glob grouping': 'a `(..)` inside a word handed to zsh, read as a subshell by the lexer\'s zsh grammar while zsh globs it (a lexer gap, stated since the first commit of this round)',
   'an opaque expansion from a cwd outside every project': 'a leading opaque expansion, or one after a literal head outside every project, from a cwd in no project (B2 as ruled, with its boundary)',
@@ -7368,7 +7368,6 @@ const RESIDUAL_TABLE = [
   // round 6's fourth commit: `c='cp a b'; $c` and `c='cp a b'; bash -c "$c"` are read through THE HEAD CANDIDATES (the rows test of that commit), so
   // the class's members are the names the command fills in through a construct the resolver does not read
   ['RT-read-var-head', 'a script held in a variable', null, "read c <<< 'cp ../base/report.md report.md'; $c", ['bash']],   // zsh splits no expansion: the whole value is the command name there, and dash has no here-string
-  ['RT-positional-eval', 'a script held in a variable', null, "set -- 'cp ../base/report.md report.md'; eval \"$1\"", ['bash', 'zsh', 'dash']],
   ['RT-printf-v-bash-c', 'a script held in a variable', null, "printf -v c 'cp ../base/report.md report.md'; bash -c \"$c\"", ['bash', 'zsh']],
   ['RT-xargs', 'a reader outside the roads', 'xargs', "printf '%s\\n' ../base/report.md report.md | xargs cp", ['bash', 'zsh', 'dash']],
   ['RT-xargs-I', 'a reader outside the roads', 'xargs', 'echo report.md | xargs -I{} cp ../base/report.md {}', ['bash', 'zsh', 'dash']],
@@ -7382,9 +7381,6 @@ const RESIDUAL_TABLE = [
   ['RT-script-wrapper', 'a reader outside the roads', 'script', "script -qc 'cp ../base/report.md report.md' /dev/null", ['bash', 'zsh', 'dash']],
   ['RT-strace', 'a reader outside the roads', 'strace', 'strace -o /dev/null cp ../base/report.md report.md', ['bash', 'zsh', 'dash']],
   ['RT-busybox-sh', 'a reader outside the roads', 'busybox', "busybox sh -c 'cp ../base/report.md report.md'", ['bash', 'zsh', 'dash']],
-  ['RT-positional-at', 'a command name the resolver never reads', null, 'set -- cp ../base/report.md report.md; "$@"', ['bash', 'zsh', 'dash']],
-  ['RT-positional-123', 'a command name the resolver never reads', null, 'set -- cp ../base/report.md report.md; $1 "$2" "$3"', ['bash', 'zsh', 'dash']],
-  ['RT-positional-star', 'a command name the resolver never reads', null, 'set -- cp ../base/report.md report.md; $*', ['bash', 'zsh', 'dash']],
   ['RT-array-head', 'a command name the resolver never reads', null, 'cmd=(cp); "${cmd[@]}" ../base/report.md report.md', ['bash', 'zsh']],
   ['RT-nameref-head', 'a command name the resolver never reads', null, 'c=cp; declare -n r=c; $r ../base/report.md report.md', ['bash']],
   ['RT-loop-head', 'a command name the resolver never reads', null, 'for c in cp; do $c ../base/report.md report.md; done', ['bash', 'zsh', 'dash']],
@@ -7393,7 +7389,6 @@ const RESIDUAL_TABLE = [
   ['RT-shell-var-c', 'a command name the resolver never reads', null, "${SHELL} -c 'cp ../base/report.md report.md'", ['bash']],   // the world's SHELL is bash's alone (zsh and dash have no SHELL of their own here)
   ['RT-function-producer', 'a producer outside the output model', null, "f() { echo 'cp ../base/report.md report.md'; }; f | bash", ['bash', 'zsh', 'dash']],
   ['RT-tee-producer', 'a producer outside the output model', 'tee', "echo 'cp ../base/report.md report.md' | tee /dev/null | bash", ['bash', 'zsh', 'dash']],
-  ['RT-inner-pipe-producer', 'a producer outside the output model', null, "(echo 'cp ../base/report.md report.md' | cat) | bash", ['bash', 'zsh', 'dash']],
   ['RT-perl-open', 'a writer outside the model', 'perl', "perl -e 'open(F,\">report.md\"); print F \"x\"; close F'", ['bash', 'zsh', 'dash']],
   ['RT-ruby-e', 'a writer outside the model', 'ruby', "ruby -e 'File.write(\"report.md\",\"x\")'", ['bash', 'zsh', 'dash']],
   ['RT-sed-e', 'a writer outside the model', 'sed', "sed -n '1e cp ../base/report.md report.md' ../base/report.md", ['bash', 'zsh', 'dash']],
@@ -7485,11 +7480,6 @@ const RESIDUAL_TABLE = [
   ['RT-reply-head', 'a command name the resolver never reads', null, 'read <<< cp; $REPLY ../base/report.md report.md', ['bash', 'zsh']],
   ['RT-select-head', 'a command name the resolver never reads', null, 'select c in cp; do $c ../base/report.md report.md; break; done <<< 1', ['bash', 'zsh']],
   ['RT-loop-var-after-loop', 'a command name the resolver never reads', null, 'for c in cp; do :; done; $c ../base/report.md report.md', ['bash', 'zsh', 'dash']],
-  ['RT-function-at-head', 'a command name the resolver never reads', null, 'c() { "$@"; }; c cp ../base/report.md report.md', ['bash', 'zsh', 'dash']],
-  ['RT-function-123-head', 'a command name the resolver never reads', null, 'c() { $1 "$2" "$3"; }; c cp ../base/report.md report.md', ['bash', 'zsh', 'dash']],
-  ['RT-function-1-head', 'a command name the resolver never reads', null, 'c() { $1 ../base/report.md report.md; }; c cp', ['bash', 'zsh', 'dash']],
-  ['RT-function-shift-head', 'a command name the resolver never reads', null, 'c() { shift; "$@"; }; c x cp ../base/report.md report.md', ['bash', 'zsh', 'dash']],
-  ['RT-set-split-head', 'a command name the resolver never reads', null, "c='cp ../base/report.md report.md'; set -- $c; $1 $2 $3", ['bash', 'dash']],
   ['RT-glued-unset-head', 'a command name the resolver never reads', null, 'c=cp; $c$x ../base/report.md report.md', ['bash', 'zsh', 'dash']],
   ['RT-glued-braced-unset-head', 'a command name the resolver never reads', null, 'c=cp; ${c}${x} ../base/report.md report.md', ['bash', 'zsh', 'dash']],
   ['RT-glued-dq-unset-head', 'a command name the resolver never reads', null, 'c=cp; $c"$x" ../base/report.md report.md', ['bash', 'zsh', 'dash']],
@@ -7499,9 +7489,6 @@ const RESIDUAL_TABLE = [
   ['RT-glued-strip-head', 'a command name the resolver never reads', null, 'c=cp; $c${x#y} ../base/report.md report.md', ['bash', 'zsh', 'dash']],
   ['RT-glued-plus-head', 'a command name the resolver never reads', null, 'c=cp; ${x:+y}$c ../base/report.md report.md', ['bash', 'zsh', 'dash']],
   ['RT-getopts-optarg-eval', 'a script held in a variable', null, "getopts c: o -c 'cp ../base/report.md report.md'; eval \"$OPTARG\"", ['bash', 'zsh', 'dash']],
-  ['RT-function-star-eval', 'a script held in a variable', null, 'c() { eval "$*"; }; c cp ../base/report.md report.md', ['bash', 'zsh', 'dash']],
-  ['RT-function-at-eval', 'a script held in a variable', null, 'c() { eval "$@"; }; c cp ../base/report.md report.md', ['bash', 'zsh', 'dash']],
-  ['RT-colon-assign-from-name', 'a script held in a variable', null, 'c=cp; : ${d:=$c}; $d ../base/report.md report.md', ['bash', 'zsh', 'dash']],
   ['RT-declare-from-name', 'a script held in a variable', null, 'c=cp; declare d=$c; $d ../base/report.md report.md', ['bash', 'zsh']],
   ['RT-while-read-eval', 'a script held in a variable', null, "echo 'cp ../base/report.md report.md' | while read -r l; do eval \"$l\"; done", ['bash', 'zsh', 'dash']],
   ['RT-subshell-read-eval', 'a script held in a variable', null, "echo 'cp ../base/report.md report.md' | (read -r l; eval \"$l\")", ['bash', 'zsh', 'dash']],
@@ -7524,13 +7511,23 @@ const RESIDUAL_TABLE = [
   ['RT-called-body-python-system', 'a reader outside the roads', 'python3', "f() { python3 -; }; echo 'import os; os.system(\"cp ../base/report.md report.md\")' | f", ['bash', 'zsh', 'dash']],
   ['RT-python-system-fd3', 'a reader outside the roads', 'python3', "python3 /dev/fd/3 3< <(echo 'import os; os.system(\"cp ../base/report.md report.md\")')", ['bash', 'zsh']],
   ['RT-eval-echo-bare-producer', 'a producer outside the output model', null, "eval echo \"'cp ../base/report.md report.md'\" | bash", ['bash', 'zsh', 'dash']],
-  ['RT-background-echo-producer', 'a producer outside the output model', null, "(echo 'cp ../base/report.md report.md' & wait) | bash", ['bash', 'zsh', 'dash']],
-  ['RT-time-echo-producer', 'a producer outside the output model', null, "(time echo 'cp ../base/report.md report.md') 2>/dev/null | bash", ['bash', 'zsh', 'dash']],
   ['RT-yes-head-producer', 'a producer outside the output model', 'yes', "(yes 'cp ../base/report.md report.md' | head -1) | bash", ['bash', 'zsh', 'dash']],
   ['RT-bash-bash-producer', 'a producer outside the output model', null, "(echo 'echo cp ../base/report.md report.md') | bash | bash", ['bash', 'zsh', 'dash']],
   ['RT-tee-in-subshell-consumer', 'a producer outside the output model', 'tee', "echo 'cp ../base/report.md report.md' | (tee /dev/null | bash)", ['bash', 'zsh', 'dash']],
   ['RT-python-truncate', 'a writer outside the model', 'python3', "python3 -c 'import os; os.truncate(\"report.md\", 0)'", ['bash', 'zsh', 'dash']],
   ['RT-python-os-write', 'a writer outside the model', 'python3', "python3 -c 'import os; os.write(os.open(\"report.md\", os.O_WRONLY|os.O_TRUNC), b\"x\")'", ['bash', 'zsh', 'dash']],
+  // round 6's sixth commit: the members the round's verifiers measured that no rule of the commit reads (the rows the commit refuses moved to its rows test)
+  ['RT-self-call-at-head', 'a reader outside the roads', null, 'c() { "$@"; }; c c cp ../base/report.md report.md', ['bash', 'zsh', 'dash']],   // the body's call of itself is not followed again (fnChain), and the operands it hands over name the writer
+  ['RT-autoload-written', 'a reader outside the roads', null, "mkdir -p ../scratch/fn; printf '%s\\n' 'cp ../base/report.md report.md' > ../scratch/fn/c; fpath=(../scratch/fn $fpath); autoload c; c", ['zsh']],   // zsh loads the function from a file the command wrote (bash and dash have no autoload; the array assignment stops dash)
+  ['RT-source-through-name', 'a reader outside the roads', null, "s=.; printf '%s\\n' 'cp ../base/report.md report.md' > ../scratch/s.sh; $s ../scratch/s.sh", ['bash', 'zsh', 'dash']],   // the name resolves to `.`, which sources a file the command wrote (its contents are not in the command)
+  ['RT-nsenter', 'a reader outside the roads', 'nsenter', 'nsenter cp ../base/report.md report.md', ['bash', 'zsh', 'dash']],   // a wrapper outside the set (named on the contract's list of unlisted wrappers)
+  ['RT-tmux-new', 'a reader outside the roads', 'tmux', 'tmux -L rompguardtest new -d cp ../base/report.md report.md; while tmux -L rompguardtest has-session 2>/dev/null; do sleep 0.1; done', ['bash', 'zsh', 'dash']],   // a program that runs a command in a session of its own (a private socket; the loop waits for the session to end, so the row measures the write)
+  ['RT-alias-sourced-heredoc', 'a reader outside the roads', null, "cat > ../scratch/a.sh <<'EOF'\nalias c=cp\nEOF\n. ../scratch/a.sh\nc ../base/report.md report.md", ['dash']],   // an alias in a sourced written file, the file written through a here-document (RT-alias-sourced-written is the printf spelling)
+  ['RT-fresh-shell-positional-head', 'a command name the resolver never reads', null, "bash -c '$1 ../base/report.md report.md' _ cp", ['bash', 'zsh', 'dash']],   // a fresh shell's own positional parameters, the arguments after its script, which the guard does not read
+  ['RT-fresh-shell-positional-eval', 'a script held in a variable', null, "bash -c 'eval \"$1\"' _ 'cp ../base/report.md report.md'", ['bash', 'zsh', 'dash']],
+  ['RT-read-trap', 'a script held in a variable', null, "read -r t <<< 'cp ../base/report.md report.md'; trap \"$t\" EXIT", ['bash', 'zsh']],   // a `read` value as the trap action (dash has no here-string)
+  ['RT-read-in-c-head', 'a script held in a variable', null, "echo 'cp ../base/report.md report.md' | bash -c 'read -r x; $x'", ['bash', 'zsh', 'dash']],   // a `read` inside the `-c` script, fed by the pipe: the name is read through a construct the resolver does not follow
+  ['RT-read-in-c-eval', 'a script held in a variable', null, "echo 'cp ../base/report.md report.md' | bash -c 'read -r x; eval \"$x\"'", ['bash', 'zsh', 'dash']],
 ];
 test("round 6, second commit, THE RESIDUAL TABLE: every shape the round could name that still reaches a tracked file, run through the hook (allowed) and the shells (the writers as measured), each under a class of THE RESIDUAL PROPERTY, and the property's paragraph on the hook header names every class", () => {
   const w = sixthPassWorld();
@@ -8102,12 +8099,12 @@ test("round 6, fifth commit, the rows: the parameter's value joins a default wor
       ['R6V-S-heredoc', 'nad', `BASH_ENV=/dev/stdin bash -c : <<'EOF'\n${CP}\nEOF`, A, 'name'],
       ['R6V-S-exec-fd3-cost', 'nad', `exec 3<<< '${CP}'; BASH_ENV=/dev/fd/3 bash -c :`, N, 'name'],   // the cost: read as fed, while bash reads no startup file there
       // (6) THE EXPORTED FUNCTION
-      ['R6V-F-env-at', 'nad', `env 'BASH_FUNC_c%%=() { cp "$@"; }' bash -c 'c ${CP.slice(3)}'`, A, ['text', SPLIT]],
+      ['R6V-F-env-at', 'nad', `env 'BASH_FUNC_c%%=() { cp "$@"; }' bash -c 'c ${CP.slice(3)}'`, A, 'name'],   // round 6's sixth commit (THE POSITIONAL VALUE): the call replays the body with its operands, so the copy is refused by name (as split before)
       ['R6V-F-env-literal', 'nad', `env 'BASH_FUNC_c%%=() { ${CP}; }' bash -c c`, A, 'name'],
       ['R6V-F-env-i', 'nad', `env -i 'BASH_FUNC_c%%=() { ${CP}; }' /usr/bin/bash -c c`, A, 'name'],
       ['R6V-F-env-piped', 'nad', `echo c | env 'BASH_FUNC_c%%=() { ${CP}; }' bash`, A, 'name'],
       ['R6V-F-env-s', 'nad', `env 'BASH_FUNC_c%%=() { ${CP}; }' bash -s <<< c`, BZ, 'name'],
-      ['R6V-F-env-shadow-cat', 'nad', `env 'BASH_FUNC_cat%%=() { command cp "$@"; }' bash -c 'cat ${CP.slice(3)}'`, A, ['text', SPLIT]],
+      ['R6V-F-env-shadow-cat', 'nad', `env 'BASH_FUNC_cat%%=() { command cp "$@"; }' bash -c 'cat ${CP.slice(3)}'`, A, 'name'],
       ['R6V-F-env-sh-cost', 'nad', `env 'BASH_FUNC_c%%=() { ${CP}; }' sh -c c`, N, 'name'],   // the cost: dash imports nothing
       // (7) THE SPLICED DEFINITION
       ['R6V-A-alias-of-alias', 'nad', `alias a=alias\na c=cp\nc ${CP.slice(3)}`, D, 'name'],
@@ -8196,5 +8193,315 @@ test("round 6, fifth commit, the rows: the parameter's value joins a default wor
     assert.deepEqual(targets("a=cp; b='base/report.md docs/report.md'; eval \"$a $b\""), [report], 'two names in one text compose');
     assert.deepEqual(targets("c=c; c+=p; $c base/report.md docs/report.md"), [report], '`+=` appends');
     assert.deepEqual(targets("x=$(printf '%s' 'cp base/report.md docs/report.md'); $x"), [report], 'a value the output model resolves on the script road is a candidate');
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+// Round 6's sixth commit (2026-09-21; the round's three verifiers on the fifth commit's head): three passes had each found roads by which a
+// text the hook could not establish reached an allow through a null, so the mechanism is fixed once and the rows follow from it. THE APPLIED
+// RESOLVER: once the resolver applies to a segment, every shape it does not model is UNRESOLVABLE (a redirection, a here-document, a `<`, a
+// substitution on the printer; a `&&`, `||`, `&` or `|` after it in a list; a redirection on the closer of the subshell or group holding it),
+// null reserved for a head that is no printer. THE UNREAD SCRIPT WORD: a script word that is no expansion and still not literal (a glob) is a
+// text the resolver cannot establish. THE SPECIAL PARAMETER: a default word over a digit or a special parameter is read or UNRESOLVABLE, never
+// an expansion the resolver never reads. THE ASSIGNED DEFAULT: `${name:=word}` gives name a candidate. THE SHELL'S OPTION WORD: an expansion
+// in option position of a shell, with words after it, stands for the texts it can or refuses as WRAPPER_OPT refuses an unknown option. THE
+// POSITIONAL VALUE: the called body's replay runs for every call and the positional parameters stand for the call's operands or a `set`'s.
+// THE EMPTY ALTERNATIVE: an empty brace alternative is a word bash drops. Each row: the hook as a process from docs/ (the verdict and its
+// reason), from a cwd in no project (allowed), and the shells run unguarded over a fresh world (the writers as measured); the twins that stay
+// allowed write in no shell; the residual table's fifteen rows these rules refuse are pinned here refused. Then THE APPLIED RESOLVER over
+// every list operator and every redirection operator the lexer has, derived from the hook's source, and the lexer's and extract's side in-process.
+test("round 6, sixth commit, the rows: a printer with a redirection or followed by an operator inside a list is UNRESOLVABLE (never null), a glob in a `-c` operand or an inline word refuses, a default word over a special or positional parameter reads or refuses, `${name:=word}` gives the name a candidate, an expansion in a shell's option position refuses or stands for its texts, the called body replays for every call with its operands in the positional parameters and a `set` binds them, an empty brace alternative is judged under bash's reading; each with the shells that write, the twins allowed with no shell writing, and the residual rows the rules refuse", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const A = ['bash', 'zsh', 'dash'];
+    const BZ = ['bash', 'zsh'];
+    const BD = ['bash', 'dash'];
+    const B = ['bash'];
+    const D = ['dash'];
+    const Z = ['zsh'];
+    const N = [];
+    const CP = 'cp ../base/report.md report.md';
+    const UNSET = "so its value is the shell's own";
+    // [id, cwd, command, the shells that write, the verdict: by name, allowed, or refused with the reason including a text (or as not literal)]
+    const rows = [
+      ['R6W-R1-echo-2devnull-pipe', 'nad', `echo 'cp ../base/report.md report.md' 2>/dev/null | bash`, A, ['text', 'whether its text reaches the stream']],
+      ['R6W-R1-printf-2devnull-pipe', 'nad', `printf '%s\\n' 'cp ../base/report.md report.md' 2>/dev/null | bash`, A, ['text', 'whether its text reaches the stream']],
+      ['R6W-R1-echo-lt-devnull-pipe', 'nad', `echo 'cp ../base/report.md report.md' </dev/null | bash`, A, ['text', 'whether its text reaches the stream']],
+      ['R6W-R1-echo-3devnull-pipe', 'nad', `echo 'cp ../base/report.md report.md' 3>/dev/null | bash`, A, ['text', 'whether its text reaches the stream']],
+      ['R6W-R1-echo-gt-devstdout-pipe', 'nad', `echo 'cp ../base/report.md report.md' >/dev/stdout | bash`, A, ['text', 'whether its text reaches the stream']],
+      ['R6W-R1-echo-gt-devfd1-pipe', 'nad', `echo 'cp ../base/report.md report.md' >/dev/fd/1 | bash`, A, ['text', 'whether its text reaches the stream']],
+      ['R6W-R1-echo-2app-devnull-pipe', 'nad', `echo 'cp ../base/report.md report.md' 2>>/dev/null | bash`, A, ['text', 'whether its text reaches the stream']],
+      ['R6W-R1-echo-2clobber-devnull-pipe', 'nad', `echo 'cp ../base/report.md report.md' 2>|/dev/null | bash`, A, ['text', 'whether its text reaches the stream']],
+      ['R6W-R1-echo-2rw-devnull-pipe', 'nad', `echo 'cp ../base/report.md report.md' 2<>/dev/null | bash`, A, ['text', 'whether its text reaches the stream']],
+      ['R6W-R1-echo-heredoc-subshell-pipe', 'nad', `(echo 'cp ../base/report.md report.md' <<'EOF'\nx\nEOF\n) | bash`, A, ['text', 'whether its text reaches the stream']],
+      ['R6W-R1-echo-herestring-subshell-pipe', 'nad', `(echo 'cp ../base/report.md report.md' <<< x) | bash`, BZ, ['text', 'whether its text reaches the stream']],
+      ['R6W-R1-group-echo-2devnull-pipe', 'nad', `{ echo 'cp ../base/report.md report.md' 2>/dev/null; } | bash`, A, ['text', 'whether its text reaches the stream']],
+      ['R6W-R1-bash-c-sub-echo-2devnull', 'nad', `bash -c "$(echo 'cp ../base/report.md report.md' 2>/dev/null)"`, A, ['text', 'whether its text reaches the stream']],
+      ['R6W-R1-herestring-sub-echo-2devnull', 'nad', `bash <<< "$(echo 'cp ../base/report.md report.md' 2>/dev/null)"`, BZ, ['text', 'whether its text reaches the stream']],
+      ['R6W-R1-procsub-echo-2devnull', 'nad', `bash <(echo 'cp ../base/report.md report.md' 2>/dev/null)`, BZ, ['text', 'whether its text reaches the stream']],
+      ['R6W-R1-heredoc-sub-echo-2devnull', 'nad', `bash <<EOF\n$(echo 'cp ../base/report.md report.md' 2>/dev/null)\nEOF`, A, ['text', 'whether its text reaches the stream']],
+      ['R6W-R1-echo-2devnull-pipe-sh', 'nad', `echo 'cp ../base/report.md report.md' 2>/dev/null | sh`, A, ['text', 'whether its text reaches the stream']],
+      ['R6W-R1-echo-2devnull-pipe-dash', 'nad', `echo 'cp ../base/report.md report.md' 2>/dev/null | dash`, A, ['text', 'whether its text reaches the stream']],
+      ['R6W-R1-echo-2devnull-pipe-zsh', 'nad', `echo 'cp ../base/report.md report.md' 2>/dev/null | zsh`, A, ['text', 'whether its text reaches the stream']],
+      ['R6W-R1-echo-2devnull-pipe-devstdin', 'nad', `echo 'cp ../base/report.md report.md' 2>/dev/null | bash /dev/stdin`, A, ['text', 'whether its text reaches the stream']],
+      ['R6W-R1-zsh-multios-devnull', 'nad', `echo 'cp ../base/report.md report.md' >/dev/null | bash`, Z, ['text', 'whether its text reaches the stream']],
+      ['R6W-R1-zsh-multios-file', 'nad', `echo 'cp ../base/report.md report.md' >../scratch/o.txt | bash`, Z, ['text', 'whether its text reaches the stream']],
+      ['R6W-R1-zsh-multios-append', 'nad', `echo 'cp ../base/report.md report.md' >>../scratch/o.txt | bash`, Z, ['text', 'whether its text reaches the stream']],
+      ['R6W-R1-zsh-multios-amp', 'nad', `echo 'cp ../base/report.md report.md' &>/dev/null | bash`, Z, ['text', 'whether its text reaches the stream']],
+      ['R6W-R1-ctl-dup-1', 'nad', `echo 'cp ../base/report.md report.md' >&1 | bash`, A, 'name'],
+      ['R6W-R1-ctl-dup-1-1', 'nad', `echo 'cp ../base/report.md report.md' 1>&1 | bash`, A, 'name'],
+      ['R6W-R1-ctl-dup-2-1', 'nad', `echo 'cp ../base/report.md report.md' 2>&1 | bash`, A, 'name'],
+      ['R6W-R1-ctl-close-2', 'nad', `echo 'cp ../base/report.md report.md' 2>&- | bash`, A, 'name'],
+      ['R6W-R1-ctl-subshell-dup', 'nad', `(echo 'cp ../base/report.md report.md' >&2) 2>&1 | bash`, A, 'name'],
+      ['R6W-R1-and-true-subshell', 'nad', `(echo 'cp ../base/report.md report.md' && true) | bash`, A, ['text', 'an operator outside the model']],
+      ['R6W-R1-or-true-subshell', 'nad', `(echo 'cp ../base/report.md report.md' || true) | bash`, A, ['text', 'an operator outside the model']],
+      ['R6W-R1-and-colon-subshell', 'nad', `(echo 'cp ../base/report.md report.md' && :) | bash`, A, ['text', 'an operator outside the model']],
+      ['R6W-R1-and-true-group', 'nad', `{ echo 'cp ../base/report.md report.md' && true; } | bash`, A, ['text', 'an operator outside the model']],
+      ['R6W-R1-true-then-and', 'nad', `(true; echo 'cp ../base/report.md report.md' && true) | bash`, A, ['text', 'an operator outside the model']],
+      ['R6W-R1-and-newline', 'nad', `(echo 'cp ../base/report.md report.md' &&\ntrue) | bash`, A, ['text', 'an operator outside the model']],
+      ['R6W-R1-bash-c-sub-and', 'nad', `bash -c "$(echo 'cp ../base/report.md report.md' && true)"`, A, ['text', 'an operator outside the model']],
+      ['R6W-R1-bash-c-sub-or', 'nad', `bash -c "$(echo 'cp ../base/report.md report.md' || true)"`, A, ['text', 'an operator outside the model']],
+      ['R6W-R1-herestring-sub-and', 'nad', `bash <<< "$(echo 'cp ../base/report.md report.md' && true)"`, BZ, ['text', 'an operator outside the model']],
+      ['R6W-R1-procsub-and', 'nad', `bash <(echo 'cp ../base/report.md report.md' && true)`, BZ, ['text', 'an operator outside the model']],
+      ['R6W-R1-value-and-head', 'nad', `x=$(echo 'cp ../base/report.md report.md' && true); $x`, BD, ['text', 'could not establish that text']],
+      ['R6W-R1-value-or-eval', 'nad', `x=$(echo 'cp ../base/report.md report.md' || true); eval "$x"`, A, ['text', 'could not establish that text']],
+      ['R6W-R1-and-cat-pipe', 'nad', `(echo 'cp ../base/report.md report.md' && true) | cat | bash`, A, ['text', 'an operator outside the model']],
+      ['R6W-R1-and-zsh', 'nad', `(echo 'cp ../base/report.md report.md' && true) | zsh`, A, ['text', 'an operator outside the model']],
+      ['R6W-R1-and-sh', 'nad', `(echo 'cp ../base/report.md report.md' && true) | sh`, A, ['text', 'an operator outside the model']],
+      ['R6W-R1-ctl-mirror-and', 'nad', `(true && echo 'cp ../base/report.md report.md') | bash`, A, ['text', 'the text printed is not known']],
+      ['R6W-R1-ctl-mirror-or', 'nad', `(false || echo 'cp ../base/report.md report.md') | bash`, A, ['text', 'the text printed is not known']],
+      ['R6W-R2a-bash-c-star', 'nad', `bash -c cp\\ ../base/*.md\\ report.md`, BD, ['text', 'glob character']],
+      ['R6W-R2a-bash-c-bracket', 'nad', `bash -c cp\\ ../base/report.md\\ [r]eport.md`, BD, ['text', 'glob character']],
+      ['R6W-R2a-bash-c-qmark', 'nad', `bash -c cp\\ ../base/report.md\\ ?eport.md`, BD, ['text', 'glob character']],
+      ['R6W-R2a-bash-c-restar', 'nad', `bash -c cp\\ ../base/re*.md\\ report.md`, BD, ['text', 'glob character']],
+      ['R6W-R2a-bash-c-mq', 'nad', `bash -c cp\\ ../base/report.md\\ report.m?`, BD, ['text', 'glob character']],
+      ['R6W-R2a-sh-c-star', 'nad', `sh -c cp\\ ../base/*.md\\ report.md`, BD, ['text', 'glob character']],
+      ['R6W-R2a-dash-c-star', 'nad', `dash -c cp\\ ../base/*.md\\ report.md`, BD, ['text', 'glob character']],
+      ['R6W-R2a-eval-star', 'nad', `eval cp\\ ../base/*.md\\ report.md`, BD, ['text', 'glob character']],
+      ['R6W-R2a-python-c-star', 'nad', `python3 -c open\\(\\"report.md\\",\\"w\\"\\).write\\(\\"*\\"\\)`, BD, ['text', 'glob character']],
+      ['R6W-R2a-node-e-star', 'nad', `node -e require\\(\\"fs\\"\\).writeFileSync\\(\\"report.md\\",\\"*\\"\\)`, BD, ['text', 'glob character']],
+      ['R6W-R2a-ctl-sq', 'nad', `bash -c 'cp ../base/*.md report.md'`, A, 'name'],
+      ['R6W-R2a-ctl-ansi', 'nad', `bash -c $'cp ../base/*.md report.md'`, BZ, 'name'],
+      ['R6W-R2a-ctl-escaped-star', 'nad', `bash -c cp\\ ../base/\\*.md\\ report.md`, A, 'name'],
+      ['R6W-R2a-ctl-no-glob', 'nad', `bash -c cp\\ ../base/report.md\\ report.md`, A, 'name'],
+      ['R6W-R2b-colon-plus-hash', 'nad', `\${#:+cp} ../base/report.md report.md`, A, 'name'],
+      ['R6W-R2b-plus-hash', 'nad', `\${#+cp} ../base/report.md report.md`, A, 'name'],
+      ['R6W-R2b-colon-plus-q', 'nad', `\${?:+cp} ../base/report.md report.md`, A, 'name'],
+      ['R6W-R2b-plus-q', 'nad', `\${?+cp} ../base/report.md report.md`, A, 'name'],
+      ['R6W-R2b-colon-plus-0', 'nad', `\${0:+cp} ../base/report.md report.md`, A, 'name'],
+      ['R6W-R2b-plus-0', 'nad', `\${0+cp} ../base/report.md report.md`, A, 'name'],
+      ['R6W-R2b-colon-plus-dollar', 'nad', `\${$:+cp} ../base/report.md report.md`, A, 'name'],
+      ['R6W-R2b-plus-dollar', 'nad', `\${$+cp} ../base/report.md report.md`, A, 'name'],
+      ['R6W-R2b-colon-plus-dash', 'nad', `\${-:+cp} ../base/report.md report.md`, BZ, 'name'],
+      ['R6W-R2b-plus-dash', 'nad', `\${-+cp} ../base/report.md report.md`, A, 'name'],
+      ['R6W-R2b-dq-hash', 'nad', `"\${#:+cp}" ../base/report.md report.md`, A, 'name'],
+      ['R6W-R2b-hash-dq-word', 'nad', `\${#:+"cp"} ../base/report.md report.md`, A, 'name'],
+      ['R6W-R2b-hash-glued', 'nad', `\${#:+c}p ../base/report.md report.md`, A, 'name'],
+      ['R6W-R2b-hash-whole', 'nad', `\${#:+cp ../base/report.md report.md}`, BD, 'name'],
+      ['R6W-R2b-1-dash', 'nad', `\${1:-cp} ../base/report.md report.md`, A, ['text', UNSET]],
+      ['R6W-R2b-9-dash', 'nad', `\${9:-cp} ../base/report.md report.md`, A, ['text', UNSET]],
+      ['R6W-R2b-10-dash', 'nad', `\${10:-cp} ../base/report.md report.md`, A, ['text', UNSET]],
+      ['R6W-R2b-at-dash', 'nad', `\${@:-cp} ../base/report.md report.md`, A, ['text', 'special parameter']],
+      ['R6W-R2b-star-dash', 'nad', `\${*:-cp} ../base/report.md report.md`, A, ['text', 'special parameter']],
+      ['R6W-R2b-bang-dash', 'nad', `\${!:-cp} ../base/report.md report.md`, BD, ['text', 'special parameter']],
+      ['R6W-R2b-set-1-plus', 'nad', `set -- x; \${1:+cp} ../base/report.md report.md`, A, 'name'],
+      ['R6W-R2b-set-empty-1-dash', 'nad', `set -- ; \${1:-cp} ../base/report.md report.md`, A, ['text', UNSET]],
+      ['R6W-R2b-dollar-bash-c', 'nad', `\${$:+bash} -c 'cp ../base/report.md report.md'`, A, 'name'],
+      ['R6W-R2b-piped-hash-bash', 'nad', `echo 'cp ../base/report.md report.md' | \${#:+bash}`, A, 'name'],
+      ['R6W-R2b-hash-eval', 'nad', `\${#:+eval} 'cp ../base/report.md report.md'`, A, 'name'],
+      ['R6W-R2b-hash-source-procsub', 'nad', `\${#:+.} <(echo 'cp ../base/report.md report.md')`, BZ, 'name'],
+      ['R6W-R2b-ctl-PWD', 'nad', `\${PWD:+cp} ../base/report.md report.md`, A, 'name'],
+      ['R6W-R2b-ctl-HOME', 'nad', `\${HOME:+cp} ../base/report.md report.md`, A, 'name'],
+      ['R6W-R2b-ctl-c-unset', 'nad', `\${c:-cp} ../base/report.md report.md`, A, ['text', UNSET]],
+      ['R6W-R2b-ctl-c-set-plus', 'nad', `c=1; \${c:+cp} ../base/report.md report.md`, A, 'name'],
+      ['R6W-R2b-length-twin', 'nad', `echo \${#x}; cp ../base/report.md report.md`, A, 'name'],
+      ['R6W-R2b-length-dash-twin', 'nad', `echo \${#-}`, N, 'allow'],
+      ['R6W-R2c-colon-assign', 'nad', `: \${e:=cp}; $e ../base/report.md report.md`, A, 'name'],
+      ['R6W-R2c-assign', 'nad', `: \${e=cp}; $e ../base/report.md report.md`, A, 'name'],
+      ['R6W-R2c-dq-colon-assign', 'nad', `: "\${e:=cp}"; "$e" ../base/report.md report.md`, A, 'name'],
+      ['R6W-R2c-true', 'nad', `true \${e:=cp}; $e ../base/report.md report.md`, A, 'name'],
+      ['R6W-R2c-echo-devnull', 'nad', `echo \${e:=cp} >/dev/null; $e ../base/report.md report.md`, A, 'name'],
+      ['R6W-R2c-bash-c', 'nad', `: \${e:=cp}; bash -c "$e ../base/report.md report.md"`, A, 'name'],
+      ['R6W-R2c-eval', 'nad', `: \${e:=cp}; eval "$e ../base/report.md report.md"`, A, 'name'],
+      ['R6W-R2c-whole-eval', 'nad', `: \${e:='cp ../base/report.md report.md'}; eval "$e"`, A, 'name'],
+      ['R6W-R2c-two', 'nad', `: \${e:=c}\${f:=p}; $e$f ../base/report.md report.md`, A, 'name'],
+      ['R6W-R2c-glued', 'nad', `: \${e:=c}; \${e}p ../base/report.md report.md`, A, 'name'],
+      ['R6W-R2c-x-assign', 'nad', `x=\${e:=cp}; $e ../base/report.md report.md`, A, 'name'],
+      ['R6W-R2c-cd', 'nad', `: \${e:=cd}; $e ../notes; cp ../base/report.md n1.md`, A, 'name'],
+      ['R6W-R2c-empty-first', 'nad', `e=; : \${e:=cp}; $e ../base/report.md report.md`, A, 'name'],
+      ['R6W-R2c-ctl-head', 'nad', `\${e:=cp} ../base/report.md report.md`, A, 'name'],
+      ['R6W-R2c-ctl-d-assign', 'nad', `d=\${e:=cp}; $d ../base/report.md report.md`, A, ['text', 'could not establish that text']],
+      ['R6W-R3-set-1-bash', 'nad', `set -- -c; bash "$1" 'cp ../base/report.md report.md'`, A, 'name'],
+      ['R6W-R3-set-1-sh', 'nad', `set -- -c; sh "$1" 'cp ../base/report.md report.md'`, A, 'name'],
+      ['R6W-R3-set-1-dash', 'nad', `set -- -c; dash "$1" 'cp ../base/report.md report.md'`, A, 'name'],
+      ['R6W-R3-set-1-zsh', 'nad', `set -- -c; zsh "$1" 'cp ../base/report.md report.md'`, A, 'name'],
+      ['R6W-R3-set-at', 'nad', `set -- -c 'cp ../base/report.md report.md'; bash "$@"`, A, 'name'],
+      ['R6W-R3-default-unset-colon', 'nad', `bash "\${f:--c}" 'cp ../base/report.md report.md'`, A, ['text', UNSET]],
+      ['R6W-R3-default-unset', 'nad', `bash \${f--c} 'cp ../base/report.md report.md'`, A, ['text', UNSET]],
+      ['R6W-R3-default-set-readable', 'nad', `f=-c; bash \${f-x} 'cp ../base/report.md report.md'`, A, 'name'],
+      ['R6W-R3-array', 'nad', `a=(-c); bash "\${a[@]}" 'cp ../base/report.md report.md'`, BZ, ['text', 'option or the script operand']],
+      ['R6W-R3-for', 'nad', `for f in -c; do bash $f 'cp ../base/report.md report.md'; done`, A, ['text', 'option or the script operand']],
+      ['R6W-R3-function', 'nad', `f() { bash "$1" "$2"; }; f -c 'cp ../base/report.md report.md'`, A, 'name'],
+      ['R6W-R3-read', 'nad', `read -r f <<< -c; bash $f 'cp ../base/report.md report.md'`, BZ, ['text', 'option or the script operand']],
+      ['R6W-R3-printf-v', 'nad', `printf -v f -- -c; bash $f 'cp ../base/report.md report.md'`, BZ, ['text', 'option or the script operand']],
+      ['R6W-R3-cat-heredoc-sub', 'nad', `bash $(cat <<'E'\n-c\nE\n) 'cp ../base/report.md report.md'`, A, 'name'],
+      ['R6W-R3-brace-bash', 'nad', `bash {-c,} 'cp ../base/report.md report.md'`, B, 'name'],
+      ['R6W-R3-brace-sh', 'nad', `sh {-c,} 'cp ../base/report.md report.md'`, B, 'name'],
+      ['R6W-R3-brace-dash', 'nad', `dash {-c,} 'cp ../base/report.md report.md'`, B, 'name'],
+      ['R6W-R3-brace-o-errexit', 'nad', `bash -o errexit {-c,} 'cp ../base/report.md report.md'`, B, 'name'],
+      ['R6W-R3-brace-nested', 'nad', `bash -c 'bash {-c,} "cp ../base/report.md report.md"'`, A, 'name'],
+      ['R6W-R3-ctl-f-readable', 'nad', `f=-c; bash $f 'cp ../base/report.md report.md'`, A, 'name'],
+      ['R6W-R3-ctl-echo-sub', 'nad', `bash $(echo -c) 'cp ../base/report.md report.md'`, A, 'name'],
+      ['R6W-R3-ctl-sq-c', 'nad', `bash '-c' 'cp ../base/report.md report.md'`, A, 'name'],
+      ['R6W-R3-ctl-escaped-c', 'nad', `bash \\-c 'cp ../base/report.md report.md'`, A, 'name'],
+      ['R6W-R3-ctl-ansi-c', 'nad', `bash $'-c' 'cp ../base/report.md report.md'`, BZ, 'name'],
+      ['R6W-R3-ctl-brace-seq', 'nad', `bash -{c..c} 'cp ../base/report.md report.md'`, BZ, 'name'],
+      ['R6W-R4-bash-at-c', 'nad', `f() { bash "$@"; }; f -c 'cp ../base/report.md report.md'`, A, 'name'],
+      ['R6W-R4-bash-at-procsub', 'nad', `f() { bash "$@"; }; f <(echo 'cp ../base/report.md report.md')`, BZ, 'name'],
+      ['R6W-R4-bash-c-1', 'nad', `f() { bash -c "$1"; }; f 'cp ../base/report.md report.md'`, A, 'name'],
+      ['R6W-R4-bash-c-star', 'nad', `f() { bash -c "$*"; }; f cp ../base/report.md report.md`, A, 'name'],
+      ['R6W-R4-eval-1', 'nad', `f() { eval "$1"; }; f 'cp ../base/report.md report.md'`, A, 'name'],
+      ['R6W-R4-at-head', 'nad', `f() { "$@"; }; f cp ../base/report.md report.md`, A, 'name'],
+      ['R6W-R4-1-head', 'nad', `f() { $1 ../base/report.md report.md; }; f cp`, A, 'name'],
+      ['R6W-R4-at-head-t', 'nad', `f() { "$@"; }; f cp -t . ../base/report.md`, A, 'name'],
+      ['R6W-R4-nested', 'nad', `g() { "$@"; }; f() { g "$@"; }; f cp ../base/report.md report.md`, A, 'name'],
+      ['R6W-R4-c-bash-c-star', 'nad', `c() { bash -c "$*"; }; c 'cp ../base/report.md report.md'`, A, 'name'],
+      ['R6W-R4-c-sh-c-1', 'nad', `c() { sh -c "$1"; }; c 'cp ../base/report.md report.md'`, A, 'name'],
+      // R4-c-c-cp: a residual-table row (allowed, writes)
+      ['R6W-T-brace-cp', 'nad', `{cp,} ../base/report.md report.md`, B, 'name'],
+      ['R6W-T-brace-mv', 'nad', `{mv,} ../base/report.md report.md`, B, 'name'],
+      ['R6W-T-brace-bash', 'nad', `{bash,} -c 'cp ../base/report.md report.md'`, B, 'name'],
+      ['R6W-T-brace-tee', 'nad', `{tee,} report.md < ../base/report.md`, B, 'name'],
+      ['R6W-T-autoload', 'nad', `printf '%s\\n' 'cp ../base/report.md report.md' > ../scratch/fn/c; fpath=(../scratch/fn $fpath); autoload c; c`, N, 'allow'],
+      // T-autoload-mkdir: a residual-table row (allowed, writes)
+      // T-dot-var: a residual-table row (allowed, writes)
+      // T-nsenter: a residual-table row (allowed, writes)
+      // T-tmux: a residual-table row (allowed, writes)
+      // T-sourced-alias-file: a residual-table row (allowed, writes)
+      ['R6W-T-set-trap-1', 'nad', `set -- 'cp ../base/report.md report.md'; trap "$1" EXIT`, A, 'name'],
+      // T-read-trap: a residual-table row (allowed, writes)
+      ['R6W-T-set-eval-1', 'nad', `set -- cp; eval "$1" ../base/report.md report.md`, A, 'name'],
+      ['R6W-T-set-eval-star', 'nad', `set -- cp ../base/report.md report.md; eval "$*"`, A, 'name'],
+      ['R6W-T-set-eval-at', 'nad', `set -- cp ../base/report.md report.md; eval "$@"`, A, 'name'],
+      ['R6W-T-set-bash-c-1', 'nad', `set -- 'cp ../base/report.md report.md'; bash -c "$1"`, A, 'name'],
+      // T-read-x-head: a residual-table row (allowed, writes)
+      // T-read-x-eval: a residual-table row (allowed, writes)
+      // N-tmux-wait: a residual-table row (allowed, writes)
+      // N-fresh-positional-head: a residual-table row (allowed, writes)
+      // N-fresh-positional-eval: a residual-table row (allowed, writes)
+      ['R6W-N-set-then-fn', 'nad', `set -- cp; f() { $1 ../base/report.md report.md; }; f cat`, N, 'allow'],
+      ['R6W-N-fn-then-set', 'nad', `f() { $1 ../base/report.md report.md; }; set -- cp; f cat`, N, 'allow'],
+      ['R6W-N-fn-eval-shift', 'nad', `f() { eval shift; "$@"; }; f x cp ../base/report.md report.md`, A, 'name'],
+      ['R6W-N-fn-source-stdin-set', 'nad', `f() { . /dev/stdin <<< 'set -- cp'; "$@" ../base/report.md report.md; }; f cat`, BZ, 'name'],
+      ['R6W-N-eval-set-then', 'nad', `eval 'set -- cp'; "$@" ../base/report.md report.md`, A, 'name'],
+      ['R6W-N-set-shift', 'nad', `set -- x cp; shift; "$@" ../base/report.md report.md`, A, 'name'],
+      ['R6W-N-set-star-unquoted', 'nad', `set -- 'cp ../base/report.md' report.md; $*`, BD, 'name'],
+      ['R6W-N-set-2-only', 'nad', `set -- x 'cp ../base/report.md report.md'; eval "$2"`, A, 'name'],
+      ['R6W-N-heredoc-positional', 'nad', `f() { bash <<EOF\n$1\nEOF\n}; f 'cp ../base/report.md report.md'`, A, 'name'],
+      ['R6W-N-shift-count-var', 'nad', `n=1; set -- x cp; shift $n; "$@" ../base/report.md report.md`, A, 'name'],
+      ['R6W-N-set-nonliteral', 'nad', `c=cp; set -- $c; $1 ../base/report.md report.md`, A, 'name'],
+      ['R6W-N-set-A-zsh', 'nad', `set -- cp; set -A arr cat; $1 ../base/report.md report.md`, BZ, ['text', 'positional parameters']],
+      ['R6W-N-brace-head-empty-first', 'nad', `{,cp} ../base/report.md report.md`, B, 'name'],
+      ['R6W-N-brace-tee-empty', 'nad', `cat ../base/report.md | {tee,} report.md`, B, 'name'],
+      ['R6W-N-here-string-at', 'nad', `f() { bash <<< "$*"; }; f cp ../base/report.md report.md`, BZ, 'name'],
+      ['R6W-N-target-1', 'nad', `f() { cp ../base/report.md "$1"; }; f report.md`, A, 'name'],
+      ['R6W-N-unfed-twin', 'nad', `f() { bash; }; f`, N, 'allow'],
+      ['R6W-N-special-0-c', 'nad', `\${0:-x} -c 'cp ../base/report.md report.md'`, A, ['text', 'special parameter']],
+      ['R6W-N-echo-sub-file-pipe', 'nad', `echo "$(cat ../scratch/other.md)" | bash`, N, ['text', 'the text printed is not known']],
+      ['R6W-N-cat-heredoc-2devnull', 'nad', `(cat 2>/dev/null <<'EOF'\ncp ../base/report.md report.md\nEOF\n) | bash`, A, ['text', 'whether its text reaches the stream']],
+      ['R6W-N-closer-2devnull', 'nad', `(echo 'cp ../base/report.md report.md') 2>/dev/null | bash`, A, ['text', 'whether its text reaches the stream']],
+      ['R6W-N-time-echo-closer', 'nad', `(time echo 'cp ../base/report.md report.md') 2>/dev/null | bash`, A, ['text', 'whether its text reaches the stream']],
+      ['R6W-N-group-closer-2devnull', 'nad', `{ echo 'cp ../base/report.md report.md'; } 2>/dev/null | bash`, A, ['text', 'whether its text reaches the stream']],
+      ['R6W-N-fn-before-alias', 'nad', `f() { c ../base/report.md report.md; }\nalias c=cp\nf`, N, 'allow'],
+      ['R6W-N-alias-before-fn', 'nad', `alias c=cp\nf() { c ../base/report.md report.md; }\nf`, D, 'name'],
+      // found while closing the closer's redirection: a `<&` or a `<` alone after a `)` was a segment the lexer never kept
+      ['R6W-N-closer-dup-exec', 'nad', `exec 3< <(echo '${CP}'); (bash) <&3`, BZ, 'name'],   // the dup after the `)` reaches the exec feed (closerTexts)
+      ['R6W-N-cat-heredoc-closer-lt', 'nad', `(cat <<'EOF'\n${CP}\nEOF\n) </dev/null | bash`, A, ['text', 'whether its text reaches the stream']],   // the `<` on the closer of a printing list: UNRESOLVABLE, its segment kept
+      ['R6W-N-closer-lt-devnull-twin', 'nad', '(bash) </dev/null', N, 'allow'],
+      ['R6W-RT-positional-eval', 'nad', `set -- 'cp ../base/report.md report.md'; eval "$1"`, A, 'name'],
+      ['R6W-RT-positional-at', 'nad', `set -- cp ../base/report.md report.md; "$@"`, A, 'name'],
+      ['R6W-RT-positional-123', 'nad', `set -- cp ../base/report.md report.md; $1 "$2" "$3"`, A, 'name'],
+      ['R6W-RT-positional-star', 'nad', `set -- cp ../base/report.md report.md; $*`, A, 'name'],
+      ['R6W-RT-inner-pipe-producer', 'nad', `(echo 'cp ../base/report.md report.md' | cat) | bash`, A, ['text', 'an operator outside the model']],
+      ['R6W-RT-function-at-head', 'nad', `c() { "$@"; }; c cp ../base/report.md report.md`, A, 'name'],
+      ['R6W-RT-function-123-head', 'nad', `c() { $1 "$2" "$3"; }; c cp ../base/report.md report.md`, A, 'name'],
+      ['R6W-RT-function-1-head', 'nad', `c() { $1 ../base/report.md report.md; }; c cp`, A, 'name'],
+      ['R6W-RT-function-shift-head', 'nad', `c() { shift; "$@"; }; c x cp ../base/report.md report.md`, A, 'name'],
+      ['R6W-RT-set-split-head', 'nad', `c='cp ../base/report.md report.md'; set -- $c; $1 $2 $3`, BD, ['text', 'positional parameters']],
+      ['R6W-RT-function-star-eval', 'nad', `c() { eval "$*"; }; c cp ../base/report.md report.md`, A, 'name'],
+      ['R6W-RT-function-at-eval', 'nad', `c() { eval "$@"; }; c cp ../base/report.md report.md`, A, 'name'],
+      ['R6W-RT-colon-assign-from-name', 'nad', `c=cp; : \${d:=$c}; $d ../base/report.md report.md`, A, ['text', 'could not establish that text']],
+      ['R6W-RT-background-echo-producer', 'nad', `(echo 'cp ../base/report.md report.md' & wait) | bash`, A, ['text', 'an operator outside the model']],
+      ['R6W-RT-time-echo-producer', 'nad', `(time echo 'cp ../base/report.md report.md') 2>/dev/null | bash`, A, ['text', 'whether its text reaches the stream']],
+      // N-tmux-loop: a residual-table row (allowed, writes)
+    ];
+    const judge = (id, cwd, raw, writers, expect) => {
+      const cmd = w.fill(raw);
+      const at = w.cwds[cwd];
+      w.build();
+      const h = w.hook(cmd, at);
+      assert.ok(!h.reason.includes('an error of my own'), `${id}: no internal error: ${h.reason.split('\n')[0]}`);
+      if (expect === 'allow') assert.equal(h.status, 0, `${id}: allowed: ${cmd}: ${h.reason}`);
+      else {
+        assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`);
+        assert.ok(!/\u2014/.test(h.reason) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash, no romp noun`);
+        if (expect === 'name') assert.match(h.reason, BY_NAME_RE, `${id}: by name: ${h.reason.split('\n')[0]}`);
+        else if (expect[0] === 'text') assert.ok(h.reason.includes(expect[1]), `${id}: refused, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
+        else assert.ok(NOT_LITERAL.test(h.reason) && h.reason.includes(expect[1]), `${id}: refused as not literal, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
+      }
+      w.build();
+      assert.equal(w.hook(cmd, w.cwds.out).status, 0, `${id}: from a cwd in no project the relative write reaches no tracked file: ${cmd}`);
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+        const r = w.run(cmd, at, shell);
+        assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
+      }
+    };
+    let n = 0;
+    for (const [id, cwd, raw, writers, expect] of rows) { judge(id, cwd, raw, writers, expect); n++; }
+    assert.equal(n, 196);
+    // THE APPLIED RESOLVER over every operator the lexer has, DERIVED from its source: the list operators from endSegment's calls (beside `;`,
+    // the newline and the parentheses), the redirection operators from WRITE_REDIRECTS and the read-side kinds the lexer expects (`<`, a
+    // here-document, a here-string). Each stands on a printer before the pipe: refused as a text the resolver cannot establish, allowed from
+    // a cwd in no project, the writers by the grammars: an operator on fd 2 leaves echo's text on the pipe in every shell unless its spelling
+    // is zsh's alone (`!` after the operator, `>>|`), where bash and dash read the `!` as part of the file name or the `|` as the pipe operator,
+    // fail, and print nothing; an operator on the standard output (`&>`, `>&` and their kin, which take no descriptor) sends the text to the
+    // file in bash and dash and to both under zsh's MULTIOS; a here-string is bash's and zsh's; a here-document on the echo leaves its output
+    // as it is (the body is read after the segment ends), so that row refuses by name, the printer read as before.
+    const hookSrc = fs.readFileSync(HOOK, 'utf8');
+    const listOps = [...new Set([...hookSrc.matchAll(/endSegment\((?:'([^'\n]*)'|(or) \? '\|\|' : '\|')\)/g)].flatMap((m) => (m[2] ? ['||', '|'] : [m[1]])))].filter((op) => op !== '' && op !== ';' && op !== '\\n');
+    assert.deepEqual([...listOps].sort(), ['&', '&&', '|', '||'], 'the list operators the lexer ends a segment with, beside `;`, the newline and a parenthesis (a new one reds here and joins the sweep)');
+    const tailOf = { '&&': 'true', '||': 'true', '&': 'wait', '|': 'cat' };
+    for (const op of listOps) judge(`OP-list-${op}`, 'nad', `(echo '${CP}' ${op} ${tailOf[op]}) | bash`, A, ['text', 'an operator outside the model']);
+    const writeOps = eval(hookSrc.match(/^const WRITE_REDIRECTS = new Set\((\[[^\]]*\])\);/m)[1]);
+    assert.ok(writeOps.length >= 19 && writeOps.includes('>') && writeOps.includes('&>>|'), `WRITE_REDIRECTS read from the source (${writeOps.length} operators)`);
+    const expectedWriters = (op, fd) => (!fd ? Z : (op.includes('!') || op === '>>|' ? Z : A));
+    for (const op of writeOps) { const fd = op.includes('&') ? '' : '2'; judge(`OP-redirect-${fd}${op}`, 'nad', `echo '${CP}' ${fd}${op}/dev/null | bash`, expectedWriters(op, fd), ['text', 'whether its text reaches the stream']); }
+    judge('OP-redirect-<', 'nad', `echo '${CP}' </dev/null | bash`, A, ['text', 'whether its text reaches the stream']);
+    judge('OP-redirect-<<<', 'nad', `echo '${CP}' <<< x | bash`, BZ, ['text', 'whether its text reaches the stream']);
+    judge('OP-redirect-<<', 'nad', `echo '${CP}' <<'E' | bash\nx\nE`, A, 'name');
+    judge('OP-redirect-<<-', 'nad', `echo '${CP}' <<-'E' | bash\n\tx\n\tE`, A, 'name');
+    console.log(`# the operator sweep: ${listOps.length} list operators, ${writeOps.length + 4} redirection operators, every row refused`);
+    // the lexer's side, in-process
+    assert.ok(lex("echo 'cp a b' 2>/dev/null | bash").segments[0].printed.unresolvableReading.why.includes('stands on the echo'), 'THE APPLIED RESOLVER: a redirection on the printer is UNRESOLVABLE, never null');
+    const printedOf = (c) => lex(c).segments.filter((s) => s.printed).pop();   // the last: a printer before a `|` inside the list carries its own reading, the closer the list's
+    const whyOf = (c) => { const s = printedOf(c); return s && s.printed && s.printed.unresolvableReading ? s.printed.unresolvableReading.why : `(no unresolvable reading placed: ${s ? JSON.stringify(s.printed) : 'no printed segment'})`; };   // the mark's reason, or a text that says what was placed instead, so a missing mark fails the assertion that follows
+    assert.ok(whyOf("(echo 'cp a b' && true) | bash").includes('followed by `&&`'), 'a printer followed by && inside the list');
+    assert.ok(whyOf("(echo 'cp a b' | cat) | bash").includes('followed by `|`'), 'and by | (the inner pipe, a residual row before)');
+    assert.ok(whyOf("(echo 'cp a b') 2>/dev/null | bash").includes('stands on the subshell'), 'a redirection on the closer, placed on the segment that carries the pipe');
+    assert.equal(printedOf('(cat f) 2>/dev/null | bash'), undefined, 'no printer: no reading (the residual)');
+    assert.deepEqual(lex('${#:+cp} a b').segments[0].words[0].readings, ['cp'], 'THE SPECIAL PARAMETER: a + form is the word alone');
+    assert.ok(lex('${#:-cp} a b').segments[0].words[0].unresolvableReading, 'a - form over a special parameter is UNRESOLVABLE');
+    assert.deepEqual(lex('${1:-cp} a b').segments[0].words[0].readingParams.map((p) => p.name), ['1'], 'a positional parameter carries its name');
+    assert.deepEqual(lex(': ${e:=cp}').segments[0].paramAssigns, [{ name: 'e', texts: ['cp'] }], 'THE ASSIGNED DEFAULT is recorded on the segment');
+    assert.deepEqual(lex(': ${e:=$(cat f)}').segments[0].paramAssigns, [{ name: 'e', texts: null }], 'a word the resolver cannot establish marks the name');
+    assert.deepEqual(lex('{cp,} a b').segments[0].words.map((x) => [x.text, !!x.braceEmpty]), [['cp', false], ['', true], ['a', false], ['b', false]], 'THE EMPTY ALTERNATIVE is marked');
+    // extract's side, in-process over the scratch project
+    assert.deepEqual(targets("f() { bash \"$@\"; }; f -c 'cp base/report.md docs/report.md'"), [report], "THE POSITIONAL VALUE: the replay reads the call's operands where the shell's option stands");
+    assert.deepEqual(targets('set -- cp base/report.md docs/report.md; "$@"'), [report], 'a `set` binds them for this shell');
+    assert.deepEqual(targets("eval 'set -- cp'; \"$@\" base/report.md docs/report.md"), [report], 'a set inside an eval is adopted');
+    assert.deepEqual(targets(': ${e:=cp}; $e base/report.md docs/report.md'), [report], 'THE ASSIGNED DEFAULT is a candidate of the name');
+    assert.deepEqual(targets("f() { c base/report.md docs/report.md; }\nalias c=cp\nf"), [], "an alias bound after the definition does not reach the body (the replay reads it as of the definition's line)");
+    assert.deepEqual(targets('set -- cp; f() { $1 base/report.md docs/report.md; }; f cat'), [], "a body being defined has positional parameters of its own");
   } finally { process.env.HOME = savedHome; w.rm(); }
 });

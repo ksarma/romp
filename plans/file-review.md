@@ -4594,31 +4594,97 @@ document stands on its own, each with the reasoning it was given.
     script from a tracked cwd; `cat -n` before a pipe fed a text; `exec 3<<< ..; BASH_ENV=/dev/fd/3 bash -c :` (bash
     does not read it there); `env 'BASH_FUNC_..' sh -c c` (dash imports nothing); a function calling itself before its
     shell.
+    ROUND 6, SIXTH COMMIT (2026-09-21; the round's three verifiers on the fifth commit's head, an attack lens, a
+    residuals lens and the body auditor: every finding a command a shell wrote onto the tracked file while the guard
+    allowed it, three of them roads by which a text the hook could not establish reached an allow through a null; the
+    mechanism is fixed once, stated here, and the rows follow from it). THE APPLIED RESOLVER (printerOf,
+    shapeOnPrinter, segmentOutput, listOutput, closerOutput): once the resolver applies to a segment (its head is a
+    literal echo or printf, or a cat fed a here-document, alone or in a list or group of them), every shape it does
+    not model is UNRESOLVABLE, never null: a redirection, a here-document, a `<`, a substitution or an arithmetic body
+    on the printer (`echo 'cp a b' 2>/dev/null | bash`, `</dev/null`, `3>/dev/null`, `>/dev/stdout`, `2>>`, `2>|`,
+    `2<>`, zsh's MULTIOS write forms, the same inside `$(..)`, a here-string, a `<(..)` and a here-document, each ran
+    the text in the shells named while the printer was dropped as outside the model and the list read as
+    printer-less), a `&&`, `||`, `&` or `|` after it inside a list (`(echo 'cp a b' && true) | bash` and its `||`, `&
+    wait` and `| cat` forms ran the text in every shell), and a redirection on the closer of the subshell or group
+    holding it (`(echo ..) 2>/dev/null | bash`, `(time echo ..) 2>/dev/null | bash`); null is reserved for a segment
+    whose head is no printer at all, the residual the property names; pinned by execution over every list operator and
+    every redirection operator the lexer has. THE UNREAD SCRIPT WORD (scriptTexts): a script word that is no expansion
+    and still not literal (a glob character, a brace list past the cap, a quoting whose reading depends on the shell)
+    is a text the resolver cannot establish, refused (`bash -c cp\ ../base/*.md\ report.md`, `[r]eport.md`,
+    `?eport.md`, the same through `sh -c`, `dash -c` and `eval`, python's and node's inline words holding a `*`, each
+    ran in bash and dash while no text was read and nothing was refused). THE SPECIAL PARAMETER (lex's braceParameter,
+    defaultWordReading): a default word over a digit run or a special parameter is a default word too; the `+` forms
+    stand for the word alone, a `-`, `=` or `?` form over `#`, `?`, `0`, `$`, `!`, `-`, `@` or `*` stands for a value
+    that is the shell's own, UNRESOLVABLE, and one over a positional parameter carries the name to THE POSITIONAL
+    VALUE (`${#:+cp} a b`, `${0:+cp}`, `${$:+bash} -c '..'`, `${1:-cp} a b`, `${@:-cp}`, `${!:-cp}`, `${0:-x} -c '..'`
+    ran the copy in the shells named while the grammar read names alone). THE ASSIGNED DEFAULT (lex's paramAssigns,
+    extract's noteCandidates): `${name:=word}` and `${name=word}` give name word's texts as candidates, a word the
+    resolver cannot establish marking the name (`: ${e:=cp}; $e a b`, `true ${e:=cp}`, `x=${e:=cp}`, `: ${e:=cd}; $e
+    ../notes; cp ..`, `: ${e:='cp a b'}; eval "$e"` ran in every shell while the assignment was recorded nowhere). THE
+    SHELL'S OPTION WORD (shellScript's optionWord, the walk's readShell): a word in option position of a shell in
+    SHELLS, with words after it, that the resolver did not read stands for each text it can (its readings, a
+    candidate, a positional), the shell read again with each in its place, and for none is refused on the side
+    WRAPPER_OPT takes for an option a wrapper's table does not know, every later word a target the hook cannot read;
+    as the last word it is the operand, so `bash -c "$x"` keeps the residual (`set -- -c; bash "$1" 'cp a b'`, `bash
+    "${f:--c}" ..`, `f=-c; bash ${f-x} ..`, `a=(-c); bash "${a[@]}" ..`, `bash {-c,} ..` ran the script in the shells
+    named while the expansion was taken as the script FILE operand and the `-c` it stood for was never seen). THE
+    POSITIONAL VALUE (bindPositionals, positionalWords, expandPositionals, setOperands, positionalsApply, the walk;
+    CANDIDATE_TOKEN and RESOLVED_NAME take a digit, `$@` and `$*`): THE CALLED BODY's replay runs for every call, fed
+    or not (`f() { bash "$@"; }; f -c 'cp a b'`, `f() { bash -c "$1"; }`, `"$*"`, `eval "$1"`, `"$@"` and `$1` as the
+    command name, a nested call, `f() { bash <<< "$1"; }`, `eval "cp $1 $2"` ran in every shell while the replay ran
+    for a fed call alone), and the positional parameters this shell holds are the replayed call's operands or those a
+    `set` with no option word gave (`set -- 'cp a b'; eval "$1"`, `set -- cp a b; "$@"`, `$*`, `set -- x cp; shift;
+    "$@" ..`), standing in place of a whole word that is one of them, read through the readability rule and THE HEAD
+    CANDIDATES for a `$N` inside a word, and joined by one blank for `"$*"` and `"$@"` in a here-string or an unquoted
+    here-document body; a `shift` by a count not read, a `set` whose operands or option words the resolver does not
+    read (`set -A` is zsh's array assignment), an `eval` of a text it does not read or a sourced file rebinds them to
+    values not known, after which a positional word is UNRESOLVABLE; a body being defined has positionals of its own
+    (`set -- cp; f() { $1 a b; }; f cat` runs cat, allowed), the replay reads a body's aliases as of the definition's
+    line (functionLines: `f() { c a b; }`, then `alias c=cp`, then `f` expands in no shell), and a fresh or fed
+    shell's positional parameters are its own, not read (`bash -c '$1 a b' _ cp`, the residual). THE EMPTY ALTERNATIVE
+    (lex's braceEmpty, the walk's variants): bash drops an unquoted empty word a brace list expands to and zsh keeps
+    it, so a writer's operands are judged under both readings and an empty word in command position is dropped (`{cp,}
+    a b`, `{mv,} a b`, `{bash,} -c '..'`, `{,cp} a b` copied in bash while the lexer's empty operand was judged as `cp
+    '' a b`, a copy no shell performs). THE RESIDUAL TABLE loses the fifteen rows these rules refuse (the positional
+    rows, the function-body rows, the inner pipe, the backgrounded and the timed echo, `${d:=$c}`) and gains the
+    members the verifiers measured that no rule reads: a function's call of itself, zsh's autoload of a written file,
+    a `.` reached through a value, nsenter, tmux, an alias in a sourced written file, a fresh shell's own positional
+    parameters, a `read` value as a trap action or inside a `-c` script; the property's second, third and fourth
+    classes are restated for them. Stated costs, each pinned with no shell writing: `echo "$(cat f)" | bash` (a
+    substitution in a printer's operand), `bash -c "$x" _ a b` (an expansion before further words), `${#-cp} a b` (a
+    `-` form over a special parameter); `bash -c "$x"` alone stays the residual and `bash -c "${x:-..}"` the fifth
+    commit's stated cost: two spellings, two rules, each stated.
     THE RESIDUAL PROPERTY. The guard refuses a write only when it resolves the command to a writer it models (the
-    writer cases of extract's switch, a write redirection, an interpreter's write call it scans) reached through a road it reads
-    (the wrapper set, the shells' script roads, the readings of the resolver, the alias and hash roads), with a target it can
-    place or cannot read. Every write that still reaches a tracked file is one the guard does not resolve to such a writer
-    through such a road, whether or not its text stands in the command, and falls in one of these classes, each measured by
-    execution in tools/romp-track-bash-guard.test.mjs (THE RESIDUAL TABLE, whose rows are the population this statement is
-    over): a writer outside the model, a program, or a write form of a program the hook models, that writes the file by its own
-    nature and is not among the write forms the hook reads (rsync, patch, tar -x, ed, ex, vim, make, shuf -o, gawk -i inplace,
-    awk's print redirect, uniq, scp, openssl -out, shred, curl -o, wget -O, find -exec, a git alias or a subcommand that writes
-    the tree, bash's history -w, zsh's sysopen and mapfile modules, sed's e command and a w command in a sed script the resolver
-    cannot read, busybox's applets); a reader outside the roads, a program that runs a command or a script the hook does not
-    follow into it (xargs, an interpreter's system, exec or subprocess call, a wrapper outside the set, a shell outside SHELLS,
-    a file the command writes and then runs or sources); a command name the resolver never reads, a command whose name is an
-    expansion of a kind the resolver does not read ("$@", $1, $*, "${a[@]}", a loop variable, a name read or filled by getopts, printf -v or a
-    nameref, ${SHELL}, a substitution outside the output model such as $(which cp), a ${...} operator form the resolver
-    does not read); a script held in a variable, a value the command gives a name through a construct the resolver does not read
-    (`read`, `printf -v`, a positional parameter), run as a command or handed to a shell (`$c` after `read c`, `eval "$1"`,
-    `bash -c "$c"` after `printf -v c`; a value an assignment word gives, whitespace included, is read through THE HEAD
-    CANDIDATES since round 6's fourth commit); a producer outside the output model, a pipe into a shell from anything but a
-    literal echo or printf, alone or in a subshell or group of such commands, or a plain cat passing such a text through (a call of a function the command defines, a tee
-    or a pipe through another command, a cat of a file); zsh's glob grouping, a `(..)` inside a
-    word handed to zsh, read as a subshell by the lexer's zsh grammar while zsh globs it (a lexer gap, stated since the first
-    commit of this round); an opaque expansion from a cwd outside every project, a leading opaque expansion, or one after a
-    literal head outside every project, from a cwd in no project (B2 as ruled, with its boundary). A shape outside these classes
-    that reaches a tracked file is a rule to state, not a residual.
+    writer cases of extract's switch, a write redirection, an interpreter's write call it scans) reached through a
+    road it reads (the wrapper set, the shells' script roads, the readings of the resolver, the alias and hash roads),
+    with a target it can place or cannot read. Every write that still reaches a tracked file is one the guard does not
+    resolve to such a writer through such a road, whether or not its text stands in the command, and falls in one of
+    these classes, each measured by execution in tools/romp-track-bash-guard.test.mjs (THE RESIDUAL TABLE, whose rows
+    are the population this statement is over): a writer outside the model, a program, or a write form of a program
+    the hook models, that writes the file by its own nature and is not among the write forms the hook reads (rsync,
+    patch, tar -x, ed, ex, vim, make, shuf -o, gawk -i inplace, awk's print redirect, uniq, scp, openssl -out, shred,
+    curl -o, wget -O, find -exec, a git alias or a subcommand that writes the tree, bash's history -w, zsh's sysopen
+    and mapfile modules, sed's e command and a w command in a sed script the resolver cannot read, busybox's applets);
+    a reader outside the roads, a program that runs a command or a script the hook does not follow into it (xargs, an
+    interpreter's system, exec or subprocess call, a wrapper outside the set, a shell outside SHELLS, a file the
+    command writes and then runs or sources, a function's call of itself, which the replay does not follow again); a
+    command name the resolver never reads, a command whose name is an expansion of a kind the resolver does not read
+    ("${a[@]}", a loop variable, a name read or filled by getopts, printf -v or a nameref, ${SHELL}, a substitution
+    outside the output model such as $(which cp), a ${...} operator form the resolver does not read, a positional
+    parameter of a script handed to a fresh shell with arguments of its own; "$@", $1 and $* stand for the operands of
+    a called function or of a `set` this shell ran since round 6's sixth commit); a script held in a variable, a value
+    the command gives a name through a construct the resolver does not read (`read`, `printf -v`, a positional
+    parameter of a fresh shell's script), run as a command or handed to a shell (`$c` after `read c`, `eval "$1"`
+    inside a `bash -c` given arguments, `bash -c "$c"` after `printf -v c`; a value an assignment word gives,
+    whitespace included, is read through THE HEAD CANDIDATES since round 6's fourth commit, and a `${name:=word}`
+    gives word since the sixth); a producer outside the output model, a pipe into a shell from anything but a literal
+    echo or printf, alone or in a subshell or group of such commands, or a plain cat passing such a text through (a
+    call of a function the command defines, a tee or a pipe through another command, a cat of a file); zsh's glob
+    grouping, a `(..)` inside a word handed to zsh, read as a subshell by the lexer's zsh grammar while zsh globs it
+    (a lexer gap, stated since the first commit of this round); an opaque expansion from a cwd outside every project,
+    a leading opaque expansion, or one after a literal head outside every project, from a cwd in no project (B2 as
+    ruled, with its boundary). A shape outside these classes that reaches a tracked file is a rule to state, not a
+    residual.
 48. **Sessions commit the comments folder** (2026-09-10). The user found that their sessions never added
     `.trackchanges/` to git, so the user's comments on the sessions' files and the record of the tracked changes
     were not archived with the work. Decision 25 is unchanged: romp does no git operation, and a `.gitignore` line is the
