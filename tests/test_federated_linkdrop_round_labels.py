@@ -25,9 +25,14 @@ repository (the maintainer's round 6 found the earlier module reading the review
 committed tree got two verdicts). AUTHOR_FORM is how the PR body spells the author's own work ("pass P", "pass P's fixer pass",
 "the pass-P head"), named in the helper's refusal so the writer knows what to write.
 
-THE POPULATION is the family's files, each read WHOLE: the modules the glob FAMILY_GLOB names under this directory (the sibling
-pin's own spelling, tests/test_federated_linkdrop_driver_bound.py's ledger pin; a family module named otherwise escapes both,
-so the population is spelling-keyed and says so) plus the ledger entry ENTRY. Every line of them is the branch's own because
+THE POPULATION is the family's files, each read WHOLE at HEAD: the modules the glob FAMILY_GLOB names under this directory (the
+sibling pin's own spelling, tests/test_federated_linkdrop_driver_bound.py's ledger pin; a family module named otherwise escapes
+both, so the population is spelling-keyed and says so) plus the ledger entry ENTRY. Their TEXT is the COMMITTED one (_show:
+`git show HEAD:<path>` through _git), the same commit the premise below is checked against, so the verdict is a function of
+the commit and the same committed tree gets one verdict on every machine whatever its checkout holds (pass 11's closing fixer
+pass: the earlier module read the checkout's text against HEAD's premise, so a mislabel committed at HEAD and removed in the
+working tree read clean); an uncommitted edit is judged once committed, and a plant that reds this module is committed in a
+scratch repository. Every line of them is the branch's own because
 every file of them is ADDED over the branch's merge base with origin/main, and setUpModule verifies that premise by git before
 any cell runs (scope(): `git diff --name-status <merge base> HEAD` over the population, every file `A`). Where git cannot answer
 (no repository under the root, GIT_DIR pointed elsewhere, origin/main not fetched or no merge base, as in CI's shallow
@@ -44,7 +49,8 @@ nor at the merge base (an uncommitted one), the module REFUSES, naming the files
 other work's lines or uncommitted text. family() REFUSES, with the derivation named, a glob that reads no module, a file of
 the population that is not in the tree, and this module outside its own population (its path the parameter `me`, this
 module's own by default), and every cell reads the population through it, so a selected run of any one cell gets the one
-stated refusal; _read refuses a file that is not in the tree the same way, and sibling_glob returns the reason when the
+stated refusal; _read refuses a file that is not in the tree the same way, _show one git does not answer for at HEAD, and
+sibling_glob returns the reason when the
 pin's file or function is not found. A cell reads the sibling pin's glob from that pin's source and runs it, holding the two
 populations equal, so a family module the sibling sees and this census does not is a red.
 
@@ -62,8 +68,9 @@ every callee is a name or an attribute chain; every name called is a definition 
 both ways); the dunder names read are exactly DUNDERS; no attribute read is a dunder or str.format; no reflective or file
 primitive is called or read but the one open() in _read and the one glob.glob in _family_modules, both of whose paths pass
 _under, which REFUSES at run time, over the value, a path that is absolute or leaves the root (pinned by execution in
-test_every_path_the_module_reads_is_under_the_tree); the one subprocess.run is inside _git, its command git under `-C root`;
-and no string constant is an absolute path, a home path, a `..` step or a drive letter. The helper this module imports is
+test_every_path_the_module_reads_is_under_the_tree); the one subprocess.run is inside _git, its command git under `-C root`,
+and the population's text is read through _show alone, a git show at HEAD through _git (the census cell calls no _read); and
+no string constant is an absolute path, a home path, a `..` step or a drive letter. The helper this module imports is
 pinned the same way, by its own test module (tests/test_review_round_labels_rule.py: `import re` alone, no file read at all).
 What this pin does not check, stated: git's own reads (its configuration and the environment it inherits, GIT_DIR among them,
 which is how the skip road is driven), the standard library's own reads, and a method called on a value the module bound
@@ -138,7 +145,7 @@ def _git(args, root):
     """git's stdout under `root` (the one subprocess.run of this module: git, `-C root`), or None when git is absent, times out
     or fails (no repository, a missing ref, a shallow checkout)."""
     try:
-        p = subprocess.run(["git", "-C", root] + list(args), capture_output=True, text=True, timeout=60)
+        p = subprocess.run(["git", "-C", root] + list(args), capture_output=True, text=True, encoding="utf-8", timeout=60)
     except (OSError, subprocess.TimeoutExpired):
         return None
     return p.stdout if p.returncode == 0 else None
@@ -207,6 +214,17 @@ def _read(rel, root=ROOT):
         raise AssertionError("%s is not in the tree (read relative to the repository root)" % rel)
     with open(_under(root, rel), encoding="utf-8") as f:
         return f.read()
+
+
+def _show(rel, root=ROOT):
+    """The COMMITTED text of a file of the population, `git show HEAD:<path>` through _git (its path relative to `root`, through
+    _under's refusals of one that is absolute or leaves the root), so the text judged and the premise scope() checked are the
+    same commit's; a stated refusal naming the file when git does not answer for it at HEAD (a file not committed there)."""
+    _under(root, rel)
+    text = _git(["show", "HEAD:" + rel], root)
+    if text is None:
+        raise AssertionError("%s is not readable at HEAD (git show under the repository root), so the committed text cannot be judged" % rel)
+    return text
 
 
 def _family_modules(here, root, pattern=FAMILY_GLOB):
@@ -347,6 +365,12 @@ class RoundLabels(unittest.TestCase):
         self.assertEqual([n.lineno for n in runs], [n.lineno for n in ast.walk(git) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and ast.unparse(n.func) == "subprocess.run"], "every subprocess.run is inside _git: at lines %r" % ([n.lineno for n in runs],))
         self.assertEqual(len(runs), 1, "_git holds exactly one subprocess.run")
         self.assertEqual(ast.unparse(runs[0].args[0]), "['git', '-C', root] + list(args)", "the one program this module runs is git under the root it was handed: %s" % ast.unparse(runs[0].args[0]))
+        cells = [m for n in tree.body if isinstance(n, ast.ClassDef) for m in n.body if isinstance(m, ast.FunctionDef)]
+        census = next(m for m in cells if m.name == "test_no_mention_credits_a_round_the_maintainer_never_held")
+        readers = sorted({n.func.id for n in ast.walk(census) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in ("_read", "_show")})
+        self.assertEqual(readers, ["_show"], "the census cell reads the population's text through _show alone (git show at HEAD), never _read (the checkout's text): this pins WHERE the "
+                                             "read is made; the behaviour, a mislabel committed at HEAD read with the checkout restored, is driven by execution in a scratch repository "
+                                             "outside the tree (the pass record), since driving it here would mean committing here: %r" % (readers,))
         dunders = sorted({n.id for n in ast.walk(tree) if isinstance(n, ast.Name) and n.id.startswith("__")})
         self.assertEqual(dunders, sorted(DUNDERS), "the module-level dunder names read are exactly DUNDERS (`__builtins__`, `__loader__` and `__spec__` reach the builtins and the file system): %r" % (dunders,))
         reflective = [(n.attr, n.lineno) for n in ast.walk(tree) if isinstance(n, ast.Attribute) and (n.attr.startswith("__") or n.attr in ("format", "format_map"))]
@@ -362,7 +386,8 @@ class RoundLabels(unittest.TestCase):
         same modules, so the two populations cannot disagree silently. Then the refusals themselves, by execution: family()
         over a directory of the tree that holds no family module, over a root under which the entry is missing, and with this
         module's path outside its own population (pass 11's closing fixer pass: that refusal was reachable and run by no
-        cell), _read over a file that is not there, and sibling_glob over a pin whose file is missing, each a stated refusal
+        cell), _read over a file that is not there, _show over one not committed at HEAD (and the entry's committed text read
+        through it), and sibling_glob over a pin whose file is missing, each a stated refusal
         naming what it could not read, never a bare exception or an empty census. Then scope()'s roads by execution over the
         tree: the population is added over the merge base (the road setUpModule took to reach this cell), a main that is no
         ref is a skip naming it, HEAD as the main (the merge base HEAD, nothing added over it, every file already there: the
@@ -391,6 +416,10 @@ class RoundLabels(unittest.TestCase):
         with self.assertRaises(AssertionError) as gone:
             _read("upstream/no-such-entry.md")
         self.assertEqual(str(gone.exception), "upstream/no-such-entry.md is not in the tree (read relative to the repository root)")
+        with self.assertRaises(AssertionError) as unshown:
+            _show("upstream/no-such-entry.md")
+        self.assertEqual(str(unshown.exception), "upstream/no-such-entry.md is not readable at HEAD (git show under the repository root), so the committed text cannot be judged")
+        self.assertTrue(_show(ENTRY).startswith("---"), "the entry's committed text is read at HEAD through git show")
         self.assertEqual(sibling_glob(pin=("tests/no_such_module.py", SIBLING_PIN[1])), (None, "tests/no_such_module.py is not in the tree (read relative to the repository root)"))
         self.assertEqual(sibling_glob(pin=(SIBLING_PIN[0], "no_such_function"))[0], None)
         road, why = scope(files)
@@ -440,11 +469,11 @@ class RoundLabels(unittest.TestCase):
         MAINTAINER_ROUNDS, and every form is classifiable; every numbered form the family uses is a class the rule's pin holds
         probes for (a spelling outside that enumeration is a refusal, not a silent read). The guard against a vacuous census
         counts the MODULES' mentions, not the entry's (the entry carries one credit, which is what satisfied the guard over an
-        empty module population before family() refused it)."""
+        empty module population before family() refused it). Each file's text is the COMMITTED one, _show at HEAD."""
         files, how = family()
         bad, seen, counted, outside = [], 0, {}, {}
         for rel in files:
-            text = _read(rel)
+            text = _show(rel)
             counted[rel] = len(tests.review_round_labels_rule.mentions(text))
             if rel != ENTRY:
                 seen += counted[rel]
