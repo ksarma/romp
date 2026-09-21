@@ -182,6 +182,7 @@ import ast
 import asyncio
 import collections
 import concurrent.futures
+import contextlib
 import datetime
 import hashlib
 import io
@@ -268,9 +269,11 @@ COMMON_METHODS.discard("_log")   # logging.Logger has one; the door's own name i
 # `census(CENSUS_FILES)` sites, which share one construction of the canonical files through `_CENSUS` below (the
 # door keeps a Census under the same rule). gc is neither disabled nor tuned anywhere: the heap that grew was this
 # cache's, and the fix is at the cache. The module's tail was a process-lifetime cache and a fixpoint's enqueue rule,
-# not the per-copy walk over the real file: the real-file plants (one sabotaged copy of the real 21,735-line file
-# per defect) are not the cost, and must not be traded for synthetic small modules the next time someone reads
-# about 300 seconds and reaches for the obvious lever; the evidence-preserving option was also the fast one.
+# not the per-copy walk over the real file, and the plants stayed on the real file through that fix. Since round 8's
+# small-input commit (2026-09-21, the reviewer's ruling on fork PR #781: a test uses the smallest input that can
+# exhibit the property it asserts) the blind-spot class plants on a small synthetic module instead, and the tree is
+# the input of the population pins alone, through `census()`: the derivation of what a walker-mechanics pin needs
+# beside its plant is the block comment above SMALL_SDK_BACKEND in tests/test_session_env.py.
 ASTS = {}
 
 
@@ -469,16 +472,59 @@ class PoolTransportError(RuntimeError):
 # A construction in a census-pool worker appends to the WORKER's list, and build_census ships the worker's new records
 # back inside its payload for the client to absorb (absorb_constructions), so the client holds every construction it
 # caused, its own and the pool's. A record names the construction's INPUT IDENTITY (input_identity: the files by
-# realpath, a digest of their bytes, a digest of the sources table), the class that built it, the pid and the road.
+# realpath, a digest of their bytes, a digest of the sources table), the class that built it, the pid, the road and
+# whether it was DECLARED a comparison (`comparing`, below).
 # A census of a different input is a different computation: tests/test_session_env.py's blind-spot class builds about
-# 180 censuses over as many sabotaged copies of kernel/sdk_backend.py, each at its own path with its own content, and
-# the retention pins build byte-identical copies at foreign paths on purpose; each is counted under its own identity,
-# and the pin over the unchanged tree (EnvRowsCensusBlindSpots.tearDownClass) reads constructions_of() for the two
-# unchanged inputs alone, the three files and the pair, and reads_of() to say "exactly one where anything read it". A
-# subclass (the fixpoint pin's Sweeping, the cap pin's _Capped, the readers-index pin's Tracing) is a different
-# computation by design and is recorded under its own class name.
+# 180 censuses over as many sabotaged copies of its small module (SMALL_SDK_BACKEND there; until round 8's small-input
+# commit, of kernel/sdk_backend.py itself), each at its own path with its own content, and the retention pins build
+# byte-identical copies at foreign paths on purpose; each is counted under its own identity. Two pins read the recorder
+# at the class's end (EnvRowsCensusBlindSpots.tearDownClass): the unchanged-tree pin reads constructions_of() for the
+# two unchanged inputs alone, the three files and the pair, and reads_of() to say "exactly one where anything read it";
+# the count pin reads every record and asserts the PROPERTY constructions == distinct (input, class) + declared
+# comparisons, each comparison after a construction of its input (repeated_constructions), so a redundant
+# construction reds and a legitimate new input does not, where a floor or a constant would go stale the moment the
+# population moved. A subclass (the fixpoint pin's Sweeping, the cap pin's _Capped, the readers-index pin's Tracing)
+# is a different computation by design and is recorded under its own class name.
 CONSTRUCTIONS = []
 READS = collections.Counter()    # census() reads by door key, so the class-end pin asserts one construction per read input
+_COMPARING = [0]                 # how many `comparing` contexts are open in this process
+
+
+@contextlib.contextmanager
+def comparing():
+    """Constructions made under this context are DECLARED comparisons: a second construction of an input this process has
+    constructed already, made on purpose to compare two roads' results over the same input (the pool pins of
+    tests/test_session_env.py hand a pool result's own specs to the test process again and compare what each road
+    reads). The count pin admits a declared comparison only after a construction of its input, and nothing else: an
+    undeclared second construction of any input reds it, and so does a comparison of an input never constructed. A
+    pool worker's constructions are never comparisons (the flag is this process's, read at the construction)."""
+    _COMPARING[0] += 1
+    try:
+        yield
+    finally:
+        _COMPARING[0] -= 1
+
+
+def construction_key(rec):
+    """What makes two records the same computation: the input identity and the class."""
+    return (rec["files"], rec["content"], rec["sources"], rec["cls"])
+
+
+def repeated_constructions(records=None):
+    """The (input, class) groups that break the count pin's rule, over `records` (every record so far by default), each
+    as (the files by basename, the class, [(road, "comparison" | "") per construction in order]): a group whose FIRST
+    construction is a declared comparison (a comparison of nothing), or whose later construction is not one (a
+    redundant construction). Empty exactly when constructions == distinct (input, class) + declared comparisons with
+    every comparison after a construction of its input."""
+    groups = collections.OrderedDict()
+    for rec in (CONSTRUCTIONS if records is None else records):
+        groups.setdefault(construction_key(rec), []).append(rec)
+    out = []
+    for key, recs in groups.items():
+        if recs[0]["comparison"] or not all(r["comparison"] for r in recs[1:]):
+            out.append((tuple(os.path.basename(f) for f in key[0]), key[3],
+                        [(r["road"], "comparison" if r["comparison"] else "") for r in recs]))
+    return out
 
 
 def _sources_digest(sources):
@@ -507,7 +553,7 @@ def input_identity(files, sources=None):
 def record_construction(cls, files, sources):
     files, content, sdigest = input_identity(files, sources)
     rec = {"seq": len(CONSTRUCTIONS), "cls": cls.__name__, "files": files, "content": content, "sources": sdigest,
-           "pid": os.getpid(), "road": "here"}
+           "pid": os.getpid(), "road": "here", "comparison": _COMPARING[0] > 0}
     CONSTRUCTIONS.append(rec)
     return rec
 

@@ -330,6 +330,201 @@ def _table_mismatches(counts, by_kind):
     return out
 
 
+# ---- the small module: the input of the census's MECHANICS pins (round 8 of the review on fork PR #781, 2026-09-21) ----
+# The reviewer's ruling: a test uses the SMALLEST input that can exhibit the property it asserts. A walker-mechanics
+# property ("does the walker classify a bare-name loader planted here?") needs the planted module plus whatever the
+# walker must resolve against, and nothing else; running it behind the 22k lines of kernel/sdk_backend.py does not
+# test it harder and is LESS precise: an assertion over the whole tree can pass or fail for a reason unrelated to its
+# plant (another door value escaping, a row moving, a merge of main growing the population under the plant, as the
+# round-8 merge did to every count). A population property ("are there blind spots anywhere in the tree?") needs the
+# population by definition and pays for it once per process, through env_ring_census's census() door. Until this
+# commit every mechanics pin planted on a sabotaged copy of the real file beside kernel/credentials.py, about 180
+# copies at about 1.3 s each, and was the module's cost. What a plant needs beside it, read off the walker's code
+# (tests/env_ring_census.py), and what this module therefore carries:
+#   the WRITER (Census._find_writer): one method appending to its own self._problems inside a class, its message the
+#     second parameter, with problem, key and ring_text parameters (SdkBackend._log(self, m, problem, key, ring_text)),
+#     __init__'s empty-list binding, and every other reference to the ring a read inside that class through self by a
+#     copying or counting builtin, a loop or a comprehension, or the writer's own trim: the seven reference shapes the
+#     real writer's class has, so a plant's second writer or foreign touch is judged against the same admitted set;
+#   the RECEIVER CLASSES the plants type by (Census.receiver_classes, _annotation_classes, _class_object): the writer's
+#     class under the exact header `class SdkBackend:` (the alias-resolution pin swaps a base in), a second class holding
+#     the backend on an attribute bound in __init__ from a string-annotated parameter (SdkSession.backend, the
+#     "typed by its __init__" arm), and a third class binding `_ring` in its __init__ and reading it in a method
+#     (ApiHealth's deque: the twice-bound name the alias pins collide with, and the method the API_ANCHOR plants edit);
+#   the CONDUIT the roster pins bind sites against (Census.bound_site_args, the conduit walk of _door_calls): a method
+#     whose door call's message is its own parameter, with the real conduit's two roads and one site of its own
+#     (SdkSession._log_quietly, called once from _serve), so a planted site is one more beside a roster of one;
+#   the SOURCES the plants read or fold (DEFAULT_SOURCES, matched by (basename, name), which is why the module is
+#     written to disk as sdk_backend.py): the attribute source env_vars, read on any receiver; the name source
+#     AUTH_ENV_NAMES the conduit-fold pins fold, defined at module scope beside ENV_RESERVED_NAMES; one declared dict
+#     source, SdkBackend._launch_shape, in the real one's shape (a dict literal with the env under its key, built from
+#     sess.env_vars minus the reserved names), which gives the census a declared roots table for the pool transport pin
+#     to carry across the process boundary; the function-keyed declarations a plant adds (_tenth_shape) match by the
+#     same basename;
+#   the ANCHORS the plants edit at, one each (asserted at the class's setUpClass): FMT_ANCHOR (a module-level ring
+#     format, the plants' TENTH_RING goes before it), METHOD_ANCHOR (the writer's class body after _log, where the
+#     plants' _tenth methods go), SESSION_ANCHOR (the conduit's def, the roster and second-writer plants go before it),
+#     CRASH_ANCHOR (the crash line, an f-string whose leading text the reduction pin removes) and API_ANCHOR
+#     (ApiHealth._push, the alias pins' ApiHealth arms go before it);
+#   a door call of each shape the reduction reads (a self call with a literal head, a typed call through self.backend,
+#     the conduit's two inner calls with a literal site), so the small census has heads to reduce and the crash line's
+#     unreduced arm is one against none.
+# NOT needed, by the same reading: kernel/kernel.py (its feeders are found by the def name _sdk_problem_rows, which the
+# feeder pin plants in a synthetic module of its own) and kernel/credentials.py (the walker reaches it only through
+# the calls the real sdk_backend.py makes into its functions; this module makes none, and a sources entry for a file
+# the census was not handed matches nothing and fails nothing: _source_tag keys a name on the READING function's own
+# basename). The census over the unplanted module is clean by construction and asserted so once per process
+# (small_census: no content row, no failure, no explicit violation, nothing unreduced; the writer SdkBackend._log with
+# message parameter m), so a plant's row is the only row and a plant's failure the only failure, and every count a
+# mechanics pin reads is the plant's own. The module is never executed, only parsed; it is plausible Python so a reader
+# can follow a plant against it. Not a repo file of its own: the anchors, the resolve-against derivation above and the
+# plants that edit it live in one place.
+SMALL_SDK_BACKEND = r'''"""The small module: a synthetic kernel/sdk_backend.py the census's mechanics pins plant on (the block comment above
+SMALL_SDK_BACKEND in tests/test_session_env.py derives what it carries from the walker's code). Parsed, never run."""
+import sys
+import threading
+import time
+import traceback
+from collections import deque
+from typing import Any, Optional, Protocol
+
+RESERVED_DROP_RING = ("env (%s): ignoring reserved %s from the stored session env: romp sets the identity env")
+ENV_RESERVED_NAMES = ("ROMP_SID", "ROMP_SESSION_NAME")
+AUTH_ENV_NAMES = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+
+
+class AhEvent(tuple):
+    __slots__ = ()
+
+
+class ApiHealth:
+    def __init__(self, state_dir):
+        self.state_dir = state_dir
+        self._lock = threading.Lock()
+        self._ring: deque = deque()
+
+    def _push(self, ev: AhEvent):
+        with self._lock:
+            self._ring.append(ev)
+            while self._ring and self._ring[0].t < ev.t - 3600:
+                self._ring.popleft()
+
+    def failures(self):
+        with self._lock:
+            return sum(1 for e in self._ring if e.kind != "ok")
+
+
+class SdkSession:
+    def __init__(self, backend: "SdkBackend", reg: dict):
+        self.backend = backend
+        self.sid = reg["sid"]
+        self.name = reg.get("name", self.sid)
+
+    def _log_quietly(self, line: str, problem=None, key=None, ring_text=None) -> None:
+        try:
+            if not problem:
+                self.backend._log(line, problem=False)
+            else:
+                self.backend._log(line, problem=True, key=key, ring_text=ring_text)
+        except Exception:
+            pass
+
+    def _run(self):
+        try:
+            self._serve()
+        except Exception as e:
+            self.backend._log(f"sdk session {self.name} crashed: {type(e).__name__}: {e}\n"
+                              f"{traceback.format_exc()}")
+
+    def _serve(self):
+        self._log_quietly("reconnect (%s): serving" % self.name)
+
+
+class SdkBackend:
+    PROBLEM_RING = 100
+
+    def __init__(self, state_dir, notify=None):
+        self.state_dir = state_dir
+        self._notify = notify
+        self._log_cb = None
+        self._problems: list[dict] = []
+        self._problem_seq = 0
+        self._problem_lock = threading.Lock()
+        self.health = ApiHealth(state_dir)
+
+    def _launch_shape(self, sess):
+        reserved = ENV_RESERVED_NAMES + AUTH_ENV_NAMES
+        return {"mode": sess.mode, "env": {k: v for k, v in sess.env_vars.items() if k not in reserved}}
+
+    def _log(self, m, problem=None, key=None, ring_text=None):
+        if problem is None:
+            problem = sys.exc_info()[0] is not None
+        rt = str(m if ring_text is None else ring_text)
+        if problem:
+            with self._problem_lock:
+                hit = None
+                if key is not None:
+                    for entry in reversed(self._problems):
+                        if entry.get("key") == key:
+                            hit = entry
+                            break
+                if hit is not None:
+                    hit["count"] = int(hit.get("count") or 1) + 1
+                else:
+                    self._problem_seq += 1
+                    row = {"seq": self._problem_seq, "t": time.time(), "text": rt}
+                    if key is not None:
+                        row.update(key=key, first=rt, count=1)
+                    self._problems.append(row)
+                    if len(self._problems) > self.PROBLEM_RING:
+                        del self._problems[:-self.PROBLEM_RING]
+        if self._log_cb:
+            self._log_cb(m)
+
+    def problem_seq(self) -> int:
+        with self._problem_lock:
+            return self._problem_seq
+
+    def problems(self, limit: int = 0) -> list[dict]:
+        with self._problem_lock:
+            rows = list(self._problems)
+        return rows[-limit:] if limit else rows
+
+    def problem_keyed(self, key) -> bool:
+        with self._problem_lock:
+            return any(row.get("key") == key for row in self._problems)
+
+    def _note_launch(self, sess):
+        self._log("launch (%s): starting" % sess.name, problem=False)
+'''
+_SMALL = {}
+
+
+def small_module_files():
+    """The small module written once per process to a scratch directory as sdk_backend.py (the basename the sources table
+    keys on and the failure rows name), as the one-file tuple a census is built over; a plant goes beside it in the same
+    tuple, a copy of it is edited through EnvRowsCensusBlindSpots._copy."""
+    if "files" not in _SMALL:
+        path = os.path.join(tempfile.mkdtemp(), "sdk_backend.py")
+        Path(path).write_text(SMALL_SDK_BACKEND, encoding="utf-8")
+        _SMALL["files"] = (path,)
+    return _SMALL["files"]
+
+
+def small_census():
+    """The census over the unplanted small module, the mechanics pins' CONTROL: built once per process, here (the
+    census() door keeps censuses over the canonical inputs alone, so a door read of it would build it again), frozen like
+    the door's (env_ring_census.freeze) so no pin can change what the next reads, and asserted clean at its construction
+    (the block comment above SMALL_SDK_BACKEND says why the pins rely on that): no content row, no failure, no explicit
+    violation, nothing unreduced, the writer SdkBackend._log with message parameter m."""
+    if "census" not in _SMALL:
+        c = erc.freeze(Census(small_module_files(), DEFAULT_SOURCES))
+        assert (c.writer.qual, c.door, c.msg_param) == ("SdkBackend._log", "_log", "m"), (c.writer, c.door, c.msg_param)
+        assert (list(c.failures), list(c.content_rows), list(c.explicit_violations), list(c.unreduced)) == ([], [], [], []), c.summary()
+        _SMALL["census"] = c
+    return _SMALL["census"]
+
+
 class _Backend(unittest.TestCase):
     """Base: a backend on a temp state dir, no real CLI, no real key claim."""
 
@@ -1023,8 +1218,10 @@ class EnvRowsPopulation(unittest.TestCase):
     enumerates every door by resolution and derives the content rows by taint; this class holds the module to it: the
     ENV ROWS line is the derivation, every value-tainted door call declares problem=, an unreduced message is named and
     never dropped, the negative half finds the kernel's doors before it asserts them clean, the counts equal their committed tables,
-    and the parameter-indirection road is exercised on planted modules, one the walk follows and one it cannot, which
-    must fail loudly. Fork PR #792's POOL SITES line and its pin in tests/test_perf_stats.py are the precedent."""
+    and the parameter-indirection road is exercised on planted modules beside the small module (SMALL_SDK_BACKEND; since
+    round 8 of the review, the mechanics pins' input, its block comment deriving what a plant needs beside it), one the
+    walk follows and one it cannot, which must fail loudly. Fork PR #792's POOL SITES line and its pin in
+    tests/test_perf_stats.py are the precedent."""
 
     @classmethod
     def setUpClass(cls):
@@ -1231,9 +1428,11 @@ class EnvRowsPopulation(unittest.TestCase):
                 self.assertEqual(_table_mismatches(moved, at_table), [("doors", COUNTS["doors"] + delta, COUNTS["doors"])])
 
     def test_the_kernel_adds_no_content_row_so_a_module_copy_is_read_with_credentials_alone(self):
-        """The planted-module and module-copy tests below run the census over kernel/sdk_backend.py and
-        kernel/credentials.py (a second under a second, against five with kernel.py); this holds that the shortcut loses
-        no content row: the kernel taints set_env's parameter, and its rows are tainted by the door's own reads too."""
+        """The pair, kernel/sdk_backend.py with kernel/credentials.py, is the tree three population pins read through the
+        door in place of the three files (a second under a second, against five with kernel.py): the conduit roster's
+        own-roster read, the fixpoint pin's real-pair arm and the immutability pin; until round 8's small-input commit the
+        planted-module and module-copy tests ran over it too. This holds that the shortcut loses no content row: the
+        kernel taints set_env's parameter, and its rows are tainted by the door's own reads too."""
         self.assertEqual(census((SDK_BACKEND, CREDENTIALS_PY)).content_identities(), self.c.content_identities())
 
     PLANT = (
@@ -1251,14 +1450,15 @@ class EnvRowsPopulation(unittest.TestCase):
 
     def test_a_door_planted_behind_a_parameter_indirection_is_found_and_reds_without_problem(self):
         """Rule (6): a synthetic module plants a door behind a parameter (a function taking log= and calling it with an
-        env-tainted message, invoked with log=be._log through getattr). The walk finds it as a content row (the tenth,
-        so the identity pin reds), finds the door value at the call site, and reds rule (2) when the planted call lacks
-        problem=; a planted message with no literal head lands in the unreduced set."""
+        env-tainted message, invoked with log=be._log through getattr), beside the small module. The walk finds it as a
+        content row (the only one over the small module, and one ROWS does not name, so the identity pin reds), finds the
+        door value at the call site, and reds rule (2) when the planted call lacks problem=; a planted message with no
+        literal head lands in the unreduced set."""
         declared = ", problem=True, ring_text=FMT % (sess.name[:20], len(sess.env_vars))"
-        c = Census((SDK_BACKEND, CREDENTIALS_PY, self._plant("plant.py", self.PLANT.replace("@DECL@", declared))), DEFAULT_SOURCES)
+        small = small_module_files()
+        c = Census(small + (self._plant("plant.py", self.PLANT.replace("@DECL@", declared)),), DEFAULT_SOURCES)
         self.assertEqual(c.failures, [])
-        self.assertIn(("planted", "FMT", False), c.content_identities())
-        self.assertEqual(len(c.content_rows), len(ROWS) + 1)
+        self.assertEqual(c.content_identities(), [("planted", "FMT", False)], "the plant's row is the only content row over the small module")
         found = [dc for dc in c.door_calls if dc.base == "plant.py"]
         self.assertEqual([(dc.lineno, dc.kind, dc.owner, sorted(dc.taint), dc.heads) for dc in found],
                          [(3, "param", "planted", ["env"], ["env (%s): planted %s"])])
@@ -1266,12 +1466,12 @@ class EnvRowsPopulation(unittest.TestCase):
         with self.assertRaises(AssertionError) as cm:
             self._assert_pin(c)
         self.assertIn("planted", str(cm.exception))
-        c2 = Census((SDK_BACKEND, CREDENTIALS_PY, self._plant("plant.py", self.PLANT.replace("@DECL@", ""))), DEFAULT_SOURCES)
+        c2 = Census(small + (self._plant("plant.py", self.PLANT.replace("@DECL@", "")),), DEFAULT_SOURCES)
         self.assertEqual([(dc.base, dc.lineno, why) for dc, why in c2.explicit_violations if dc.base == "plant.py"],
                          [("plant.py", 3, "no explicit problem=")])
         self.assertNotIn("planted", [o for o, _f, _k in c2.content_identities()], "without problem=True it is no content row: rule (2) is what catches it")
-        c3 = Census((SDK_BACKEND, CREDENTIALS_PY, self._plant("plant.py", self.PLANT.replace("@DECL@", declared)
-                                                              + "def noisy(be, e):\n    be._log(str(e))\n")), DEFAULT_SOURCES)
+        c3 = Census(small + (self._plant("plant.py", self.PLANT.replace("@DECL@", declared)
+                                         + "def noisy(be, e):\n    be._log(str(e))\n"),), DEFAULT_SOURCES)
         self.assertIn(("plant.py", 7, "noisy", "typed"), [(dc.base, dc.lineno, dc.owner, dc.kind) for dc in c3.unreduced])
 
     CONDUIT_PLANT = (
@@ -1305,7 +1505,7 @@ class EnvRowsPopulation(unittest.TestCase):
         env-tainted; `through`'s identity names its UNBOUNDED format, the shape main's two rows had at the merged head),
         so the identity pin reds, naming both."""
         src = self.CONDUIT_PLANT
-        c = Census((SDK_BACKEND, CREDENTIALS_PY, self._plant("plant3.py", src)), DEFAULT_SOURCES)
+        c = Census(small_module_files() + (self._plant("plant3.py", src),), DEFAULT_SOURCES)
         self.assertEqual(c.failures, [])
         line_of = lambda needle: next(i + 1 for i, ln in enumerate(src.splitlines()) if needle in ln)
         planted = sorted(((dc.lineno, dc.owner, dc.kind) for dc in c.door_calls if dc.base == "plant3.py"))
@@ -1325,7 +1525,8 @@ class EnvRowsPopulation(unittest.TestCase):
         self.assertIn(("through", "UNBOUNDED:env (%s): planted %s", False), c.content_identities(),
                       "the unbounded site is a content row too (declared True, env-tainted), its identity naming the UNBOUNDED format, "
                       "as main's two rows did at the merged head; the violation is what says it is not bounded")
-        self.assertEqual(len(c.content_rows), len(ROWS) + 2)
+        self.assertEqual(c.content_identities(), [("through", "UNBOUNDED:env (%s): planted %s", False), ("beside", "FMT", False)],
+                         "the two planted rows, in line order, are the only content rows over the small module")
         with self.assertRaises(AssertionError) as cm:
             self._assert_pin(c)
         self.assertIn("through", str(cm.exception), "the identity pin reds, naming the first differing row (unittest elides the rest)")
@@ -1338,7 +1539,7 @@ class EnvRowsPopulation(unittest.TestCase):
         src = ("def pick(be):\n    return be._log\n"
                "def planted(sess, log=None):\n    log('env (%s): planted %s' % (sess.name, ', '.join(sess.env_vars)))\n"
                "def caller(be, sess):\n    planted(sess, log=pick(be))\n")
-        c = Census((SDK_BACKEND, CREDENTIALS_PY, self._plant("plant2.py", src)), DEFAULT_SOURCES)
+        c = Census(small_module_files() + (self._plant("plant2.py", src),), DEFAULT_SOURCES)
         self.assertEqual([(k, b, ln) for k, b, ln, _t in c.failures], [("door-escapes", "plant2.py", 2)])
         self.assertIn("through its return", c.failures[0][3])
         self.assertEqual([dc.lineno for dc in c.door_calls if dc.base == "plant2.py"], [], "the planted call is invisible to the walk, which is why the escape must be loud")
@@ -1578,7 +1779,7 @@ time.sleep(0.5)                                            # the executor spawns
 procs = list(pool._processes.values())                     # the workers, read before shutdown() nulls the table
 case = cls("test_the_censuses_come_through_the_worker_pool_and_read_the_same_as_this_process_builds")
 t0 = time.monotonic()
-out = case._resolve(m._Pending((m.CENSUS_FILES, m.DEFAULT_SOURCES), wedged))
+out = case._resolve(m._Pending((m.small_module_files(), m.DEFAULT_SOURCES), wedged))
 for p in procs:
     p.join(%(join)r)
 manager.join(%(join)r)
@@ -1600,14 +1801,20 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
     reflection (`operator.attrgetter("_log")`), env names reaching a seen door through a re-keyed dict return, an
     in-place `append` in a loop, `+=`, an attribute stored in one method and read in another, and a module list's
     `extend`, and second writers of the ring (`be._problems.append` from kernel.py, `self.backend._problems.append`
-    from a session, `self._problems.insert` in a second SdkBackend method). Each sabotage is replayed here on a module
-    copy or a synthetic module and must be LOUD: a tenth content row (the identity pin reds), a failure named by site,
-    or a CensusError. The copies edit anchors asserted present once in the module. The rulings' lenses (the addendum of
-    2026-09-19) added 45 dict-source variants and 60 alias receivers, 35 and 13 of them quiet; the five tests at the end
-    of this class replay every quiet one, loud now, beside the refusal-side pins the mutation pass found missing.
-    The BASE count of content rows is derived from the census at setUpClass (nine when the class was written, eleven
-    since the merge of main; the post-merge census of 2026-09-20 replaced the literals): "tenth" names the planted row,
-    and every count here reads BASE for a copy that adds no row and BASE + 1 for one that adds the plant."""
+    from a session, `self._problems.insert` in a second SdkBackend method). Each sabotage is replayed here on a copy of
+    the SMALL MODULE (SMALL_SDK_BACKEND, since round 8 of the review; the block comment above it derives what the walker
+    resolves a plant against, and why kernel/credentials.py is not needed beside it) or a synthetic module beside it,
+    and must be LOUD: a tenth content row (the identity pin reds), a failure named by site, or a CensusError. The copies
+    edit anchors asserted present once in the small module. The rulings' lenses (the addendum of 2026-09-19) added 45
+    dict-source variants and 60 alias receivers, 35 and 13 of them quiet; the five tests at the end of this class replay
+    every quiet one, loud now, beside the refusal-side pins the mutation pass found missing. Two kinds of pin share this
+    class (the reviewer's ruling, 2026-09-21: a test uses the smallest input that can exhibit the property it asserts):
+    a MECHANICS pin ("does the walker classify a form planted here?") plants on the small module, whose own census is
+    clean, so "tenth" names the planted row and every count reads BASE, the small module's content rows (zero, from the
+    control census at setUpClass), for a copy that adds no row and BASE + 1 for one that adds the plant; a POPULATION
+    pin ("what does the tree have?") reads the tree through the census() door, once per process, and states its
+    expectations in the tree's terms (ROWS, the committed tables). Until round 8's small-input commit every plant was a
+    sabotaged copy of the real file, about 180 of them at about 1.3 s each, and BASE was the tree's row count."""
 
     FMT_ANCHOR = "RESERVED_DROP_RING = ("
     METHOD_ANCHOR = "    def problem_seq(self) -> int:"
@@ -1621,11 +1828,12 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.src = Path(SDK_BACKEND).read_text(encoding="utf-8")
-        for needle in (cls.FMT_ANCHOR, cls.METHOD_ANCHOR, cls.SESSION_ANCHOR, cls.CRASH_ANCHOR, cls.API_ANCHOR):
-            assert cls.src.count(needle) == 1, "the copies' anchors are in the module once each: %r" % needle
-        cls.BASE = len(census(CENSUS_FILES).content_rows)     # the head's content rows (ROWS holds them by identity)
-        assert cls.BASE == len(ROWS), (cls.BASE, len(ROWS))
+        cls.src = SMALL_SDK_BACKEND                         # what _copy edits: the small module, never the tree file
+        for needle in (cls.FMT_ANCHOR, cls.METHOD_ANCHOR, cls.SESSION_ANCHOR, cls.CRASH_ANCHOR, cls.API_ANCHOR, "class SdkBackend:\n"):
+            assert cls.src.count(needle) == 1, "the copies' anchors are in the small module once each: %r" % needle
+        cls.small_path, = small_module_files()              # the unchanged small module, for a plant beside it
+        cls.small = small_census()                          # the control: the small module's own census, clean, frozen, once per process
+        cls.BASE = len(cls.small.content_rows)              # the small module's content rows: none (small_census asserts it)
         cls._start_pool()
 
     @classmethod
@@ -1633,7 +1841,15 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         pool, cls._pool = cls._pool, None
         if pool is not None:
             pool.shutdown(wait=True)
-        cls._assert_each_unchanged_census_was_computed_once_and_reads_as_built()
+        problems = []
+        for check in (cls._assert_each_unchanged_census_was_computed_once_and_reads_as_built,
+                      cls._assert_constructions_equal_distinct_inputs_plus_declared_comparisons):
+            try:
+                check()
+            except AssertionError as e:
+                problems.append(str(e))
+        if problems:
+            raise AssertionError("\n".join(problems))
 
     @classmethod
     def _assert_each_unchanged_census_was_computed_once_and_reads_as_built(cls):
@@ -1669,6 +1885,35 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
                                 % ", ".join(os.path.basename(f) for f in key[0]))
         if problems:
             raise AssertionError("the shared census rule (one construction per unchanged input per process, read unchanged): " + "; ".join(problems))
+
+    @classmethod
+    def _assert_constructions_equal_distinct_inputs_plus_declared_comparisons(cls):
+        """The count pin, a PROPERTY over every construction this process has recorded (round 8 of the review on fork PR
+        #781, 2026-09-21, the reviewer's ruling: never `constructions == 1`; assert constructions == distinct (input,
+        class), so a redundant construction reds and a legitimate new input does not, where a floor or a constant goes
+        stale the moment the population moves). Read off env_ring_census's recorder: the records group by (input identity,
+        class); a group's first construction is never a declared comparison and every later construction of the group is
+        one (erc.comparing: a pool pin builds a pool result's own specs again in this process to compare what the two roads
+        read, and declares it at the build), so constructions == distinct + declared comparisons holds with every
+        comparison after a construction of its input. On failure the per-input list is printed: the files by basename, the
+        class, and each construction's road with its declaration. Under pytest-xdist (-n 3, the sweep's shape) the recorder
+        is the worker's and this runs once per worker over that worker's records; a pool pin runs whole in one worker, so a
+        comparison and the construction it compares against sit in the same recorder. Red before the declaration existed,
+        at the census commit with this pin bound in and the class run alone: constructions=210 distinct (input, class)=200
+        declared comparisons=0, nine groups named (ten constructions past the first of their input), every one a pool pin's
+        second build of its own specs (a pooled build then one or two here, or two builds here). Red with a redundant
+        construction planted on this commit's tree (the same small input built
+        twice in one test through the pool, undeclared): constructions=212 distinct (input, class)=201 declared
+        comparisons=10, one group named, (('sdk_backend.py',), 'Census', [('pool', ''), ('pool', '')])."""
+        recs = list(erc.CONSTRUCTIONS)
+        distinct = {erc.construction_key(r) for r in recs}
+        declared = [r for r in recs if r["comparison"]]
+        repeated = erc.repeated_constructions(recs)
+        if repeated or len(recs) != len(distinct) + len(declared):
+            raise AssertionError("the count rule (constructions == distinct (input, class) + declared comparisons, each comparison after "
+                                 "a construction of its input): constructions=%d distinct (input, class)=%d declared comparisons=%d; the "
+                                 "inputs constructed against the rule, each with its constructions' roads in order: %s"
+                                 % (len(recs), len(distinct), len(declared), repeated))
 
     def setUp(self):
         self._pool_reason_at_start = type(self)._pool_reason    # read back in tearDown: a loss during this test is its failure
@@ -1709,11 +1954,15 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
             self.METHOD_ANCHOR, extra_methods + "    def _tenth(self, sess):\n" + body + "\n\n" + self.METHOD_ANCHOR))
 
     # ---- the census pool (fork PR #781, the reviewer's ruling of 2026-09-20 on the walk's cost on CI) ----
-    # This class constructs about 180 censuses, each over a distinct sabotaged copy of kernel/sdk_backend.py, at about
-    # 1.3 s each in one process; CI runs pytest serially under a 25-minute job ceiling, and at the head before this
-    # commit the Python 3.10 job was cancelled by it. The ruling: build the class's censuses in worker processes and
-    # assert on the same results, every plant still over the real file (not synthetic fixtures, and no cap raise before
-    # the cost is reduced and re-measured). Every plain Census this class reads comes through ONE entry point,
+    # This class constructs about 180 censuses, each over a distinct sabotaged copy of the small module (SMALL_SDK_BACKEND;
+    # about 7 ms each in one process since round 8's small-input commit, when the reviewer ruled that a mechanics pin's
+    # input is the planted module plus what the walker resolves against). Until that commit each was a copy of
+    # kernel/sdk_backend.py at about 1.3 s; CI runs pytest serially under a 25-minute job ceiling, and at the head before
+    # the pool the Python 3.10 job was cancelled by it. The pool's ruling: build the class's censuses in worker processes
+    # and assert on the same results (no cap raise before the cost is reduced and re-measured). The pool stays as the
+    # class's construction road with the small input: its transport and its degradation roads are properties of the
+    # pool, pinned below whatever the input, and a batch of plants still builds off the test process's thread. Every
+    # plain Census this class reads comes through ONE entry point,
     # `_censuses(specs)`, a spec being (files, sources). It submits the batch to the class's ProcessPoolExecutor (the
     # spawn start method; min(os.cpu_count(), 4) workers; started once in setUpClass with a start probe bounded by
     # POOL_START_TIMEOUT; each worker imports tests.env_ring_census, the module's registered name, and runs its
@@ -1792,14 +2041,18 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
     POOL_WORKERS = min(os.cpu_count() or 1, 4)
     POOL_START_TIMEOUT = 120.0        # seconds the pool's first worker has to answer the start probe
     POOL_READ_TIMEOUT = 240.0         # seconds a batch result has to arrive once the test asks for it. Derived (the reviewer's
-                                      # round 7 on fork PR #781): the largest batch, 29 constructions, builds serially in 39.5 s
-                                      # on the development box (the class alone with the pool off, 2026-09-21; across four
-                                      # workers the same batch takes about a quarter of that), so a result six times that
-                                      # late is a wedged worker, not a slow one: 6 x 40 s = 240 s. The constraint is the
-                                      # module's per-test ceiling, 600 s (CI's --timeout): a test that waits the bound once
-                                      # and then rebuilds its largest batch here takes 240 + 40 = 280 s on this box, leaving
-                                      # 320 s, an eightfold slower rebuild, before the ceiling ends the run. No per-batch
-                                      # measurement exists from CI's runners; that eightfold is the margin for them.
+                                      # round 7 on fork PR #781): the largest batch, 29 constructions, built serially in 39.5 s
+                                      # on the development box over copies of the real file (the class alone with the pool
+                                      # off, 2026-09-21; across four workers the same batch took about a quarter of that), so
+                                      # a result six times that late is a wedged worker, not a slow one: 6 x 40 s = 240 s.
+                                      # The constraint is the module's per-test ceiling, 600 s (CI's --timeout): a test that
+                                      # waits the bound once and then rebuilds its largest batch here took 240 + 40 = 280 s on
+                                      # this box, leaving 320 s, an eightfold slower rebuild, before the ceiling ends the run.
+                                      # No per-batch measurement exists from CI's runners; that eightfold is the margin for
+                                      # them. Over the small module (round 8's small-input commit) the same 29-construction
+                                      # batch builds serially in 0.20 s on this box (6.9 ms each), so the bound is kept and
+                                      # not re-derived downward: it bounds a WEDGED worker, a slow CI worker must not read as
+                                      # one, and the ceiling arithmetic only improves (240 s plus a rebuild under a second).
     POOL_FAILURES = (BrokenProcessPool, OSError, pickle.PicklingError, pickle.UnpicklingError, concurrent.futures.TimeoutError,
                      concurrent.futures.CancelledError, erc.PoolTransportError)
     _pool = None                      # the class's executor, or None while unavailable
@@ -1944,6 +2197,14 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
                 out.append(_Raised(e))
         return out
 
+    def _comparison(self, specs):
+        """The same specs built again in this process as the COMPARISON a pool pin makes against what the pool, or a
+        degradation road, delivered over them, declared so to the recorder (env_ring_census.comparing): the count pin at the
+        class's end admits a second construction of an input only under this declaration, and only after a construction of
+        it, so a pool pin's comparison passes it and an undeclared second construction anywhere reds it."""
+        with erc.comparing():
+            return self._serial(specs)
+
     @staticmethod
     def _unpack(payload):
         kind, value, records = payload
@@ -1961,7 +2222,10 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         return result
 
     def _spec(self, *paths, sources=DEFAULT_SOURCES):
-        return (tuple(paths) + (CREDENTIALS_PY,), sources)
+        """A construction's (files, sources): a copy of the small module, or the unchanged small module with a plant beside
+        it, and nothing else (until round 8's small-input commit kernel/credentials.py rode beside every copy of the real
+        file; the block comment above SMALL_SDK_BACKEND says why nothing needs to ride beside the small module)."""
+        return (tuple(paths), sources)
 
     def _census(self, *paths):
         return self._take(self._censuses([self._spec(*paths)])[0])
@@ -2130,7 +2394,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         append and trim, problems()' copy, problem_keyed()'s scan) pass."""
         row = '{"seq": 0, "t": 0, "text": "env (%s): tenth %s" % (sess.name, ", ".join(sess.env_vars))}'
         cases = {
-            "kernel-side be._problems.append": (lambda: self._spec(SDK_BACKEND, self._plant("plant.py", "def tenth(be, sess):\n    be._problems.append(%s)\n" % row)), "2 appenders"),
+            "kernel-side be._problems.append": (lambda: self._spec(self.small_path, self._plant("plant.py", "def tenth(be, sess):\n    be._problems.append(%s)\n" % row)), "2 appenders"),
             "a session's self.backend._problems.append": (lambda: self._spec(self._copy(lambda s: s.replace(self.SESSION_ANCHOR,
                 "    def _tenth(self, sess):\n        self.backend._problems.append(%s)\n\n" % row + self.SESSION_ANCHOR))), "2 appenders"),
             "a second method's self._problems.insert": (lambda: self._spec(self._method("        self._problems.insert(0, %s)" % row)), "mutated other than by the writer's append"),
@@ -2159,7 +2423,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         adds = (("insert", 'ROWS.insert(0, {"text": "env (%s): tenth %s" % (sess.name, ", ".join(sess.env_vars))})'),
                 ("extend", 'ROWS.extend([{"text": "env (%s): tenth %s" % (sess.name, ", ".join(sess.env_vars))}])'),
                 ("augmented assignment", 'ROWS += [{"text": "env (%s): tenth %s" % (sess.name, ", ".join(sess.env_vars))}]'))
-        results = self._censuses([self._spec(SDK_BACKEND, self._plant("plant.py", "ROWS = []\ndef _sdk_problem_rows():\n    return list(ROWS)\ndef feed(sess):\n    %s\n" % stmt))
+        results = self._censuses([self._spec(self.small_path, self._plant("plant.py", "ROWS = []\ndef _sdk_problem_rows():\n    return list(ROWS)\ndef feed(sess):\n    %s\n" % stmt))
                                   for _how, stmt in adds])
         for (how, _stmt), r in zip(adds, results):
             with self.subTest(how=how):
@@ -2173,14 +2437,15 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         """The round-6 mutation pass applied no mutation that breaks reduction alone. A synthetic conduit `relay(be, m)`
         with one literal site and one run-time site: the inner call's heads are the literal site's, the run-time site
         is unreduced and the inner call is not; with every site run-time the inner call is unreduced too. And the
-        module's crash line (an f-string whose leading text the census reads) with its leading text removed joins the
-        unreduced set, so its reduction is shown to rest on that text."""
+        small module's crash line (the head's shape, an f-string whose leading text the census reads; EnvRowsPopulation
+        holds the head's own line to its head) with its leading text removed joins the unreduced set, so its reduction is
+        shown to rest on that text."""
         plant = ("def relay(be, m):\n    be._log(m)\n"
                  "def a(be):\n    relay(be, 'x: literal')\n"
                  "def b(be, e):\n    relay(be, str(e))\n")
         path = self._copy(lambda s: s.replace(self.CRASH_ANCHOR, '_log(f"{self.name} crashed: '))
-        c, c2, c3 = (self._take(r) for r in self._censuses([self._spec(SDK_BACKEND, self._plant("plant.py", plant)),
-                                                             self._spec(SDK_BACKEND, self._plant("plant.py", plant.replace("'x: literal'", "repr(be)"))),
+        c, c2, c3 = (self._take(r) for r in self._censuses([self._spec(self.small_path, self._plant("plant.py", plant)),
+                                                             self._spec(self.small_path, self._plant("plant.py", plant.replace("'x: literal'", "repr(be)"))),
                                                              self._spec(path)]))
         inner = [dc for dc in c.door_calls if dc.base == "plant.py" and dc.kind == "typed"]
         self.assertEqual([(dc.owner, dc.heads, dc.unreduced) for dc in inner], [("relay", ["x: literal"], False)])
@@ -2190,7 +2455,8 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         line = [i + 1 for i, ln in enumerate(Path(path).read_text(encoding="utf-8").splitlines()) if '_log(f"{self.name} crashed: ' in ln]
         self.assertEqual(len(line), 1)
         self.assertIn(line[0], [dc.lineno for dc in c3.unreduced if dc.base == "sdk_backend.py"], "the crash line's reduction rests on its leading text")
-        self.assertEqual(len([dc for dc in c3.unreduced if dc.base == "sdk_backend.py"]), 2, "the head's one plus the crash line")
+        self.assertEqual(len([dc for dc in c3.unreduced if dc.base == "sdk_backend.py"]), len(self.small.unreduced) + 1,
+                         "the small module's own unreduced calls (none, asserted at its construction) plus the crash line")
 
     # Ruling 2 of review round 6: a dict-returning SOURCE whose env value reaches a different key than the one it entered
     # at. Each variant is the body of `_tenth_shape(<param>)` after `e = <origin>` (`%(P)s` a second read of the
@@ -2249,18 +2515,18 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
             for form, (param, origin, mode) in self.FORMS.items():
                 fn = "\ndef _tenth_shape(%s):\n    e = %s\n%s" % (param, origin, body % {"P": mode})
                 plants.append((label, form, ((self._copy(lambda s: self._with_format(s).replace(
-                    self.METHOD_ANCHOR, self._reader("_tenth_shape(%s)" % param, expr) + self.METHOD_ANCHOR) + fn), CREDENTIALS_PY),
+                    self.METHOD_ANCHOR, self._reader("_tenth_shape(%s)" % param, expr) + self.METHOD_ANCHOR) + fn),),
                     declared if form == "declared" else DEFAULT_SOURCES)))
         chain = 'def _tenth_rekey(d):\n    x = d.pop("env")\n    return {"opts": x}\n'
         for form, (param, origin, _mode) in self.FORMS.items():
             sources = declared if form == "declared" else DEFAULT_SOURCES
             fn = '\ndef _tenth_shape(%s):\n    e = %s\n    d = {"env": e}\n    return d\n' % (param, origin) + chain
             plants.append((self.CHAIN, form, ((self._copy(lambda s: self._with_format(s).replace(
-                self.METHOD_ANCHOR, self._reader("_tenth_rekey(_tenth_shape(%s))" % param, 'shape["opts"]') + self.METHOD_ANCHOR) + fn), CREDENTIALS_PY), sources)))
+                self.METHOD_ANCHOR, self._reader("_tenth_rekey(_tenth_shape(%s))" % param, 'shape["opts"]') + self.METHOD_ANCHOR) + fn),), sources)))
             methods = ('    def _tenth_shape(self, %s):\n        self._tenth_held = %s\n        return {"env": self._tenth_held}\n\n'
                        '    def _tenth_other(self):\n        return {"opts": self._tenth_held}\n\n' % (param, origin))
             plants.append((self.HELD, form, ((self._copy(lambda s: self._with_format(s).replace(
-                self.METHOD_ANCHOR, methods + self._reader("self._tenth_other()", 'shape["opts"]') + self.METHOD_ANCHOR)), CREDENTIALS_PY), sources)))
+                self.METHOD_ANCHOR, methods + self._reader("self._tenth_other()", 'shape["opts"]') + self.METHOD_ANCHOR)),), sources)))
         loud = set()
         for (label, form, _spec), r in zip(plants, self._censuses([spec for _label, _form, spec in plants])):
             with self.subTest(variant=label, form=form):
@@ -2274,7 +2540,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
             self.assertEqual(head._declared_dict_source(f), "env", q)
             self.assertTrue(f.returns and all(head._locates_source_key(r, f) for r in f.returns), "%s is located at its env key" % q)
             self.assertFalse(any("env" in v for v in head.ret_taint.get(f, {}).values()), "%s's return carries no env whole" % q)
-        self.assertEqual(len(head.content_rows), self.BASE)
+        self.assertEqual(len(head.content_rows), len(ROWS))
         self.assertEqual(head.explicit_violations, [])
 
     def test_a_twice_bound_alias_name_is_resolved_by_the_receivers_scope_and_fails_only_untyped(self):
@@ -2368,7 +2634,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         arg = (arg or "_tenth_shape(%(PARAM)s)") % sub
         path = self._copy(lambda s: self._with_format(s).replace(
             self.METHOD_ANCHOR, (methods % sub) + self._reader(arg, expr % sub) + self.METHOD_ANCHOR) + fn + (extra % sub))
-        return ((path, CREDENTIALS_PY), self._declared() if form == "declared" else DEFAULT_SOURCES)
+        return ((path,), self._declared() if form == "declared" else DEFAULT_SOURCES)
 
     def _shape_census(self, form, **kw):
         return self._take(self._censuses([self._shape_spec(form, **kw)])[0])
@@ -2701,12 +2967,14 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         rows0, refused0 = c0.bound_site_args("SdkSession._log_quietly", constants=("problem",))
         base = _true_callers(rows0)
         self.assertEqual((len(base), refused0), (7, []), "the module's own roster at round 7's head: seven, none refused")
+        rows_small, refused_small = self.small.bound_site_args("SdkSession._log_quietly", constants=("problem",))
+        self.assertEqual((len(rows_small), refused_small), (1, []), "the small module's conduit has one site of its own, none refused")
 
         def roster(call):
             c = self._take(built[call])
             rows, refused_rows = c.bound_site_args("SdkSession._log_quietly", constants=("problem",))
-            self.assertEqual(len(rows) + len([r for r in refused_rows if r[0] == "site-unbound"]), len(rows0) + 1,
-                             "the planted site is bound like the others, or refused as unbound")
+            self.assertEqual(len(rows) + len([r for r in refused_rows if r[0] == "site-unbound"]), len(rows_small) + 1,
+                             "the planted site is bound like the small module's own, or refused as unbound")
             return [t for t in _true_callers(rows) if t[0] == "_tenth_caller"], [(k, ln, text) for k, _b, ln, text in refused_rows]
         for label, call in counted.items():
             with self.subTest(form=label):
@@ -2915,7 +3183,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
                  + "        a = %s\n        self._log(line, problem=bool(ring))\n\n" % fold)
         site = "    def _tenth(self, sess):\n        self._tenth_relay('env (%s): tenth' % sess.name)\n\n"
         path = self._copy(lambda s: s.replace(self.METHOD_ANCHOR, relay + site + self.METHOD_ANCHOR))
-        c = _Capped((path, CREDENTIALS_PY), DEFAULT_SOURCES)
+        c = _Capped((path,), DEFAULT_SOURCES)
         hits = [f for f in c.failures if f[0] == "residual-cap"]
         self.assertEqual(len(hits), 1, "one residual-cap failure, naming the conduit: %r" % (c.failures,))
         self.assertEqual((hits[0][1], hits[0][2] > 0), ("sdk_backend.py", True))
@@ -3011,7 +3279,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
                     self.traced[(self.mod_of(fn).path, name)].add(fn)
                 return super()._global_read(fn, name)
 
-        c = Tracing((self._module_list_plant(), CREDENTIALS_PY), DEFAULT_SOURCES)
+        c = Tracing((self._module_list_plant(),), DEFAULT_SOURCES)
         self._assert_tenth_found(c, "self")
         key = (c.mods["sdk_backend.py"].path, "_TENTH_SEEN")
         self.assertIn(key, c.global_taint, "the module list gains the env: a growth event for the index to answer")
@@ -3055,7 +3323,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         by_name = lambda d: {k: sorted(v) for k, v in d.items() if v}
         rows = lambda c: [(dc.base, dc.lineno, dc.kind, sorted(dc.taint), dc.heads, dc.ring_formats, dc.unreduced, sorted(dc.residual))
                           for dc in c.door_calls]
-        plant = (self._module_list_plant(), CREDENTIALS_PY)
+        plant = (self._module_list_plant(),)
         fast_plant = self._censuses([(plant, DEFAULT_SOURCES)])[0]
         pairs = (("the real pair", (SDK_BACKEND, CREDENTIALS_PY), census((SDK_BACKEND, CREDENTIALS_PY))), ("the module-list plant", plant, fast_plant))
         for label, files, fast_result in pairs:
@@ -3197,10 +3465,10 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
     # ---- the pool's own pins (the block comment above _censuses says why the pool exists) ----
 
     def _pool_specs(self):
-        """Two specs a pin builds both ways: a tenth-row plant on a module copy, and a loud plant (a second appender in a
-        synthetic module beside the real file) whose construction raises CensusError."""
+        """Two specs a pin builds both ways: a tenth-row plant on a copy of the small module, and a loud plant (a second
+        appender in a synthetic module beside the small module) whose construction raises CensusError."""
         return [self._spec(self._method("        self._log(%s, problem=True, %s)" % (self.MSG, self.RING))),
-                self._spec(SDK_BACKEND, self._plant("plant.py", "def tenth(be, sess):\n    be._problems.append({'text': 'x'})\n"))]
+                self._spec(self.small_path, self._plant("plant.py", "def tenth(be, sess):\n    be._problems.append({'text': 'x'})\n"))]
 
     def _reads_of(self, results):
         """What this class reads from a batch, in one comparable shape: for a Census its identities, failures, door calls
@@ -3243,7 +3511,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         self.assertEqual([type(r).__name__ for r in pooled], ["Census", "_Raised"])
         self.assertIsInstance(pooled[1].exc, CensusError)
         self.assertIsInstance(pooled[1].exc.__cause__, _WorkerTraceback, "the worker's traceback travels as the cause")
-        self.assertEqual(self._reads_of(pooled), self._reads_of(self._serial(specs)))
+        self.assertEqual(self._reads_of(pooled), self._reads_of(self._comparison(specs)))
         c = pooled[0]
         self.assertIn(self.TENTH_ID, c.content_identities())
         # the round trip's tables are keyed by the unpickled trees (Census.__getstate__): a table left keyed by the
@@ -3282,9 +3550,11 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
                 mock.patch.object(cls, "roads", []), mock.patch.object(cls, "built", collections.Counter()), contextlib.redirect_stderr(err), \
                 warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            out = self._censuses(specs)
+            with (erc.comparing() if pooled is not None else contextlib.nullcontext()):    # the serial batch is the comparison of the pooled one
+                out = self._censuses(specs)
             self.assertIsNone(cls._pool, "the pool is dropped for the rest of the class")
-            again = self._censuses(specs[1:])
+            with erc.comparing():                                                          # specs[1] again, compared against out[1] below
+                again = self._censuses(specs[1:])
             self.assertEqual(cls.roads, ["serial (the census pool failed under a batch of 2: BrokenProcessPool: planted: every worker is gone)"] * 2)
             self.assertEqual(cls.built, {"serial": 3})
         lines = err.getvalue().splitlines()
@@ -3339,7 +3609,8 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
                     self.assertIn("the results are unchanged", lines[0])
                     self._assert_announced(caught, lines[0])
                     if exc is starts[-1]:
-                        out = self._censuses(specs)
+                        with (erc.comparing() if pooled is not None else contextlib.nullcontext()):    # the serial batch compares against the pooled one
+                            out = self._censuses(specs)
                         self.assertEqual(cls.roads, ["serial (%s)" % reason])
                         self.assertEqual(cls.built, {"serial": 2})
                         self.assertEqual(err.getvalue().splitlines(), lines, "no second line for the batch")
@@ -3389,7 +3660,8 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
             first = self._resolve(_Pending(specs[0], never))
             self.assertIsNone(cls._pool, "the pool is dropped at the timeout")
             self.assertEqual(cls._pool_reason, "the census pool failed under a batch: TimeoutError: no result within 0.2 s")
-            second = self._resolve(_Pending(specs[1], _Unasked()))
+            with erc.comparing():                              # specs[1] again, built here; `delivered` built it first, and the two are compared below
+                second = self._resolve(_Pending(specs[1], _Unasked()))
             third = self._resolve(_Pending(specs[1], delivered))
             self.assertEqual(cls.built, {"serial": 2, "pool": 1}, "two built here, the delivered one read from its future")
         lines = err.getvalue().splitlines()
@@ -3401,7 +3673,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         out = [first, second]
         self.assertEqual([type(r).__name__ for r in out], ["Census", "_Raised"])
         self._assert_tenth_found(first, "self")
-        self.assertEqual(self._reads_of([first]), self._reads_of(self._serial([specs[0]])),
+        self.assertEqual(self._reads_of([first]), self._reads_of(self._comparison([specs[0]])),
                          "the timed-out read is the census built here, the serial build's equal, never an empty result")
         self.assertIsInstance(third, _Raised)
         self.assertIsInstance(third.exc.__cause__, _WorkerTraceback, "the delivered result was unpacked as a worker's")
@@ -3434,6 +3706,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         wedged = pool.submit(time.sleep, 900.0)             # past the bound by far; the drop kills it, nothing waits for it
         time.sleep(0.5)                                     # the executor spawns a worker for the submit; read the table settled
         workers = list(pool._processes.values())
+        manager = pool._executor_manager_thread              # the reaper of the killed workers; read before shutdown() nulls it
         self.assertTrue(workers, "the pool has a worker for the sleeper")
         err = io.StringIO()
         with mock.patch.object(cls, "_pool", pool), mock.patch.object(cls, "_pool_reason", None), mock.patch.object(cls, "roads", []), \
@@ -3444,6 +3717,13 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
             self.assertIsNone(cls._pool, "the pool is dropped at the timeout")
             self.assertIsInstance(wedged.exception(timeout=30), BrokenProcessPool,
                                   "the sleeper's future ends broken: the drop killed its worker, and nothing waited for the sleep")
+            # The exit codes are read after the manager thread's own join of the workers, the way the driver pin below reads
+            # them (round 8's small-input commit): the manager marks the pool broken BEFORE it joins the workers, and with the
+            # rebuild here down from 1.3 s to 7 ms this test reached the codes while the manager was still in that join, so
+            # the two threads raced on waitpid for the same Process objects, and the one that loses reads ECHILD as no exit
+            # code (None, not a survivor). Bounded, so a manager that never finishes fails here rather than hanging.
+            manager.join(30)
+            self.assertFalse(manager.is_alive(), "the executor's manager thread finished: the reaping is done")
             for w in workers:
                 w.join(30)
             self.assertEqual({w.exitcode for w in workers}, {-signal.SIGKILL}, "every worker killed and reaped: %r" % [(w.pid, w.exitcode) for w in workers])
@@ -3456,7 +3736,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         self._assert_announced(caught, lines[0])
         self.assertIsInstance(first, Census, "a timeout yields the census built here, never an empty result: %r" % (first,))
         self._assert_tenth_found(first, "self")
-        self.assertEqual(self._reads_of([first]), self._reads_of(self._serial([spec])), "the serial build's equal")
+        self.assertEqual(self._reads_of([first]), self._reads_of(self._comparison([spec])), "the serial build's equal")
         self.assertIsNotNone(cls._pool, "the class's own pool is back")
 
     def test_a_construction_that_raises_inside_the_pooled_work_reaches_the_test_as_itself_and_never_degrades_the_class(self):
@@ -3626,7 +3906,8 @@ class CensusParseRetention(unittest.TestCase):
     keeps a parsed tree for the process's life for the census's canonical inputs alone (retained_paths, derived from
     DEFAULT_FILES), any other path is parsed for the construction that asked and dropped after it, and the `census()`
     door keeps a Census under the same rule. Until the rule every parsed path stayed: the blind-spot class above
-    constructs about 180 censuses over as many sabotaged copies of kernel/sdk_backend.py, each construction left about
+    constructed (until round 8's small-input commit; its copies are of the small module SMALL_SDK_BACKEND since) about
+    180 censuses over as many sabotaged copies of kernel/sdk_backend.py, each construction left about
     165k objects alive under a dead path, and late in the module every gen-2 collection walked tens of millions of
     objects (the finding at the pushed head, serial, a plugin timing every construction: 154 of 185 constructions in
     1.0 to 1.5 s, 14 at or above 2 s carrying 120.5 s, the slowest 21.8 s, each slow one holding exactly one gen-2
@@ -3637,12 +3918,15 @@ class CensusParseRetention(unittest.TestCase):
     found 41 compared, 41 identical, 0 different. The pins here are rules, not figures: a foreign path is not retained
     and a canonical one is, the retained set is the canonical table's, the door keeps the sites' set alone, and the
     count of retained trees does not grow with the number of constructions. gc is neither disabled nor tuned: the
-    heap that grew was the cache's, and the fix is at the cache."""
+    heap that grew was the cache's, and the fix is at the cache. The foreign input here is a copy of the small module
+    (round 8's small-input commit: the cache keys on the PATH, so any foreign path shows the rule, and the small module
+    is the smallest input with a writer for the census to find) beside kernel/credentials.py, the smallest canonical
+    input, which is what shows the retention; until that commit the copies were of kernel/sdk_backend.py itself."""
 
     def _copy(self):
-        """A plain copy of kernel/sdk_backend.py at a fresh path: the same input, a foreign path."""
+        """A copy of the small module at a fresh path: the same bytes, a foreign path."""
         path = os.path.join(tempfile.mkdtemp(), "sdk_backend.py")
-        shutil.copyfile(SDK_BACKEND, path)
+        shutil.copyfile(small_module_files()[0], path)
         return path
 
     def _plant(self, name, src):
@@ -3656,7 +3940,7 @@ class CensusParseRetention(unittest.TestCase):
         NotIn: the copy's realpath was a cache key for the process's life."""
         path = self._copy()
         c = Census((path, CREDENTIALS_PY), DEFAULT_SOURCES)
-        self.assertEqual(len(c.content_rows), len(ROWS), "the copy was the construction's input")
+        self.assertEqual((c.writer.qual, c.writer.file), ("SdkBackend._log", os.path.realpath(path)), "the copy was the construction's input: its writer is found in it")
         self.assertIn(os.path.realpath(path), c.mods, "and its Mod, with the tree, is the Census's own")
         self.assertNotIn(os.path.realpath(path), erc.ASTS, "a foreign path is parsed for its construction, not retained")
         self.assertIn(os.path.realpath(CREDENTIALS_PY), erc.ASTS, "the canonical input the construction parsed is retained")
@@ -3690,7 +3974,7 @@ class CensusParseRetention(unittest.TestCase):
         self.assertGreater(held, 0, "the door holds the sites' census")
         path = self._copy()
         c = census((path, CREDENTIALS_PY))
-        self.assertEqual(len(c.content_rows), len(ROWS), "the foreign set was computed")
+        self.assertEqual((c.writer.qual, c.writer.file), ("SdkBackend._log", os.path.realpath(path)), "the foreign set was computed")
         self.assertEqual(len(erc._CENSUS), held, "and not kept")
         self.assertNotIn(os.path.realpath(path), erc.ASTS, "nor its tree")
 
@@ -3700,7 +3984,7 @@ class CensusParseRetention(unittest.TestCase):
         def construct(n):
             for _ in range(n):
                 c = Census((self._copy(), CREDENTIALS_PY), DEFAULT_SOURCES)
-                self.assertEqual(len(c.content_rows), len(ROWS), "each copy was walked")
+                self.assertEqual(c.writer.qual, "SdkBackend._log", "each copy was walked")
             return len(erc.ASTS)
         after_three = construct(3)
         after_six = construct(3)
