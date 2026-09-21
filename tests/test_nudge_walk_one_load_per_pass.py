@@ -800,7 +800,8 @@ values, and two sentences negated, each left the module green, which is why they
 pin (extra4-3, extra7-2 and extra5-2, the reviewer's second instruction): which docstrings carried a Derives and a Bounds sentence
 was a hand-kept population on an axis the module computes, and the round-7 paragraph's universal was false for two roster rows; the
 fifth case of TheWalkersRefuseAStrangerByExecution derives the hand-written rosters of this module from its own AST, every
-module-level name assigned a non-empty literal container or a frozenset, tuple, set, dict or list call over one, walks each roster
+module-level name assigned, plainly or with an annotation, a non-empty literal container or a frozenset, tuple, set, dict or list
+call over one, walks each roster
 row's def through _walk for the rosters it reads by Name, in its body or its argument defaults, and holds every reading row to a
 docstring carrying a Bounds sentence, the text from the last 'Bounds:' to the end, that spells each roster it reads, so the sentence
 and the code agree on what the row bounds (the pin reads the label and the spelling, not the truth of the sentence, and a roster
@@ -813,7 +814,10 @@ and, with that sentence written, naming _traversal_references and _TRAVERSAL, th
 case added and the docstring's count not yet moved; since, the 'Bounds:' label removed from _census_floor's docstring reds the
 case at the existence line naming _census_floor and _TREE_READERS (1 failed, 39 passed), and _TREE_READERS respelled in that
 Bounds text as the three reader spellings reds it at the naming line (1 failed, 39 passed); both left the module green before the
-case existed. The boundary wrappers (the round's census of the module's instruments; this pass): setUp's boundary triple and the
+case existed. The derivation read plain assignments alone until this pass: _TREE_READERS bound by an annotated assignment with that
+label removed left the module green, the roster falling out of the population and its row's missing sentence unseen, and reds the case
+at the existence line naming _census_floor since (1 failed, 39 passed); the annotated binding alone leaves the module green (40
+passed). The boundary wrappers (the round's census of the module's instruments; this pass): setUp's boundary triple and the
 birth pin's expected hand-offs spelled the judge's outer wrappers by hand twice, copies pinned to each other by nothing, while
 _loader_births derives the judge's hand-offs from its AST; both are derived from _DOOR_SPELLINGS by the _or_fault suffix, one copy,
 and the birth pin holds the derivation against the judge's AST both ways. The states: load_goals_or_fault dropped from setUp's triple
@@ -4876,9 +4880,21 @@ class TheWalkersRefuseAStrangerByExecution(unittest.TestCase):
                 return bool(value.keys)
             return isinstance(value, (ast.Tuple, ast.List, ast.Set)) and bool(value.elts)
 
-        rosters = sorted({t.id for s in tree.body if isinstance(s, ast.Assign) and hand_written(s.value) for t in s.targets if isinstance(t, ast.Name)})
-        self.assertTrue(rosters, "this module binds at least one hand-written roster at module level, a name assigned a non-empty literal "
-                                 "container or a frozenset, tuple, set, dict or list call over one (a derived expectation fails on empty)")
+        def bound(stmt):
+            # the module-level statements that bind a name to a value: a plain assignment, its targets, and an annotated assignment
+            # that carries a value, its target (this pass: the derivation read ast.Assign alone, so a roster spelled `NAME: tuple = (...)`
+            # fell out of the population with every obligation on it, and its reading row's missing Bounds sentence went unseen)
+            if isinstance(stmt, ast.Assign):
+                return stmt.targets, stmt.value
+            if isinstance(stmt, ast.AnnAssign) and stmt.value is not None:
+                return [stmt.target], stmt.value
+            return [], None
+
+        rosters = sorted({t.id for s in tree.body for targets, value in (bound(s),) if value is not None and hand_written(value)
+                          for t in targets if isinstance(t, ast.Name)})
+        self.assertTrue(rosters, "this module binds at least one hand-written roster at module level, a name assigned, plainly or with an "
+                                 "annotation, a non-empty literal container or a frozenset, tuple, set, dict or list call over one (a derived "
+                                 "expectation fails on empty; an augmented assignment extends a name already bound and binds no roster of its own)")
         defs = {s.name: s for s in tree.body if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef))}
         reads = {}
         for name in sorted({name for name, _shape, _drive in _CENSUSES}):
