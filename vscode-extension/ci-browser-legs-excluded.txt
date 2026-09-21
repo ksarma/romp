@@ -8,8 +8,10 @@
 # Format: one compiled bundle path per line, relative to vscode-extension/, as the Test step's npm test builds it
 # (ui/webview/<name>.test.ts builds to out-tests/ui/webview/<name>.test.js), then a TAB, then the reason. Blank
 # lines and lines starting with # are ignored. The reasons at the roster's creation are derived from the sources: a
-# leg that launches Firefox or WebKit cannot run green in a job that installs Chromium only (and the switch would
-# make its launch skip a failure); every other leg predates the roster and has not been measured in the gating job,
+# leg that launches Firefox or WebKit cannot run green in a job that installs Chromium only (these legs launch on
+# their own and never read the switch, so under the step they would skip as they do without it; the one that calls
+# inBrowser beside its own Firefox launch is refused by the launcher rule too); every other leg predates the roster
+# and has not been measured in the gating job,
 # so its owner moves it to the roster with the step's measured numbers. To move a leg, delete its line here and add
 # the bundle path to ci-browser-legs.txt (a leg in both files turns both checkers red); a leg that launches through
 # its own playwright copy first switches its launch to inBrowser in ui/webview/real-viewer-leg.ts, the one shared

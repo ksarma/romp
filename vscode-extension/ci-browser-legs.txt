@@ -13,9 +13,11 @@
 # the step's measured seconds in its body. A leg the job does not run is listed in ci-browser-legs-excluded.txt
 # with a reason; every browser leg in the tree is in exactly one of the two files, never neither
 # (tools/ci-browser-legs.test.mjs and scripts/ci-browser-legs.sh hold that; a line whose source moved or was
-# deleted turns both red). A leg listed here launches through inBrowser with no launch or skip of its own: only
-# inBrowser reads the switch, and a leg with a launch or a skip of its own would skip under the step as it does
-# without it, so both checkers refuse its line until it launches through inBrowser alone. The gating job runs a
+# deleted turns both red). A leg listed here launches through inBrowser, called by that name, with no launch or skip
+# of its own: only inBrowser reads the switch, so a launch or a skip of the leg's own stands outside it (a private
+# skip stays a skip, and a private launch that fails is never the failure naming the switch), and both checkers
+# refuse its line until it launches through inBrowser alone. After the run, a skipped test or a leg that registered
+# no test is red: either is coverage the step would claim and not have. The gating job runs a
 # rostered leg in the Chromium it installs; a leg's Firefox and WebKit runs live elsewhere (a served pytest step, a
 # local run), and a line whose source names another engine outside a comment is refused. A leg already in
 # ci-browser-legs-excluded.txt is moved, not copied: its line there goes in the same commit as its line here arrives.

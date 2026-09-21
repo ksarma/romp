@@ -51,7 +51,8 @@ leg that cannot launch fails naming the switch and the reason instead of skippin
 leg launches through `inBrowser` with no launch or skip of its own, and in the gating job that
 is Chromium; a leg's Firefox and WebKit runs live elsewhere (a served pytest step, a local run),
 and a leg that launches on its own is refused from the roster until it takes the shared
-launcher. Every other browser leg is listed in `vscode-extension/ci-browser-legs-excluded.txt`
+launcher; after the run a skipped test, or a leg that registered no test, is red. Every other
+browser leg is listed in `vscode-extension/ci-browser-legs-excluded.txt`
 with a reason. A PR that wants its legs run moves them to the roster (a leg already in the
 exclusions loses its line there in the same commit), and `tools/ci-browser-legs.test.mjs`
 holds every browser leg in the tree to one file or the other and fails on a line whose source
