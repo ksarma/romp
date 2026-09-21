@@ -33,14 +33,20 @@ any cell runs (scope(): `git diff --name-status <merge base> HEAD` over the popu
 (no repository under the root, GIT_DIR pointed elsewhere, origin/main not fetched or no merge base, as in CI's shallow
 checkout) the derivation of "this branch's own lines" is unavailable and the module SKIPS with a reason naming what was
 unreachable, never substituting another population (the maintainer's rule of 2026-09-21, from PR 860's guard: a wider
-population reds work the guard was never about); where git answers and a file of the population is NOT added over the merge
-base (its whole text is not the branch's, or the family has landed and this guard's job is done) the module REFUSES, naming
-the files, since a whole-file read would then judge other work's lines. family() REFUSES, with the derivation named, a glob
-that reads no module, a file of the population that is not in the tree, and this module outside its own population (its path
-the parameter `me`, this module's own by default), and every cell reads the population through it, so a selected run of any
-one cell gets the one stated refusal; _read refuses a file that is not in the tree the same way, and sibling_glob returns the
-reason when the pin's file or function is not found. A cell reads the sibling pin's glob from that pin's source and runs it,
-holding the two populations equal, so a family module the sibling sees and this census does not is a red.
+population reds work the guard was never about); where git answers and NO file of the population is added over the merge base
+while every one is already in the tree there, the family has landed (on the target branch itself after the merge the merge base
+is HEAD, and a branch cut from it inherits the family), nothing here is this branch's own to vet, this guard's job is done, and
+the module SKIPS saying so (pass 11's closing fixer pass: the earlier module refused on that shape, and CI's checkout of a push
+to the target branch is that shape until the follow-up that deletes this module lands, since the checkout action writes
+origin/<branch> at the pushed commit; its checkout of a pull request writes refs/remotes/pull/N/merge and no origin/main, which
+is the first skip); where git answers and a file of the population is not added while another is, or a file is neither added
+nor at the merge base (an uncommitted one), the module REFUSES, naming the files, since a whole-file read would then judge
+other work's lines or uncommitted text. family() REFUSES, with the derivation named, a glob that reads no module, a file of
+the population that is not in the tree, and this module outside its own population (its path the parameter `me`, this
+module's own by default), and every cell reads the population through it, so a selected run of any one cell gets the one
+stated refusal; _read refuses a file that is not in the tree the same way, and sibling_glob returns the reason when the
+pin's file or function is not found. A cell reads the sibling pin's glob from that pin's source and runs it, holding the two
+populations equal, so a family module the sibling sees and this census does not is a red.
 
 THE TREE-ONLY PIN, kept from the maintainer's round 6 and adapted to the call: test_the_module_reads_nothing_outside_the_tree
 pins over this module's own source by RESOLUTION and not by a list of spellings (pass 11's fixer pass: the first pin refused
@@ -88,6 +94,7 @@ FAMILY_GLOB = "test_federated_linkdrop*.py"   # the sibling pin's spelling, held
 ENTRY = "upstream/2026-09-19-tests-federated-linkdrop-served.md"
 SIBLING_PIN = ("tests/test_federated_linkdrop_driver_bound.py", "test_the_ledger_entry_names_every_module_of_this_family")
 MAIN = "origin/main"   # the branch's target: the fork's main, the merge base's other side
+PACKAGE = "tests/__init__.py"   # a file of the tree at the merge base that this branch does not add: the partial road's probe in scope()
 # the tree-only pin: the closed import table of this module (dotted for the helper); every attribute chain it reads on each
 # import of the table (held equal both ways per import, so a read the module does not make today, os.environ, os.getcwd,
 # glob.os, unittest.loader, is refused by construction, not by a list of the names to refuse); the builtins it calls and the
@@ -140,28 +147,37 @@ def _git(args, root):
 def scope(files, root=ROOT, main=MAIN):
     """Whether every file of `files` is ADDED over the merge base of HEAD with `main`, so its whole text is the branch's own
     added lines: ("skip", what was unreachable) when git cannot answer for HEAD under `root`, for `main` or for the merge base
-    (the derivation is unavailable: the caller skips, never reading another population); ("refuse", the files) when git answers
-    and a file is not added over the merge base (other work's lines, or a landed family: the caller refuses, since a whole-file
-    read would judge lines that are not this branch's); ("ok", the derivation) otherwise."""
+    (the derivation is unavailable: the caller skips, never reading another population); ("skip", why) when git answers, NO
+    file of `files` is added over the merge base and every one is in the tree at the merge base (the family has landed: on
+    `main` itself after the merge the merge base is HEAD, and a branch cut from it inherits the family; nothing there is this
+    branch's own to vet, so the caller skips saying its job is done); ("refuse", the files) when git answers and a file of
+    `files` is not added while another is, or a file is neither added nor at the merge base (other work's lines, or an
+    uncommitted file, under a whole-file read: the caller refuses, naming them); ("ok", the derivation) otherwise."""
     if _git(["rev-parse", "--verify", "HEAD^{commit}"], root) is None:
         return "skip", "git does not answer for HEAD under the root (no repository there, or GIT_DIR points elsewhere), so this branch's own lines are not derivable"
     base = _git(["merge-base", main, "HEAD"], root)
     if base is None:
         return "skip", "no merge base of HEAD with %s is reachable (%s not fetched, as in a shallow checkout), so this branch's own lines are not derivable" % (main, main)
-    status = _git(["diff", "--name-status", "--no-renames", base.strip(), "HEAD", "--"] + list(files), root)
-    if status is None:
-        return "skip", "git diff against the merge base %s failed, so this branch's own lines are not derivable" % base.strip()[:9]
+    base = base.strip()
+    status = _git(["diff", "--name-status", "--no-renames", base, "HEAD", "--"] + list(files), root)
+    there = _git(["ls-tree", "--name-only", "-r", base, "--"] + list(files), root)
+    if status is None or there is None:
+        return "skip", "git diff or git ls-tree against the merge base %s failed, so this branch's own lines are not derivable" % base[:9]
     added = set(line.split("\t", 1)[1] for line in status.splitlines() if line.startswith("A\t"))
     kept = [f for f in files if f not in added]
+    if not added and all(f in set(there.splitlines()) for f in files):
+        return "skip", ("no file of the population is added over the merge base %s of HEAD with %s and every one is in the tree there: the family has "
+                        "landed (on %s itself the merge base is HEAD), so nothing here is this branch's own to vet and this guard's job is done" % (base[:9], main, main))
     if kept:
         return "refuse", ("a file of the population is not added over the merge base %s of HEAD with %s, so its whole text is not this branch's own lines "
-                          "(other work's lines would be judged, or the family has landed and this guard's job is done): %r" % (base.strip()[:9], main, kept))
-    return "ok", "every file of the population is added over the merge base %s of HEAD with %s (git diff --name-status)" % (base.strip()[:9], main)
+                          "(other work's lines, or an uncommitted file, would be judged by a whole-file read): %r" % (base[:9], main, kept))
+    return "ok", "every file of the population is added over the merge base %s of HEAD with %s (git diff --name-status)" % (base[:9], main)
 
 
 def setUpModule():
-    """The premise first: the population's files are this branch's own, by git. A skip names what was unreachable and no cell
-    runs; a refusal names the files that are not the branch's; nothing else is read in the derivation's place."""
+    """The premise first: the population's files are this branch's own, by git. A skip names what was unreachable, or that the
+    family has landed and this guard's job is done, and no cell runs; a refusal names the files that are not the branch's;
+    nothing else is read in the derivation's place."""
     files, how = family()
     road, why = scope(files)
     if road == "skip":
@@ -349,9 +365,12 @@ class RoundLabels(unittest.TestCase):
         cell), _read over a file that is not there, and sibling_glob over a pin whose file is missing, each a stated refusal
         naming what it could not read, never a bare exception or an empty census. Then scope()'s roads by execution over the
         tree: the population is added over the merge base (the road setUpModule took to reach this cell), a main that is no
-        ref is a skip naming it, and HEAD as the main (a merge base of HEAD, nothing added over it) is a refusal naming every
-        file of the population; the road where git does not answer at all is driven outside the tree (GIT_DIR pointed at
-        nothing in a scratch copy), since driving it here would mean writing outside the tree."""
+        ref is a skip naming it, HEAD as the main (the merge base HEAD, nothing added over it, every file already there: the
+        landed shape, CI's checkout of a push to the target branch) is a skip saying this guard's job is done, the population
+        plus a file of the tree that predates the merge base (PACKAGE) is a refusal naming that file alone, a population of
+        that file alone is the landed skip, and a file that is neither added nor at the merge base (an uncommitted one) is a
+        refusal; the road where git does not answer at all is driven outside the tree (GIT_DIR pointed at nothing in a
+        scratch copy), since driving it here would mean writing outside the tree."""
         files, how = family()
         modules = [f for f in files if f != ENTRY]
         pattern, source = sibling_glob()
@@ -381,8 +400,18 @@ class RoundLabels(unittest.TestCase):
         self.assertEqual(road, "skip", why)
         self.assertIn("no merge base of HEAD with refs/no-such-ref is reachable", why)
         road, why = scope(files, main="HEAD")
+        self.assertEqual(road, "skip", "the landed shape (the merge base HEAD, nothing added, every file there) is a skip, not a refusal: %s" % why)
+        self.assertIn("no file of the population is added over the merge base", why)
+        self.assertIn("this guard's job is done", why)
+        road, why = scope(files + [PACKAGE])
         self.assertEqual(road, "refuse", why)
-        self.assertTrue(all(f in why for f in files), "the refusal names every file of the population that is not added: %s" % why)
+        self.assertIn(PACKAGE, why)
+        self.assertTrue(all(f not in why for f in files), "the refusal names the file that is not added and none of the added ones: %s" % why)
+        self.assertEqual(scope([PACKAGE])[0], "skip", "a population wholly at the merge base is the landed skip")
+        road, why = scope(files + ["tests/no_such_census.py"])
+        self.assertEqual(road, "refuse", why)
+        self.assertIn("tests/no_such_census.py", why)
+        self.assertEqual(scope(["tests/no_such_census.py"])[0], "refuse", "a file neither added nor at the merge base is not landed: refused")
 
     def test_every_path_the_module_reads_is_under_the_tree(self):
         """_under, the road every open() and glob.glob() of this module takes (the pin above holds them there), by execution:
