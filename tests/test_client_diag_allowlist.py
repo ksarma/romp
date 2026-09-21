@@ -171,7 +171,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         self.assertEqual(err, "", "the marked row is admitted whole, nothing said (the owner 2026-09-21, who approved the field): %s" % err)
         stored = self.rows()[-1]["data"]
         self.assertEqual(stored, row, "the inactive spacer row survives the allowlist whole, marker included")
-        self.assertEqual(stored["view"], "inactive", "one fixed word")
+        self.assertEqual(stored["view"], "inactive", "the marker stored as posted (a restatement of the whole-row equality above: the table admits the key and checks no value; the word is the page's builder's, ui/webview/scroll-write.ts spacerRow)")
         self.assertIn("view", km.CLIENT_DIAG_KEYS["chat"], "the chat entry names the key on the owner's approval of 2026-09-21")
         for surface in km.CLIENT_DIAG_KEYS:
             if surface != "chat":
