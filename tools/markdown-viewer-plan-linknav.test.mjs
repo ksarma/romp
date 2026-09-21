@@ -274,7 +274,10 @@ test('L3: the control\'s words are the viewer\'s literal, quoted by the section 
   assert.match(read('ui', 'webview', 'anchor-map.ts'), /"fv-figerr",[^\n]*\n\s*"fv-figopen",/, 'anchor-map.ts CONTROL_CLASSES');
   assert.match(read('ui', 'webview', 'anchor-map.ts').replace(/\n \*  /g, ' '), /is not the note's\), and since the link-navigation follow-on the figure's Open the picture control \(`button\.fv-figopen`, a glyph with no text of its own\)\. \*\//, 'anchor-map.ts CONTROL_CLASSES header names the control, as reader-place.ts\'s twin does');
   assert.ok(read('ui', 'webview', 'anchor-map.ts').includes('const isFigureCompanion = (n: DNode): boolean => hasClass(n, "fv-figerr") || hasClass(n, "fv-figopen");'));
-  assert.ok(read('ui', 'webview', 'reader-place.ts').includes('const CONTROL_CLASSES = ["code-copy", "katex", "md-fnback", "md-frontmatter-head", "fv-gate", "fv-figerr", "fv-figopen"];'));
+  // reader-place.ts's CONTROL_CLASSES is not copied here: a byte copy of the list pinned its contents and not whether a walk reads
+  // them (the file review's landing round's second read, correctness-1, dropped the two other copies; this third one went with
+  // them). The entry's execution is md-config-figure-gate-place.test.ts's labelled scene, its count word file-figure-open.test.ts's
+  // derived pin, and the structural exclusion file-view-place-blocks.test.ts's top-level figure.
   assert.ok(viewer.includes('const n = (figureControlAfter(anchor) || anchor).nextSibling;'), 'the label lookup steps past the control');
   // the sheets: the same fv-figopen rule lines in both, every reveal under screen, none in the print block
   const REST = '.fileview-md .fv-figopen { position: relative; z-index: 1; vertical-align: top; margin: 0 6px 0 -28px; top: 6px; padding: 3px; background: var(--bg); opacity: 0; }';
