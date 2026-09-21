@@ -357,16 +357,20 @@ test('L5 and L6: no history API call in the trail or the viewer; the trail modul
   assert.ok(section.includes('`git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty'), 'L6 names the kernel stat from the merge-base');
   assert.ok(section.includes('`git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui/webview, docs, plans, tools, upstream or tests alone'), 'and the listing from the merge-base');
   assert.ok(!section.includes('git diff --stat 34142c262') && !section.includes('git diff --name-only 34142c262'), 'no verification against the branch point remains');
-  const count = /upstream or tests alone \((\d+) files, the ledger entry's where line/.exec(section);
+  assert.ok(section.includes('upstream or tests alone, save one file under .github/workflows, ci.yml, whose step'), 'L6 names the one file outside the six directories, the CI step the file review\'s landing round asked for (extra8-2)');
+  const count = /upstream or tests alone[^()]*\((\d+) files, the ledger entry's where line/.exec(section);
   assert.ok(count, 'L6 counts the listing beside the command');
   assert.ok(exists('upstream', '2026-09-19-linknav-trail-back-forward.md'), 'the ledger entry the section names');
   assert.ok(exists(...THIS_MODULE.split('/')), 'THIS_MODULE names a file in the tree: ' + THIS_MODULE + ' (a misspelt path would hold the verifications off for good behind a green diagnostic; the file review\'s round 5, tests-7)');
   gated(t, L6_CHECK, (d) => {
     assert.equal(d.kernel, '', 'no kernel change since the merge-base ' + d.base);
     const DIRS = ['ui/webview/', 'docs/', 'plans/', 'tools/', 'upstream/', 'tests/'];
-    for (const f of d.files) assert.ok(DIRS.some((dir) => f.startsWith(dir)), f + ' lies under one of the six directories L6 names');
+    // the one file outside them: the CI step the file review's landing round asked for (extra8-2), named as a file, not a
+    // directory, so a second workflow file joining the delta is red here until L6 names it
+    const FILES = ['.github/workflows/ci.yml'];
+    for (const f of d.files) assert.ok(DIRS.some((dir) => f.startsWith(dir)) || FILES.includes(f), f + ' lies under one of the six directories L6 names, or is the one workflow file it names');
     assert.equal(d.files.length, Number(count[1]), 'L6 says the listing since the merge-base has ' + count[1] + ' files; it has ' + d.files.length + ': ' + d.files.join(', '));
-    t.diagnostic('L6\'s verifications ran: ' + d.files.length + ' files since the merge-base ' + d.base + ', none under kernel/, all under the six directories');
+    t.diagnostic('L6\'s verifications ran: ' + d.files.length + ' files since the merge-base ' + d.base + ', none under kernel/, all under the six directories or the one workflow file L6 names');
   });
 });
 

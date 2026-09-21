@@ -8583,13 +8583,18 @@ bypassed: no request reaches a host the gate still holds. The build's record her
 the contract said the same; the claim was false, and the follow-on is a privacy surface, landing on the owner's word
 (open point 11). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui/webview, docs, plans, tools,
-upstream or tests alone (42 files, the ledger entry's where line; run 2026-09-21 at the head that carries the file
-review's landing round's fixes, where the merge-base is the fork's main the branch had merged for the file review's round 5 and the listing is the
-branch's whole delta over it; the run at the head after that merge, for the file review's round 5, listed 40, before the
-landing round's executed test re-aimed two more standing suites; the two earlier runs, at the commit that built the one
-reader for the file review's round 4 and at the head
-that closed the author's closing pass after the file review's round 4, listed 38 from the older merge-base they shared,
-before the merge made main's tools/markdown-viewer-plan-gate-adopt.test.mjs a file the branch edits;
+upstream or tests alone, save one file under .github/workflows, ci.yml, whose step the file review's landing round's
+extra8-2 asked for (45 files, the ledger entry's where line; run 2026-09-21 at the head that carries the fixes for the
+file review's landing round's second read, where the merge-base is 5e5ee79ed, the fork's main merged into the branch
+before landing, and the listing is the branch's whole delta over it; the run at 7f8684caf, the head that read took, one
+commit after that merge, listed 42 from the same merge-base, before three files joined the delta in the read's fixes,
+ui/webview/file-view-place-blocks.test.ts, ui/webview/real-viewer-leg.ts and .github/workflows/ci.yml, the last the one
+outside the six directories; the run at the head before that merge listed the same 42 from 01434a45b, the fork's main
+the branch had merged for the file review's round 5; the run at the head after that earlier merge, for the file review's
+round 5, listed 40, before the landing round's executed test re-aimed two more standing suites; the two earlier runs, at
+the commit that built the one reader for the file review's round 4 and at the head that closed the author's closing
+pass after the file review's round 4, listed 38 from the older merge-base they shared, before the merge made main's
+tools/markdown-viewer-plan-gate-adopt.test.mjs a file the branch edits;
 tools/markdown-viewer-plan-linknav.test.mjs runs both behind the two-part gate the Tests paragraph names, the merge-base
 not `origin/main` itself and the diff since it adding the module, reads the count off this sentence where they run, and
 otherwise says which part held them, or holds the prose alone without the ref; the Tests paragraph says where that is).
@@ -8706,7 +8711,7 @@ guide are the sources' literals; the sheets carry L3's rules under `screen` in b
 control nowhere; no history API call stands in the trail or the viewer; L6's two verifications are run from the
 merge-base with `origin/main` behind a two-part gate read off git, the merge-base not `origin/main` itself and the
 diff since it adding the module (the file review's round 4, extra8-1: the kernel stat empty, every changed file under
-the six directories, and the count L6 gives the listing's, on the open PR branch in a clone where `origin/main` has
+the six directories or the one workflow file L6 names, and the count L6 gives the listing's, on the open PR branch in a clone where `origin/main` has
 moved past the branch's last merge of it; on main, on a batch head cut from main's tip, on this branch right after
 merging `origin/main` and on any later branch once the follow-on has landed the checks stand down and the diagnostic
 names the part of the gate that held them, and without the ref the prose alone holds; a batch head that main has moved
