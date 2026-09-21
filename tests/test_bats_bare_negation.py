@@ -92,15 +92,15 @@ than passing an empty corpus as clean: suite_files; BatsSuites lists a file's ca
 them): 232 `!` words file-wide, 191 of them `[ !`, 24 inside comments and strings (the word rule takes a `!` next to a backtick, a
 `)` or a `>`), 5 at file scope, and 12 candidates in test bodies (bootstrap-sh.bats 184; install-optional-deps.bats 505;
 install-sh.bats 329, 400, 411; pr-orphans.bats 125; romp-serve.bats 117, 309, 334, 382; romp-service.bats 683; romp-sessions.bats
-84), listed in 6.73 s with the extents (one `bash -n` per `}` word of a test's lines through its close since the sixth commit,
-7.02 s there, 7.52 s at the seventh commit and 7.35 s at the eighth, and one per `}` word of the close line for its column; the
+84), listed in 6.78 s with the extents (one `bash -n` per `}` word of a test's lines through its close since the sixth commit,
+7.02 s there, 7.52 s at the seventh commit, 7.35 s at the eighth and 6.73 s at the ninth, and one per `}` word of the close line for its column; the
 fifth commit asked every brace, 8.36 s, and the head before it 6.89 s). bats
 reads all 12 (BatsCorpus, under 1.10.0 and 1.11.1): the nine at line start are `not
 ok` on their own line under `! true` and `ok` under `! false`; the three condition heads of romp-serve.bats (309, 334 and 382, `if
 ! _dead "$pid"; then kill ...; return 1; fi`) the reverse, `ok` under `! true` and `not ok` on their own line under `! false`, so
 they are read only through the second rewrite; 0 inert, 0 undecided. Each rewrite runs twice (REPEATS) and four candidates are
-decided at a time (CORPUS_WORKERS): 154.12 s of runs in 72.27 s on this box under 1.10.0 (72.30 s under 1.11.1), 109.10 s of the
-runs the three heads' probe tests, whose slowest side is romp-serve.bats 334 under `! true`, 25.45 s for its two runs, against
+decided at a time (CORPUS_WORKERS): 158.65 s of runs in 74.82 s on this box under 1.10.0 (74.37 s under 1.11.1), 113.04 s of the
+runs the three heads' probe tests, whose slowest side is romp-serve.bats 334 under `! false`, 26.45 s for its two runs, against
 which RUN_TIMEOUT stands at 60 s a run. The 5 file-scope `!` words sit in helpers and a setup (bats-state-isolation.bats 125, 126
 and 129 twice; romp-postal.bats 47): outside the subject, since a `!` there has no enclosing test to run alone, and so is one in
 the text after a test's close, on its close line or on the lines a construct opened there runs on to: a helper defined there, a
@@ -194,7 +194,7 @@ test of this module that derives from bash skips under such a bash wherever it r
 where before round 2's second commit the two recall tests, the extents and the candidates were red, and the two tests that need no bash run
 there). The inner bats resolves through a PATH without the outer's libexec directory (_bats_env), since the entry point there
 expects the BATS_ROOT the scrub removes and did not load under CI's /usr/local layout. Measured at this head: 533 shapes, 559
-tests, in 69.68 s under 1.10.0 and 74.83 s under 1.11.1; under `! true` 319 ok and 240 not ok, under `! false` 542 ok and 17 not
+tests, in 67.82 s under 1.10.0 and 77.81 s under 1.11.1; under `! true` 319 ok and 240 not ok, under `! false` 542 ok and 17 not
 ok (the four condition heads whose branch fails the test, `command _h` and `env _h`, which find no shell function, `run ! true`,
 which run itself fails, the doubled negation mid and last and the doubled negation across a line continuation mid and last,
 whose inversions cancel, `! true && false` mid and last, the backgrounded negation whose job status `wait %%` reads, mid and
@@ -216,6 +216,42 @@ earlier register keep their 260 recorded `! true` verdicts and are 260 ok under 
 candidate (541, 299 of them in tests recorded ok, 495 at line start), the 139 recorded-inert line-start sites the earlier
 register counted and every one off line start among them.
 
+This module is the first in the repository to run bats under pytest, and so the first detector of a class no test had seen: the
+environment a test module writes at import. 423 of the 934 test modules write ROMP_SERVE_TOKEN into os.environ at column 0
+(`os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")` or the like; a grep for a column-0 `os.environ` line naming it, 425 files
+under tests/), 752 name XDG_STATE_HOME at column 0 (747 rebind it to a fresh directory) and 4 write ROMP_STATE_DIR, and
+tests/conftest.py floors XDG_STATE_HOME for every run. A column-0 write runs when pytest COLLECTS the module, before any test
+runs and whether or not one of the module's tests is selected, in every process that collects it (each xdist worker collects), so
+a subprocess started with a pass-through of the process's environment sees the union of those writes. bats saw
+ROMP_SERVE_TOKEN, which bin/romp reads over the state file (its _romp_token), and romp-sessions.bats's serve-token test, whose grep
+wants the token its setup wrote to the state file, failed under both rewrites: the corpus reported it undecided in every
+full-suite shape (-n 4 and one process alike) while the same run alone read 12 of 12, and it failed identically with one such
+module collected and deselected, zero of that module's tests run, `git diff --stat` empty in every dump (the finding of fork PR
+#871's round 2, tenth commit, found by this test on 2026-09-21). Behind it, masked by it: a state root reached by XDG_STATE_HOME or
+ROMP_STATE_DIR, under which a module loading bin/romp-kernel with no token in the environment mints a serve-token at import (its
+TOKEN = _load_token()), and install-sh.bats's two no-token tests, whose last line asserts no `?token=` link, fail the same way
+(measured in the child shape with tests/test_awaiting_since.py collected: both undecided before, both read after). Since that
+commit the environment a bats run sees is built from a rule (BATS_ENV_KEYS: PATH, a fresh HOME and TMPDIR, LANG) and from nothing
+else of the process, pinned by equality on its keys, by the three routes planted in this process and closed (BatsCorpus's
+token-and-state-root pin, seconds), and by the decisive case as a child pytest (the collected-and-deselected pin, the corpus once).
+The class itself, an import-time write that reaches every subprocess of a run, is a finding of its own, filed separately and not
+fixed here: this module closes its own door.
+
+The gate on the corpus validation in CI is the shell job: its Linux cell installs bats 1.11.1 and its `bats tests/*.bats` runs
+tests/bats-bare-negation-shell-job.bats, which runs the corpus test under python3 with this module ALONE, no conftest and no
+sibling module collected, the one shape that cannot be polluted (the job was green while every local full-suite run was red).
+The five Python cells install pytest, pytest-timeout and cryptography and no bats (ci.yml's Install steps), so the thirteen
+bats-backed tests of this module skip there, and since the tenth commit the first skip warns once per process
+(WITHOUT_BATS_NOTICE, listed in pytest's warnings summary and counted in the summary line under -q, the cells' flags): a green
+Python cell says the corpus validation did not run in it. Installing bats in those cells was measured and refused: at the head
+before the tenth commit the module alone cost `45 passed in 199.86s` with bats against `34 passed, 11 skipped in 17.56s` without,
+182 s more per cell (the register and the corpus most of it; at this head `48 passed in 263.03s (0:04:23)` with bats 1.10.0, the
+two new bats-backed pins among them and the child pytest 70 s of it, against `35 passed, 13 skipped, 1 warning in 17.13s`
+without), on cells whose margin under their 25-minute cap is 2 to 5 minutes (the 3.14t cell at about 23 of 25), for a bats
+install of 4 s; the shell job carries the validation inside its 35
+minutes (11 minutes at the ninth commit). The polluted shape, pytest over the whole tests/ with bats on PATH, exists in local
+sweeps only, where the two pins above run.
+
 Deleted here, not fixed: the line scanner's frame model (the brace-depth walk, its block ends and the coverage pin over them), its
 heredoc classification (introducers, delimiter words, the skip) and its status-read grammar (`_plain_call`, `_helper_read`,
 `_read_position`, `_closes_a_condition`, `_trailer`, `_fallback_fails`, the compound closes), with the Scanner cases that pinned
@@ -229,6 +265,7 @@ import collections
 import concurrent.futures
 import contextlib
 import glob
+import importlib.util
 import os
 import re
 import shlex
@@ -241,6 +278,7 @@ import threading
 import time
 import unittest
 import unittest.mock
+import warnings
 
 from tests.test_ci_bats_bound import run_bats_step   # the one reading of the shell job's Run bats step: its pin and this population
 
@@ -399,6 +437,28 @@ def skip_unless_bash_serves(case):
                   "on macOS (3.2.57)" % lacking)
         print(reason)
         case.skipTest(reason)
+
+
+# what a run without bats says once, through the first skip (skip_unless_bats_serves): a UserWarning, which pytest lists in the
+# run's warnings summary and counts in its summary line under -q, the flags CI's Python cells run with, and unittest prints on
+# stderr. Before fork PR #871's round 2, tenth commit, the thirteen bats-backed tests skipped into a count in the summary line,
+# and a green Python cell said nothing of the corpus validation not having run in it
+WITHOUT_BATS_NOTICE = ("bats is not on PATH, so the bats-backed tests of tests/test_bats_bare_negation.py skipped: the corpus validation "
+                       "(every bare `!` in a test body of every bats suite decided by bats) did not run in this process. CI's Python cells "
+                       "install no bats, by decision (the module docstring); tests/bats-bare-negation-shell-job.bats runs it in the shell "
+                       "job's Linux cell, the one gate on it in CI. To run it here, put bats on PATH.")
+_WITHOUT_BATS_NOTICED = []
+
+
+def skip_unless_bats_serves(case, reason=None):
+    """Returns where bats is on PATH; elsewhere warns once per process (WITHOUT_BATS_NOTICE) and skips the test case with the
+    reason, CORPUS_SKIP when none is given."""
+    if shutil.which("bats"):
+        return
+    if not _WITHOUT_BATS_NOTICED:
+        _WITHOUT_BATS_NOTICED.append(True)
+        warnings.warn(WITHOUT_BATS_NOTICE, UserWarning, stacklevel=2)
+    case.skipTest(CORPUS_SKIP if reason is None else reason)
 
 
 def _test_line(line):
@@ -950,26 +1010,53 @@ def _ere_literal(text):
     return re.sub(r"[][\\^$.|?*+(){}]", r"\\\g<0>", text)
 
 
+# The environment a bats run of this module's sees: the one statement of the rule. _bats_env builds it from these keys and from
+# nothing else the process holds, and the equality pin holds the built environment's keys to exactly this tuple
+# (BatsCorpus.test_the_environment_handed_to_bats_holds_exactly_the_allowed_keys_and_nothing_else_of_the_process), so a key added
+# here is a pass-through made visible and a key built but not listed is dropped. PATH: the process's own (os.defpath when it has
+# none), less every directory holding bats's libexec entry point (_bats_env says why); bats and every tool a suite calls resolve
+# through it, and the shell job's bats has the runner's. HOME and TMPDIR: a fresh directory each under the scratch the caller
+# hands over, so a suite reads and writes no state of this machine's and everything it makes under them goes with the scratch.
+# LANG: the process's, `C` when it has none (the same locale to bash and every tool as no LANG at all), so a suite reading the
+# locale sees the one the outer run has, the runner's under the shell job's bats and this box's under pytest here; the corpus and
+# the register need none (measured, the module docstring), and the process's LC_ALL, an override of its own, is not passed.
+# Nothing of the process beyond those: no ROMP_*, no XDG_*, no CLAUDE_*, no credential-shaped name, and no pass-through of the
+# rest, because 423 of the 934 test modules write ROMP_SERVE_TOKEN into os.environ at import (a column-0 write) and 752 name
+# XDG_STATE_HOME there, and a column-0 write runs when pytest COLLECTS the module, so it is in the process before any test runs
+# and in every process that collects the module, whether or not one of its tests is selected. The pass-through this replaced
+# (every variable but BATS_*) handed bats the union of them: under any full-suite shape bin/romp read ROMP_SERVE_TOKEN over the
+# state file, romp-sessions.bats's serve-token test failed under both rewrites, and the corpus reported it undecided, while the
+# same test alone read 12 of 12 (fork PR #871's round 2, tenth commit). A denylist of the names found would close those and
+# leave the next one open (ROMP_STATE_DIR, which install.sh reads before XDG_STATE_HOME and four modules write at import): this
+# tuple is what bats MAY see.
+BATS_ENV_KEYS = ("PATH", "HOME", "TMPDIR", "LANG")
+
+
 def _bats_env(scratch):
-    """The environment for a bats run of this module's: every BATS_* variable unset (under BATS_TEST_TIMEOUT bats's timeout watcher
+    """The environment for a bats run of this module's, built from BATS_ENV_KEYS (the rule and its reasons are at the tuple) and
+    nothing else: PATH from the process with every directory holding bats's libexec entry point dropped (an outer bats prepends
+    its libexec directory to PATH, and the `bats` there, beside bats-exec-test, is the entry point that expects the BATS_ROOT its
+    bin wrapper exported, which an environment built from this rule never carries; the wrapper's own scrub removes BATS_LIBEXEC
+    with the rest before python starts, so the directory is known by what it holds and not by that variable; with it gone `bats`
+    resolves to a wrapper again. Left in place, the inner bats ran with BATS_ROOT empty: on this box, whose bats lives under
+    /usr and whose /lib is /usr/lib, that only put the frames of an `exit` and of a teardown failure on bats-exec-test's own
+    lines, since the frames bats drops are those under $BATS_ROOT/lib and libexec, and under CI's /usr/local prefix the inner
+    bats did not load at all, `//bats-core/validator.bash: No such file or directory`, measured with 1.11.1 from a scratch prefix
+    as the outer and the inner bats); HOME and TMPDIR each a fresh directory under the scratch one; LANG from the process, `C`
+    when it has none. No BATS_* variable, by construction rather than by a strip (under BATS_TEST_TIMEOUT bats's timeout watcher
     is a background child of the test, and a bare `wait` in a test waits on it: the register's D_bg hung to a 40 s kill with the
-    variable set and passed in 0.07 s without; a nested bats must also not read the outer run's BATS_ROOT, BATS_RUN_TMPDIR and the
-    rest); every directory on PATH holding bats's libexec entry point dropped from it (an outer bats prepends its libexec
-    directory to PATH, and the `bats` there, beside bats-exec-test, is the entry point that expects the BATS_ROOT its bin wrapper
-    exported, which the strip above removes; the wrapper's own scrub removes BATS_LIBEXEC with the rest before python starts, so
-    the directory is known by what it holds and not by that variable; with it gone `bats` resolves to a wrapper again. Left in
-    place, the inner bats ran with BATS_ROOT empty: on this box, whose bats lives under /usr and whose /lib is /usr/lib, that only
-    put the frames of an `exit` and of a teardown failure on bats-exec-test's own lines, since the frames bats drops are those under
-    $BATS_ROOT/lib and libexec, and under CI's /usr/local prefix the inner bats did not load at all, `//bats-core/validator.bash: No
-    such file or directory`, measured with 1.11.1 from a scratch prefix as the outer and the inner bats); HOME and TMPDIR each a
-    fresh directory under the scratch one, so a test reads and writes no state of this machine's. A bats started with this
-    environment resolves through its PATH (Popen looks the executable up in the environment it is given)."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith("BATS_")}
-    if "PATH" in env:
-        env["PATH"] = os.pathsep.join(p for p in env["PATH"].split(os.pathsep) if not os.path.isfile(os.path.join(p, "bats-exec-test")))
-    for var, sub in (("HOME", "home"), ("TMPDIR", "tmp")):
-        env[var] = os.path.join(scratch, sub)
-        os.makedirs(env[var], exist_ok=True)
+    variable set and passed in 0.07 s without; a nested bats must also not read the outer run's BATS_ROOT, BATS_RUN_TMPDIR and
+    the rest). A bats started with this environment resolves through its PATH (Popen looks the executable up in the environment
+    it is given). The inner TMPDIR is the scratch's path plus `/tmp`: at the corpus's depth that is the run's TMPDIR, the tests
+    package's root under it, the corpus's scratch and the candidate's directory, some 60 bytes over the run's, and a suite's
+    AF_UNIX socket under it must fit sun_path (108 bytes), so the run's TMPDIR stays short (the sweep's 17 bytes; one nested
+    root more under -n)."""
+    path = os.environ.get("PATH", os.defpath)
+    built = {"PATH": os.pathsep.join(p for p in path.split(os.pathsep) if not os.path.isfile(os.path.join(p, "bats-exec-test"))),
+             "HOME": os.path.join(scratch, "home"), "TMPDIR": os.path.join(scratch, "tmp"), "LANG": os.environ.get("LANG", "C")}
+    for var in ("HOME", "TMPDIR"):
+        os.makedirs(built[var], exist_ok=True)
+    return {k: built[k] for k in BATS_ENV_KEYS}
     return env
 
 
@@ -993,6 +1080,9 @@ RUN_TIMEOUT = 60
 # the bound on the register's one run over every shape: every shape terminates, so a run past it is an error and not a verdict, a
 # backstop for a run with no outer bound (pytest)
 REGISTER_TIMEOUT = 900
+# the bound on the child pytest of the collected-and-deselected pin (BatsCorpus): the corpus once (its time is in the module
+# docstring) plus a collection that loads bin/romp-kernel; a run past it is an error and not a verdict
+CHILD_TIMEOUT = 600
 
 
 def _end_group(p, grace=5.0):
@@ -3456,12 +3546,17 @@ class BatsGroundTruth(unittest.TestCase):
         # a pass that verified nothing. The bash probe is held at "nothing lacking" for the test, since under a bash that lacks
         # something the bash gate fires first and this message is never reached (round 2's second commit: under bash 3.2.57 this test failed on the
         # gate's message, which has its own pin above)
-        with unittest.mock.patch.dict(_BASH_PROBE, {"shortfall": False}), unittest.mock.patch("shutil.which", return_value=None):
+        # the first skip of the process warns once (WITHOUT_BATS_NOTICE, the corpus's without-bats pin asserts its text); caught here
+        # with the once-flag reset, so a run with bats on PATH shows no warning of bats being absent
+        with unittest.mock.patch.dict(_BASH_PROBE, {"shortfall": False}), unittest.mock.patch("shutil.which", return_value=None), \
+                unittest.mock.patch.object(sys.modules[__name__], "_WITHOUT_BATS_NOTICED", []), warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
             for test in (self.test_the_record_is_what_bats_says_under_both_rewrites, self.test_decide_reads_every_test_of_the_register_whose_verdicts_differ_and_refuses_none):
                 with self.assertRaises(unittest.SkipTest) as cm:
                     test()
                 self.assertIn("shell job", str(cm.exception))
                 self.assertIn(" and ".join(self.RECORDED_WITH), str(cm.exception))
+        self.assertEqual([(w.category, str(w.message)) for w in caught], [(UserWarning, WITHOUT_BATS_NOTICE)])
 
     _record = None   # the one record_under_bats run of this process and its seconds, read by the agreement and the decision test
 
@@ -3476,8 +3571,7 @@ class BatsGroundTruth(unittest.TestCase):
 
     def skip_without_bats(self):
         skip_unless_bash_serves(self)
-        if not shutil.which("bats"):
-            self.skipTest("bats is not on PATH: the record (bats %s) stands unverified here; %s" % (" and ".join(self.RECORDED_WITH), WHERE_BATS_RUNS))
+        skip_unless_bats_serves(self, "bats is not on PATH: the record (bats %s) stands unverified here; %s" % (" and ".join(self.RECORDED_WITH), WHERE_BATS_RUNS))
 
     def test_decide_reads_every_test_of_the_register_whose_verdicts_differ_and_refuses_none(self):
         # F1 of fork PR #871's commit-3 review: decide refused a `( ! cmd )` subshell on its own line as undecided, since bash blames
@@ -3548,14 +3642,16 @@ class BatsCorpus(unittest.TestCase):
     undecided one's report in full (the message naming which, the line as written and under each rewrite, both outcomes, the
     blamed line, what bats said) follows the table, and the test fails on it. CORPUS_WORKERS candidates are decided at a time, each
     run in its own copy of the tree. Where bats is absent this skips, naming where it runs (WHERE_BATS_RUNS: CI's shell job's Linux
-    cell, through tests/bats-bare-negation-shell-job.bats)."""
+    cell, through tests/bats-bare-negation-shell-job.bats), and the first skip of the process warns (WITHOUT_BATS_NOTICE). The
+    environment every bats run sees is built from BATS_ENV_KEYS and nothing else of this process, pinned here three ways: by
+    equality on its keys, by the three routes the import-time writes took planted in this process and closed, and by the shape
+    the finding was found in, a child pytest with a module that writes the environment at import collected and deselected."""
 
     SKIP = CORPUS_SKIP
 
     def test_every_candidate_of_every_suite_is_read_by_bats(self):
         skip_unless_bash_serves(self)
-        if not shutil.which("bats"):
-            self.skipTest(self.SKIP)
+        skip_unless_bats_serves(self, self.SKIP)
         root, files = ROOT, suite_files()
         decisions, t0 = [], time.monotonic()
         work = [(relpath, lines, extents, cand) for relpath in files for lines, extents in [_read_suite(relpath)] for cand in candidates(lines, extents)]
@@ -3584,32 +3680,154 @@ class BatsCorpus(unittest.TestCase):
         # bats (a shape's bare `wait` hangs on the timeout watcher); a directory holding bats's libexec entry point (a `bats` beside
         # a bats-exec-test: the outer's libexec, first on PATH) is dropped wherever it stands, so the inner `bats` is a wrapper that
         # exports BATS_ROOT and not the entry point that expects it; a PATH without such a directory stands as it is, an absent
-        # directory included; HOME and TMPDIR are fresh directories under the scratch one
+        # directory included; HOME and TMPDIR are fresh directories under the scratch one, made. Before fork PR #871's round 2,
+        # tenth commit, this test also planted KEEP_ME=1 and asserted that it reached bats: it pinned the pass-through, the defect
+        # the equality pin below replaced it with
         with tempfile.TemporaryDirectory() as d:
             libexec, bin_, absent = os.path.join(d, "libexec"), os.path.join(d, "bin"), os.path.join(d, "absent")
             for p, names in ((libexec, ("bats", "bats-exec-test")), (bin_, ("bats",))):
                 os.makedirs(p)
                 for n in names:
                     open(os.path.join(p, n), "w").close()
-            with unittest.mock.patch.dict(os.environ, {"BATS_TEST_TIMEOUT": "180", "BATS_RUN_TMPDIR": d, "KEEP_ME": "1",
+            with unittest.mock.patch.dict(os.environ, {"BATS_TEST_TIMEOUT": "180", "BATS_RUN_TMPDIR": d,
                                                        "PATH": os.pathsep.join((libexec, bin_, libexec))}):
                 env = _bats_env(d)
             with unittest.mock.patch.dict(os.environ, {"PATH": os.pathsep.join((bin_, absent))}):
                 plain = _bats_env(d)
+            made = (os.path.isdir(env["HOME"]), os.path.isdir(env["TMPDIR"]))
         self.assertEqual([k for k in env if k.startswith("BATS_")], [])
-        self.assertEqual(env["KEEP_ME"], "1")
         self.assertEqual(env["PATH"], bin_)
         self.assertEqual(plain["PATH"], os.pathsep.join((bin_, absent)))
         self.assertEqual((env["HOME"], env["TMPDIR"]), (os.path.join(d, "home"), os.path.join(d, "tmp")))
+        self.assertEqual(made, (True, True))
+
+    def test_the_environment_handed_to_bats_holds_exactly_the_allowed_keys_and_nothing_else_of_the_process(self):
+        # the rule (BATS_ENV_KEYS) held by EQUALITY on the built environment's keys, never by membership: a token, a state root by
+        # both of its names and an arbitrary name are planted in os.environ around the call (the writes 423 test modules make at
+        # import, and one no census names), and none reaches the output; then every value is pinned to its source, PATH the
+        # process's (less a libexec directory, the test above), LANG the process's or `C`, HOME and TMPDIR the scratch's, so no
+        # value but PATH's and LANG's comes from os.environ. A pass-through added to _bats_env reds the first assertion whatever
+        # its key; a key added to BATS_ENV_KEYS is a pass-through announced there
+        path = os.environ.get("PATH", os.defpath)
+        with tempfile.TemporaryDirectory() as d:
+            root = os.path.join(d, "state")
+            with unittest.mock.patch.dict(os.environ, {"ROMP_SERVE_TOKEN": "testtok", "XDG_STATE_HOME": root, "ROMP_STATE_DIR": os.path.join(root, "romp"),
+                                                       "FOO": "1", "LANG": "C.UTF-8", "LC_ALL": "C"}):
+                env = _bats_env(d)
+            with unittest.mock.patch.dict(os.environ, {"PATH": path, "FOO": "1"}, clear=True):
+                bare = _bats_env(d)
+        for built in (env, bare):
+            self.assertEqual(set(built), set(BATS_ENV_KEYS),
+                             "bats must see the Shell job environment and nothing of the pytest process: 423 test modules write os.environ at import, "
+                             "so a pass-through reaches bats whether or not their tests ran; the keys built were %s" % sorted(built))
+        expected_path = os.pathsep.join(p for p in path.split(os.pathsep) if not os.path.isfile(os.path.join(p, "bats-exec-test")))
+        self.assertEqual((env["PATH"], env["LANG"], env["HOME"], env["TMPDIR"]), (expected_path, "C.UTF-8", os.path.join(d, "home"), os.path.join(d, "tmp")))
+        self.assertEqual((bare["PATH"], bare["LANG"], bare["HOME"], bare["TMPDIR"]), (expected_path, "C", os.path.join(d, "home"), os.path.join(d, "tmp")))
+
+    def test_a_token_and_a_state_root_written_into_the_process_environment_reach_no_suite(self):
+        # the routes the finding took, planted in this process and closed by _bats_env, in seconds: (A) ROMP_SERVE_TOKEN, which
+        # bin/romp reads over the state file (its _romp_token) and 423 test modules write at import, through romp-sessions.bats's
+        # serve-token test, whose grep wants the token its setup wrote to the state file; (B) a state root holding a serve-token,
+        # reached by XDG_STATE_HOME, which tests/conftest.py floors and 747 modules rebind at import and under which a module
+        # loading bin/romp-kernel with no token in the environment mints one at import (its TOKEN = _load_token()), and by
+        # ROMP_STATE_DIR, which install.sh reads first (its _state_dir) and four modules write at import, through install-sh.bats's
+        # two no-token tests, whose last line asserts no `?token=` link. Each route is shown live first, the plant handed to bats
+        # directly on the file as written: the test fails (`not ok`), so a `read` under the plant below is the environment's
+        # doing and not a plant that reached nothing. Then, with all three planted in os.environ, the road decides the three
+        # candidates (decide_under_bats, one run per rewrite): read, as alone. A denylist of the two names the finding named
+        # leaves the third route open, and bin/romp reads it first too (its _romp_token), so that mutation reds all three here,
+        # undecided (measured); before fork PR #871's round 2, tenth commit, the pass-through red all three the same way
+        skip_unless_bash_serves(self)
+        skip_unless_bats_serves(self)
+        wanted = (("tests/romp-sessions.bats", "romp sessions: reads the KERNEL, authorizing with the serve token", "ROMP_SERVE_TOKEN"),
+                  ("tests/install-sh.bats", "install.sh: ROMP_NO_SERVICE with no token points at romp up, never a dead link", "XDG_STATE_HOME"),
+                  ("tests/install-sh.bats", "install.sh: service up but token not minted yet, says how to get the link", "ROMP_STATE_DIR"))
+        picked, suites = [], {}
+        for relpath, name, route in wanted:
+            if relpath not in suites:
+                suites[relpath] = _read_suite(relpath)
+            lines, extents = suites[relpath]
+            by_name = {_test_name(lines[o]): k for k, (o, _) in enumerate(extents)}
+            self.assertIn(name, by_name, "%s has no test named %r: hand this pin the test that reads the token now" % (relpath, name))
+            cands = [c for c in candidates(lines, extents) if c.test == by_name[name]]
+            self.assertEqual(len(cands), 1, "%s %r holds %d candidates, one expected: %s" % (relpath, name, len(cands), cands))
+            picked.append((relpath, lines, extents, cands[0], name, route))
+        with tempfile.TemporaryDirectory() as d:
+            root = os.path.join(d, "state")
+            os.makedirs(os.path.join(root, "romp"))
+            with open(os.path.join(root, "romp", "serve-token"), "w", encoding="utf-8") as f:
+                f.write("minted-under-a-collected-module\n")
+            routes = {"ROMP_SERVE_TOKEN": "testtok", "XDG_STATE_HOME": root, "ROMP_STATE_DIR": os.path.join(root, "romp")}
+            tree = os.path.join(d, "tree")
+            shutil.copytree(ROOT, tree, symlinks=True, ignore=shutil.ignore_patterns(".git", "node_modules", "__pycache__", ".pytest_cache"))
+            live = []
+            for relpath, _, _, _, name, route in picked:
+                out, err, ended, _, _ = _run_bats(["bats", "-t", "-f", "^%s$" % _ere_literal(name), relpath], tree, dict(_bats_env(d), **{route: routes[route]}), RUN_TIMEOUT)
+                live.append((route, relpath, re.findall(r"^(ok|not ok) \d+ ", out, re.M), ended, out + err))
+            self.assertEqual([(route, relpath, verdicts, ended) for route, relpath, verdicts, ended, _ in live],
+                             [(route, relpath, ["not ok"], False) for route, relpath, _, _, _ in live],
+                             "a route handed to bats did not fail its test: the plant reaches nothing, and the assertion below pins nothing\n\n"
+                             + "\n\n".join("%s -> %s:\n%s" % (route, relpath, text) for route, relpath, _, _, text in live))
+            with unittest.mock.patch.dict(os.environ, routes):
+                decided = [decide_under_bats(ROOT, relpath, lines, extents, cand, d, repeats=1) for relpath, lines, extents, cand, _, _ in picked]
+        for dec in decided:
+            print("%s:%d %s" % (dec.relpath, dec.cand.line + 1, _row(dec)), flush=True)
+        self.assertEqual([(dec.relpath, dec.cand.line + 1, dec.verdict) for dec in decided], [(dec.relpath, dec.cand.line + 1, "read") for dec in decided],
+                         "a token or a state root written into this process's environment reached a suite bats ran:\n\n"
+                         + "\n\n".join(report(dec) for dec in decided if dec.verdict != "read"))
+
+    def test_the_corpus_reads_the_same_suite_after_a_module_writing_the_environment_at_import_is_collected_and_deselected(self):
+        # the finding (fork PR #871's round 2, 2026-09-21, by test): the corpus test passed alone and failed in every full-suite
+        # shape, -n 4 and one process alike, because bats inherited the union of the test modules' import-time environment writes;
+        # the decisive case was this test alone with ONE such module collected and deselected (-k), zero of its tests run, failing
+        # identically, `git diff --stat` empty in every dump. That case as a pin: a child pytest over this module and
+        # tests/test_anchor_mints.py, which writes ROMP_SERVE_TOKEN into os.environ at column 0 (re-read below, so a polluter that
+        # stopped polluting is named rather than pinning nothing), selecting the corpus test alone, started from an environment
+        # holding nothing of this process but PATH and LANG (the child's HOME fresh; its TMPDIR the temp dir the run was handed,
+        # ROMP_TESTS_SYSTEM_TMPDIR, so its corpus scratch nests no deeper than this process's: under this process's TMPDIR a
+        # suite's socket path would pass sun_path). Red before the tenth commit: the child reported romp-sessions.bats's
+        # serve-token test failing under both rewrites, undecided (bin/romp read the collected module's ROMP_SERVE_TOKEN over the
+        # state file). The pin above plants the same writes in this process and runs three candidates in seconds; this one runs
+        # the shape the finding was found in, the corpus once, about 80 s, and is the red-before of the change
+        skip_unless_bash_serves(self)
+        skip_unless_bats_serves(self)
+        if importlib.util.find_spec("pytest") is None:
+            self.skipTest("pytest is not importable by %s: the child run of this pin is a pytest collection" % sys.executable)
+        polluter = "tests/test_anchor_mints.py"
+        with open(os.path.join(ROOT, polluter), encoding="utf-8") as f:
+            self.assertRegex(f.read(), r'(?m)^os\.environ\.setdefault\("ROMP_SERVE_TOKEN"', "%s no longer writes ROMP_SERVE_TOKEN at import: this pins nothing" % polluter)
+        own = unittest.defaultTestLoader.loadTestsFromModule(sys.modules[__name__]).countTestCases()
+        with tempfile.TemporaryDirectory() as d:
+            env = _bats_env(d)
+            env["TMPDIR"] = os.environ.get("ROMP_TESTS_SYSTEM_TMPDIR") or tempfile.gettempdir()
+            out, err, ended, status, secs = _run_bats([sys.executable, "-B", "-m", "pytest", "-q", "-s", "-p", "no:cacheprovider", "-k",
+                                                        "test_every_candidate_of_every_suite_is_read_by_bats", polluter, "tests/test_bats_bare_negation.py"],
+                                                       ROOT, env, CHILD_TIMEOUT)
+        tail = "\n".join((out + "\n" + err).splitlines()[-120:])
+        self.assertFalse(ended, "the child pytest did not finish in %d s:\n%s" % (CHILD_TIMEOUT, tail))
+        self.assertEqual(status, 0, "the corpus test failed in the child pytest with %s collected and deselected (%.0f s):\n%s" % (polluter, secs, tail))
+        m = re.search(r"^1 passed, (\d+) deselected", out, re.M)
+        self.assertIsNotNone(m, "the child pytest did not run the corpus test alone:\n%s" % tail)
+        self.assertGreater(int(m.group(1)), own - 1, "%s's tests were not among the deselected: it was not collected, and this pins nothing:\n%s" % (polluter, tail))
+        print("child pytest: %s in %.0f s, %s collected and deselected" % (m.group(0), secs, polluter), flush=True)
 
     def test_without_bats_the_corpus_skips_and_names_where_it_runs(self):
         # the bash probe held at "nothing lacking", as in the register's without-bats pin: the bash gate fires first under a bash
         # that lacks something, and this is the message of the other gate
-        with unittest.mock.patch.dict(_BASH_PROBE, {"shortfall": False}), unittest.mock.patch("shutil.which", return_value=None):
+        # and the skip announces itself once per process, a UserWarning pytest lists in the run's warnings summary under -q: the
+        # second skip of the process adds none (the notice is reset here, so this test's own process state does not decide it)
+        with unittest.mock.patch.dict(_BASH_PROBE, {"shortfall": False}), unittest.mock.patch("shutil.which", return_value=None), \
+                unittest.mock.patch.object(sys.modules[__name__], "_WITHOUT_BATS_NOTICED", []), warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
             with self.assertRaises(unittest.SkipTest) as cm:
+                self.test_every_candidate_of_every_suite_is_read_by_bats()
+            with self.assertRaises(unittest.SkipTest):
                 self.test_every_candidate_of_every_suite_is_read_by_bats()
         self.assertIn("shell job", str(cm.exception))
         self.assertIn("tests/bats-bare-negation-shell-job.bats", str(cm.exception))
+        self.assertEqual([(w.category, str(w.message)) for w in caught], [(UserWarning, WITHOUT_BATS_NOTICE)])
+        for said in ("bats is not on PATH", "did not run in this process", "Python cells install no bats", "tests/bats-bare-negation-shell-job.bats"):
+            self.assertIn(said, WITHOUT_BATS_NOTICE)
 
     def test_decide_reads_a_candidate_only_when_one_rewrite_fails_inside_its_test_and_names_the_other_cases(self):
         # the three-way rule on synthetic runs: read needs `ok` under one rewrite and `not ok` under the other, whichever way round
@@ -3736,8 +3954,7 @@ class BatsRoad(unittest.TestCase):
         # no test for is `no such test`, a file holding two tests of one name is refused by bats whole (`Error: Duplicate test
         # name(s) in file`, no plan line: `no TAP`, with bats's words in the detail; the other test of that file runs), and a name
         # holding ERE metacharacters and a `$` is matched literally, as written
-        if not shutil.which("bats"):
-            self.skipTest(CORPUS_SKIP)
+        skip_unless_bats_serves(self)
         with tempfile.TemporaryDirectory() as d:
             os.makedirs(os.path.join(d, "tree", "tests"))
             with open(os.path.join(d, "tree", "tests", "probe.bats"), "w", encoding="utf-8") as f:
@@ -3773,8 +3990,7 @@ class BatsRoad(unittest.TestCase):
         # all; this showed only once the register's decision test and the end-to-end teardown case ran under the wrapper. The
         # wrapper's precondition exactly: the libexec directory of the bats on PATH, read off a probe run, put first on PATH and no
         # BATS_* variable set; the exit is blamed on its own line of the test file
-        if not shutil.which("bats"):
-            self.skipTest(CORPUS_SKIP)
+        skip_unless_bats_serves(self)
         with tempfile.TemporaryDirectory() as d:
             tree = os.path.join(d, "tree")
             os.makedirs(os.path.join(tree, "tests"))
@@ -3808,8 +4024,7 @@ class BatsRoad(unittest.TestCase):
         # locally forever and in CI to the wrapper's per-test bound, nameless. Bounded at 2 s the poll test comes back `timed out`
         # a few seconds later, its process group ended by TERM first (bats runs the teardown: the marker) and then KILL, nothing of
         # it left; decide makes an undecided verdict of it
-        if not shutil.which("bats"):
-            self.skipTest(CORPUS_SKIP)
+        skip_unless_bats_serves(self)
         with tempfile.TemporaryDirectory() as d:
             tree = self.hanging_suite(d)
             t0 = time.monotonic()
@@ -3831,8 +4046,7 @@ class BatsRoad(unittest.TestCase):
         # process of the run is left. Two legs: the run on the main thread, whose _run_bats installs the handler for itself, and
         # the run on a worker thread under the main thread's _term_ends_live_runs block, the corpus's composition (BatsCorpus:
         # CORPUS_WORKERS candidates at a time), where the worker cannot install a handler and the main thread's ends its group
-        if not shutil.which("bats"):
-            self.skipTest(CORPUS_SKIP)
+        skip_unless_bats_serves(self)
         head = "import sys; sys.path.insert(0, %r)\nfrom tests.test_bats_bare_negation import run_test_alone, _term_ends_live_runs\n" % os.path.dirname(HERE)
         for leg in ("direct", "worker"):
             with tempfile.TemporaryDirectory() as d:
@@ -3859,8 +4073,7 @@ class BatsRoad(unittest.TestCase):
         # a touch of a marker under this test's directory: after the road decides each, no marker exists (the body was data under
         # both rewrites), the here-string's next line, a command, did run (its marker exists), another command's here-document
         # introduced on the same line reached that command (the kept file holds its body), and each verdict is the register's
-        if not shutil.which("bats"):
-            self.skipTest(CORPUS_SKIP)
+        skip_unless_bats_serves(self)
         with tempfile.TemporaryDirectory() as d:
             tree = os.path.join(d, "tree")
             os.makedirs(os.path.join(tree, "tests"))
@@ -3894,8 +4107,7 @@ class BatsRoad(unittest.TestCase):
         # bats's fd 3 open was charged the sleep's lifetime and reported timed out with its verdict in the captured output. The
         # wait is on the process now, and a verdict already out is read VERDICT_GRACE seconds later: the run comes back `not ok`
         # on its line well inside the bound, and nothing of its group is left
-        if not shutil.which("bats"):
-            self.skipTest(CORPUS_SKIP)
+        skip_unless_bats_serves(self)
         with tempfile.TemporaryDirectory() as d:
             tree = os.path.join(d, "tree")
             os.makedirs(os.path.join(tree, "tests"))
@@ -3914,8 +4126,7 @@ class BatsRoad(unittest.TestCase):
         # nondeterministically for a reason unrelated to its negation was read from noise, its inert negation silently exempted.
         # A test failing on every other run (a counter it keeps under this test's directory) around an inert `! true`: its runs
         # under the first rewrite disagree, the candidate is undecided, and the message names the disagreement
-        if not shutil.which("bats"):
-            self.skipTest(CORPUS_SKIP)
+        skip_unless_bats_serves(self)
         with tempfile.TemporaryDirectory() as d:
             tree, counter = os.path.join(d, "tree"), os.path.join(d, "counter")
             os.makedirs(os.path.join(tree, "tests"))
@@ -3951,8 +4162,7 @@ class BatsRoad(unittest.TestCase):
         # mis-classified, recorded here); a negated brace group whose line holds `;` operators is followed to its close, since bash
         # reads none of them as the pipeline's end, and decided like any other (inert here; before fork PR #871's round 2, second commit, the extent
         # ended at the first `;`, the rewritten file did not parse, and the candidate was undecided)
-        if not shutil.which("bats"):
-            self.skipTest(CORPUS_SKIP)
+        skip_unless_bats_serves(self)
         text = ('@test "mid" {\n    ! true\n    true\n}\n'
                 '@test "last" {\n    true\n    ! true\n}\n'
                 '@test "head" {\n    if ! true; then return 1; fi\n    true\n}\n'
