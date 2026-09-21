@@ -64,7 +64,7 @@ JS = km._LANDING_APIH_JS
 
 def _hist():
     """The History block of the cell's script, between its two section comments, or '' before the section exists. The anchors are
-    COMMENTS, so they are read from the script's comment spans on purpose (round 9's fixer pass: a find over the raw text is a pin a
+    COMMENTS, so they are read from the script's comment spans on purpose (the fixer pass of the author's pass 9: a find over the raw text is a pin a
     comment satisfies, and here the comment is the point)."""
     spans = [(s, JS[s:e]) for s, e in served_css.js_comment_spans(JS)]
     i = next((s for s, text in spans if text.startswith("// -- History")), -1)
@@ -737,7 +737,7 @@ class Docs(unittest.TestCase):
             self.assertNotIn("fleet", text.lower(), name)
         for w in ("card", "board", "goal", "column"):
             self.assertNotIn("'" + w, HIST, w)          # no quoted romp noun inside the History script
-        # the dot rules follow #1338: keyed on the dot word, not the machine state; read as parsed rules (round 9's fixer pass: a
+        # the dot rules follow #1338: keyed on the dot word, not the machine state; read as parsed rules (the fixer pass of the author's pass 9: a
         # 400-character window over the raw page stood here)
         dots = [r for r in served_css.rules(km._landing()) if any("[data-dot=" in m for m in served_css.members(r.selector))]
         self.assertIn(".ah-dot[data-dot=fine]", [m.strip() for r in dots for m in served_css.members(r.selector)], "the dot rules are keyed on the dot word")

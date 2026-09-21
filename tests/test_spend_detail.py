@@ -596,7 +596,7 @@ class SpendDetail(unittest.TestCase):
                       "Escape closes it through the shell's one Escape chain")
         self.assertIn("#rsp-back{position:fixed;inset:0;z-index:205;display:flex;align-items:center;justify-content:center;"
                       "background:rgba(0,0,0,0.55)}", html, "the panel rule: a centered card over rgba(0,0,0,0.55)")
-        self.assertNotIn("__ROMP_LOADER__", html, "the loader markup is spliced, not left as a placeholder")   # (round 9: a dead split stood here)
+        self.assertNotIn("__ROMP_LOADER__", html, "the loader markup is spliced, not left as a placeholder")   # (the author's pass 9: a dead split stood here)
         code = served_css.code(html)   # the code and markup with every served comment blanked: the spend script's comments spell these strings too
         self.assertIn("rl-word", code)
         self.assertNotIn("this machine only", html, "T247c: every attached kernel's sessions are in — no such note")
@@ -635,7 +635,7 @@ class SpendDetail(unittest.TestCase):
         menu = open(os.path.join(os.path.dirname(HERE), "ui", "webview", "tag-menu.ts")).read()
         shared = re.search(r'chip\.setAttribute\("style", "([^"]+)"\s*\n\s*\+ "border-radius:9px;"', menu)
         self.assertTrue(shared, "the shared tagChip's style is where the pin expects it")
-        # the chip's inline twin lives in a script's code: searched over the live script elements' code (round 9's fixer pass: the regex ran over the page)
+        # the chip's inline twin lives in a script's code: searched over the live script elements' code (the fixer pass of the author's pass 9: the regex ran over the page)
         twin = re.search(r"function spTagChip\(s\)\{var c=spColor\(s\);return '<span class=rsp-tag-chip style=\"([^\"]+)\"", "\n".join(served_css.scripts(js)))
         self.assertTrue(twin, "the landing page inlines the chip")
         self.assertTrue(twin.group(1).startswith(shared.group(1) + "border-radius:9px;border:1px solid "), "the pill, byte for byte up to the colour (the row's size: no font-size)")

@@ -17,13 +17,13 @@ parses (tests/keyboard_gap_browser.mjs), the driver moves it the way an iOS keyb
 offsetTop 0 to 83, resize then scroll), and the assertion is geometric: the composer's bottom in the shell's coordinate
 space keeps the same distance from the visible band's bottom edge as at rest (no band), --mtabs-h is 0px, the body's box
 IS the visible band, and #mtabs's box still ends at the true bottom of the layout viewport (a fixed panel's containing
-block is the viewport, not the fixed body). On the base tree the composer stops 83 px short of the band. Round 3
+block is the viewport, not the fixed body). On the base tree the composer stops 83 px short of the band. The author's pass 3
 (2026-09-19): with the visual viewport dragged to the layout viewport's bottom (offsetTop 336, the band 336..844) the fixed
 bar is INSIDE the band, so its strip is reserved and the composer sits above the bar; the first cut of kbOpen took upstream's
-height difference first and collapsed the strip, and the bar painted over the composer's bottom. Round 4 (2026-09-20): the
+height difference first and collapsed the strip, and the bar painted over the composer's bottom. The author's pass 4 (2026-09-20): the
 strip is the part of the bar's box inside the band the shell published, so at an interior pan (offsetTop 320, the band
 320..828) --mtabs-h is the overlap and the composer sits flush above the bar's visible part; and a pinch over the deep
-pan keeps the strip, the bar being inside the published band whatever the height difference says. Round 6 (2026-09-20): the
+pan keeps the strip, the bar being inside the published band whatever the height difference says. The author's pass 6 (2026-09-20): the
 overlap is of two intervals, so a short band panned deep (20 at 830: 830..850), its top below the bar's top, reserves the
 bar's pixels from the band's top down, not the whole bar.
 
@@ -199,7 +199,7 @@ class KeyboardGap(unittest.TestCase):
         self.assertEqual(_px(up["mtabsH"]), 0, where + "the bar's strip collapses with the keyboard up: %r" % (up,))
         self.assertAlmostEqual(up["body"]["top"], KB_PAN, delta=0.5, msg=where + "the body starts at the pan: %r" % (up,))
         self.assertAlmostEqual(up["body"]["bottom"], band_bottom, delta=0.5, msg=where + "the body ends at the band's bottom: %r" % (up,))
-        # the new-session picker lifted under the same keyboard and pan (round 2, 2026-09-19): the lift is the other fixed box
+        # the new-session picker lifted under the same keyboard and pan (the author's pass 2, 2026-09-19): the lift is the other fixed box
         # sized by --app-h, and at top 0 it sat a pan above the body, so the band survived under the picker. Its box IS the
         # body's, which is the visible band. The base tree put it at 0..508 against a body at 83..591.
         pk, rel = r["pickerUp"], r["pickerDown"]
@@ -227,7 +227,7 @@ class KeyboardGap(unittest.TestCase):
         self.assertEqual(_px(nopan["mtabsH"]), 0, where + "%r" % (nopan,))
         self.assertAlmostEqual(KB_H - nopan["composerBottom"], rest_gap, delta=1, msg=where + "flush above the band with no pan: %r" % (nopan,))
         self.assertAlmostEqual(settled["composerBottom"], rest["composerBottom"], delta=0.5, msg=where + "%r" % (settled,))
-        # round 9 (2026-09-20), the maintainer's round 5 ruling: the keyboard raised under a LIGHT zoom with no hold standing. Round
+        # the author's pass 9 (2026-09-20), the maintainer's round 5 ruling: the keyboard raised under a LIGHT zoom with no hold standing. The author's pass
         # 8's derived cut (1.0006 at 844) put every scale between it and the old literal 1.01 on the hold road, and with the hold 0
         # (the state after any rest at scale 1) that road published 0px: the band under the composer, the defect this leg exists to
         # close, back under a zoom the eye cannot see. The measured road publishes the pan a pure zoom cannot explain, the measured
@@ -243,7 +243,7 @@ class KeyboardGap(unittest.TestCase):
         self.assertAlmostEqual(lz_band_bottom - lz["composerBottom"], rest_gap, delta=share + 1,
                                msg=where + "the composer keeps its distance from the band's bottom to within the zoom's share plus the rounding pixel (the derived bound), no band: %r" % (lz,))
         self.assertAlmostEqual(lz_back["composerBottom"], rest["composerBottom"], delta=0.5, msg=where + "%r" % (lz_back,))
-        # the visual viewport at the layout viewport's bottom with the keyboard up (round 3, 2026-09-19): the band is 336..844,
+        # the visual viewport at the layout viewport's bottom with the keyboard up (the author's pass 3, 2026-09-19): the band is 336..844,
         # the fixed bottom:0 bar is inside it, and the fixed body, at the pan, ends where the bar does. The bar's box decides:
         # visible, so its strip is reserved and the composer sits above the bar at its resting distance. The first cut read
         # upstream's height difference first (844 - 508 > 120) and collapsed the strip, so the composer's bottom sat under
@@ -257,8 +257,8 @@ class KeyboardGap(unittest.TestCase):
         self.assertEqual(_px(deep["mtabsH"]), bar_h, where + "a bar inside the band keeps its strip: %r" % (deep,))
         self.assertAlmostEqual((LAYOUT_H - bar_h) - deep["composerBottom"], rest_gap, delta=1,
                                msg=where + "the composer sits above the bar at its resting distance, not under it: %r" % (deep,))
-        # round 4 (2026-09-20): a PINCH over the deep pan. The shell publishes the same band (the pan holds at 336, --app-h is
-        # 254 * 2) and the bar is inside it, so the strip stands and the composer keeps its place above the bar. The round-3
+        # the author's pass 4 (2026-09-20): a PINCH over the deep pan. The shell publishes the same band (the pan holds at 336, --app-h is
+        # 254 * 2) and the bar is inside it, so the strip stands and the composer keeps its place above the bar. The author's pass 3
         # reading handed a pinch back to upstream's height difference (844 - 508 > 120: a keyboard) and collapsed the strip
         # at the pinch cut (then the literal 1.01), so the bar painted over the composer's bottom for as long as the zoom held.
         dzm = r["deepZoomed"]
@@ -268,16 +268,16 @@ class KeyboardGap(unittest.TestCase):
         self.assertAlmostEqual((LAYOUT_H - bar_h) - dzm["composerBottom"], rest_gap, delta=1,
                                msg=where + "the composer sits above the bar under the zoom, not under it: %r" % (dzm,))
         self.assertAlmostEqual(deep_back["composerBottom"], rest["composerBottom"], delta=0.5, msg=where + "%r" % (deep_back,))
-        # round 4 (2026-09-20): the pan at an INTERIOR position, the bar partly inside the band (the band 320..828 against a bar
+        # the author's pass 4 (2026-09-20): the pan at an INTERIOR position, the bar partly inside the band (the band 320..828 against a bar
         # whose box starts at 844 less its height). The strip is the part of the bar inside the band, so the composer sits flush
-        # above the bar's visible part; the round-3 strip was the bar's whole height there, a dark band between the composer
+        # above the bar's visible part; the author's pass 3 strip was the bar's whole height there, a dark band between the composer
         # and the keyboard of the height the keyboard hides. The step must be interior (derived from the bar's measured box),
         # or the assertion says nothing about the range.
         mid, mid_back = r["kbUpMid"], r["settledMid"]
         self.assertEqual(_px(mid["appTop"]), 320, where + "the pan is published: %r" % (mid,))
         self.assertEqual(_px(mid["appH"]), KB_H, where + "%r" % (mid,))
         mid_band_bottom = 320 + KB_H
-        # the overlap of the two intervals, derived from the box and the band (round 6, 2026-09-20: it had been the bar's pixels
+        # the overlap of the two intervals, derived from the box and the band (the author's pass 6, 2026-09-20: it had been the bar's pixels
         # above the band's bottom, the one-edge form, which agrees here and could not disagree anywhere)
         overlap = max(0, min(mid["bar"]["bottom"], mid_band_bottom) - max(mid["bar"]["top"], 320))
         self.assertGreater(overlap, 0.5, where + "the step is interior: the bar's top is above the band's bottom: %r" % (mid,))
@@ -286,7 +286,7 @@ class KeyboardGap(unittest.TestCase):
         self.assertAlmostEqual(mid_band_bottom - _px(mid["mtabsH"]) - mid["composerBottom"], rest_gap, delta=1,
                                msg=where + "the composer sits above the bar's visible part at its resting distance, no band between them: %r" % (mid,))
         self.assertAlmostEqual(mid_back["composerBottom"], rest["composerBottom"], delta=0.5, msg=where + "%r" % (mid_back,))
-        # round 6 (2026-09-20): the band's TOP edge. A short band panned deep (height 20 at offsetTop 830: 830..850 against the
+        # the author's pass 6 (2026-09-20): the band's TOP edge. A short band panned deep (height 20 at offsetTop 830: 830..850 against the
         # bar's box) has its top below the bar's top and is shorter than the bar, so the strip is the overlap of the two
         # intervals, the bar's pixels from the band's top down to the bar's bottom, derived from the box and the band. The
         # first proportional form read the band's bottom edge only and reserved the whole bar there, more than the band holds.
@@ -298,7 +298,7 @@ class KeyboardGap(unittest.TestCase):
         self.assertTrue(0.5 < sd_overlap < bar_h - 0.5, where + "the step is interior: %r against the bar %r" % (sd_overlap, sd["bar"]))
         self.assertAlmostEqual(_px(sd["mtabsH"]), sd_overlap, delta=0.5, msg=where + "the strip is the overlap of the band and the bar's box, not the bar's pixels above the band's bottom: %r" % (sd,))
         self.assertAlmostEqual(sd_back["composerBottom"], rest["composerBottom"], delta=0.5, msg=where + "%r" % (sd_back,))
-        # a pinch after the pan, and the keyboard dismissed while zoomed (round 2, 2026-09-19): zoomed with the keyboard up the
+        # a pinch after the pan, and the keyboard dismissed while zoomed (the author's pass 2, 2026-09-19): zoomed with the keyboard up the
         # pan holds and the body is still the band; with the keyboard gone and the zoom standing, --app-h is the full height
         # again, and a held pan would place the body at 83..927 with the composer row below the viewport. The held pan is
         # clamped to the layout viewport less that height, so the body stays inside it and the composer stays reachable.
@@ -310,7 +310,7 @@ class KeyboardGap(unittest.TestCase):
         self.assertLessEqual(dz["body"]["bottom"], LAYOUT_H + 0.5, where + "the body stays inside the layout viewport with the keyboard gone under a zoom: %r" % (dz,))
         self.assertLessEqual(dz["composerBottom"], LAYOUT_H - bar_h + 0.5, where + "the composer row is reachable, above the bar's strip: %r" % (dz,))
         self.assertEqual(_px(dz["appTop"]), 0, where + "the held pan is clamped to the viewport: %r" % (dz,))
-        # round 4 (2026-09-20): the keyboard raised AGAIN under the same zoom. The clamp bounded what the run above published and
+        # the author's pass 4 (2026-09-20): the keyboard raised AGAIN under the same zoom. The clamp bounded what the run above published and
         # left the hold standing, so the pan is 83 again and the body is the band; a clamp that wrote back had lowered the
         # hold to 0 and laid the body out at 0..508 under the pan, the band reopened for as long as the zoom held.
         uz = r["kbUpAgainZoomed"]
@@ -321,18 +321,18 @@ class KeyboardGap(unittest.TestCase):
         return r
 
     def _populations(self, engine):
-        """The writer's and the consumer's populations, as the comments in fit() and over the fixed body rule state them (round
+        """The writer's and the consumer's populations, as the comments in fit() and over the fixed body rule state them (the author's pass
         2, 2026-09-19). fit() publishes a non-zero pan only off a coarse pointer, at any width; the fixed body applies wherever
         _MOBILE_MQ matches: at most 820 px wide at any pointer, or a coarse pointer at most 1024 px wide. The two differ in
         both directions, and each side is driven here in a real engine under the same fake pan as the phone legs."""
         where = engine + ": "
         # a fine pointer at 800 px: inside the query by width alone. The body is fixed, at top 0: the non-coarse branch writes
         # 0px (a pan is a soft-keyboard thing), the height is document.documentElement.clientHeight (innerHeight only where the
-        # document element has none, a node stub; round 9, 2026-09-20: these sites had named innerHeight as the source), so this
+        # document element has none, a node stub; the author's pass 9, 2026-09-20: these sites had named innerHeight as the source), so this
         # window lays out exactly as before the pan. This leg does not discriminate the two sources: at 800 by 900 both are 900
         fine = self._drive(engine, {"device": None, "viewport": {"width": 800, "height": 900}}, "-fine800")
         up = fine["kbUp"]
-        # the premise first (round 4, 2026-09-20): every geometric assertion below is satisfied identically by a page whose fake
+        # the premise first (the author's pass 4, 2026-09-20): every geometric assertion below is satisfied identically by a page whose fake
         # viewport was never installed or never panned (a real, unpanned viewport reads offsetTop 0), so the emulation is
         # pinned the way the phone leg pins it: the fake is what the shell reads, its install raised nothing, and it was panned
         self.assertTrue(up["vv"]["fake"], where + "the shell's visualViewport is the fake: %r" % (up["vv"],))
@@ -345,7 +345,7 @@ class KeyboardGap(unittest.TestCase):
         self.assertAlmostEqual(up["body"]["top"], 0, delta=0.5, msg=where + "%r" % (up,))
         self.assertAlmostEqual(up["body"]["bottom"], 900, delta=0.5, msg=where + "%r" % (up,))
         self.assertEqual(up["bar"]["display"], "flex", where + "the phone layout, by width")
-        # round 6 (2026-09-20): the strip on this road. The band is 0 to the layout viewport (clientHeight), the fixed bar's box is inside it, and the
+        # the author's pass 6 (2026-09-20): the strip on this road. The band is 0 to the layout viewport (clientHeight), the fixed bar's box is inside it, and the
         # strip is the bar's measured height, the same as at rest: upstream's pointer-ungated kbOpen read the short visual
         # viewport as a keyboard here and collapsed the strip over the composer
         self.assertGreater(_px(fine["rest"]["mtabsH"]), 0, where + "the bar's height is measured at rest: %r" % (fine["rest"],))

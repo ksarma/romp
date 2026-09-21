@@ -69833,24 +69833,24 @@ function wid(){try{return sessionStorage.getItem('romp:wid')||'';}catch(e){retur
 // keyboards and collapsing toolbars — where height*scale keeps a mobile pinch from re-fitting too.
 // Every run recomputes from scratch — never adjusts a stored value — so a viewport that grows back
 // (keyboard gone, app back in front) can never leave a stale, shorter --app-h behind.
-// [fork] round 8 (2026-09-20): "pinch-immune in every browser" above is upstream's premise about innerHeight, left as written;
+// [fork] the author's pass 8 (2026-09-20): "pinch-immune in every browser" above is upstream's premise about innerHeight, left as written;
 // the fork's contrary reading of WebKit and its evidence status live in ONE place, the fit() comment below the --app-h write
 // ("TWO PREMISES rest here"), which names this paragraph as the contrary. The fine-pointer road reads the layout viewport
 // as document.documentElement.clientHeight through the fork line after the h assignment.
 // [fork] D1 (2026-09-19): the pan a WRITING road of fit() last stored, the value its pinch branch holds: the measured road
 // stores its measurement and the 0px road a zero, in a no-pan state only; the clamp road publishes a bound of the hold and
 // stores nothing, so what the page is using can sit below the hold until a road WRITES it: the measured road, or the 0px road in
-// a no-pan state, which under a standing pan or zoom runs without writing (round 8, 2026-09-20; round 6, 2026-09-20: it had
+// a no-pan state, which under a standing pan or zoom runs without writing (the author's pass 8, 2026-09-20; the author's pass 6, 2026-09-20: it had
 // read "the pan last published, on every road", which the clamp road contradicts whenever it binds). The one stored
 // value in this script, and the sentence above is about --app-h, which every run still recomputes from scratch: the hold is
 // bounded at use (the clamp inside fit) and never adjusted in place, so a keyboard raised again under a standing zoom finds
-// the pan it was measured with, not a value the clamp lowered (round 4, 2026-09-20).
+// the pan it was measured with, not a value the clamp lowered (the author's pass 4, 2026-09-20).
 var lastPan=0;
-// [fork] round 8 (2026-09-20): the ONE reading of the pan both writing roads share: the measured road stores it and the 0px road's
+// [fork] the author's pass 8 (2026-09-20): the ONE reading of the pan both writing roads share: the measured road stores it and the 0px road's
 // no-pan test reads it, so an offsetTop that rounds to no pixel (0.4) is no pan on both roads and one that rounds up (0.5) a pan on
 // both. The 0px road had read the raw offsetTop, so a pan in (0, 0.5) was a standing hold there and a stored 0 here.
 function panPx(vv){return Math.round(vv.offsetTop||0);}
-// [fork] round 9 (2026-09-20): a pure ZOOM's share of that reading, in the same pixels. What panPx reads is vv.offsetTop, the visual
+// [fork] the author's pass 9 (2026-09-20): a pure ZOOM's share of that reading, in the same pixels. What panPx reads is vv.offsetTop, the visual
 // viewport's top edge in the layout viewport's coordinates, and the visual viewport lies inside the layout viewport: over a layout
 // viewport L px tall a report at scale s with no keyboard behind it has a visual viewport L/s tall whose top ranges over
 // [0, L - L/s], so a zoom alone pans by at most L(1 - 1/s), 0 at scale 1, 2.5 px at 1.003 and 8.4 px at 1.01 over 844. A keyboard
@@ -69859,32 +69859,32 @@ function panPx(vv){return Math.round(vv.offsetTop||0);}
 // L is the LAYOUT viewport, read once per run below (document.documentElement.clientHeight; innerHeight stands in only where the
 // document element has no clientHeight, a node stub, a real standards-mode document always has one), never the coarse road's
 // h = round(vv.height*scale): with the keyboard up that h is the band, L less the keyboard, a height no zoom pans over, and
-// h(1 - 1/s) would understate the share by the keyboard's height times (1 - 1/s). Round 8 had derived the cut below from "an 844
+// h(1 - 1/s) would understate the share by the keyboard's height times (1 - 1/s). The author's pass 8 had derived the cut below from "an 844
 // px layout viewport" while the coarse road passed its h of 460 to it, so the two roads took the cut at two heights. The
 // derivation's DOMAIN is a scale of 1 or more, the premise that the visual viewport lies inside the layout viewport; below 1 (a
 // zoom-out, or a pinch-out bounce, whether iOS reports one unverified) the visual viewport is the taller and its top can only sit at
 // or above the layout viewport's, so a pure zoom-out pans nothing downward and its share is 0, never the negative L(1 - 1/s) (the
-// author's fixer pass after round 9: the helper had returned the negative share and kbPx below published the reading PLUS it, 94 px
+// fixer pass of the author's pass 9: the helper had returned the negative share and kbPx below published the reading PLUS it, 94 px
 // at scale 0.9 with no keyboard, stored as the hold).
 function zoomPx(vv,L){return Math.max(0,Math.round(L*(1-1/(vv.scale||1))));}
-// [fork] round 8 (2026-09-20): the pinch CUT, derived from the measured road's own rounding (it had been the literal 1.01, with no
+// [fork] the author's pass 8 (2026-09-20): the pinch CUT, derived from the measured road's own rounding (it had been the literal 1.01, with no
 // derivation anywhere and no cell driven inside (1, 1.01)): the scale at which a zoom's own share first rounds to a pixel,
-// L(1 - 1/s) = 0.5, s = L/(L - 0.5), 1.0006 over an 844 px layout viewport, on both roads at the layout viewport (round 9). Below it
+// L(1 - 1/s) = 0.5, s = L/(L - 0.5), 1.0006 over an 844 px layout viewport, on both roads at the layout viewport (the author's pass 9). Below it
 // a pure zoom's pan stores as 0, so a reading of 0 there is a resting viewport (the 0px road clears the hold on that) and a
 // positive reading is a keyboard's whole; at or above it a zoom could put a pixel into the reading, so the report is a PINCH: the
 // 0px road leaves the hold standing, and the measured road publishes the reading less the zoom's share (kbPx below) rather than
-// standing down (round 8 had it fall to the hold road there, and with no hold standing that road publishes 0: a keyboard raised
+// standing down (the author's pass 8 had it fall to the hold road there, and with no hold standing that road publishes 0: a keyboard raised
 // under a light zoom, a scale between the cut and the old 1.01, laid the shell out at pan 0 and reopened the band; the maintainer's
 // round 5 ruling). Both engines report exactly 1 at rest (Playwright's WebKit and Chromium, eight descriptor contexts). With no
 // layout height (L 0) the cut is undefined and the report counts as pinched, so the hold stands rather than being cleared against a
 // height that is not there.
 function pinched(vv,L){return !(L>0&&(vv.scale||1)<L/(L-0.5));}
-// [fork] round 9 (2026-09-20): the pan a pure zoom CANNOT explain, the keyboard's: the measured pixels less the zoom's share in
+// [fork] the author's pass 9 (2026-09-20): the pan a pure zoom CANNOT explain, the keyboard's: the measured pixels less the zoom's share in
 // pixels, never below 0. Below the cut the share is no pixel and this is panPx itself, the one reading the 0px road's no-pan test
-// shares (round 8); at or above it the error against the keyboard's own pan is bounded by the share (the zoom may have panned less
+// shares (the author's pass 8); at or above it the error against the keyboard's own pan is bounded by the share (the zoom may have panned less
 // than its bound, 8 px at 1.01 over 844, where standing down cost the whole keyboard pan, about 80 px) plus the two roundings: the
 // published value is an integer from panPx and zoomPx, each at most half a pixel off, so it lies within the share plus one pixel
-// BELOW the keyboard's own pan and one pixel ABOVE it, never one-sided (the author's fixer pass after round 9: a reading of 86.5 at a
+// BELOW the keyboard's own pan and one pixel ABOVE it, never one-sided (the fixer pass of the author's pass 9: a reading of 86.5 at a
 // share of 2.49 publishes 85, a pixel above a keyboard pan of 84.01 when the zoom panned its whole share; a reading of 84 at a share
 // of 16.55 publishes 67, 17 below a keyboard pan of 84 when the zoom panned nothing; an engine's float32 report adds an ulp). Under a real
 // pinch a keyboard's pan of 83 lies inside the share (422 at scale 2 over 844), so the measured road does not run and the hold road
@@ -69894,7 +69894,7 @@ function pinched(vv,L){return !(L>0&&(vv.scale||1)<L/(L-0.5));}
 // and takes the hold road, whose clamp binds at 0 there. inside compares the report's bottom edge ROUNDED to the pixel, the rounding
 // this road reads at: the engines hand over float32 values, and a visual viewport flush at the layout viewport's bottom (offsetTop +
 // height = L, the deep pan with the keyboard up) can sum to L plus an ulp in doubles (3e-5 over 844), which an exact test read as
-// outside and sent to the hold road, 0 with no hold where the excess arm publishes 277 (the author's fixer pass after round 9, scale
+// outside and sent to the hold road, 0 with no hold where the excess arm publishes 277 (the fixer pass of the author's pass 9, scale
 // 1.3856); a report whose bottom overshoots by less than the half pixel that rounds away is inside to the pixel, and the stale
 // report (654 over) is not.
 function kbPx(vv,L){return Math.max(0,panPx(vv)-zoomPx(vv,L));}
@@ -69902,7 +69902,7 @@ function inside(vv,L){return Math.round((vv.offsetTop||0)+(vv.height||0))<=L;}
 function fit(){try{var vv=window.visualViewport;
 var coarse=window.matchMedia&&matchMedia('(pointer: coarse)').matches;
 var h=(!coarse||!vv)?window.innerHeight:Math.round(vv.height*(vv.scale||1));
-// [fork] round 8 (2026-09-20): the LAYOUT viewport, read once here for every road below (round 9: the fine road's height, the cut
+// [fork] the author's pass 8 (2026-09-20): the LAYOUT viewport, read once here for every road below (the author's pass 9: the fine road's height, the cut
 // and the zoom's share on both roads, and the clamp), as document.documentElement.clientHeight (the reasoning and the engine premise
 // are in the fit() comment below the --app-h write); innerHeight stands in only where the document element has no clientHeight
 // (a node stub), a real standards-mode document always has one. On the fine road h IS the layout viewport (this line re-reads
@@ -69918,7 +69918,7 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // 2026-09-19, iPhone, installed app: an empty band about 80 CSS px tall between the composer and the keyboard's accessory
 // bar). Publish the pan as --app-top; the mobile body rule (position:fixed;top:var(--app-top)) moves the shell down into the
 // visible band. Written on every run, 0px whenever the pointer is not coarse or there is no visual viewport, whatever the
-// visual viewport says (a fine-pointer browser has no soft keyboard to pan for). Two gates on two axes (round 2, 2026-09-19): this writer is gated on the POINTER, so any
+// visual viewport says (a fine-pointer browser has no soft keyboard to pan for). Two gates on two axes (the author's pass 2, 2026-09-19): this writer is gated on the POINTER, so any
 // coarse document publishes its pan at any width; the consumer, the fixed body rule inside the _MOBILE_MQ block, is gated
 // on the LAYOUT query, which a window at or under 820 px matches at any pointer and a coarse one up to 1024 px. So a
 // fine-pointer window at or under 820 px takes the fixed body at top 0 and lays out as before, and a coarse document wider
@@ -69927,13 +69927,13 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // cut L/(L - 0.5), the smallest zoom whose own pan can round to a pixel, derived beside the helper) pans
 // the visual viewport too, with no keyboard behind it, so the part of offsetTop a pure zoom can explain (its share, zoomPx,
 // derived beside it) is never published: the measured road publishes the reading less that share where anything is left
-// (kbPx; round 9, 2026-09-20: it had stood down at the cut, which with no hold standing published 0 and reopened the band under
+// (kbPx; the author's pass 9, 2026-09-20: it had stood down at the cut, which with no hold standing published 0 and reopened the band under
 // a light zoom) and otherwise the last pan holds (a zoom alone never re-lays the shell, the pinch-aware note above: its share is
-// the whole of its pan), CLAMPED AT USE to the layout viewport's height less h (round 2,
+// the whole of its pan), CLAMPED AT USE to the layout viewport's height less h (the author's pass 2,
 // 2026-09-19): the same run recomputes --app-h from the zoomed viewport, so a pan measured under a keyboard that has since
 // gone would otherwise place the body's bottom, the composer row, below the layout viewport until the zoom ended. The layout
-// height is document.documentElement.clientHeight, on this road (round 7, 2026-09-20) and on the fine-pointer road above
-// (round 8, 2026-09-20; one read for every road since round 9); both had read window.innerHeight. TWO PREMISES rest here and nowhere else in this file: the other
+// height is document.documentElement.clientHeight, on this road (the author's pass 7, 2026-09-20) and on the fine-pointer road above
+// (the author's pass 8, 2026-09-20; one read for every road since the author's pass 9); both had read window.innerHeight. TWO PREMISES rest here and nowhere else in this file: the other
 // sites point here, and the upstream lines that state the contrary (the "pinch-immune in every browser" paragraph above;
 // the meta comment in _landing) stay as written. ENGINE MODEL: Chromium keeps innerHeight at the layout viewport under a
 // pinch and WebKit shrinks it to the visual viewport's height, so a clamp reading innerHeight there had innerHeight - h
@@ -69941,7 +69941,7 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // composer reopened for as long as the zoom held; clientHeight is the layout viewport in both models (standards mode is
 // pinned by EXECUTION, not by an assertion on the mode: in quirks mode the root's clientHeight is the body's height, not
 // the viewport's, and the served legs' pan and pinch figures, 83 and 336 px in tests/test_keyboard_gap_served.py in both
-// engines with a skip counted as a failure, flip to 0 the moment the document is served without its doctype (round 9,
+// engines with a skip counted as a failure, flip to 0 the moment the document is served without its doctype (the author's pass 9,
 // 2026-09-20: the clause had said "pinned" and named no pin); the page is overflow:hidden, so no scrollbar parts
 // clientHeight from innerHeight where innerHeight was right), which
 // makes the read a no-op on every road where the old value was right and a fix on any road where it was not. The model
@@ -69951,29 +69951,29 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // the contrary (that the token disables zoom). The harness drives both engine models on the pinch road and on the
 // fine-pointer road, and both signs of the clamp's difference (a rotation under a standing zoom with the visual viewport's
 // report not yet updated makes it negative). The clamp bounds what is
-// published and leaves the hold itself standing (round 4, 2026-09-20: it had written its result back, so the first time it
+// published and leaves the hold itself standing (the author's pass 4, 2026-09-20: it had written its result back, so the first time it
 // bound the held pan decayed to 0 and a keyboard raised again under the same zoom laid the shell out at pan 0 under a
 // keyboard-sized --app-h, the band reopened). The hold is the pan of the KEYBOARD it was measured with: a keyboard of a
 // different height raised while the zoom stands (the emoji keyboard, the predictive bar toggled) is laid out at that pan
 // under its own height until the zoom ends, a band under the composer for a taller keyboard and the body's bottom below
-// the band for a shorter one, by the height difference (round 5, 2026-09-20, disclosed: re-measuring under a zoom only
+// the band for a shorter one, by the height difference (the author's pass 5, 2026-09-20, disclosed: re-measuring under a zoom only
 // when the height changes is a design call not taken here; the harness and served legs re-raise the same keyboard). Two
 // roads WRITE the hold and each writes the value it publishes: the measured road its measurement less the zoom's share (kbPx,
 // the measurement itself below the cut), and the 0px road a zero, only in a true no-pan state, one the measured road would
-// store as 0: no visual viewport, or one under the cut, taken at the layout viewport L on both roads (round 9, 2026-09-20: the
+// store as 0: no visual viewport, or one under the cut, taken at the layout viewport L on both roads (the author's pass 9, 2026-09-20: the
 // coarse road had taken it at its own h, the band's height with the keyboard up, so the two roads' cuts differed; pinched reads
 // the cut itself as a pinch, so the hold stands there), whose offsetTop rounds to no positive pixel (panPx, the reading the
 // measured road stores there;
-// round 6 and round 8, 2026-09-20: the 0px road had read the raw offsetTop, so a pan in (0, 0.5) was no pan by this rule and a
+// the author's passes 6 and 8, 2026-09-20: the 0px road had read the raw offsetTop, so a pan in (0, 0.5) was no pan by this rule and a
 // kept hold by that test). A pointer that turns fine with a pan standing (the keyboard up on iOS) or under a
 // standing zoom leaves the hold for the keyboard it was measured with, so coarse again under that zoom the pinch road
-// publishes the keyboard's pan and not a 0 the fine window never measured (round 4 had written the zero on every fine run,
+// publishes the keyboard's pan and not a 0 the fine window never measured (the author's pass 4 had written the zero on every fine run,
 // and the pinch road then laid the shell out at pan 0 under a keyboard-sized --app-h, the band reopened); a flip with the
 // visual viewport at rest clears it, so a zoom after that republishes no stale pan. The clamp road publishes a bound of the
 // hold and stores nothing, so --app-top can sit below the hold until a road WRITES it (the measured road, or the 0px road in a
-// no-pan state; the 0px road runs without writing under a standing pan or zoom, round 8, 2026-09-20). The pan is published under
-// the same validity guard as the height it belongs to (round 4, 2026-09-20,
-// as round 1 confirmed it): a coarse run whose height report is refused (h 0) publishes neither, so the prior pan stands
+// no-pan state; the 0px road runs without writing under a standing pan or zoom, the author's pass 8, 2026-09-20). The pan is published under
+// the same validity guard as the height it belongs to (the author's pass 4, 2026-09-20,
+// as the maintainer's round 1 confirmed it): a coarse run whose height report is refused (h 0) publishes neither, so the prior pan stands
 // beside the prior height rather than moving the fixed body by a pan measured against nothing; the 0px road has no height
 // to belong to and publishes unconditionally (only its write into the hold carries the no-pan condition above). The visual
 // viewport's scroll event, where a pan lands, is already bound below, so no new listener.
@@ -70004,20 +70004,20 @@ document.documentElement.style.setProperty('--mtabs-h',(kbOpen()?0:(bar.offsetHe
 // on the phone layout; both are written above barfit's call in fit()), and the strip is the part of the bar's box inside
 // it, the overlap of the two intervals, max(0, min(bar.bottom, bandBottom) - max(bar.top, bandTop)), getBoundingClientRect
 // being layout-viewport-relative for a fixed box too: 0 for a bar whose box starts at or below the band's bottom edge or
-// ends at or above its top edge, the whole height for a bar wholly inside, and the overlap between. Round 6 (2026-09-20):
+// ends at or above its top edge, the whole height for a bar wholly inside, and the overlap between. The author's pass 6 (2026-09-20):
 // the first form, clamp(bandBottom - bar.top, 0, offsetHeight), read the band's bottom edge only, so a band whose top sat
 // below the bar's top (the band a refused height report leaves standing after a rotation, or a short band panned deep)
-// reserved pixels above the band: the whole bar over a bar with no pixel inside it, and more than a short band holds. Round 4 (2026-09-20): the reservation had been all-or-nothing on a visibility verdict, so across one bar
+// reserved pixels above the band: the whole bar over a bar with no pixel inside it, and more than a short band holds. The author's pass 4 (2026-09-20): the reservation had been all-or-nothing on a visibility verdict, so across one bar
 // height of pan values, the bar partly inside the band, the strip stood bar-tall over a bar showing a few pixels, the very
 // band this change exists to close; the strip now follows the pixels. The PUBLISHED band rather than the live visual
 // viewport, so a pinch (whose --app-top holds and whose --app-h is upstream's scale arithmetic) judges the bar against the
-// shell it laid out and the strip never flips at the pinch cut (round 4: the pinch term had handed the verdict back to
+// shell it laid out and the strip never flips at the pinch cut (the author's pass 4: the pinch term had handed the verdict back to
 // upstream's height reading, which disagrees with the box under a deep pan). A bar the engine keeps ABOVE the keyboard
 // (Android Chrome under resizes-content: innerHeight shrinks and fixed bottom:0 rides the shrunken bottom) is wholly inside
 // by this reading, so its strip stays reserved; the focused-field and shrunken-innerHeight readings considered instead would
 // have collapsed it there. Upstream's barfit (kbOpen's verdict: the whole height or nothing) stands only where the box or
 // the band cannot be read: no bar, no visualViewport, a style object without getPropertyValue, or a run before fit()
-// published both variables. Cost: one getBoundingClientRect per fit(), the read the round-3 kbOpen already made; while a
+// published both variables. Cost: one getBoundingClientRect per fit(), the read the author's pass 3 kbOpen already made; while a
 // pan carries the bar through the band's edge each frame writes a new --mtabs-h, which .col's padding consumes, one
 // relayout per frame, the same as the all-or-nothing strip's single flip spread across the frames it now spans. Rebound
 // rather than edited: fit() calls barfit by name.
@@ -71763,7 +71763,7 @@ def _landing():
             # maximum-scale=1,user-scalable=no: the top document governs pinch-zoom for the whole visual
             # viewport (incl. iframes), so without this iOS page-zooms on a timeline pinch instead of letting
             # the timeline's own pinch handler run (the user 2026-06-16). Disables browser zoom on the mobile UI.
-            # [fork] round 8 (2026-09-20): whether iOS Safari honours user-scalable=no is a premise this file states ONCE, with its
+            # [fork] the author's pass 8 (2026-09-20): whether iOS Safari honours user-scalable=no is a premise this file states ONCE, with its
             # evidence status, in the fit() comment of _LANDING_MOBILE_JS ("TWO PREMISES rest here"); the line above is upstream's
             # and stays as written.
             # NO viewport-fit=cover in the STATIC meta (the user 2026-06-17): with cover, Android Chrome reports a non-zero
@@ -72516,7 +72516,7 @@ def _landing():
             # y 0; a coarse document there still publishes its pan, and nothing consumes it (the two gates, and the two
             # populations they cover, are in the fit() comment; the served populations leg drives both).
             "body{position:fixed;left:0;right:0;top:var(--app-top,0px);height:var(--app-h,100dvh)}"
-            # [fork] D1 round 2 (2026-09-19): the other fixed box sized by --app-h is the new-session picker's lift
+            # [fork] D1, the author's pass 2 (2026-09-19): the other fixed box sized by --app-h is the new-session picker's lift
             # (body.picker-open iframe.lifted, upstream's base rule above the media blocks: position:fixed;top:0). At layout
             # y 0 it sat a pan above the body under the keyboard, so the band the rule above removes from the composer
             # survived under the picker; a hand list of fixed panels once kept here had missed it, so the consumers are

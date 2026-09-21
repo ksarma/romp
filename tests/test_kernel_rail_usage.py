@@ -48,7 +48,7 @@ class RailUsage(unittest.TestCase):
     def test_the_shell_renders_the_posted_usage_colormapped_with_a_hover_panel(self):
         self.assertIn("romp==='usage'", self.html, "the shell listens for the timeline's usage post")
         for win in ("fiveHour", "sevenDay"):
-            # the code, not the page: the usage script's comments spell both window names (round 5, 2026-09-20: the literal
+            # the code, not the page: the usage script's comments spell both window names (the author's pass 5, 2026-09-20: the literal
             # reached assertIn through the loop variable, outside the pins census's derivation until it read the loop form)
             self.assertIn(win, self.code, "renders both rate-limit windows")
         # the used bar wears the SELECTED COLORMAP colour (server-computed in _usage_limits, read here as seg.color)
@@ -79,7 +79,7 @@ class RailUsage(unittest.TestCase):
         # order within a window: label, then the bars, then % — all inline
         # anchor past the spend chip (it wears ru-name/ru-pct too, with no bars — the user 2026-08-04):
         # the slice must start at a WINDOW row, whose label is built from the WINS table
-        # the window is inside one live script's code (round 9, 2026-09-20: it had been sliced from the raw page)
+        # the window is inside one live script's code (the author's pass 9, 2026-09-20: it had been sliced from the raw page)
         one = next(js for js in served_css.scripts(self.html) if "<div class=ru-name>'+w" in js)
         one = one[one.index("<div class=ru-name>'+w"):]
         self.assertLess(one.index("ru-name"), one.index("ru-bars"))
@@ -106,7 +106,7 @@ class RailUsage(unittest.TestCase):
         # hover — the compact level — must say there is more underneath (progressive disclosure: never
         # a dead end). One footnote line in the hover's own footnote style (.ru-tip-age size and
         # opacity, no new font size), on the DESKTOP tip only: the phone panel has its "By session" button.
-        js = self.html   # (round 9, 2026-09-20: a dead split of the page stood here)
+        js = self.html   # (the author's pass 9, 2026-09-20: a dead split of the page stood here)
         self.assertIn("Click for the full breakdown by session.", js)
         self.assertIn("tip.classList.remove('ru-modal');tip.innerHTML=h+'<div class=ru-tip-hint>Click for the full breakdown by session.</div>';", js,
                       "the desktop tip ends in the affordance line")

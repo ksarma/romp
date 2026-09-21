@@ -7,10 +7,10 @@
 // fresh on every run and binds its resize and scroll events on the object it finds at parse, so the fake is what it reads
 // and what it hears. The layout viewport is the browser's own (innerHeight 844 under the shell's viewport meta). Three
 // moves: the keyboard up with iOS's pan (height 508, offsetTop 83, then resize and scroll), the keyboard down (844, 0),
-// and a keyboard with no pan (508, 0); then (round 2) the picker's lift under the pan, a pinch with the keyboard up and the
-// keyboard dismissed under the zoom; then (round 3) the keyboard up with the visual viewport at the layout viewport's bottom
-// (508, 336), the fixed bar inside the band; then (round 4) a pinch over that deep pan and the pan at an interior position (508,
-// 320), the bar partly inside the band; then (round 6) a short band panned deep (20, 830), the band's top below the bar's top.
+// and a keyboard with no pan (508, 0); then (the author's pass 2) the picker's lift under the pan, a pinch with the keyboard up and the
+// keyboard dismissed under the zoom; then (the author's pass 3) the keyboard up with the visual viewport at the layout viewport's bottom
+// (508, 336), the fixed bar inside the band; then (the author's pass 4) a pinch over that deep pan and the pan at an interior position (508,
+// 320), the bar partly inside the band; then (the author's pass 6) a short band panned deep (20, 830), the band's top below the bar's top.
 // After each the driver waits two animation frames (fit() coalesces to one per frame)
 // and reads, in the shell's coordinate space: the composer's bottom (the chat iframe's top plus the composer's bottom inside
 // its same-origin document), the body's box, #mtabs's box, and the three shell variables.
@@ -48,7 +48,7 @@ const result = async (extra) => {
 
 // the phone: the iPhone 14 descriptor at the viewport the design names (under _MOBILE_MQ's 820 px; a coarse pointer, which
 // fit()'s visual-viewport branch is gated on), the pattern of tests/return_from_background_browser.mjs. cfg.context names
-// another population (round 2): a device descriptor or null for a plain desktop context (a fine pointer), and a viewport.
+// another population (the author's pass 2): a device descriptor or null for a plain desktop context (a fine pointer), and a viewport.
 const ctxCfg = cfg.context || {};
 const dev = ctxCfg.device === null ? {} : { ...(playwright.devices[ctxCfg.device || "iPhone 14"] || {}) };
 delete dev.defaultBrowserType;
@@ -146,37 +146,37 @@ try {
   out.kbDown = await move(844, 0);       // the keyboard down: the pan is gone with it
   out.kbNoPan = await move(508, 0);      // a keyboard that does not pan (Android under resizes-visual)
   out.settled = await move(844, 0);
-  // round 9 (2026-09-20), the maintainer's round 5 ruling: the keyboard raised under a LIGHT zoom with no hold standing (the rest
-  // above stored 0): scale 1.003, the visual viewport 506.48 tall (508 / 1.003) panned 83.7, so h is 508 again. Round 8's cut read
+  // the author's pass 9 (2026-09-20), the maintainer's round 5 ruling: the keyboard raised under a LIGHT zoom with no hold standing (the rest
+  // above stored 0): scale 1.003, the visual viewport 506.48 tall (508 / 1.003) panned 83.7, so h is 508 again. The author's pass 8's cut read
   // the report as a pinch and published the hold, 0px, the band. The measured road publishes the pan less the zoom's share,
   // 844(1 - 1/1.003) = 2.52 px, 3 in pixels: 81px, at most the share below the keyboard's pan
   out.kbUpLightZoom = await move(506.48, 83.7, 1.003);
   out.settledLight = await move(844, 0);
-  // round 3 (2026-09-19): the keyboard up with the visual viewport dragged to the layout viewport's bottom (height 508,
+  // the author's pass 3 (2026-09-19): the keyboard up with the visual viewport dragged to the layout viewport's bottom (height 508,
   // offsetTop 336: the band 336..844), so the fixed bottom:0 bar is inside the band and the fixed body, at the pan, ends at
   // the bar; the strip must be reserved there or the bar paints over the composer
   out.kbUpDeep = await move(508, 336);
-  // round 4 (2026-09-20): a pinch over the deep pan (scale 2, height 254: h = 508 again, the pan holds at 336). The band the shell
-  // published is unchanged, the bar is inside it, and the strip must stand; the round-3 reading handed a pinch back to the
+  // the author's pass 4 (2026-09-20): a pinch over the deep pan (scale 2, height 254: h = 508 again, the pan holds at 336). The band the shell
+  // published is unchanged, the bar is inside it, and the strip must stand; the author's pass 3 reading handed a pinch back to the
   // height difference and collapsed it at the pinch cut (then the literal 1.01)
   out.deepZoomed = await move(254, 336, 2);
   out.settledDeep = await move(844, 0);
-  // round 4 (2026-09-20): the pan at an INTERIOR position (508 + 320 = 828 against a bar whose box starts at 844 less its height):
+  // the author's pass 4 (2026-09-20): the pan at an INTERIOR position (508 + 320 = 828 against a bar whose box starts at 844 less its height):
   // the bar is partly inside the band and the strip is the overlap, not the bar's whole height
   out.kbUpMid = await move(508, 320);
   out.settledMid = await move(844, 0);
-  // round 6 (2026-09-20): a SHORT band panned deep (height 20, offsetTop 830: the band 830..850 against a bar whose box ends at
+  // the author's pass 6 (2026-09-20): a SHORT band panned deep (height 20, offsetTop 830: the band 830..850 against a bar whose box ends at
   // 844 and starts above 830): the band's top is below the bar's top, so the strip is the overlap of the two intervals, the
   // bar's pixels between 830 and 844; the first proportional form read the band's bottom edge only and reserved the whole bar,
   // more than the band holds
   out.kbUpShortDeep = await move(20, 830);
   out.settledShort = await move(844, 0);
-  // round 2 (2026-09-19): a zoom after the pan, and the keyboard dismissed while the zoom holds (the fake's scale is what the
+  // the author's pass 2 (2026-09-19): a zoom after the pan, and the keyboard dismissed while the zoom holds (the fake's scale is what the
   // shell reads; the browser's own layout is not zoomed)
   out.kbUpAgain = await move(508, 83);
   out.pinchPanned = await move(254, 83, 2);      // pinched with the keyboard up: h = 254 * 2 = 508, the pan holds
   out.kbDownZoomed = await move(422, 200, 2);    // the keyboard goes while zoomed: h = 844 again, and a held pan would hang the body
-  out.kbUpAgainZoomed = await move(254, 83, 2);  // round 4: the keyboard raised again under the same zoom: the hold survived the clamp, the pan is 83 again
+  out.kbUpAgainZoomed = await move(254, 83, 2);  // the author's pass 4: the keyboard raised again under the same zoom: the hold survived the clamp, the pan is 83 again
   out.zoomBack = await move(844, 0, 1);
   if (cfg.shots) await page.screenshot({ path: cfg.shots + "-settled.png" }).catch(() => {});
   await result({});

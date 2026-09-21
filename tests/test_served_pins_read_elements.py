@@ -2,17 +2,17 @@
 """A pin over a served page or a served script or style constant reads the ELEMENT, the PARSED RULE or the CODE it pins, never
 text a comment can satisfy.
 
-D1 round 1 (2026-09-19): two served comments spelled the viewport meta's own tokens, and three assertions that named the
+D1, the maintainer's round 1 (2026-09-19): two served comments spelled the viewport meta's own tokens, and three assertions that named the
 meta were satisfied by comment text; one test passed in full against a page whose meta had lost the token it exists to
-pin. The three were re-pointed at the meta element. Round 2 asked for the CLASS to be closed, not the instances: every
+pin. The three were re-pointed at the meta element. The maintainer's round 2 asked for the CLASS to be closed, not the instances: every
 assertIn of a string literal over a served page's text whose literal also occurs inside a comment of that page is a pin a
-comment can satisfy, and this module derives them and fails on each (round 4, 2026-09-20; the first instance beyond the
-three was the timeline's touch-action pin, satisfied by two script comments that spell the declaration). Round 6
+comment can satisfy, and this module derives them and fails on each (the author's pass 4, 2026-09-20; the first instance beyond the
+three was the timeline's touch-action pin, satisfied by two script comments that spell the declaration). The author's pass 6
 (2026-09-20): the class had been closed over the page getters only, and the kernel's served CONSTANTS (the `_*_JS` and
 `_*_CSS` strings spliced into the pages) carried eight pins a served comment satisfied, one of them created by the change
 that landed the census (a new comment spelled offsetHeight inside _LANDING_MOBILE_JS); module-level test functions, a
 conjunction of memberships, a name bound to a slice of a page, and the ordering pins `page.index(<lit>)` were outside it
-too, with live members in each. Round 7 (2026-09-20): the constants had been a NAME ROSTER (`_*_JS`, `_*_CSS`), which
+too, with live members in each. The author's pass 7 (2026-09-20): the constants had been a NAME ROSTER (`_*_JS`, `_*_CSS`), which
 missed a bare script constant with eight comment spans and four live pins (the timeline's boot script), every `_*_HTML`
 constant and the served SVG and theme-reader fragments; the constants are derived by rule now, and a `for` variable over
 a tuple of served texts, which had bound nothing, is read.
@@ -21,27 +21,27 @@ Population, derived by an AST walk over tests/test_*.py, every method of every c
 `self.assertIn(<lit>, X)`, `self.assertTrue(<lit> in X)` and a bare `assert <lit> in X` (a conjunction of memberships
 inside assertTrue or assert is one row per conjunct), and the position forms `X.index(<lit>)`, `X.find(<lit>)`,
 `X.rindex(<lit>)`, `X.rfind(<lit>)` and `X.count(<lit>)`, where <lit> is a string literal or the variable of a
-`for <name> in (<str>, ...)` loop or comprehension in the same function (one row per literal; round 5, 2026-09-20: a loop
+`for <name> in (<str>, ...)` loop or comprehension in the same function (one row per literal; the author's pass 5, 2026-09-20: a loop
 variable had been outside the derivation, and the one such pin in the suite was satisfiable by two comments), and X is one
 of the kernel's served TEXTS: a call to one of its page getters, or one of its served constants (`<alias>.<_NAME>`), or a
 Name bound to either in the same function (a tuple assignment counts by position; a Name bound to a SLICE of one counts
 too, judged over the whole text, so a literal a comment spells anywhere in the text flags it and the fix is the same), or
 the variable of a `for <name> in (<text>, <text>)` loop over served texts (one row per text, inside the loop's body;
-round 7), or a `self.<attr>` bound to one in any method of the same class (a setUp), or a body FETCHED by a literal path
-(round 8, 2026-09-20: `_, body = _serve_get("/sw.js", ...)`, `page = self._get_text("/")`, through `.read(...)` and
-`.decode(...)`, alone or by tuple unpack; the fixer pass of round 8: a FORMATTED url too, `with urllib.request.urlopen(
+the author's pass 7), or a `self.<attr>` bound to one in any method of the same class (a setUp), or a body FETCHED by a literal path
+(the author's pass 8, 2026-09-20: `_, body = _serve_get("/sw.js", ...)`, `page = self._get_text("/")`, through `.read(...)` and
+`.decode(...)`, alone or by tuple unpack; the fixer pass of the author's pass 8: a FORMATTED url too, `with urllib.request.urlopen(
 "http://127.0.0.1:%d/timeline?token=testtok" % self.port) as r:` binding `r` and `body = r.read().decode(...)` after it, the
 route the url's path, and only where the query carries `token=`, since a token-less fetch of a page route is answered by the
 handler's gate with the paste-the-token page, a text the route walk does not map), which is the text of the getter the
 kernel's GET dispatch serves at that path (route_getters below). The getters are derived from the
 kernel source by rule: the functions named `_landing`, `_<name>_page`, `_<name>_js` or `_<name>_css` that a call with no
-arguments renders (no parameter, or every parameter defaulted; round 7: the served script functions, the service worker,
+arguments renders (no parameter, or every parameter defaulted; the author's pass 7: the served script functions, the service worker,
 the reload and shim cores and the timeline axis, had been outside the getter rule with ten live pins), a page read for
 every kind of comment and a script or style getter by the scanner of its kind; the constants from the LOADED kernel by rule,
-not from a roster of names (round 7): every module-level str attribute named `_[A-Z][A-Z0-9_]*` whose text a rendered page
+not from a roster of names (the author's pass 7): every module-level str attribute named `_[A-Z][A-Z0-9_]*` whose text a rendered page
 carries, or whose name ends `_JS`, `_CSS` or `_HTML` (a text served at a route of its own, or spliced under a condition the
 hermetic render does not meet), each with the KINDS of element its text lands in (inside a script element's content, inside
-a style element's, or markup; by suffix where the page does not carry it), read through any module alias. The round-6
+a style element's, or markup; by suffix where the page does not carry it), read through any module alias. The author's pass 6
 roster is kept as a floor the rule may not shrink below. A short constant a page carries by coincidence is in the set and
 harmless: no scanner finds a comment in it, and a pin over it is judged over text the page does carry. Each text is
 rendered or read once; a membership or count row is comment-satisfiable when its literal occurs inside a comment span of
@@ -64,7 +64,7 @@ name bound to one by an assignment of its own (a self.<attr> in any method of th
 `for` over served texts inside that loop; every such site must be a row (so a module with such a site the derivation stops
 reading fails here), the row count is at least the site count, and the modules with rows in a form the textual census reads
 are exactly the modules with sites (a module the derivation reads in such a form and the textual census does not, or the
-reverse, fails here). Each row carries whether its form is one the textual census reads (round 8, 2026-09-20): the literal's
+reverse, fails here). Each row carries whether its form is one the textual census reads (the author's pass 8, 2026-09-20): the literal's
 SOURCE segment must be a plain literal or a run of them (a literal with a backslash, a triple-quoted one, a loop or
 comprehension variable are not), and its container must not be a name bound to a slice; a module all of whose rows are in
 declined forms is outside the module symmetry (its rows are still judged, and the form-space pin below holds the declined
@@ -72,9 +72,9 @@ forms), so a sound module reds nothing there while a module with one readable ro
 pinned on a synthetic module below (a form the derivation stops reading fails there), built over every derived getter and
 over a derived constant of each kind. The container NAMES the tests pin are derived from the test text on their own and
 held to the kernel-derived getters and constants (a getter the tests call or a served str the tests assert over that the
-derivation does not read fails there; round 7).
+derivation does not read fails there; the author's pass 7).
 
-The fetched route (round 8, 2026-09-20): a fetched body is read as the text of the route it fetched. The (route, getter)
+The fetched route (the author's pass 8, 2026-09-20): a fetched body is read as the text of the route it fetched. The (route, getter)
 pairs are derived from the kernel's GET dispatch by an AST walk (route_getters), never restated: an `if` comparing one Name
 against a string literal by EQUALITY (`if p == "/chat": return self._send(200, _chat_page(), ...)`) or by MEMBERSHIP in a
 tuple of literals (`if p in ("/", ""):`, the landing's form) whose body returns a call carrying a call to a derived getter
@@ -84,7 +84,7 @@ naive equality walk misses the landing and reports eight routes believing nine).
 self.<method> (a test helper over the handler or an HTTP client) whose first argument is a string literal beginning with `/`
 that, without its ?query, is such a route, or a call to an attribute named `urlopen` whose first argument is a string literal,
 bare or `%`-formatted, of the form `http://127.0.0.1:%d/<route>?...token=...` (the `with ... as r` target is what it binds;
-the fixer pass of round 8: the tokened fetches in tests/test_kernel.py carried 39 pins over five pages outside the population, one
+the fixer pass of the author's pass 8: the tokened fetches in tests/test_kernel.py carried 39 pins over five pages outside the population, one
 of them satisfiable by three comments of the timeline page); a method call on another object (`path.split("/")`) is not one.
 
 Bound: a url built otherwise than as a bare or `%`-formatted literal (a `Request` object, an f-string, `.format`), a formatted
@@ -125,7 +125,7 @@ import served_css   # noqa: E402  the served page's comment spans (loads no romp
 
 _GETTER = re.compile(r"^def (_landing|_[a-z_]+_(?:page|js|css))\(([^)]*)\):", re.M)
 _GETTER_NAME = re.compile(r"_landing|_[a-z_]+_(?:page|js|css)")
-# the round-6 roster of served constants, kept as the floor the rule-derived set may not shrink below (round 7, 2026-09-20)
+# the author's pass 6 roster of served constants, kept as the floor the rule-derived set may not shrink below (the author's pass 7, 2026-09-20)
 _ROSTER = re.compile(r"^(_[A-Za-z_]*_(?:JS|CSS)) = ", re.M)
 _CAPS = re.compile(r"_[A-Z][A-Z0-9_]*")
 _SUFFIX_KIND = (("_JS", "script"), ("_CSS", "style"), ("_HTML", "markup"))
@@ -152,10 +152,10 @@ _TUPLE_DEF = re.compile(r"^\s*(?P<targets>[A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)+)\
 _ITEM_ONLY = re.compile(r"^" + _ITEM + r"$")
 _FOR_TEXTS = re.compile(r"^(?P<indent>\s*)for\s+(?P<target>[A-Za-z_]\w*)\s+in\s+[(\[]\s*(?P<values>" + _ITEM + r"(?:\s*,\s*" + _ITEM + r")*)\s*,?\s*[)\]]\s*:")
 _TEXT_ITEM = re.compile(r"([A-Za-z_]\w*)\.([A-Za-z_]\w*)(\(\))?")
-# a fetch of a literal path (round 8, 2026-09-20): `<targets> = <helper>("/route"...` or `= self.<helper>("/route"...`, the path a
+# a fetch of a literal path (the author's pass 8, 2026-09-20): `<targets> = <helper>("/route"...` or `= self.<helper>("/route"...`, the path a
 # route the dispatch maps (route_getters); and a body read from a fetched name, `<target> = <name>.decode(...)` or
 # `<target> = <name>.read(...).decode(...)`
-# a fetch of a FORMATTED url (the fixer pass of round 8): `with <x>.urlopen("http://127.0.0.1:%d/<route>?token=..." % <port>, ...) as r:`;
+# a fetch of a FORMATTED url (the fixer pass of the author's pass 8): `with <x>.urlopen("http://127.0.0.1:%d/<route>?token=..." % <port>, ...) as r:`;
 # the route is the path, and the query must carry the token (a token-less fetch of a page route is answered by the handler's gate
 # with the paste-the-token page, a text the route walk does not map). One url grammar for both censuses; how a site is found
 # stays their own (an AST walk against a regex by logical line)
@@ -163,7 +163,7 @@ _URL = re.compile(r"^https?://127\.0\.0\.1:%d(?P<route>/[^?\s\"']*)(?:\?(?P<quer
 _URLOPEN_DEF = re.compile(r"^\s*with\s+(?:[A-Za-z_]\w*\.)*urlopen\(\s*(?P<url>" + _LIT1 + r")\s*%.*\)\s+as\s+(?P<target>[A-Za-z_]\w*)\s*:\s*(?:#.*)?$")
 _FETCH_DEF = re.compile(r"^\s*(?P<targets>[A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s*=\s*(?:self\.)?[A-Za-z_]\w*\(\s*(?P<route>\"/[^\"\\\n]*\"|'/[^'\\\n]*')")
 _DECODE_DEF = re.compile(r"^\s*(?P<target>[A-Za-z_]\w*)\s*=\s*(?P<src>[A-Za-z_]\w*)(?:\.read\([^)]*\))?\.decode\([^)]*\)\s*(?:#.*)?$")
-_ALIAS_DEF = re.compile(r"^\s*(?P<target>[A-Za-z_]\w*)\s*=\s*(?P<src>(?:self\.)?[A-Za-z_]\w*)\s*(?:#.*)?$")   # `js = html`, `js = self.html` (the fixer pass of round 9)
+_ALIAS_DEF = re.compile(r"^\s*(?P<target>[A-Za-z_]\w*)\s*=\s*(?P<src>(?:self\.)?[A-Za-z_]\w*)\s*(?:#.*)?$")   # `js = html`, `js = self.html` (the fixer pass of the author's pass 9)
 _DEF_LINE = re.compile(r"^(?P<indent>\s*)(?:async\s+)?def\s")
 _CLASS_LINE = re.compile(r"^class\s")
 
@@ -194,7 +194,7 @@ def route_getters(source=None):
     source (or over `source`, a handler text, for the form-space pin) reading TWO shapes and no other: an `if` whose test compares
     one Name against a string literal by equality (`if p == "/chat":`) or by membership in a tuple of string literals (`if p in
     ("/", ""):`, the landing's form), and whose body returns a call carrying a call to a derived getter with no arguments
-    (`return self._send(200, _chat_page(), ...)`). Shape-sensitive by design (round 8, 2026-09-20): a third shape needs a third
+    (`return self._send(200, _chat_page(), ...)`). Shape-sensitive by design (the author's pass 8, 2026-09-20): a third shape needs a third
     branch here and a case in the form-space test; an equality-only walk misses the landing."""
     tree = ast.parse(_kernel_source() if source is None else source)
     getters = set(page_getters())
@@ -244,7 +244,7 @@ def landing_kinds(text):
     no page carries it."""
     kinds = set()
     for g, page in pages().items():
-        # a text served as a script or a style sheet is that kind throughout: the element layer reads MARKUP (round 9, 2026-09-20:
+        # a text served as a script or a style sheet is that kind throughout: the element layer reads MARKUP (the author's pass 9, 2026-09-20:
         # it had been run over the script getters' JS too, where `<t.length` reads as a tag opening; the layer refuses a name
         # outside ASCII now and the JS carried one)
         spans = _element_spans(g) if getter_kind(g) == "markup" else [(0, len(page), getter_kind(g))]
@@ -266,7 +266,7 @@ def _element_spans(getter):
 
 @functools.lru_cache(maxsize=None)
 def served_constants():
-    """{name: frozenset of kinds} for the kernel's served constants, derived by RULE from the loaded kernel (round 7,
+    """{name: frozenset of kinds} for the kernel's served constants, derived by RULE from the loaded kernel (the author's pass 7,
     2026-09-20; a `_*_JS`/`_*_CSS` name roster had missed _TIMELINE_BOOT, a script constant with comments and live pins, and
     every `_*_HTML` constant): every module-level str attribute named `_[A-Z][A-Z0-9_]*` whose text a rendered page carries
     (kinds: the element kinds of its landings) or whose name ends `_JS`, `_CSS` or `_HTML` (a text served at a route of its
@@ -299,10 +299,10 @@ def _text(node, getters, constants):
 
 
 def _fetched(node, names, routes):
-    """The served text a fetched value stands for (round 8, 2026-09-20): a call to a Name or a self.<method> whose first argument
+    """The served text a fetched value stands for (the author's pass 8, 2026-09-20): a call to a Name or a self.<method> whose first argument
     is a string literal beginning with `/` that, without its ?query, is a route in `routes` (`_serve_get("/sw.js", ...)`,
     `self._get_text("/")`); a call to an attribute named `urlopen` whose first argument is a string literal, bare or `%`-formatted,
-    naming such a route with the token in its query (_url_route; the fixer pass of round 8); or the `.read(...)` or `.decode(...)`
+    naming such a route with the token in its query (_url_route; the fixer pass of the author's pass 8); or the `.read(...)` or `.decode(...)`
     of such a value or of a Name bound to one, through any chain of the two (`body.decode()`, `fetch("/chat").read().decode()`);
     else None. A bare Name is not followed (as _text does not)."""
     if not isinstance(node, ast.Call):
@@ -337,7 +337,7 @@ def _bind(targets, value, names, attrs, getters, constants, sliced=None, routes=
     """Record Name and self.<attr> targets bound to a served text, or to a slice of one; a tuple assignment binds by position; a
     FETCHED value (_fetched, with `routes`) binds every Name it is unpacked into (`_, body = _serve_get("/sw.js")`: the status
     too, a name no membership reads). `sliced`, when given, tracks the Names bound through a slice (a form the textual census
-    does not read; round 8)."""
+    does not read; the author's pass 8)."""
     if isinstance(value, ast.Tuple) and len(targets) == 1 and isinstance(targets[0], ast.Tuple) \
             and len(targets[0].elts) == len(value.elts):
         pairs = list(zip(targets[0].elts, value.elts))
@@ -350,7 +350,7 @@ def _bind(targets, value, names, attrs, getters, constants, sliced=None, routes=
             g = _resolve(v.value, names, attrs, getters, constants)
             via_slice = True
         if not g and (isinstance(v, ast.Name) or isinstance(v, ast.Attribute) and isinstance(v.value, ast.Name) and v.value.id == "self"):
-            # `js = html` or `js = self.html`, an ALIAS of a bound name (the fixer pass of round 9: two suite modules alias the page so
+            # `js = html` or `js = self.html`, an ALIAS of a bound name (the fixer pass of the author's pass 9: two suite modules alias the page so
             # and neither census had followed it, so their position pins and a regex over the alias were outside both populations)
             g = _resolve(v, names, attrs, getters, constants)
             via_slice = isinstance(v, ast.Name) and sliced is not None and v.id in sliced
@@ -429,7 +429,7 @@ def _loops(fn):
 def rows_of(path, getters, constants, routes=None):
     """[(line, literal, text, form, readable)] for every membership or position assertion of a literal over a served text in one
     test module; form is "in" for a membership, else the position method; readable is whether the row's form is one the textual
-    census reads (round 8, 2026-09-20): the literal's source segment is a plain literal or a run of them (re.fullmatch over _LIT:
+    census reads (the author's pass 8, 2026-09-20): the literal's source segment is a plain literal or a run of them (re.fullmatch over _LIT:
     no backslash, not triple-quoted, not a loop or comprehension variable) and the container is not a name bound to a slice."""
     with open(path, encoding="utf-8") as f:
         src = f.read()
@@ -438,8 +438,8 @@ def rows_of(path, getters, constants, routes=None):
     out = []
     functions = (ast.FunctionDef, ast.AsyncFunctionDef)
     groups = [[n for n in cls.body if isinstance(n, functions)] for cls in ast.walk(tree) if isinstance(cls, ast.ClassDef)]
-    groups.append([n for n in tree.body if isinstance(n, functions)])   # module-level test functions (round 6, 2026-09-20)
-    modnames = _module_bindings(tree, getters, constants, routes)   # a served text bound at module level is read in every function (the fixer pass of round 9)
+    groups.append([n for n in tree.body if isinstance(n, functions)])   # module-level test functions (the author's pass 6, 2026-09-20)
+    modnames = _module_bindings(tree, getters, constants, routes)   # a served text bound at module level is read in every function (the fixer pass of the author's pass 9)
     def bindings(fn):   # in walk order, so a with-item's `as` target is bound before the assignments in its body read it
         for st in ast.walk(fn):
             if isinstance(st, ast.Assign):
@@ -455,7 +455,7 @@ def rows_of(path, getters, constants, routes=None):
                 _bind(targets, value, {}, attrs, getters, constants, None, routes)
         for fn in fns:
             names, sliced = dict(modnames), set()
-            for targets, value in bindings(fn):   # an assignment, or a with-item's `as` target (`with urlopen(...) as r`; the fixer pass of round 8)
+            for targets, value in bindings(fn):   # an assignment, or a with-item's `as` target (`with urlopen(...) as r`; the fixer pass of the author's pass 8)
                 _bind(targets, value, names, attrs, getters, constants, sliced, routes)
             text_of = lambda x: _resolve(x, names, attrs, getters, constants)
             readable = lambda lit, x: plain(lit) and not (isinstance(x, ast.Name) and x.id in sliced)
@@ -469,8 +469,8 @@ def rows_of(path, getters, constants, routes=None):
                     rows += [(node.lineno, pos[0].col_offset, i, l, text_of(pos[1]), pos[2], readable(pos[0], pos[1])) for i, l in enumerate(_literals(pos[0]))]
             # a loop variable, bound to the loop's own body (a variable rebound by a later loop resolves to its own loop):
             # `for win in ("fiveHour", "sevenDay"):` binds the LITERALS, one row per literal for each membership or position
-            # form of the variable over a text (round 5, 2026-09-20); `for page in (km._feed_page(), km._files_page()):` binds
-            # the TEXTS, one row per text for each membership or position form of a literal over the variable (round 7,
+            # form of the variable over a text (the author's pass 5, 2026-09-20); `for page in (km._feed_page(), km._files_page()):` binds
+            # the TEXTS, one row per text for each membership or position form of a literal over the variable (the author's pass 7,
             # 2026-09-20: a For target had bound nothing, so every membership over it was outside the population)
             for var, it, body in _loops(fn):
                 lits = _literals(it)
@@ -559,10 +559,10 @@ def textual_census(path, getters, constants, routes=None):
     `<alias>.<CONST>` inline, a Name bound to one by an assignment of its own earlier in the same function (a `self.<attr>`
     so bound in any method of the class), by a tuple assignment, by a `for` over served texts inside that loop (one site per
     text), or by a fetch of a literal path the dispatch maps (`_FETCH_DEF`, every target; `_DECODE_DEF` for the body read from
-    one; round 8) or of a formatted url with the token in its query (`_URLOPEN_DEF`, the `as` target; the fixer pass of round
+    one; the author's pass 8) or of a formatted url with the token in its query (`_URLOPEN_DEF`, the `as` target; the fixer pass of the author's pass
     8). A binding a later line rebinds keeps the served text, as the derivation reads it. containers is the set of
     (name, called) for every `<alias>.<name>` the module uses as a container in one of those forms, whatever the name, the
-    NAMES the tests pin, read on their own for the check against the kernel-derived getters and constants (round 7)."""
+    NAMES the tests pin, read on their own for the check against the kernel-derived getters and constants (the author's pass 7)."""
     sites, containers, names, attrs, loops, modnames = [], set(), {}, {}, [], {}
     with open(path, encoding="utf-8") as f:
         source = f.read()
@@ -575,7 +575,7 @@ def textual_census(path, getters, constants, routes=None):
             names = {}
         m = _BOUND_DEF.match(line)
         if m:
-            # a binding at column 0 is the module's, read in every function (the fixer pass of round 9)
+            # a binding at column 0 is the module's, read in every function (the fixer pass of the author's pass 9)
             (attrs if m.group("target").startswith("self.") else modnames if indent == 0 else names)[m.group("target")] = [(m.group("name"), bool(m.group("call")))]
         m = _TUPLE_DEF.match(line)
         if m:
@@ -603,7 +603,7 @@ def textual_census(path, getters, constants, routes=None):
         if m and m.group("src") in names:
             names[m.group("target")] = names[m.group("src")]
         m = _ALIAS_DEF.match(line)
-        if m:   # an alias of a bound name: the module's, the function's, or a self.<attr> (the fixer pass of round 9)
+        if m:   # an alias of a bound name: the module's, the function's, or a self.<attr> (the fixer pass of the author's pass 9)
             src = m.group("src")
             items = attrs.get(src) if src.startswith("self.") else names.get(src, modnames.get(src))
             if items:
@@ -650,7 +650,7 @@ _ASSERTS = {"assertIn", "assertNotIn", "assertEqual", "assertNotEqual", "assertT
 READER_FORMS = ("parser", "assert", "position", "view-pin", "position-unpinned", "membership-unpinned", "regex", "slice", "span-slice", "method", "conversion",
                 "value-use", "compare", "unclassified")
 # served_css functions returning a TEXT derived from the one they are given, its comments blanked with offsets kept: a VIEW of the text,
-# the round-6 re-point form (a literal membership or position pin over one is not comment-satisfiable by construction: `view-pin`)
+# the author's pass 6 re-point form (a literal membership or position pin over one is not comment-satisfiable by construction: `view-pin`)
 _VIEWS = {"code", "markup", "js_code", "css_code"}
 # str methods whose result is the text transformed or cut into pieces: a COPY of the text, which the pins census does not bind, so a
 # literal membership or position pin over one is unjudged (`membership-unpinned`, `position-unpinned`)
@@ -663,7 +663,7 @@ _VALUE_USES = {"dumps", "len", "print", "isinstance", "write", "repr", "str", "t
 
 def _module_bindings(tree, getters, constants, routes):
     """{Name: served text} for the module-level assignments that bind a served text (`JS = km._LANDING_APIH_JS`; the fixer pass of
-    round 9: three suite modules bind one at import time and read it in every test, and neither census had seen the binding)."""
+    the author's pass 9: three suite modules bind one at import time and read it in every test, and neither census had seen the binding)."""
     names = {}
     for st in tree.body:
         if isinstance(st, ast.Assign):
@@ -673,7 +673,7 @@ def _module_bindings(tree, getters, constants, routes):
 
 def _imports_parser(path):
     """Whether a test module IMPORTS served_css (`import served_css` or `from served_css import ...`, anywhere in it): the parser
-    road's membership test (the fixer pass of round 9: the census had tested text containment, the string anywhere in the file, a
+    road's membership test (the fixer pass of the author's pass 9: the census had tested text containment, the string anywhere in the file, a
     comment included, while every surface stated the import; the two agree at this head, 15 modules)."""
     with open(path, encoding="utf-8") as f:
         tree = ast.parse(f.read(), path)
@@ -683,16 +683,16 @@ def _imports_parser(path):
 
 def readers_of(path, getters, constants, routes=None):
     """[(line, form, text, source)] for every READ of a served text in one test module: the population the maintainer's round 5
-    ruling asked to be derived once, of every road (round 9, 2026-09-20), after the one HTML regex this change had added beside
+    ruling asked to be derived once, of every road (the author's pass 9, 2026-09-20), after the one HTML regex this change had added beside
     the parser it introduced. A served text is what rows_of resolves (a getter call, a constant, a Name or self.<attr> bound to
-    one or to a fetched body, the variable of a `for` over texts, a Name bound at module level), and since the fixer pass of round 9
+    one or to a fetched body, the variable of a `for` over texts, a Name bound at module level), and since the fixer pass of the author's pass 9
     also a VIEW of one (`served_css.code(X)`, markup, js_code, css_code: the text with its comments blanked, inline or bound to a
     Name) and a COPY of one (a str method of _COPIES on it, a slice of it, a line of its splitlines, the variable of a `for` over it
     or over its pieces, inline or bound), each read over a view or a copy being a row over the text it derives from. A read is X in
     any of these forms, each named in READER_FORMS: `served_css.<fn>(X, ...)` or a name imported from served_css called on X
     (`parser`, the one road for an element, an attribute or a rule); `X.<index|find|rindex|rfind|count>(needle)` with a literal or
     loop-literal needle over the text itself (`position`: a pins-census row, judged there), over a view (`view-pin`: an order or
-    count over comment-blanked text, the round-6 re-point form) or over a copy (`position-unpinned`: a read the pins census does
+    count over comment-blanked text, the author's pass 6 re-point form) or over a copy (`position-unpinned`: a read the pins census does
     not see), and with any other needle (`position-unpinned`); a literal membership `<lit> in X` under assertIn, assertNotIn,
     assertTrue or a bare assert over the text (`assert`: the pins census's row), over a view (`view-pin`) or over a copy
     (`membership-unpinned`), and `<needle> in X` with a non-literal needle (`membership-unpinned`); `re.<fn>(..., X)` or
@@ -832,7 +832,7 @@ def readers_of(path, getters, constants, routes=None):
                     rows.append((node.lineno, pin("assert", arg) if f.attr in ("assertIn", "assertNotIn") else "assert", t, seg(node)))
                 elif depth == 0 and (isinstance(f, ast.Name) and f.id in helpers or isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name)
                                      and f.value.id == "self" and f.attr in methods and f.attr not in _ASSERTS):
-                    # a helper of this module, or a method of the same class (`self._code(js)`; the fixer pass of round 9): followed once
+                    # a helper of this module, or a method of the same class (`self._code(js)`; the fixer pass of the author's pass 9): followed once
                     h = helpers[f.id] if isinstance(f, ast.Name) else methods[f.attr]
                     params = [a.arg for a in h.args.args]
                     if isinstance(f, ast.Attribute) and params and params[0] == "self":
@@ -895,7 +895,7 @@ class ServedPinsReadElements(unittest.TestCase):
         pages_ = [g for g in getters if getter_kind(g) == "markup"]
         self.assertTrue(pages_ and [g for g in getters if getter_kind(g) == "script"], "page getters and script getters both derived: %r" % (getters,))
         self.assertTrue(all(comments[g] for g in pages_), "every served page carries comments (the derivation read them): %r" % ({g: len(comments[g]) for g in pages_},))
-        # the constants are derived by rule from the loaded kernel; the round-6 roster (the source's `_*_JS`/`_*_CSS` names) is
+        # the constants are derived by rule from the loaded kernel; the author's pass 6 roster (the source's `_*_JS`/`_*_CSS` names) is
         # the floor the rule may not shrink below, and the rule reaches past it (a script constant outside the roster, an
         # HTML constant), each failing on an empty side
         roster = set(_ROSTER.findall(_kernel_source()))
@@ -929,8 +929,8 @@ class ServedPinsReadElements(unittest.TestCase):
             pinned |= containers
         # the floor, derived: every site the textual census finds is a row the derivation found (so a module the derivation
         # stops reading, or a form it stops reading, fails here), the population is at least that, and the modules with rows in
-        # a form the textual census reads are the modules with sites, both ways (round 7, 2026-09-20: 5 modules had rows and no
-        # site, a drop there invisible; round 8: over the readable rows, so a module all of whose rows use a form the textual
+        # a form the textual census reads are the modules with sites, both ways (the author's pass 7, 2026-09-20: 5 modules had rows and no
+        # site, a drop there invisible; the author's pass 8: over the readable rows, so a module all of whose rows use a form the textual
         # census declines is not a false red here, and the form-space pin below holds those forms)
         self.assertTrue(sites, "the textual census found no assertion over a served text")
         self.assertEqual(sorted(set(sites) - {r[:5] for r in rows}), [], "sites the textual census reads and the derivation does not")
@@ -940,7 +940,7 @@ class ServedPinsReadElements(unittest.TestCase):
         self.assertEqual(sorted(readable_modules ^ {s[0] for s in sites}), [],
                          "modules with readable rows and no textual site, or the reverse: widen the textual census to the form the derivation read, or write the pin in a form it reads")
         self.assertTrue({r[3] for r in rows} & set(getters) and {r[3] for r in rows} & set(constants), "rows over pages and over constants both derived")
-        self.assertTrue({r[3] for r in rows} - set(getters) - roster, "rows over constants outside the round-6 roster (the class the roster missed): %r" % (sorted({r[3] for r in rows} - set(getters)),))
+        self.assertTrue({r[3] for r in rows} - set(getters) - roster, "rows over constants outside the author's pass 6 roster (the class the roster missed): %r" % (sorted({r[3] for r in rows} - set(getters)),))
         # the container NAMES the tests pin, read from the test text on their own: every getter the tests call is derived, and
         # every `_CAPS` str the tests assert over that is served (by suffix or by landing in a page) is derived; both sides
         # non-empty, and the pinned names reach past the roster
@@ -949,7 +949,7 @@ class ServedPinsReadElements(unittest.TestCase):
         self.assertTrue(pinned_getters and pinned_caps, "the tests pin getters and constants: %r" % (sorted(pinned),))
         self.assertEqual(sorted(pinned_getters - set(getters)), [], "page getters the tests pin that the derivation does not read")
         pinned_served = {n for n in pinned_caps if isinstance(getattr(km, n, None), str) and (_suffix_kind(n) or landing_kinds(getattr(km, n)))}
-        self.assertTrue(pinned_served - roster, "the tests pin a served constant outside the round-6 roster: %r" % (sorted(pinned_served),))
+        self.assertTrue(pinned_served - roster, "the tests pin a served constant outside the author's pass 6 roster: %r" % (sorted(pinned_served),))
         self.assertEqual(sorted(pinned_served - set(constants)), [], "served constants the tests pin that the derivation does not read")
         bad = []
         for fname, line, lit, name, form, _ in rows:
@@ -969,17 +969,17 @@ class ServedPinsReadElements(unittest.TestCase):
 
     def test_the_derivation_reads_the_forms_it_claims(self):
         # the population is a derivation, so its form space is pinned: a getter call inline, a Name bound in the function,
-        # a tuple assignment by position, a self.<attr> bound in setUp; a Name bound to something else is not a row. Round 5
+        # a tuple assignment by position, a self.<attr> bound in setUp; a Name bound to something else is not a row. The author's pass 5
         # (2026-09-20): a loop variable over a tuple or list of literals (one row per literal), assertTrue(lit in page) and a
-        # bare assert; a literal bound by assignment stays outside (the bound in the docstring). Round 6 (2026-09-20): a served
+        # bare assert; a literal bound by assignment stays outside (the bound in the docstring). The author's pass 6 (2026-09-20): a served
         # constant inline and bound, a module-level function, a conjunction inside assert or assertTrue (one row per conjunct),
         # a Name bound to a slice of a page, the position forms index, find, rindex, rfind and count; a dynamically resolved
-        # getter (getattr) stays outside (the bound). Round 7 (2026-09-20): a `for` over served texts (one row per text, a
+        # getter (getattr) stays outside (the bound). The author's pass 7 (2026-09-20): a `for` over served texts (one row per text, a
         # membership and a position form), a comprehension over literals, a position form over a loop literal, and the
         # constants of every kind the rule derives (a style constant, an HTML constant, a bare script constant and a markup
-        # constant outside the round-6 roster), each name derived here, not written. Round 8: a body fetched by a literal path,
+        # constant outside the author's pass 6 roster), each name derived here, not written. The author's pass 8: a body fetched by a literal path,
         # and (the fixer pass) by a formatted url with the token in its query, bound by the with-item's `as` target; a token-less
-        # url and an unmapped path bind nothing. Round 9's fixer pass: a binding at module level (MOD) and an alias of a bound Name
+        # url and an unmapped path bind nothing. The fixer pass of the author's pass 9: a binding at module level (MOD) and an alias of a bound Name
         # or self.<attr> (alias, al2), each a row and a site. The module is built over EVERY derived
         # getter, so a new getter is pinned by construction, and every expectation fails on an empty derivation
         getters, constants, routes = page_getters(), served_constants(), route_getters()
@@ -1088,9 +1088,9 @@ def test_module_level():
                     (28, "h", "_feed_page", "in"), (29, "g", "_feed_page", "index"), (29, "f", "_feed_page", "index"), (30, "e", "_LANDING_MOBILE_JS", "count"),
                     (31, "d", "_feed_page", "find"), (31, "c", "_feed_page", "rindex"), (31, "b", "_feed_page", "rfind"),
                     (34, "y\tz", "_feed_page", "in"), (35, "tq", "_feed_page", "in"),
-                    (38, "f1", "_sw_js", "in"), (40, "f2", "_chat_page", "in"), (42, "f3", "_landing", "in"),   # the fetched forms (round 8)
-                    (51, "f7", "_chat_page", "in"),   # a formatted url with the token, bound by the with-item's `as` (the fixer pass of round 8)
-                    (58, "m1", "_feed_page", "in"), (60, "m2", "_feed_page", "in"), (62, "m3", "_landing", "in")]   # a module-level binding and two aliases (round 9's fixer pass)
+                    (38, "f1", "_sw_js", "in"), (40, "f2", "_chat_page", "in"), (42, "f3", "_landing", "in"),   # the fetched forms (the author's pass 8)
+                    (51, "f7", "_chat_page", "in"),   # a formatted url with the token, bound by the with-item's `as` (the fixer pass of the author's pass 8)
+                    (58, "m1", "_feed_page", "in"), (60, "m2", "_feed_page", "in"), (62, "m3", "_landing", "in")]   # a module-level binding and two aliases (the fixer pass of the author's pass 9)
         expected += [(L + 1, "a1", g, "in") for g in getters] + [(L + 2, "a2", g, "index") for g in getters]
         expected += [(L + 5, "a4", "_feed_page", "index"), (L + 5, "a5", "_feed_page", "index"), (L + 6, "a6", "_feed_page", "index"), (L + 6, "a7", "_feed_page", "index"),
                      (L + 7, "a8", css, "in"), (L + 8, "a9", html, "in"), (L + 10, "b1", script, "in"), (L + 11, "b2", mark, "in"), (L + 12, "b4b5", "_feed_page", "in"),
@@ -1098,11 +1098,11 @@ def test_module_level():
         self.assertEqual([r[:4] for r in rows], expected)
         self.assertNotIn(("a3", "in"), {(lit, form) for _, lit, _, form, _ in rows}, "the loop variable is bound to the loop's body only")
         self.assertNotIn(("b3", "in"), {(lit, form) for _, lit, _, form, _ in rows}, "a loop whose iterable mixes a text with something else binds nothing")
-        # round 8 (2026-09-20): a fetch of an unmapped path, a body passed through served_css.js_code, and a method call on another
+        # the author's pass 8 (2026-09-20): a fetch of an unmapped path, a body passed through served_css.js_code, and a method call on another
         # object with a route-shaped literal (path.split("/")) bind nothing; the fixer pass: nor a formatted url of a page route with
         # no token in its query (the gate's paste-the-token page, f8), nor one of a path the dispatch does not map (f9)
         self.assertEqual({lit for _, lit, _, _, _ in rows} & {"f4", "f5", "f6", "f8", "f9"}, set())
-        # round 8 (2026-09-20): the rows the textual census declines, by form: a loop or comprehension literal (p, q, r, a4 to a7),
+        # the author's pass 8 (2026-09-20): the rows the textual census declines, by form: a loop or comprehension literal (p, q, r, a4 to a7),
         # a name bound to a slice (h), a literal with a backslash and a triple-quoted one; every other row is readable
         declined = {(15, "p"), (15, "q"), (17, "r"), (28, "h"), (L + 5, "a4"), (L + 5, "a5"), (L + 6, "a6"), (L + 6, "a7"), (34, "y\tz"), (35, "tq")}
         self.assertEqual({(line, lit) for line, lit, _, _, readable in rows if not readable}, declined)
@@ -1126,7 +1126,7 @@ def test_module_level():
         self.assertEqual(containers, {(g, True) for g in getters} | {("_LANDING_MOBILE_JS", False), (css, False), (html, False), (script, False), (mark, False)})
 
     def test_every_reader_of_a_served_page_is_the_parser_or_a_stated_read(self):
-        # round 9 (2026-09-20), the maintainer's round 5 ruling asked once, of every road that reads the served page, whether it is
+        # the author's pass 9 (2026-09-20), the maintainer's round 5 ruling asked once, of every road that reads the served page, whether it is
         # HTML-correct or refuses what it cannot resolve: the change had moved the element reads onto html.parser as ruled and then
         # added a fresh regex over the raw page beside it (the viewport meta, satisfiable by a commented copy, the case it existed to
         # stop). The population is EVERY read of a served text across the suite, derived by readers_of (its form space in
@@ -1134,7 +1134,7 @@ def test_module_level():
         # markup by another road (`assert`: a literal membership the pins census judges or a whole-text compare; `position` with a
         # literal needle: a pins-census row, an order or count over text the census judges against every comment span, not an
         # element's extent or attributes; `view-pin`: a literal membership or position pin over the parser's comment-blanked VIEW of
-        # the text, served_css.code, markup, js_code or css_code, the round-6 re-point form, not comment-satisfiable by construction;
+        # the text, served_css.code, markup, js_code or css_code, the author's pass 6 re-point form, not comment-satisfiable by construction;
         # `span-slice`: parser-derived offsets; `conversion` and `value-use`: the text handed whole to a callable of the stated
         # allowlist, not read here; `compare`); a raw read of markup (`regex`, `slice`, `method`, `position-unpinned`,
         # `membership-unpinned`, the last two also a literal pin over a COPY of the text, a str-method result, a slice or a line of
@@ -1143,9 +1143,9 @@ def test_module_level():
         # figure, not a red here); a read over a text that is JS or CSS source and not markup (a script or style constant, a script
         # getter) is `source`: the element layer has no element to offer for it, and its literal pins are the pins census's. A form
         # the walk cannot name reds everywhere, and so does `unclassified`, the text handed whole to a callable outside the
-        # allowlist (the fixer pass of round 9: an unknown callee had defaulted to value-use, so a parser of its own, an imported
+        # allowlist (the fixer pass of the author's pass 9: an unknown callee had defaulted to value-use, so a parser of its own, an imported
         # helper or a compiled pattern from another module read the page unseen; and a read over a view, a copy, an alias or a
-        # module-level binding of the text had produced no row at all: the round-6 order pins over served_css.code were outside the
+        # module-level binding of the text had produced no row at all: the author's pass 6 order pins over served_css.code were outside the
         # population the record called every read).
         getters, constants, routes = page_getters(), served_constants(), route_getters()
         kinds = {g: frozenset([getter_kind(g)]) for g in getters}
@@ -1174,7 +1174,7 @@ def test_module_level():
             by.setdefault(status(*r), []).append(r)
         self.assertEqual(by.get("unclassified", []), [], "a read of a served text the walk cannot classify (a callee outside the stated allowlist):\n"
                          + "\n".join("%s:%d %s %s: %s" % r for r in by.get("unclassified", [])))
-        self.assertTrue(by.get("view-pin"), "literal pins over the parser's comment-blanked view (the round-6 re-point form) are rows")
+        self.assertTrue(by.get("view-pin"), "literal pins over the parser's comment-blanked view (the author's pass 6 re-point form) are rows")
         self.assertTrue(sum(road.values()) >= 15 and all(road[f] for f in ("test_kernel_mobile.py", "test_shell_viewport_fit.py", "test_spend_detail.py")), road)
         raw_on_road = [r for r in by.get("raw", []) if road[r[0]]]
         self.assertEqual(raw_on_road, [], "a module on the parser road reads the page by another road; route it through served_css or state it:\n"
@@ -1191,7 +1191,7 @@ def test_module_level():
                         % (len(off), len({r[0] for r in off})))
 
     def test_no_tracked_element_sits_under_a_container_the_reader_does_not_read(self):
-        # round 9 (2026-09-20), the maintainer's round 5 ruling: the reader's roster of untracked containers (template, noscript)
+        # the author's pass 9 (2026-09-20), the maintainer's round 5 ruling: the reader's roster of untracked containers (template, noscript)
         # justified itself with "no served page carries either" and omitted svg, which served pages do carry as live markup and
         # inside which both engines parse a style's or script's content as markup. The reader refuses a tracked element under such
         # a container now (served_css.REFUSED_CONTAINERS), and the justification is this census, DERIVED over every page the
@@ -1220,7 +1220,7 @@ def test_module_level():
                     carrying[c].append((g, counts[c]))
         self.assertEqual(under, [], "a tracked element under a refused container")
         self.assertTrue(carrying["svg"], "at least one served page carries <svg> as live markup, the case the roster omitted: %r" % (carrying,))
-        self.assertGreaterEqual(len(carrying["svg"]), 2, "the pages carrying svg markup (two at round 9): %r" % (carrying["svg"],))
+        self.assertGreaterEqual(len(carrying["svg"]), 2, "the pages carrying svg markup (two at the author's pass 9): %r" % (carrying["svg"],))
         self.assertEqual([c for c in ("math", "template", "noscript") if carrying[c]], [], "no served page carries these today: %r" % (carrying,))
         self.assertTrue({"html", "head", "body"} <= roster, "the containers tracked elements sit under, derived: %r" % (sorted(roster),))
         self.assertEqual(sorted(roster & served_css.REFUSED_CONTAINERS), [], "the derived roster holds no refused container: %r" % (sorted(roster),))
@@ -1231,7 +1231,7 @@ def test_module_level():
         # assert, a literal position pin and one with a Name needle, a non-literal membership, a regex through re and through a
         # compiled pattern, a slice by index and a slice by parser-derived spans, a str method, a conversion, a value-use (json.dumps)
         # and a helper followed one level (its membership a row at its own line), a whole-text compare, and a read over a script
-        # constant (its form is the read's; the census test gives it the `source` status by the text's kind). The fixer pass of round
+        # constant (its form is the read's; the census test gives it the `source` status by the text's kind). The fixer pass of the author's pass
         # 9 adds the gaps it found: a VIEW bound to a Name and inline (a position pin and a membership over it: view-pin; a regex
         # over it: regex), a COPY by a str method, a slice, a line of splitlines and a for over the pieces (a literal pin over one:
         # position-unpinned or membership-unpinned; the method itself a row), a module-level binding and an alias (a pins-census
@@ -1322,7 +1322,7 @@ class T(unittest.TestCase):
         self.assertEqual([r[3].split(":")[0] for r in rows if r[1] == "value-use" and not r[3].startswith("helper")], ["dumps", "write", "replace"])
         self.assertEqual(sorted({r[1] for r in rows} - set(READER_FORMS)), [])
         self.assertEqual(sorted(set(READER_FORMS) - {r[1] for r in rows}), [], "every named form, the catch-all included, is met by the synthetic module")
-        # the parser road's membership test is the IMPORT (round 9's fixer pass: it had been the string anywhere in the file): a module
+        # the parser road's membership test is the IMPORT (the fixer pass of the author's pass 9: it had been the string anywhere in the file): a module
         # naming served_css in a comment alone is not on the road, one importing it under either form is
         for text, on_road in (("# served_css is not imported here\n", False), ("import served_css\n", True), ("from served_css import code\n", True), ("import os\n", False)):
             with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
@@ -1333,7 +1333,7 @@ class T(unittest.TestCase):
                 os.unlink(f.name)
 
     def test_the_route_walk_reads_equality_and_membership(self):
-        # round 8 (2026-09-20): the (route, getter) pairs are derived from the handler by a shape-sensitive walk, never restated. A
+        # the author's pass 8 (2026-09-20): the (route, getter) pairs are derived from the handler by a shape-sensitive walk, never restated. A
         # synthetic handler with both shapes pins the two: the landing's membership tuple and the equality routes; a route
         # returning json.dumps, a getter called with arguments and a prefix test bind nothing. An equality-only walk misses the
         # landing here and on the kernel (eight routes believing nine).

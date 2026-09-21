@@ -208,7 +208,7 @@ class ServiceWorkerRoute(unittest.TestCase):
         # kernel's routing block rides the notification's data; a live window gets it over
         # postMessage, a cold start gets the kernel's deep link (ServiceWorkerExecutes runs it).
         _, body = _serve_get("/sw.js", headers={"X-Romp-Token": km.TOKEN})
-        # the worker's CODE, comments blanked (round 8, 2026-09-20): the worker's own comment spells setAppBadge, so a pin over
+        # the worker's CODE, comments blanked (the author's pass 8, 2026-09-20): the worker's own comment spells setAppBadge, so a pin over
         # the fetched body was satisfiable by it (the pins census reads a fetched route as its getter's text now and names such a
         # row; a body read through served_css.js_code is not comment-satisfiable by construction)
         js = served_css.js_code(body.decode())
@@ -1899,7 +1899,7 @@ class LandingRevealPins(unittest.TestCase):
         # pinned absent from the script's code lines and the served shell: any store or replay, any build comparison, any
         # element the script would own, any word for /reveal but the four roads, any timer
         import re
-        js = served_css.js_code(km._LANDING_REVEAL_JS)   # the code with its comments blanked: the prose may name what went; the code may not (round 9's fixer pass: a lambda had stripped // lines by hand)
+        js = served_css.js_code(km._LANDING_REVEAL_JS)   # the code with its comments blanked: the prose may name what went; the code may not (the fixer pass of the author's pass 9: a lambda had stripped // lines by hand)
         for word in ("caches", "/__romp/", "tapReplay", "tapLanded", "registration.update", "r.update()", "PAGEV", "__ROMP_SWV__",
                      "'store'", "'offer'", "'closed'", "tap-resume", "sw-stale", "sw-update", "tap-offer", "/push/dismissed", "setTimeout",
                      "fingerprint(", "resume(", "pushReveal"):

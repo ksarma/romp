@@ -86,7 +86,7 @@ class RestartReloadRaceTest(unittest.TestCase):
     def test_the_flip_hands_the_decision_to_the_reload_core_and_never_reloads_by_itself(self):
         import json
         html = km._landing()
-        # the function's window inside one live script's code, comments removed (round 9, 2026-09-20: it had been sliced from the
+        # the function's window inside one live script's code, comments removed (the author's pass 9, 2026-09-20: it had been sliced from the
         # raw page)
         js = next(s for s in served_css.scripts(html) if "window.__rompRestart=function(){" in s)
         a = js.index("window.__rompRestart=function(){")
@@ -96,7 +96,7 @@ class RestartReloadRaceTest(unittest.TestCase):
         self.assertNotIn("if(b&&b!==%s)location.reload()" % json.dumps(km._BOOT_ID), fn, "the flip's own reload is gone (2026-09-14)")
         self.assertEqual(fn.count("location.reload()"), 3, "the no-core fallback and the two-minute backstop's two arms: nothing else reloads here")
         # the ruling's words stand beside the code, in the SOURCE (the sentence is a served comment, so a pin over the page
-        # was satisfiable by prose alone; tests/test_served_pins_read_elements.py names that class, round 6, 2026-09-20)
+        # was satisfiable by prose alone; tests/test_served_pins_read_elements.py names that class, the author's pass 6, 2026-09-20)
         self.assertIn("A changed build: the core OFFERS the reload", _kernel_src())
         # and the gear's own ↻ handler, dead since the control moved to the rail, is gone with its first-200 reload
         self.assertNotIn("rrefresh", _gear_src())

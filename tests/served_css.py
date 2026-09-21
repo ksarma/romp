@@ -1,27 +1,27 @@
 #!/usr/bin/env python3
 """Parsed views of a served page, for pins that read the ELEMENT or the PARSED RULE they pin rather than page text.
 
-A substring assertion over a served page is satisfied by a comment that spells the same token (D1 round 1, 2026-09-19:
+A substring assertion over a served page is satisfied by a comment that spells the same token (D1, the maintainer's round 1, 2026-09-19:
 three viewport-meta pins were satisfied by a served comment after the meta had lost the token), and a census that
 substring-searches declarations misses members written through a custom-property indirection, with whitespace inside
 the var() call, under a split selector, inside a style element carrying an attribute, or re-topped through the inset
-shorthand (D1 round 2, 2026-09-19). This module is the instrument both kinds of pin read instead.
+shorthand (D1, the author's pass 2, 2026-09-19). This module is the instrument both kinds of pin read instead.
 
-Elements (round 8, 2026-09-20): the element and attribute layer is the standard library's HTML tokenizer, html.parser
+Elements (the author's pass 8, 2026-09-20): the element and attribute layer is the standard library's HTML tokenizer, html.parser
 (`_Elements`, `elements(html)`), not regular expressions over the markup. The question was put after the same silent-pass
-shape closed three times here (a linked sheet unread, round 6; `rel="preload stylesheet"` past a start-anchored token read,
-round 7; a `>` inside a quoted attribute value ending a regex's element early, and a `<style media=print>` read as
-unconditional CSS, round 8), and the answer is yes: the tokenizer reads tags, attributes (unquoted values, lower-cased names,
+shape closed three times here (a linked sheet unread, the author's pass 6; `rel="preload stylesheet"` past a start-anchored token read,
+the author's pass 7; a `>` inside a quoted attribute value ending a regex's element early, and a `<style media=print>` read as
+unconditional CSS, the author's pass 8), and the answer is yes: the tokenizer reads tags, attributes (unquoted values, lower-cased names,
 the first of a duplicate), comments, and script and style CDATA the way HTML does, and getpos() maps to absolute offsets by
 line start, which is all this layer needs; those three closed members are its unit cases. What it does not do, and this module
 still does itself: tokenize CSS and JS (the scanners below), and the HTML5 script-data escaped states (a `<!-- <script>` inside
 a script), which the served pages do not use. Where the tokenizer parts from HTML the reader REFUSES rather than parse past it
-(round 9, 2026-09-20, the maintainer's round 5 ruling): a `<![CDATA[` marked section, which html.parser consumes whole to `]]>`
+(the author's pass 9, 2026-09-20, the maintainer's round 5 ruling): a `<![CDATA[` marked section, which html.parser consumes whole to `]]>`
 where HTML reads `<!` followed by anything but `--` or DOCTYPE as a bogus comment ending at the FIRST `>`, so a live style
 element after a `>` inside the section was invisible to elements() and rules() with no refusal (the fourth silent divergence
 this module closed; the plant is a unit case); an abruptly closed comment, `<!-->` or `<!--->`, which html.parser closes at the
 NEXT `-->` where HTML closes it at its own `>`, so a live style, link or meta between the two was invisible with no refusal (the
-author's fixer pass after round 9, the fifth; the shape HTML reads as an empty comment refuses too, a loud over-refusal of a shape
+fixer pass of the author's pass 9, the fifth; the shape HTML reads as an empty comment refuses too, a loud over-refusal of a shape
 no served page carries); a character reference in a tracked element's attribute value that html.unescape decodes and HTML keeps
 as written (the attribute paragraph below); and a tag or attribute name outside ASCII (the same paragraph). The enumeration of
 what the tokenizer hands this reader is DERIVED, not kept by hand: `TOKENIZER_SURFACE` names every handle_* method and
@@ -34,8 +34,8 @@ for both surfaces, the CDATA and RCDATA element sets and the constructor's param
 classify. The tokenizer's CDATA end-tag and comment rules were tightened in the 3.12 and
 3.13 maintenance releases (a `</script` ends the element only before whitespace, `/` or `>`; a comment closes at `-->` or
 `--!>`); the shapes this module's unit cases pin read the same under 3.10, 3.11, 3.12, 3.13 and 3.14, and the eight served
-pages gave byte-identical spans, scripts and rules under each at round 8. Refuses a script or style element the page never
-closes, and a self-closing `<script/>` or `<style/>` (a start tag to HTML). Containers (round 9, 2026-09-20, the maintainer's
+pages gave byte-identical spans, scripts and rules under each at the author's pass 8. Refuses a script or style element the page never
+closes, and a self-closing `<script/>` or `<style/>` (a start tag to HTML). Containers (the author's pass 9, 2026-09-20, the maintainer's
 round 5 ruling): the reader keeps a stack of the open elements (its own: a start tag pushes, a void element and a self-closing
 foreign element do not, an end tag pops to its nearest open match, no implied end tags and no foreign-content breakout, so the
 stack can only over-report an ancestor, never lose one) and REFUSES a tracked element (script, style, link, meta) whose stack
@@ -45,9 +45,9 @@ holds a container whose content HTML does not parse as this reader parses the el
 `<noframes>`, `<xmp>` and `<plaintext>` are text to HTML and to a tokenizer release that knows the set, and a start tag to one that
 does not, so the outcome under any release is a refusal or no element, never a live read; and inside `<frameset>` HTML IGNORES a
 tracked start tag (the in-frameset insertion mode drops anything but frameset, frame and noframes: both engines drop a `<style>`
-there, measured; the author's fixer pass after round 9). Tree construction's other rules that could drop or move a tracked start
+there, measured; the fixer pass of the author's pass 9). Tree construction's other rules that could drop or move a tracked start
 tag are outside this model, and the modes a served page could put one in were measured live in both engines (select, option,
-table, td, colgroup: a style there is live to the engines and to this reader). The round-8 roster (`<template>` and
+table, td, colgroup: a style there is live to the engines and to this reader). The author's pass 8 roster (`<template>` and
 `<noscript>`, "no served page carries either") is gone: it omitted `<svg>`, which two served pages carry as live markup, and the
 justification is a CENSUS now, derived over every page the kernel's GET dispatch serves (tests/test_served_pins_read_elements.py:
 the containers each tracked element sits under, and the pages carrying each container), red when a tracked element sits under
@@ -55,7 +55,7 @@ a refused container or a new refused container appears on a page (the reader ref
 The stack's one-sided error is disclosed: a `<style>` in HTML content after a breakout tag closed the svg (`<svg><b>...`) is
 refused here where HTML would read it, a loud over-refusal, never a silent over-read.
 
-Attribute compares (round 9, 2026-09-20): every value this module compares is compared as HTML compares that attribute, and the
+Attribute compares (the author's pass 9, 2026-09-20): every value this module compares is compared as HTML compares that attribute, and the
 population is every compare of an `attr()` value in this file plus the tokenizer's own name handling; the rows are in
 tests/test_shell_viewport_fit.py (ParsedSheetReads, one per attribute per rule). style `type`: absent, or the empty string, or an
 ASCII case-insensitive match for text/css, compared AS WRITTEN, no whitespace stripped (HTML's "update a style block": a type
@@ -71,7 +71,7 @@ ASCII whose lowercase is inside it (the Kelvin sign), so a tag or attribute NAME
 tokenizer's fold (read from the raw tag text, `_raw_names`); a duplicated attribute keeps its first value (HTML drops the later
 one; `attr`). The case folds here are ASCII folds (`_ascii_lower`), never str.lower: over the keyword sets compared the two agree
 (no character outside ASCII lower-cases to a letter of text/css, all, screen or stylesheet), and the fold is HTML's. Attribute
-VALUES (the author's fixer pass after round 9): the tokenizer decodes character references with html.unescape's TEXT rule, and
+VALUES (the fixer pass of the author's pass 9): the tokenizer decodes character references with html.unescape's TEXT rule, and
 HTML's attribute rule differs in two places: a legacy named reference without its `;` (`&amp`, `&AMP`, `&not`) is kept as written
 when `=` or an ASCII alphanumeric follows the name (`a&amp=b`, `&ampx` and `&notit;x` are literal in every engine, measured, and
 read `a&=b`, `&x` and `\xacit;x` here), and a control or noncharacter code point a numeric reference names is kept where
@@ -82,20 +82,20 @@ element's `type` is read and not judged (below), so it is compared nowhere; HTML
 from the style element's, recorded so a future judge takes that rule and not this file's.
 
 Style rules: `rules(html)` parses every live style element (any attributes, except that a `type` neither empty nor an ASCII
-case-insensitive match for text/css, as written, refuses, the fixer pass of round 8: no engine applies such an element's content
+case-insensitive match for text/css, as written, refuses, the fixer pass of the author's pass 8: no engine applies such an element's content
 and its rules had read as live, the sibling hole of the media attribute; a style or script element inside an HTML comment is
-comment text, not an element, round 5, 2026-09-20), strips its comments, and brace-matches it into Rule(index, at, selector,
+comment text, not an element, the author's pass 5, 2026-09-20), strips its comments, and brace-matches it into Rule(index, at, selector,
 declarations, decls): `at` is the tuple of enclosing at-rule preludes (an @media query, a @supports condition), with the
 element's own `media` attribute as the outermost prelude where it conditions anything (`media_prelude`: `@media print`;
-absent, empty, `all` and `screen` add nothing; round 8: a rule under `<style media=print>` had read as unconditional, so a
+absent, empty, `all` and `screen` add nothing; the author's pass 8: a rule under `<style media=print>` had read as unconditional, so a
 census over what applies on the phone's screen passed over a page whose only origin sat in one), `declarations` the block's raw
 text, `decls` its (property, value) pairs split at ; outside parentheses and quotes; a statement at-rule (@charset, @namespace,
 `@layer name;`: an at-prelude ended by ; with no block) is consumed and dropped, never folded into the next rule's prelude
-(round 5). CSS the parser cannot read REFUSES rather than shrinking a census silently (round 6, 2026-09-20): a `<link>` whose
-rel set carries the stylesheet token anywhere (`rel=stylesheet`, `rel="preload stylesheet"`, `alternate stylesheet` too; round
-7, 2026-09-20: a token after another had passed; round 8: the rel read from the tokenizer's attributes, so a `>` inside a quoted
+(the author's pass 5). CSS the parser cannot read REFUSES rather than shrinking a census silently (the author's pass 6, 2026-09-20): a `<link>` whose
+rel set carries the stylesheet token anywhere (`rel=stylesheet`, `rel="preload stylesheet"`, `alternate stylesheet` too; the author's pass
+7, 2026-09-20: a token after another had passed; the author's pass 8: the rel read from the tokenizer's attributes, so a `>` inside a quoted
 value before it no longer hides it) in the live markup and an `@import` statement, ended by `;` or by the end of the element
-(round 7: a trailing statement had been dropped unread), both raise, the way an unclosed style element does, since what an
+(the author's pass 7: a trailing statement had been dropped unread), both raise, the way an unclosed style element does, since what an
 external file adds or re-tops is outside every rule the parse returns (a rule the file merely moves still reds the pins that
 name it); a caller that reads a page which links its stylesheets by design passes `linked=True` and takes the style elements
 alone. Keywords and function names are compared case-insensitively, as CSS reads them (`position:FIXED`, `VAR(--app-h)`,
@@ -105,11 +105,11 @@ a name already in the set, so a declaration keyed to the shell height through an
 (`names_any(value, names)`); `bare_var(value)` is the one custom property a value consists of (`var(--app-top,0px)` and
 nothing outside the function; None for `calc(var(--app-top) - 40px)`), and `aliases(rules, name, member)` the fixed point
 of the names declared as a bare var() of one in the set, for a pin that needs the VALUE, not a mention, less any name a
-rule that can select `member` re-declares to something else (round 6, 2026-09-20: the table had been sheet-global, so an
+rule that can select `member` re-declares to something else (the author's pass 6, 2026-09-20: the table had been sheet-global, so an
 alias on one rule counted where the member's own rule re-declared it), the refusal following the chain on the member's
-rules to a fixed point (round 7: a name declared on the member's rule as a bare var() of a REFUSED name had stayed); `is_fixed(rule, rules)` reads position:fixed
+rules to a fixed point (the author's pass 7: a name declared on the member's rule as a bare var() of a REFUSED name had stayed); `is_fixed(rule, rules)` reads position:fixed
 through the same indirection (a bare var() resolved against every declaration of the name, its fallback when undeclared;
-round 6). A property published only by script, never declared in the served CSS, is outside any served-CSS census by
+the author's pass 6). A property published only by script, never declared in the served CSS, is outside any served-CSS census by
 construction, and so is the sheet a `<link>` or an `@import` names (the parse refuses those, above). Selectors:
 `members(selector)` splits a comma list, `subject(member)` is the subject compound (the last compound of a complex
 selector), `parts(compound)` its simple selectors, `restricting(compound)` the ones that tell elements apart (a type, an
@@ -119,7 +119,7 @@ compounds can select one element (one's restricting selectors are a subset of th
 `body` and `body.picker-open`, `*` and anything; not `#f-chat` and `iframe.lifted`, which a static reading of the sheet
 cannot unite), `surely(compound, known)` whether a compound selects every element known to carry the simple selectors
 in `known` (its restricting selectors are all among them, and it carries no attribute selector or functional pseudo-class,
-which select by a state the sheet cannot show: `body:not(.picker-open)` may select the body or not, round 6, 2026-09-20;
+which select by a state the sheet cannot show: `body:not(.picker-open)` may select the body or not, the author's pass 6, 2026-09-20;
 `*` alone passes), `compound(known)` the canonical compound naming an element
 known by a set of simple selectors (`iframe.lifted` for {iframe, .lifted}), `specificity(member)` the (ids, classes,
 types) triple, `important(value)` whether a declaration value ends in !important however spaced or cased.
@@ -132,7 +132,7 @@ satisfy; `code(html)` is the page with every such span blanked, for a token that
 a string inside a script); `js_code(js)` and `css_code(css)` blank the comments of one script or style fragment, for a pin
 over one of the kernel's served constants (a string spliced into a page), which the same census reads; `element_spans(html)`
 is every live script and style element's content span with its kind, for a reader that needs to know which kind of element
-a text landed in (the census picks a constant's comment scanner by it, round 7, 2026-09-20); `linked_sheets(html)` the
+a text landed in (the census picks a constant's comment scanner by it, the author's pass 7, 2026-09-20); `linked_sheets(html)` the
 offsets of the live `<link>` elements whose rel set carries stylesheet (`rel_tokens`), the parse's refusal and the census's pin
 reading one predicate; `attr(element, name)` an element's attribute as the tokenizer read it. A script element's `type`
 attribute is read and not judged: a data block (`<script type=application/json>`) is still script text to `scripts()` and
@@ -151,7 +151,7 @@ Rule = namedtuple("Rule", "index at selector declarations decls")
 # a live script, style, link or meta element: absolute offsets of the element and of its content (a link or meta has none:
 # content_start, content_end and end coincide at the end of its tag), its attributes as the tokenizer read them, (name, value)
 # pairs with the name lower-cased and the value unquoted (None for a bare attribute), and `stack`, the names of the elements open
-# at its start tag, outermost first (the reader's own stack, round 9, 2026-09-20: the container census reads it)
+# at its start tag, outermost first (the reader's own stack, the author's pass 9, 2026-09-20: the container census reads it)
 Element = namedtuple("Element", "kind start content_start content_end end attrs stack")
 
 _VAR = re.compile(r"var\(\s*(--[\w-]+)", re.I)
@@ -162,13 +162,13 @@ _ASCII_FOLD = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstu
 
 
 def _ascii_lower(s):
-    """HTML's ASCII lowercase: A to Z folded, every other character kept (str.lower folds Unicode too; round 9, 2026-09-20)."""
+    """HTML's ASCII lowercase: A to Z folded, every other character kept (str.lower folds Unicode too; the author's pass 9, 2026-09-20)."""
     return s.translate(_ASCII_FOLD)
 
 
 def _raw_attrs(raw):
     """The tag name and the (name, raw value) pairs of a start tag's raw text as WRITTEN, before the tokenizer's fold and decode
-    (round 9, 2026-09-20; the values since the author's fixer pass after round 9): the name after `<` to whitespace, `/` or `>`; then,
+    (the author's pass 9, 2026-09-20; the values since the fixer pass of the author's pass 9): the name after `<` to whitespace, `/` or `>`; then,
     per attribute, the name to whitespace, `/`, `>` or `=`, and after `=` a quoted value to its closing quote (to the end of the tag
     text when never closed) or an unquoted one to whitespace or `>`, the extents the tokenizer's attribute pattern takes; None for a
     bare attribute."""
@@ -210,7 +210,7 @@ def _raw_attrs(raw):
 
 
 def _raw_names(raw):
-    """The tag name and attribute names of a start tag's raw text as WRITTEN, for the ASCII check (round 9, 2026-09-20)."""
+    """The tag name and attribute names of a start tag's raw text as WRITTEN, for the ASCII check (the author's pass 9, 2026-09-20)."""
     tag, attrs = _raw_attrs(raw)
     return [x for x in [tag] + [name for name, _ in attrs] if x]
 
@@ -221,7 +221,7 @@ _CHARREF = re.compile(r"&(#[0-9]+;?|#[xX][0-9a-fA-F]+;?|[^\t\n\f <&#;]{1,32};?)"
 
 def _attr_reference_divergence(value):
     """The first character reference in a RAW attribute value that html.unescape (the tokenizer's decode) reads otherwise than HTML's
-    attribute rule does, or None (the author's fixer pass after round 9). Two divergences: a legacy NAMED reference without its `;`
+    attribute rule does, or None (the fixer pass of the author's pass 9). Two divergences: a legacy NAMED reference without its `;`
     (the html5 table's names without a semicolon: amp, AMP, not, lt ...), which HTML keeps as written when the character after the
     name is `=` or an ASCII alphanumeric (`a&amp=b`, `&ampx`, `&notit;x`: literal in every engine, measured) and html.unescape decodes
     by its longest-prefix lookup (`a&=b`, `&x`, `\xacit;x`); and a NUMERIC reference naming a control or noncharacter code point,
@@ -245,11 +245,11 @@ _BARE_VAR = re.compile(r"^var\(\s*(--[\w-]+)\s*(?:,(.*))?\)$", re.S | re.I)
 # a style element's media attribute that conditions nothing: absent, empty, `all`, or `screen` (every page here is a screen)
 _UNCONDITIONAL_MEDIA = {"", "all", "screen"}
 # the type values under which HTML applies a style element's content as CSS (absent counts as empty); any other type is inert in
-# every engine, so an element carrying one REFUSES rather than reading as live rules (the fixer pass of round 8, 2026-09-20)
+# every engine, so an element carrying one REFUSES rather than reading as live rules (the fixer pass of the author's pass 8, 2026-09-20)
 _CSS_TYPES = {"", "text/css"}
 
 
-# html.parser's handler surface, each with what this reader does on it and HTML's behaviour (round 9, 2026-09-20; the test walks the
+# html.parser's handler surface, each with what this reader does on it and HTML's behaviour (the author's pass 9, 2026-09-20; the test walks the
 # class and reds on a handler this table does not name). Verbs: `read` (an element or attribute this layer returns), `comment` (a
 # span the pins census treats as comment text), `event` (a position boundary only: the construct closes a pending comment span and
 # is otherwise ignored), `refused` (a loud assertion).
@@ -276,7 +276,7 @@ TOKENIZER_SURFACE = {
                                 " `>` itself and never reaches _markupbase.parse_marked_section (the TOKENIZER_EXTENTS spy); older 3.10 and 3.11 patch releases routed"
                                 " it there, where an unknown keyword raised"),
 }
-# the rest of html.parser's public surface (the author's fixer pass after round 9): the parse_* layer, where the EXTENT of each
+# the rest of html.parser's public surface (the fixer pass of the author's pass 9): the parse_* layer, where the EXTENT of each
 # construct is decided, and the loop and plumbing around it, each with the extent the tokenizer takes and HTML's beside it;
 # tests/test_shell_viewport_fit.py walks the class for every public method that is not a handler, reds on one this table does not
 # name, executes one shape per extent rule, and shows the two unreached methods unreached by a spy. Kinds: `extent` (a rule about where
@@ -285,7 +285,7 @@ TOKENIZER_SURFACE = {
 TOKENIZER_EXTENTS = {
     "goahead": ("extent", "the loop: text runs to the next `<` or `&`; a `<` not followed by a letter, `!`, `/` or `?` is text; `</` before a non-letter is a bogus"
                           " comment to the first `>` (`</3>`) and `</>` is dropped with no token. HTML: the data, tag-open and end-tag-open states, the same extents"),
-    "parse_starttag": ("extent", "a start tag ends at the first `>` outside a quoted attribute value (a `>` inside quotes is value text, round 8); a quote never closed"
+    "parse_starttag": ("extent", "a start tag ends at the first `>` outside a quoted attribute value (a `>` inside quotes is value text, the author's pass 8); a quote never closed"
                                  " swallows the rest of the page and yields no element; the tag name runs to whitespace, `/` or `>` (`<style<b>` is the tag style<b)."
                                  " HTML: the tag-name and attribute-value states, the same extents; EOF inside a tag emits nothing"),
     "check_for_whole_start_tag": ("extent", "whether the start tag's `>` is in the buffer, over quoted values, the same rule as parse_starttag. HTML: the same"),
@@ -323,17 +323,17 @@ TOKENIZER_EXTENTS = {
 # text to HTML and to a tokenizer that knows the set, and a start tag to one that does not (3.10 knows script and style alone), so the
 # reader refuses a tracked element under any of them (REFUSED_CONTAINERS) and the outcome is a refusal or no element, never a live read
 TOKENIZER_TEXT_ELEMENTS = {"script", "style", "xmp", "iframe", "noembed", "noframes", "textarea", "title", "plaintext", "noscript"}
-# the containers whose content HTML does not parse as this reader parses a tracked element (round 9, 2026-09-20): foreign content
+# the containers whose content HTML does not parse as this reader parses a tracked element (the author's pass 9, 2026-09-20): foreign content
 # (svg, math: markup where the reader reads raw text; an svg link loads nothing), inert content (template), text to a scripting
 # browser (noscript), the text elements above other than script and style, and frameset, where HTML IGNORES a tracked start tag
-# (the author's fixer pass after round 9: both engines drop a style there, and the reader had read it live)
+# (the fixer pass of the author's pass 9: both engines drop a style there, and the reader had read it live)
 REFUSED_CONTAINERS = frozenset({"svg", "math", "template", "noscript", "frameset"}) | (frozenset(TOKENIZER_TEXT_ELEMENTS) - {"script", "style"})
 # HTML's void elements: a start tag with no end tag and no content, never pushed on the container stack
 _VOID = frozenset({"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"})
 
 
 class _Elements(HTMLParser):
-    """The element and attribute layer of a served page, read by the standard library's HTML tokenizer (round 8, 2026-09-20):
+    """The element and attribute layer of a served page, read by the standard library's HTML tokenizer (the author's pass 8, 2026-09-20):
     every live script, style and link element with absolute offsets and its attributes, and every HTML comment's span. A
     script or style element's content is the tokenizer's CDATA (it ends at the element's own end tag, whatever the content
     spells, a `<!--` in a script string included), a `<style` or `<link` inside an HTML comment or a script string is comment
@@ -366,7 +366,7 @@ class _Elements(HTMLParser):
         self.elements.append(Element(kind, pos, end, end, end, tuple(attrs), tuple(self.stack)))
 
     def _container(self, tag, pos):
-        # round 9 (2026-09-20): a tracked element under a container whose content HTML does not parse as this reader parses the
+        # the author's pass 9 (2026-09-20): a tracked element under a container whose content HTML does not parse as this reader parses the
         # element refuses (the module docstring names each); the stack can only over-report an ancestor, so this refuses too much,
         # never too little
         held = [c for c in self.stack if c in REFUSED_CONTAINERS]
@@ -374,13 +374,13 @@ class _Elements(HTMLParser):
             tag, pos, held[-1], "foreign content, parsed as markup" if held[-1] in ("svg", "math") else "a start tag HTML ignores there" if held[-1] == "frameset" else "inert or text content")
 
     def _ascii_names(self, pos, names):
-        # round 9 (2026-09-20): HTML lower-cases tag and attribute names over ASCII, the tokenizer over Unicode, and the two part on
+        # the author's pass 9 (2026-09-20): HTML lower-cases tag and attribute names over ASCII, the tokenizer over Unicode, and the two part on
         # a letter outside ASCII whose lowercase is inside it (the Kelvin sign reads as k); a name outside ASCII refuses
         for name in names:
             assert name.isascii(), "a tag or attribute name outside ASCII at offset %d (%r): HTML folds names over ASCII and the tokenizer over Unicode; this reader refuses it" % (pos, name)
 
     def _references(self, tag, pos):
-        # the author's fixer pass after round 9: the tokenizer decodes attribute values by html.unescape's text rule; where HTML's
+        # the fixer pass of the author's pass 9: the tokenizer decodes attribute values by html.unescape's text rule; where HTML's
         # attribute rule keeps the reference as written (_attr_reference_divergence) a tracked element refuses rather than carry the
         # tokenizer's value into a compare or a returned content
         for name, value in _raw_attrs(self.get_starttag_text())[1]:
@@ -431,7 +431,7 @@ class _Elements(HTMLParser):
     def handle_comment(self, data):
         pos = self._pos()
         self._event(pos)
-        # the author's fixer pass after round 9: html.parser closes a comment at the NEXT `-->` (or `--!>`) and takes `<!-->` or `<!--->`
+        # the fixer pass of the author's pass 9: html.parser closes a comment at the NEXT `-->` (or `--!>`) and takes `<!-->` or `<!--->`
         # as the abrupt close only when no later close exists, where HTML closes an abruptly closed comment at its own `>`, so
         # `<!--><style>...</style><!-- x -->` was ONE comment here and a live style to every engine, with no refusal: the same silent
         # class as the CDATA section, refused the same way, wherever it sits (the shape HTML reads as an empty comment is refused too, a
@@ -458,7 +458,7 @@ class _Elements(HTMLParser):
         self.pending = pos
 
     def unknown_decl(self, data):
-        # round 9 (2026-09-20), the maintainer's round 5 ruling: html.parser consumes a `<![CDATA[ ... ]]>` section whole (to `]]>`, or
+        # the author's pass 9 (2026-09-20), the maintainer's round 5 ruling: html.parser consumes a `<![CDATA[ ... ]]>` section whole (to `]]>`, or
         # to the end of the page when unterminated) where HTML reads a bogus comment that ends at the FIRST `>`, so a live style
         # element after a `>` inside the section was invisible to this reader with no refusal. Refused rather than parsed past.
         # Every other marked section html.parser reports here (`<![if !IE]>`) ends at the first `>`, HTML's extent: comment text
@@ -476,14 +476,14 @@ def elements(html):
 
 def tag_counts(html):
     """{tag: count} of every start tag the tokenizer read as live markup (outside script and style content and comments), for the
-    container census (round 9, 2026-09-20)."""
+    container census (the author's pass 9, 2026-09-20)."""
     return dict(_Elements(html).tags)
 
 
 def meta_content(html, name):
     """The `content` attribute of the ONE live `<meta>` element whose `name` is an ASCII case-insensitive match for `name`, as
     written (no whitespace stripped), read through the element layer: a meta inside an HTML comment or a script string is no
-    element, whatever the attribute order or quoting (round 9, 2026-09-20, the maintainer's round 5 ruling: the viewport meta had
+    element, whatever the attribute order or quoting (the author's pass 9, 2026-09-20, the maintainer's round 5 ruling: the viewport meta had
     been found by a regular expression over the raw page, so a commented copy read as the live meta, the exact case the helper
     existed to stop). None for a meta with no content attribute; refuses 0 or 2 or more matching metas."""
     metas = [e for e in elements(html) if e.kind == "meta" and _ascii_lower(attr(e, "name") or "") == _ascii_lower(name)]
@@ -501,7 +501,7 @@ def html_comment_spans(html):
 
 def markup(html):
     """The page with its HTML comments blanked (offsets preserved): the text a reader that wants live markup only reads, so a
-    <style> or <script> written inside an HTML comment is neither an element nor a tag opening (round 5, 2026-09-20: it had been
+    <style> or <script> written inside an HTML comment is neither an element nor a tag opening (the author's pass 5, 2026-09-20: it had been
     read as live markup, so a census accepted an origin rule that existed only in commented-out markup). The element layer
     itself no longer needs it: the tokenizer reads a comment as a comment."""
     return _blank(html, html_comment_spans(html))
@@ -515,8 +515,8 @@ def attr(element, name):
 
 def rel_tokens(element):
     """The tokens of a link element's rel set, ASCII-folded: HTML reads rel as a set of space-separated tokens, split on ASCII
-    whitespace, each ASCII case-insensitive, and applies the keyword wherever it sits (round 7, 2026-09-20: `rel="preload
-    stylesheet"` had passed a start-anchored reading in silence; round 9: the split had been str.split's, over Unicode whitespace,
+    whitespace, each ASCII case-insensitive, and applies the keyword wherever it sits (the author's pass 7, 2026-09-20: `rel="preload
+    stylesheet"` had passed a start-anchored reading in silence; the author's pass 9: the split had been str.split's, over Unicode whitespace,
     so a no-break space parted two words HTML reads as one token)."""
     value = attr(element, "rel")
     return {t for t in _ASCII_WS_RUN.split(_ascii_lower(value or "")) if t}
@@ -525,7 +525,7 @@ def rel_tokens(element):
 def linked_sheets(html):
     """Offsets of every live `<link>` element whose rel set carries the stylesheet token (outside script elements and HTML
     comments; the element's extent and its attributes are the tokenizer's, so a `>` inside a quoted value before rel does not
-    hide the rel, round 8, 2026-09-20): the one predicate behind the parse's refusal and a census's pin that a page links no
+    hide the rel, the author's pass 8, 2026-09-20): the one predicate behind the parse's refusal and a census's pin that a page links no
     sheet."""
     return [e.start for e in elements(html) if e.kind == "link" and "stylesheet" in rel_tokens(e)]
 
@@ -539,17 +539,17 @@ def element_spans(html):
 def style_elements(html, linked=False):
     """Every live style element, as Element records; refuses when the live markup links an external stylesheet (a `<link>`
     whose rel set carries stylesheet, outside script elements: linked_sheets), whose rules no parse of the page's style
-    elements returns (round 6, 2026-09-20: an unconsumed tag refused while the linked sheet passed in silence, which taught a
+    elements returns (the author's pass 6, 2026-09-20: an unconsumed tag refused while the linked sheet passed in silence, which taught a
     reader that unread CSS is always caught); `linked=True` states that the caller knows the page links its stylesheets and
     wants the style elements alone. A style element the page never closes refuses in the tokenizer (_Elements), and one whose
     `type` is neither empty nor an ASCII case-insensitive match for text/css AS WRITTEN refuses here: no engine applies its
-    content, so its rules would have read as live (the fixer pass of round 8; no served page carries one). Not stripped (round
+    content, so its rules would have read as live (the fixer pass of the author's pass 8; no served page carries one). Not stripped (the author's pass
     9, 2026-09-20, the maintainer's round 5 ruling): HTML compares the attribute as written, so `<style type=" text/css ">` is
     inert in every engine, and the strip this compare had made read its rules as live, a one-space hole in the refusal."""
     links = linked_sheets(html)
     assert linked or not links, "the served page links %d external stylesheet(s) this parse does not read; pass linked=True to take the style elements alone" % len(links)
     styles = [e for e in elements(html) if e.kind == "style"]
-    for e in styles:   # the sibling hole of the media attribute (the fixer pass of round 8): a non-CSS type is inert to every engine
+    for e in styles:   # the sibling hole of the media attribute (the fixer pass of the author's pass 8): a non-CSS type is inert to every engine
         t = attr(e, "type")   # compared as written: HTML strips nothing here (it does strip a SCRIPT's type, the opposite rule; that attribute is not judged)
         assert t is None or _ascii_lower(t) in _CSS_TYPES, "a <style type=%r> at offset %d is not CSS to any engine and no rule inside it applies; this parse refuses it" % (t, e.start)
     return styles
@@ -562,10 +562,10 @@ def style_blocks(html, linked=False):
 
 def media_prelude(element):
     """The at-rule prelude a style element's own media attribute puts over every rule it holds (`@media print`), or None where
-    the attribute conditions nothing (absent, empty, `all`, `screen`): round 8 (2026-09-20), a `<style media=print>` had been
+    the attribute conditions nothing (absent, empty, `all`, `screen`): the author's pass 8 (2026-09-20), a `<style media=print>` had been
     read as unconditional CSS, so a census over what applies on the phone's screen passed over a page whose only origin sat in
     one. The query text is kept as written (its ASCII whitespace runs collapsed); a folded prelude never equals the shell's mobile
-    query, so a rule under it is not the mobile block's. The strip and the fold are CSS's (round 9, 2026-09-20): a media query
+    query, so a rule under it is not the mobile block's. The strip and the fold are CSS's (the author's pass 9, 2026-09-20): a media query
     list is parsed by CSS Syntax, which consumes the whitespace tokens around a query, and media types match ASCII
     case-insensitively; the whitespace is the five ASCII characters, not str.strip's Unicode set (a no-break space is part of an
     ident to CSS, so `media="\xa0all"` conditions the element: its prelude is kept and never equals the mobile block's)."""
@@ -642,7 +642,7 @@ _DECLARATION_AT = {"@font-face", "@page", "@counter-style", "@property", "@viewp
 
 def _statement(buf):
     """A statement at-rule's text (`@import url(x); @charset "utf-8"; @namespace svg url(...); @layer base;`), met at a `;`
-    outside any block or left at the end of the element (CSS ends an at-rule at EOF as well as at `;`, round 7, 2026-09-20: a
+    outside any block or left at the end of the element (CSS ends an at-rule at EOF as well as at `;`, the author's pass 7, 2026-09-20: a
     trailing `@import url(x.css)` with no semicolon had been dropped unread): anything else at that level is a parse this
     instrument cannot account for and refuses, and an `@import` refuses because its sheet is outside the parse."""
     text = buf.strip()
@@ -658,7 +658,7 @@ def rules(html, linked=False):
     for el in style_elements(html, linked):
         css = html[el.content_start:el.content_end]
         css = _blank(css, css_comment_spans(css))
-        media = media_prelude(el)   # the element's own media attribute conditions every rule it holds (round 8, 2026-09-20)
+        media = media_prelude(el)   # the element's own media attribute conditions every rule it holds (the author's pass 8, 2026-09-20)
         outer = (media,) if media else ()
         stack, buf, i, n = [], "", 0, len(css)
         while i < n:
@@ -686,7 +686,7 @@ def rules(html, linked=False):
                 buf = ""
             elif ch == ";":
                 # a statement at-rule (@import url(x); @charset "utf-8"; @namespace svg url(...); @layer base;) ends here
-                # with no block. Round 5 (2026-09-20): it had accumulated into the NEXT rule's prelude, which then began
+                # with no block. The author's pass 5 (2026-09-20): it had accumulated into the NEXT rule's prelude, which then began
                 # with @ and was pushed as a nested at-rule, dropping that rule and its declarations silently.
                 _statement(buf)
                 buf = ""
@@ -694,7 +694,7 @@ def rules(html, linked=False):
                 buf += ch
             i += 1
         if buf.strip():
-            _statement(buf)   # a statement at-rule the end of the element ends (round 7, 2026-09-20)
+            _statement(buf)   # a statement at-rule the end of the element ends (the author's pass 7, 2026-09-20)
         assert not stack, "unbalanced braces in a served style element: %r" % (stack,)
     return out
 
@@ -747,7 +747,7 @@ _NEVER_RESTRICTS = re.compile(r"^(?:\*|\[.*\]|:[\w-]+\(.*\))$", re.S)
 def restricting(compound):
     """The simple selectors of a compound that tell elements apart in a static reading: a type, an id, a class, a plain
     pseudo-class or a pseudo-element. Dropped: `*`, an attribute selector and a functional pseudo-class (:not(), :is(),
-    :where(), :has(), :nth-child()), which can hold for any element the rest of the compound selects (round 5, 2026-09-20:
+    :where(), :has(), :nth-child()), which can hold for any element the rest of the compound selects (the author's pass 5, 2026-09-20:
     can_match had read them as selectors the other compound must also carry, so `*`, `iframe[id]` and `iframe:not(.foo)`
     were read as unable to select the lifted frame). None for a prelude that is not a compound selector."""
     found = parts(compound)
@@ -772,7 +772,7 @@ def surely(compound, known):
     restricting()): each restricting selector of the compound is among them, and the compound carries no attribute selector
     or functional pseudo-class. `iframe` and `iframe.lifted` surely select the element known as {iframe, .lifted};
     `iframe.lifted.big` only may (can_match), the element may lack .big; `body:not(.picker-open)`, `:is(#f-chat)` and
-    `body[data-x]` only may too, they select by a state or an attribute the sheet cannot show (round 6, 2026-09-20: those
+    `body[data-x]` only may too, they select by a state or an attribute the sheet cannot show (the author's pass 6, 2026-09-20: those
     had been dropped from the reading, as can_match rightly drops them, so a rule that cannot select the member at all
     was accepted as its origin). `*` alone restricts nothing and passes. The subject compound only is read: an
     ancestor-conditioned origin (html.kb body) still passes, and the state question is the served leg's."""
@@ -807,7 +807,7 @@ def important(value):
 
 def is_fixed(rule, rules_=None):
     """Whether a rule declares position:fixed, the keyword read case-insensitively; with the sheet's rules given, through a
-    custom-property indirection too (round 6, 2026-09-20: `position:var(--pos)` with `:root{--pos:fixed}`, or
+    custom-property indirection too (the author's pass 6, 2026-09-20: `position:var(--pos)` with `:root{--pos:fixed}`, or
     `position:var(--nope,fixed)`, had been read as not fixed while the sizing half of the census resolved its var() to a
     fixed point): a bare var() value resolves against EVERY declaration of the name in the sheet (any of them reading fixed
     counts, a name can be redeclared per element, so the reading is over-inclusive), and against its fallback text when the
@@ -866,9 +866,9 @@ def aliases(rules_, name, member=None):
     itself: the names whose value IS the property's value (`--x:var(--app-top)`), not merely a function of it
     (`--x:calc(var(--app-top) - 40px)` is in closure() and not here). For a pin that needs the value, not a mention. With
     `member`, a compound naming the element the pin is about, a name that any rule able to select that element declares to
-    something other than a bare var() of a name in the set is refused (round 6, 2026-09-20: the table had been sheet-global
+    something other than a bare var() of a name in the set is refused (the author's pass 6, 2026-09-20: the table had been sheet-global
     with no cascade, so `--x:var(--app-top)` on one rule made `top:var(--x)` the pan even where the member's own rule
-    re-declared `--x:0`), and the refusal follows the chain on the member's rules to a fixed point (round 7, 2026-09-20: it had
+    re-declared `--x:0`), and the refusal follows the chain on the member's rules to a fixed point (the author's pass 7, 2026-09-20: it had
     run once, so `--y:var(--x)` on the member's own rule stayed an alias after `--x` was refused there, though the engine
     computes `--y` on the member from the member's own `--x`; a `--y:var(--x)` declared on `:root` stays, the root computes it
     as the pan and the member inherits that). This is not a cascade: a re-declaration on an ANCESTOR of the member, which the
@@ -988,7 +988,7 @@ def scripts(html):
 
 def js_code(js):
     """A script fragment with its comments blanked (offsets preserved): the text a pin over one of the kernel's served script
-    CONSTANTS reads (round 6, 2026-09-20: a bare token asserted over such a constant was satisfiable by the constant's own
+    CONSTANTS reads (the author's pass 6, 2026-09-20: a bare token asserted over such a constant was satisfiable by the constant's own
     comment, and the pins census reads the constants now)."""
     return _blank(js, js_comment_spans(js))
 
