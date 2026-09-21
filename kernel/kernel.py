@@ -2980,8 +2980,8 @@ def _persist_intr_marks(force=False):
     p = _intr_marks_path()
     tmp = p.with_name(p.name + ".tmp.%d.%x" % (os.getpid(), threading.get_ident()))
     try:
-        p.parent.mkdir(parents=True, exist_ok=True)
-        tmp.write_text(json.dumps(snap), encoding="utf-8")
+        jd.srm.make_dir(p.parent, parents=True, root=jd.STATE)
+        jd.srm.write_text(tmp, json.dumps(snap), encoding="utf-8")
         os.replace(tmp, p)
         _INTR_MARKS_WRITE_SAID[0] = False                 # a clean write re-arms the say-once latch
         return True
@@ -3278,7 +3278,7 @@ def _record_suspend(iv):
     (the timeline reads _downtime, loaded from the file at startup). Best-effort, never raises."""
     _downtime.append(iv)                             # the state FIRST, its file (the reader's key) LAST: a look landing between
     try:                                             #  the two sees the suspension and a stat that will move under its memo; the
-        with open(jd.STATE / "kernel-downtime.jsonl", "a") as f:   #  other order let a look record a skippable memo without the
+        with jd.srm.open_private(jd.STATE / "kernel-downtime.jsonl", "a") as f:   #  other order let a look record a skippable memo without the
             f.write(json.dumps({"start": iv[0], "end": iv[1]}) + "\n")   #  suspension under the final stat (T401 (2) round six)
         _files_stat_mark()                           # the downtime log is a keyed file of every session
     except OSError:
@@ -3595,7 +3595,7 @@ def _client_diag_append(fp, line):
                     _client_diag_rotate_failed = True
                     print("[client-diag] could not rotate %s to %s.1 (%s): the file keeps growing past %d bytes"
                           % (fp, fp, e, CLIENT_DIAG_MAX_BYTES), file=sys.stderr)
-        with open(fp, "a", encoding="utf-8") as f:
+        with jd.srm.open_private(fp, "a", encoding="utf-8") as f:
             f.write(line)
 
 
@@ -4273,7 +4273,7 @@ def _write_palette_mirror():
     every switch; bin/romp falls back to the default set when it doesn't exist (kernel never booted)."""
     try:
         n = _palette_name()
-        jd.STATE.mkdir(parents=True, exist_ok=True)
+        jd.srm.make_dir(jd.STATE, parents=True, root=jd.STATE)
         _atomic_write(jd.STATE / "palette-colors",
                       "".join("%s\t%s\n" % bf for bf in zip(pal.colors(n), pal.fgs(n))))
     except OSError:
@@ -5044,7 +5044,7 @@ def _model_alias_boot_pass():
         sys.stderr.write("romp-kernel: model-alias migration could not read %d file(s) — no marker "
                          "written, retrying next boot\n" % fails)
     else:
-        jd.STATE.mkdir(parents=True, exist_ok=True)
+        jd.srm.make_dir(jd.STATE, parents=True, root=jd.STATE)
         _atomic_write(marker, json.dumps({"t": int(time.time()), "moved": n}))
     return n
 # "ultracode" tops the ladder (the user 2026-08-04): the CLI's own /effort offers it — xhigh effort plus
@@ -5455,8 +5455,8 @@ def _set_palette(name):
     if name not in pal.PALETTES:
         return False
     try:
-        jd.STATE.mkdir(parents=True, exist_ok=True)
-        (jd.STATE / "palette").write_text(name)
+        jd.srm.make_dir(jd.STATE, parents=True, root=jd.STATE)
+        jd.srm.write_text(jd.STATE / "palette", name)
     except OSError:
         return False
     new_bg, new_fg = pal.colors(name), pal.fgs(name)
@@ -7227,8 +7227,12 @@ def _atomic_write(path, text, mode=None):
     `mode` (e.g. 0o600) is set on the temp's DESCRIPTOR (os.fchmod) before the first write, and os.replace
     carries it onto the published path, so the text never exists at a wider mode and a looser existing file
     tightens on its next write: required for any file holding a CREDENTIAL. The mode is applied on the
-    descriptor before the write, so it is not subject to the umask. Without a mode the temp inherits the umask
-    (usually 0644). Every mode-bearing caller today passes 0600: the Web Push VAPID private key (push-vapid.json,
+    descriptor before the write, so it is not subject to the umask. Without a mode the temp is BORN 0600 too, by
+    the shared module's creator (jd.srm.write_text: an O_CREAT at 0600 and an fchmod before Path.write_text runs;
+    round 4f, 2026-09-21: until then the mode-less road inherited the umask, usually 0644, and under a permissive
+    umask the readers quarantined the kernel's own fresh files), so every file this helper publishes under the root
+    is owner-only whatever the process umask; a mode argument still names an exact mode (0640 stays 0640). Every
+    mode-bearing caller today passes 0600: the Web Push VAPID private key (push-vapid.json,
     _vapid_keys; a credential travels this road, which is the strongest reason the mode is set before the
     write), remotes.json (every attached host's serve token: at 0644 any other local user could read those
     tokens and drive the REMOTE kernels, defeating the loopback token gate for federation) and its refused-rows
@@ -7263,14 +7267,14 @@ def _atomic_write(path, text, mode=None):
     requested mode published exactly under a permissive and a restrictive umask, a leftover temp overwritten
     rather than refused, and a raising fchmod closing the descriptor and leaving no temp."""
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    jd.srm.make_dir(path.parent, parents=True, root=jd.STATE)
     with _atomic_lock:
         _atomic_seq[0] += 1
         n = _atomic_seq[0]
     tmp = path.with_name("%s.tmp.%d.%d.%d" % (path.name, os.getpid(), threading.get_ident(), n))
     try:
         if mode is None:
-            tmp.write_text(text)
+            jd.srm.write_text(tmp, text)
         else:
             fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
             try:
@@ -7345,8 +7349,8 @@ def _order_audit(kind, old, new, stack=None, only_permuted=False):
                 _atomic_write(path, "".join(lines[len(lines) // 2:]))
         except Exception:
             pass
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "a") as f:
+        jd.srm.make_dir(path.parent, parents=True, root=jd.STATE)
+        with jd.srm.open_private(path, "a") as f:
             f.write(line)
     except Exception:
         sys.stderr.write("order audit: %s\n" % traceback.format_exc())
@@ -9749,9 +9753,9 @@ def _set_session_flag(sid, flag, value):
                     if nd.get("parentId") is None and not nd.get("cleared") and status.get(nid) != "cleared"]
             if tops:
                 p = jd.STATE / "cleared.jsonl"
-                p.parent.mkdir(parents=True, exist_ok=True)
+                jd.srm.make_dir(p.parent, parents=True, root=jd.STATE)
                 t = time.time()
-                with p.open("a") as fh:
+                with jd.srm.open_private(p, "a") as fh:
                     for nid in tops:
                         fh.write(json.dumps({"id": nid, "t": t, "op": "clear"}) + "\n")
                 _mark_nodes_cleared(tops, True)               # durable node flag → sealed across judge passes
@@ -10092,7 +10096,7 @@ def _user_todos_log_write(line):
             os.replace(p, p.with_name("user-todos-log.1.jsonl"))
     except OSError:
         pass                                         # no file yet: nothing to rotate
-    with open(p, "a", encoding="utf-8") as f:
+    with jd.srm.open_private(p, "a", encoding="utf-8") as f:
         f.write(line + "\n")
 
 
@@ -15162,8 +15166,8 @@ def _persist_tick_seen(force=False):
     p = _tick_seen_path()
     tmp = p.with_name(p.name + ".tmp.%d.%x" % (os.getpid(), threading.get_ident()))   # per WRITER: the exit's force write
     try:                                                                                #  runs beside the pusher's persist
-        p.parent.mkdir(parents=True, exist_ok=True)
-        tmp.write_text(body, encoding="utf-8")
+        jd.srm.make_dir(p.parent, parents=True, root=jd.STATE)
+        jd.srm.write_text(tmp, body, encoding="utf-8")
         os.replace(tmp, p)
         _TICK_SEEN_WRITE_SAID[0] = False             # a clean write re-arms the say-once latch: the next fault episode is said too
         return True
@@ -16095,8 +16099,8 @@ def _log_nudge_event(sid, gid, t, count, verdict="fired", ev_t=None, parked_s=No
     older readers key on sid/gid/t/count."""
     try:
         p = jd.STATE / "nudge-events.jsonl"
-        p.parent.mkdir(parents=True, exist_ok=True)
-        with p.open("a") as f:
+        jd.srm.make_dir(p.parent, parents=True, root=jd.STATE)
+        with jd.srm.open_private(p, "a") as f:
             f.write(json.dumps({"sid": sid, "gid": gid, "t": int(t), "count": count,
                                 "verdict": verdict,
                                 **({"evT": int(ev_t)} if ev_t else {}),
@@ -19592,7 +19596,7 @@ def _set_working_note(sid, text):
     if p is None:
         return
     if (text or "").strip():
-        WORKING_DIR.mkdir(parents=True, exist_ok=True)
+        jd.srm.make_dir(WORKING_DIR, parents=True, root=jd.STATE)
         _atomic_write(p, text)
     else:
         try:
@@ -23923,7 +23927,7 @@ def _refuse_drive_records(client, op, sid, msg, what, cause, lead):
             break
     target = str(msg.get("name") or "") if op in _TARGET_NAME_OPS else ""
     try:
-        with (jd.STATE / "undelivered.jsonl").open("a") as fh:
+        with jd.srm.open_private(jd.STATE / "undelivered.jsonl", "a") as fh:
             fh.write(json.dumps({"at": int(time.time()), "op": op, "sid": sid, "what": what,
                                  "itemId": msg.get("itemId") or "", "text": text, "target": target}) + "\n")
     except OSError:
@@ -25493,12 +25497,12 @@ def _tunnel_log(host, event, **kw):
     """Append one record to the dial log. Best-effort and never raises: logging must not be able to break
     the supervisor that is trying to reconnect you."""
     try:
-        TUNNEL_LOG.parent.mkdir(parents=True, exist_ok=True)
+        jd.srm.make_dir(TUNNEL_LOG.parent, parents=True, root=jd.STATE)
         if TUNNEL_LOG.exists() and TUNNEL_LOG.stat().st_size > TUNNEL_LOG_MAX:
             TUNNEL_LOG.replace(TUNNEL_LOG.with_suffix(".jsonl.1"))     # keep exactly one generation back
         rec = {"t": round(time.time(), 3), "host": host, "event": event}
         rec.update(kw)
-        with open(TUNNEL_LOG, "a") as f:
+        with jd.srm.open_private(TUNNEL_LOG, "a") as f:
             f.write(json.dumps(rec, default=str) + "\n")
     except Exception:
         pass
@@ -26304,8 +26308,8 @@ def _minted_host_id():
         pass
     name = "host-%08x" % random.getrandbits(32)
     try:
-        _HOST_ID_FILE.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(str(_HOST_ID_FILE), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        jd.srm.make_dir(_HOST_ID_FILE.parent, parents=True, root=jd.STATE)
+        fd = os.open(str(_HOST_ID_FILE), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)   # owner-only by code (0644 until round 4f)
         os.write(fd, (name + "\n").encode())
         os.close(fd)
     except FileExistsError:
@@ -26944,9 +26948,9 @@ def _spawn_tunnel(r):
     _reap_stray_tunnels(r["host"])   # clear any orphan on this host's ports first, so we never leak a 2nd tunnel
     argv = _tunnel_argv(r)
     try:
-        TUNNEL_ERR_DIR.mkdir(parents=True, exist_ok=True)
+        jd.srm.make_dir(TUNNEL_ERR_DIR, parents=True, root=jd.STATE)
         # truncated per dial, so the file always holds THIS attempt's words; the jsonl keeps the history
-        errf = open(_tunnel_err_path(r["host"]), "w+b")
+        errf = jd.srm.open_private(_tunnel_err_path(r["host"]), "w+b")
     except Exception:
         errf = None
     try:
@@ -29074,8 +29078,8 @@ def _notice_append(sid, row):
     """Append one row under the lock the caller holds; "" or the write fault's prose (a write that fails is said, never lost)."""
     try:
         d = _notice_dir()
-        d.mkdir(parents=True, exist_ok=True)
-        with open(_notice_path(sid), "a") as f:
+        jd.srm.make_dir(d, parents=True, root=jd.STATE)
+        with jd.srm.open_private(_notice_path(sid), "a") as f:
             f.write(json.dumps(row) + "\n")
         return ""
     except OSError as e:
@@ -29283,8 +29287,8 @@ def _compact_notices(now=None):
                     sys.stderr.write("notice: the archive pass held %s's rows (%s)\n" % (sid[:8], ierr))
                     continue
                 try:
-                    _notice_archive_dir().mkdir(parents=True, exist_ok=True)
-                    with open(apath, "a") as f:
+                    jd.srm.make_dir(_notice_archive_dir(), parents=True, root=jd.STATE)
+                    with jd.srm.open_private(apath, "a") as f:
                         for r in arch:
                             f.write(json.dumps(dict(r, archivedAt=now)) + "\n")   # the pass's stamp: one block a pass, the restore's tail read stops at its edge
                     tmp = p.with_name(p.name + ".tmp.%d" % os.getpid())
@@ -29353,9 +29357,9 @@ def _notice_revs_write_unlocked(sid, revs, arch_st):
     archive's stat it describes beside the map: "" or the fault's prose. The caller holds _notice_lock."""
     ip = _notice_revs_path(sid)
     try:
-        _notice_archive_dir().mkdir(parents=True, exist_ok=True)
+        jd.srm.make_dir(_notice_archive_dir(), parents=True, root=jd.STATE)
         tmp = ip.with_name(ip.name + ".tmp.%d" % os.getpid())
-        tmp.write_text(json.dumps({"revs": revs, "archive": _notice_archive_desc(arch_st)}, sort_keys=True))
+        jd.srm.write_text(tmp, json.dumps({"revs": revs, "archive": _notice_archive_desc(arch_st)}, sort_keys=True))
         os.replace(tmp, ip)
         return ""
     except OSError as e:
@@ -29566,8 +29570,8 @@ def _restore_notice_archive(item_ids):
                 continue
             pre_st, pre_err = _notice_file_stat(ap, "the notice archive")   # the archive as the index may describe it, before the rewrite
             try:
-                _notice_dir().mkdir(parents=True, exist_ok=True)
-                with open(_notice_path(sid), "a") as f:
+                jd.srm.make_dir(_notice_dir(), parents=True, root=jd.STATE)
+                with jd.srm.open_private(_notice_path(sid), "a") as f:
                     for o in back:
                         f.write(json.dumps({k: v for k, v in o.items() if k != "archivedAt"}) + "\n")   # the pass's stamp stays in the archive
             except OSError as e:
@@ -29575,7 +29579,7 @@ def _restore_notice_archive(item_ids):
                 continue
             try:
                 tmp = ap.with_name(ap.name + ".tmp.%d" % os.getpid())
-                with _gr.open(ap, "rb") as src, open(tmp, "wb") as dst:
+                with _gr.open(ap, "rb") as src, jd.srm.open_private(tmp, "wb") as dst:
                     left = cut                         # the unread head, byte for byte, never parsed
                     while left > 0:
                         chunk = src.read(min(1 << 20, left))
@@ -29799,9 +29803,9 @@ def _watch_run(cmd):
     sp = None
     try:
         sd = jd.STATE / "watch-scratch"
-        sd.mkdir(parents=True, exist_ok=True)
+        jd.srm.make_dir(sd, parents=True, root=jd.STATE)
         sp = sd / ("w-%s.sh" % os.urandom(4).hex())
-        sp.write_text(cmd + "\n")
+        jd.srm.write_text(sp, cmd + "\n")
         r = subprocess.run(["/bin/sh", str(sp)], capture_output=True, text=True,
                            timeout=WATCH_RUN_TIMEOUT)
         out = ((r.stdout or "") + (("\n" + r.stderr) if r.stderr else "")).strip()
@@ -31016,7 +31020,7 @@ def _audit_restart_request(action, **kw):
     try:
         rec = {"t": int(time.time()), "action": action}
         rec.update({k: v for k, v in kw.items() if v})
-        with open(jd.STATE / "restart-audit.jsonl", "a", encoding="utf-8") as f:
+        with jd.srm.open_private(jd.STATE / "restart-audit.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps(rec) + "\n")
     except Exception:
         pass
@@ -31052,7 +31056,7 @@ def _audit_unrequested_signal(signum, pending=False, now=None, manager_stopped=F
                "managerPid": int(mgr) if mgr.isdigit() else None,
                "managerRequested": False, "managerStopped": bool(manager_stopped),
                "managerRestartPending": bool(pending), "reason": reason}
-        with open(jd.STATE / "restart-audit.jsonl", "a", encoding="utf-8") as f:
+        with jd.srm.open_private(jd.STATE / "restart-audit.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps(rec) + "\n")
     except Exception:
         pass
@@ -31160,7 +31164,7 @@ def _audit_parent_gone(manager_pid, now=None):
         rec = {"t": int(now if now is not None else time.time()), "action": "parent-gone",
                "pid": os.getpid(), "ppid": os.getppid(), "managerPid": manager_pid,
                "reason": PARENT_GONE_REASON}
-        with open(jd.STATE / "restart-audit.jsonl", "a", encoding="utf-8") as f:
+        with jd.srm.open_private(jd.STATE / "restart-audit.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps(rec) + "\n")
     except Exception:
         pass
@@ -31215,7 +31219,7 @@ def _kernel_sample_tick(now=None):
                 row["gcGen2Collections"] = int(g2[0]); row["gcGen2MsSum"] = round(float(g2[1]), 1)
         except Exception:
             pass
-        with open(KERNEL_SAMPLES_FILE, "a", encoding="utf-8") as fh:
+        with jd.srm.open_private(KERNEL_SAMPLES_FILE, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(row, separators=(",", ":")) + "\n")
         return True
     except Exception:
@@ -31291,7 +31295,7 @@ def _append_restart_cut(row):
     """Best-effort append in a dying process: flushed line-buffered write, never raises — the
     ledger must not be able to break the restart itself (the audit's discipline)."""
     try:
-        with open(RESTART_CUTS_FILE, "a", encoding="utf-8") as f:
+        with jd.srm.open_private(RESTART_CUTS_FILE, "a", encoding="utf-8") as f:
             f.write(json.dumps(row) + "\n")
             f.flush()
     except Exception:
@@ -32856,7 +32860,7 @@ def _death_boot_pass(now=None):
     stamped over."""
     now = int(now or time.time())
     try:
-        jd.SDKDIR.mkdir(parents=True, exist_ok=True)   # the kernel owns the directory's existence: from here on
+        jd.srm.make_dir(jd.SDKDIR, parents=True, root=jd.STATE)   # the kernel owns the directory's existence: from here on
     except OSError:                                    # a MISSING sdk/ is a vanished one, never a fresh root's
         pass                                           # (the blindness guard below reads the failure)
     if not _gr.isdir(jd.NAMES):
@@ -33077,9 +33081,9 @@ def _record_death(sid, now, by):
         return False
     try:
         gd = jd.STATE / "gone"
-        gd.mkdir(parents=True, exist_ok=True)
+        jd.srm.make_dir(gd, parents=True, root=jd.STATE)
         tmp = gd / (sid + ".json.tmp")
-        tmp.write_text(json.dumps({"t": int(now) - 1, "by": by}))
+        jd.srm.write_text(tmp, json.dumps({"t": int(now) - 1, "by": by}))
         os.replace(tmp, gd / (sid + ".json"))
     except Exception:
         sys.stderr.write("record-death %s: %s\n" % (sid, traceback.format_exc()))
@@ -33106,11 +33110,11 @@ def _record_idle(sid, now, by=""):
         return
     try:
         sdir = jd.STATE / "states"
-        sdir.mkdir(parents=True, exist_ok=True)
+        jd.srm.make_dir(sdir, parents=True, root=jd.STATE)
         rec = {"t": int(now) - 1, "state": "idle"}
         if by:
             rec["by"] = by
-        with open(sdir / (sid + ".jsonl"), "a") as f:
+        with jd.srm.open_private(sdir / (sid + ".jsonl"), "a") as f:
             f.write(json.dumps(rec) + "\n")
     except Exception:
         pass
@@ -39660,7 +39664,7 @@ def _rewind_holds_map():
 def _rewind_holds_save():
     try:
         tmp = _rewind_holds_file().with_suffix(".json.tmp.%d" % os.getpid())
-        tmp.write_text(json.dumps(_rewind_holds[0] or {}))
+        jd.srm.write_text(tmp, json.dumps(_rewind_holds[0] or {}))
         tmp.rename(_rewind_holds_file())
     except Exception as e:
         sys.stderr.write("rewind-hold: persist failed: %s\n" % e)
@@ -39929,7 +39933,7 @@ def _rewind_migration_bg():
             sys.stderr.write("romp-kernel: rewind migration left %d session(s) unreconciled — "
                              "no marker written, retrying next boot\n" % fails)
         else:
-            marker.write_text(json.dumps({"t": int(time.time()), "archived": n}))
+            jd.srm.write_text(marker, json.dumps({"t": int(time.time()), "archived": n}))
         if n:
             sys.stderr.write("romp-kernel: rewind migration archived %d dead-branch goal node(s)\n" % n)
     except Exception:
@@ -45346,9 +45350,9 @@ def _episode_boundary_check(sid, path, now):
     if not tops:
         return
     p = jd.STATE / "cleared.jsonl"
-    p.parent.mkdir(parents=True, exist_ok=True)
+    jd.srm.make_dir(p.parent, parents=True, root=jd.STATE)
     t = time.time()                  # one shared batch t → a single Undo restores the whole boundary batch
-    with p.open("a") as fh:
+    with jd.srm.open_private(p, "a") as fh:
         for nid in tops:
             fh.write(json.dumps({"id": nid, "t": t, "op": "clear"}) + "\n")
     # The settle's OWN record — which cards this boundary dropped — rides the episodes log as an
@@ -45504,9 +45508,9 @@ def _clear_all(item_ids):
     seen = set(item_ids)
     item_ids = item_ids + [i for i in _delegation_linked_ids(item_ids) if i not in seen]   # + the delegation's peer copy
     p = jd.STATE / "cleared.jsonl"
-    p.parent.mkdir(parents=True, exist_ok=True)
+    jd.srm.make_dir(p.parent, parents=True, root=jd.STATE)
     t = time.time()
-    with p.open("a") as f:
+    with jd.srm.open_private(p, "a") as f:
         for iid in item_ids:
             f.write(json.dumps({"id": iid, "t": t, "op": "clear"}) + "\n")
     _files_stat_mark()                                # the clears log is a keyed file of every session (plans/nudge-walk-events.md)
@@ -45548,7 +45552,7 @@ def _undo_clear():
     restored = [i for i in restored if not i.startswith("notice:")]
     skipped = dict(_restore_goal_archive(restored))   # pull the restored tops back OUT of the archive FIRST,
     restored = [i for i in restored if i.rsplit(":", 1)[0] not in skipped]   # (a session it could not read
-    with (jd.STATE / "cleared.jsonl").open("a") as f:   # keeps its clear rows: still the newest batch)
+    with jd.srm.open_private(jd.STATE / "cleared.jsonl", "a") as f:   # keeps its clear rows: still the newest batch)
         for iid in restored + notices:
             f.write(json.dumps({"id": iid, "t": time.time(), "op": "undo"}) + "\n")
     _files_stat_mark()                                # the clears log is a keyed file of every session (plans/nudge-walk-events.md)
@@ -45564,7 +45568,7 @@ def _undo_clear():
         # per row split a two-card batch into two one-card batches and each further Undo brought back one
         # card, against the promise that the next Undo restores exactly them (review find, 2026-09-08).
         t = time.time()
-        with (jd.STATE / "cleared.jsonl").open("a") as f:
+        with jd.srm.open_private(jd.STATE / "cleared.jsonl", "a") as f:
             for iid in restored + notices:
                 if iid.rsplit(":", 1)[0] in late or (iid.startswith("notice:") and iid.split(":", 3)[1] in nlate):
                     f.write(json.dumps({"id": iid, "t": t, "op": "clear"}) + "\n")
@@ -48756,7 +48760,7 @@ def _login_start():
             return "a login flow is already running — finish or cancel it first"
         scratch = jd.STATE / "login-scratch"
         try:
-            scratch.mkdir(parents=True, exist_ok=True)
+            jd.srm.make_dir(scratch, parents=True, root=jd.STATE)
         except Exception:
             pass
         env = dict(os.environ)
@@ -49622,8 +49626,8 @@ def _persist_spend_trees(force=False, only=None):
                     pass
             continue
         try:
-            p.parent.mkdir(parents=True, exist_ok=True)
-            tmp.write_text(body, encoding="utf-8")
+            jd.srm.make_dir(p.parent, parents=True, root=jd.STATE)
+            jd.srm.write_text(tmp, body, encoding="utf-8")
             os.replace(tmp, p)
             m["dirty"] = False; n += 1
         except OSError as e:                             # a read-only directory, a full disk, a path replaced by a directory: the
@@ -58102,8 +58106,8 @@ def _set_colormap(name):
     """Persist the chosen colormap name (ignored if unknown); the next push recolours the feed."""
     if name in cm.COLORMAPS:
         try:
-            jd.STATE.mkdir(parents=True, exist_ok=True)
-            (jd.STATE / "colormap").write_text(name)
+            jd.srm.make_dir(jd.STATE, parents=True, root=jd.STATE)
+            jd.srm.write_text(jd.STATE / "colormap", name)
         except OSError:
             pass
 
@@ -58138,7 +58142,7 @@ def _set_judge_state(fname, value, allowed, allow_empty=False, gt=None):
             return None
         stamp = gt if gt is not None else int(time.time() * 1000)
         try:
-            jd.STATE.mkdir(parents=True, exist_ok=True)
+            jd.srm.make_dir(jd.STATE, parents=True, root=jd.STATE)
             _atomic_write(jd.STATE / (fname + ".gt"), str(stamp))
         except OSError as e:
             sys.stderr.write("setting %s: could not write the gesture stamp (%s) — nothing "
@@ -58246,7 +58250,7 @@ def _migrate_judge_fast_tiers():
             n += 1
             if carry:
                 sys.stderr.write("judges: fast mode carried over to the %s tier as %s (its model: %s)\n" % (word, v, model_of()))
-        jd.STATE.mkdir(parents=True, exist_ok=True)
+        jd.srm.make_dir(jd.STATE, parents=True, root=jd.STATE)
         _atomic_write(marker, str(int(time.time())))
         return n
     except Exception:
@@ -59401,10 +59405,10 @@ def _save_dropped_file(name, b64):
     under the state dir's drops/ and return the saved path for the prompt to reference. None on failure."""
     try:
         drops = jd.STATE / "drops"
-        drops.mkdir(parents=True, exist_ok=True)
+        jd.srm.make_dir(drops, parents=True, root=jd.STATE)
         safe = re.sub(r"[^\w.-]+", "_", name)[-80:] or "drop"
         f = drops / ("%d-%s" % (int(time.time() * 1000), safe))
-        f.write_bytes(base64.b64decode(b64))
+        jd.srm.write_bytes(f, base64.b64decode(b64))
         return str(f)
     except (OSError, ValueError):
         # the caller warns the client; this names the actual cause (fail loudly, CLAUDE.md)
@@ -61193,7 +61197,7 @@ def _pin_dir():
     if _MENTION_PINS is None:
         _MENTION_PINS = jd.STATE / "mention-pins"
         try:
-            _MENTION_PINS.mkdir(parents=True, exist_ok=True)
+            jd.srm.make_dir(_MENTION_PINS, parents=True, root=jd.STATE)
         except OSError:
             pass
     return _MENTION_PINS
@@ -61214,7 +61218,7 @@ _PIN_ASSOC_MEMO = {}                    # sid -> {uuid: {target: pin id}}, the s
 def _pin_assoc_dir():
     d = _pin_dir() / "assoc"
     try:
-        d.mkdir(parents=True, exist_ok=True)
+        jd.srm.make_dir(d, parents=True, root=jd.STATE)
     except OSError:
         pass
     return d
@@ -61256,7 +61260,7 @@ def _pin_assoc_append(sid, uuid, target, pid):
     the old in-memory behavior for this message, never blocks the build."""
     _pin_assoc_memo(sid).setdefault(uuid, {})[target] = pid
     try:
-        with open(_pin_assoc_dir() / (str(sid) + ".jsonl"), "a", encoding="utf-8") as f:
+        with jd.srm.open_private(_pin_assoc_dir() / (str(sid) + ".jsonl"), "a", encoding="utf-8") as f:
             f.write(json.dumps({"u": uuid, "t": target, "p": pid}) + "\n")
     except OSError:
         pass
@@ -61288,7 +61292,7 @@ def _pin_mention(fp):
     try:
         if not dst.exists():
             tmp = d / (pid + ".tmp.%d" % os.getpid())
-            tmp.write_bytes(raw)
+            jd.srm.write_bytes(tmp, raw)
             os.replace(tmp, dst)
             # bound the store on the write event, oldest first (mtime; serves don't touch it — a pin
             # for a busy old chat can age out, and the fallback is the live file)
@@ -61502,7 +61506,7 @@ def _note_chat_divergence(sid, name, chat_state, row_state, now):
     else:
         rec["cleared"] = True
     try:
-        with open(jd.STATE / "chat-divergence.jsonl", "a") as f:
+        with jd.srm.open_private(jd.STATE / "chat-divergence.jsonl", "a") as f:
             f.write(json.dumps(rec) + "\n")
     except OSError:
         pass
@@ -65380,7 +65384,7 @@ class _JudgeChild:
 
     def _write_pid_record(self, p):
         try:
-            _judge_child_pid_file().write_text(json.dumps({"pid": p.pid, "parent": os.getpid(), "t": int(time.time())}))
+            jd.srm.write_text(_judge_child_pid_file(), json.dumps({"pid": p.pid, "parent": os.getpid(), "t": int(time.time())}))
         except OSError:
             pass
 
@@ -77423,7 +77427,7 @@ class Handler(BaseHTTPRequestHandler):
             # gesture.
             try:
                 p = jd.STATE / "card-opens.jsonl"
-                with open(p, "a") as f:
+                with jd.srm.open_private(p, "a") as f:
                     f.write(json.dumps({"t": int(time.time()), "itemId": str(msg["itemId"])[:200],
                                         "sid": str(msg.get("sid") or "")[:64]}) + "\n")
             except OSError:
@@ -77498,7 +77502,7 @@ class Handler(BaseHTTPRequestHandler):
                 for _k in ("settled", "superseded", "gesture", "cancelled"):   # gesture: the reader took the landing over (round three, low 3); cancelled: they clicked the wait away (T402)
                     if isinstance(msg.get(_k), bool):
                         rec[_k] = msg[_k]
-                with open(jd.STATE / "locate-audit.jsonl", "a", encoding="utf-8") as f:
+                with jd.srm.open_private(jd.STATE / "locate-audit.jsonl", "a", encoding="utf-8") as f:
                     f.write(json.dumps(rec) + "\n")
             except OSError:
                 pass

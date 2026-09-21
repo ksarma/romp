@@ -21,7 +21,8 @@ by branch), a loop or comprehension target over a root listing, a scandir entry'
 listing answers. Over those it lists every READ: read_text, read_bytes, open in a read mode, os.open read-only,
 gzip.open, glob, rglob, glob.glob, iterdir, listdir, scandir, is_dir and os.path.isdir, and sys.path.insert or append
 of one. The bytes a read answers are data, not a path (a names entry's cwd used as a browse path is not a root read),
-and writes (open in a write mode, _atomic_write, an O_EXCL temp) are not reads.
+and writes (open in a write mode, _atomic_write, an O_EXCL temp) are not reads: tests/test_state_root_writers.py censuses the
+CREATIONS over the same derivation (it imports this module and reads its cache) and pins them to the owner-only creators.
 
 WHAT IT ASSERTS. Every read in the census either goes through a Reader (kernel/state_root_mode.py: a call on a reader
 instance, whose guard lstat's every component from the root down, quarantines a failing one and reads the path as

@@ -616,7 +616,9 @@ class Retention(unittest.TestCase):
         ad, ip = km._notice_archive_dir(), km._notice_revs_path(SID)
         ip.unlink(); rebuilt = km._NOTICE_ARCH_REBUILDS["count"]
         try:
-            os.chmod(ad, 0o555)                          # the archive readable, the index unwritable
+            os.chmod(ad, 0o500)                          # the archive readable, the index unwritable (0500, not 0555: a group or other
+            #                                              bit would be a loose directory of ours, which the creator's make_dir tightens
+            #                                              to 0700 and thereby makes writable again; round 4f of the state-root review)
             row, err = km.post_notice(SID, "figure", "second", producer="figure", now=300, t=300)
             self.assertEqual((err, row["rev"]), (None, 2), "rebuilt from the archive and answered")
             self.assertFalse(ip.exists(), "the write failed: no index")

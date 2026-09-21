@@ -655,7 +655,7 @@ def _mailbox(sid):
         raise ValueError("unsafe session id")
     mb = MAILROOT / sid
     for d in ("tmp", "new", "cur"):
-        (mb / d).mkdir(parents=True, exist_ok=True)
+        _srm.make_dir(mb / d, parents=True, root=STATE.parent)
     return mb
 
 def _unique():
@@ -692,8 +692,8 @@ def _mark_pending(sid):
         return
     try:
         if not empty:
-            MAILPENDING.mkdir(parents=True, exist_ok=True)
-            m.touch()
+            _srm.make_dir(MAILPENDING, parents=True, root=STATE.parent)
+            _srm.touch(m)
         else:
             m.unlink()                                 # FileNotFoundError lands in the except below like every other fault
     except Exception:
@@ -713,9 +713,9 @@ def _tl_append(fname, obj):
     ignoring the return: each is an annotation on a message that already exists, not the record of
     whether it does."""
     try:
-        TLDIR.mkdir(parents=True, exist_ok=True)
+        _srm.make_dir(TLDIR, parents=True, root=STATE.parent)
         _gr.exists(TLDIR / fname)                      # a planted link at the log is quarantined before the append (never written through)
-        with open(TLDIR / fname, "a") as fh:
+        with _srm.open_private(TLDIR / fname, "a") as fh:
             fh.write(json.dumps(obj) + "\n")
         if _TL_FAULT[0]:
             _TL_FAULT[0] = False
@@ -900,7 +900,7 @@ def deliver(to_id, from_name, from_id, body, park=False, kind="", from_host="",
     if relay_marker:
         hdr += "X-Relay-Marker: %s\n" % _hdr_val(relay_marker)   # the kernel's marker id (clamped above; the one
         #                                                          sanitizer every header value passes, as well)
-    tmp.write_text(hdr + "\n" + body + "\n")
+    _srm.write_text(tmp, hdr + "\n" + body + "\n")
     # Timeline log: a message was SENT (the matching exec event is logged when
     # the recipient consumes it in read_box). id = maildir filename joins the two.
     ev = {"t": int(time.time()), "ev": "sent", "id": name,
@@ -1085,7 +1085,7 @@ def read_box(sid, consume):
     if not _gr.isdir(newd):
         return []
     if consume:
-        (mb / "cur").mkdir(parents=True, exist_ok=True)
+        _srm.make_dir(mb / "cur", parents=True, root=STATE.parent)
     out = []
     try:
         entries = sorted(_gr.iterdir(newd), key=lambda p: p.name)   # oldest first; a planted message file is quarantined here, never delivered
@@ -1170,7 +1170,7 @@ def restore(sid, mid):
     except OSError:
         head = ""
     try:
-        (MAILROOT / sid / "new").mkdir(parents=True, exist_ok=True)
+        _srm.make_dir(MAILROOT / sid / "new", parents=True, root=STATE.parent)
         src.rename(MAILROOT / sid / "new" / mid)
     except FileNotFoundError:
         return RESTORE_MISSING
@@ -2522,8 +2522,8 @@ def _warn_stuck_mail():
                     _log("stuck-warn to %s failed: %s" % (s.get("name", "?"), e))
                 _refusal_over("stuck-mail warning")
             try:                                        # mark one-time even if the sender was dead/absent → no re-scan churn
-                WARNED.mkdir(parents=True, exist_ok=True)
-                marker.touch()
+                _srm.make_dir(WARNED, parents=True, root=STATE.parent)
+                _srm.touch(marker)
             except Exception:
                 pass
     try:                                                # prune markers whose message finally delivered (left new/)
@@ -3364,11 +3364,11 @@ def _hold_claim(sid, mid):
     if not (_safe_id(sid) and _safe_id(mid)):
         return
     try:
-        MAILHELD.mkdir(parents=True, exist_ok=True)
+        _srm.make_dir(MAILHELD, parents=True, root=STATE.parent)
         m = MAILHELD / sid
         have = set(_gr.read_text(m).split()) if _gr.exists(m) else set()
         if mid not in have:
-            with open(m, "a") as f:
+            with _srm.open_private(m, "a") as f:
                 f.write(mid + "\n")
     except OSError as e:
         _log("held claim %s for %s: the marker could not be written (%s); the claim stands in cur/ unrecorded" % (mid, sid, e))
@@ -3399,7 +3399,7 @@ def _retry_held_claims():
                 _log("held claim %s for %s put back in new/ (cur/ reads again)" % (mid, sid))
         try:
             if keep:
-                m.write_text("".join(x + "\n" for x in keep))
+                _srm.write_text(m, "".join(x + "\n" for x in keep))
             else:
                 m.unlink()
         except OSError as e:
@@ -3757,11 +3757,11 @@ def serve():
         _refuse_loudly(why)
         return 2
     STATE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)   # a root this call makes is 0700 from its first instant (the
-    STATE.mkdir(parents=True, exist_ok=True)   #  token mint above made it the same way when the import gate found none)
+    _srm.make_dir(STATE, parents=True, root=STATE.parent)   #  token mint above made it the same way when the import gate found none)
     _state_root_gate("start", establish=_STATE_ROOT_UNMADE_AT_START[0])   # the state root's mode (2026-09-20): a root this process
     #                                            made is chmod'ed 0700 first (a creation default); any other is read, repaired and
     #                                            judged on what it reads now; refuse or unknown exits 2 before the bind
-    MAILROOT.mkdir(parents=True, exist_ok=True)
+    _srm.make_dir(MAILROOT, parents=True, root=STATE.parent)
     _reconcile_markers()
     _sweep_unfinished_writes()             # temps a crash left: removed, said, their ledgers closed (2026-09-08)
     if peers_on():
@@ -4027,7 +4027,7 @@ def _write_remote_sids():
                 if pa.get("id"):
                     ids.add(str(pa["id"]))
         tmp = STATE / "remote-sids.tmp"
-        tmp.write_text("\n".join(sorted(ids)) + ("\n" if ids else ""))
+        _srm.write_text(tmp, "\n".join(sorted(ids)) + ("\n" if ids else ""))
         os.replace(tmp, STATE / "remote-sids")
     except Exception:
         pass
@@ -4128,8 +4128,8 @@ def _minted_host_id():
         pass
     name = "host-%08x" % random.getrandbits(32)
     try:
-        _HOST_ID_FILE.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(str(_HOST_ID_FILE), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        _srm.make_dir(_HOST_ID_FILE.parent, parents=True, root=STATE.parent)
+        fd = os.open(str(_HOST_ID_FILE), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)   # owner-only by code (0644 until round 4f)
         os.write(fd, (name + "\n").encode())
         os.close(fd)
     except FileExistsError:
@@ -4203,8 +4203,8 @@ def peer_seen_check(mid):
 def peer_seen_add(mid):
     _seen_load().add(mid)
     try:
-        PEER_SEEN.parent.mkdir(parents=True, exist_ok=True)
-        with PEER_SEEN.open("a") as f:
+        _srm.make_dir(PEER_SEEN.parent, parents=True, root=STATE.parent)
+        with _srm.open_private(PEER_SEEN, "a") as f:
             f.write(mid + "\n")
     except Exception as e:
         _log("peer-seen append failed: %s" % e)     # dedupe degrades to the in-memory window
@@ -4218,10 +4218,10 @@ def _atomic_json_put(path, obj):
     that could leave a half-record, and the listings then skipped it silently, every pass, forever.)
     Raises OSError; the caller says so."""
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    _srm.make_dir(path.parent, parents=True, root=STATE.parent)
     tmp = path.with_name("%s.tmp-%d-%s" % (path.name, os.getpid(), os.urandom(4).hex()))
     try:
-        with open(tmp, "w") as fh:
+        with _srm.open_private(tmp, "w") as fh:
             fh.write(json.dumps(obj))
             fh.flush()
             os.fsync(fh.fileno())
@@ -4595,7 +4595,7 @@ def _remember_presence(rows):
     _LOCAL_PRESENCE_GOOD[0], _LOCAL_PRESENCE_GOOD[1] = rows, True
     try:
         tmp = _PRESENCE_GOOD_FILE.with_suffix(".tmp")
-        tmp.write_text(json.dumps(rows))
+        _srm.write_text(tmp, json.dumps(rows))
         os.replace(tmp, _PRESENCE_GOOD_FILE)     # the disk twin follows every answered read
     except Exception:
         pass
@@ -4680,9 +4680,9 @@ def _quarantine_put(origin, m, to_id, via="", wire_id=None):
         if m.get("relayMarker"):
             rec["relayMarker"] = str(m.get("relayMarker"))[:64]
     try:
-        QUARANTINE.mkdir(parents=True, exist_ok=True)
+        _srm.make_dir(QUARANTINE, parents=True, root=STATE.parent)
         tmp = QUARANTINE / (mid + ".tmp")
-        tmp.write_text(json.dumps(rec))
+        _srm.write_text(tmp, json.dumps(rec))
         tmp.rename(QUARANTINE / (mid + ".json"))      # atomic publish (the kernel may be reading the dir)
         _refusal_over("quarantine")                   # a hold landed: the next refusal here is a new episode
         _log("quarantine: held %s from %s -> %s (directed)" % (mid, origin, rec["to"]))
@@ -5484,8 +5484,8 @@ def ensure():
     if why:
         _refuse_loudly(why)
         return False
-    STATE.mkdir(parents=True, exist_ok=True)
-    logf = open(LOG, "a")
+    _srm.make_dir(STATE, parents=True, root=STATE.parent)
+    logf = _srm.open_private(LOG, "a")
     subprocess.Popen([sys.executable, os.path.abspath(__file__), "serve"],
                      stdout=logf, stderr=logf, stdin=subprocess.DEVNULL, start_new_session=True)
     for _ in range(40):           # ~4s

@@ -5619,7 +5619,13 @@ discriminator. A `0775` venv or a `0664` parked-ops mirror under the owner's
 private group passes; the property is ownership plus the absence of a
 symlink plus the discriminator, never a directory's mode alone. A path
 that is not under the root (a transcript under the Claude config
-directory) is not the root's to guard, and the plain read runs.
+directory) is not the root's to guard, and the plain read runs. Entries
+under the root are born owner-only by code, whatever the process umask
+(since 2026-09-21): every directory a romp process makes there is `0700`
+and every file `0600` before its first byte, so the readers never
+quarantine a process's own fresh entries under a permissive umask; the
+population of creators is derived and pinned the same way
+(`tests/test_state_root_writers.py --list`).
 
 What a guarded reader does when the guard fails is the quarantine
 contract: the first failing component under the root is renamed to

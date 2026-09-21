@@ -380,7 +380,7 @@ class CodexBackend:
         self.state = Path(state_dir)
         self.root = self.state / "codex"
         self.projects = self.root / "projects"
-        self.projects.mkdir(parents=True, exist_ok=True)
+        _srm.make_dir(self.projects, parents=True, root=state_dir)
         self.notify = notify or (lambda *a, **k: None)
         self.poke = poke or (lambda: None)
         self.push = push or (lambda: None)
@@ -951,7 +951,7 @@ class CodexBackend:
         with s.lock:
             cwd, tid = s.cwd, s.tid
         d = self.projects / _enc_cwd(cwd)
-        d.mkdir(parents=True, exist_ok=True)
+        _srm.make_dir(d, parents=True, root=self.state)
         return d / ("%s.jsonl" % tid)
 
     def _ensure_norm(self, s):
@@ -972,7 +972,7 @@ class CodexBackend:
         poke/push AFTER releasing the lock — and an RLock would not save a push-under-lock: two
         workers pushing concurrently AB-BA across their sessions' locks."""
         path = self.transcript_path(s.sid)
-        with open(path, "a", encoding="utf-8") as f:
+        with _srm.open_private(path, "a", encoding="utf-8") as f:
             if _ends_mid_line(path, self._gr):
                 # A torn earlier write left a partial line. Written straight after it, this batch's first
                 # record would join it in ONE unparseable line every reader skips (_tail_state, the event
@@ -1358,7 +1358,7 @@ class CodexBackend:
         (_set_session_color, _set_palette) write atomically themselves, so cross-module races
         degrade to last-writer-wins of a whole valid file, never a torn one."""
         d = self.state / "names"
-        d.mkdir(parents=True, exist_ok=True)
+        _srm.make_dir(d, parents=True, root=self.state)
         with self._names_lock:
             try:
                 old = self._gr.read_text(d / s.sid).rstrip("\n").split("\t")
@@ -1377,7 +1377,7 @@ class CodexBackend:
             except OSError:                   # open(); a leaked stray must not shadow the write
                 pass
             try:
-                tmp.write_text("%s\t%s\t%s\t%s%s\n" % (s.name, s.cwd, bg, fg, ("\t" + emoji) if emoji else ""))
+                _srm.write_text(tmp, "%s\t%s\t%s\t%s%s\n" % (s.name, s.cwd, bg, fg, ("\t" + emoji) if emoji else ""))
                 os.replace(str(tmp), str(d / s.sid))
             finally:
                 tmp.unlink(missing_ok=True)   # never LEAK the staging file: names consumers
@@ -1445,7 +1445,7 @@ class CodexBackend:
         self._ensure_norm(s)
         # touch the materialized transcript NOW: discovery lists real files, and an empty jsonl
         # parses to an empty session — the tab opens immediately instead of waiting for turn one
-        self.transcript_path(sid).touch()
+        _srm.touch(self.transcript_path(sid))
         self._publish_spawn_name(s, bg, fg)
         self.push()
         return sid
@@ -1619,7 +1619,7 @@ class CodexBackend:
             with s.norm_lock:
                 s.norm = None
             self._ensure_norm(s)
-            self.transcript_path(s.sid).touch()
+            _srm.touch(self.transcript_path(s.sid))
             try:
                 self._write_name(s)
             except (OSError, UnicodeDecodeError) as e:

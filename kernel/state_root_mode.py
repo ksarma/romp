@@ -8,7 +8,7 @@ twice"; a comment marked KEEP IN SYNC is not a mechanism, and the two copies the
 Stdlib only, and nothing from kernel/ beside this file. tests/test_state_root_mode.py's OneText pins that none of the
 loaders defines a copy of any function here.
 
-Three things live here.
+Four things live here.
 
 1. THE ROOT'S VERDICT (check, import_read_refusal). THE DISCRIMINATOR: "writable by another local user" means the
    mode carries an OTHER write bit, or it carries a GROUP write bit and the group is not the owner's private group. A
@@ -91,6 +91,32 @@ writable by another local user, whatever its exact mode (the root is 0700 in the
 writable by nobody but its owner when its chmod was refused and the boot warned), so every other uid is kept out of it.
 plans/state-root-mode.md records the method.
 
+4. THE OWNER-ONLY CREATORS (make_dir, write_text, write_bytes, open_private, touch; round 4f, 2026-09-21): every entry
+   the kernel, the judge, the event model, the bus, the session host and the handed-root modules CREATE under the root
+   is born owner-only BY CODE, whatever the process umask. romp-manager's ruling: "if the kernel and the host make
+   entries under the root at the process umask, then under a permissive umask the readers quarantine the process's OWN
+   FRESH ENTRIES. That is a self-inflicted denial road, and 'the live umask is 0002 with private groups' is a bound held
+   by the environment rather than by the code." A directory is made by make_dir: os.mkdir at 0700 (a umask removes
+   bits and never adds one, so 0700 holds under every umask), and one that already existed as a directory of ours at a
+   looser mode is TIGHTENED to 0700 (an entry an older process made at the umask's mode); a symlink, a non-directory
+   or another uid's directory at the path is refused, never tightened through. The ROOT itself is never tightened by a
+   writer (its mode is the gate's to READ BEFORE IT REPAIRS: a writer that tightened it first would hide a loosening
+   from the check, the sibling's-repair finding of round 4d), and an absent root is made 0700, a creation default.
+   A file is BORN at 0600 before its first byte: the creators open it O_WRONLY|O_CREAT at 0600, fchmod the descriptor
+   0600 (exact under any umask, and the repair of an existing file at a looser mode) and close, and THEN run the
+   primitive the site used (Path.write_text, Path.write_bytes, builtins.open in a write or append mode, Path.touch),
+   so the suite's fixtures that count or fault a write by interposing on those names still meet it (the primitive rule
+   of round 4c, on the write side). The population of creators is derived by code, not by hand:
+   tests/test_state_root_writers.py's AST census over the eleven modules lists every call that creates an entry under
+   a root-derived path (mkdir, makedirs, write_text, write_bytes, a write-mode open, os.open with O_CREAT, a tempfile
+   with dir under the root, touch, a copy, rename, replace or link whose destination is under the root, a write-mode
+   gzip.open) and fails for one that is neither through these creators nor a rename whose source is itself an entry
+   born under the root (the mode travels with the inode) nor on its allowlist with a reason (a site that sets its mode
+   by code itself: the serve-token mint, write_reg, write_lease, the bus root's mkdir, the atomic publisher's
+   descriptor). tests/test_state_root_mode.py's EntriesAreBornOwnerOnlyUnderAPermissiveUmask drives the kernel, the
+   bus and the session host under umask 0022 and 0000 in child processes and holds that nothing of their own is
+   quarantined and every entry they made lstat's owner-only.
+
 Injectable lookups (getgrgid, getpwall, getpwuid, bound) are keyword arguments on every entry point, resolved AT CALL
 TIME to grp.getgrgid, pwd.getpwall, pwd.getpwuid and LOOKUP_BOUND_S when None (so a test that patches grp or pwd, or
 sets LOOKUP_BOUND_S on this module, is seen), so tests drive the discriminator without a second account on the box
@@ -119,6 +145,8 @@ WRITE_BITS = OTHER_WRITE | GROUP_WRITE   # the bits the discriminator judges (0o
 LOOKUP_BOUND_S = 3.0                     # the group database's answer is waited for this long, then counted as unreadable
 PRIVATE_MEMO_S = 300.0                   # a private-group answer from the REAL database stands this long (the readers' cost)
 QUARANTINE_DIR = "quarantine"            # <root>/quarantine, created 0700, holds what the readers declined
+OWNER_ONLY_DIR = 0o700                   # the mode every directory a writer makes under the root is born at (make_dir)
+OWNER_ONLY_FILE = 0o600                  # the mode every file a writer makes under the root is born at (the creators, part 4)
 
 DISTRUST_REMEDY_BELL = ("remove serve-token, repo-root and every entry you did not make, or recreate the root, then "
                         "chmod 700 it (its contents are not to be trusted)")
@@ -637,6 +665,152 @@ def _is_path(p):
 def _as_path(p):
     """The pathlib.Path for `p` (the sites wrapped a str in Path before their read_text / read_bytes; the same here)."""
     return p if isinstance(p, pathlib.Path) else pathlib.Path(os.fspath(p))
+
+
+# ── the owner-only creators (part 4) ─────────────────────────────────────────────────────────────────────────────
+
+def make_dir(path, parents=False, root=None):
+    """`path` as a directory BORN OWNER-ONLY BY CODE, whatever the process umask, and returned as given. Absent: os.mkdir
+    at OWNER_ONLY_DIR (0700; a umask removes bits and never adds one, so the mode holds under 0022, 0002 and 0000
+    alike), each missing ancestor made the same way when `parents` (pathlib's parents=True makes them at the umask's
+    mode; os.makedirs applies its mode to the leaf alone). Present as a directory of ours at a looser mode: TIGHTENED
+    to 0700 (the entry an older process made at the umask's mode, tightened on its next use; PR 814's owner_only_dir is
+    this shape for hosts/). Present as a symlink or a non-directory: FileExistsError, never tightened or written through
+    (a bare mkdir(exist_ok=True) followed a planted link to its target's directory; the readers refuse a link under the
+    root, so a writer refuses it too). Present as another uid's directory: PermissionError (EPERM), the error the chmod
+    would have raised, and nothing is adopted. `root`, the state root when the caller holds it (every module does):
+    THE ROOT ITSELF IS NEVER TIGHTENED HERE. Its mode is the gate's to read BEFORE it repairs (check, import_read_refusal):
+    a writer that tightened it on the way to a write would hide a loosening from the check that exists to report it
+    (round 4d's sibling's-repair finding, the same shape). An absent root is made 0700, a creation default (the bus's
+    serve() and the serve-token loader make it the same way); its own parents (an XDG directory romp does not own) are
+    made as pathlib made them, at the umask's mode, when `parents`. TIGHTENING IS FOR ENTRIES UNDER THE ROOT ALONE: a
+    path not under `root`, or a call with no `root`, is made 0700 when absent (still this process's directory) and left
+    as it stands when present (the census derives a site's path from the root by data flow, and a helper a caller
+    hands a path outside the root at one site and a root path at another would otherwise tighten a directory that is
+    not romp's to tighten). One lstat on the common road (the directory exists and is 0700); a mkdir on the first; a
+    chmod only on a loose one of ours under the root."""
+    p = os.fspath(path)
+    rel = relative_under(root, p) if root is not None else None
+    try:
+        st = os.lstat(p)
+    except FileNotFoundError:
+        st = None
+    if st is None:
+        parent = os.path.dirname(p.rstrip("/"))
+        if parents and parent and not os.path.isdir(parent):
+            if rel is not None and not rel:
+                os.makedirs(parent, exist_ok=True)        # the root's own parents: not romp's, the umask's mode as before
+            else:
+                make_dir(parent, parents=True, root=root)
+        try:
+            os.mkdir(p, OWNER_ONLY_DIR)
+            return path
+        except FileExistsError:
+            st = os.lstat(p)                             # a sibling made it between the two calls: judged below
+    if rel is not None and not rel:
+        return path                                      # the root itself: the gate's to read and to repair
+    if stat.S_ISLNK(st.st_mode):
+        raise FileExistsError(errno.EEXIST, "a symlink stands where a directory of ours is to be made (not followed)", p)
+    if not stat.S_ISDIR(st.st_mode):
+        raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), p)
+    if st.st_uid != os.geteuid():
+        raise PermissionError(errno.EPERM, "directory belongs to uid %d, not to this process (uid %d): not tightened, not adopted"
+                              % (st.st_uid, os.geteuid()), p)
+    if rel and stat.S_IMODE(st.st_mode) & ~OWNER_ONLY_DIR & 0o777:
+        os.chmod(p, OWNER_ONLY_DIR)                      # a loose directory of ours under the root: tightened on its next use
+    return path
+
+
+def born_owner_only(path):
+    """The file at `path` BORN at OWNER_ONLY_FILE (0600) before its first byte, and an existing one TIGHTENED to it: os.open
+    O_WRONLY|O_CREAT at 0600 (a umask never adds a bit), fchmod 0600 on the descriptor (exact under any umask; the repair
+    of a file an older process made at the umask's mode), close. Nothing is written and nothing is truncated: the
+    creators below run the site's own primitive next (Path.write_text, builtins.open, Path.touch), which the suite's
+    fixtures interpose on. O_NONBLOCK|O_NOCTTY: a FIFO or a device planted at the path fails here (ENXIO) instead of
+    blocking the open, as the primitive's own open would then do or not do as before. A symlink is followed as the
+    primitive follows it (the readers quarantine a planted link under the root at its next read)."""
+    fd = os.open(os.fspath(path), os.O_WRONLY | os.O_CREAT | os.O_NONBLOCK | os.O_NOCTTY | os.O_CLOEXEC, OWNER_ONLY_FILE)
+    try:
+        os.fchmod(fd, OWNER_ONLY_FILE)
+    finally:
+        os.close(fd)
+
+
+def _born(path):
+    """born_owner_only(path), answering whether this call CREATED the file (absent before it). The creators below unlink a
+    file they created when the site's primitive then raises (a faulting Path.write_text in a test, ENOSPC, a read-only
+    mount), so a failed first write leaves nothing where the bare primitive left nothing (an aside that could not be
+    written is not on disk empty; an atomic publisher's temp that failed is gone); a file that existed is left as the
+    primitive left it."""
+    existed = os.path.lexists(path)
+    born_owner_only(path)
+    return not existed
+
+
+def _unlink_created(path):
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+def write_text(path, text, encoding=None, errors=None, newline=None):
+    """Path.write_text of a file born owner-only (born_owner_only first); returns the count written."""
+    created = _born(path)
+    try:
+        return _as_path(path).write_text(text, encoding=encoding, errors=errors, newline=newline)
+    except BaseException:
+        if created:
+            _unlink_created(path)
+        raise
+
+
+def write_bytes(path, data):
+    """Path.write_bytes of a file born owner-only; returns the count written."""
+    created = _born(path)
+    try:
+        return _as_path(path).write_bytes(data)
+    except BaseException:
+        if created:
+            _unlink_created(path)
+        raise
+
+
+def open_private(path, mode="a", buffering=-1, encoding=None, errors=None, newline=None):
+    """builtins.open of a file born owner-only, in a WRITE or APPEND mode ("a", "ab", "w", "wb", "w+b", ...; a read mode is
+    a ValueError, Reader.open is the guarded read). The append logs under the root (messages.jsonl, cleared.jsonl,
+    judge-errors.jsonl, host.log, the states and ledgers) take this road: the file is 0600 from its first line, and an
+    older one at the umask's mode is tightened on the next append."""
+    if not any(c in mode for c in "wax+"):
+        raise ValueError("open_private writes only; mode %r reads (Reader.open is the guarded read)" % mode)
+    if "x" in mode:
+        # an EXCLUSIVE create: born_owner_only would make the file first and the primitive's O_EXCL then refuse it, so the
+        # descriptor is opened O_CREAT|O_EXCL at 0600 here and handed to the primitive's file object (the site's mode with
+        # the x read as w, the shape os.fdopen takes); no site takes this road today, and a new one is owner-only too
+        fd = os.open(os.fspath(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | (os.O_APPEND if "a" in mode else 0), OWNER_ONLY_FILE)
+        try:
+            return os.fdopen(fd, mode.replace("x", "w"), buffering=buffering, encoding=encoding, errors=errors, newline=newline)
+        except BaseException:
+            os.close(fd)
+            raise
+    created = _born(path)
+    try:
+        return open(path, mode, buffering=buffering, encoding=encoding, errors=errors, newline=newline)
+    except BaseException:
+        if created:
+            _unlink_created(path)
+        raise
+
+
+def touch(path):
+    """Path.touch of a file born owner-only (an absent one is made 0600; an existing one is tightened and its mtime set)."""
+    created = _born(path)
+    try:
+        _as_path(path).touch()
+    except BaseException:
+        if created:
+            _unlink_created(path)
+        raise
 
 
 class Reader:

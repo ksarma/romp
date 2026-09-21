@@ -184,6 +184,13 @@ YIELDS_PATHS = {"glob", "rglob", "iterdir", "os.scandir", "os.listdir"}
 READER_METHODS = {"open", "read_text", "read_bytes", "os_open", "gzip_open", "stat", "exists", "isdir", "dir", "listdir",
                   "scandir", "iterdir", "glob", "sys_path_dir", "trust"}
 READER_YIELDS_PATHS = {"glob", "iterdir", "listdir", "scandir", "dir"}
+# THE STATE ROOT'S OWNER-ONLY CREATORS (kernel/state_root_mode.py part 4; fork PR 874's round 4f, 2026-09-21): `_srm.open_private(p,
+# "a")`, `_srm.write_text(p, text)`, `_srm.make_dir(d, ...)`, `_srm.touch(p)`. Each births the entry 0600 or 0700 under any
+# umask and then runs the site's own primitive BY PATH (open, Path.write_text, os.mkdir, Path.touch), so a creation through
+# one is a by-path terminal of the primitive's kind, keyed by that kind and its first argument: the key the bare primitive
+# had, so a listed site that takes the creator keeps its row (Journal._open_segment's and _persist_gaps's opens, the host's
+# log and identity.json). The receiver is the shared module (`_srm`, `srm`, `jd.srm`), the method by name.
+CREATOR_METHODS = {"open_private": "open", "write_text": "write_text", "write_bytes": "write_bytes", "make_dir": "mkdir", "touch": "touch"}
 # THE FOUR LISTS BELOW are decided member by member by ONE question (the round-7 addendum, after the verifiers found
 # `setdefault` among the pure methods and `re.sub` among the sinks): can a hosts path flow THROUGH this call, either OUT
 # of it in its return (then it is PURE: the return carries the receiver's and the arguments' tags) or INTO its receiver to
@@ -1238,6 +1245,12 @@ class Census:
             return _dotted(node.func) in ("_reader", "_srm.Reader")
         return False
 
+    @staticmethod
+    def _is_creator_module(node):
+        """The receiver of an owner-only creator (CREATOR_METHODS): the shared state-root module, bound as `_srm` (the
+        handed-root modules and the host), `srm` (the judge) or `jd.srm` (the kernel)."""
+        return _dotted(node).split(".")[-1].endswith("srm") if isinstance(node, (ast.Name, ast.Attribute)) else False
+
     def _terminal(self, e, fn, name, arg_tags, kw_tags):
         """Record `e` as a terminal when a path or descriptor position carries taint; returns the tags the call
         yields (a descriptor for os.open, paths for a listing) or None when the call is no terminal. A call on the
@@ -1254,6 +1267,9 @@ class Census:
         if reader:
             # the state root's guarded reader (READER_METHODS): a by-path read of the primitive's kind at the first argument
             positions, name = (0,), m
+        elif m in CREATOR_METHODS and self._is_creator_module(e.func.value):
+            # the state root's owner-only creator (CREATOR_METHODS): a by-path creation of the primitive's kind at the first argument
+            positions, name = (0,), CREATOR_METHODS[m]
         if positions is None and fd_positions is None and exec_positions is None:
             if m in PATH_METHODS and recv_tags and self._class_named(e.func.value, fn) is None:
                 is_method = True

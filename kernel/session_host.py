@@ -410,7 +410,7 @@ class Journal:
         # UNBUFFERED: a write that fails leaves nothing pending in a buffer to land later at a stale position
         # (a buffered handle keeps the bytes of a failed flush and writes them on the next one; the commit-5
         # review's finding a)
-        self._fh = open(self._path(first), "ab", buffering=0)
+        self._fh = _srm.open_private(self._path(first), "ab", buffering=0)   # born 0600 under any umask (round 4f), the open by path as before
         self._pos = self._fh.tell()
 
     def append(self, record: dict) -> int:
@@ -466,7 +466,7 @@ class Journal:
         whole or leaves the old one standing."""
         tmp = self.dir / "gaps.json.tmp"
         try:
-            with open(tmp, "wb") as f:
+            with _srm.open_private(tmp, "wb") as f:
                 f.write(json.dumps(sorted(self.gaps)).encode("utf-8"))
             os.replace(tmp, self.dir / "gaps.json")
         except OSError:
@@ -1062,7 +1062,7 @@ class SessionHost:
                 continue
             row[k] = v if isinstance(v, (str, int, float, bool)) else str(v)
         try:
-            with open(self.log_path, "a", encoding="utf-8") as f:
+            with _srm.open_private(self.log_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(row, separators=(",", ":")) + "\n")
         except Exception:
             pass
@@ -1623,7 +1623,7 @@ class SessionHost:
         self._stdin_q = asyncio.Queue()
         self.log("host-started", hostPid=os.getpid())
         try:                                            # the identity hostAck is keyed by, for a reader with no hello
-            (self.dir / "identity.json").write_text(json.dumps({"pid": os.getpid(), "start": self.lease_api["proc_start"](os.getpid()) or ""}))
+            _srm.write_text(self.dir / "identity.json", json.dumps({"pid": os.getpid(), "start": self.lease_api["proc_start"](os.getpid()) or ""}))
         except OSError:
             pass
         # the directory first, the CLI second, the socket third. A refusal of the prelude starts nothing: no CLI was

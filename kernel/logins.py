@@ -231,7 +231,7 @@ def write_record(state_dir, rec: dict) -> None:
     if not ID_RE.match(lid):
         raise ValueError("a login record needs a 12-hex id")
     d = logins_dir(state_dir)
-    d.mkdir(parents=True, exist_ok=True)
+    _srm.make_dir(d, parents=True, root=state_dir)
     # 0700 / 0600, the serve-token treatment: the record holds no token, but a user may type a literal into a
     # token command, and a default-umask file is world-readable on a shared host
     os.chmod(d, 0o700)

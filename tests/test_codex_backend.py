@@ -2467,10 +2467,12 @@ class RaisingRegistryTransactions(unittest.TestCase):
             be = cb.CodexBackend(td, client_factory=lambda: None)
             sid = be.spawn("webby", "/tmp")
             nf = os.path.join(td, "names", sid)
-            os.chmod(os.path.dirname(nf), 0o555)   # the ATOMIC write's tmp create raises; the
+            os.chmod(os.path.dirname(nf), 0o500)   # the ATOMIC write's tmp create raises; the
             try:                                    # file survives untouched (r32 made the write
                 with self.assertRaises(Exception):  # tmp+replace, so a read-only FILE no longer
-                    be.rename(sid, "newname")       # fails it — only the dir does)
+                    be.rename(sid, "newname")       # fails it — only the dir does; 0500 and not 0555 since the
+                #                                     state-root review's round 4f: a group or other bit is a loose directory
+                #                                     of ours, which the creator's make_dir tightens to 0700, writable again)
             finally:
                 os.chmod(os.path.dirname(nf), 0o755)
             self.assertEqual(be._session(sid).name, "webby", "memory kept the old name")
@@ -2586,7 +2588,8 @@ class RaisingRegistryTransactions(unittest.TestCase):
         # crash residue armed the decode landmine — tmp+os.replace, like sdk_backend.write_name
         import inspect
         src = inspect.getsource(cb.CodexBackend._write_name)
-        self.assertIn("tmp.write_text", src, "the payload lands on a TMP file first")
+        self.assertIn("_srm.write_text(tmp", src, "the payload lands on a TMP file first (through the state root's owner-only "
+                                                  "creator since round 4f of the state-root review, 2026-09-21)")
         self.assertIn("os.replace", src, "and moves into place atomically")
 
     def test_the_names_staging_file_never_leaks(self):

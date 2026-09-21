@@ -301,8 +301,8 @@ _STATE_ROOT_NOT_A_DIRECTORY_AT_IMPORT = False   # a FILE at the root's path: rec
 _STATE_ROOT_REPAIR_STEP = None      # "mkdir" or "chmod 700": the call that failed at import, or None when both ran
 _STATE_ROOT_REPAIR_ERROR = None     # that call's "ENAME: strerror" (_errno_text), or None
 try:
-    STATE.mkdir(parents=True, exist_ok=False)
-    _STATE_ROOT_CREATED_AT_IMPORT = True
+    STATE.mkdir(parents=True, exist_ok=False, mode=0o700)   # a root this import makes is 0700 from its first instant (round 4f); without
+    _STATE_ROOT_CREATED_AT_IMPORT = True                    # exist_ok, so a creation is recorded and a pre-existing root's EEXIST is the rule's input
 except FileExistsError as _repair_e:
     if not os.path.isdir(STATE):    # pre-existing, and not a directory: the EEXIST is the record, and the chmod is skipped
         _STATE_ROOT_NOT_A_DIRECTORY_AT_IMPORT = True
@@ -467,7 +467,7 @@ def _rebind_state(path, make=False):
     global JUDGE_SCRATCH
     STATE = path
     if make:
-        Path(STATE).mkdir(parents=True, exist_ok=True)
+        Path(STATE).mkdir(parents=True, exist_ok=True, mode=0o700)   # born 0700 whatever the test's umask; the floor below tightens an existing one
     try:
         # THE FLOOR (tests-5 of round 3, one rule in one place): a root a test minted under the umask (0775 under 0002) is
         # chmod'ed 0700 here when it exists and is this uid's, so a request or a housekeeping pass on it never exits the
@@ -1390,7 +1390,7 @@ def _log_judge_error(judge, fsid, err, note=None, goal=None, seg=None):
             last = getattr(_judge_ctx, "last", None)
             if isinstance(last, dict) and last.get("judge") == judge:
                 rec["debug"] = {"input": last.get("input"), "reply": last.get("reply")}
-        with open(ERRORS, "a") as f:
+        with srm.open_private(ERRORS, "a") as f:
             f.write(json.dumps(rec) + "\n")
     except Exception:
         pass
@@ -1961,7 +1961,7 @@ def _prune_usage_log():
         floor = max((t for t, _ in parsed), default=0) - _USAGE_RETAIN_S
         keep = [ln for t, ln in parsed if t >= floor]
         tmp = USAGE.with_name(USAGE.name + ".tmp")
-        tmp.write_text("\n".join(keep) + ("\n" if keep else ""))
+        srm.write_text(tmp, "\n".join(keep) + ("\n" if keep else ""))
         os.replace(tmp, USAGE)
         sys.stderr.write("romp-judge: judge-usage.jsonl outgrew %dMB — pruned to the newest 31 days "
                          "(%d rows kept)\n" % (_USAGE_PRUNE_BYTES // (1024 * 1024), len(keep)))
@@ -1980,7 +1980,7 @@ def _log_judge_usage(judge, tier, model, fsid, wrap, sent=None, recv=None, err=F
     try:
         u = wrap.get("usage") or {}
         _prune_usage_log()                       # bounded growth (one cheap stat at healthy sizes)
-        with open(USAGE, "a") as f:
+        with srm.open_private(USAGE, "a") as f:
             f.write(json.dumps({"t": int(time.time()), "judge": judge, "tier": tier, "model": model,
                                 "fsid": fsid or None, "ms": wrap.get("duration_ms"),
                                 "sent": sent, "recv": recv,      # literal API send/response wall-clock (floats)
@@ -2055,7 +2055,7 @@ def _note_fast_readback(tier, model, wrap, judge, fsid):
 
 def _atomic_write_json(path, obj):
     tmp = Path("%s.%d.%x.tmp" % (path, os.getpid(), threading.get_ident()))   # per writer: two threads never share one
-    tmp.write_text(json.dumps(obj))
+    srm.write_text(tmp, json.dumps(obj))
     os.replace(tmp, path)
 
 
@@ -2248,7 +2248,7 @@ def _auth_write_locked(d):
     means a stale latch, and the next mark/clear retries it."""
     try:
         tmp = JUDGE_AUTH.with_suffix(".tmp")
-        tmp.write_text(json.dumps(d))
+        srm.write_text(tmp, json.dumps(d))
         os.replace(tmp, JUDGE_AUTH)
     except Exception:
         pass
@@ -2331,7 +2331,7 @@ def _limit_mark(bucket, pct, resets_at, model):
         if cur.get("bucket") == bucket and cur.get("resets_at") == resets_at:
             return
         tmp = JUDGE_LIMIT.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"t": int(time.time()), "bucket": bucket, "pct": pct,
+        srm.write_text(tmp, json.dumps({"t": int(time.time()), "bucket": bucket, "pct": pct,
                                    "resets_at": resets_at, "model": str(model or "")}))
         os.replace(tmp, JUDGE_LIMIT)
     except Exception:
@@ -2700,7 +2700,7 @@ def _judge_run_impl(model, sys_prompt, user, effort=None, judge=None, tier="tria
             # live bar), a different one-shot engine. The reply lands in a temp file (-o); `codex exec`
             # reports no token usage, so the usage row keeps the call's bracket + engine for the
             # timeline and counts, and leaves tokens/cost null (absent, not faked).
-            os.makedirs(JUDGE_SCRATCH, exist_ok=True)
+            srm.make_dir(JUDGE_SCRATCH, parents=True, root=STATE)
             outp = os.path.join(JUDGE_SCRATCH, "codex-%d-%d.out" % (os.getpid(), rid))
             try:
                 try:
@@ -3776,8 +3776,8 @@ def persist_planner_seen(force=False):
     p = STATE / _PLANNER_SEEN_FILE
     tmp = p.with_name(p.name + ".tmp.%d.%x" % (os.getpid(), threading.get_ident()))
     try:
-        p.parent.mkdir(parents=True, exist_ok=True)
-        tmp.write_text(body, encoding="utf-8")
+        srm.make_dir(p.parent, parents=True, root=STATE)
+        srm.write_text(tmp, body, encoding="utf-8")
         os.replace(tmp, p)
         _PLANNER_STATS["persisted"] = len(snap["rows"])
         _PLANNER_SEEN_SAID[0] = False
@@ -4441,9 +4441,9 @@ def tasks_for(fsid, leaf, files, now, done=None):
         _judge_ctx.stage_incomplete = True
         return tasks
     try:
-        PCACHE.mkdir(parents=True, exist_ok=True)
+        srm.make_dir(PCACHE, parents=True, root=STATE)
         tmp = cf.with_suffix(".tmp.%d" % os.getpid())
-        tmp.write_text(json.dumps({"key": key, "capKey": cap_key, "v": 9, "tasks": tasks}))
+        srm.write_text(tmp, json.dumps({"key": key, "capKey": cap_key, "v": 9, "tasks": tasks}))
         tmp.rename(cf)
     except Exception as e:
         # the decision stands for this pass (the tasks are returned) but the next pass cannot read it back:
@@ -4605,8 +4605,8 @@ def append_caption(fsid, uid, grain, t, caption, live=False, natoms=None):
         rec["live"] = True
         if natoms is not None:
             rec["natoms"] = natoms
-    CAPDIR.mkdir(parents=True, exist_ok=True)
-    with open(CAPDIR / (fsid + ".jsonl"), "a") as f:
+    srm.make_dir(CAPDIR, parents=True, root=STATE)
+    with srm.open_private(CAPDIR / (fsid + ".jsonl"), "a") as f:
         f.write(json.dumps(rec) + "\n")
 
 
@@ -4628,10 +4628,10 @@ def _caption_fails(fsid):
 
 
 def _write_caption_fails(fsid, d):
-    CAPDIR.mkdir(parents=True, exist_ok=True)
+    srm.make_dir(CAPDIR, parents=True, root=STATE)
     path = CAPDIR / (fsid + ".fails.json")
     if d:
-        path.write_text(json.dumps(d))
+        srm.write_text(path, json.dumps(d))
     else:
         try:
             path.unlink()                             # empty ledger → no file (nothing to prune later)
@@ -4804,9 +4804,9 @@ def _publish_tmp(dirpath, fsid):
 
 
 def write_archive(fsid, rec):
-    ARCHDIR.mkdir(parents=True, exist_ok=True)
+    srm.make_dir(ARCHDIR, parents=True, root=STATE)
     tmp = _publish_tmp(ARCHDIR, fsid)
-    tmp.write_text(json.dumps(rec))
+    srm.write_text(tmp, json.dumps(rec))
     tmp.rename(ARCHDIR / (fsid + ".json"))            # atomic publish
 
 
@@ -5828,8 +5828,8 @@ def append_override(fsid, node_id, op, t):
     kernel-side block verdicts ride append_block and an undo-clear restore rides append_restore below
     (it must carry node payloads)."""
     d = _overrides_dir()
-    d.mkdir(parents=True, exist_ok=True)
-    with (d / (fsid + ".jsonl")).open("a") as f:
+    srm.make_dir(d, parents=True, root=STATE)
+    with srm.open_private(d / (fsid + ".jsonl"), "a") as f:
         f.write(json.dumps({"node": node_id, "op": op, "t": int(t)}) + "\n")
     _session_file_written(fsid)
 
@@ -5844,8 +5844,8 @@ def append_clear(fsid, node_id, src, why, t):
     and uncleared after a restart. The row carries its author and why, so the replay re-records the same
     verdict the live write made."""
     d = _overrides_dir()
-    d.mkdir(parents=True, exist_ok=True)
-    with (d / (fsid + ".jsonl")).open("a") as f:
+    srm.make_dir(d, parents=True, root=STATE)
+    with srm.open_private(d / (fsid + ".jsonl"), "a") as f:
         f.write(json.dumps({"node": node_id, "op": "clear", "src": src, "why": why, "t": int(t)}) + "\n")
     _session_file_written(fsid)
 
@@ -5860,8 +5860,8 @@ def append_block(fsid, node_id, src, why, t):
     chip outlived the user's own follow-up). Written BEFORE the caller's store save; replay re-records
     the block unless a user event at/after t supersedes it (their reply answered the ask)."""
     d = _overrides_dir()
-    d.mkdir(parents=True, exist_ok=True)
-    with (d / (fsid + ".jsonl")).open("a") as f:
+    srm.make_dir(d, parents=True, root=STATE)
+    with srm.open_private(d / (fsid + ".jsonl"), "a") as f:
         f.write(json.dumps({"node": node_id, "op": "block", "src": src, "why": why, "t": int(t)}) + "\n")
     _session_file_written(fsid)
 
@@ -5874,8 +5874,8 @@ def append_restore(fsid, nodes, status, t):
     re-inserts a node only when NEITHER the store NOR the archive has it (a later re-clear parks it
     back in the archive, and replay defers to that)."""
     d = _overrides_dir()
-    d.mkdir(parents=True, exist_ok=True)
-    with (d / (fsid + ".jsonl")).open("a") as f:
+    srm.make_dir(d, parents=True, root=STATE)
+    with srm.open_private(d / (fsid + ".jsonl"), "a") as f:
         f.write(json.dumps({"op": "restore", "t": int(t),
                             "nodes": {k: dict(v) for k, v in nodes.items()},
                             "status": dict(status)}) + "\n")
@@ -6841,7 +6841,7 @@ def save_goals(fsid, store):
         raise FrozenStoreError("save_goals refuses a shared read-only store (load_goals_shared); load the "
                                "writer's copy with load_goals")
     _goal_io_bump("saves")
-    GOALDIR.mkdir(parents=True, exist_ok=True)
+    srm.make_dir(GOALDIR, parents=True, root=STATE)
     _h0 = time.perf_counter()
     mine = _own_hash(store) if "_baseRev" in store else None
     _goal_io_bump("noop_hash_ms", (time.perf_counter() - _h0) * 1000.0)   # the no-op check's serialization,
@@ -6871,7 +6871,7 @@ def save_goals(fsid, store):
             store["rev"] = int(store.get("rev") or 0) + 1
         _goal_io_bump("writes")
         tmp = _publish_tmp(GOALDIR, fsid)
-        tmp.write_text(json.dumps(store))
+        srm.write_text(tmp, json.dumps(store))
         if mine is not None and not rebased:         # a rebase changed the content `mine` describes
             _disk_seed(GOALDIR / (fsid + ".json"), tmp, mine)
         tmp.rename(GOALDIR / (fsid + ".json"))        # atomic publish
@@ -6972,9 +6972,9 @@ def save_goal_archive(fsid, store):
                               "the empty fallback would replace it — nothing was published and the file is left as it is")
         raise UnreadStoreError("save_goal_archive refuses to publish an archive that loaded as a fallback for a file "
                                "that exists and did not read or parse; the file is left as it is")
-    GOALARCHDIR.mkdir(parents=True, exist_ok=True)
+    srm.make_dir(GOALARCHDIR, parents=True, root=STATE)
     tmp = _publish_tmp(GOALARCHDIR, fsid)
-    tmp.write_text(json.dumps(store))
+    srm.write_text(tmp, json.dumps(store))
     tmp.rename(GOALARCHDIR / (fsid + ".json"))        # atomic publish
     _session_file_written(fsid)
 
@@ -9532,8 +9532,8 @@ def resume_lineage(sid):
 def append_episode(sid, head, fsid, t):
     """Record an observed episode head for `sid` (append-only; the caller has already established
     this head is NEW — see the kernel's boundary tick)."""
-    EPIDIR.mkdir(parents=True, exist_ok=True)
-    with (EPIDIR / (sid + ".jsonl")).open("a") as fh:
+    srm.make_dir(EPIDIR, parents=True, root=STATE)
+    with srm.open_private(EPIDIR / (sid + ".jsonl"), "a") as fh:
         fh.write(json.dumps({"head": head, "fsid": fsid, "t": t}) + "\n")
     _episode_memo.pop(sid, None)
     _session_file_written(sid)
@@ -9546,8 +9546,8 @@ def append_episode_settle(sid, head, t, settled):
     only AFTER the head row lands (the two-writer race in the kernel's boundary check) — a seed row
     must never be able to claim a settle. episode_rows skips these rows; episode_settles reads
     them back."""
-    EPIDIR.mkdir(parents=True, exist_ok=True)
-    with (EPIDIR / (sid + ".jsonl")).open("a") as fh:
+    srm.make_dir(EPIDIR, parents=True, root=STATE)
+    with srm.open_private(EPIDIR / (sid + ".jsonl"), "a") as fh:
         fh.write(json.dumps({"settleFor": head, "t": t, "settled": settled}) + "\n")
     _episode_memo.pop(sid, None)
     _session_file_written(sid)
@@ -11619,7 +11619,7 @@ def migrate_all_stores():
                 continue
             if migrate_store(store):
                 tmp = p.with_name(p.name + ".tmp.%d" % os.getpid())
-                tmp.write_text(json.dumps(store))
+                srm.write_text(tmp, json.dumps(store))
                 tmp.rename(p)                         # atomic publish
                 n += 1
     _shared_clear()                                   # the shared read-only views predate the sweep's publishes
@@ -12343,7 +12343,7 @@ def _wrap_index_save():
     idx_path = STATE / "skill-load-index.json"
     try:
         tmp = idx_path.with_name(idx_path.name + ".tmp.%d" % os.getpid())
-        tmp.write_text(json.dumps({"v": 2, "files": {k: list(v) for k, v in _WRAP_INDEX.items()}, "checked": sorted(_CHECKED)}))
+        srm.write_text(tmp, json.dumps({"v": 2, "files": {k: list(v) for k, v in _WRAP_INDEX.items()}, "checked": sorted(_CHECKED)}))
         tmp.rename(idx_path)
         _WRAP_DIRTY["v"] = False
     except Exception as e:
@@ -13150,7 +13150,7 @@ def _apply_echo_clears(fsid, store, targets, batch_t, now, why):
     archives the cleared roots on the kernel's next pass."""
     if not targets:
         return 0
-    with (STATE / "cleared.jsonl").open("a") as fh:
+    with srm.open_private(STATE / "cleared.jsonl", "a") as fh:
         for tid in targets:
             fh.write(json.dumps({"id": tid, "t": batch_t, "op": "clear"}) + "\n")
     _session_file_written(None)                  # the clears log is every session's
@@ -14881,10 +14881,10 @@ def _relay_write_entry(sid, nid, marker="", rev=0):
     so the spend's re-read tells a fresh entry flushed over the path from the one it read (see _relay_spend)."""
     try:
         d = _relay_queue_dir()
-        d.mkdir(parents=True, exist_ok=True)
+        srm.make_dir(d, parents=True, root=STATE)
         tmp = d / (".tmp-%s-%d-%s" % (re.sub(r"[^A-Za-z0-9_.-]", "_", nid), os.getpid(), secrets.token_hex(3)))
         #             the judge's flush and the tick's rewrite share one process: a private name each
-        tmp.write_text(json.dumps({"sid": sid, "nid": nid, "t": int(time.time()), "marker": str(marker or ""),
+        srm.write_text(tmp, json.dumps({"sid": sid, "nid": nid, "t": int(time.time()), "marker": str(marker or ""),
                                    "rev": int(rev or 0), "token": secrets.token_hex(4)}))
         #   token: the entry's own identity, compared by the tick's spend on its re-read (the third verdict: every
         #   recall entry's marker is the constant "recall", so a fresh one the judge flushed over the path DURING a
@@ -16074,9 +16074,9 @@ _gone_memo = {}                      # sid -> (marker mtime_ns, finalized) — a
 def _write_death_marker(fsid, m):
     """Atomic marker rewrite (tmp+rename), best-effort like every marker write."""
     try:
-        GONEDIR.mkdir(parents=True, exist_ok=True)
+        srm.make_dir(GONEDIR, parents=True, root=STATE)
         tmp = GONEDIR / (fsid + ".json.tmp")
-        tmp.write_text(json.dumps(m))
+        srm.write_text(tmp, json.dumps(m))
         os.replace(tmp, GONEDIR / (fsid + ".json"))
         _gone_memo.pop(fsid, None)
     except Exception:

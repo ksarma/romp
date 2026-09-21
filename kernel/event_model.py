@@ -1576,9 +1576,9 @@ def checkpoint_write(path, force=False):
            "guard": tail.hex(), "count": int(count), "lastUuid": (last.get("uuid") if isinstance(last, dict) else None),
            "seq": seq, "t": time.time(), "folds": folds}
     try:
-        cp.parent.mkdir(parents=True, exist_ok=True)
+        _srm.make_dir(cp.parent, parents=True, root=_state_root())
         tmp = cp.with_name("%s.%d.%x.tmp" % (cp.name, os.getpid(), threading.get_ident()))
-        tmp.write_text(json.dumps(doc, separators=(",", ":")))
+        _srm.write_text(tmp, json.dumps(doc, separators=(",", ":")))
         os.replace(tmp, cp)
     except OSError:
         return False
@@ -1687,7 +1687,7 @@ def _asm_retire_version_mark(meta, doc):
     d2 = {k: v for k, v in doc.items() if k != "refused"}
     mtmp = meta.with_name(meta.name + ".%d.tmp" % os.getpid())
     try:
-        mtmp.write_text(json.dumps(d2))
+        _srm.write_text(mtmp, json.dumps(d2))
         os.replace(mtmp, meta)
     except OSError as e:
         try:
@@ -5702,7 +5702,7 @@ def asm_sidecar_refresh(leaf_path, doc):
         pass
     try:
         mtmp = meta.with_name(meta.name + ".%d.tmp" % os.getpid())
-        mtmp.write_text(json.dumps(_asm_sidecar(doc)))
+        _srm.write_text(mtmp, json.dumps(_asm_sidecar(doc)))
         os.replace(mtmp, meta)
         return True
     except OSError:
@@ -5741,7 +5741,7 @@ def _asm_mark_refused(leaf_path, reason, rompuuid=None, sdk_human=False):
         d["refused"] = {"reason": reason, "size": st_[0], "mtime": st_[1]}
         try:
             mtmp = meta.with_name(meta.name + ".mark.%d.%x.tmp" % (os.getpid(), threading.get_ident()))
-            mtmp.write_text(json.dumps(d)); os.replace(mtmp, meta)
+            _srm.write_text(mtmp, json.dumps(d)); os.replace(mtmp, meta)
         except OSError:
             return False
         try:
@@ -5773,7 +5773,7 @@ def _asm_retire_refusal_mark(meta):
         n += 1
         aside = meta.with_name("%s.retired-%s-%d" % (meta.name, stamp, n))
     try:
-        aside.write_bytes(text)
+        _srm.write_bytes(aside, text)
     except OSError as e:                                # best effort by design, but never silent: the mark's forensic copy is lost, so
         _asm_removed("refusedMark:asideFailed")         #  count it and say so once (the 1717 read, low 4); the retirement itself proceeds
         _say_once("checkpoint: the refusal mark of %s could not be kept aside (%s)" % (meta.name, e))
@@ -6586,15 +6586,15 @@ def asm_checkpoint_write(leaf_path, rompuuid, sdk_human=False, tree=None, reason
         if len(data) > _ASM_CKPT_CAP:                                  #  bytes a boot reads are the compressed ones
             return skip("oversize")
         try:
-            cp.parent.mkdir(parents=True, exist_ok=True)
+            _srm.make_dir(cp.parent, parents=True, root=_state_root())
             tmp = cp.with_name("%s.%d.%x.tmp" % (cp.name, os.getpid(), threading.get_ident()))
-            tmp.write_bytes(data)
+            _srm.write_bytes(tmp, data)
             _t_write = time.monotonic()                   # the window's edge: a refusal stamped before this was against the document
             os.replace(tmp, cp)                           #  the replace retires (popped below); one stamped after it stands
             meta = cp.with_name(cp.name + ".meta")            # {"av", "path"}: what the boot sweep reads, never the document
             _asm_retire_refusal_mark(meta)                    # a refusedStanding mark for the cut this write replaces is history
             mtmp = meta.with_name(meta.name + ".%d.tmp" % os.getpid())
-            mtmp.write_text(json.dumps(_asm_sidecar(doc)))   # the inputs' fsids and whether resume links joined them: what
+            _srm.write_text(mtmp, json.dumps(_asm_sidecar(doc)))   # the inputs' fsids and whether resume links joined them: what
             #                                                   asm_document_seeds reads, never the document
             os.replace(mtmp, meta)
         except OSError:

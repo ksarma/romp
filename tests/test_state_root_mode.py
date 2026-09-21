@@ -52,6 +52,12 @@ artifact enumeration in plans/state-root-mode.md) settled WHAT is refused and WH
   EVERY LONG-LIVED WRITER RUNS THE CHECK: the bus at import in every mode (not only argv "serve") and the session host at
         start and on its beat (round 3's E). TheBusRefuses, TheSessionHostRunsTheCheck.
   ONE TEXT             the predicate lives in kernel/state_root_mode.py alone; the loaders define no copy (OneText).
+  BORN OWNER-ONLY      round 4f (romp-manager, 2026-09-21): every entry a romp process CREATES under the root is 0700 or 0600
+        before its first byte, by code, whatever the process umask (kernel/state_root_mode.py part 4: make_dir, write_text,
+        write_bytes, open_private, touch; a rename of an entry so born; a site that sets its mode itself), so the readers
+        never quarantine a process's own fresh entries; the population of creators is derived and pinned by
+        tests/test_state_root_writers.py. EntriesAreBornOwnerOnlyUnderAPermissiveUmask drives the roads under umask 0022
+        and 0000 in child processes.
 
 For each arm the test below names, in its docstring, what the arm does to everything that is NOT the door it guards (the
 round's shape demand), and what fails at 9748684d3 (round 2's head, before round 4) and how that was checked: this module
@@ -72,6 +78,7 @@ import base64
 import collections
 import contextlib
 import errno
+import glob
 import grp
 import http.client
 import io
@@ -87,6 +94,7 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -652,13 +660,14 @@ class TheImportRecordsItsOwnRepair(unittest.TestCase):
         self.assertIsNone(out["refusal"], "the import-read rule is about directories; ENOTDIR is the current read's refusal")
 
     def test_a_root_the_import_created_has_no_import_refusal_whatever_its_umask_mode(self):
-        """The exemption: the judge module's own mkdir made the root at the umask's mode (0775 under 002, 0777 under 000);
-        nothing could have been planted in a directory that did not exist a moment before, so importCreated is True and
-        importRefusal None even for a 0777 creation default. At 9748684d3 the child faults on the missing attribute
-        (exit 1)."""
+        """The exemption: the judge module's own mkdir made the root, so nothing could have been planted in a directory
+        that did not exist a moment before: importCreated is True and importRefusal None whatever the umask. Through
+        round 4e the mkdir made the root at the umask's mode (0777 under 000, read before the chmod two lines later);
+        since round 4f it is mkdir(mode=0o700), born owner-only under any umask, so the import's read is 0700 and the
+        exemption keys on `created` alone. At 9748684d3 the child faults on the missing attribute (exit 1)."""
         root, out, err = self._child("os.umask(0o000)\n")
         self.assertTrue(out["created"])
-        self.assertEqual(out["atImport"], 0o777, "the umask's creation default, read before the chmod")
+        self.assertEqual(out["atImport"], 0o700, "born 0700 by the import's own mkdir(mode=0o700), whatever the umask (round 4f)")
         self.assertIsNone(out["refusal"], "a root the import created is exempt")
         self.assertEqual(out["verdict"], "ok")
         self.assertEqual(_mode(root), 0o700)
@@ -3159,6 +3168,326 @@ class TheSessionHostRunsTheCheck(unittest.TestCase):
         self.assertFalse(os.path.lexists(spec_path))
         self.assertTrue(any(n.endswith(".hosts.%s.spawn.json" % self.sid) for n in os.listdir(os.path.join(self.state, "quarantine"))))
         self.assertFalse(os.path.exists(self.fake_log))
+
+
+# ── ENTRIES BORN OWNER-ONLY BY CODE, whatever the process umask (round 4f) ────────────────────────────────────────
+
+SID_A = "11111111-2222-3333-4444-00000000004f"   # a session the harness registers under <root>/names, known and not live
+SID_B = "11111111-2222-3333-4444-00000000004e"   # the bus arm's sender
+
+
+def _under_umask(umask, argv):
+    """`argv` run by a shell that sets `umask` FIRST and execs the program, so the interpreter starts under it and every
+    entry the program makes with no mode of its own is born at the umask's mode (0666 and 0777 under 0000; 0644 and 0755
+    under 0022). The umask is set in the child before the import, never in this process."""
+    return ["/bin/sh", "-c", 'umask %04o && exec "$@"' % umask, "umask-shim"] + [str(a) for a in argv]
+
+
+def _loose_entries(root):
+    """Every entry under `root` (the root itself excluded) that is not owner-only: a mode with any group or other bit, or a
+    symlink whatever its mode (the readers refuse one under the root), as (relative path, octal mode, kind)."""
+    out = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        for name in dirnames + filenames:
+            p = os.path.join(dirpath, name)
+            st = os.lstat(p)
+            kind = ("link" if stat.S_ISLNK(st.st_mode) else "dir" if stat.S_ISDIR(st.st_mode)
+                    else "sock" if stat.S_ISSOCK(st.st_mode) else "file")
+            if kind == "link" or stat.S_IMODE(st.st_mode) & 0o077:
+                out.append((os.path.relpath(p, root), "%04o" % stat.S_IMODE(st.st_mode), kind))
+    return sorted(out)
+
+
+def _write_0600(path, text):
+    with open(path, "w") as fh:
+        fh.write(text)
+    os.chmod(path, 0o600)
+
+
+def _register_name(root, sid, name):
+    """A session the kernel and the bus know by its names record (tests/test_kernel_headless_ops.py's shape), made
+    owner-only by the harness itself so the harness's own entries never stand in for the process's."""
+    d = os.path.join(root, "names")
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    os.chmod(d, 0o700)
+    _write_0600(os.path.join(d, sid), "%s\t\n" % name)
+
+
+_INPROC_KERNEL_CHILD = r'''
+import json, os, sys, time
+sys.path.insert(0, sys.argv[1])                                  # tests/, for romp_load
+from romp_load import load_source
+bin_dir, lab, sid = sys.argv[2], sys.argv[3], sys.argv[4]
+u = os.umask(0); os.umask(u)                                     # read, then put back: the shell set it before this interpreter started
+em = load_source("romp_event_model", os.path.join(bin_dir, "romp-event-model"))
+jd = load_source("romp_judge", os.path.join(bin_dir, "romp-judge"))
+km = load_source("romp_kernel", os.path.join(bin_dir, "romp-kernel"))
+report = {"umask": "%04o" % u, "root": str(jd.STATE), "importLine": jd._STATE_ROOT_MODE_LINE}
+km._state_root_boot_check()                                      # the boot's check on the pre-made 0700 root
+km._jobs_pass(int(time.time()), {})                              # a housekeeping pass (its stateRootMode stage first)
+km._park_op(sid, ("send", "parked in process under umask %04o" % u, None))   # a parked op saved: pending-ops.json
+row, err = km.post_notice(sid, "pin", "born owner-only", "", producer="pin")   # a notice filed: notices/<sid>.jsonl
+report["noticeErr"] = err
+p = os.path.join(lab, "transcript.jsonl")                        # a transcript OUTSIDE the root, folded with a checkpoint name
+with open(p, "w") as fh:
+    for i in range(3):
+        fh.write(json.dumps({"n": i}) + "\n")
+em.fold_records({}, p, list, lambda st, o: st + [o["n"]], ckpt="pin")
+report["checkpoint"] = bool(em.checkpoint_write(p))              # a checkpoint written under <root>/checkpoints
+report["refusedRows"] = [r.get("text") for r in km._SYNC_NOTICES if r.get("kind") == "refused"]
+report["refused"] = [str(x) for x in list(km._gr.refused) + list(jd._gr.refused) + list(em._gr.refused)]
+print(json.dumps(report))
+'''
+
+_BUS_DELIVER_CHILD = r'''
+import json, os, sys
+sys.path.insert(0, sys.argv[1])                                  # tests/, for romp_load
+from romp_load import load_source
+bin_dir, to_id, from_id = sys.argv[2], sys.argv[3], sys.argv[4]
+u = os.umask(0); os.umask(u)
+ps = load_source("romp_postal_pin", os.path.join(bin_dir, "romp-postal-service"))   # the import gate runs on the 0700 root
+ps.deliver(to_id, "api", from_id, "mail under umask %04o" % u, park=True, kind="coordinate")   # the box, the message, the
+print(json.dumps({"umask": "%04o" % u, "refused": [str(x) for x in ps._gr.refused]}))          # sent row and the pending marker
+'''
+
+
+class EntriesAreBornOwnerOnlyUnderAPermissiveUmask(unittest.TestCase):
+    """THE BEHAVIOURAL PIN of round 4f (romp-manager's ruling, 2026-09-21): "if the kernel and the host make entries under
+    the root at the process umask, then under a permissive umask the readers quarantine the process's OWN FRESH ENTRIES.
+    That is a self-inflicted denial road, and 'the live umask is 0002 with private groups' is a bound held by the
+    environment rather than by the code. Entries born owner-only BY CODE." Every creator under the root now goes through
+    kernel/state_root_mode.py's make_dir, write_text, write_bytes, open_private and touch (0700 and 0600 before the first
+    byte, under any umask), through a rename of an entry so born, or sets its mode by code at its site; the population
+    is derived and pinned by tests/test_state_root_writers.py. This class runs the CREATION ROADS under umask 0022 and
+    0000, set in CHILD processes before the interpreter starts (_under_umask), on a hermetic 0700 root the harness
+    pre-makes with its own entries owner-only: the served kernel (boot, a request, housekeeping passes, a parked op, a
+    notice, a second request), the kernel in process (the boot check, a housekeeping pass, a parked op, a notice, a
+    checkpoint), the bus (start, a mail delivered, the pending marker, the pid file, a second request) and the session
+    host (start, the lease, the journal, host.log, identity.json, the socket). For each it holds that NO <root>/quarantine
+    directory exists, that no log carries a "quarantined" line and no refused-kind row was filed, that the roads' entries
+    were made, that every entry under the root lstat's OWNER-ONLY (no group or other bit; a symlink counts as loose) and
+    that the process keeps serving after a second request. Owner-only, not merely "not writable by another": every entry
+    these processes make is a directory of ours (0700), a regular file of ours (0600) or the host's socket (0600), none
+    of which any other uid has a reason to read, so the stronger claim costs nothing and is the one make_dir and
+    born_owner_only promise; a weaker one would let a 0644 file in under 0022, which is what the readers admit but not
+    what the ruling asked for. FAILING BEFORE (ec1714ae2, measured with this class copied into a detached worktree): under
+    0000 the kernel's notices/ directory and its jsonl, checkpoints/, the bus's postal/mail/<sid>/ boxes, timeline/ and
+    mail-pending/, and the host's leases/ are born 0777 and 0666, the readers quarantine them at the next read ("quarantined
+    to" in the logs, <root>/quarantine populated), and under 0022 every one of them lstat's 0755 or 0644, not owner-only.
+    The recorded quarantine list is in the PR's notes (design.md, round 4f)."""
+
+    UMASKS = (0o022, 0o000)
+
+    def setUp(self):
+        self.lab = tempfile.mkdtemp(prefix="romp-srm4f-")
+        self.procs = []
+        self.addCleanup(self._cleanup)
+
+    def _cleanup(self):
+        for proc, pg in self.procs:
+            if proc.poll() is None:
+                try:
+                    (os.killpg(proc.pid, 9) if pg else proc.kill())
+                    proc.wait(timeout=10)
+                except Exception:
+                    pass
+        shutil.rmtree(self.lab, ignore_errors=True)
+
+    def _root(self, *parts):
+        """A 0700 state root the harness pre-makes, with session-hosts off and two registered sessions, all owner-only."""
+        root = os.path.join(self.lab, *parts)
+        os.makedirs(root, mode=0o700, exist_ok=True)
+        os.chmod(root, 0o700)
+        _write_0600(os.path.join(root, "session-hosts"), "off\n")
+        _register_name(root, SID_A, "web")
+        _register_name(root, SID_B, "api")
+        return root
+
+    @staticmethod
+    def _post(port, path, body, token):
+        req = urllib.request.Request("http://127.0.0.1:%d%s" % (port, path), data=json.dumps(body).encode(),
+                                     headers={"Content-Type": "application/json", "X-Romp-Token": token}, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.status, json.loads(r.read().decode() or "{}")
+        except urllib.error.HTTPError as e:
+            return e.code, {"error": e.read().decode(errors="replace")[:400]}
+
+    @staticmethod
+    def _get(port, path):
+        try:
+            with urllib.request.urlopen("http://127.0.0.1:%d%s" % (port, path), timeout=2) as r:
+                return r.status
+        except Exception:
+            return None
+
+    @staticmethod
+    def _tail(log, n=1500):
+        try:
+            return open(log).read()[-n:]
+        except OSError as e:
+            return "(log unreadable: %s)" % e
+
+    def _await(self, proc, up, log, what, seconds=60):
+        for _ in range(int(seconds * 2)):
+            if proc.poll() is not None:
+                raise unittest.SkipTest("%s exited before it served:\n%s" % (what, self._tail(log)))
+            if up():
+                return
+            time.sleep(0.5)
+        raise unittest.SkipTest("%s never served here:\n%s" % (what, self._tail(log)))
+
+    def _assert_owner_only(self, root, log_text, made, where):
+        q = os.path.join(root, "quarantine")
+        self.assertFalse(os.path.isdir(q), "%s: quarantined its own entries: %r\n%s"
+                         % (where, sorted(os.listdir(q)) if os.path.isdir(q) else [], log_text[-1500:]))
+        self.assertNotIn("quarantined", log_text, "%s: a quarantine line in its log:\n%s" % (where, log_text[-1500:]))
+        for rel in made:
+            hits = glob.glob(os.path.join(root, rel))
+            self.assertTrue(hits, "%s made %s (the road ran); under the root: %r" % (where, rel, sorted(
+                os.path.relpath(p, root) for p in glob.glob(os.path.join(root, "**"), recursive=True))))
+        self.assertEqual(_loose_entries(root), [], "%s: every entry under the root is owner-only" % where)
+
+    # the served kernel ------------------------------------------------------------------------------------------------
+
+    def _served_kernel(self, umask):
+        root = self._root("k%04o" % umask, "xdg", "romp")
+        lab = os.path.join(self.lab, "k%04o" % umask)
+        dist, claude = os.path.join(lab, "dist"), os.path.join(lab, "claude")
+        os.makedirs(dist); os.makedirs(claude)
+        port, token = _free_port(), "srm4f-tok"
+        env = _kernel_env(lab, dist, port, token)
+        klog = os.path.join(lab, "kernel.log")
+        proc = subprocess.Popen(_under_umask(umask, [os.path.join(BIN, "romp-kernel")]), stdout=open(klog, "w"),
+                                stderr=subprocess.STDOUT, env=env)
+        self.procs.append((proc, False))
+        what = "the kernel under umask %04o" % umask
+        self._await(proc, lambda: self._get(port, "/healthz") == 200, klog, what)
+        # a request that WRITES under the root: a notice card (notices/<sid>.jsonl through _notice_append). A parked op
+        # needs a backend that owns the session (/send answers "no running backend owns" hermetically), so the park and
+        # the checkpoint are driven in process (_inproc_kernel), the same modules on the same roads
+        st, res = self._post(port, "/notice", {"id": SID_A, "key": "pin", "title": "born owner-only"}, token)
+        self.assertEqual((st, res.get("ok")), (200, True), "a notice card is filed: %r" % (res,))
+        time.sleep(2.5)                                    # several housekeeping passes (JOBS_PASS_S is 0.5 s), the root re-read each
+        self.assertEqual(self._get(port, "/healthz"), 200, "%s keeps serving after its writes" % what)
+        proc.kill(); proc.wait(timeout=10)
+        self._assert_owner_only(root, self._tail(klog, 200000), ["notices/*", "repo-root"], what)
+
+    def test_a_served_kernel_under_umask_0022_makes_owner_only_entries_and_quarantines_nothing_of_its_own(self):
+        self._served_kernel(0o022)
+
+    def test_a_served_kernel_under_umask_0000_makes_owner_only_entries_and_quarantines_nothing_of_its_own(self):
+        self._served_kernel(0o000)
+
+    # the kernel in process: the roads a request cannot reach hermetically (the checkpoint) ------------------------------
+
+    def _inproc_kernel(self, umask):
+        root = self._root("p%04o" % umask, "xdg", "romp")
+        lab = os.path.join(self.lab, "p%04o" % umask)
+        dist, claude = os.path.join(lab, "dist"), os.path.join(lab, "claude")
+        os.makedirs(dist); os.makedirs(claude)
+        child = os.path.join(lab, "child.py")
+        Path(child).write_text(_INPROC_KERNEL_CHILD)
+        env = _kernel_env(lab, dist, _free_port(), "srm4f-tok")
+        r = subprocess.run(_under_umask(umask, [sys.executable, child, HERE, BIN, lab, SID_A]), env=env,
+                           capture_output=True, text=True, timeout=180)
+        what = "the kernel in process under umask %04o" % umask
+        self.assertEqual(r.returncode, 0, "%s:\n%s" % (what, r.stderr[-2500:]))
+        report = json.loads(r.stdout.strip().splitlines()[-1])
+        self.assertEqual(report["umask"], "%04o" % umask, "the child ran under the umask")
+        self.assertEqual(os.path.realpath(report["root"]), os.path.realpath(root))
+        self.assertIsNone(report["noticeErr"])
+        self.assertTrue(report["checkpoint"], "the checkpoint was written")
+        self.assertEqual(report["refusedRows"], [], "%s filed no refused-kind row" % what)
+        self.assertEqual(report["refused"], [], "%s's readers refused nothing" % what)
+        self._assert_owner_only(root, r.stderr, ["pending-ops.json", "notices/*", "checkpoints/*", "repo-root"], what)
+
+    def test_the_kernel_in_process_under_umask_0022_writes_a_checkpoint_a_park_and_a_notice_owner_only(self):
+        self._inproc_kernel(0o022)
+
+    def test_the_kernel_in_process_under_umask_0000_writes_a_checkpoint_a_park_and_a_notice_owner_only(self):
+        self._inproc_kernel(0o000)
+
+    # the bus ----------------------------------------------------------------------------------------------------------
+
+    def _bus(self, umask):
+        xdg = os.path.join(self.lab, "b%04o" % umask)
+        root = self._root("b%04o" % umask, "romp")
+        port, token = _free_port(), "bus-tok"
+        env = {k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "LANG", "LC_ALL")}
+        env.update(XDG_STATE_HOME=xdg, ROMP_POSTAL_PORT=str(port), ROMP_POSTAL_HERMETIC="1", ROMP_POSTAL_PEERS="0",
+                   ROMP_POSTAL_IDLE_GRACE="100000", ROMP_POSTAL_POLL="1", ROMP_KERNEL_PORT=str(_free_port()), ROMP_SERVE_TOKEN=token)
+        log = os.path.join(self.lab, "bus-%04o.log" % umask)
+        proc = subprocess.Popen(_under_umask(umask, [sys.executable, os.path.join(BIN, "romp-postal-service"), "serve"]),
+                                env=env, stdout=open(log, "w"), stderr=subprocess.STDOUT)
+        self.procs.append((proc, False))
+        what = "the bus under umask %04o" % umask
+        self._await(proc, lambda: self._get(port, "/ping") == 200, log, what)
+        # the delivery road, in a second bus process over the same root under the same umask: the route's /send asks the
+        # kernel whether the recipient is live and answers 503 with none, so deliver() is called as the route calls it
+        # (park=True, a handoff for a session that is not live: the box, the message, the timeline row, the pending marker)
+        child = os.path.join(self.lab, "bus-%04o-deliver.py" % umask)
+        Path(child).write_text(_BUS_DELIVER_CHILD)
+        r = subprocess.run(_under_umask(umask, [sys.executable, child, HERE, BIN, SID_A, SID_B]), env=env,
+                           capture_output=True, text=True, timeout=120)
+        self.assertEqual(r.returncode, 0, "%s's delivery:\n%s" % (what, r.stderr[-2500:]))
+        report = json.loads(r.stdout.strip().splitlines()[-1])
+        self.assertEqual((report["umask"], report["refused"]), ("%04o" % umask, []), report)
+        time.sleep(1.5)                                    # a monitor poll (ROMP_POSTAL_POLL=1) of the serving bus over the fresh box and marker
+        self.assertEqual(self._get(port, "/ping"), 200, "%s keeps serving after the delivery" % what)
+        proc.kill(); proc.wait(timeout=10)
+        self._assert_owner_only(root, self._tail(log, 200000) + r.stderr,
+                                ["postal/server.pid", "postal/mail/%s/new/*" % SID_A, "postal/mail-pending/%s" % SID_A, "timeline/messages.jsonl"], what)
+
+    def test_the_bus_under_umask_0022_delivers_marks_and_writes_its_pid_owner_only(self):
+        self._bus(0o022)
+
+    def test_the_bus_under_umask_0000_delivers_marks_and_writes_its_pid_owner_only(self):
+        self._bus(0o000)
+
+    # the session host --------------------------------------------------------------------------------------------------
+
+    def _host(self, umask):
+        state = self._root("h%04o" % umask)
+        out = os.path.join(self.lab, "h%04o-out" % umask)          # the fake CLI's own files live OUTSIDE the root: not romp's entries
+        os.makedirs(out)
+        hosts = Path(state) / "hosts"
+        d = hosts / SID_A
+        d.mkdir(parents=True, mode=0o700)
+        os.chmod(hosts, 0o700); os.chmod(d, 0o700)                 # the harness's layout, owner-only by the harness
+        spec = {"sid": SID_A, "name": "web", "version": "abc12345", "state_dir": state, "protocol": 1,
+                "cli_path": os.path.join(HERE, "fixtures", "fake_claude.py"), "cwd": out,
+                "permission_prompt_tool_name": "stdio", "permission_mode": "default",
+                "env": {"FAKE_CLI_LOG": os.path.join(out, "fake-cli.log"), "FAKE_CLI_TRANSCRIPT_DIR": os.path.join(out, "transcripts"),
+                        "FAKE_CLI_SESSION_ID": "11111111-2222-3333-4444-0000000000f1"},
+                "max_buffer_size": 1024 * 1024, "hook_self_answer_s": 2, "unattached_grace_s": 3600}
+        _write_0600(str(d / "spawn.json"), json.dumps(spec))
+        env = dict(os.environ, PYTHONUNBUFFERED="1", ROMP_SDK_SITE=os.path.join(out, "no-sdk-here"))
+        for name in ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"):
+            env.pop(name, None)
+        errlog = os.path.join(out, "host.stderr")
+        proc = subprocess.Popen(_under_umask(umask, [sys.executable, os.path.join(BIN, "romp-session-host"), str(d / "spawn.json")]),
+                                stdout=subprocess.DEVNULL, stderr=open(errlog, "w"), env=env, start_new_session=True)
+        self.procs.append((proc, True))
+        what = "the session host under umask %04o" % umask
+        sock, lease = hosts / (SID_A[:8] + ".sock"), Path(state) / "leases" / (SID_A + ".json")
+        self._await(proc, lambda: sock.exists() and lease.exists(), errlog, what, seconds=60)
+        time.sleep(3.5)                                    # a lease beat (3 s) and the journal's first records
+        self.assertIsNone(proc.poll(), "%s keeps running after its beat:\n%s" % (what, self._tail(errlog)))
+        os.killpg(proc.pid, 9); proc.wait(timeout=10)
+        hostlog = d / "host.log"
+        rows = [json.loads(l) for l in hostlog.read_text().splitlines()] if hostlog.exists() else []
+        self.assertIn("host-started", [r.get("kind") for r in rows], rows)
+        self.assertNotIn("state-root-refused", [r.get("kind") for r in rows], rows)
+        self._assert_owner_only(state, self._tail(errlog, 200000),
+                                ["hosts/%s/host.log" % SID_A, "hosts/%s/identity.json" % SID_A, "hosts/%s/journal-*.jsonl" % SID_A,
+                                 "leases/%s.json" % SID_A], what)
+
+    def test_the_session_host_under_umask_0022_writes_its_lease_journal_and_log_owner_only(self):
+        self._host(0o022)
+
+    def test_the_session_host_under_umask_0000_writes_its_lease_journal_and_log_owner_only(self):
+        self._host(0o000)
 
 
 # ── ONE TEXT: the predicate lives in kernel/state_root_mode.py alone (round 3's F) ────────────────────────────────

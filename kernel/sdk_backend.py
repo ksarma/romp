@@ -1543,11 +1543,11 @@ _STATES = ("working", "waiting", "idle", "permission", "compacting", "picker")
 
 def append_state(state_dir: Path, sid: str, state: str, t: int | None = None, by: str = "") -> None:
     p = Path(state_dir) / "states" / (sid + ".jsonl")
-    p.parent.mkdir(parents=True, exist_ok=True)
+    _srm.make_dir(p.parent, parents=True, root=state_dir)
     rec = {"t": int(time.time()) if t is None else int(t), "state": state}
     if by:
         rec["by"] = by          # a romp-written settle (an interrupt), skipped by the turn-finished push (#937 fold)
-    with open(p, "a") as f:
+    with _srm.open_private(p, "a") as f:
         f.write(json.dumps(rec) + "\n")
 
 
@@ -1557,9 +1557,9 @@ def append_retry_recovered(state_dir: Path, sid: str, retries: int, t: int | Non
     Same file/format as append_state, with its own key ("retriesRecovered") so the state/awaiting readers,
     which filter by their own keys, skip it."""
     p = Path(state_dir) / "states" / (sid + ".jsonl")
-    p.parent.mkdir(parents=True, exist_ok=True)
+    _srm.make_dir(p.parent, parents=True, root=state_dir)
     rec = {"t": int(time.time()) if t is None else int(t), "retriesRecovered": int(retries)}
-    with open(p, "a") as f:
+    with _srm.open_private(p, "a") as f:
         f.write(json.dumps(rec) + "\n")
 
 
@@ -1572,10 +1572,10 @@ def append_retry_gave_up(state_dir: Path, sid: str, retries: int, kind: str = ""
     "gave up after N retries" chat note right where the storm died. `kind` is the CLI's own error stamp
     (AssistantMessage.error: "server_error", "rate_limit", …), kept for the note's tooltip."""
     p = Path(state_dir) / "states" / (sid + ".jsonl")
-    p.parent.mkdir(parents=True, exist_ok=True)
+    _srm.make_dir(p.parent, parents=True, root=state_dir)
     rec = {"t": int(time.time()) if t is None else int(t), "retriesGaveUp": int(retries),
            "errorKind": str(kind or "")}
-    with open(p, "a") as f:
+    with _srm.open_private(p, "a") as f:
         f.write(json.dumps(rec) + "\n")
 
 
@@ -1600,9 +1600,9 @@ def _assistant_text(msg) -> str:
 
 
 def _rewrite_json(p: Path, obj) -> None:
-    p.parent.mkdir(parents=True, exist_ok=True)
+    _srm.make_dir(p.parent, parents=True)
     tmp = p.with_suffix(p.suffix + ".tmp")
-    tmp.write_text(json.dumps(obj))
+    _srm.write_text(tmp, json.dumps(obj))
     os.replace(tmp, p)
 
 
@@ -1655,10 +1655,10 @@ def append_orphan_reply(state_dir: Path, sid: str, uuid: str, text: str, t: int 
     (its own "orphanReply" key, skipped by the state/awaiting/recovery readers) lets build_session interleave the
     lost text back at its timestamp — DEDUP'd against the disk so a retry that DID re-reply never doubles."""
     p = Path(state_dir) / "states" / (sid + ".jsonl")
-    p.parent.mkdir(parents=True, exist_ok=True)
+    _srm.make_dir(p.parent, parents=True, root=state_dir)
     rec = {"t": int(time.time()) if t is None else int(t),
            "orphanReply": {"uuid": str(uuid or ""), "text": (text or "")[:ORPHAN_REPLY_CAP]}}
-    with open(p, "a") as f:
+    with _srm.open_private(p, "a") as f:
         f.write(json.dumps(rec) + "\n")
 
 
@@ -1682,9 +1682,9 @@ def append_effort_applied(state_dir: Path, sid: str, effort: str, t: int | None 
     self-destructs on the next message and history keeps no trace of when effort changed). Its own key
     ("effortApplied") so the state/awaiting/recovery readers, which filter by their own keys, skip it."""
     p = Path(state_dir) / "states" / (sid + ".jsonl")
-    p.parent.mkdir(parents=True, exist_ok=True)
+    _srm.make_dir(p.parent, parents=True, root=state_dir)
     rec = {"t": int(time.time()) if t is None else int(t), "effortApplied": str(effort)}
-    with open(p, "a") as f:
+    with _srm.open_private(p, "a") as f:
         f.write(json.dumps(rec) + "\n")
 
 
@@ -1697,9 +1697,9 @@ def append_cmd_gesture(state_dir: Path, sid: str, text: str, t: int | None = Non
     (t, text). Its own key ("cmdGesture") so the state/awaiting/recovery readers, which filter by their own
     keys, skip it. `text` is the full display form, e.g. "/effort high"."""
     p = Path(state_dir) / "states" / (sid + ".jsonl")
-    p.parent.mkdir(parents=True, exist_ok=True)
+    _srm.make_dir(p.parent, parents=True, root=state_dir)
     rec = {"t": int(time.time()) if t is None else int(t), "cmdGesture": str(text)}
-    with open(p, "a") as f:
+    with _srm.open_private(p, "a") as f:
         f.write(json.dumps(rec) + "\n")
 
 
@@ -1726,9 +1726,9 @@ def append_machine_cut(state_dir: Path, sid: str, cause: str, t: float | None = 
     written in the same second). Its own "machineCut" key, so the state/awaiting/recovery readers, which
     filter by their own keys, skip it."""
     p = Path(state_dir) / "states" / (sid + ".jsonl")
-    p.parent.mkdir(parents=True, exist_ok=True)
+    _srm.make_dir(p.parent, parents=True, root=state_dir)
     rec = {"t": time.time() if t is None else float(t), "machineCut": str(cause)}
-    with open(p, "a") as f:
+    with _srm.open_private(p, "a") as f:
         f.write(json.dumps(rec) + "\n")
 
 
@@ -1744,10 +1744,10 @@ def append_resume_fork(state_dir: Path, sid: str, from_fsid: str, to_fsid: str, 
     kernel's episode-boundary stand-down). Its own "resumeFork" key, like machineCut, so the
     state/awaiting readers skip it."""
     p = Path(state_dir) / "states" / (sid + ".jsonl")
-    p.parent.mkdir(parents=True, exist_ok=True)
+    _srm.make_dir(p.parent, parents=True, root=state_dir)
     rec = {"t": time.time() if t is None else float(t),
            "resumeFork": {"from": str(from_fsid), "to": str(to_fsid)}}
-    with open(p, "a") as f:
+    with _srm.open_private(p, "a") as f:
         f.write(json.dumps(rec) + "\n")
 
 
@@ -1799,14 +1799,14 @@ _LEDGER_LOCK = threading.Lock()   # one appender at a time across the ledgers: t
 def _append_ledger_row(state_dir: Path, name: str, row: dict) -> None:
     try:
         p = Path(state_dir) / name
-        p.parent.mkdir(parents=True, exist_ok=True)
+        _srm.make_dir(p.parent, parents=True, root=state_dir)
         with _LEDGER_LOCK:
             try:
                 if p.stat().st_size >= LEDGER_ROTATE_BYTES:
                     os.replace(p, p.with_name(p.name + ".1"))   # the older predecessor, if any, is dropped
             except FileNotFoundError:
                 pass
-            with open(p, "a", encoding="utf-8") as f:
+            with _srm.open_private(p, "a", encoding="utf-8") as f:
                 f.write(json.dumps(row) + "\n")
                 f.flush()
     except Exception:
@@ -1881,11 +1881,11 @@ def append_awaiting(state_dir: Path, sid: str, awaiting: bool, why: str = "") ->
     auto-nudge (bugz's event-model awaiting, contract confirmed 2026-06-22). awaiting:true carries a
     "why"; awaiting:false clears it."""
     p = Path(state_dir) / "states" / (sid + ".jsonl")
-    p.parent.mkdir(parents=True, exist_ok=True)
+    _srm.make_dir(p.parent, parents=True, root=state_dir)
     rec = {"t": int(time.time()), "awaiting": bool(awaiting)}
     if awaiting and why:
         rec["why"] = why
-    with open(p, "a") as f:
+    with _srm.open_private(p, "a") as f:
         f.write(json.dumps(rec) + "\n")
 
 
@@ -2086,7 +2086,7 @@ def write_name(state_dir: Path, sid: str, name: str, cwd: str, bg: str = "", fg:
     never drops it; "" clears it explicitly. Written only while set, so a record
     without one keeps the four-field shape."""
     p = Path(state_dir) / "names" / sid
-    p.parent.mkdir(parents=True, exist_ok=True)
+    _srm.make_dir(p.parent, parents=True, root=state_dir)
     if emoji is None:
         try:
             old = _reader(state_dir).read_text(p).rstrip("\n").split("\t")
@@ -2095,7 +2095,7 @@ def write_name(state_dir: Path, sid: str, name: str, cwd: str, bg: str = "", fg:
         emoji = old[4] if len(old) > 4 else ""
     tmp = p.with_suffix(".tmp")
     try:
-        tmp.write_text("\t".join([name, cwd, bg, fg] + ([emoji] if emoji else [])) + "\n")
+        _srm.write_text(tmp, "\t".join([name, cwd, bg, fg] + ([emoji] if emoji else [])) + "\n")
         os.replace(tmp, p)
     finally:
         try:                       # never LEAK the staging file: open() creates it before a write can die
@@ -2897,7 +2897,7 @@ class ApiHealth:
             v = uuid.uuid4().hex + uuid.uuid4().hex
             tmp = p.with_name("%s.%d.%s.tmp" % (p.name, os.getpid(), uuid.uuid4().hex[:8]))
             try:
-                p.parent.mkdir(parents=True, exist_ok=True)
+                _srm.make_dir(p.parent, parents=True, root=self.state_dir)
                 self._sweep_dead_salt_temps(p)
                 fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                 try:
@@ -3170,8 +3170,8 @@ class ApiHealth:
                           for k, tiers in self._ledger.items()}}
         tmp = p.with_name("%s.%d.%s.tmp" % (p.name, os.getpid(), uuid.uuid4().hex[:8]))
         try:
-            p.parent.mkdir(parents=True, exist_ok=True)
-            tmp.write_text(json.dumps(doc))
+            _srm.make_dir(p.parent, parents=True, root=self.state_dir)
+            _srm.write_text(tmp, json.dumps(doc))
             os.replace(tmp, p)
         except OSError as e:
             if self._log:
@@ -3391,7 +3391,7 @@ def _reg_rows_note(sid: str, reg: dict) -> None:
 
 def write_reg(state_dir: Path, sid: str, reg: dict) -> None:
     p = _reg_path(state_dir, sid)
-    p.parent.mkdir(parents=True, exist_ok=True)
+    _srm.make_dir(p.parent, parents=True, root=state_dir)
     # Writer-unique temp name: during a kernel restart the OUTGOING kernel's session machinery and
     # the incoming kernel's boot reconcile can write the same sid's registry concurrently, and a
     # SHARED "<sid>.tmp" let one writer's os.replace steal the other's temp file mid-write
@@ -4479,7 +4479,7 @@ def write_lease(state_dir, lease: dict) -> None:
     bin/romp) is the same uid, so 0600 shuts nobody out; the directory's mode stays the umask's (the general
     finding the PR's notes record)."""
     p = lease_path(state_dir, lease["sid"])
-    p.parent.mkdir(parents=True, exist_ok=True)
+    _srm.make_dir(p.parent, parents=True, root=state_dir)
     tmp = p.with_name("%s.%d.%s.tmp" % (p.name, os.getpid(), uuid.uuid4().hex[:8]))
     try:
         fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -5607,7 +5607,7 @@ def flag_settings_path(state_dir, sid: str, *, ultracode: bool = False, fast: bo
     d = os.path.join(str(state_dir), FLAG_SETTINGS_DIR)
     p = os.path.join(d, "%s.json" % sid)
     try:
-        os.makedirs(d, exist_ok=True)
+        _srm.make_dir(d, parents=True, root=state_dir)
         # 0600, the serve-token treatment: the env block can carry secrets, and a default-umask file is
         # world-readable on a shared host (PR #889 review). The mode is set on the descriptor BEFORE the write:
         # a pre-existing file keeps its old mode through O_CREAT|O_TRUNC, and the trailing chmod this had until
@@ -5729,9 +5729,9 @@ _defaults_lock = threading.Lock()   # serializes the read-modify-writes below: t
 def _write_sdk_defaults(state_dir: Path, d: dict) -> None:
     """The one writer: atomic tmp+rename. Callers hold _defaults_lock."""
     p = _defaults_path(state_dir)
-    p.parent.mkdir(parents=True, exist_ok=True)
+    _srm.make_dir(p.parent, parents=True, root=state_dir)
     tmp = p.with_suffix(".tmp")
-    tmp.write_text(json.dumps(d))
+    _srm.write_text(tmp, json.dumps(d))
     os.replace(tmp, p)
 
 
@@ -16050,7 +16050,7 @@ class SdkBackend:
             _fold(hours, hour, 192)   # hour buckets, 8 days — the rolling 5h/7d windows read these
             try:
                 tmp = self.state_dir / "spend.json.tmp"
-                tmp.write_text(json.dumps({"days": days, "hours": hours}))
+                _srm.write_text(tmp, json.dumps({"days": days, "hours": hours}))
                 os.replace(tmp, p)
             except Exception as ex:
                 self._log("spend record failed: %s" % ex)
@@ -16291,7 +16291,7 @@ class SdkBackend:
                 return                                # no change → keep t honest
             try:
                 tmp = self.state_dir / "usage.json.tmp"
-                tmp.write_text(json.dumps(data))
+                _srm.write_text(tmp, json.dumps(data))
                 os.replace(tmp, self.state_dir / "usage.json")
             except Exception:
                 self._log("usage.json write failed: %s" % traceback.format_exc())   # never silent
@@ -16331,7 +16331,7 @@ class SdkBackend:
             hours.pop(k, None)
         try:
             tmp = self.state_dir / "usage-history.json.tmp"
-            tmp.write_text(json.dumps({"hours": hours}))
+            _srm.write_text(tmp, json.dumps({"hours": hours}))
             os.replace(tmp, p)
         except Exception:
             self._log("usage-history.json write failed: %s" % traceback.format_exc())
@@ -16422,7 +16422,7 @@ class SdkBackend:
                     "seven_day": cur.get("seven_day"), "fable": cur.get("fable")}
             try:
                 tmp = self.state_dir / "usage.json.tmp"
-                tmp.write_text(json.dumps(data))
+                _srm.write_text(tmp, json.dumps(data))
                 os.replace(tmp, self.state_dir / "usage.json")
             except Exception:
                 self._log("usage.json write failed: %s" % traceback.format_exc())   # never silent (the user 2026-07-02)

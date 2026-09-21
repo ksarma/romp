@@ -99,10 +99,10 @@ def install_runtime(state_dir):
     url = wheel_url()  # Refuse unsupported hosts before creating an installation.
     base = Path(state_dir).resolve() / 'codex-runtime'
     gr = _reader(state_dir)
-    base.mkdir(parents=True, exist_ok=True)
+    _srm.make_dir(base, parents=True, root=state_dir)
     target = base / VERSION
     # Serialize concurrent setup calls and publish only a validated full package.
-    with (base / 'install.lock').open('a') as lock:
+    with _srm.open_private(base / 'install.lock', 'a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
             return _package_path(target, gr)
@@ -125,7 +125,8 @@ def install_runtime(state_dir):
                 target.unlink()
             elif target.exists():
                 shutil.rmtree(target)
-            staging.rename(target)
+            _srm.make_dir(staging, root=state_dir)   # pip made the staging directory at the umask's mode: tightened to 0700 before it
+            staging.rename(target)                    # is published (the mode travels with the inode; the tree inside keeps pip's modes)
     return _package_path(target, gr)
 
 
