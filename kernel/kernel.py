@@ -35309,10 +35309,11 @@ def _subagent_tree_charge(kind, t0):
 # walk, or a validation of D_r lstats when a read on another thread has re-inserted it since), which re-indexes the stamps of
 # r's directories with no extra stat, and one re-fold per awaiting agent whose file was resolved under r (a stat each on a
 # quiescent file); every other root's pair, stamps and launch folds are untouched, so the cost of an eviction is D_r + A_r,
-# not the sum over every held root (which it was until 2026-09-21, round 1 of #882's ruling;
-# tests/test_subagent_tree_stamps_per_cycle.py's lab: at R roots of D directories and A agents with one unrelated eviction
-# between each pair of N reads, the round-1 head paid R x D x N lstats and R x A x N folds per cycle, the scoped
-# invalidation R x D and R x A, the same as with no eviction). A stamp the
+# not the sum over every held root (which it was until 2026-09-21, round 1 of #882's ruling; a lab lifted from
+# tests/test_subagent_tree_stamps_per_cycle.py's world and run outside the repo, its records kept outside it too: at
+# (R, D, A, N) = (1, 8, 3, 3) and (3, 8, 3, 3) with one or three unrelated roots evicted between each pair of the N reads,
+# the one-generation design paid R x D x N lstats and R x A x N folds per cycle, the scoped invalidation R x D and R x A,
+# the same as with no eviction). A stamp the
 # scope took itself for a directory of no held tree (the project directory on an agent-file miss) is vouched by no root and is
 # re-taken after any eviction; a table clear (_SUBAGENT_ROOT_EVICTED at its cap) drops every held entry once. The walk memo
 # made a call cost one lstat per known directory instead of a
@@ -35330,11 +35331,15 @@ def _subagent_tree_charge(kind, t0):
 # agents and the directories at once; with the scope it is sum_r D_r lstats (each root's one validation, whatever the
 # readers, agents and reads consult it), 0 stamp stats (D_r for a root whose command row's owner lookup re-checked stamps
 # before the tree was read) and sum_s A_s folds, plus the eviction term above and, while a fold faults, A_s folds per read.
-# Evidence, the lab (tests/test_subagent_tree_stamps_per_cycle.py's world at R sessions of D directories, A agents and N
-# reads, through the real _pusher_cycle and _jobs_cycle): at N in {1, 3, 5}, R in {1, 3, 9}, D in {8, 32, 96, 156} and A in
-# {3, 8} the cost before was N x R x A x D stats (72; 2,592; 12,636; 21,060; 33,696) and N x R x D lstats in every cell, and
-# with the scope R x D lstats and 0 stats in every cell, nine roots of 32 directories costing what three of 96 cost (288
-# lstats; before, 864 lstats and 2,592 stats both): the total directories decide, not their split over roots. Motivation, a
+# Evidence, a lab lifted from tests/test_subagent_tree_stamps_per_cycle.py's world (R sessions of D directories, A agents
+# and N reads, through the real _pusher_cycle and _jobs_cycle) and run outside the repo, its records kept outside it too:
+# in each of the cells run, (R, D, A, N) in {(1, 8, 3, 1), (1, 8, 3, 3), (1, 8, 3, 5), (9, 156, 3, 1), (9, 156, 3, 3),
+# (9, 156, 3, 5), (9, 156, 8, 3), (1, 156, 3, 3), (9, 8, 3, 3), (3, 96, 3, 3), (9, 32, 3, 3), (3, 32, 3, 3)}, the cost
+# before was N x R x A x D stats and N x R x D lstats (72 stats at (1, 8, 3, 3); 2,592 at (9, 32, 3, 3); 12,636 at
+# (9, 156, 3, 3); 21,060 at (9, 156, 3, 5); 33,696 at (9, 156, 8, 3)), and
+# with the scope R x D lstats and 0 stats, nine roots of 32 directories costing what three of 96 cost (288 lstats; before,
+# 864 lstats and 2,592 stats both): the total directories decide, not their split over roots, which the module's
+# SumOverRoots cases pin in the tree at three roots of unequal size through the real cycles. Motivation, a
 # dated reading and not the law's evidence: on two deployed kernels (2026-09-19), on one _dir_stamp's one os.stat was the top
 # self frame of a 20 s py-spy profile, 28% of the samples by that profile's reading, and on the other the memo's own counters
 # showed 24.5 million validation lstats in 6.8 hours over 1,294 directories (the user 2026-09-05, who wanted the one-core

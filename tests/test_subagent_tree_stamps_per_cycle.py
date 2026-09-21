@@ -64,13 +64,18 @@ any root's eviction: every held tree paid its D lstats again, every held stamp i
 through is the served read's (mtime, size) per directory, so a file landing after the hold under a directory the served
 listing lacked leaves the recorded key behind the next signature's re-stat and the tab is rebuilt, whether the landing moved
 the root's stamp or a listed child's; a fresh stat taken after the served listing recorded the post-landing key, equal to
-every later re-stat, and the tab that showed the file missing was never rebuilt.
+every later re-stat, and the tab that showed the file missing was never rebuilt. (7) The sum over roots: three alive
+sessions with trees of unequal size and unequal agent counts, read in one pusher cycle and in one jobs pass with the reads
+interleaved, cost the sum over their roots of D_r lstats (each root its own D_r), 0 stats and one fold per agent (the sum
+over the sessions of A_s), so the total directories decide the cycle's cost and not their split over roots (the derived
+cost sentence's pin in the tree; a lab lifted from this world measured the same at more sizes outside the repo).
 
 Every count is derived from D and A in the test, never written out. The cycle's jobs that read the tree through
 mechanisms of their own (the fold checkpoint writer's realpath per checkpointed file, the spend guard's window-file
 walk) are stubbed to nothing here, so what the spy counts is this memo's path alone. Synthetic fixtures only: a
 private placeholder sid, invented agent ids and descriptions, a temp state root with session hosts off.
 """
+import contextlib
 import errno
 import json
 import os
@@ -332,6 +337,16 @@ class _World(unittest.TestCase):
         km._subagent_scope_open()
         self.addCleanup(km._subagent_scope_close)
         return km._subagent_scope()
+
+    @staticmethod
+    def _counting_fold(folded):
+        """The REAL _agent_launch_ids behind a wrapper that records each file folded, by basename."""
+        real_fold = km._agent_launch_ids
+
+        def counting(agent_path, *a, **k):
+            folded.append(os.path.basename(str(agent_path)))
+            return real_fold(agent_path, *a, **k)
+        return mock.patch.object(km, "_agent_launch_ids", counting)
 
     @staticmethod
     def _stats():
@@ -1125,16 +1140,6 @@ class ScopedInvalidation(_World):
             self.assertNotIn(str(r), km._SUBAGENT_TREES)
         self.assertIn(str(self.sub), km._SUBAGENT_TREES, "the alive session's root stays")
 
-    @staticmethod
-    def _counting_fold(folded):
-        """The REAL _agent_launch_ids behind a wrapper that records each file folded, by basename."""
-        real_fold = km._agent_launch_ids
-
-        def counting(agent_path, *a, **k):
-            folded.append(os.path.basename(str(agent_path)))
-            return real_fold(agent_path, *a, **k)
-        return mock.patch.object(km, "_agent_launch_ids", counting)
-
     def test_a_held_tree_survives_the_eviction_of_a_root_it_is_not(self):
         _op, other = self._other_root()
         self._open()
@@ -1421,6 +1426,156 @@ class DependencyKey(_World):
         r_root, s_root, rs_root = self._keys(rec, root)
         self.assertEqual((r_root, rs_root), (s_root, s_root),
                          "the root is recorded too, under its served key, and its re-stat holds: nothing landed in it")
+
+
+class SumOverRoots(_World):
+    """(7) The cost across sessions is the sum over the roots read of each root's own figure, whatever the split (the
+    derived cost sentence in the comment block at _subagent_scope_open, docs/reference.md and the ledger entry; the lab
+    that measured it at more sizes lives outside the repo, this is its pin in the tree). Three alive sessions in one
+    project directory with trees of UNEQUAL size and UNEQUAL agent counts, setUp's (D, A) and EXTRA's, each read CALLS times
+    in one pusher cycle and in one jobs pass, the reads interleaved across the sessions (S0, S1, S2, S0, ...) as the
+    builds' are, so a scope that held one root at a time would validate on every read. Keys, per root: D_r os.lstat on its
+    directories (its one validation), 0 os.stat on them, A_r os.stat on its agent files and A_r folds (one per agent, since
+    every agent's owner is read from the other agents' launches when A_r >= 2); and over the cycle: the sum over the roots
+    of D_r lstats, the sum over the sessions of A_s folds, R validated hits, no walk, nothing evicted, served moved by the
+    asks the scope answered, and dirStats plus the sum of D_r - 1. Every figure is derived from the sessions' D_r and A_r in
+    the test. Before the scope each session's N reads paid N x D_s lstats and N x A_s x D_s stats, the cost linear in the
+    reads, the sessions, the agents and the directories at once."""
+
+    EXTRA = ((5, 2), (12, 5))   # (D_r, A_r) of the two sessions built beside setUp's (D, A) = (8, 3): unequal, each A_r >= 2
+
+    def _drop_memos(self, path, root):
+        """A session's entries out of the process-wide memos (setUp's _forget_memos for a session built here)."""
+        km._SUBAGENT_TREES.pop(root, None)
+        km._SUBAGENT_META_CACHE.pop(root, None)
+        for k in [k for k in list(km._SUBAGENT_FILE_CACHE) if k[0] == path]:
+            km._SUBAGENT_FILE_CACHE.pop(k, None)
+        for k in [k for k in list(km._AGENT_LAUNCH_IDS_CACHE) if str(k).startswith(root)]:
+            km._AGENT_LAUNCH_IDS_CACHE.pop(k, None)
+
+    def _sessions(self):
+        """setUp's session and, for each (D_r, A_r) in EXTRA, one more beside it in the project directory: its transcript,
+        name and live row, and a subagents tree of D_r directories (the root, workflows/, D_r - 2 workflow directories) with
+        A_r nested agents, aged, its memos warmed OUTSIDE any scope (setUp's idiom) and popped at cleanup. Returns
+        [(sid, transcript path, root, its directories, its agent ids)] in read order, the sizes asserted unequal."""
+        out = [(SID, self.path, str(self.sub), list(self.dirs), list(self.aids))]
+        rows = {SID: self._row()}
+        cdir = Path(self.td.name) / "work"
+        for s, (dr, ar) in enumerate(self.EXTRA, start=1):
+            self.assertGreaterEqual(dr, ar + 2, "each agent has a workflow directory of its own")
+            sid = "11111111-2222-3333-4444-7c7c7c7c7c%02x" % (0x80 + s)   # a PRIVATE placeholder sid per session
+            tpath = self.tpath.parent / (sid + ".jsonl")
+            tpath.write_text(self.tpath.read_text())
+            (jd.NAMES / sid).write_text("web%d\t%s\t#abcdef\n" % (s, str(cdir)))
+            sub = km._subagents_dir(tpath)
+            wfroot = sub / "workflows"
+            wfroot.mkdir(parents=True)
+            dirs = [str(sub), str(wfroot)]
+            aids = ["a%016x" % (0x7d00 + 0x100 * s + i) for i in range(ar)]
+            for i in range(dr - 2):
+                wf = wfroot / ("wf_%016x" % i)
+                wf.mkdir()
+                dirs.append(str(wf))
+                if i < ar:
+                    self._add_agent(wf, 100 * s + i, aids[i])
+            self.assertEqual(len(dirs), dr)
+            _age(sub)
+            self.addCleanup(self._drop_memos, str(tpath), str(sub))
+            rows[sid] = dict(self._row(), subagents=[{"type": "Workflow", "since": 100, "agentId": a} for a in aids])
+            out.append((sid, str(tpath), str(sub), dirs, aids))
+        km.Sessions.live = lambda: dict(rows)
+        for sid, path, root, dirs, aids in out[1:]:
+            aw = km._session_awaiting(sid, path, True)
+            self.assertEqual((aw or {}).get("count"), len(aids), "the warm read of the session sees its %d agents: %r" % (len(aids), aw))
+            self.assertEqual(len(km._SUBAGENT_TREES[root][0]), len(dirs), "the walk memo holds the session's %d directories" % len(dirs))
+            for aid in aids:
+                self.assertIsNotNone(km._SUBAGENT_FILE_CACHE.get((path, aid), (None, None))[1], "each agent's file resolved")
+        self.assertEqual(len({len(d) for _s, _p, _r, d, _a in out}), len(out), "premise: the trees are of unequal size: %r" % [len(d) for _s, _p, _r, d, _a in out])
+        self.assertEqual(len({len(a) for _s, _p, _r, _d, a in out}), len(out), "premise: the agent counts are unequal: %r" % [len(a) for _s, _p, _r, _d, a in out])
+        return out
+
+    def _cycle_over(self, what, run, tick):
+        sess = self._sessions()
+        by_root = {root: sid for sid, _p, root, _d, _a in sess}
+        rec = {"counts": {sid: [] for sid, _p, _r, _d, _a in sess}, "asked": {sid: [] for sid, _p, _r, _d, _a in sess}}
+        real = km._subagent_tree
+
+        def asking(d):
+            sc = _scope()
+            held = (sc["trees"].get(str(d)) if sc is not None else None)
+            out = real(d)
+            sid = by_root.get(str(d))
+            if sid is not None:
+                rec["asked"][sid][-1].append("served" if held is not None and out is held[0] else "validated")
+            return out
+
+        def job(now, live_map, **kw):
+            rec["scope"] = _scope()
+            with mock.patch.object(km, "_subagent_tree", asking):
+                for _ in range(CALLS):                    # interleaved: every session once, then again
+                    for sid, path, _root, _dirs, _aids in sess:
+                        rec["asked"][sid].append([])
+                        aw = km._session_awaiting(sid, path, True)
+                        rec["counts"][sid].append((aw or {}).get("count"))
+        setattr(km, tick, job)
+        folded = []
+        b = self._stats()
+        spies = {}
+        with contextlib.ExitStack() as es:
+            for _sid, _p, root, dirs, _a in sess:
+                spies[root] = es.enter_context(_Spy(set(dirs), root))   # one spy per tree: disjoint directory sets
+            es.enter_context(self._counting_fold(folded))
+            run()
+        d = self._delta(b)
+        self.assertIsNotNone(rec.get("scope"), "the %s opened the subagents-tree scope on its thread" % what)
+        self.assertTrue(getattr(km._live_scope, "subtrees", None) is None, "the scope ends with the %s" % what)
+        sum_d = sum(len(dirs) for _s, _p, _r, dirs, _a in sess)
+        sum_a = sum(len(aids) for _s, _p, _r, _d, aids in sess)
+        lstats = sum(sp.total()["dir_lstat"] for sp in spies.values())
+        self.assertEqual(lstats, sum_d,
+                         "os.lstat over the R = %d trees in one %s: %d; keyed on the sum over the roots read of D_r, %r = %d, the total "
+                         "directories whatever their split over roots (each root's one validation, however the sessions' reads "
+                         "interleave); before the scope N x that = %d, and a scope holding one root at a time pays it again"
+                         % (len(sess), what, lstats, [len(dirs) for _s, _p, _r, dirs, _a in sess], sum_d, CALLS * sum_d))
+        self.assertEqual(len(folded), sum_a,
+                         "launch folds over one %s: %d; keyed on the sum over the sessions of A_s, %r = %d, one per agent; before the "
+                         "scope N x that = %d" % (what, len(folded), [len(aids) for _s, _p, _r, _d, aids in sess], sum_a, CALLS * sum_a))
+        asks_total = 0
+        for sid, _path, root, dirs, aids in sess:
+            dr, ar = len(dirs), len(aids)
+            self.assertEqual(rec["counts"][sid], [ar] * CALLS, "each of the %d reads of the session saw its %d agents: %r" % (CALLS, ar, rec["counts"][sid]))
+            asks = rec["asked"][sid]
+            flat = [a for bucket in asks for a in bucket]
+            self.assertEqual(len(asks), CALLS)
+            self.assertTrue(all(asks), "every read of the session reached the tree memo at least once: %r" % (asks,))
+            self.assertEqual(flat, ["validated"] + ["served"] * (len(flat) - 1),
+                             "the asks on the session's root over one %s, flattened: %r; keyed on the shape, the first validating and every "
+                             "later one served the held pair, with the other sessions' reads in between (a scope holding one root at a time "
+                             "validates again after each of them)" % (what, asks))
+            asks_total += len(flat)
+            t = spies[root].total()
+            self.assertEqual((t["dir_lstat"], t["dir_stat"], t["file_stat"]), (dr, 0, ar),
+                             "(os.lstat on the root's directories, os.stat on them, os.stat on its agent files) for the root of D_r = %d "
+                             "directories and A_r = %d agents over one %s: %r; keyed on (D_r, 0, A_r): its one validation, no stamp "
+                             "re-check stat, one fold per agent; before the scope its N = %d reads paid (N x D_r, N x A_r x D_r, N x A_r) = %r"
+                             % (dr, ar, what, (t["dir_lstat"], t["dir_stat"], t["file_stat"]), CALLS, (CALLS * dr, CALLS * ar * dr, CALLS * ar)))
+            names = sorted("agent-%s.jsonl" % a for a in aids)
+            self.assertEqual(sorted(f for f in folded if f in set(names)), names, "one fold per agent of the session: %r" % (folded,))
+        self.assertEqual((d["hit"], d["miss"], d["evict"]), (len(sess), 0, 0),
+                         "memos.subagentTree over one %s: (hit, miss, evict) %r; keyed on (R = %d, 0, 0): one validated hit per root, no walk, "
+                         "nothing evicted (every session is alive)" % (what, (d["hit"], d["miss"], d["evict"]), len(sess)))
+        self.assertEqual(d["served"], asks_total - len(sess),
+                         "memos.subagentTree served over one %s: %d; keyed on the asks the scopes answered from a held pair, %d (every ask "
+                         "but each root's first)" % (what, d["served"], asks_total - len(sess)))
+        self.assertEqual(d["dirStats"], sum(len(dirs) - 1 for _s, _p, _r, dirs, _a in sess),
+                         "dirStats over one %s: %d; keyed on the sum over the roots of D_r - 1 = %d, the validations' lstats below each root and "
+                         "no stamp re-check stat" % (what, d["dirStats"], sum(len(dirs) - 1 for _s, _p, _r, dirs, _a in sess)))
+
+    def test_one_pusher_cycle_over_three_sessions_costs_the_sum_over_their_roots(self):
+        self._cycle_over("pusher cycle", km._pusher_cycle, "_turn_notify_tick")
+
+    def test_one_jobs_pass_over_three_sessions_costs_the_sum_over_their_roots(self):
+        self._cycle_over("jobs pass", km._jobs_cycle, "_auto_nudge_tick")
 
 
 if __name__ == "__main__":

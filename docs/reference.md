@@ -3692,10 +3692,12 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   else, so an eviction costs one read of that root at its next lookup in
   the cycle plus one fold per agent under it, its D plus its A, not a
   re-validation of every held tree (since 2026-09-21; before it one
-  process-wide generation emptied every scope on any eviction, and the lab
-  in `tests/test_subagent_tree_stamps_per_cycle.py` measured R roots of D
-  directories and A agents with one unrelated root evicted between each
-  pair of N reads at R x D x N lstats and R x A x N folds per cycle, against
+  process-wide generation emptied every scope on any eviction, and a lab
+  lifted from `tests/test_subagent_tree_stamps_per_cycle.py`'s world, run
+  outside the repo with its records kept outside it, measured R roots of D
+  directories and A agents with one or three unrelated roots evicted
+  between each pair of N reads, at (R, D, A, N) = (1, 8, 3, 3) and
+  (3, 8, 3, 3), at R x D x N lstats and R x A x N folds per cycle, against
   R x D and R x A once scoped, the figure with no eviction); a
   thread outside a cycle, a WS or HTTP handler's build or the act-now nudge
   pass, reads per call as before), with `hit` and `miss`
@@ -3720,13 +3722,17 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   session's N reads in the cycle paid its tree's D lstats and D stamp stats
   per agent whose launches were consulted, N x (A + 1) x D per session, a
   cost linear in the reads, the sessions, the agents and the directories at
-  once; the lab in `tests/test_subagent_tree_stamps_per_cycle.py`'s world,
-  R sessions of D directories with A agents and N reads driven through the
-  real cycle functions, measured N x R x A x D stats and N x R x D lstats
-  before in every cell of N in {1, 3, 5}, R in {1, 3, 9}, D in {8, 32, 96,
-  156} and A in {3, 8}, and R x D lstats with 0 stats after, the same 288
-  at nine roots of 32 directories as at three of 96: the total directories
-  decide, not their split over roots), plus D more for a root whose command
+  once; a lab lifted from `tests/test_subagent_tree_stamps_per_cycle.py`'s
+  world, R sessions of D directories with A agents and N reads driven
+  through the real cycle functions, run outside the repo with its records
+  kept outside it, measured N x R x A x D stats and N x R x D lstats before
+  and R x D lstats with 0 stats after in each of the cells run, (R, D, A, N)
+  in {(1, 8, 3, 1), (1, 8, 3, 3), (1, 8, 3, 5), (9, 156, 3, 1), (9, 156, 3,
+  3), (9, 156, 3, 5), (9, 156, 8, 3), (1, 156, 3, 3), (9, 8, 3, 3),
+  (3, 96, 3, 3), (9, 32, 3, 3), (3, 32, 3, 3)}, the same 288 at nine roots
+  of 32 directories as at three of 96: the total directories decide, not
+  their split over roots, which the module's `SumOverRoots` cases pin at
+  three roots of unequal size), plus D more for a root whose command
   row's owner lookup re-checks stamps before the tree is read, plus, per
   agent whose file is nowhere or under a sibling's tree, one stat of the
   project directory and one per directory of each sibling subagents tree
