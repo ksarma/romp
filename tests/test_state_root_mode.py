@@ -2049,11 +2049,49 @@ class AServedKernelRefusesAtRuntime(unittest.TestCase):
             time.sleep(0.5)
         raise unittest.SkipTest("hermetic kernel never served /healthz here")
 
-    def _await_exit(self, seconds=60):
+    def _await_exit(self, seconds=120):
+        """Poll for the child's exit up to `seconds`, True when it exited. 120 s (round 4d): the free-threaded 3.14t CI
+        cell runs the child kernel's boot and its housekeeping pass slower than this box's 3.12, and round 4's 30 s
+        budget on the two loosening arms ran out there ("unexpectedly None: the kernel exited") with no log to read."""
         for _ in range(int(seconds * 2)):
             if self.kernel.poll() is not None:
-                return
+                return True
             time.sleep(0.5)
+        return False
+
+    def _loosen_until_exit(self, seconds=120):
+        """chmod the root 0777 and poll for the kernel's exit up to `seconds`; (exited, re-loosenings). THE SIBLING'S
+        REPAIR (round 4d, found on the 3.14t CI cell and again here under load): the kernel's boot starts a daemon thread
+        that runs `romp-postal-service ensure` (kernel.py, _ensure_postal_bus), and the bus's import gate READS the root,
+        REFUSES a loosened one (exit 2, the distrust remedy, which the kernel logs as "postal bus ensure refused") and
+        re-tightens it to 0700 on its way out, read before repair. When the test's chmod lands while that child is
+        starting, the bus reads 0777 before the kernel's next housekeeping pass does, and the pass then reads 0700: the
+        kernel never saw the loosening and serves on. The kernel's own re-check is this test's subject, so a root found
+        0700 again while the kernel lives is loosened again and the count is returned for the assertion message; a
+        kernel that exits on a loosening it READ is the claim, and a sibling gate's repair between the chmod and the read
+        is the harness's race, not a miss of the kernel's. (What it shows about the product, recorded in the PR's notes:
+        a sibling writer's gate can hide a transient loosening from the kernel's cadence, and the bus's refusal is then
+        the only trace of it, in the kernel's log.)"""
+        os.chmod(self.root, 0o777)
+        reloosened = 0
+        for _ in range(int(seconds * 4)):
+            if self.kernel.poll() is not None:
+                return True, reloosened
+            try:
+                if _mode(self.root) != 0o777:
+                    os.chmod(self.root, 0o777)
+                    reloosened += 1
+            except OSError:
+                pass
+            time.sleep(0.25)
+        return False, reloosened
+
+    def _tail(self, n=1500):
+        """The child's captured stdout and stderr (one file), its last `n` characters, for an assertion message."""
+        try:
+            return open(self.klog).read()[-n:]
+        except OSError as e:
+            return "(kernel log unreadable: %s)" % e
 
     def test_a_pre_existing_writable_root_never_serves_the_kernel_exits_2_at_import(self):
         """THE IMPORT-READ RULE end to end: a pre-existing root THIS UID OWNS at 0777, no chmod interposed, planted before
@@ -2062,8 +2100,8 @@ class AServedKernelRefusesAtRuntime(unittest.TestCase):
         line ("re-tightened to 0700" and the old remedy)."""
         os.chmod(self.root, 0o777)
         self._spawn()
-        self._await_exit(60)
-        self.assertIsNotNone(self.kernel.poll(), "the kernel exited at import:\n" + open(self.klog).read()[-800:])
+        self._await_exit(120)
+        self.assertIsNotNone(self.kernel.poll(), "the kernel exited at import:\n" + self._tail())
         self.assertEqual(self.kernel.returncode, 2, open(self.klog).read()[-800:])
         log = open(self.klog).read()
         self.assertIn("read 0777 at import (writable by other local users: an other write bit), re-tightened to 0700", log)
@@ -2113,13 +2151,10 @@ class AServedKernelRefusesAtRuntime(unittest.TestCase):
         self._spawn()
         self._await_healthz()
         self.assertTrue(self._healthz(), "serving 200 on the 0700 root")
-        os.chmod(self.root, 0o777)
-        for _ in range(60):                                    # the jobs pass (every 0.5s at interval 0) finds it
-            if self.kernel.poll() is not None:
-                break
-            time.sleep(0.5)
-        self.assertIsNotNone(self.kernel.poll(), "the kernel exited on the loosened root")
-        self.assertEqual(self.kernel.returncode, 2, "exit 2:\n" + open(self.klog).read()[-1200:])
+        exited, reloosened = self._loosen_until_exit(120)      # the jobs pass (every 0.5s at interval 0) finds it
+        self.assertTrue(exited, "the kernel did not exit on the loosened root within 120 s (re-loosened %d times after a "
+                        "sibling gate tightened it); its log tail:\n%s" % (reloosened, self._tail()))
+        self.assertEqual(self.kernel.returncode, 2, "exit 2:\n" + self._tail())
         log = open(self.klog).read()
         self.assertIn("writable by other local users", log)
         self.assertIn("romp stops now", log)
@@ -2145,13 +2180,10 @@ class AServedKernelRefusesAtRuntime(unittest.TestCase):
         env = _kernel_env(self.lab, os.path.join(self.lab, "dist"), self.port, self.token)
         self.kernel = subprocess.Popen([sys.executable, shim], stdout=open(self.klog, "w"), stderr=subprocess.STDOUT, env=env)
         self._await_healthz()
-        os.chmod(self.root, 0o777)
-        for _ in range(60):
-            if self.kernel.poll() is not None:
-                break
-            time.sleep(0.5)
-        self.assertIsNotNone(self.kernel.poll(), "the kernel exited")
-        self.assertEqual(self.kernel.returncode, 2)
+        exited, reloosened = self._loosen_until_exit(120)
+        self.assertTrue(exited, "the kernel did not exit on the loosened root within 120 s (re-loosened %d times after a "
+                        "sibling gate tightened it); its log tail:\n%s" % (reloosened, self._tail()))
+        self.assertEqual(self.kernel.returncode, 2, "exit 2:\n" + self._tail())
         log = open(self.klog).read()
         stamps = [float(l.split("EXIT-STAMP", 1)[1]) for l in log.splitlines() if l.startswith("EXIT-STAMP")]
         self.assertEqual(len(stamps), 1, "the child stamped its exit exactly once:\n" + log[-1200:])
@@ -2630,6 +2662,83 @@ class TheGuardedReadersQuarantine(_KernelState):
         with mock.patch.object(importlib.util, "find_spec", fake_find_spec), mock.patch.object(km, "_sdk_backend", None), \
              contextlib.redirect_stderr(io.StringIO()):
             return km._ensure_sdk_on_path()
+
+    def test_a_fault_under_a_trusted_directory_propagates_as_the_primitive_raised_it_and_nothing_is_quarantined(self):
+        """Round 4d: an EACCES on a component whose parent the walk TRUSTED (this uid's, no symlink, not writable by
+        another) is that directory's fault, not a plant under it (nothing another uid could have put there). Each reader
+        runs its primitive and answers exactly as the bare primitive does on the same path (a PermissionError from
+        read_text, read_bytes, open, os_open, gzip_open, stat, listdir, scandir, iterdir and glob's consumption; exists
+        and isdir as the interpreter's pathlib answers them: 3.12 raises, 3.14 answers False), quarantines nothing, files
+        no row, says no line, and trusted_path reports the fault with ok True. Through round 4c the walk turned the
+        lstat's EACCES into a refusal ("could not be read") whose quarantine EACCES refused too, and the path read ABSENT:
+        the judge's _reg_spawned_at then answered None for a reg it could not read, and tests/test_planner_skip.py's
+        unreadable-sdk case keyed two sessions as reg-less and skipped them on the 3.14t CI cell (on 3.12 _sdk_owned's
+        Path.exists raised the same EACCES first and hid it). The controls: the same directory at 0700 reads; a symlink
+        planted beside it is still quarantined (the trust failures keep their contract)."""
+        if os.geteuid() == 0:
+            raise unittest.SkipTest("root reads every directory")
+        sdk = Path(self.root, "sdk")
+        sdk.mkdir(mode=0o700)
+        reg = sdk / "a.json"
+        reg.write_text('{"spawnedAt": 1}')
+        os.chmod(sdk, 0)
+        self.addCleanup(os.chmod, sdk, 0o700)
+
+        def outcome(fn):
+            try:
+                v = fn()
+                if hasattr(v, "close"):
+                    v.close()
+                return ("value", v if not hasattr(v, "close") else "handle")
+            except OSError as e:
+                return ("raise", type(e).__name__, e.errno)
+
+        def consumed(fn):
+            return lambda: list(fn())
+
+        pairs = [
+            (lambda: km._gr.read_text(reg), lambda: reg.read_text()),
+            (lambda: km._gr.read_bytes(reg), lambda: reg.read_bytes()),
+            (lambda: km._gr.open(reg), lambda: open(reg)),
+            (lambda: km._gr.os_open(reg), lambda: os.open(reg, os.O_RDONLY)),
+            (lambda: km._gr.gzip_open(reg), lambda: __import__("gzip").open(reg)),
+            (lambda: km._gr.stat(reg), lambda: reg.stat()),
+            (lambda: km._gr.exists(reg), lambda: reg.exists()),
+            (lambda: km._gr.isdir(reg), lambda: reg.is_dir()),
+            (lambda: km._gr.listdir(sdk), lambda: os.listdir(sdk)),
+            (consumed(lambda: km._gr.scandir(sdk)), consumed(lambda: os.scandir(sdk))),
+            (consumed(lambda: km._gr.iterdir(sdk)), consumed(lambda: sdk.iterdir())),
+            (consumed(lambda: km._gr.glob(sdk, "*.json")), consumed(lambda: sdk.glob("*.json"))),
+        ]
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            for guarded, bare in pairs:
+                g, b = outcome(guarded), outcome(bare)
+                if isinstance(g[1], os.stat_result) or (g[0] == "value" and isinstance(g[1], list)):
+                    g, b = (g[0], type(g[1]).__name__), (b[0], type(b[1]).__name__)
+                self.assertEqual(g, b, "the guarded reader answers as the bare primitive does")
+            self.assertEqual(outcome(lambda: km._gr.read_text(reg)), ("raise", "PermissionError", errno.EACCES))
+        t = srm.trusted_path(self.root, reg)
+        self.assertTrue(t["ok"], t)
+        self.assertIn("EACCES", t.get("fault") or "", t)
+        self.assertIsNone(t["reason"])
+        self.assertEqual(self._quarantined(), [], "nothing quarantined: a fault is not a plant")
+        self.assertEqual(km._gr.refused, [], "no refusal recorded")
+        self.assertEqual(self.refused_rows(), [], "no row")
+        self.assertEqual(err.getvalue(), "", "no line")
+        # the control: the same directory readable again reads the file through the same reader
+        os.chmod(sdk, 0o700)
+        self.assertEqual(km._gr.read_text(reg), '{"spawnedAt": 1}')
+        self.assertNotIn("fault", srm.trusted_path(self.root, reg))
+        # the contrast: a trust failure beside it keeps the quarantine contract
+        elsewhere = Path(tempfile.mkdtemp(), "b.json")
+        elsewhere.write_text("{}")
+        os.symlink(elsewhere, sdk / "b.json")
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(FileNotFoundError):
+                km._gr.read_text(sdk / "b.json")
+        self.assertEqual([r[1] for r in km._gr.refused], ["symlink"])
+        self.assertTrue(any(n.endswith(".sdk.b.json") for n in self._quarantined()), self._quarantined())
 
     def test_a_planted_sdkvenv_owned_by_another_uid_is_quarantined_and_never_on_sys_path(self):
         """kernel-1 of round 3: the venv directory reads as another uid's (os.lstat interposed for that one path: a

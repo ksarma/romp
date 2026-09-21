@@ -48,7 +48,15 @@ Three things live here.
    naming the path and the reason (owner, symlink, writable by another, or the lookup failure), and the reader then
    behaves AS IF THE PATH WERE ABSENT: FileNotFoundError from the readers that raise it for a missing file, an empty
    listing from the directory readers, False from isdir and exists, nothing added from sys_path_dir. A quarantine that
-   itself fails (EPERM, a busy mount) says so and still reads absent. A ROOT that itself fails the guard (gone, not a
+   itself fails (EPERM, a busy mount) says so and still reads absent. A FAULT IS NOT A PLANT (round 4d, 2026-09-21):
+   an EACCES or EPERM (any errno but ENOENT and ENOTDIR) on the lstat of a component whose parent the walk has just
+   trusted (this uid's, not a symlink, not writable by another local user, so holding nothing another uid put there;
+   an owner-only directory of ours with no search bit, 0600 or 000, is the case met) is the directory's fault and not
+   an entry's untrustworthiness: nothing is quarantined, no line is said and no row is filed, and the reader runs the
+   site's primitive, which raises the fault as the site's bare read raised it before round 4 (PermissionError from
+   Path.read_text; Path.exists answers as its interpreter's pathlib does), so a caller's own fault handling still
+   sees it (the judge's _reg_spawned_at files a judge-errors row and plans the session on a sentinel, where the
+   round-4 readers answered absent and the session was keyed as if its reg were gone). A ROOT that itself fails the guard (gone, not a
    directory, another uid's, writable by another) is the gate's case, not an entry's: the readers read absent,
    quarantine nothing, file no row, and say it once per process per root and cause. Nothing ever adopts a declined artifact and
    nothing is merely skipped: a skipped plant is re-adopted at the next boot (the ruling's B), a quarantined one is
@@ -531,8 +539,11 @@ def trusted_path(root, path, **lookups):
     process's effective uid, and not writable by another local user by the discriminator (never the directory's mode
     alone: a 0775 venv or a 0664 mirror under the owner's private group passes). Returns a dict: ok (bool), absent
     (bool: the walk met a missing component; ok is True then, the path reads as absent on its own), reason (None |
-    "outside" | "root" | "symlink" | "owner" | "writable" | "lookup" | "error"), detail (the text for the line),
-    component (the absolute path of the first failing component, or None), rel (the components below the root). The
+    "outside" | "root" | "symlink" | "owner" | "writable" | "lookup"), detail (the text for the line),
+    component (the absolute path of the first failing component, or None), rel (the components below the root), and
+    fault (present only when the lstat of a component under a TRUSTED parent failed with an errno other than ENOENT
+    or ENOTDIR, EACCES for one: ok is True, nothing is quarantined, and the reader's primitive raises the fault as the
+    site's bare read would; an entry a directory of ours refuses to show us is not a plant, round 4d). The
     root itself is RESOLVED first (a legitimate root reached through a symlink stays legitimate) and judged the same
     way as a component, with reason "root" when it fails (the gates own that case; the readers read absent and
     quarantine nothing, since the root is not an entry). `path` not under the root: ok False with reason "outside",
@@ -562,8 +573,15 @@ def trusted_path(root, path, **lookups):
         except (FileNotFoundError, NotADirectoryError):
             return {"ok": True, "absent": True, "reason": None, "detail": None, "component": None, "rel": rel}
         except OSError as e:
-            return {"ok": False, "absent": False, "reason": "error", "detail": "could not be read (%s)" % errno_text(e),
-                    "component": cur, "rel": rel}
+            # A FAULT, NOT A PLANT (round 4d): the lstat of an entry under a directory the walk has just trusted (this
+            # uid's, not a symlink, not writable by another local user, so holding nothing another uid put there) failed
+            # with EACCES (the directory has no search bit for us: an owner-only 0600 or 000 directory of ours), EPERM or
+            # another errno that is not ENOENT or ENOTDIR. Nothing here is untrusted; the entry cannot be judged, and the
+            # reader runs the site's primitive, which raises the same fault the site's bare read raised before round 4
+            # (the judge's _reg_spawned_at records a sentinel from that PermissionError). Through round 4c this arm was a
+            # refusal ("could not be read") whose quarantine EACCES refused too, and the path read ABSENT.
+            return {"ok": True, "absent": False, "reason": None, "detail": None, "component": None, "rel": rel,
+                    "fault": errno_text(e)}
         reason, detail = _judge_entry(st, uid, **lookups)
         if reason is not None:
             return {"ok": False, "absent": False, "reason": reason, "detail": detail, "component": cur, "rel": rel}
@@ -757,13 +775,13 @@ class Reader:
 
     def isdir(self, path):
         """A trusted directory at the path, by Path.is_dir (a Path) or os.path.isdir (a str); a symlinked directory under
-        the root is refused and quarantined by the guard, never followed. False when refused."""
+        the root is refused and quarantined by the guard, never followed. False when refused. A fault under a trusted
+        parent (EACCES from a directory of ours with no search bit) is the primitive's to answer, as at the site before
+        round 4: Path.is_dir raises it on 3.12 and answers False on 3.14, os.path.isdir answers False (round 4d; through
+        round 4c an OSError arm here answered False on every interpreter)."""
         if not self._ok(path):
             return False
-        try:
-            return path.is_dir() if _is_path(path) else os.path.isdir(path)
-        except OSError:
-            return False
+        return path.is_dir() if _is_path(path) else os.path.isdir(path)
 
     is_dir = isdir
 

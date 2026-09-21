@@ -551,6 +551,11 @@ class PlannerSkip(_World):
         if os.geteuid() != 0:
             os.chmod(jd.SDKDIR, 0)
             try:
+                # the reg read itself raises (the guarded reader propagates a fault under a trusted directory, round 4d of
+                # fork PR 874, where its round-4 form read the reg ABSENT and this case held on 3.12 only because
+                # _sdk_owned's Path.exists raised the same EACCES; on 3.14 Path.exists answers False to it)
+                with self.assertRaises(OSError):
+                    jd._reg_spawned_at(A)
                 self.assertEqual(self.run_pass()[1], 0, "sdk/ unreadable: every reg is a sentinel, no session skipped")
             finally:
                 os.chmod(jd.SDKDIR, 0o755)

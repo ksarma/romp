@@ -72,7 +72,8 @@ test("the gate, the clear, and the envelope mark all scope to LOGIN-billed calls
   // empty reply as an incomplete stage, and the wrapper holds none of the billing or the gate
   const run = JUDGE.slice(JUDGE.indexOf("def _judge_run_impl(")).split("\ndef ", 1)[0];
   const billing = run.indexOf('auth = "codex" if engine == "codex" else _judge_auth(fsid)');
-  const gate = run.indexOf('u = json.loads((STATE / "usage.json").read_text()) if auth == "login" else {}');
+  // usage.json is read through the state root's guarded reader (fork PR 874); the gate's shape is the same
+  const gate = run.indexOf('u = json.loads(_gr.read_text(STATE / "usage.json")) if auth == "login" else {}');
   assert.ok(billing >= 0 && gate > billing,
     "billing resolves BEFORE the login-only gate, including the Codex bypass");
   assert.match(run, /if auth == "login":\s*\n\s*# only a LOGIN-billed success is evidence/);
