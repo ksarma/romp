@@ -97,6 +97,17 @@ tests/test_kernel_boot_splash.py, which reads served_css.code for the tokens a c
 arguments (`_shim_core_js("chat")` renders another text), a text served under a name with none of the suffixes the rules
 read (the web app manifest; the `_reload_core` function), a name bound outside the function, a literal bound by assignment
 rather than a loop, and assertNotIn (a comment can red it, never green it) are outside this derivation.
+
+Where the two census tests run (2026-09-21, the author's pass after the maintainer's round 5): on ONE CI cell, the kernel's
+interpreter, Python 3.12 (the interpreter the deployed kernel is pinned to, docs/install.md's ROMP_PYTHON), and every other
+interpreter SKIPS them with the reason stated on the skip (_ONE_CELL_REASON) and substitutes nothing for them, the maintainer's
+rule for a guard that does not run. The design rests on a derivation: the census is a source-text fact, reading the test files'
+text and AST, the kernel's source and its rendered pages, none of which varies by interpreter, and its rows dumped as sorted JSON
+were byte-identical under 3.10, 3.12, 3.13 and 3.14 (the review record). The one AST input that does vary is a node's position
+inside an f-string's braces (PEP 701: a format spec's nested f-string spans the whole literal on 3.10 and its own text since
+3.12), which feeds a reader row's `source` column alone, so the premise the design stands on is that no reader row's node lies
+inside an f-string, and test_no_reader_row_lies_inside_an_f_string pins it by execution on EVERY interpreter (it carries no
+skip): the day a row moves into an f-string the one-cell design is re-opened by a red there, not found by drift between cells.
 """
 import ast
 import bisect
@@ -975,24 +986,54 @@ def _spans(kinds, text):
 
 
 @functools.lru_cache(maxsize=None)
+def population():
+    """The population's paths, sorted: every tests/test_*.py but this module, the two censuses' own glob and exclusion."""
+    return tuple(p for p in sorted(glob.glob(os.path.join(HERE, "test_*.py"))) if os.path.realpath(p) != os.path.realpath(__file__))
+
+
+@functools.lru_cache(maxsize=None)
+def _derived():
+    """(getters, constants, routes), the kernel-derived inputs of every derivation over the population, once per process."""
+    return page_getters(), served_constants(), route_getters()
+
+
+@functools.lru_cache(maxsize=None)
+def _readers(path):
+    """readers_of over one population module, derived once per process and keyed on the path: the population's files do not change
+    within a run, and the form-space tests call readers_of on their temp files directly, never through this cache. Read by
+    population_census on the census cell and by the f-string premise pin on every interpreter, so a cell that skips the census
+    parses each module and derives its reader rows and nothing else (the module docstring's last paragraph)."""
+    return readers_of(path, *_derived())
+
+
+@functools.lru_cache(maxsize=None)
 def population_census():
     """The census over the population, derived ONCE per process and read by both census tests: {module basename: (rows_of rows,
-    textual_census (sites, containers), _imports_parser, readers_of rows)} for every tests/test_*.py but this module, in sorted
-    order, each derivation over the kernel-derived getters, constants and routes. The population and the forms are the four
-    derivations' own; what this shares is the work: the two tests had each walked the population on their own and the reader
-    census had run rows_of a second time (CI's 3.10 cell, 2026-09-21: 144 s and 78 s, the job at 24 min 26 s against a 25-minute
-    cap), and with _parse every module is read and parsed once."""
-    getters, constants, routes = page_getters(), served_constants(), route_getters()
+    textual_census (sites, containers), _imports_parser, readers_of rows)} for every module of population(), in sorted order, each
+    derivation over the kernel-derived getters, constants and routes. The population and the forms are the four derivations' own;
+    what this shares is the work: the two tests had each walked the population on their own and the reader census had run rows_of
+    a second time (CI's 3.10 cell, 2026-09-21: 144 s and 78 s, the job at 24 min 26 s against a 25-minute cap), and with _parse
+    every module is read and parsed once (the reader rows through _readers inside this loop, so the parse is shared with them)."""
+    getters, constants, routes = _derived()
     out = {}
-    for path in sorted(glob.glob(os.path.join(HERE, "test_*.py"))):
-        if os.path.realpath(path) == os.path.realpath(__file__):
-            continue
+    for path in population():
         out[os.path.basename(path)] = (rows_of(path, getters, constants, routes), textual_census(path, getters, constants, routes),
-                                       _imports_parser(path), readers_of(path, getters, constants, routes))
+                                       _imports_parser(path), _readers(path))
     return out
 
 
+# the one CI cell that runs the two census tests, the kernel's interpreter (the module docstring's last paragraph): every other
+# interpreter skips them with _ONE_CELL_REASON on the skip, substitutes nothing, and runs the f-string premise pin
+_CENSUS_CELL = (3, 12)
+_ONE_CELL_REASON = ("the reader census is a source-text fact whose rows were derived byte-identical under Python 3.10, 3.12, 3.13 and 3.14 "
+                    "(2026-09-21, the review record), the only interpreter-sensitive AST input, a node's position inside an f-string's braces, "
+                    "reaching a reader row's source column alone, which no population row exercises (test_no_reader_row_lies_inside_an_f_string "
+                    "pins that here and on every interpreter), so the census runs on the kernel's interpreter cell, 3.12, and is skipped on "
+                    "this one, not replaced by anything")
+
+
 class ServedPinsReadElements(unittest.TestCase):
+    @unittest.skipUnless(sys.version_info[:2] == _CENSUS_CELL, _ONE_CELL_REASON)
     def test_no_assertion_over_a_served_text_is_satisfiable_by_a_comment(self):
         getters, constants, routes = page_getters(), served_constants(), route_getters()
         # the fetched-route map, derived from the handler by the walk: the landing's membership form and an equality form both read
@@ -1074,6 +1115,37 @@ class ServedPinsReadElements(unittest.TestCase):
                 bad.append("%s:%d %r %s %s: %d of %d occurrences inside a comment%s" % (
                     fname, line, lit, form, name + ("()" if name in getters else ""), len(inside), len(hits), " (prose only)" if len(inside) == len(hits) else ""))
         self.assertEqual(bad, [], "a pin a served comment can satisfy; read the parsed rule, the code with its comments removed or the element instead:\n" + "\n".join(bad))
+
+    def test_no_reader_row_lies_inside_an_f_string(self):
+        # the one-cell design's premise (the module docstring's last paragraph), pinned on EVERY interpreter: this test carries no
+        # skip. A reader row's `source` column is the module text between its node's positions, and a node's position inside an
+        # f-string's braces is the one AST input that differs by interpreter (PEP 701, 3.12), so the census's rows are the same on
+        # every interpreter exactly as long as no row's node sits inside an f-string. Derived from the census, not listed: every
+        # f-string of every population module is walked, and every node inside one is matched against that module's reader rows
+        # by line and by the source segment the way readers_of writes the column (the segment itself, or after the `<callee>: ` or
+        # `helper <name>: ` prefix of a method, value-use or unclassified row). The f-strings scanned and their replacement fields
+        # are counted, so a population that stopped holding any would red here rather than pass for nothing.
+        fstrings, braces, offending = 0, 0, []
+        for path in population():
+            tree, lines = _parsed(path)
+            rows = _readers(path)   # read right after the parse, so a cell that skips the census parses each module once here too
+            inside = {}
+            for js in ast.walk(tree):
+                if isinstance(js, ast.JoinedStr):
+                    fstrings += 1
+                    braces += sum(isinstance(v, ast.FormattedValue) for v in js.values)
+                    for node in ast.walk(js):
+                        if node is not js and hasattr(node, "lineno"):
+                            inside.setdefault(node.lineno, set()).add((_segment(lines, node) or "").replace("\n", " ")[:160])
+            for line, form, text, source in rows:
+                if any(s and (source == s or source.endswith(": " + s)) for s in inside.get(line, ())):
+                    offending.append("%s:%d %s %s: %s" % (os.path.basename(path), line, form, text, source))
+        self.assertGreater(fstrings, 0, "no f-string in the population: the premise is vacuous here, re-derive it")
+        self.assertGreater(braces, 0, "no f-string of the population carries a replacement field (%d f-strings): the premise is vacuous here" % fstrings)
+        self.assertEqual(offending, [], "a reader row's node lies inside an f-string (%d f-strings with %d replacement fields scanned), the one AST "
+                         "input whose positions differ by interpreter: the census's one-cell design (the module docstring) rests on there being "
+                         "none, so RE-OPEN it, every interpreter cell running the census or the row moved out of the f-string; the first: %s"
+                         % (fstrings, braces, offending[0] if offending else ""))
 
     def test_the_derivation_reads_the_forms_it_claims(self):
         # the population is a derivation, so its form space is pinned: a getter call inline, a Name bound in the function,
@@ -1233,6 +1305,7 @@ def test_module_level():
         # the containers the module pins, whatever the name: the getters, the constants, and `other` and `dyn` are not containers
         self.assertEqual(containers, {(g, True) for g in getters} | {("_LANDING_MOBILE_JS", False), (css, False), (html, False), (script, False), (mark, False)})
 
+    @unittest.skipUnless(sys.version_info[:2] == _CENSUS_CELL, _ONE_CELL_REASON)
     def test_every_reader_of_a_served_page_is_the_parser_or_a_stated_read(self):
         # the author's pass 9 (2026-09-20), the maintainer's round 5 ruling asked once, of every road that reads the served page, whether it is
         # HTML-correct or refuses what it cannot resolve: the change had moved the element reads onto html.parser as ruled and then
