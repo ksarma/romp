@@ -169,12 +169,15 @@ class DeliveryRidesTheSettle(unittest.TestCase):
     def _end_producer(self):
         """End the producer under test: the stop seam FIRST, the gate SECOND (the stuck tiers return, the pass completes
         under its stubs, the loop ends at its next turn of the wheel), the wake, then a bounded join; the flag is cleared
-        once the producer is dead. Idempotent: the body's tail calls it and the cleanup calls it again."""
+        once the producer is dead. Guarded for a producer never started (its ident is None: the body failed between the
+        cleanup's registration and the start). Idempotent: the body's tail calls it and the cleanup calls it again."""
+        producer = getattr(self, "producer", None)
         km._LOOPS_STOP.set()
         self.gate.set()
         km._producer_wake.set()
-        self.producer.join(10)
-        if not self.producer.is_alive():
+        if producer is not None and producer.ident is not None:
+            producer.join(10)
+        if producer is None or not producer.is_alive():
             km._LOOPS_STOP.clear()
 
     def _pass_in_flight(self, ran_on):
@@ -239,6 +242,28 @@ class DeliveryRidesTheSettle(unittest.TestCase):
         for p in self._pass_stubs():
             p.start()
             self.addCleanup(p.stop)
+        census0 = thread_census()            # leftovers() below is a census DIFFERENCE against this, as wait_for_census reads one
+        tail = None                          # the pre-fix case, bound below once its class exists; end_tail_producer reads it late
+
+        def end_tail_producer():
+            """End what the pre-fix shape leaves behind: the stop seam first, the gate second (the stuck tiers return and
+            the pass completes under this test's stubs), the wake, a bounded join, the flag cleared once the producer is
+            dead. Guarded for a producer never started (the body failed before the pre-fix case ran, or its start never
+            came). Idempotent: this body's tail calls it, and the cleanup calls it again."""
+            producer = getattr(tail, "producer", None)
+            km._LOOPS_STOP.set()
+            if getattr(tail, "gate", None) is not None:
+                tail.gate.set()
+            km._producer_wake.set()
+            if producer is not None and producer.ident is not None:
+                producer.join(10)
+            if producer is None or not producer.is_alive():
+                km._LOOPS_STOP.clear()
+
+        # Registered BEFORE the pre-fix case runs (tail.run below), the shape this module requires of every start: an
+        # assertion that fails between cannot leak the producer the pre-fix case leaves (planted, verified: a self.fail
+        # after tail.run(res) with the end only on this body's tail left the producer and its tiers behind).
+        self.addCleanup(end_tail_producer)
 
         class _Fixed(DeliveryRidesTheSettle):
             def test_fails(self):
@@ -262,8 +287,11 @@ class DeliveryRidesTheSettle(unittest.TestCase):
                     self.fail("planted: the body fails before its tail")
                     km._LOOPS_STOP.set(); gate.set(); km._producer_wake.set(); self.producer.join(5)   # never reached
 
-        def leftovers():
-            return sorted(t.name for t in threading.enumerate() if t.name in ("producer-under-test", "index", "triage"))
+        def leftovers(timeout=0.0):
+            """The threads alive now that were not at this test's start, by count: the Counter difference
+            tests/conftest.py's wait_for_census reads (polled up to `timeout` for a thread still reaching its exit), as
+            descriptors (the target's module.qualname), never absolute thread names."""
+            return wait_for_census(census0, timeout=timeout)
 
         fixed, res = _Fixed("test_fails"), unittest.TestResult()
         fixed.run(res)
@@ -271,7 +299,7 @@ class DeliveryRidesTheSettle(unittest.TestCase):
         self.assertIn("planted", res.failures[0][1])
         self.assertEqual(res.errors, [], res.errors)
         self.assertFalse(fixed.producer.is_alive(), "the cleanup registered before the start ended the producer")
-        self.assertEqual(leftovers(), [], "no producer or tier thread outlives the failed body")
+        self.assertEqual(leftovers(timeout=5.0), [], "no producer or tier thread outlives the failed body")
         self.assertFalse(km._LOOPS_STOP.is_set(), "the flag is cleared once the producer is dead")
 
         tail, res = _TailOnly("test_fails"), unittest.TestResult()
@@ -282,14 +310,13 @@ class DeliveryRidesTheSettle(unittest.TestCase):
         self.assertTrue(any("T282" in t and "romp_kernel_parkedlive._producer" in t for t in texts),
                         "the pre-fix shape leaks: the census names the producer and cannot stop it: %r" % (texts,))
         self.assertTrue(tail.producer.is_alive(), "wedged on the gate, alive after its test ended")
-        self.assertIn("producer-under-test", leftovers())
-        # this test ends what the pre-fix shape left: the stop seam first, the gate second, a bounded join
-        km._LOOPS_STOP.set()
-        tail.gate.set()
-        km._producer_wake.set()
-        tail.producer.join(10)
-        self.assertFalse(tail.producer.is_alive())
-        km._LOOPS_STOP.clear()
+        left = leftovers()
+        self.assertIn("romp_kernel_parkedlive._producer", left, left)
+        self.assertEqual(len(left), 3, "the producer and its two tier threads, wedged on the gate: %r" % (left,))
+        end_tail_producer()                  # the same end the cleanup holds; here it is also what is asserted
+        self.assertFalse(tail.producer.is_alive(), "the stop seam, the gate and a bounded join ended what the pre-fix shape left")
+        self.assertEqual(leftovers(timeout=5.0), [], "the tiers returned with the gate and the pass completed under the stubs")
+        self.assertFalse(km._LOOPS_STOP.is_set(), "the flag is cleared once the producer is dead")
 
     def test_two_parks_drain_one_per_settle_in_park_order(self):
         self.assertTrue(km._send_or_park(self.be, SID, "one", echo="human"))   # cannot forward: a send parks mid-turn
