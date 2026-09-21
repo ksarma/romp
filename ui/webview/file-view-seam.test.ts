@@ -1402,7 +1402,8 @@ test("the inertness premise, held where CI runs: MD_PURIFY is its six-key litera
 // every module those modules name in an import the compiler parses (an import declaration under any clause: a named import, a
 // type-only one, a namespace or default import, a side-effect import; an `export ... from`; an `import x = require()`; and a
 // dynamic `import()` or `require()` of a string literal), under any quote and across any line break, a specifier that is not a
-// string literal refused with its file and line (the file review's landing round's second read, tests-1 with extra5-1, extra7-1 and extra7-2:
+// string literal refused with its file and line, and a module the parser reports a diagnostic on refused with its line rather
+// than judged over the parser's recovery (the file review's landing round's second read, tests-1 with extra5-1, extra7-1 and extra7-2:
 // the regex resolver before it read a double-quoted specifier at a line's start alone, so a single-quoted import in any reached
 // module dropped that module and its whole closure from the judged set with nothing red, and its binding reader read
 // `import ... from` lines alone, so file-view.ts's require-bound gclock was outside the method-call guard), transitively, and
@@ -1520,19 +1521,40 @@ test("no re-parse after the adoption: mdBlock's post-adoption region and every m
   // above would not see it: every binding file-view.ts imports, under any form and from any source (the compiler's tree, so a
   // require-bound one, gclock, and a clause wrapped over lines are in the set; the file review's landing round's second read, extra7-1), is
   // asserted absent as the object of a method call in the region and in every reached local (the fork PR review's round-2
-  // verification named this blind spot, 2026-09-20)
+  // verification named this blind spot, 2026-09-20), the calls read off the compiler's tree under any access spelling (a property
+  // access, an optional chain, a bracket; the author's closing pass after the file review's landing round's second read: one regex
+  // over `b.name(` had left `gclock?.learnAll(box)` and `gclock["learnAll"](box)` silent)
+  /** The compiler's tree for `src`, REFUSED when the parser reports a diagnostic: a module the parser recovers over would be judged
+   *  over its recovery (an unterminated block comment before an import drops the import silently, an unterminated specifier is
+   *  followed as a wrong path), and a form this census cannot follow refuses with its line rather than passing over it (the author's
+   *  closing pass after the file review's landing round's second read). Every reader below parses through this. */
+  const parsed = (file: string, src: string): ts.SourceFile => {
+    const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, file.endsWith(".js") ? ts.ScriptKind.JS : ts.ScriptKind.TS);
+    const diags = (sf as unknown as { parseDiagnostics: ts.Diagnostic[] }).parseDiagnostics;
+    if (diags.length) { const d = diags[0]; throw new Error(file + ":" + (sf.getLineAndCharacterOfPosition(d.start ?? 0).line + 1) + ": the parser reports a diagnostic, so the module is refused rather than judged over the parser's recovery: " + ts.flattenDiagnosticMessageText(d.messageText, " ")); }
+    return sf;
+  };
   /** Every binding a module imports, by the compiler's tree: a default, a namespace, a named one (as renamed), an
-   *  `import x = require()`, and a variable bound to require() or to await import() (destructured or not), under any quote and
-   *  across any line break. */
+   *  `import x = require()`, and a variable bound to require() or to await import() (destructured or not), the loader reached
+   *  through an await, a cast (`as`, `<T>`, `satisfies`), a non-null mark, parentheses or a member chain (`require("./p").default`:
+   *  a binding to a member of a loaded module is one the module's code is called through), under any quote and across any line
+   *  break. */
   const bindingsOf = (src: string, file: string): Set<string> => {
-    const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const sf = parsed(file, src);
     const names = new Set<string>();
     const isLoader = (e: ts.Expression): boolean => ts.isCallExpression(e) && ((ts.isIdentifier(e.expression) && e.expression.text === "require") || e.expression.kind === ts.SyntaxKind.ImportKeyword);
+    const unwrap = (e: ts.Expression): ts.Expression => {
+      let x = e;
+      for (;;) {
+        if (ts.isAwaitExpression(x) || ts.isAsExpression(x) || ts.isTypeAssertionExpression(x) || ts.isSatisfiesExpression(x) || ts.isNonNullExpression(x) || ts.isParenthesizedExpression(x) || ts.isPropertyAccessExpression(x) || ts.isElementAccessExpression(x)) x = x.expression;
+        else return x;
+      }
+    };
     const bindName = (nm: ts.BindingName): void => { if (ts.isIdentifier(nm)) names.add(nm.text); else for (const el of nm.elements) if (ts.isBindingElement(el)) bindName(el.name); };
     const walk = (n: ts.Node): void => {
       if (ts.isImportDeclaration(n) && n.importClause) { const c = n.importClause; if (c.name) names.add(c.name.text); if (c.namedBindings) { if (ts.isNamespaceImport(c.namedBindings)) names.add(c.namedBindings.name.text); else for (const el of c.namedBindings.elements) names.add(el.name.text); } }
       else if (ts.isImportEqualsDeclaration(n)) names.add(n.name.text);
-      else if (ts.isVariableDeclaration(n) && n.initializer) { const init = ts.isAwaitExpression(n.initializer) ? n.initializer.expression : n.initializer; if (isLoader(init)) bindName(n.name); }
+      else if (ts.isVariableDeclaration(n) && n.initializer) { if (isLoader(unwrap(n.initializer))) bindName(n.name); }
       ts.forEachChild(n, walk);
     };
     walk(sf);
@@ -1540,20 +1562,47 @@ test("no re-parse after the adoption: mdBlock's post-adoption region and every m
   };
   const bindings = bindingsOf(VIEW, "file-view.ts");
   assert.ok(bindings.has("hljs") && bindings.has("linkifyFileText") && bindings.has("marked") && bindings.has("gclock"), "the reader sees the default, the named, the singleton and the require-bound imports (gclock: `const gclock = require(\"./gesture-clock.js\")`)");
-  // the binding reader, pinned by execution over a synthetic module holding each binding form: a default, a namespace, a named
-  // and a renamed one, a default beside a namespace under single quotes, a clause wrapped over lines, a namespace wrapped over
-  // lines, an import-equals, a require-bound name, a destructured require and an awaited import()
-  const bindingForms = 'import a from "./a";\nimport * as b from "./b";\nimport { c, d as e } from "./c";\nimport f, * as g from \'./f\';\nimport {\n  h,\n} from "./h";\nimport * as\n  i from "./i";\nimport j = require("./j");\nconst k = require("./k");\nconst { l } = require("./l");\nconst m = await import("./m");\n';
-  assert.deepEqual([...bindingsOf(bindingForms, "x.ts")].sort(), ["a", "b", "c", "e", "f", "g", "h", "i", "j", "k", "l", "m"], "the binding reader sees every binding form, under any quote and across a line break (a form it missed would leave a method call on that binding unguarded)");
-  /** The imported bindings `text` calls a method on (`ns.pass(box)`): the shape the bare-call list above cannot see. */
-  const methodCallsIn = (text: string): string[] => [...bindings].filter((b) => new RegExp("\\b" + b + "\\.\\w+\\(").test(text)).sort();
+  // the binding reader, pinned by execution over a synthetic module holding each binding form it reads: a default, a namespace, a
+  // named and a renamed one, a default beside a namespace under single quotes, a clause wrapped over lines, a namespace wrapped over
+  // lines, an import-equals, a require-bound name, a destructured require, an awaited import(), and a require reached through an
+  // `as` cast, parentheses, a `.default` member, a non-null mark and an awaited import()'s member
+  const bindingForms = 'import a from "./a";\nimport * as b from "./b";\nimport { c, d as e } from "./c";\nimport f, * as g from \'./f\';\nimport {\n  h,\n} from "./h";\nimport * as\n  i from "./i";\nimport j = require("./j");\nconst k = require("./k");\nconst { l } = require("./l");\nconst m = await import("./m");\nconst n = require("./n") as { learnAll: (x: unknown) => void };\nconst o = (require("./o"));\nconst p = require("./p").default;\nconst q = require("./q")!;\nconst r = (await import("./r")).default;\n';
+  assert.deepEqual([...bindingsOf(bindingForms, "x.ts")].sort(), ["a", "b", "c", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r"], "the binding reader sees each binding form pinned here, under any quote, across a line break and through a cast, parentheses, a non-null mark or a member of the loaded module (a form outside this list is outside the reader: a binding it missed would leave a method call on that binding unguarded)");
+  /** The imported bindings the code in `text` calls a method on, by the compiler's tree: every call whose callee, parentheses
+   *  unwrapped, is a property access (`ns.pass(box)`, `ns?.pass(box)`) or an element access (`ns["pass"](box)`) whose chain roots in an
+   *  identifier in `bindings` (so `ns.pass.call(null, box)` is seen through its inner access). `shape` says what `text` is: a
+   *  statement list (the region after the adoption) or a function's text from its parameter list on (a reached local's body as
+   *  localBody cuts it), each wrapped into a function so the compiler parses it whole; a parse diagnostic refuses. */
+  const methodCallsIn = (text: string, shape: "statements" | "signature" = "statements"): string[] => {
+    const sf = parsed("region.ts", shape === "statements" ? "function __region() {\n" + text + "\n}\n" : "function __region(" + text + "\n}\n");
+    const found = new Set<string>();
+    const walk = (n: ts.Node): void => {
+      if (ts.isCallExpression(n)) {
+        let c: ts.Expression = n.expression;
+        while (ts.isParenthesizedExpression(c)) c = c.expression;
+        if (ts.isPropertyAccessExpression(c) || ts.isElementAccessExpression(c)) {
+          let root: ts.Expression = c.expression;
+          while (ts.isPropertyAccessExpression(root) || ts.isElementAccessExpression(root) || ts.isParenthesizedExpression(root) || ts.isNonNullExpression(root)) root = root.expression;
+          if (ts.isIdentifier(root) && bindings.has(root.text)) found.add(root.text);
+        }
+      }
+      ts.forEachChild(n, walk);
+    };
+    walk(sf);
+    return [...found].sort();
+  };
   assert.deepEqual(methodCallsIn("gclock.learnAll(box); hljs.highlight(raw, { language: lang }); linkifyFileText(box);"), ["gclock", "hljs"], "the guard, driven: a method call on the require-bound binding and on the default import is seen, a bare call is not (the file review's landing round's second read, extra7-1: `gclock.learnAll(box)` planted after the adoption had left this test green, gclock being outside the binding set)");
-  for (const b of bindings) assert.doesNotMatch(after, new RegExp("\\b" + b + "\\.\\w+\\("), "no method call on the imported binding `" + b + "` after the adoption: a pass in that form would hide from the callee list above");
+  assert.deepEqual(methodCallsIn("gclock?.learnAll(box);"), ["gclock"], "an optional chain is a method call on the binding");
+  assert.deepEqual(methodCallsIn('gclock["learnAll"](box);'), ["gclock"], "a bracket access is one too (both spellings had passed the one-spelling regex)");
+  assert.deepEqual(methodCallsIn("(marked.parse)(s); hljs.highlight.call(null, raw); gclock!.learnAll(box);"), ["gclock", "hljs", "marked"], "parentheses around the callee, a call through .call and a non-null mark are seen through");
+  assert.deepEqual(methodCallsIn("const gclock2 = { x() {} }; gclock2.x(); learnAll(box); box.replaceChildren();"), [], "a name outside the binding set and a bare call are not method calls on an imported binding");
+  assert.deepEqual(methodCallsIn("figurePath: string): FigureTarget | null {\n  return gclock.learnAll(box);", "signature"), ["gclock"], "a local's text from its parameter list on is read whole");
+  assert.deepEqual(methodCallsIn(after), [], "no method call on an imported binding after the adoption (the compiler's tree, under any access spelling): a pass in that form would hide from the callee list above");
   /** file-view.ts's named imports from `./`: the binding to the module, for resolving a bare call (the compiler's tree, so any
    *  quote and any line break; a type-only clause included, as the reader before it took `import type {`). */
   const importsOf = (src: string): Record<string, string> => {
     const map: Record<string, string> = {};
-    const sf = ts.createSourceFile("file-view.ts", src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const sf = parsed("file-view.ts", src);
     for (const st of sf.statements) {
       if (!ts.isImportDeclaration(st) || !st.importClause?.namedBindings || !ts.isNamedImports(st.importClause.namedBindings)) continue;
       if (!ts.isStringLiteral(st.moduleSpecifier) || !st.moduleSpecifier.text.startsWith("./")) continue;
@@ -1568,10 +1617,11 @@ test("no re-parse after the adoption: mdBlock's post-adoption region and every m
    *  any quote and across any line break; each as a path relative to ui/webview (`x` to `x.ts`, a suffix kept as written), the
    *  npm packages apart. A specifier that is not a string literal (a template, with or without a substitution, a variable, an
    *  expression) REFUSES with the file, the form and the line, on the safe side: a module the walk cannot name is a module it
-   *  cannot judge (the file review's landing round's second read, tests-1, extra5-1, extra7-1, extra7-2). */
+   *  cannot judge (the file review's landing round's second read, tests-1, extra5-1, extra7-1, extra7-2); a module the parser
+   *  reports a diagnostic on refuses with its line too (`parsed`, above), never judged over the parser's recovery. */
   const importTargets = (src: string, from: string): { local: string[]; packages: string[] } => {
     const local = new Set<string>(), packages = new Set<string>();
-    const sf = ts.createSourceFile(from, src, ts.ScriptTarget.Latest, true, from.endsWith(".js") ? ts.ScriptKind.JS : ts.ScriptKind.TS);
+    const sf = parsed(from, src);
     const lineOf = (n: ts.Node): number => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
     const take = (spec: ts.Node | undefined, form: string, holder: ts.Node): void => {
       if (!spec || !ts.isStringLiteral(spec)) throw new Error(from + ":" + lineOf(holder) + ": " + form + " whose specifier is not a string literal (refused, on the safe side): " + holder.getText(sf).split("\n")[0].slice(0, 100));
@@ -1607,6 +1657,13 @@ test("no re-parse after the adoption: mdBlock's post-adoption region and every m
   for (const [bad, form] of [["export function f() { return import(`./x`); }", "import()"], ["const s = './x'; export function f() { return import(s); }", "import()"], ["const q = import('./' + name);", "import()"], ["const p = require(`./x`);", "require()"], ["const p = require(`./${name}`);", "require()"], ["const p = require(spec);", "require()"]] as const) {
     assert.throws(() => importTargets(bad, "x.ts"), new RegExp("^Error: x\\.ts:1: " + form.replace(/[()]/g, "\\$&") + " whose specifier is not a string literal \\(refused, on the safe side\\): "), "a non-literal specifier is refused with its line, never dropped: " + bad);
   }
+  // and a module the parser reports a diagnostic on is refused with its line by every reader, never judged over the recovery: an
+  // unterminated block comment before an import had dropped the import silently, an unterminated specifier was followed as a wrong
+  // path (the author's closing pass after the file review's landing round's second read)
+  assert.throws(() => importTargets("/* open\nimport { zz } from './zz-plant';", "x.ts"), /^Error: x\.ts:2: the parser reports a diagnostic, so the module is refused rather than judged over the parser's recovery: '\*\/' expected/, "the resolver refuses an unterminated block comment before an import, naming the line the diagnostic points at (the file's end)");
+  assert.throws(() => importTargets("import { zz } from './zz-plant;\n", "x.ts"), /^Error: x\.ts:1: the parser reports a diagnostic/, "and an unterminated specifier");
+  assert.throws(() => bindingsOf("const x = ;\nconst y = require('./y');\n", "x.ts"), /^Error: x\.ts:1: the parser reports a diagnostic/, "the binding reader refuses the same way");
+  assert.throws(() => importsOf("import { zz } from './zz-plant;\n"), /^Error: file-view\.ts:1: the parser reports a diagnostic/, "and the named-import reader");
   const viewImports = importsOf(VIEW);
   const localFns = new Set([...codeOnly(VIEW).matchAll(/^(?:export )?function (\w+)\(/gm)].map((m) => m[1]));
   const modules = new Set<string>(); const locals: string[] = [];
@@ -1636,7 +1693,7 @@ test("no re-parse after the adoption: mdBlock's post-adoption region and every m
   assert.deepEqual(reached, REACHED_LOCALS, "the local functions a post-adoption pass reaches, transitively over bare calls (a new one widens this list first)");
   assert.deepEqual(importedCallees, IMPORTED_CALLEES, "the imported functions a reached local calls, each to its module (a new one widens the module set first)");
   assert.deepEqual([...globals].sort(), [...GLOBAL_CALLS].sort(), "the globals a reached local calls (a new one is judged here first)");
-  for (const l of reached) for (const b of bindings) assert.doesNotMatch(localBody(l), new RegExp("\\b" + b + "\\.\\w+\\("), "no method call on the imported binding `" + b + "` in the reached local " + l + ": a pass in that form would hide from the walk");
+  for (const l of reached) assert.deepEqual(methodCallsIn(localBody(l), "signature"), [], "no method call on an imported binding in the reached local " + l + " (the compiler's tree, under any access spelling): a pass in that form would hide from the walk");
   const GLYPH_HOLDER = 'if (!figureGlyph) { const holder = el("span"); holder.innerHTML = ICON_EXPAND; figureGlyph = holder.firstElementChild ?? null; }';
   assert.deepEqual(reached.flatMap((l) => localBody(l).split("\n").filter((x) => RE_PARSE.test(x)).map((x) => l + ": " + x.trim())), ["figureControlGlyph: " + GLYPH_HOLDER], "the one re-parse a reached local holds is the glyph's holder (figureControlGlyph), judged: parsed once, cloned into each control");
   const glyphBody = localBody("figureControlGlyph");

@@ -136,16 +136,26 @@ function section() {
   return plan.slice(start, next < 0 ? plan.length : next);
 }
 
-test('the re-parse paragraph carries no typed addend beside a derived sum: the held text names no `<module>\'s <number word>` and no "those <number word> modules", a number there being a hole filled from the census, and the imported callees, their modules\' count and the pointer at JUDGED_SITES stand where the typed words stood (the file review\'s landing round\'s second read, extra8-1 with extra5-2, extra6-2, extra10-2 and tests-2)', () => {
+test('the re-parse paragraph carries no typed addend beside a derived sum: the held text names no number word within forty characters of a module token, in either order and under any phrasing (`<module>\'s <number word>`, `<number word> sites in <module>`), and no "those <number word> modules", a number there being a hole filled from the census, and the imported callees, their modules\' count and the pointer at JUDGED_SITES stand where the typed words stood (the file review\'s landing round\'s second read, extra8-1 with extra5-2, extra6-2, extra10-2 and tests-2; the author\'s closing pass after it keyed the guard on the property, two spellings having been refused before)', () => {
   const held = PARAGRAPHS.find(([opener]) => opener === '**The re-parse population.**')[1];
   const WORD = '(?:' + [...ONES.slice(1), ...TENS.slice(2)].join('|') + ')(?:-(?:' + ONES.slice(1, 10).join('|') + '))?';
-  const perModule = new RegExp("\\b[\\w-]+\\.(?:ts|js)'s " + WORD + "\\b");
+  const MODULE = '[\\w-]+\\.(?:ts|js)';
+  /** A number word within forty characters of a module token, in either order, the window stopping at a sentence's end, a
+   *  comma, a semicolon or a hole's braces: the shape of a typed addend beside its module, whatever the words between. The
+   *  comma is the read's boundary, stated: the paragraph's own list "one in a reached local, and code-block.ts's" is a count of
+   *  the road's sites beside the next clause's module, not an addend, and an addend written across a comma
+   *  ("preview.ts, two of them") is outside this read. */
+  const typedAddend = new RegExp('\\b' + WORD + '\\b[^.,;{}]{0,40}\\b' + MODULE + '\\b|\\b' + MODULE + '\\b[^.,;{}]{0,40}\\b' + WORD + '\\b');
   const thoseModules = new RegExp('\\bthose ' + WORD + ' modules\\b');
-  assert.doesNotMatch(held, perModule, 'a per-module count typed into the paragraph: the breakdown is JUDGED_SITES\'s and the paragraph points there');
+  const hit = typedAddend.exec(held);
+  assert.equal(hit, null, 'a per-module count typed into the paragraph, a number word beside a module token: the breakdown is JUDGED_SITES\'s and the paragraph points there' + (hit ? ': ' + JSON.stringify(hit[0]) : ''));
   assert.doesNotMatch(held, thoseModules, 'a count of the imported callees\' modules typed into the paragraph: the hole {IMPORTED_CALLEE_MODULES} is its home');
   assert.ok(held.includes('({IMPORTED_CALLEES}, ') && held.includes('those {IMPORTED_CALLEE_MODULES} modules') && held.includes('(JUDGED_SITES, per module)'), 'the imported callees and their modules\' count are holes, and the per-module breakdown points at JUDGED_SITES');
-  // the regexes are armed: the typed words the round found would be red here
-  assert.match("preview.ts's two (the lightbox", perModule); assert.match('so those three modules sat', thoseModules);
+  // the regexes are armed: the typed words the round found, and the phrasing the two-spelling guard passed, are red here; a
+  // number word with no module token in its window, or a module token whose window a semicolon or a hole closes, is not
+  for (const typed of ["preview.ts's two (the lightbox", 'two sites in preview.ts among them;', 'reader-place.ts holds four such lines', 'and in anchor-map.ts three']) assert.match(typed, typedAddend, 'armed on: ' + typed);
+  for (const fine of ['the two sums the paragraph states', "file-view.ts's, counted below; two", 'code-block.ts ({SITES} lines), two', 'twenty-six lines. code-block.ts holds', "one in a reached local, and code-block.ts's", 'preview.ts, two of them, and']) assert.doesNotMatch(fine, typedAddend, 'not armed on (the window stops at a comma, the stated boundary): ' + fine);
+  assert.match('so those three modules sat', thoseModules);
 });
 
 test('the fix section is in the plan once, after Out of scope, and its text stops at the next section', () => {

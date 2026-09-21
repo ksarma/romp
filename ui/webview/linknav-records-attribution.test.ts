@@ -752,3 +752,19 @@ test("road 2's gate (the file review's round 5, tests-7): a pure function over g
     fs.rmSync(repo, { recursive: true, force: true });
   }
 });
+
+test("ROAD_TWO_GATED_CHECKS is derived from this module's own code, never typed alone: the count of calls of roadTwo over REPO in the code, its comment units blanked (source-units' comments, the compiler's ranges), equals the export, and the merge-base is read in roadTwo alone, so a second check keyed on the delta added here without the export following is red here and not only in the plan's sentence (the author's closing pass after the file review's landing round's second read: the export was a typed count held to the plan's word and to nothing in this module)", () => {
+  const blank = (text: string): string => { let code = text; for (const c of comments(text, THIS_MODULE)) code = code.slice(0, c.pos) + code.slice(c.pos, c.end).replace(/[^\n]/g, " ") + code.slice(c.end); return code; };
+  const src = read(THIS_MODULE);
+  const code = blank(src);
+  assert.equal(code.length, src.length, "blanking keeps every offset");
+  const CALL = /\broadTwo\(REPO, /g;
+  const sites = (code.match(CALL) || []).length;
+  assert.equal(sites, ROAD_TWO_GATED_CHECKS, "the checks keyed on the delta in this module are its calls of roadTwo over REPO, " + sites + " in the code; the export says " + ROAD_TWO_GATED_CHECKS + " (a string literal quoting such a call counts here too, a false red this message explains; a comment quoting one does not)");
+  assert.equal((code.match(/git\("merge-base", "origin\/main", "HEAD"\)/g) || []).length, 1, "the merge-base is read in roadTwo alone, so every check keyed on the delta here goes through roadTwo and is counted above");
+  // armed: a second call site in the code counts, one in a comment does not
+  // (the plants are assembled from parts, since a string literal spelling the call in this module would count above)
+  const call = "roadTwo" + "(REPO, reviews, THIS_MODULE)";
+  assert.equal(((code + "\nconst zz = " + call + ";\n").match(CALL) || []).length, ROAD_TWO_GATED_CHECKS + 1, "a second call site counts");
+  assert.equal((blank(src + "\n// a note quoting " + call + "\n").match(CALL) || []).length, ROAD_TWO_GATED_CHECKS, "a call quoted in a comment does not count");
+});
