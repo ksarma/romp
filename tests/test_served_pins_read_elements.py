@@ -647,8 +647,9 @@ _RE_FUNCS = {"search", "match", "fullmatch", "findall", "finditer", "split", "su
 _ASSERTS = {"assertIn", "assertNotIn", "assertEqual", "assertNotEqual", "assertTrue", "assertFalse", "assertIs", "assertIsNot", "assertIsNone", "assertIsNotNone",
             "assertMultiLineEqual", "assertRegex", "assertNotRegex", "assertCountEqual", "assertLess", "assertGreater", "assertLessEqual", "assertGreaterEqual"}
 # the forms a read of a served text can take (readers_of); the census test states which are the parser road or a stated read and reds on the rest
+# (`splice`, the close of the author's pass 9: the text copied into another string by concatenation, %-format or an f-string, not read there)
 READER_FORMS = ("parser", "assert", "position", "view-pin", "position-unpinned", "membership-unpinned", "regex", "slice", "span-slice", "method", "conversion",
-                "value-use", "compare", "unclassified")
+                "value-use", "splice", "compare", "unclassified")
 # served_css functions returning a TEXT derived from the one they are given, its comments blanked with offsets kept: a VIEW of the text,
 # the author's pass 6 re-point form (a literal membership or position pin over one is not comment-satisfiable by construction: `view-pin`)
 _VIEWS = {"code", "markup", "js_code", "css_code"}
@@ -658,7 +659,10 @@ _COPIES = {"lower", "upper", "casefold", "strip", "lstrip", "rstrip", "replace",
            "title", "capitalize", "zfill", "center", "ljust", "rjust", "split", "rsplit", "splitlines", "partition", "rpartition", "format"}
 # callables that take a served text WHOLE and read nothing of it, the stated allowlist behind `value-use`; any other callee handed the
 # text is `unclassified` and reds the census (a parser of its own, an imported helper, a compiled pattern from another module)
-_VALUE_USES = {"dumps", "len", "print", "isinstance", "write", "repr", "str", "type", "bool"}
+_VALUE_USES = {"dumps", "len", "print", "isinstance", "write", "repr", "str", "type", "bool",
+               # a child process's argument vector, by qualified name (the close of the author's pass 9: a script constant's slice handed to
+               # node inside the list, `subprocess.run([node, "-e", harness, post, ...])`, is executed there, not read here)
+               "subprocess.run", "subprocess.check_output", "subprocess.Popen"}
 
 
 def _module_bindings(tree, getters, constants, routes):
@@ -701,12 +705,22 @@ def readers_of(path, getters, constants, routes=None):
     (`slice`); any other str method on X (`method`, the method's name in the source column); X.encode/decode/read (`conversion`:
     bytes to text and back, no content read); X handed whole to any other `self.assert*` (`assert`: a whole-text compare); X handed
     whole to a callable of the stated allowlist _VALUE_USES (json.dumps, len, print, isinstance, a file's write, repr, str, type,
-    bool) or as the ARGUMENT of another string's str method (`other.replace("__X__", X)`: spliced or compared, not read) (`value-use`:
-    the text is not read at that site); X as the operand of a comparison other than a membership (`compare`); X handed whole to any
-    other callable (`unclassified`: a compiled pattern imported from another module, an inline `re.compile(...).search`, an imported
-    helper, a parser of its own, a lambda; red in the census). A module-level function of the same module called with X is
-    FOLLOWED one level, its parameter bound to the text, so a membership or a read inside a helper (`_has(self, lit, body)`) is a
-    row at the helper's own line."""
+    bool, and by qualified name a child process's argument vector, subprocess.run, check_output and Popen) or as the ARGUMENT of
+    another string's str method (`other.replace("__X__", X)`: spliced or compared, not read) (`value-use`: the text is not read at that
+    site); X as the operand of a comparison other than a membership (`compare`); X handed whole to any other callable (`unclassified`: a
+    compiled pattern imported from another module, an inline `re.compile(...).search`, an imported helper, a parser of its own, a
+    lambda; red in the census). A module-level function of the same module called with X is FOLLOWED one level, its parameter bound
+    to the text, so a membership or a read inside a helper (`_has(self, lit, body)`) is a row at the helper's own line.
+    The close of the author's pass 9 made the walk read what the sentences above already claimed of "X": X is handed to a callable
+    by KEYWORD as well as by position (`parse_it(text=page)`, `self.assertIn("x", container=page)`, `re.search("x", string=page)`; a
+    followed helper binds a keyword to its parameter by name); a SPLICE of X into another string (`page + "x"`, `"%s" % page`,
+    `f"{page}"`) is a row of its own (`splice`: the text copied, not read) and derives from X as a copy does, so a read over the
+    result is `position-unpinned` or `membership-unpinned` and a callee handed it is classified as if handed X; a CONTAINER literal
+    holding X (a list, tuple, set or dict, a starred element) derives from X the same way, so `json.dumps({"k": page})` is a
+    value-use and `parse_it([page])` unclassified; `self.assertRegex(X, pattern)` and assertNotRegex are `regex`, a pattern run over
+    the text, not a whole-text compare; and for assertIn and assertNotIn the row is over the CONTAINER (the second argument or
+    `container=`), the text read, a served text in the member position being compared whole (`assertIn("x" + km._SVG, page)` is an
+    `assert` over the page). Before the close each of these was no row at all, or the assertRegex an `assert`."""
     with open(path, encoding="utf-8") as f:
         src = f.read()
     tree = ast.parse(src, path)
@@ -747,13 +761,33 @@ def readers_of(path, getters, constants, routes=None):
             f = x.func
             if isinstance(f, ast.Attribute) and f.attr in _COPIES:
                 return text_of(f.value, names, attrs, derived)
+        # the close of the author's pass 9: a SPLICE of the text into another string (a concatenation or a %-format, an f-string) and a
+        # CONTAINER literal holding it (a list, tuple, set or dict, a starred element) derive from the text too: the walk had read
+        # neither, so a read over `page + "x"`, over `f"{page}"` or through `[page]` handed to a call produced no row at all
+        if isinstance(x, ast.BinOp):
+            return text_of(x.left, names, attrs, derived) or text_of(x.right, names, attrs, derived)
+        if isinstance(x, ast.JoinedStr):
+            parts = [v.value for v in x.values if isinstance(v, ast.FormattedValue)]
+        elif isinstance(x, (ast.List, ast.Tuple, ast.Set)):
+            parts = x.elts
+        elif isinstance(x, ast.Dict):
+            parts = [v for v in x.values if v is not None]
+        elif isinstance(x, ast.Starred):
+            parts = [x.value]
+        else:
+            return None
+        for part in parts:
+            t = text_of(part, names, attrs, derived)
+            if t:
+                return t
         return None
 
     def basis_of(x, names, attrs, derived):
-        """None for the text itself, "view" for a served_css view of it, "copy" for a str-method copy, a slice or a piece of it."""
+        """None for the text itself, "view" for a served_css view of it, "copy" for a str-method copy, a slice or a piece of it, a splice
+        of it into another string or a container literal holding it."""
         if isinstance(x, ast.Name):
             return derived.get(x.id)
-        if isinstance(x, ast.Subscript):
+        if isinstance(x, (ast.Subscript, ast.BinOp, ast.JoinedStr, ast.List, ast.Tuple, ast.Set, ast.Dict, ast.Starred)):
             return "copy"
         if isinstance(x, ast.Call):
             if is_view(x):
@@ -818,7 +852,9 @@ def readers_of(path, getters, constants, routes=None):
                     else:
                         rows.append((node.lineno, "unclassified", t, seg(node)))
                     continue
-                served = [(i, a) for i, a in enumerate(node.args) if text(a)]
+                # the arguments that are a served text, positional by index and keyword by name (the close of the author's pass 9: the
+                # walk had read positional arguments alone, so `parse_it(text=page)` and `self.assertIn("x", container=page)` were no row)
+                served = [(i, a) for i, a in enumerate(node.args) if text(a)] + [(kw.arg, kw.value) for kw in node.keywords if text(kw.value)]
                 if not served:
                     continue
                 arg = served[0][1]
@@ -829,7 +865,22 @@ def readers_of(path, getters, constants, routes=None):
                 elif isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and (f.value.id == "re" and f.attr in _RE_FUNCS or f.value.id in patterns):
                     rows.append((node.lineno, "regex", t, seg(node)))
                 elif isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "self" and f.attr in _ASSERTS:
-                    rows.append((node.lineno, pin("assert", arg) if f.attr in ("assertIn", "assertNotIn") else "assert", t, seg(node)))
+                    if f.attr in ("assertRegex", "assertNotRegex"):
+                        # a pattern run over the text: a regex read, not a whole-text compare (the close of the author's pass 9: it had read
+                        # as `assert`, so a regex over raw markup on the parser road was not red)
+                        form = "regex"
+                    elif f.attr in ("assertIn", "assertNotIn"):
+                        # what is READ is the container (the second argument, or `container=`); a served text in the member position is
+                        # compared whole, spliced or not (the close of the author's pass 9: a splice in the member position had read as a
+                        # pin over a copy, a raw read of the constant the page was searched for)
+                        container = node.args[1] if len(node.args) > 1 else next((kw.value for kw in node.keywords if kw.arg == "container"), None)
+                        if container is not None and text(container):
+                            form, t = pin("assert", container), text(container)   # the row is over the text read, the container's
+                        else:
+                            form = "assert"
+                    else:
+                        form = "assert"
+                    rows.append((node.lineno, form, t, seg(node)))
                 elif depth == 0 and (isinstance(f, ast.Name) and f.id in helpers or isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name)
                                      and f.value.id == "self" and f.attr in methods and f.attr not in _ASSERTS):
                     # a helper of this module, or a method of the same class (`self._code(js)`; the fixer pass of the author's pass 9): followed once
@@ -837,15 +888,19 @@ def readers_of(path, getters, constants, routes=None):
                     params = [a.arg for a in h.args.args]
                     if isinstance(f, ast.Attribute) and params and params[0] == "self":
                         params = params[1:]
-                    bound = {params[i]: text(a) for i, a in served if i < len(params)}
+                    bound = {params[i]: text(a) for i, a in served if isinstance(i, int) and i < len(params)}
+                    bound.update({k: text(a) for k, a in served if isinstance(k, str) and k in params})   # a keyword argument binds its parameter by name
                     rows.append((node.lineno, "value-use", t, "helper %s: " % callee + seg(node)))
                     rows += walk(h, dict(bound), dict(attrs), depth + 1, {}, methods)
-                elif callee in _VALUE_USES:
+                elif callee in _VALUE_USES or isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id + "." + f.attr in _VALUE_USES:
                     rows.append((node.lineno, "value-use", t, "%s: " % callee + seg(node)))
                 elif isinstance(f, ast.Attribute) and f.attr in _STR_READS and not text(f.value):   # another string's method: the text is its argument
                     rows.append((node.lineno, "value-use", t, "%s: " % callee + seg(node)))
                 else:
                     rows.append((node.lineno, "unclassified", t, "%s: " % callee + seg(node)))
+            elif isinstance(node, (ast.BinOp, ast.JoinedStr)) and text(node):
+                # the splice itself: the text copied into another string, not read (what reads the result is a read over a copy)
+                rows.append((node.lineno, "splice", text(node), seg(node)))
             elif isinstance(node, ast.Subscript) and text(node.value):
                 sl = node.slice
                 spans = isinstance(sl, ast.Slice) and (sl.lower is not None or sl.upper is not None) \
@@ -1136,7 +1191,8 @@ def test_module_level():
         # element's extent or attributes; `view-pin`: a literal membership or position pin over the parser's comment-blanked VIEW of
         # the text, served_css.code, markup, js_code or css_code, the author's pass 6 re-point form, not comment-satisfiable by construction;
         # `span-slice`: parser-derived offsets; `conversion` and `value-use`: the text handed whole to a callable of the stated
-        # allowlist, not read here; `compare`); a raw read of markup (`regex`, `slice`, `method`, `position-unpinned`,
+        # allowlist, not read here; `splice`: the text copied into another string, not read there, what reads the result being a
+        # read over a copy; `compare`); a raw read of markup (`regex`, `slice`, `method`, `position-unpinned`,
         # `membership-unpinned`, the last two also a literal pin over a COPY of the text, a str-method result, a slice or a line of
         # it, which the pins census does not judge): a road beside the parser, which a module that has adopted the parser road (it
         # IMPORTS served_css, _imports_parser) may not keep, and which a module that has not is reported with (the sweep left, a
@@ -1164,7 +1220,7 @@ def test_module_level():
         def status(fname, line, form, text, source):
             if form == "position" and (fname, line, text) not in pins:
                 form = "position-unpinned"   # a position pin the pins census does not see (inside a followed helper): raw
-            if form in ("parser", "assert", "position", "view-pin", "span-slice", "conversion", "value-use", "compare"):
+            if form in ("parser", "assert", "position", "view-pin", "span-slice", "conversion", "value-use", "splice", "compare"):
                 return form
             if form == "unclassified":
                 return "unclassified"
@@ -1237,7 +1293,14 @@ def test_module_level():
         # position-unpinned or membership-unpinned; the method itself a row), a module-level binding and an alias (a pins-census
         # row: position), a bare assert's literal membership (assert), another string's method taking the text (value-use), a
         # method of the class followed one level, and three callees outside the allowlist (unclassified: an imported compiled
-        # pattern, an imported helper, a parser of its own), so the catch-all is met too
+        # pattern, an imported helper, a parser of its own), so the catch-all is met too. The close of the author's pass 9 adds the
+        # forms the walk had been silent on (no row at all): a text handed by keyword (to an unknown callee: unclassified; as
+        # assertIn's container: assert; to re.search: regex; to a helper, bound to its parameter by name so the helper's read is a
+        # row), a splice by concatenation, by %-format and by f-string (the splice itself, and a position pin over the result:
+        # position-unpinned; a bound splice with a bare-assert membership over it: membership-unpinned), a dict literal handed to
+        # json.dumps and a list literal handed to another string's join, to subprocess.run and, starred, to print (value-use), a list
+        # handed to list() (unclassified), assertRegex over the text (regex, where it had read as assert), and a splice in
+        # assertIn's member position (the row is over the container, the page; the splice its own row over the constant)
         getters, constants, routes = page_getters(), served_constants(), route_getters()
         src = '''
 import re
@@ -1295,6 +1358,24 @@ class T(unittest.TestCase):
         PAT2.search(page)
         parse_it(page)
         etree.fromstring(page)
+        parse_it(text=page)
+        self.assertIn("k1", container=page)
+        re.search("k2", string=page)
+        (page + "k3").index("k4")
+        f"{page}".index("k5")
+        ("%s" % page).index("k6")
+        cat = page + "k7"
+        assert "k8" in cat
+        json.dumps({"k": page})
+        "".join([page])
+        subprocess.run([node, "-e", page])
+        print(*[page])
+        list(page)
+        self.assertRegex(page, "k9")
+        self.assertIn("k10" + km._LANDING_MOBILE_JS, page)
+        _kw(self, "k11", body=page)
+def _kw(self, lit, body):
+    body.index(lit)
 '''
         with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
             f.write(src)
@@ -1313,13 +1394,24 @@ class T(unittest.TestCase):
                           (41, "method", "_landing"), (42, "position-unpinned", "_landing"), (43, "membership-unpinned", "_landing"),
                           (44, "method", "_landing"), (45, "position-unpinned", "_landing"), (45, "slice", "_landing"), (46, "method", "_landing"), (47, "position-unpinned", "_landing"),
                           (48, "position", "_landing"), (49, "assert", "_landing"), (50, "value-use", "_landing"), (52, "position", "_landing"), (53, "value-use", "_landing"),
-                          (54, "unclassified", "_landing"), (55, "unclassified", "_landing"), (56, "unclassified", "_landing")])
+                          (54, "unclassified", "_landing"), (55, "unclassified", "_landing"), (56, "unclassified", "_landing"),
+                          # the close of the author's pass 9: the keyword, splice, container and assertRegex forms
+                          (57, "unclassified", "_landing"), (58, "assert", "_landing"), (59, "regex", "_landing"),
+                          (60, "position-unpinned", "_landing"), (60, "splice", "_landing"), (61, "position-unpinned", "_landing"), (61, "splice", "_landing"),
+                          (62, "position-unpinned", "_landing"), (62, "splice", "_landing"), (63, "splice", "_landing"), (64, "membership-unpinned", "_landing"),
+                          (65, "value-use", "_landing"), (66, "value-use", "_landing"), (67, "value-use", "_landing"), (68, "value-use", "_landing"),
+                          (69, "unclassified", "_landing"), (70, "regex", "_landing"), (71, "assert", "_landing"), (71, "splice", "_LANDING_MOBILE_JS"),
+                          (72, "value-use", "_landing"), (74, "position-unpinned", "_landing")])
         self.assertEqual([r[3] for r in rows if r[1] == "method"], ["splitlines: js.splitlines()", "split: page.split(\"<\")", "lower: page.lower()",
                                                                     "splitlines: page.splitlines()", "splitlines: page.splitlines()"])
+        self.assertEqual([r[3] for r in rows if r[1] == "splice"], ['page + "k3"', 'f"{page}"', '"%s" % page', 'page + "k7"', '"k10" + km._LANDING_MOBILE_JS'])
+        self.assertEqual([r[3] for r in rows if r[0] == 74], ["body.index(lit)"], "the helper's parameter bound by keyword, its read a row at the helper's line")
+        self.assertEqual([r[3] for r in rows if r[0] in (58, 59, 70)], ['self.assertIn("k1", container=page)', 're.search("k2", string=page)', 'self.assertRegex(page, "k9")'])
         self.assertTrue([r for r in rows if r[1] == "value-use" and r[3].startswith("helper _has")] and [r for r in rows if r[1] == "value-use" and r[3].startswith("helper _win")]
                         and [r for r in rows if r[1] == "value-use" and r[3].startswith("helper _lines")], "helpers and a method of the class followed one level")
-        self.assertEqual([r[3].split(":")[0] for r in rows if r[1] == "unclassified"], ["search", "parse_it", "fromstring"])
-        self.assertEqual([r[3].split(":")[0] for r in rows if r[1] == "value-use" and not r[3].startswith("helper")], ["dumps", "write", "replace"])
+        self.assertEqual([r[3].split(":")[0] for r in rows if r[1] == "unclassified"], ["search", "parse_it", "fromstring", "parse_it", "list"])
+        self.assertEqual([r[3].split(":")[0] for r in rows if r[1] == "value-use" and not r[3].startswith("helper")], ["dumps", "write", "replace", "dumps", "join", "run", "print"])
+        self.assertTrue([r for r in rows if r[1] == "value-use" and r[3].startswith("helper _kw")], "a helper handed the text by keyword is followed")
         self.assertEqual(sorted({r[1] for r in rows} - set(READER_FORMS)), [])
         self.assertEqual(sorted(set(READER_FORMS) - {r[1] for r in rows}), [], "every named form, the catch-all included, is met by the synthetic module")
         # the parser road's membership test is the IMPORT (the fixer pass of the author's pass 9: it had been the string anywhere in the file): a module
