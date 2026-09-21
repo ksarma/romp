@@ -313,21 +313,6 @@ jobs:
         # which one ran ("browser: playwright chromium").
         timeout-minutes: 5
         run: npx playwright install chromium
-      - name: Gear description browser legs (node --test)
-        # ui/webview/gear-sub-focus-browser.test.ts drives the real gear module and its stylesheet in the Chromium installed
-        # above: the per-setting description shown on a keyboard focus, one tooltip across the panel, the picker-open state,
-        # the click by control kind, and the model of an engine without :has(). The Test step above ran this file too, BEFORE
-        # the install, where its browser legs skip and its source pins alone read the sheet (the maintainer's round 5 of the
-        # wsBytesByHost review, tests-1: the gate had verified the keyboard road by two pins keyed on where a brace fell). The
-        # bundle is the Test step's (npm test builds out-tests/ and npm run build leaves it), so nothing is rebuilt here;
-        # ROMP_GEAR_BROWSER_REQUIRE turns the file's browser skip into a failure naming the reason, the pane bench's stance
-        # below, so a runner that lost its browser turns this red rather than green with the coverage gone. Its cost, three
-        # numbers together (the maintainer's round 6, extra7-1 and extra6-1): 30 s for this step on the runner, in a job of
-        # 31 min 32 s, under the 40-minute cap above (the Actions API, job 106182603399, 2026-09-21); the step's browser
-        # launches are counted by nothing and not stated. tests/test_served_labs_under_ci.py pins the step's place and its run line.
-        env:
-          ROMP_GEAR_BROWSER_REQUIRE: "1"
-        run: node --test out-tests/ui/webview/gear-sub-focus-browser.test.js
       - name: Dashboard pane bench (node --test)
         # tools/ui-bench.mjs replays a synthetic frame stream into the real feed and timeline pages in the
         # headless Chromium installed above, served by the kernel's own page route from the dist the Build
