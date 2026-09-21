@@ -274,8 +274,10 @@ def _bind(out, target, value):
 
 class _Bindings:
     """Every value a name can hold in a module, keyed by the target's source text (`name`, `self.name`), read in ONE
-    walk on first use: `name = value` (annotated or augmented too); a `for name in (<literal>, ...)` loop's target, bound
-    to each element (a tuple target over rows, column by column); and a function's parameters, bound to what every call
+    walk on first use: `name = value` (annotated or augmented too); a `for name in (<literal>, ...)` loop's or comprehension's
+    target, bound to each element (a tuple target over rows, column by column; an enumerate() target's second name), a
+    lambda's first parameter over the literal a map() or filter() hands it, an import alias of the kernel's
+    SESSION_HOSTS_SETTING; and a function's parameters, bound to what every call
     site in the module passes for them (by position, `self`/`cls` skipped; by keyword) and to their defaults, so a value
     that reaches a write through a helper's argument is still read (2026-09-21). Two views of the same walk: `module`,
     everything; `local[f]`, what function `f` binds itself (its own parameters included; an inner function's bindings
@@ -313,11 +315,27 @@ class _Bindings:
                 _bind(module, node.target, node.value)
                 if here is not None:
                     _bind(here, node.target, node.value)
-            elif isinstance(node, ast.For) and isinstance(node.iter, (ast.Tuple, ast.List)):
-                for elt in node.iter.elts:
-                    _bind(module, node.target, elt)
+            elif isinstance(node, (ast.For, ast.comprehension)):
+                target, it = node.target, node.iter                # a loop or a comprehension over a literal tuple or list,
+                if (isinstance(it, ast.Call) and _call_name(it) == "enumerate" and it.args                 # or enumerate() of one
+                        and isinstance(target, (ast.Tuple, ast.List)) and len(target.elts) == 2):
+                    target, it = target.elts[1], it.args[0]
+                if isinstance(it, (ast.Tuple, ast.List)):
+                    for elt in it.elts:
+                        _bind(module, target, elt)
+                        if here is not None:
+                            _bind(here, target, elt)
+            elif (isinstance(node, ast.Call) and _call_name(node) in ("map", "filter") and len(node.args) >= 2
+                    and isinstance(node.args[0], ast.Lambda) and isinstance(node.args[1], (ast.Tuple, ast.List))
+                    and node.args[0].args.args):                    # map(lambda p: ..., (<literal>, ...)): p over the elements
+                for elt in node.args[1].elts:
+                    _bind(module, ast.Name(node.args[0].args.args[0].arg), elt)
                     if here is not None:
-                        _bind(here, node.target, elt)
+                        _bind(here, ast.Name(node.args[0].args.args[0].arg), elt)
+            elif isinstance(node, ast.ImportFrom):
+                for a in node.names:                               # `from ... import SESSION_HOSTS_SETTING as TOGGLE`: TOGGLE spells it
+                    if a.name.endswith("SESSION_HOSTS_SETTING") and a.asname:
+                        _bind(module, ast.Name(a.asname), ast.Name(a.name))
             inner = func
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 funcs.append(node)
@@ -996,8 +1014,9 @@ def _prefix_of(call):
 
 
 def _lab_shapes(expr, assigned, depth=4):
-    """[(prefix, comps, note)] for every temp directory `expr` can name: a mkdtemp/TemporaryDirectory call gives
-    its prefix (and a note when it passes `dir=`, since that dir may sit above or below the root); os.path.join,
+    """[(prefix, comps, note, the mkdtemp call)] for every temp directory `expr` can name: a mkdtemp/TemporaryDirectory
+    call gives its prefix (and a note when it passes `dir=`, since that dir may sit above or below the root: the caller
+    then measures the nesting with _dir_bytes on the call); os.path.join,
     Path, `/` and str(...) over one carry their literal components; a name or attribute is followed through the
     module's assignments (every value it is ever bound to, so a shared local like `d` yields each of its shapes)."""
     if isinstance(expr, ast.Call):
@@ -1005,15 +1024,15 @@ def _lab_shapes(expr, assigned, depth=4):
         if name in ("mkdtemp", "TemporaryDirectory"):
             d = _dir_argument(expr)
             note = None if d is None or (isinstance(d, ast.Constant) and d.value is None) else "dir=" + ast.unparse(d)
-            return [(_prefix_of(expr), (), note)]
+            return [(_prefix_of(expr), (), note, expr)]
         if name in ("Path", "join", "str", "realpath", "abspath", "fspath") and expr.args:
             rest = expr.args[1:]
             if all(isinstance(a, ast.Constant) and isinstance(a.value, str) for a in rest):
                 comps = tuple(a.value for a in rest)
-                return [(p, c + comps, n) for p, c, n in _lab_shapes(expr.args[0], assigned, depth)]
+                return [(p, c + comps, n, k) for p, c, n, k in _lab_shapes(expr.args[0], assigned, depth)]
             return []
     if isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Div) and isinstance(expr.right, ast.Constant):
-        return [(p, c + (expr.right.value,), n) for p, c, n in _lab_shapes(expr.left, assigned, depth)]
+        return [(p, c + (expr.right.value,), n, k) for p, c, n, k in _lab_shapes(expr.left, assigned, depth)]
     if isinstance(expr, ast.Attribute) and expr.attr == "name":          # TemporaryDirectory().name
         return _lab_shapes(expr.value, assigned, depth)
     if isinstance(expr, (ast.Name, ast.Attribute)) and depth:
@@ -1078,6 +1097,9 @@ def _session_hosts_path(expr, assigned, depth=3):
     for only when every use of that indirection is."""
     if isinstance(expr, ast.IfExp):
         return _session_hosts_path(expr.body, assigned, depth) + _session_hosts_path(expr.orelse, assigned, depth)
+    if (isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute) and not expr.args
+            and expr.func.attr in ("resolve", "absolute", "expanduser")):
+        return _session_hosts_path(expr.func.value, assigned, depth)  # Path(<path>).resolve(): the same path
     if isinstance(expr, ast.Call) and expr.args:
         name = _call_name(expr)
         if name in ("open", "fdopen") and isinstance(expr.func, ast.Attribute) and ast.unparse(expr.func.value) not in MODULES:
@@ -1205,9 +1227,10 @@ def _session_hosts_writes(tree, scope_of):
 # `unaccounted` by file, line and source line for the pin to refuse. No per-file allowlist: the shapes are by construction,
 # each with the reason it reads or writes nothing the derivation would need to count.
 NON_WRITE_SHAPES = {
-    "read": "read_text / read_bytes / exists / is_file / is_dir / stat / lstat / samefile / resolve on the path, os.path.exists "
-            "/ isfile / isdir / getsize / getmtime / access / os.stat on it, open() or Path.open() in a read-only mode: the "
-            "file's content is read, never written",
+    "read": "read_text / read_bytes / exists / is_file / is_dir / stat / lstat / samefile on the path, os.path.exists / "
+            "isfile / isdir / getsize / getmtime / access / os.stat / os.read on it, open() or Path.open() in a read-only "
+            "mode: the file's content is read, never written (resolve / absolute / expanduser / fileno hand the same path "
+            "or handle on, and its consumer decides)",
     "comparison": "an operand of ==, !=, in, not in (`last.value == <name>`, `<name> in os.listdir(d)`): a string compared, "
                   "not a path opened",
     "assertion": "an argument of a unittest assert* method (a compared value or its message): compared or printed, never opened",
@@ -1216,31 +1239,34 @@ NON_WRITE_SHAPES = {
     "docstring": "a string statement (a docstring, a bare string): documentation",
     "parent-dir": "os.path.dirname(<path>) or <path>.parent: the file's own name is dropped and the result names its "
                   "directory (conftest's os.makedirs of it); nothing about the toggle is read or written, unless that "
-                  "directory is then removed or renamed (rmtree, rmdir, rename, move), which is unaccounted",
-    "inspection": "len / repr / hash / isinstance / type / any / all / sum / enumerate over the text, or a str method "
-                  "returning a bool or an int (startswith, endswith, count, find, index): the text is looked at, not used",
+                  "directory is then removed, renamed or copied into (rmtree, rmdir, rename, move, copytree): unaccounted",
+    "inspection": "len / repr / hash / isinstance / type / bool / id of the text, or a str method returning a bool or an int "
+                  "(startswith, endswith, count, find, index): a scalar comes out, the text is looked at, not used",
     "reader input": "a (label, text) pair handed to this module's own readers (hosts_on_labs, session_hosts_ledger, "
                     "harness_dirs, longest_prefix, _python_pins): planted source under test, read by the reader in that test",
     "child source": "a Python source handed to a child interpreter (subprocess.run([sys.executable, \"-c\", <text>]), the "
-                    "text joined from literal lines) is parsed and read as a nested module: its writes are classified and "
-                    "its labs counted under `<file>:<line> (a child Python's source)`; a text that is not Python (a shell "
-                    "one-liner) is unaccounted",
+                    "text joined from literal lines, or a command string run whole) is parsed and read as a nested module: "
+                    "its writes are classified and its labs counted under `<file>:<line> (a child Python's source)`; a text "
+                    "that is not Python (a shell one-liner), or an argv element other than the -c text (a path handed to cp, "
+                    "rm, tee), is unaccounted",
     "bound": "a name or attribute bound to the path or the text (`toggle = os.path.join(root, <name>)`, a loop target, a "
              "parameter's default, a helper's return value or parameter): accounted when EVERY use of it, in the binding's "
              "scope, is a classified write or one of the shapes here",
     "handle": "open(<path>, a write mode) or os.open(<path>, flags) bound to a name or a with-target: the path is written "
               "through the handle, so EVERY use of the handle must be a classified write (fh.write, os.write), a read "
               "(os.read) or housekeeping; a handle nothing uses, or one handed to json.dump, is unaccounted",
-    "housekeeping": "close / flush / fileno / seek / tell on a handle, os.close / os.fsync on a descriptor: nothing written",
+    "housekeeping": "close / flush / seek / tell on a handle, os.close / os.fsync on a descriptor: nothing written",
 }
 READ_METHODS = ("read_text", "read_bytes", "exists", "is_file", "is_dir", "is_symlink", "stat", "lstat", "samefile",
-                "resolve", "readlink", "owner", "group")
+                "owner", "group")
+SAME_PATH_METHODS = ("resolve", "absolute", "expanduser", "as_posix", "readlink", "fileno")   # the same path or handle again
 READ_FUNCTIONS = ("exists", "lexists", "isfile", "isdir", "islink", "stat", "lstat", "fstat", "getsize", "getmtime",
                   "getctime", "getatime", "access", "samefile", "readlink", "read", "pread")
-HOUSEKEEPING_METHODS = ("close", "flush", "fileno", "seek", "tell", "isatty", "readable", "writable", "seekable")
+HOUSEKEEPING_METHODS = ("close", "flush", "seek", "tell", "isatty", "readable", "writable", "seekable")
 HOUSEKEEPING_FUNCTIONS = ("close", "fsync", "fdatasync", "set_inheritable", "get_inheritable")
 MODULES = ("os", "os.path", "shutil", "subprocess", "pathlib", "json", "io", "tempfile", "sys")
-DIR_REMOVERS = ("rmtree", "rmdir", "removedirs", "rename", "replace", "move")   # of the toggle's directory: the toggle goes too
+DIR_REMOVERS = ("rmtree", "rmdir", "removedirs", "rename", "replace", "move", "copytree")   # the toggle's directory removed,
+#                                                                                              renamed or written into
 STRING_TEXT_METHODS = ("replace", "strip", "lstrip", "rstrip", "lower", "upper", "format", "join", "split", "rsplit",
                        "splitlines", "encode", "decode", "partition", "rpartition", "removeprefix", "removesuffix",
                        "casefold", "title", "capitalize", "center", "ljust", "rjust", "expandtabs", "translate", "zfill",
@@ -1248,8 +1274,8 @@ STRING_TEXT_METHODS = ("replace", "strip", "lstrip", "rstrip", "lower", "upper",
 STRING_INSPECT_METHODS = ("startswith", "endswith", "count", "find", "rfind", "index", "rindex", "isdigit", "isalpha",
                           "isalnum", "isspace", "islower", "isupper", "isidentifier")
 PASS_CALLS = PATH_ARGS + ("bytes", "expanduser", "basename", "dedent", "sorted", "list", "set", "tuple", "dict", "frozenset",
-                          "reversed", "iter", "next", "map", "filter", "zip", "min", "max")
-INSPECTORS = ("len", "repr", "hash", "isinstance", "type", "any", "all", "sum", "bool", "enumerate", "id")
+                          "reversed", "iter", "next", "map", "filter", "zip", "min", "max", "enumerate", "any", "all", "sum")
+INSPECTORS = ("len", "repr", "hash", "isinstance", "type", "bool", "id")
 MESSAGE_SINKS = ("print", "fail", "skipTest", "skip", "log", "debug", "info", "warning", "warn", "error", "exception",
                  "critical", "_log")
 WRITE_METHODS = ("write", "write_text", "write_bytes")
@@ -1259,6 +1285,16 @@ READER_FUNCTIONS = ("hosts_on_labs", "session_hosts_ledger", "harness_dirs", "lo
 TEXT_PASS_NODES = (ast.JoinedStr, ast.FormattedValue, ast.Tuple, ast.List, ast.Set, ast.Dict, ast.IfExp, ast.keyword,
                    ast.Starred, ast.Subscript, ast.BinOp, ast.BoolOp, ast.Await, ast.Yield, ast.ListComp, ast.SetComp,
                    ast.GeneratorExp, ast.DictComp, ast.comprehension, ast.Slice)
+
+
+def _path_method(call):
+    """A call spelled like a str method that is a path's or a module's instead: `replace` with one argument is
+    Path.replace(target) (str.replace takes two), `copy` with any argument is shutil's (a container's copy takes none),
+    and a bare name (`from shutil import copy; copy(...)`) is never a str method."""
+    if not isinstance(call.func, ast.Attribute) or _on_module(call):
+        return True
+    name = call.func.attr
+    return (name == "replace" and len(call.args) < 2) or (name == "copy" and bool(call.args))
 
 
 def _on_module(call):
@@ -1285,14 +1321,18 @@ def _read_mode(call, pos):
 
 def _occurrences(tree):
     """Every node that spells the session-hosts name: a str constant containing it (a path component, a message, a
-    docstring, a script), a bytes constant containing it, a Name or Attribute ending in SESSION_HOSTS_SETTING."""
+    docstring, a script) or containing the constant's name (`getattr(ht, "SESSION_HOSTS_SETTING")`), a bytes constant
+    containing it, a Name or Attribute ending in SESSION_HOSTS_SETTING, an import alias of it. The name spelled in pieces
+    (`"session-" + "hosts"`) is outside the reader."""
     for node in ast.walk(tree):
         if isinstance(node, ast.Constant):
             v = node.value
-            if (isinstance(v, str) and "session-hosts" in v) or (isinstance(v, bytes) and b"session-hosts" in v):
+            if (isinstance(v, str) and ("session-hosts" in v or "SESSION_HOSTS_SETTING" in v)) or (isinstance(v, bytes) and b"session-hosts" in v):
                 yield node
         elif _names_setting(node) and isinstance(node.ctx, ast.Load):    # a Store target is the binding, not a use
             yield node
+        elif isinstance(node, ast.alias) and node.name.endswith("SESSION_HOSTS_SETTING"):
+            yield node                                             # `from kernel.host_transport import SESSION_HOSTS_SETTING as X`
 
 
 def _child_source(chain):
@@ -1307,6 +1347,35 @@ def _child_source(chain):
                                               for e in node.args[0].elts)
     leaf = chain[0]
     return leaf.value if isinstance(leaf, ast.Constant) and isinstance(leaf.value, str) else None
+
+
+def _loop_target(target, iterable, chain):
+    """The Name a loop binds the occurrence to: the target itself; the column of a loop over rows (`for name, value in
+    ((<name>, "on"),)`); the second element of an `enumerate(...)` target. None when the reader cannot map it."""
+    if isinstance(iterable, ast.Call) and _call_name(iterable) == "enumerate" and isinstance(target, (ast.Tuple, ast.List)):
+        target = target.elts[1] if len(target.elts) == 2 else None
+    elif isinstance(target, (ast.Tuple, ast.List)) and isinstance(iterable, (ast.Tuple, ast.List)):
+        row = next((e for e in iterable.elts if isinstance(e, (ast.Tuple, ast.List)) and any(c in e.elts for c in chain)), None)
+        j = next((i for i, c in enumerate(row.elts) if c in chain), None) if row is not None else None
+        target = target.elts[j] if j is not None and j < len(target.elts) else None
+    return target if isinstance(target, ast.Name) else None
+
+
+BINDING_HOPS = 6      # bindings followed from an occurrence to its uses (a name, a handle, a lambda, a helper...); cycles are
+#                       caught by `seen`, so this only bounds the walk (a test's text bound four names deep needed 4)
+
+
+def _executed(chain):
+    """Whether the text on `chain` (from the occurrence up to the executor's argument) is what the child EXECUTES: the
+    command string itself (`run("...", shell=True)`, `os.system`, `exec`), or the element after `-c` in an argv list. Any
+    other argv element (`["cp", src, <the toggle's path>]`, `["rm", "-f", ...]`) is a path or a word handed to a program:
+    not a source the reader can read, so unaccounted (the refuter's second pass, 2026-09-21)."""
+    top = chain[-1]
+    if isinstance(top, (ast.List, ast.Tuple)):
+        inner = next((e for e in top.elts if e in chain), None)
+        j = top.elts.index(inner) if inner is not None else -1
+        return j >= 1 and isinstance(top.elts[j - 1], ast.Constant) and top.elts[j - 1].value == "-c"
+    return not isinstance(top, ast.keyword) or top.arg in ("args", "cmd", "command")
 
 
 class _Ledger:
@@ -1347,17 +1416,28 @@ class _Ledger:
                 shapes = _lab_shapes(expr, assigned)              # the enclosing function's bindings first...
                 if not shapes:
                     shapes = _lab_shapes(expr, assigned.module)   # ...then the module's, for a root a caller handed in
-                shapes = [(p, c + comps, n) for p, c, n in shapes]
-                if not shapes or any(p is None for p, _, _ in shapes):
+                shapes = [(p, c + comps, n, k) for p, c, n, k in shapes]
+                if not shapes or any(p is None for p, _, _, _ in shapes):
                     self.unresolved.append("%s:%d: %s" % (self.label, node.lineno, ast.unparse(expr)))
                     continue
                 note = "no file, or an empty one, reads as on (a removal, a touch, a truncating open)" if value is None else None
-                for prefix, cs, n in dict.fromkeys(shapes):
-                    below = 1 + len(os.fsencode(prefix)) + self.tail + sum(1 + len(os.fsencode(c)) for c in cs)
+                by_shape = {}                                      # one lab per SHAPE (prefix, components, note), whichever call
+                for prefix, cs, n, call in shapes:
+                    by_shape.setdefault((prefix, cs, n), call)
+                for (prefix, cs, n), call in by_shape.items():
+                    tail_bytes = sum(1 + len(os.fsencode(c)) for c in cs)
+                    if n:                                          # minted under dir=: the nesting counted, as harness_dirs counts it
+                        deep = [b for b, _, _ in _dir_bytes(call, assigned, self.tail)]
+                        if not deep or None in deep:
+                            self.unresolved.append("%s:%d: %s (%s)" % (self.label, node.lineno, ast.unparse(expr), n))
+                            continue
+                        below = max(deep) + tail_bytes
+                    else:
+                        below = 1 + len(os.fsencode(prefix)) + self.tail + tail_bytes
                     self.labs.append(Lab(below, self.label, node.lineno, prefix, cs, n or note))
         for leaf in _occurrences(self.tree):
             cats = self.reached.get(id(leaf))
-            category = ", ".join(sorted(cats)) if cats else self._account(leaf, (), self.depth + 1)
+            category = ", ".join(sorted(cats)) if cats else self._account(leaf, (), BINDING_HOPS)
             self.entries.append((leaf.lineno, category, self.lines[leaf.lineno - 1].strip()))
             if category is None:
                 why = self.why.get(id(leaf)) or next((w for w in self.why.values()), None) if self.why else None
@@ -1369,8 +1449,11 @@ class _Ledger:
         plain local name, the whole module for an attribute or a module-level name."""
         owner = self.bindings.built().owner.get(at)
         scope = owner if owner is not None and "." not in key else self.tree
+        keys = {key}
+        if isinstance(self.parents.get(at), ast.ClassDef):          # a class attribute: read as self.<name> or cls.<name> too
+            keys |= {"self." + key, "cls." + key}
         return [n for n in ast.walk(scope) if isinstance(n, (ast.Name, ast.Attribute))
-                and isinstance(n.ctx, ast.Load) and ast.unparse(n) == key]
+                and isinstance(n.ctx, ast.Load) and ast.unparse(n) in keys]
 
     def _all(self, nodes, seen, depth, origin):
         """The atomic categories of every node in `nodes` (a bound name's uses, a helper's calls, a parameter's reads, a
@@ -1417,14 +1500,14 @@ class _Ledger:
                 grand = self.parents.get(parent)
                 if isinstance(grand, ast.Call) and grand.func is parent:
                     m = parent.attr
+                    if m in SAME_PATH_METHODS or (m in STRING_TEXT_METHODS and not _path_method(grand)):
+                        node = grand                               # the same path, handle or text again: its consumer decides
+                        chain.append(node)
+                        continue
                     if m in READ_METHODS:
                         return "read"
                     if m == "open":
                         return "read" if _open_reads(grand) else self._handle(grand, seen, depth)
-                    if m in STRING_TEXT_METHODS:
-                        node = grand
-                        chain.append(node)
-                        continue
                     if m in STRING_INSPECT_METHODS:
                         return "inspection"
                     if m in HOUSEKEEPING_METHODS:
@@ -1439,13 +1522,23 @@ class _Ledger:
                 return None
             if isinstance(parent, ast.Call):
                 name = _call_name(parent)
-                if parent.func is node:
-                    return None
-                if name in PASS_CALLS or (name in STRING_TEXT_METHODS and not _on_module(parent)):
+                if parent.func is node:                            # a bound lambda's name called: its result flows on
+                    node = parent
+                    chain.append(node)
+                    continue
+                if name in READER_FUNCTIONS:
+                    return "reader input"                          # this module's own readers: the text is what they read
+                funcs = list(self.bindings.built().functions.get(name, ()))      # a def of the module, or a lambda bound
+                funcs += [v for v in self._scope(parent).get(name, ()) if isinstance(v, ast.Lambda)]   # to the name
+                if funcs:                                          # before the sink rules: a module's own `write` or `log` is followed
+                    return self._joined("bound", self._all(self._param_uses(funcs, parent, node), seen, depth, leaf))
+                if name == "print" and isinstance(node, ast.keyword) and node.arg == "file":
+                    return None                                    # print(..., file=fh): a write through the handle
+                if name in PASS_CALLS or (name in STRING_TEXT_METHODS and not _path_method(parent)):
                     node = parent                                  # the result is a path or a text again: its consumer decides
                     chain.append(node)
                     continue
-                if name in STRING_INSPECT_METHODS and not _on_module(parent):
+                if name in STRING_INSPECT_METHODS and not _path_method(parent):
                     return "inspection"
                 if name == "dirname":
                     return self._parent_dir(parent)
@@ -1463,14 +1556,8 @@ class _Ledger:
                     return "message"
                 if name in INSPECTORS:
                     return "inspection"
-                if name in READER_FUNCTIONS:
-                    return "reader input"
                 if name in EXECUTORS:
                     return self._child(leaf, chain)
-                funcs = list(self.bindings.built().functions.get(name, ()))      # a def of the module, or a lambda bound
-                funcs += [v for v in self._scope(parent).get(name, ()) if isinstance(v, ast.Lambda)]   # to the name
-                if funcs:
-                    return self._joined("bound", self._all(self._param_uses(funcs, parent, node), seen, depth, leaf))
                 return None
             if isinstance(parent, (ast.Assign, ast.AnnAssign)) and node is parent.value:
                 targets = parent.targets if isinstance(parent, ast.Assign) else [parent.target]
@@ -1485,14 +1572,31 @@ class _Ledger:
                         return None                                # a target the reader cannot map
                 return self._joined("bound", self._all(uses, seen, depth, leaf))
             if isinstance(parent, ast.For) and node is parent.iter:
-                target = parent.target
-                if isinstance(target, (ast.Tuple, ast.List)) and isinstance(node, (ast.Tuple, ast.List)):
-                    row = next((e for e in node.elts if isinstance(e, (ast.Tuple, ast.List)) and any(c in e.elts for c in chain)), None)
-                    j = next((i for i, c in enumerate(row.elts) if c in chain), None) if row is not None else None
-                    target = target.elts[j] if j is not None and j < len(target.elts) else None   # a loop over rows: the column
-                if not isinstance(target, ast.Name):
+                target = _loop_target(parent.target, node, chain)
+                if target is None:
                     return None
                 uses = [n for n in ast.walk(parent) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id == target.id]
+                return self._joined("bound", self._all(uses, seen, depth, leaf))
+            if isinstance(parent, ast.ImportFrom):
+                return self._joined("bound", self._all(self._uses(node.asname or node.name, parent), seen, depth, leaf))
+            if isinstance(parent, ast.Lambda) and node is parent.body:
+                binding = self.parents.get(parent)                 # `line = lambda m: ...`: the lambda's value reaches its callers
+                if isinstance(binding, ast.Assign) and binding.value is parent:
+                    uses = []
+                    for t in binding.targets:
+                        if not isinstance(t, (ast.Name, ast.Attribute)):
+                            return None
+                        uses += self._uses(ast.unparse(t), binding)
+                    return self._joined("bound", self._all(uses, seen, depth, leaf))
+                node = parent                                      # an inline lambda: its consumer decides
+                chain.append(node)
+                continue
+            if isinstance(parent, ast.comprehension) and node is parent.iter:
+                target = _loop_target(parent.target, node, chain)
+                if target is None:
+                    return None
+                comp = self.parents.get(parent)
+                uses = [n for n in ast.walk(comp) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id == target.id]
                 return self._joined("bound", self._all(uses, seen, depth, leaf))
             if isinstance(parent, ast.Return):
                 func = self.bindings.built().owner.get(parent)
@@ -1564,7 +1668,9 @@ class _Ledger:
             if params and params[0] in ("self", "cls"):
                 params = params[1:]
             name = None
-            if arg in call.args and not any(isinstance(a, ast.Starred) for a in call.args):
+            if isinstance(arg, ast.keyword):
+                name = arg.arg if arg.arg in params + [a.arg for a in f.args.kwonlyargs] else None
+            elif arg in call.args and not any(isinstance(a, ast.Starred) for a in call.args):
                 i = call.args.index(arg)
                 name = params[i] if i < len(params) else None
             else:
@@ -1577,13 +1683,15 @@ class _Ledger:
         """A text handed to an executor: Python is read as a nested module (its labs and holes merged here under a label
         naming the site); anything else is unaccounted."""
         text = _child_source(chain)
-        if text is None or not self.depth:
+        if text is None or not self.depth or not _executed(chain):
             return None
         try:
             tree = ast.parse(text)
         except SyntaxError:
             return None
         nested = _Ledger("%s:%d (a child Python's source)" % (self.label, leaf.lineno), text, self.tail, self.depth - 1, tree)
+        if not nested.entries:
+            return None                                            # the name is not in the text as Python reads it
         self.labs += nested.labs
         self.unresolved += nested.unresolved
         self.opaque += nested.opaque
@@ -1610,7 +1718,9 @@ def hosts_on_labs(sources, tail):
     `unaccounted` lists every occurrence of the session-hosts name (the literal in any string, the kernel's constant by
     name) that no classified write, read, comparison, message, docstring, bound name or child source reached
     (NON_WRITE_SHAPES; the refuter's finding of 2026-09-21: until then a write in an unknown shape was dropped in silence).
-    All three are holes in the bound, for the caller to refuse by name."""
+    All three are holes in the bound, for the caller to refuse by name. Outside the reader, stated: the name spelled in
+    pieces (`"session-" + "hosts"`), and a helper's parameter bound from a call in ANOTHER module (the bindings are per
+    module; such a helper's own module gives its labs)."""
     labs, unresolved, opaque, unaccounted = [], [], [], []
     for label, text in sources:
         if "session-hosts" not in text and "SESSION_HOSTS_SETTING" not in text:
