@@ -571,8 +571,9 @@ def _population(cred):
     1Password spelling the rule names, continued, truncated and as the tail of another name; the session prefix with
     accounts, bare, without its underscore, as an infix, and a name that only begins like it; the control token; the
     three Claude credential names (AUTH_ENV_NAMES) and the two reserved identity names; names outside the shell
-    alphabet (the empty name, a leading digit, a dash); all of it in every casing; and the fixture census. Every entry
-    is a NAME: the values beside them are assembled at run time by the test."""
+    alphabet (the empty name, a leading digit, a dash, and a space or a tab leading, trailing or inner); all of it in
+    every casing; and the fixture census. Every entry is a NAME: the values beside them are assembled at run time by
+    the test."""
     suffixes = tuple(cred.CREDENTIAL_ENV_SUFFIXES)
     names = set()
     for stem in ("NOTES", "HF", "MY_SECRET", "SVC_00", "X9", "OPENROUTER", "ROMP_SERVE", "OP", "OP_SESSION", "A_B_C",
@@ -603,8 +604,19 @@ def _population(cred):
     names.update(sb.ENV_RESERVED_NAMES)
     names.update({"", "9LEADS" + suffixes[0], "MY-" + suffixes[0][1:], "X-Y" + suffixes[-1], "WITH-DASH", "DIGITS_123",
                   "PATH", "FEATURE_FLAG"})
+    # whitespace-bearing names (fork PR #781, review round 7): the shell alphabet has no whitespace, so each is an
+    # outsider at the doors, and the rule reads a name as spelled, so a trailing blank unshapes a suffix name while a
+    # leading or an inner one leaves the suffix where endswith finds it. A door that trimmed before its alphabet check,
+    # or a rule that stripped, judges the trimmed spelling instead, and with no such name in the population that
+    # trimming was invisible to every reader here. A space and a tab, leading, trailing and in place of the first
+    # underscore, on a name of each half, the session prefix and two unshaped names.
+    for n in ("NOTES" + suffixes[0], "HF" + suffixes[-1], cred.OP_ENV_NAMES[0], prefix + "TESTACCT", "PATH", "FEATURE_FLAG"):
+        for blank in (" ", "\t"):
+            names.update(_casings(blank + n) | _casings(n + blank) | _casings(n.replace("_", blank, 1)))
     names.update(_fixture_name_census())
-    return sorted(n for n in names if "=" not in n and "\0" not in n)
+    # "=" and NUL cannot name a variable (putenv refuses both); a line break is left out too: the lister prints one name
+    # per line and the boot notice is one log row, so neither output could carry such a name whole
+    return sorted(n for n in names if "=" not in n and "\0" not in n and "\n" not in n)
 
 
 class FourReaders(unittest.TestCase):
@@ -782,6 +794,70 @@ class FourReaders(unittest.TestCase):
         self.assertIn("romp's own `%s` is refused like any other" % cred.CONTROL_TOKEN_VAR, flat,
                       "%s: the --env passage says the doors refuse the control token" % self.LISTER)
 
+    # ── the rule as the doors STATE it at run time ──
+    def _shape_clause_at_runtime(self, clause, where, cred):
+        """A refusal's parenthesised shape clause as a door emitted it, parsed into the parts it names and held to the
+        rule's constants, as _shape_clause holds the reference's sentences: a token is a word of the clause that spells a
+        name part, a suffix begins with an underscore, a glob ends in an asterisk (the reference's clauses carry backticks,
+        a run-time sentence none). The suffix set is the rule's; the 1Password half is a glob, and every glob covers every
+        1Password spelling the rule names; the fold is said last, so it scopes both halves (the boot line's pin says why a
+        fold said before the 1Password clause excludes op_session_<account>)."""
+        tokens = re.findall(r"[A-Za-z_][A-Za-z0-9_]*\*?", clause)
+        self.assertEqual({t for t in tokens if t.startswith("_")}, set(cred.CREDENTIAL_ENV_SUFFIXES),
+                         "%s: the suffixes the run-time clause names are the rule's: %r" % (where, clause))
+        globs = [t for t in tokens if t.endswith("*")]
+        self.assertTrue(globs, "%s: the clause spells the 1Password half as a glob: %r" % (where, clause))
+        for g in globs:
+            for n in cred.OP_ENV_NAMES + (cred.OP_ENV_PREFIX,):
+                self.assertTrue(n.startswith(g[:-1]), "%s: %s covers every 1Password spelling the rule names (%s): %r"
+                                % (where, g, n, clause))
+        self.assertIn("1Password", clause, "%s: the clause names the 1Password half: %r" % (where, clause))
+        self.assertTrue(clause.rstrip().endswith("any letter case"),
+                        "%s: the fold is said after both halves, so it scopes both: %r" % (where, clause))
+
+    def _pin_runtime_sentences(self, km, cred, values):
+        """The rule as the doors STATE it (fork PR #781, review round 7): credential_env_refusal spells the shape in a
+        parenthesised clause that reaches the /new reply, `romp new`'s stderr and the kernel log, and _env_roads spells the
+        suffixes again in the mixed pick's road; until this round both were pinned by literal text alone (test_session_env's
+        door tests), so a clause changed to name _SECRET left every reader agreeing with the rule and this test green. Each
+        door is driven over a suffix pick, a 1Password pick, a folded 1Password pick and a mixed one; its sentence is
+        credentials.py's, parsed: the clause as _shape_clause_at_runtime says, and the road as _env_roads scopes it to the
+        half matched, the suffix half's naming no 1Password, the 1Password half's naming 1Password and no suffix, the mixed
+        road naming the rule's suffixes and then 1Password with the fold said after both. Names whole, never a value."""
+        suffix_name, op_name = "NOTES" + cred.CREDENTIAL_ENV_SUFFIXES[0], cred.OP_ENV_NAMES[0]
+        folded = (cred.OP_ENV_PREFIX + "TESTACCT").lower()
+        for n in (suffix_name, op_name, folded):
+            self.assertIn(n, values, "%s is in the population" % n)
+        picks = {"a suffix pick": [suffix_name], "a 1Password pick": [op_name], "a folded 1Password pick": [folded],
+                 "a mixed pick": [suffix_name, folded, op_name]}
+        for door, label in ((km._env_error, self.DOOR_KM), (sb.env_request_error, self.DOOR_SB)):
+            for pick, names in picks.items():
+                where = "%s over %s" % (label, pick)
+                err = door({n: values[n] for n in names})
+                self.assertEqual(err, "env: " + cred.credential_env_refusal(names),
+                                 "%s: the refusal is credentials.py's sentence behind the door's one head" % where)
+                for n in names:
+                    self.assertIn(n, err, "%s: names %r whole" % (where, n))
+                    self.assertNotIn(values[n], err, "%s: never a value" % where)
+                m = re.search(r" credential-shaped \(([^()]*)\) and ", err)
+                self.assertTrue(m, "%s: the sentence carries one parenthesised shape clause after 'credential-shaped': %r" % (where, err))
+                self._shape_clause_at_runtime(m.group(1), where, cred)
+                road = cred._env_roads(names)
+                self.assertTrue(err.endswith(" " + road), "%s: the sentence ends with the road scoped to the pick: %r" % (where, err))
+                named = {t for t in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", road) if t.startswith("_")}
+                self.assertLessEqual(named, set(cred.CREDENTIAL_ENV_SUFFIXES), "%s: a suffix the road names is the rule's: %r" % (where, road))
+                op = any(cred.is_op_env_name(n.upper()) for n in names)
+                if op and len(names) > 1:
+                    self.assertEqual(named, set(cred.CREDENTIAL_ENV_SUFFIXES), "%s: the mixed road names every suffix of the rule: %r" % (where, road))
+                    self.assertLess(max(road.index(s) for s in cred.CREDENTIAL_ENV_SUFFIXES), road.index("1Password"),
+                                    "%s: the suffix half first, then the 1Password half: %r" % (where, road))
+                    self.assertTrue(road.rstrip().endswith("any letter case"), "%s: the fold said after both halves: %r" % (where, road))
+                elif op:
+                    self.assertIn("1Password", road, "%s: the 1Password half's road names it: %r" % (where, road))
+                    self.assertEqual(named, set(), "%s: and names no suffix, the half it is not about: %r" % (where, road))
+                else:
+                    self.assertNotIn("1Password", road, "%s: the suffix half's road names no 1Password: %r" % (where, road))
+
     def _pin_routes_by_source(self, km, cred):
         """The weaker guarantee, said as such: each route still reaches the function the executed checks drive."""
         ksrc = (ROOT / "kernel" / "kernel.py").read_text(encoding="utf-8")
@@ -848,10 +924,24 @@ class FourReaders(unittest.TestCase):
         self.assertGreaterEqual(len(outside), 4, "names outside the shell alphabet: %r" % (outside,))
         self.assertTrue(any(rule[n] for n in outside) and any(not rule[n] for n in outside),
                         "the alphabet's outsiders are shaped and unshaped alike: %r" % (outside,))
+        # the whitespace-bearing outsiders (fork PR #781, review round 7): leading, trailing and inner, each kind shaped and
+        # unshaped alike, so a door that trims before its alphabet check or a rule that strips drifts on one of them
+        blank = [n for n in outside if any(c.isspace() for c in n)]
+        self.assertGreaterEqual(len(blank), 60, "whitespace-bearing outsiders: %r" % (blank[:8],))
+        for kind, has in (("leading", lambda n: n[0].isspace()), ("trailing", lambda n: n[-1].isspace()),
+                          ("inner", lambda n: not n[0].isspace() and not n[-1].isspace())):
+            some = [n for n in blank if has(n)]
+            self.assertTrue(any(rule[n] for n in some) and any(not rule[n] for n in some),
+                            "%s-whitespace names, shaped and unshaped alike: %r" % (kind, some[:8]))
+        self.assertIs(rule["NOTES" + cred.CREDENTIAL_ENV_SUFFIXES[0] + " "], False,
+                      "%s reads a name as spelled: a trailing blank unshapes a suffix name, and a rule that stripped would judge "
+                      "a spelling the doors' alphabet check never saw" % self.RULE)
         self.assertEqual(cred.credential_env_names(values), sorted(shaped), "%s over the population as an environ" % self.RULE)
-        # the reference's spellings and the routes first: a suffix added to the rule, or dropped from the document, reds here
+        # the reference's spellings, the routes and the run-time sentences first: a suffix added to the rule, or dropped
+        # from the document or from the doors' own statement of the rule, reds here
         self._pin_lister_spellings(cred)
         self._pin_routes_by_source(km, cred)
+        self._pin_runtime_sentences(km, cred, values)
         # every reader over every name, then one comparison against the rule
         verdicts = {
             self.DOOR_KM: {n: self._door_verdict(km._env_error, n, values[n], cred) for n in population},
@@ -878,3 +968,54 @@ class FourReaders(unittest.TestCase):
             self.fail("readers drifting from the rule (every drifting reader named, with the names it drifted on):\n"
                       + "\n".join(report))
         self._pin_the_one_difference(cred, verdicts, values)
+
+
+class BootRefusalMirror(unittest.TestCase):
+    """bin/romp-manager refuses to start on a retired provider variable or a 1Password name in its environment
+    (retiredCredentialNames), the exact-half mirror of kernel/credentials.py's check_boot_environment: the manager is
+    JavaScript and cannot import the module, so its three const lines RETYPE RETIRED_VARS, OP_ENV_NAMES and OP_ENV_PREFIX,
+    and until fork PR #781's review round 7 nothing held the copies to the tuples (a 1Password name dropped from the
+    JavaScript list left every Python reader agreeing with the rule and tests/manager-op-env.test.js green, which drives
+    two of the four names). Pinned from Python rather than node: the rule's tuples are read from the module that owns them,
+    where a node test could only retype them a third time or parse Python source. Two checks: the three const lines,
+    parsed as the array and string literals they are, equal the tuples in order; and the function itself, run under node
+    over the whole derived population (_population) with values assembled at run time, refuses exactly the names the boot
+    check refuses over the same environment, in its order: the retired names as RETIRED_VARS lists them, then the exact
+    1Password spellings sorted (is_op_env_name, no case fold: the boot check refuses what `op` exports). Names only."""
+
+    def _const(self, src, name):
+        m = re.search(r"^const %s = (.*);$" % re.escape(name), src, re.M)
+        self.assertTrue(m, "bin/romp-manager declares `const %s = ...;` on one line, where this test reads it" % name)
+        return ast.literal_eval(m.group(1))
+
+    def test_the_managers_const_lines_are_the_rules_tuples_and_its_refusal_runs_as_the_boot_checks_exact_half(self):
+        cred = sb._cred
+        src = (BIN / "romp-manager").read_text(encoding="utf-8")
+        self.assertEqual(self._const(src, "RETIRED_CREDENTIAL_NAMES"), list(cred.RETIRED_VARS),
+                         "the manager's retired names are kernel/credentials.py RETIRED_VARS, in order")
+        self.assertEqual(self._const(src, "OP_ENV_NAMES"), list(cred.OP_ENV_NAMES),
+                         "the manager's 1Password names are kernel/credentials.py OP_ENV_NAMES, in order")
+        self.assertEqual(self._const(src, "OP_ENV_PREFIX"), cred.OP_ENV_PREFIX,
+                         "the manager's session prefix is kernel/credentials.py OP_ENV_PREFIX")
+        population = _population(cred)
+        for witness in cred.RETIRED_VARS + cred.OP_ENV_NAMES + (cred.OP_ENV_PREFIX + "TESTACCT",):
+            self.assertIn(witness, population, witness)
+        values = {n: "synthetic-" + os.urandom(8).hex() for n in population}
+        state = tempfile.mkdtemp(prefix="romp-mgr-mirror-")
+        self.addCleanup(shutil.rmtree, state, True)
+        script = ("const m = require(process.argv[1]); const env = JSON.parse(require('fs').readFileSync(0, 'utf8')); "
+                  "process.stdout.write(JSON.stringify(m.retiredCredentialNames(env)));")
+        r = subprocess.run(["node", "-e", script, str(BIN / "romp-manager")], input=json.dumps(values),
+                           env={"PATH": os.environ.get("PATH", ""), "HOME": state, "ROMP_STATE_DIR": state},
+                           capture_output=True, text=True, timeout=120)
+        self.assertEqual(r.returncode, 0, "the manager's retiredCredentialNames runs under node: %s" % r.stderr)
+        got = json.loads(r.stdout)
+        want = [n for n in cred.RETIRED_VARS if n in values] + sorted(n for n in values if cred.is_op_env_name(n))
+        self.assertGreaterEqual(len(want), len(cred.RETIRED_VARS) + len(cred.OP_ENV_NAMES) + 1, "the exact half of the population: %r" % (want,))
+        self.assertEqual(got, want, "the manager refuses what the boot check refuses (check_boot_environment's in_env), name for name, in its order")
+        for n in cred.OP_ENV_NAMES + (cred.OP_ENV_PREFIX + "TESTACCT",):
+            self.assertIn(n, got, "%s is refused at boot" % n)
+            self.assertNotIn(n.lower(), got, "the exact half: %r is the doors' business, not the boot's" % (n.lower(),))
+        for v in values.values():
+            self.assertNotIn(v, r.stdout + r.stderr, "names only, never a value")
+
