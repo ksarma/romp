@@ -112,11 +112,14 @@ TEST_ROOT_CHILDREN = "romp-tests-children"           # inside a root: one JSON l
 
 def parent_root(handed, system):
     """The `romp-tests-*` root a NESTED process was handed as its temp dir, or None for a run's first process. Nested
-    means: the handed dir is a root by name, it is not the recorded system dir itself, and that system dir exists to
-    mint in. Pure on its arguments; the module applies it to what this process was handed."""
+    means: the handed dir is a root by name, it sits DIRECTLY under the recorded system dir (realpath of its parent is
+    the realpath of `system`), and that system dir exists to mint in. The placement test is on the parent, not the name
+    alone (the review of 2026-09-21): the package's own `romp-tests-state-*` dir and conftest's `romp-tests-claude-*`
+    are `romp-tests-*` by name too, and sit INSIDE a root, so a process handed one of those as its TMPDIR mints inside
+    it, as any first process does. Pure on its arguments; the module applies it to what this process was handed."""
     try:
         if (os.path.basename(handed).startswith(TEST_ROOT_PREFIX) and os.path.isdir(system)
-                and os.path.realpath(handed) != os.path.realpath(system)):
+                and os.path.realpath(os.path.dirname(os.path.abspath(handed))) == os.path.realpath(system)):
             return handed
     except OSError:
         pass

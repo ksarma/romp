@@ -1220,6 +1220,41 @@ class HarnessSocketBudget(unittest.TestCase):
         self._release(ctl)
         self.assertEqual(os.listdir(synthetic), [], "the controller removed its own; nothing of either is left")
 
+    def test_only_a_root_directly_under_the_recorded_system_dir_is_a_parent(self):
+        """The placement rule on the parent, not the name (the review of 2026-09-21): a `romp-tests-*` dir that is NOT
+        directly under the recorded system dir — the package's own `romp-tests-state-*` inside a root, conftest's
+        `romp-tests-claude-*`, a root under some other dir — handed as a process's TMPDIR is no parent, and that process
+        mints INSIDE it, as a first process does. Pure on tests.parent_root and tests.mint_root, then by execution: a
+        child handed a state-shaped dir inside the controller's root, with the controller's record."""
+        pkg = sys.modules["tests"]
+        system = tempfile.mkdtemp(prefix="placement-")
+        root = tempfile.mkdtemp(prefix="romp-tests-", dir=system)
+        state = tempfile.mkdtemp(prefix="romp-tests-state-", dir=root)               # the package's state dir, inside a root
+        claude = tempfile.mkdtemp(prefix="romp-tests-claude-", dir=root)             # conftest's, inside a root
+        elsewhere = tempfile.mkdtemp(prefix="romp-tests-", dir=tempfile.mkdtemp(prefix="other-", dir=system))
+        self.assertEqual(pkg.parent_root(root, system), root, "a root directly under the recorded dir is the parent")
+        for handed, why in ((state, "the package's state dir, inside a root"), (claude, "conftest's claude dir, inside a root"),
+                            (elsewhere, "a root under some other dir"), (system, "the recorded dir itself")):
+            self.assertIsNone(pkg.parent_root(handed, system), why)
+        self.assertIsNone(pkg.parent_root(root, os.path.join(system, "gone")), "a recorded dir that is gone: no parent")
+        minted, parent = pkg.mint_root(state, system)
+        self.assertIsNone(parent)
+        self.assertEqual(os.path.dirname(minted), state, "handed the state dir, a process mints inside it: %r" % minted)
+        shutil.rmtree(minted)
+        # By execution: a child handed a state-shaped dir inside the controller's root, with the controller's record.
+        synthetic = tempfile.mkdtemp(prefix="harness-")
+        ctl, c = self._child({"TMPDIR": synthetic}, synthetic)
+        planted = os.path.join(c["root"], "romp-tests-state-planted")
+        os.mkdir(planted)
+        wrk, w = self._child({"TMPDIR": planted, "ROMP_TESTS_SYSTEM_TMPDIR": c["system"]}, synthetic)
+        self.assertIsNone(w["parent"], "a state-shaped dir is no parent root: %r" % (w,))
+        self.assertEqual(os.path.dirname(w["root"]), planted, "the child minted inside what it was handed: %r" % (w["root"],))
+        self.assertEqual(os.listdir(synthetic), [os.path.basename(c["root"])], "nothing new beside the controller's root")
+        self._release(wrk)
+        self.assertEqual(os.listdir(planted), [], "the child removed its own root at exit")
+        self._release(ctl)
+        self.assertEqual(os.listdir(synthetic), [])
+
     def test_a_worker_killed_without_its_hooks_is_removed_by_the_controller_at_exit(self):
         """The parent-side sweep at the package level (RunLeavesNothing has it under pytest): the worker SIGKILLed,
         its root stands with a dead owner; the controller's exit takes it, then its own."""
