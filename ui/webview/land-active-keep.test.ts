@@ -305,14 +305,18 @@ test("the reload restore's raw write, the ordering its exception rests on: the t
     assert.ok(write >= 0, shape + ": the raw write ran: " + JSON.stringify(r.trace));
     // the record is admitted twice: once to decide the take (before it: nothing armed but the record) and once for the restore, and both
     // calls return the same persisted object, so the binding whose value is written is named by its CALL: the last read of a record's top
-    // before the write is the site's, and its serial is the binding's
+    // before the write is the site's, and its serial is the binding's. The window therefore follows the VALUE: a site rewritten to read a
+    // later record's top moves the window's start to that record, and a geometry change made before that later binding is outside this
+    // window by construction; that shape (the executed verifier's E4 after the maintainer's round 4 ruling: a resize, a second admitting call,
+    // the write rebound to it) is held by the reload cell above, which asserts the spacer's height at the write, and by
+    // spacer-measure.test.ts's locator of the site's `rs.top` read, both red on it while this cell stays green
     const readEv = r.trace.slice(0, write).reverse().find((e) => e.startsWith("read rs.top#"));
     assert.ok(readEv, shape + ": the write's value was read from a record's top: " + JSON.stringify(r.trace));
     const recordEv = "record#" + readEv!.slice("read rs.top#".length);
     const take = r.trace.indexOf("take"), record = r.trace.indexOf(recordEv), read = r.trace.indexOf(readEv!);
     assert.ok(take >= 0 && record > take, shape + ": the take runs before the record is bound for the restore (the take stands, by measurement): " + JSON.stringify(r.trace));
     assert.ok(read > record && write > read, shape + ": the site reads its record's top after the binding, and writes after the read: " + JSON.stringify(r.trace));
-    assert.deepEqual(r.trace.slice(record + 1, write).filter((e) => e !== readEv), [], shape + ": from the record's binding to its write the trace holds the site's read of that record's top and nothing else: no take-class event (a take, an untake, a spacer redraw, a write of the parked flag or of the view's take state), no geometry event (a height written on a row or the view element, a child inserted or removed), no other record; a change here would land the persisted top in a layout it was not measured in, and the site would owe a take-back like every other: " + JSON.stringify(r.trace));
+    assert.deepEqual(r.trace.slice(record + 1, write).filter((e) => e !== readEv), [], shape + ": from the record's binding to its write the trace holds the site's read of that record's top and nothing else: no take-class event (a take, an untake, a spacer redraw, a write of the parked flag or of the view's take state), no geometry event (a height written on a row or the view element, a child inserted or removed), no other record; a change here would land the persisted top in a layout it was not measured in, and the site would owe a take-back like every other (the window follows the record whose top the write reads: a site rebound to a later record is the reload cell's and the tree locator's to catch): " + JSON.stringify(r.trace));
     assert.deepEqual(r.geometryAt["write reload-restore"], r.geometryAt[recordEv], shape + ": the geometry the write lands in is the geometry at the binding, every child by class and height");
     assert.deepEqual(r.writes.map((x) => x.writer), ["reload-restore"], shape + ": the raw write is the land's one write");
     assert.ok(!r.trace.some((e) => /^(measured|avgTurnH|pxPerTurn)=/.test(e)), shape + ": the view's own take state (any of its three fields) is written by nothing on this road: " + JSON.stringify(r.trace));
