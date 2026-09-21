@@ -23,8 +23,10 @@ THE RULE this module holds: in the branch's lines, the word "round" followed by 
 round N" (a hyphen or a space before N) with N in REVIEWER_ROUNDS; a numbered round without the maintainer's name before it is
 refused, as is one numbered past the rounds held, and so is a bare referential form (the word after an article, "the", "this" or
 "that", or with a possessive and no number; a verify, a fixer pass, a build or a probe is the author's pass, and is named so:
-"the author's pass 4", "the author's pass-3 fixer pass", "the author's pass-1 verify"). The qualifier may end the line above the
-mention, as a wrapped comment has it. "round-trip" and Math.round are not mentions.
+"the author's pass 4", "the author's pass-1 verify"). The qualifier may end the line above the mention, as a wrapped comment has
+it: the mention is then the first prose on its line, after the comment marker, and the previous non-blank line ends with the
+qualifier (offences reads the previous line for that one shape, and for nothing else; the maintainer's round 6, B: the docstring
+had stated this and the code had searched the mention's own line alone). "round-trip" and Math.round are not mentions.
 
 REVIEWER_ROUNDS is a constant of this tree, derived from the maintainer's rulings on this PR (rounds 1, 3, 4, 5 and 6, the first
 with an addendum; the sixth added 2026-09-21 when its ruling landed); the author raises it when a ruling lands. It is read from
@@ -66,7 +68,8 @@ REVIEWER_ROUNDS = frozenset({1, 3, 4, 5, 6})
 # the bare referential forms; "round-trip" in either spelling and a method named round are not mentions (the number group is
 # empty for a bare form)
 MENTION = re.compile(r"\bround[- ](\d+)\b|\b(?:the|this|that) round\b(?![- ]?trip)|\bround's\b", re.I)
-QUALIFIER = re.compile(r"\bmaintainer's\s+$", re.I)   # what must stand immediately before a numbered mention ("the" may end the line above)
+QUALIFIER = re.compile(r"\bmaintainer's\s+$", re.I)   # what must stand immediately before a numbered mention: on its line, or ending the line above when the mention opens its line (THE RULE, the docstring)
+MARKER = re.compile(r"^\s*(?:#|//|/\*|\*|<!--)?\s*")               # a comment marker and the whitespace around it, which a wrapped line begins with
 
 # a hunk header of a unified diff: the new side's first line number (and its count, absent for one line)
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
@@ -77,18 +80,34 @@ def mention_lines(text):
     return [(i, line) for i, line in enumerate(text.split("\n"), 1) if MENTION.search(line)]
 
 
-def offences(line, rounds=REVIEWER_ROUNDS):
-    """(the mention, why) for every mention in `line` the rule refuses."""
+def qualified(line, m, prev):
+    """Whether the numbered mention `m` in `line` has the qualifier immediately before it: on its own line, or ending `prev`, the
+    previous non-blank line, when the mention is the first prose on its line after the comment marker (a wrapped comment)."""
+    if QUALIFIER.search(line[:m.start()]):
+        return True
+    return prev is not None and MARKER.match(line).end() == m.start() and QUALIFIER.search(prev.rstrip() + " ") is not None
+
+
+def offences(line, rounds=REVIEWER_ROUNDS, prev=None):
+    """(the mention, why) for every mention in `line` the rule refuses; `prev` is the previous non-blank line, for the wrapped shape."""
     out = []
     for m in MENTION.finditer(line):
         n = m.group(1)
         if n is None:
             out.append((m.group(0), "a bare referential form: name the maintainer's round or the author's pass"))
-        elif not QUALIFIER.search(line[:m.start()]):
+        elif not qualified(line, m, prev):
             out.append((m.group(0), "a numbered round without the maintainer's name before it"))
         elif int(n) not in rounds:
             out.append((m.group(0), "the maintainer held rounds %s" % ", ".join(str(r) for r in sorted(rounds))))
     return out
+
+
+def previous_line(lines, ln):
+    """The previous non-blank line of a file (`lines` its lines, `ln` a 1-based line number), or None at the top."""
+    for k in range(ln - 2, -1, -1):
+        if lines[k].strip():
+            return lines[k]
+    return None
 
 
 def _git(*args):
@@ -152,12 +171,18 @@ class RoundLabels(unittest.TestCase):
         self.assertIn(SELF, added, "the rig: this module is a file the branch adds, so its own lines are in the population it derives (%s)" % how)
         bad, read, carrying = [], 0, set()
         for rel, lines in sorted(added.items()):
+            if not any(MENTION.search(line) for _, line in lines):
+                continue
+            text, why = _git("show", "HEAD:" + rel)     # the committed file, for the line above a wrapped mention (a base line or an added one)
+            self.assertIsNotNone(text, "the rig: HEAD's %s could not be read (%s)" % (rel, why))
+            head_lines = text.split("\n")
             for ln, line in lines:
                 if not MENTION.search(line):
                     continue
+                self.assertEqual(head_lines[ln - 1], line, "the rig: the diff's line %d of %s is HEAD's line %d" % (ln, rel, ln))
                 read += 1
                 carrying.add(rel)
-                bad += ["%s:%d: %r (%s)" % (rel, ln, mention, why) for mention, why in offences(line)]
+                bad += ["%s:%d: %r (%s)" % (rel, ln, mention, why) for mention, why in offences(line, prev=previous_line(head_lines, ln))]
         self.assertGreater(read, 0, "the census read no added line carrying a mention: the pattern or the derivation (%s) is broken" % how)
         self.assertEqual(bad, [], "a branch line names a round the maintainer did not hold, or names one bare; write the "
                                   "maintainer's round by its number or the author's pass by the label mapping (the module "
@@ -198,6 +223,17 @@ class RoundLabels(unittest.TestCase):
         self.assertIsNone(MENTION.search("the %s-trip and the %s trip" % (R, R)), "neither spelling of round-trip is a mention")
         self.assertEqual(len(mention_lines("a\n%s 7\nb\nthe %s asked\n" % (R, R))), 2)
         self.assertEqual(offences("%s %s 7" % (M, R), rounds=frozenset({7})), [], "a raised REVIEWER_ROUNDS admits the new round")
+        # the wrapped shapes, two lines each (the maintainer's round 6, B): the qualifier ending the line above a mention that opens
+        # its line is accepted, in every comment marker; a bare number opening a line whose line above ends otherwise is refused,
+        # as is a mention the qualifier's line does not immediately precede (prose before it on its own line)
+        for marker in ("// ", "# ", " *  ", "   ", "<!-- "):
+            self.assertEqual(offences("%s%s 5, tests-1)" % (marker, R), prev="   (%s" % M), [], "a wrapped qualifier accepted under %r" % marker)
+        self.assertEqual(len(offences("// %s 5" % R, prev="// the")), 1, "the article alone above a wrapped bare number: refused")
+        self.assertEqual(len(offences(" * %s 5 on panel-3" % R, prev=" * ruled on")), 1, "a wrapped bare number under an unqualified line: refused")
+        self.assertEqual(len(offences("// and %s 5" % R, prev="// %s" % M)), 1, "the qualifier above does not reach a mention that is not first on its line")
+        self.assertEqual(len(offences("%s 5" % R, prev=None)), 1, "no line above: refused")
+        self.assertEqual(previous_line(["a", "", "  ", "b"], 4), "a", "the previous non-blank line, blanks skipped")
+        self.assertIsNone(previous_line(["a"], 1), "nothing above the first line")
 
 
 if __name__ == "__main__":
