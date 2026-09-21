@@ -35,22 +35,28 @@ and its pipeline ends at the closing backtick. Three exclusions are lexical, by 
 (_OPERATOR_OF). A `!` that is another command's argument (`find . ! -name x`) is a candidate, and bats reports it as inert or
 undecided: a false report on the visible side, none in the tree today. The one piece of grammar left is the negated pipeline's
 extent (negated_pipeline), and bash decides it too: the walker proposes where the text may end, at every `;`, `&&`, `||`, lone
-`&` or unmatched `)` outside the quotes and parentheses it tracks, at a `#` at the start of a word, and at the line's end, and at
-each proposal asks `bash -n` whether the text so far, in a brace group, is a complete command (_pipeline_complete). Where it is,
-the pipeline ends there (the closing backtick of the substitution the `!` sits in ends it unasked). Where an operator is not the
-end, it is inside something bash reads whole, a `[[ ]]`, a `${ }`, a backtick substitution, a `$( )` whose nested quotes the
-tracker paired otherwise, or a compound the `!` negates (`! { true; false; }`, `! if ...; fi`, `! case ... esac`), and the scan goes
-on past it to the construct's end. Whether a `#` begins a comment is bash's call as well (_begins_comment: after a blank, a `|`
-or a subshell's `)` it does; glued to a `$( )` it is part of the word). At a comment or at the line's end where bash wants more,
-the pipeline runs on to the next line: after a `|` or `|&` with or without a comment after it, after a trailing `\`, inside an
-open quote, parenthesis, brace group or compound; a here-document the pipeline introduces is its lines through the terminator,
-counted by bash (one warning per here-document still pending, whatever the form: `<<WORD`, `<<-WORD`, the word quoted or not,
-two on one line, an introducer line ending in a comment or a `|`; the body of another command's here-document introduced on the
-line before the `!` comes first and stays), and `$'...'` is one word. The tracking proposes and bash disposes, so the tracker's
-one hazard is a quote it reads open where bash reads none, which hides an operator from the proposal; the register below pins
-every form one shape each. The rewrite keeps every `!` of a run (`! ! true` negates twice, and bash reads a doubled negation's
-status), replaces the command after it, and leaves the pipeline's later lines (continuations, here-document bodies and
-terminators) empty, the line count kept.
+`&` and `)` of the text wherever it stands, at a `#` at the start of a word, and at the line's end, and at each proposal asks
+`bash -n` whether the text so far, in a brace group, is a complete command (_pipeline_complete). Where it is, the pipeline ends
+there (the closing backtick of the substitution the `!` sits in ends it unasked). Where an operator is not the end, it is inside
+something bash reads whole, a quoted string, a `$( )` whatever quotes stand inside it, a `[[ ]]`, a `${ }`, a backtick
+substitution, or a compound the `!` negates (`! { true; false; }`, `! if ...; fi`, `! case ... esac`), and the scan goes on past
+it to the construct's end. The walker tracks no quote and no parenthesis (since fork PR #871's round 4: it tracked both to choose
+its proposals, and a `$( )` inside double quotes opens a quoting context of its own, so a quote inside one desynchronised it, the
+rest of the line read as a string, no operator in it was proposed, and the extent of `! cmd "$(echo "it's")"; true` ran to the
+line's end, the `; true` that made the negation inert dropped by the rewrite and the site read as read, the silent direction);
+what it reads of bash's lexing is the character after a backslash, that word's, and a blank a backslash escapes at a line's end,
+a character of the word and no trailing blank (_text_end: `! true \ ` is complete and `! true \` continues; before round 4 the
+walker stripped the blank before asking, and bash read the escaped blank as a continuation). Whether a `#` begins a comment is
+bash's call as well (_begins_comment: after a blank, a `|` or a subshell's `)` it does; glued to a `$( )` it is part of the
+word). At a comment or at the line's end where bash wants more, the pipeline runs on to the next line: after a `|` or `|&` with
+or without a comment after it, after a trailing `\`, inside an open quote, parenthesis, brace group or compound; a here-document
+the pipeline introduces is its lines through the terminator, counted by bash (one warning per here-document still pending,
+whatever the form: `<<WORD`, `<<-WORD`, the word quoted or not, two on one line, an introducer line ending in a comment or a `|`;
+the body of another command's here-document introduced on the line before the `!` comes first and stays), and `$'...'`, like
+every quoted string, is text bash refuses to end the pipeline inside. The walker proposes and bash disposes, and the register
+below pins every form one shape each. The rewrite keeps every `!` of a run (`! ! true` negates twice, and bash reads a doubled
+negation's status), replaces the command after it, and leaves the pipeline's later lines (continuations, here-document bodies
+and terminators) empty, the line count kept.
 
 Over the 46 suites at this head (the population is the glob CI's shell job hands bats, `tests/*.bats`, read off
 .github/workflows/ci.yml by the reading tests/test_ci_bats_bound.py pins that step with, and a glob naming no file raises rather
@@ -58,12 +64,12 @@ than passing an empty corpus as clean: suite_files; BatsSuites lists a file's ca
 them): 232 `!` words file-wide, 191 of them `[ !`, 24 inside comments and strings (the word rule takes a `!` next to a backtick, a
 `)` or a `>`), 5 at file scope, and 12 candidates in test bodies (bootstrap-sh.bats 184; install-optional-deps.bats 505;
 install-sh.bats 329, 400, 411; pr-orphans.bats 125; romp-serve.bats 117, 309, 334, 382; romp-service.bats 683; romp-sessions.bats
-84), listed in 4.90 s with the extents. bats reads all 12 (BatsCorpus, under 1.10.0 and 1.11.1): the nine at line start are `not
+84), listed in 5.08 s with the extents. bats reads all 12 (BatsCorpus, under 1.10.0 and 1.11.1): the nine at line start are `not
 ok` on their own line under `! true` and `ok` under `! false`; the three condition heads of romp-serve.bats (309, 334 and 382, `if
 ! _dead "$pid"; then kill ...; return 1; fi`) the reverse, `ok` under `! true` and `not ok` on their own line under `! false`, so
 they are read only through the second rewrite; 0 inert, 0 undecided. Each rewrite runs twice (REPEATS) and four candidates are
-decided at a time (CORPUS_WORKERS): 166.60 s of runs in 76.91 s on this box under 1.10.0 (71.28 s under 1.11.1), 119.73 s of the
-runs the three heads' probe tests, whose slowest side is romp-serve.bats 334 under `! false`, 29.34 s for its two runs, against
+decided at a time (CORPUS_WORKERS): 155.19 s of runs in 70.26 s on this box under 1.10.0 (70.70 s under 1.11.1), 110.27 s of the
+runs the three heads' probe tests, whose slowest side is romp-serve.bats 334 under `! false`, 25.71 s for its two runs, against
 which RUN_TIMEOUT stands at 60 s a run. The 5 file-scope `!` words sit in helpers and a setup (bats-state-isolation.bats 125, 126
 and 129 twice; romp-postal.bats 47): outside the subject, since a `!` there has no enclosing test to run alone. Two classes this
 instrument does not see: that file scope, and a negation inside a string another shell runs (`eval "! true; true"`,
@@ -77,11 +83,20 @@ so a run an outer bound ends is attributable too (the poll case of the synthetic
 disagree, a failure nondeterministic for a reason unrelated to the negation, reported undecided with the disagreement named rather
 than read from a pair that happened to differ (the alternating case); a test that skips (bats gives no verdict: `skipped`, the TAP
 reader's case); two tests of one name in a file, which bats refuses whole (`Error: Duplicate test name(s) in file`, no TAP: the TAP
-reader's duplicate case); a test failing under both rewrites, and one whose failure is blamed outside the test (the later-failure
-and read-in-teardown cases); and a pipeline or a here-document body running off the end of the text (Candidates'
-continuation-past-the-text case, and a test bash cannot close is refused before any candidate of it is read). A negated compound
-command is not among them since fork PR #871's round 3: its operators are inside what bash reads whole, so the extent runs to its
-close and bats decides it (the group case of the synthetic-suite test, undecided before). None in the tree today, by the 12 rows.
+reader's duplicate case); a file bats could not load, a failure at file scope (`did not load`: `not ok N setup_file failed` under
+1.10.0, `bats-gather-tests` under 1.11.1; the TAP reader's unloadable case); a test failing under both rewrites, and one whose
+failure is blamed outside the test (the later-failure and read-in-teardown cases); a `not ok` bats prints no frame under (decide's
+synthetic no-line case; bats prints one for every failure it traces); and a pipeline or a here-document body running off the end
+of the text (Candidates' continuation-past-the-text case, and a test bash cannot close is refused before any candidate of it is
+read). Three more roads end undecided with no case at this head, kept as backstops and named so the list above is not read as
+exhaustive: more than one test line for the filter (`N tests`) and none (`no such test`), since bats's `-f` is matched here
+against the literal name as written, the text this module reads as bats does (measured: `-f` filters on the raw name, a `$HOME`
+or a `$( )` in it unexpanded, while `bats -t` prints the expanded description), so the filter finds exactly the test it names or
+the file loads none; and a rewritten file bash does not parse (decide's synthetic case), since the walker ends a pipeline only
+where bash read the text so far as complete (before round 4 an escaped blank at a line's end reached it: the close blanked). A
+negated compound command is not among them since fork PR #871's round 3: its operators are inside what bash reads whole, so the
+extent runs to its close and bats decides it (the group case of the synthetic-suite test, undecided before). None in the tree
+today, by the 12 rows.
 
 The register (ground_truth_shapes, BatsGroundTruth) is the gate on the three things the instrument still asserts. Recall: every `!`
 character of a shape's tests is a candidate unless NOT_A_NEGATION declares it text or an operator, and a test recorded `ok` with no
@@ -95,7 +110,9 @@ a comment holding operators), its continuations (the line continued by `\`, by `
 with one, by a comment line inside it, by an open quote, parenthesis or brace group: G_cont_*), `|&` inside it, the here-documents
 it introduces in every form, mid and last (C_negated_heredoc_*, whose bodies are `false`), `$'it\'s'` in it and `$'a\'b'` before a
 list operator (G_ansi_quote_*), an operator inside something bash reads whole (a `[[ ]]`, nested quotes, a `${ }`, backticks:
-G_op_in_*), a `#` glued to a metacharacter where bash begins a comment and glued to a `$( )` where it does not (G_glued_*), a
+G_op_in_*), one a quote inside a `"$( )"` would hide from a walker tracking quotes, before a `; true` tail (G_hidden_semi_*), an
+escaped blank or tab at the line's end and an escaped blank before a `; true` tail (G_escaped_*), a `#` glued to a metacharacter
+where bash begins a comment and glued to a `$( )` where it does not (G_glued_*), a
 negated compound of every kind followed to its close (G_negated_*), a close sharing its line (I_close_shares_last_line_*) and one
 introducing a here-document (I_close_introduces_heredoc_*, I_one_liner_heredoc), so a split that stops short or runs past one
 changes a recorded verdict or loses one. Decision:
@@ -116,18 +133,19 @@ test of this module that derives from bash skips under such a bash wherever it r
 (bash_shortfall, skip_unless_bash_serves: BASH_4_SYNTAX and the warning; the Python cells run the module on macOS with no bats,
 where before round 3 the two recall tests, the extents and the candidates were red, and the two tests that need no bash run
 there). The inner bats resolves through a PATH without the outer's libexec directory (_bats_env), since the entry point there
-expects the BATS_ROOT the scrub removes and did not load under CI's /usr/local layout. Measured at this head: 481 shapes, 493
-tests, in 63.74 s under 1.10.0 and 66.93 s under 1.11.1; under `! true` 285 ok and 208 not ok, under `! false` 479 ok and 14 not
+expects the BATS_ROOT the scrub removes and did not load under CI's /usr/local layout. Measured at this head: 493 shapes, 505
+tests, in 65.28 s under 1.10.0 and 68.88 s under 1.11.1; under `! true` 294 ok and 211 not ok, under `! false` 491 ok and 14 not
 ok (the four condition heads whose branch fails the test, `command _h` and `env _h`, which find no shell function, `run ! true`,
 which run itself fails, the doubled negation mid and last, whose inversions cancel, `! true && false` mid and last, the
 backgrounded negation whose job status `wait %%` reads, mid and last, and the status saved with `rc=$?` and read by `[ ]`); decide
-over the 476 tests holding one candidate: 210 read, 263 inert, 3 undecided (`command _h`, `env _h` and `! true && false` last,
+over the 488 tests holding one candidate: 213 read, 272 inert, 3 undecided (`command _h`, `env _h` and `! true && false` last,
 failing under both), the 7 holding two (the doubled and tripled negations, `if ! _h` and `! _h` mid and last with their helpers)
-and the 10 holding none not asked. The 429 shapes of fork PR #871's round 2 keep their recorded verdicts under both bats, and their
-extents and rewrites are byte for byte the round-2 walker's (measured over every shape and the corpus's 24 rewrites: 0
-differences), as round 2's kept round 1's 381; the 250 shapes of the earlier register keep their 260 recorded `! true` verdicts
-and are 260 ok under `! false`; every negation of the register is a candidate (492, 282 of them in tests recorded ok, 452 at line
-start), the 139 recorded-inert line-start sites the earlier register counted and every one off line start among them.
+and the 10 holding none not asked. The 481 shapes of fork PR #871's round 3 keep their recorded verdicts under both bats, and their
+extents and rewrites are byte for byte the round-3 walker's (measured over every shape and the corpus's 24 rewrites: 0
+differences), as round 3's kept round 2's 429 and round 2's round 1's 381; the 250 shapes of the earlier register keep their 260
+recorded `! true` verdicts and are 260 ok under `! false`; every negation of the register is a candidate (504, 291 of them in
+tests recorded ok, 464 at line start), the 139 recorded-inert line-start sites the earlier register counted and every one off line
+start among them.
 
 Deleted here, not fixed: the line scanner's frame model (the brace-depth walk, its block ends and the coverage pin over them), its
 heredoc classification (introducers, delimiter words, the skip) and its status-read grammar (`_plain_call`, `_helper_read`,
@@ -418,10 +436,11 @@ def candidates(lines, extents):
     return out
 
 
-# the negated pipeline's extent (negated_pipeline): (line index, column) just past its text, trailing blanks excluded, and the
-# lines after the candidate's that the rewrite leaves empty: the lines its text ran on to, and the bodies and terminators of the
-# here-documents it introduced; never a line of another command's here-document, introduced on the candidate's line before its
-# `!`, whose body comes first among the bodies that follow the line and stays
+# the negated pipeline's extent (negated_pipeline): (line index, column) just past its text, trailing blanks excluded (a blank a
+# backslash escapes is a character of the word and stays: _text_end), and the lines after the candidate's that the rewrite leaves
+# empty: the lines its text ran on to, and the bodies and terminators of the here-documents it introduced; never a line of another
+# command's here-document, introduced on the candidate's line before its `!`, whose body comes first among the bodies that follow
+# the line and stays
 Extent = collections.namedtuple("Extent", "line col blank")
 
 
@@ -436,10 +455,21 @@ def _pipeline_complete(own):
     """Whether bash reads the negated pipeline's own text (its lines from the `!`, the bodies and terminators of its here-documents
     included) as a complete command: the text wrapped in a brace group goes through `bash -n`, and a pipeline still wanting its
     next stage (a trailing `|` or `|&`, a comment after either or not), a trailing `\\`, an open quote, parenthesis, group or
-    compound, an operator inside a `[[ ]]`, a `${ }` or a backtick substitution, or a pending here-document leaves the group
-    unclosed. The one reading of where a pipeline ends: at an operator the walker found, at a comment, at a line's end; the
-    walker's own quote and parenthesis tracking proposes operators and nothing more."""
+    compound, an operator inside a quoted string, a `$( )`, a `[[ ]]`, a `${ }` or a backtick substitution, or a pending
+    here-document leaves the group unclosed. The one reading of where a pipeline ends: at an operator character the walker found,
+    at a comment, at a line's end; the walker proposes every operator character of the text and nothing more."""
     return _bash_parses(["{"] + own + ["}"])
+
+
+def _text_end(line, stop):
+    """The column just past the text of the line before column stop, trailing blanks excluded: a blank the backslash before it
+    escapes is a character of the word and stays, so the text bash is asked about is the text bash reads (`! true \\ ` is a
+    complete command, `! true \\` continues on the next line; an odd run of backslashes escapes the blank, `\\ `, and an even one
+    is escaped backslashes and a blank, `\\\\ `)."""
+    cut = len(line[:stop].rstrip())
+    if cut < stop and (cut - len(line[:cut].rstrip("\\"))) % 2:
+        cut += 1
+    return cut
 
 
 def _heredoc_lines(lines, cand, i, cut):
@@ -471,8 +501,8 @@ def _heredoc_lines(lines, cand, i, cut):
 def _begins_comment(own, text):
     """Whether a `#` following `text` (the pipeline's text so far on its line, after its earlier lines, own) begins a comment to
     bash: the text with `#'` appended and with `#"` appended go through `bash -n`, and a `#` that begins a comment hides either
-    quote, so bash says the same of both; a `#` that is part of a word (`a#b`, `$#`, one inside a `${ }` or inside a quoted string
-    the tracker paired otherwise) leaves a quote open, a different one each time. Asked only of a `#` at the start of a word, one
+    quote, so bash says the same of both; a `#` that is part of a word (`a#b`, `$#`, one inside a `${ }` or inside a quoted string)
+    leaves a quote open, a different one each time. Asked only of a `#` at the start of a word, one
     at column 0 or after a blank or one of bash's metacharacters (`|#`, `)#`, `(#`), since a `#` inside a word never begins a
     comment; a `#` after a `)` begins one when the `)` closed a subshell (`(true)# note`) and not when it closed a `$( )`
     (`$(x)#b`, one word), which is bash's call to make."""
@@ -481,30 +511,37 @@ def _begins_comment(own, text):
 
 def negated_pipeline(lines, cand):
     r"""The Extent of the negated pipeline that begins at the candidate's `!`. The walker proposes where the pipeline's text may
-    end, and bash decides at every proposal: a `;`, `&&`, `||`, lone `&` (a redirection's `&>`, `>&` or `<&` is none) or
-    unmatched `)` outside the quotes and parentheses the walker tracks ends the pipeline where bash reads the text so far as a
-    complete command (_pipeline_complete), and where it does not the operator is inside something bash reads whole and the scan
-    goes on past it: a `[[ ]]` (`! [[ a == b && c == d ]]`), a `${ }` (`${x:-a;b}`), a backtick substitution, a `$( )` whose
-    nested quotes the tracker paired otherwise (`"$(printf "%s && %s" a b)"`), or a compound the `!` negates (`! { true; false; }`,
-    `! if true; then ...; fi`, `! case a in a) ... esac`, followed to its close; before fork PR #871's round 3 the walker ended
-    the extent at the first such operator unasked, so the rewrite split the construct, and the remainder parsing on its own, an
-    inert site read as read). A `#` at the start of a word begins a comment where bash reads one (_begins_comment: after a
-    blank, a `|`, a `)` closing a subshell), and there, and at the line's end, the pipeline ends where bash reads the text so far
-    as complete and runs on to the next line where bash wants more: after a `|` or `|&` (a comment after either too: bash
-    continues the pipeline past it, and before round 2 the comment ended the extent there, so the rewrite split one pipeline into
-    two commands and an armed site read as inert), after a trailing `\`, inside an open quote, parenthesis, brace group or
-    compound. Quotes are tracked as bash reads them, `'...'`, `"..."` with backslash escapes and ANSI-C `$'...'` with backslash
-    escapes (read as a plain single quote before round 2, `$'it\'s'` ended at the escaped quote and the tracker ran off the
-    text); the tracking finds operators to propose and nothing more, and its one hazard is a quote it reads open where bash reads
-    none, which hides an operator from the proposal. A here-document the pipeline introduces is bash's call as well
-    (_heredoc_lines): its body and terminator lines are the pipeline's, blank in the rewrite, whatever the form (`<<WORD` or
-    `<<-WORD`, the word quoted or not; two on one line, bodies in introduction order; an introducer line ending in a comment or
-    in a `|`, the next stage following the terminator), and the body of a here-document another command introduced on the line
-    before the `!` comes first and stays. Before round 2 the extent stopped at the introducer line's end, and the rewrite left the
-    body and its terminator to run as commands. For a `!` inside a backtick substitution (cand.backticks) the first backtick not
-    escaped by a backslash ends it, whatever quote is open, since that is where bash closes the substitution. None when the
-    pipeline, or a body, runs off the end of the text: undecided, the safe side."""
-    i, j, q, depth = cand.line, cand.col + 1, None, 0
+    end, and bash decides at every proposal: at every `;`, `&&`, `||`, lone `&` (a redirection's `&>`, `>&` or `<&` is none, and
+    the `&` of `|&` is that operator's) and `)` of the text, wherever it stands, the pipeline ends where bash reads the text so
+    far as a complete command (_pipeline_complete), and where it does not the character is inside something bash reads whole and
+    the scan goes on past it: a quoted string (`"a;b"`), a `$( )` whatever quotes stand inside it (`"$(echo "it's")"`,
+    `"$(echo 'a"b')"`: a substitution opens a fresh quoting context), a `[[ ]]` (`! [[ a == b && c == d ]]`), a `${ }`
+    (`${x:-a;b}`), a backtick substitution, or a compound the `!` negates (`! { true; false; }`, `! if true; then ...; fi`,
+    `! case a in a) ... esac`, followed to its close; before fork PR #871's round 3 the walker ended the extent at the first such
+    operator unasked, so the rewrite split the construct, and the remainder parsing on its own, an inert site read as read). The
+    walker tracks no quote and no parenthesis: bash's answer at a proposal inside one is that the text is incomplete, so tracking
+    would decide nothing bash does not, and its misreadings hid operators (before round 4 the walker paired the quote inside a
+    `"$( )"` with the one outside it, read the rest of the line as a string, proposed no operator in it, and the extent of
+    `! cmd "$(echo "it's")"; true` ran to the line's end, so the rewrite dropped the `; true` that made the negation inert and
+    the site was read as read, the silent direction). Two things it does read are bash's lexing of single characters: the
+    character after a backslash is that word's (`\;` is no operator, `\#` no comment), so the scan skips it; and a blank a
+    backslash escapes at a line's end is a character of the word and not a trailing blank (_text_end), so it stays in the text
+    bash is asked about (`! true \ ` is complete and `! true \` continues; before round 4 the walker stripped the blank before
+    asking, so bash read a continuation and the line after it became the pipeline's, blank in the rewrite: mid-test an inert
+    site read as read, last the close blanked and the file unparsed). A `#` at the start of a word begins a comment where bash
+    reads one (_begins_comment: after a blank, a `|`, a `)` closing a subshell), and there, and at the line's end, the pipeline
+    ends where bash reads the text so far as complete and runs on to the next line where bash wants more: after a `|` or `|&` (a
+    comment after either too: bash continues the pipeline past it, and before round 2 the comment ended the extent there, so the
+    rewrite split one pipeline into two commands and an armed site read as inert), after a trailing `\`, inside an open quote,
+    parenthesis, brace group or compound. A here-document the pipeline introduces is bash's call as well (_heredoc_lines): its
+    body and terminator lines are the pipeline's, blank in the rewrite, whatever the form (`<<WORD` or `<<-WORD`, the word quoted
+    or not; two on one line, bodies in introduction order; an introducer line ending in a comment or in a `|`, the next stage
+    following the terminator), and the body of a here-document another command introduced on the line before the `!` comes
+    first and stays. Before round 2 the extent stopped at the introducer line's end, and the rewrite left the body and its
+    terminator to run as commands. For a `!` inside a backtick substitution (cand.backticks) the first backtick not escaped by a
+    backslash ends it, whatever quotes stand before it, since that is where bash closes the substitution and `bash -n` reads
+    nothing inside one. None when the pipeline, or a body, runs off the end of the text: undecided, the safe side."""
+    i, j = cand.line, cand.col + 1
     own, keep = [], set()
     while i < len(lines):
         line, n = lines[i], len(lines[i])
@@ -516,35 +553,18 @@ def negated_pipeline(lines, cand):
                 if cand.backticks and ch == "`":
                     stop, kind = j, "backtick"
                     break
-                if q == "'":
-                    if ch == "'":
-                        q = None
-                elif q in ('"', "$'"):
-                    if ch == "\\":
-                        j += 1
-                    elif ch == q[-1]:
-                        q = None
-                elif ch == "\\":
+                if ch == "\\":   # the next character is the word's, whatever it is
                     j += 1
-                elif ch == "$" and line.startswith("'", j + 1):   # a `$` the scan reads as itself, before a quote: ANSI-C quoting
-                    q, j = "$'", j + 1
-                elif ch in "'\"":
-                    q = ch
-                elif ch == "(":
-                    depth += 1
-                elif ch == ")" and depth:
-                    depth -= 1
                 elif ch == "|" and line.startswith("|&", j):   # one operator, inside the pipeline: its `&` is no lone `&`
                     j += 1
-                elif depth == 0 and (ch in ";)" or line.startswith(("&&", "||"), j)
-                                     or (ch == "&" and not line.startswith("&>", j) and not (j and line[j - 1] in "<>"))):
+                elif ch in ";)" or line.startswith(("&&", "||"), j) or (ch == "&" and not line.startswith("&>", j) and not (j and line[j - 1] in "<>")):
                     stop, kind = j, "operator"
                     break
                 elif ch == "#" and (j == 0 or line[j - 1] in " \t|&;()<>") and _begins_comment(own, line[start:j]):
                     stop, kind = j, "comment"
                     break
                 j += 1
-            cut = len(line[:stop].rstrip())
+            cut = _text_end(line, stop)
             text = line[start:cut]
             bodies = _heredoc_lines(lines, cand, i, cut)
             if bodies is not None:
@@ -714,8 +734,9 @@ def _bats_env(scratch):
 
 # one bats run of a test alone: the outcome (`ok`, `not ok`, or why bats gave no verdict: `skipped`, `did not load`, `no such
 # test`, `N tests`, `no TAP`, `timed out`), the 1-based line bats blames for a `not ok` (the innermost frame of its trace) and the
-# file it names there, the TAP and stderr text, and the wall time
-BatsRun = collections.namedtuple("BatsRun", "outcome line file detail secs")
+# file it names there, the TAP and stderr text, the wall time, and how many runs it stands for: 1, or the count of a side's
+# agreeing runs (_agreed), whose secs is then their total, so a message about one run's time divides or says the count
+BatsRun = collections.namedtuple("BatsRun", "outcome line file detail secs runs", defaults=(1,))
 _TAP_TEST = re.compile(r"^(ok|not ok) \d+ (.*)$")
 _TAP_SKIP = re.compile(r"^ok \d+ .* # skip( |$)")
 _TAP_FRAME = re.compile(r"^# \((?:from function `[^']*' )?in (?:test )?file (\S+), line (\d+)")
@@ -883,15 +904,20 @@ def decide(relpath, cand, extent, runs):
     is unrelated to it), a side whose repeated runs disagree (`disagree`, from _agreed: the inference from a differing pair holds
     for a DETERMINISTIC test, and a test failing nondeterministically for a reason unrelated to the negation would otherwise be
     read from noise, its inert negation silently exempted), and a run bats gave no verdict on (a skip, a file that did not load,
-    no such test, a run the bound ended, a rewrite bash does not parse). The message says which, so a maintainer can tell a
-    negation bats read as inert from a position this instrument could not decide (fork PR #778 round 8, Group C's rule)."""
+    no such test, more than one test line for the filter, a `not ok` with no frame under it, a run the bound ended, a rewrite
+    bash does not parse). The message says which, so a maintainer can tell a negation bats read as inert from a position this
+    instrument could not decide (fork PR #778 round 8, Group C's rule); a run standing for a side's agreeing runs (BatsRun.runs
+    above 1, its secs their total) is described as that many runs, each ended at the bound, and never as one run of their total
+    time."""
     for (what, _), run in zip(REWRITES, runs):
         if run.outcome == "disagree":
             return "undecided", "under `%s` %s; nothing was decided" % (what, run.detail.splitlines()[0])
         if run.outcome not in ("ok", "not ok"):
+            ended = ("the run was ended after %.0f s" % run.secs if run.runs == 1 else
+                     "the side's %d runs were each ended at the bound, %.0f s together," % (run.runs, run.secs))
             why = (run.detail if run.outcome == "no run" else
-                   "the run was ended after %.0f s with no verdict: a rewrite that does not terminate is one cause, a loop whose "
-                   "condition is this negation running forever under one of the two" % run.secs if run.outcome == "timed out" else
+                   "%s with no verdict: a rewrite that does not terminate is one cause, a loop whose condition is this negation "
+                   "running forever under one of the two" % ended if run.outcome == "timed out" else
                    "the outcome was `%s`" % run.outcome)
             return "undecided", "under `%s` bats gave no verdict on the test: %s; nothing was decided" % (what, why)
     if all(run.outcome == "ok" for run in runs):
@@ -910,7 +936,7 @@ def decide(relpath, cand, extent, runs):
 
 # what became of one candidate of the corpus: the suite's path (tests/<name>), the candidate, its enclosing test's name, the
 # verdict and message (decide), the candidate's line under each rewrite, the run standing for each rewrite's side (_agreed, its
-# seconds the side's), and the seconds every run took together
+# seconds the side's and its runs their count), and the seconds every run took together
 Decision = collections.namedtuple("Decision", "relpath cand test verdict message rewritten runs secs")
 # how many times each rewrite of a corpus candidate runs (decide_under_bats). The two outcomes decide reads come from separate bats
 # processes, so a differing pair proves a read only when each side's outcome is the test's own and not one run's noise: a side's
@@ -928,15 +954,15 @@ CORPUS_WORKERS = 4
 
 
 def _agreed(repl, side):
-    """One BatsRun standing for a side's runs (REPEATS of them, under the rewrite repl): the first, its seconds the side's total,
-    when every run's outcome, blamed line and file are the first's; else a `disagree` run, undecided to decide, whose detail's
-    first line names the nondeterminism and whose later lines carry each run's TAP, for the report."""
+    """One BatsRun standing for a side's runs (REPEATS of them, under the rewrite repl): the first, its seconds the side's total
+    and its runs their count, when every run's outcome, blamed line and file are the first's; else a `disagree` run, undecided to
+    decide, whose detail's first line names the nondeterminism and whose later lines carry each run's TAP, for the report."""
     secs = sum(r.secs for r in side)
     if all((r.outcome, r.line, r.file) == (side[0].outcome, side[0].line, side[0].file) for r in side):
-        return side[0]._replace(secs=secs)
+        return side[0]._replace(secs=secs, runs=len(side))
     named = "the test's %d runs disagree (%s): its outcome does not turn on this rewrite alone, so no pair holding it is read as " \
             "evidence; a failure nondeterministic for a reason unrelated to this negation is the usual cause" % (len(side), ", then ".join(_shown(r) for r in side))
-    return BatsRun("disagree", None, None, "\n".join([named] + ["run %d, %s:\n%s" % (n + 1, _shown(r), r.detail) for n, r in enumerate(side)]), secs)
+    return BatsRun("disagree", None, None, "\n".join([named] + ["run %d, %s:\n%s" % (n + 1, _shown(r), r.detail) for n, r in enumerate(side)]), secs, len(side))
 
 
 def decide_under_bats(root, relpath, lines, extents, cand, scratch, bats="bats", timeout=RUN_TIMEOUT, repeats=REPEATS):
@@ -1354,11 +1380,13 @@ class Candidates(unittest.TestCase):
         # the remainder parsing on its own, an inert site read as read), and a negated compound ended at its first operator (the
         # rewritten file did not parse: undecided). Every proposed stop is bash's call now (_pipeline_complete), and so is whether
         # a `#` glued to a metacharacter begins a comment (_begins_comment: after `|` and after a subshell's `)` it does, after a
-        # `$( )` it is part of the word). The forms, one each: the two `[[ ]]` operators, a `&&` and a `;` inside nested quotes,
+        # `$( )` it is part of the word); since round 4 the walker tracks no quote and no parenthesis at all, and every operator
+        # character is proposed. The forms, one each: the two `[[ ]]` operators, a `&&` and a `;` inside nested quotes,
         # inside a `${ }` and inside backticks, a comment glued to `|`, to a subshell's `)` and to `(`, a word glued to `$( )`, a
         # negated group, `if`, `case`, `for`, `while`, `until`, arithmetic and subshell compound, and the ANSI-C quote before a
-        # list operator (fresh-2's arm, which G_ansi_quote_* did not arm: with the arm removed the tracker read `b' || false` as a
-        # string and the extent ran to the line's end, where bash reads the whole line as complete)
+        # list operator (fresh-2's arm, which G_ansi_quote_* did not arm: with the arm removed the round-3 tracker read `b' || false`
+        # as a string and the extent ran to the line's end, where bash reads the whole line as complete; since round 4 the `;` and
+        # the `||` inside and after an ANSI-C quote are proposed like any other and bash refuses the one inside)
         lines = ['@test "x" {',
                  '    ! [[ a == a && b == b ]]',                         # 1
                  '    ! [[ a == a || b == b ]]',                         # 2
@@ -1407,6 +1435,52 @@ class Candidates(unittest.TestCase):
         self.assertFalse(_begins_comment([], "! echo $(true)"))
         self.assertFalse(_begins_comment([], "! echo ${x:-a "))
         self.assertFalse(_begins_comment([], '! echo "$(echo "a '))
+
+    def test_a_quote_inside_a_substitution_hides_no_operator_and_an_escaped_blank_at_a_lines_end_is_no_continuation(self):
+        # round 4 of fork PR #871 (round 3's two verifiers). The walker tracked quotes and parentheses to find the operators it
+        # proposed, and a `$( )` inside double quotes opens a quoting context of its own, so a quote inside one desynchronised the
+        # tracker: the rest of the line read as a string, no operator in it was proposed, and the extent ran to the line's end,
+        # where bash reads the whole line as complete; the rewrite dropped the tail that discarded the status (`; true`,
+        # `|| true`) and an inert site was read as read, the silent direction (the runs verifier: `! grep -q x "$(echo "it's")" ;
+        # true` last, verdict read, runs `['not ok @2', 'ok']`, where the tail-keeping rewrites run ok, ok). And the walker
+        # stripped a line's trailing blanks before asking bash, so `! true \ `, an escaped blank and a complete command to bash,
+        # was asked as `! true \`, a continuation, and the line after it became the pipeline's, blank in the rewrite: mid-test the
+        # command after it deleted and the negation made last (inert read as read), last the close blanked and the file unparsed
+        # (the walker verifier). Now every operator character is proposed, whatever surrounds it, and bash refuses one inside a
+        # quote or a substitution (_pipeline_complete); and an escaped blank stays in the text bash is asked about (_text_end).
+        # The forms: a `'` inside nested double quotes inside a `"$( )"` and a `"` inside single quotes inside one, before
+        # `; true`, and the first before `|| true`; an escaped blank, an escaped tab and an escaped blank ending an argument at the
+        # line's end; an escaped blank before a `;`; an escaped backslash before a trailing blank (an even run: the blank is no
+        # character of the word and is excluded); and a trailing `\` alone, which still continues
+        lines = ['@test "x" {',
+                 '    ! echo "$(echo "it\'s")" > /dev/null; true',       # 1
+                 '    ! echo "$(echo \'a"b\')" > /dev/null; true',       # 2
+                 '    ! echo "$(echo "don\'t")" > /dev/null || true',    # 3
+                 '    ! true \\ ',                                       # 4: an escaped blank at the line's end
+                 '    ! true \\\t',                                      # 5: an escaped tab
+                 '    ! true a\\ ',                                      # 6: the escaped blank ends an argument
+                 '    ! true \\ ; true',                                 # 7: an escaped blank before an operator
+                 '    ! true \\\\ ',                                     # 8: an escaped backslash, then a trailing blank
+                 '    ! true \\',                                        # 9: a continuation
+                 '        x',
+                 '    true',
+                 '}']
+        extents = bash_test_extents(lines)
+        found = {c.line: c for c in candidates(lines, extents)}
+        self.assertEqual(sorted(found), [1, 2, 3, 4, 5, 6, 7, 8, 9])
+        ends = {1: Extent(1, len('    ! echo "$(echo "it\'s")" > /dev/null'), ()), 2: Extent(2, len('    ! echo "$(echo \'a"b\')" > /dev/null'), ()),
+                3: Extent(3, len('    ! echo "$(echo "don\'t")" > /dev/null'), ()), 4: Extent(4, len('    ! true \\ '), ()), 5: Extent(5, len('    ! true \\\t'), ()),
+                6: Extent(6, len('    ! true a\\ '), ()), 7: Extent(7, len('    ! true \\ '), ()), 8: Extent(8, len('    ! true \\\\'), ()), 9: Extent(10, len('        x'), (10,))}
+        for i, cand in sorted(found.items()):
+            self.assertEqual(negated_pipeline(lines, cand), ends[i], lines[i])
+        self.assertEqual(rewritten_shape(lines, extents, "! true"),
+                         ['@test "x" {', '    ! true; true', '    ! true; true', '    ! true || true', '    ! true', '    ! true', '    ! true', '    ! true; true',
+                          '    ! true ', '    ! true', '', '    true', '}'])
+        self.assertTrue(_bash_parses(_rewritten(rewritten_shape(lines, extents, "! false"))))
+        # _text_end on its own: an escaped blank stays; an unescaped one, one after an even run of backslashes and a second one
+        # after the escaped one do not
+        self.assertEqual([_text_end(t, len(t)) for t in ("! true ", "! true \\ ", "! true \\\\ ", "! true \\\\\\ ", "! true \\  ")],
+                         [len("! true"), len("! true \\ "), len("! true \\\\"), len("! true \\\\\\ "), len("! true \\ ")])
 
     def test_the_rewrite_keeps_the_line_count_and_what_follows_the_pipeline_and_every_bang_of_a_run(self):
         lines = ['@test "x" {', '    ! echo "$(echo a; echo b)" | cat || true   # note', '    ! true \\', '        --flag || false', '    ! true   # note',
@@ -1624,16 +1698,18 @@ def ground_truth_shapes():
     # the tracker ran off the text and the register raised on the shape)
     S["G_ansi_quote_mid"] = "@test \"x\" {\n    ! echo $'it\\'s' > /dev/null\n    true\n}\n"
     S["G_ansi_quote_last"] = "@test \"x\" {\n    true\n    ! echo $'it\\'s' > /dev/null\n}\n"
-    # an operator inside something bash reads whole, which the walker's tracking proposes as the pipeline's end and bash refuses
-    # (round 3 of fork PR #871: the walker stopped there unasked, the rewrite split the construct and the remainder ran on its
-    # own, an inert site read as read), one form each, mid and last: the two `[[ ]]` operators; a `&&` and a `;` inside quotes
-    # nested in a `$( )` inside quotes (the tracker pairs the inner quote with the outer), inside a `${ }` and inside backticks; a
+    # an operator inside something bash reads whole, which the walker proposes as the pipeline's end and bash refuses (round 3 of
+    # fork PR #871: the walker stopped there unasked, the rewrite split the construct and the remainder ran on its own, an inert
+    # site read as read), one form each, mid and last: the two `[[ ]]` operators; a `&&` and a `;` inside quotes nested in a
+    # `$( )` inside quotes (the round-3 tracker paired the inner quote with the outer and exposed them), inside a `${ }` and inside
+    # backticks; a
     # `#` glued to `|` and to a subshell's `)`, where bash begins a comment, glued to `(`, and glued to a `$( )`, where it is part
     # of the word (`$(true)#b || false`: an extent ending at the `#` would drop the `|| false` and its verdict); a negated compound
     # (man bash, Compound Commands: a group, `if`, `case`, `for`, `while`, `until`, `(( ))`, a subshell with a `;` inside), on one
-    # line and over several, followed to its close; and the ANSI-C quote before a list operator, which arms the `$'` arm (with the
-    # arm removed the tracker reads `b' || false` as a string and the extent runs to the line's end, where bash reads the whole
-    # line as complete, so G_ansi_quote_* alone did not pin it)
+    # line and over several, followed to its close; and the ANSI-C quote before a list operator, which armed the round-3 tracker's
+    # `$'` arm (with the arm removed that tracker read `b' || false` as a string and the extent ran to the line's end, where bash
+    # reads the whole line as complete, so G_ansi_quote_* alone did not pin it; since round 4 there is no arm: the `||` is proposed
+    # and bash ends the pipeline there)
     for name, text in (("op_in_dbracket_and", "! [[ a == a && b == b ]]"), ("op_in_dbracket_or", "! [[ a == a || b == b ]]"),
                        ("op_in_nested_quotes_and", '! echo "$(printf "%s && %s" a b)" > /dev/null'), ("op_in_nested_quotes_semi", '! echo "$(echo "a;b")" > /dev/null'),
                        ("op_in_param_and", "! echo ${x:-a&&b} > /dev/null"), ("op_in_param_semi", "! echo ${x:-a;b} > /dev/null"),
@@ -1646,6 +1722,25 @@ def ground_truth_shapes():
                        ("negated_for", "! for i in 1; do true; done"), ("negated_while", "! while false; do true; done"),
                        ("negated_until", "! until true; do false; done"), ("negated_arith", "! (( 1 && 1 ))"), ("negated_subshell_semi", "! (true; true)"),
                        ("ansi_quote_or_false", "! echo $'a\\'b' || false")):
+        S["G_%s_mid" % name] = '@test "x" {\n    %s\n    true\n}\n' % text
+        S["G_%s_last" % name] = '@test "x" {\n    true\n    %s\n}\n' % text
+    # round 4 of fork PR #871 (round 3's two verifiers): the walker tracks no quote and no parenthesis, since every operator
+    # character is proposed and bash refuses one inside a quote or a substitution (a `$( )` inside double quotes opens a quoting
+    # context of its own, and the tracker, pairing the quote inside it with the one outside, read the rest of the line as a string
+    # and proposed no operator in it, so the extent ran to the line's end and the rewrite dropped the `; true` that made the
+    # negation inert: an inert site read as read, the silent direction, which G_op_in_nested_quotes_* did not pin, holding the
+    # other direction, an operator the desync exposed and bash refused); and a blank a backslash escapes at a line's end is a
+    # character of the word and no trailing blank, so `! true \ ` is complete to bash and no continuation (the walker stripped the
+    # blank before asking, bash read `! true \`, and the line after it became the pipeline's and blank in the rewrite: mid-test
+    # the command after it deleted and the negation made last, an inert site read as read; last the close blanked). One shape
+    # each, mid and last: a `'` inside nested double quotes inside a `"$( )"` and a `"` inside single quotes inside one, each
+    # before a `; true` tail, which makes the last position inert too, so the recorded pair is (ok, ok) and a walker dropping the
+    # tail records (not ok, ok) there; an escaped blank, an escaped tab and an escaped blank ending an argument at the line's end,
+    # whose last position is read, (not ok, ok), and an escaped blank before a `; true` tail, (ok, ok) in both positions
+    for name, text in (("hidden_semi_squote_in_subst", '! echo "$(echo "it\'s")" > /dev/null; true'),
+                       ("hidden_semi_dquote_in_subst", '! echo "$(echo \'a"b\')" > /dev/null; true'),
+                       ("escaped_blank_end", "! true \\ "), ("escaped_tab_end", "! true \\\t"), ("escaped_blank_arg_end", "! true a\\ "),
+                       ("escaped_blank_semi_true", "! true \\ ; true")):
         S["G_%s_mid" % name] = '@test "x" {\n    %s\n    true\n}\n' % text
         S["G_%s_last" % name] = '@test "x" {\n    true\n    %s\n}\n' % text
     S["G_or_return_var_mid"] = '@test "x" {\n    rc=1\n    %s || return "$rc"\n    true\n}\n' % N
@@ -2171,6 +2266,14 @@ class BatsGroundTruth(unittest.TestCase):
         'G_continued_pipe_mid': ('ok', 'ok'),
         'G_double_negation_last': ('ok', 'not ok'),
         'G_double_negation_mid': ('ok', 'not ok'),
+        'G_escaped_blank_arg_end_last': ('not ok', 'ok'),
+        'G_escaped_blank_arg_end_mid': ('ok', 'ok'),
+        'G_escaped_blank_end_last': ('not ok', 'ok'),
+        'G_escaped_blank_end_mid': ('ok', 'ok'),
+        'G_escaped_blank_semi_true_last': ('ok', 'ok'),
+        'G_escaped_blank_semi_true_mid': ('ok', 'ok'),
+        'G_escaped_tab_end_last': ('not ok', 'ok'),
+        'G_escaped_tab_end_mid': ('ok', 'ok'),
         'G_eval_string_mid': ('ok', 'ok'),
         'G_first_command': ('ok', 'ok'),
         'G_glued_comment_open_paren_last': ('not ok', 'ok'),
@@ -2181,6 +2284,10 @@ class BatsGroundTruth(unittest.TestCase):
         'G_glued_comment_subshell_mid': ('ok', 'ok'),
         'G_glued_word_subst_last': ('not ok', 'ok'),
         'G_glued_word_subst_mid': ('not ok', 'ok'),
+        'G_hidden_semi_dquote_in_subst_last': ('ok', 'ok'),
+        'G_hidden_semi_dquote_in_subst_mid': ('ok', 'ok'),
+        'G_hidden_semi_squote_in_subst_last': ('ok', 'ok'),
+        'G_hidden_semi_squote_in_subst_mid': ('ok', 'ok'),
         'G_last_command': ('not ok', 'ok'),
         'G_last_past_comment_blank': ('not ok', 'ok'),
         'G_lone_bang_last': ('not ok', 'ok'),
@@ -2675,6 +2782,8 @@ class BatsCorpus(unittest.TestCase):
                            ([ok, BatsRun("no TAP", None, None, "Error: Duplicate test name(s) in file", 0.0)], "the outcome was `no TAP`"),
                            ([BatsRun("did not load", None, None, "", 0.0), bad(10)], "the outcome was `did not load`"),
                            ([ok, BatsRun("timed out", None, None, "1..1", 61.2)], "under `! false` bats gave no verdict on the test: the run was ended after 61 s with no verdict"),
+                           ([ok, _agreed("! false", [BatsRun("timed out", None, None, "1..1", 61.2), BatsRun("timed out", None, None, "1..1", 60.8)])],
+                            "under `! false` bats gave no verdict on the test: the side's 2 runs were each ended at the bound, 122 s together, with no verdict"),
                            ([BatsRun("no run", None, None, "the rewritten file does not parse under bash -n: x", 0.0), ok], "does not parse under bash -n"),
                            ([BatsRun("no run", None, None, "the negated pipeline runs off the end of the text", 0.0), ok], "runs off the end"),
                            ([_agreed("! true", [ok, bad(10)]), ok], "under `! true` the test's 2 runs disagree (ok, then not ok @10): its outcome does not turn on this rewrite alone")):
@@ -2682,9 +2791,11 @@ class BatsCorpus(unittest.TestCase):
             self.assertEqual(verdict, "undecided", message)
             self.assertIn(said, message)
             self.assertNotIn("asserts nothing", message)
-        # a side's runs stand as one when they agree in outcome, blamed line and file, its seconds summed; a differing outcome or a
-        # failure blamed elsewhere is `disagree`, and its detail carries every run's TAP for the report
-        self.assertEqual(_agreed("! true", [bad(10)._replace(secs=1.5), bad(10)._replace(secs=2.0)]), bad(10)._replace(secs=3.5))
+        # a side's runs stand as one when they agree in outcome, blamed line and file, its seconds summed and its runs counted (a
+        # message about the run's time then says the count and the total, never the total as one run's: the walker verifier of fork
+        # PR #871's round 3 read `ended after 6 s` off a 3 s bound); a differing outcome or a failure blamed elsewhere is `disagree`,
+        # and its detail carries every run's TAP for the report
+        self.assertEqual(_agreed("! true", [bad(10)._replace(secs=1.5), bad(10)._replace(secs=2.0)]), bad(10)._replace(secs=3.5, runs=2))
         self.assertEqual(_agreed("! false", [ok, ok]).outcome, "ok")
         for side in ([ok, bad(10)], [bad(10), bad(11)], [bad(10), bad(10, "tests/other.bats")]):
             run = _agreed("! true", side)
@@ -3027,7 +3138,9 @@ class BatsRoad(unittest.TestCase):
         self.assertIn("blamed on tests/one.bats line 31, outside the candidate's test (tests/one.bats lines 22 to 26)", decisions[5].message)
         self.assertEqual([r.outcome for r in decisions[6].runs], ["ok", "timed out"])
         self.assertTrue(3 * REPEATS <= decisions[6].runs[1].secs < 15 * REPEATS, decisions[6].runs[1].secs)   # the side's runs, summed
-        self.assertIn("under `! false` bats gave no verdict on the test: the run was ended after", decisions[6].message)
+        self.assertIn("under `! false` bats gave no verdict on the test: the side's %d runs were each ended at the bound, %.0f s together, with no verdict"
+                      % (REPEATS, decisions[6].runs[1].secs), decisions[6].message)   # the count and the total, not the total as one run's
+        self.assertEqual(decisions[6].runs[1].runs, REPEATS)
         self.assertIn("under `! false`: while ! false; do sleep 0.1; done  ->  timed out", report(decisions[6]))
         text = report(decisions[0])
         self.assertIn("tests/one.bats:2 in test 'mid': INERT: the test passes with the negated command succeeding and with it failing", text)
