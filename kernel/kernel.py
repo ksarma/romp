@@ -69925,7 +69925,11 @@ if(h)document.documentElement.style.setProperty('--app-h',h+'px');
 // pinch and WebKit shrinks it to the visual viewport's height, so a clamp reading innerHeight there had innerHeight - h
 // below 0 on every zoomed run, the max term bound at 0 and the road published 0px whatever the hold, the band under the
 // composer reopened for as long as the zoom held; clientHeight is the layout viewport in both models (standards mode is
-// pinned and the page is overflow:hidden, so no scrollbar parts it from innerHeight where innerHeight was right), which
+// pinned by EXECUTION, not by an assertion on the mode: in quirks mode the root's clientHeight is the body's height, not
+// the viewport's, and the served legs' pan and pinch figures, 83 and 336 px in tests/test_keyboard_gap_served.py in both
+// engines with a skip counted as a failure, flip to 0 the moment the document is served without its doctype (round 9,
+// 2026-09-20: the clause had said "pinned" and named no pin); the page is overflow:hidden, so no scrollbar parts
+// clientHeight from innerHeight where innerHeight was right), which
 // makes the read a no-op on every road where the old value was right and a fix on any road where it was not. The model
 // holds by WebKit's source and a Chromium run; the on-device read under a pinch is the only real-engine confirmation, and
 // it is pending (headless WebKit here refuses a scale above 1). REACHABILITY: the pinch machinery here assumes a pinch is

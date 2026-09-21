@@ -655,7 +655,8 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         # pinch-aware since 2026-08-19: the fine-pointer road reads innerHeight on upstream's line (its premise, "pinch-immune in
         # every browser", and the fork's contrary engine model both live in the fit() comment, the one home, with their evidence
         # status), and the fork line after it re-reads the layout viewport as documentElement.clientHeight before the --app-h
-        # write (round 8, 2026-09-20; a no-op wherever innerHeight was right, standards mode pinned and the page overflow:hidden);
+        # write (round 8, 2026-09-20; a no-op wherever innerHeight was right: standards mode is pinned by execution, the served legs'
+        # pan and pinch figures in tests/test_keyboard_gap_served.py flipping to 0 in quirks mode, and the page is overflow:hidden);
         # the visual viewport drives the fit only on coarse-pointer devices, where the soft keyboards and collapsing toolbars it
         # exists for live, scale-guarded against mobile pinches. Behaviour: test_kernel_mobile.MobileFitExecutes drives that road
         # with innerHeight parted from clientHeight.
