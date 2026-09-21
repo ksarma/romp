@@ -89,8 +89,11 @@ holds a further round on this PR, raise REVIEWER_ROUNDS and rewrite this constan
 is then a real round. The file list is checked against the checkout on the derived road alone, where it is live (a
 deleted file has left it, so a missing file there is one removed between the listing and the read); on the manifest and
 out-of-scope roads the manifest is a FROZEN RECORD whose rows are read for the rules and checked for their own
-consistency (non-empty, every line row under a file row), never against the tree: after the merge the tree moves under a
-record those roads cannot regenerate, and a later change's rename of a listed file is nobody's defect here.
+consistency (non-empty, every line row under a file row), never against the tree: the out-of-scope road's record is
+another branch's population, not this tree's; on the manifest road (CI's until the PR lands; this module leaves the tree
+at landing, the first paragraph above) a check that each line row is a line of its file would catch that road's one
+residual, a manifest the author left stale after a reword (pinned on the derived road), and is left as a shape question
+for the ruler beside the convergence named above rather than added to a guard about to become a caller.
 """
 import os
 import re
