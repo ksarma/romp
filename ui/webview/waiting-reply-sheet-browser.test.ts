@@ -159,9 +159,11 @@ async function boot(browser: any) {
       const r = e.getBoundingClientRect(); const at = d.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2);
       return at === e ? "target" : at === overlay ? "overlay" : at === box ? "box" : at ? ((at as HTMLElement).className || at.tagName).split(" ")[0] : "none";
     };
-    // the three-row height in THIS engine: a probe of the same class, rows=3, laid out outside the sheet where nothing
-    // squeezes it; measured and removed
+    // the three-row height in THIS engine: a probe of the same class, rows=3, laid out outside the sheet and OUT OF FLOW
+    // (position fixed: the pane's body is a full-height flex column, and a probe in flow there is a shrinkable flex item
+    // on a short frame, the very squeeze under test); measured and removed
     const probe = d.createElement("textarea"); probe.className = "ut-reply-input"; probe.rows = 3;
+    probe.style.position = "fixed"; probe.style.top = "0"; probe.style.left = "0"; probe.style.width = "300px"; probe.style.visibility = "hidden";
     d.body.appendChild(probe);
     const floorH = probe.clientHeight;
     probe.remove();
@@ -227,7 +229,7 @@ async function boot(browser: any) {
     const inFrame = c.y >= 0 && c.y <= m.frameH && c.x >= 0 && c.x <= PHONE_W;
     if (inFrame) await page.mouse.click(c.x, c.y);
     await settle();
-    const after = await page.evaluate((t: string) => {
+    const after: { overlayUp: boolean; rowUp: boolean; posted: Array<{ type: string; id: string; todoId: string; text: string }> } = await page.evaluate((t: string) => {
       const win = (document.getElementById("f-waiting") as HTMLIFrameElement).contentWindow! as any;
       const d = win.document;
       return { overlayUp: !!d.getElementById("ut-reply-prompt"), rowUp: !!d.querySelector(`.ut-reply[data-tid="${t}"]`),
@@ -235,7 +237,33 @@ async function boot(browser: any) {
     }, tid);
     return { before: m, tapAt: c, inFrame, ...after };
   };
-  return { page, W, setHeight, settle, measure, probeShort, openReply, cancelReply, fill, tapSend, waitTight, errors };
+  // the person pulls the box taller: a native drag of the resize grip (the textarea's bottom-right corner, inside the
+  // border; resize: vertical), and where the headless engine's grip does not move (WebKit, in the round-1 refuters'
+  // runs) the inline height written as the grip writes it; the road taken is reported with the result
+  const dragTaller = async () => {
+    const before = (await measure())!;
+    const r = await page.evaluate(() => {
+      const win = (document.getElementById("f-waiting") as HTMLIFrameElement).contentWindow!;
+      const b = win.document.querySelector("#ut-reply-prompt .ut-reply-input")!.getBoundingClientRect();
+      return { right: b.right, bottom: b.bottom };
+    });
+    await page.mouse.move(r.right - 5, r.bottom - 5);
+    await page.mouse.down();
+    await page.mouse.move(r.right - 5, r.bottom + 40, { steps: 8 });
+    await page.mouse.move(r.right - 5, r.bottom + 60, { steps: 4 });
+    await page.mouse.up();
+    await settle();
+    let m = (await measure())!;
+    let road = "native grip";
+    if (m.inputStyleH === before.inputStyleH || m.inputH <= before.inputH + 10) {
+      road = "scripted (the headless grip did not move)";
+      await page.evaluate(() => { const win = (document.getElementById("f-waiting") as HTMLIFrameElement).contentWindow!; (win.document.querySelector("#ut-reply-prompt .ut-reply-input") as HTMLElement).style.height = "150px"; });
+      await settle();
+      m = (await measure())!;
+    }
+    return { road, dragged: m };
+  };
+  return { page, W, setHeight, settle, measure, probeShort, openReply, cancelReply, fill, tapSend, dragTaller, waitTight, errors };
 }
 // a short window with the chip todo open: the box scrolls; the detail keeps its floor and scrolls within itself; its
 // first line's address and Send are each under a finger once the box is scrolled to them
@@ -274,7 +302,7 @@ for (const name of ["chromium", "firefox", "webkit"]) {
     try { browser = await pw[name].launch(); }
     catch (e) { t.skip("no playwright " + name + " on this box — this leg needs it; the served leg tests/test_reply_sheet_served.py is the guard where this skips (CI's browser step runs it in chromium): " + String((e as Error).message).split("\n")[0]); return; }
     try {
-      const { setHeight, measure, probeShort, openReply, cancelReply, fill, tapSend, waitTight, errors } = await boot(browser);
+      const { page, W, setHeight, settle, measure, probeShort, openReply, cancelReply, fill, tapSend, dragTaller, waitTight, errors } = await boot(browser);
       await openReply("t1");
       // ── 508px: the keyboard up on a phone, above the fold's threshold — the squeeze fix alone
       let m = (await measure())!;
@@ -341,6 +369,20 @@ for (const name of ["chromium", "firefox", "webkit"]) {
       assert.ok(m.inputH >= m.floorH - 1, `then 420px, folded: three rows still (${m.inputH} against ${m.floorH}px)`);
       assertFits(m, "900 then 420, the answer grown");
       await fill("");
+      // ── the person pulls the box taller, then types ONE character: the dragged height stands. Before the guard every
+      // keystroke snapped a dragged box back to its content's height, on a textarea whose own CSS invites the drag
+      // (resize: vertical); the guard is file-comments.ts autosize's, copied into grow
+      await setHeight(TALL);
+      await waitTight(false);
+      const d = await dragTaller();
+      t.diagnostic(`${name}: the drag road was ${d.road}; inline height after the drag ${d.dragged.inputStyleH}, box ${d.dragged.inputH}px against the ${m.floorH}px floor`);
+      assert.ok(d.dragged.inputH > m.floorH + 30, `the drag took (${d.road}): ${d.dragged.inputH}px against the ${m.floorH}px floor, inline height ${d.dragged.inputStyleH}`);
+      await W.locator("#ut-reply-prompt .ut-reply-input").focus();
+      await page.keyboard.type("a");
+      await settle();
+      m = (await measure())!;
+      assert.equal(m.inputStyleH, d.dragged.inputStyleH, `one keystroke after the drag (${d.road}): the inline height the person set stands, grow stood down (before the guard it snapped back to the floor: ${m.inputH}px)`);
+      assert.ok(m.inputH >= d.dragged.inputH - 1, `and the box keeps the dragged height (${m.inputH} against ${d.dragged.inputH}px)`);
       await setHeight(KEYBOARD_UP);
       await waitTight(false);
       await cancelReply();

@@ -329,16 +329,24 @@ function showReply(sid: string, todoId: string, todoText: string, todoDetail = "
   // keyboard up, and a tap there fell on the backdrop): the wanted height is written, the box's overflow past its own
   // cap read, and the height gives that overflow back, never under the floor. Run on the window's resize too (kbFit),
   // so a keyboard opening or closing re-fits an answer already grown; the box's own scroll (styles.css
-  // #ut-reply-prompt .picker-box) is the backstop for a window the floors alone overflow. render.ts showUserTodoReply
-  // carries the same block, byte for byte (reply-sheet-keyboard.test.ts pins the two equal).
+  // #ut-reply-prompt .picker-box) is the backstop for a window the floors alone overflow. A height the person DRAGGED
+  // stands (the textarea keeps resize: vertical): the guard is file-comments.ts autosize's, compared string to string,
+  // an inline height that is not what this handler last wrote was dragged there, before the first keystroke or since,
+  // and the handler stands down until the sheet closes (the maintainer's round 1 ruling: without it every keystroke
+  // snapped a dragged box back to its content). growComposer is the precedent for the auto-then-measure idiom only: it
+  // discards a dragged height too (only its cap survives a drag). render.ts showUserTodoReply carries the same block,
+  // byte for byte (reply-sheet-keyboard.test.ts pins the two equal).
+  let sizedTo = "";   // what grow last wrote ("" before its first write): an inline height that is not it is the person's drag
   const grow = () => {
+    if (input.style.height !== sizedTo) return;   // dragged (resize: vertical writes the inline height, fires no input): the person's height stands
     input.style.height = "auto";
     const floor = input.offsetHeight;
-    if (!(floor > 0)) { input.style.height = ""; return; }   // no layout to measure (a box not laid out): no inline height
+    if (!(floor > 0)) { input.style.height = sizedTo; return; }   // no layout to measure (a box not laid out): keep what stood
     const want = input.scrollHeight + floor - input.clientHeight;
     input.style.height = want + "px";
     const over = box.scrollHeight - box.clientHeight;   // the box past its own cap with the answer at its content's height
     if (over > 0) input.style.height = Math.max(floor, want - over) + "px";
+    sizedTo = input.style.height;
   };
   input.addEventListener("input", grow);
   overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });

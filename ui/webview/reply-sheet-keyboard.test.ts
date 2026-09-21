@@ -62,8 +62,9 @@ const GROW_ARM = /input\.addEventListener\("input", grow\);/;
 // the grow handler is a BLOCK (its head, its statements, the `};` that closes it), sliced whole; a builder whose head or
 // close moved is a loud failure here, and the browser legs slice the same block
 function growBlock(src: string, name: string): string {
-  const head = src.indexOf("\n  const grow = () => {\n");
-  assert.ok(head >= 0, "the grow block's head not found in " + name + ": re-anchor");
+  const head = src.indexOf("\n  let sizedTo = \"\";");   // the drag guard's record, declared right above the handler
+  assert.ok(head >= 0, "the grow block's head (let sizedTo) not found in " + name + ": re-anchor");
+  assert.ok(src.indexOf("\n  const grow = () => {\n", head) > head && src.indexOf("\n  const grow = () => {\n", head) < head + 200, name + ": the grow handler follows its sizedTo line");
   const end = src.indexOf("\n  };\n", head);
   assert.ok(end > head, "the grow block's close not found in " + name + ": re-anchor");
   return src.slice(head + 1, end + "\n  };".length);
@@ -171,7 +172,10 @@ function inputNode(geom: { offset: number; client: number; scroll: number }) {
   Object.defineProperty(input, "offsetHeight", { get: () => geom.offset, configurable: true });
   Object.defineProperty(input, "clientHeight", { get: () => geom.client, configurable: true });
   Object.defineProperty(input, "scrollHeight", { get: () => geom.scroll, configurable: true });
-  return { input, writes, geom };
+  // the writes since the last mark: the list is never cleared, because style.height READS the last write and the handler's
+  // drag guard compares that read with what it wrote last (a cleared list would read as a drag)
+  let mark = 0;
+  return { input, writes, geom, mark: () => { mark = writes.length; }, fresh: () => writes.slice(mark) };
 }
 // the box (.picker-box.confirm-box) as the handler reads it: its scroll height against its client height is the content
 // past the cap, the room the answer does not have; a stand-in whose two numbers are the test's input. The handler writes
@@ -198,36 +202,53 @@ for (const [name, src] of BUILDERS) {
     const grow = grower(name, src, g.input, b.box, win);
     assert.equal(g.input._listeners.input === grow, true, "armed on the box's input event");
     g.input._listeners.input({ type: "input" });
-    assert.deepEqual(g.writes, ["auto", "78px"], "measured at auto first, then the floor: an empty box is three rows");
+    assert.deepEqual(g.fresh(), ["auto", "78px"], "measured at auto first, then the floor: an empty box is three rows");
     // a long answer: the content's scroll height plus the border a border-box height carries (the composer's growComposer
     // reads scrollHeight the same way; the border is what a bare scrollHeight would leave as a one-line scroll)
-    g.writes.length = 0; g.geom.scroll = 200;
+    g.mark(); g.geom.scroll = 200;
     grow();
-    assert.deepEqual(g.writes, ["auto", "202px"], "grows to the content: 200px of content and padding plus the 2px of border; the box fit it, so the wanted height stands");
+    assert.deepEqual(g.fresh(), ["auto", "202px"], "grows to the content: 200px of content and padding plus the 2px of border; the box fit it, so the wanted height stands");
     // the cap is the room: with the answer at its content's height the box runs past its own cap, and the answer gives
     // exactly that overflow back, so Cancel and Send end at the box's bottom edge, inside its clip
-    g.writes.length = 0; g.geom.scroll = 5000; b.geom.scroll = 5300; b.geom.client = 400;
+    g.mark(); g.geom.scroll = 5000; b.geom.scroll = 5300; b.geom.client = 400;
     grow();
-    assert.deepEqual(g.writes, ["auto", "5002px", (5002 - 4900) + "px"], "the wanted height written, the box's 4900px of overflow read, and the height is the wanted less the overflow: the room");
+    assert.deepEqual(g.fresh(), ["auto", "5002px", (5002 - 4900) + "px"], "the wanted height written, the box's 4900px of overflow read, and the height is the wanted less the overflow: the room");
     // the room does not go under the floor: a box whose fixed rows alone overflow keeps three rows (the box itself scrolls,
     // styles.css's every-height backstop; that is the browser legs' measurement, not this harness's)
-    g.writes.length = 0; b.geom.scroll = 5390;
+    g.mark(); b.geom.scroll = 5390;
     grow();
-    assert.deepEqual(g.writes, ["auto", "5002px", "78px"], "5002 less 4990 is 12px, under the floor: the floor stands");
+    assert.deepEqual(g.fresh(), ["auto", "5002px", "78px"], "5002 less 4990 is 12px, under the floor: the floor stands");
     // the window's height is not what caps the answer: the same box overflow at another window gives the same height
-    g.writes.length = 0; win.innerHeight = 150;
+    g.mark(); win.innerHeight = 150;
     grow();
-    assert.deepEqual(g.writes, ["auto", "5002px", "78px"], "a 150px window changes nothing here: the box's own overflow is the input, never window.innerHeight");
+    assert.deepEqual(g.fresh(), ["auto", "5002px", "78px"], "a 150px window changes nothing here: the box's own overflow is the input, never window.innerHeight");
     assert.doesNotMatch(growBlock(src, name), /window\.innerHeight|innerHeight \* 0\.4/, name + ": the handler reads no share of the window");
     // the floor is read from the layout, not a constant: a larger font lays out a taller floor and the handler follows
-    g.writes.length = 0; g.geom.offset = 100; g.geom.client = 98; g.geom.scroll = 98; b.geom.scroll = 400; win.innerHeight = 900;
+    g.mark(); g.geom.offset = 100; g.geom.client = 98; g.geom.scroll = 98; b.geom.scroll = 400; win.innerHeight = 900;
     grow();
-    assert.deepEqual(g.writes, ["auto", "100px"], "the floor is whatever height auto laid out");
-    // a box with no layout to measure (a fake DOM, a display:none box) keeps no inline height: nothing is written past
-    // the measuring auto, as file-comments.ts autosizeComposer stands down when the scroll height reads 0
-    g.writes.length = 0; g.geom.offset = 0; g.geom.client = 0; g.geom.scroll = 0;
+    assert.deepEqual(g.fresh(), ["auto", "100px"], "the floor is whatever height auto laid out");
+    // a box with no layout to measure (a fake DOM, a display:none box) keeps what stood: nothing new is written past the
+    // measuring auto, as file-comments.ts autosizeComposer stands down when the scroll height reads 0
+    g.mark(); g.geom.offset = 0; g.geom.client = 0; g.geom.scroll = 0;
     grow();
-    assert.deepEqual(g.writes, ["auto", ""], "no layout: the measuring auto, then the inline height cleared");
+    assert.deepEqual(g.fresh(), ["auto", "100px"], "no layout: the measuring auto, then the height the handler last wrote put back");
+    // THE DRAG GUARD (file-comments.ts autosize's): the textarea keeps resize: vertical, and a drag writes the inline height
+    // and fires no input, so the handler knows a drag as an inline height that is not what it last wrote; the next
+    // keystroke writes nothing and the person's height stands until the sheet closes
+    g.mark(); g.geom.offset = 78; g.geom.client = 76; g.geom.scroll = 76;
+    grow();
+    assert.deepEqual(g.fresh(), ["auto", "78px"], "back at the floor, on record");
+    g.mark(); g.writes.push("150px");   // the drag, as the browser serializes it
+    g.geom.scroll = 300;
+    grow();
+    assert.deepEqual(g.fresh(), ["150px"], "dragged since the last write: the handler stands down, the 150px stands (before the guard a keystroke snapped it back to the content's height)");
+    grow();
+    assert.deepEqual(g.fresh(), ["150px"], "and on every keystroke after");
+    // dragged BEFORE the first keystroke: nothing on record yet, an inline height already there
+    const g2 = inputNode({ offset: 78, client: 76, scroll: 200 }); g2.writes.push("120px");
+    const grow2 = grower(name, src, g2.input, boxNode({ scroll: 400, client: 400 }).box, win);
+    grow2();
+    assert.deepEqual(g2.writes, ["120px"], "dragged before the first write: the handler stands down too (the case the second comparison alone cannot see)");
   });
 }
 
@@ -295,7 +316,7 @@ test("the answer box is a fixed flex item that holds three rows: it never absorb
   const r = rule("#ut-reply-prompt .ut-reply-input");
   assert.match(r, /flex: 0 0 auto;/, "no shrink: with min-height auto resolving to 0 on a textarea, flex-shrink 1 gave it the whole deficit");
   assert.match(r, /min-height: calc\(3lh \+ 16px\);/, "three rows (rows=3) plus the 7px+7px padding and the 1px+1px border (.ut-reply-input, box-sizing border-box)");
-  assert.match(rule(".ut-reply-input"), /resize: vertical;/, "the person can still pull the box taller");
+  assert.match(rule(".ut-reply-input"), /resize: vertical;/, "the person can pull the box taller, and the height they pulled STANDS: grow stands down for an inline height it did not write (the guard executed above; the browser legs drag the grip, then type, in each engine)");
   assert.match(rule(".ut-reply-input"), /box-sizing: border-box;/, "the 16px in the floor is the box's own padding and border");
   assert.match(rule(".ut-reply-input"), /padding: 7px 9px;/); assert.match(rule(".ut-reply-input"), /border: 1px solid/);
 });
