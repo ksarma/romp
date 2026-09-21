@@ -259,11 +259,12 @@ class RoundLabels(unittest.TestCase):
         self.assertEqual(joined_runs([(3, "# a"), (4, "#  b"), (7, "// c"), (8, " * d")]), [(3, 4, "a b"), (7, 8, "c d")], "runs by consecutive numbers, markers stripped")
 
     def test_the_diff_reader_numbers_added_lines_in_the_new_side(self):
-        """The reader over `git diff -U0`: two files, a hunk after removed lines (the new side's numbering does not move for
-        them), a second hunk, a deleted file (nothing added), a header-shaped added line, a renamed file under its new path, and a
-        removed line beginning with two minus signs directly before an added line beginning with two plus signs (a comment
-        rewritten in a language whose comment marker is two minus signs: both are content, and the hunk after them stays the
-        file's)."""
+        """The reader over `git diff -U0`, on a synthetic diff of these shapes: a hunk after removed lines (the new side's
+        numbering does not move for them), a second hunk, a deleted file (nothing added), a header-shaped added line, a renamed
+        file under its new path, and a removed line beginning with two minus signs directly before an added line beginning with
+        two plus signs (a comment rewritten in a language whose comment marker is two minus signs: both are content, and the hunk
+        after them stays the file's). The list is the count: no number here to drift from it (the closing fixer pass after the
+        maintainer's round 6, close-2, which found "two files" over a diff of four)."""
         diff = "\n".join([
             "diff --git a/x.py b/x.py", "index 1..2 100644", "--- a/x.py", "+++ b/x.py",
             "@@ -3,2 +3 @@", "-gone one", "-gone two", "+kept three",
