@@ -35437,7 +35437,13 @@ def _subagent_tree(d):
     dropped at the next lookup, _subagent_vouched; another root's eviction leaves it served): the pair a validated hit or a
     clean walk returned is held in the scope under the generation read before the lstat and every later call for the root
     on that thread in the cycle is served it with no stat, and a change on disk after that validation is seen by the next
-    cycle's first call, one cycle later at most (the comment block above _subagent_scope_open). Not held:
+    cycle's first call, one cycle later at most (the comment block above _subagent_scope_open). The root's own removal or
+    replacement is inside that lag, not an exception to it: the served call precedes the root's lstat, so a root held
+    earlier in the cycle is served until the cycle ends, and the two pop paths below run only on a call the scope does not
+    serve, the next cycle's first call on this thread or a call on a thread with no hold on the root (the other loop's
+    first call for it in its own cycle, a handler thread's), whose pop records the eviction so that this thread's next
+    lookup drops the hold and finds what the pop found (round 2 of #882 pinned both pops through such a thread, and the
+    same-thread hold beside them). Not held:
     a missing or replaced root (the two pop paths, which also record the root's eviction when they removed an entry,
     _subagent_root_evicted, so every open scope drops what it holds for THAT root) and a walk with a failed listing or
     child lstat, which cost what they cost today per call and never serve a failure."""

@@ -42,7 +42,14 @@ launch fold that did not read the file is folded once per read (the call-local
 hold) and again by the next read (not held for the cycle) while one that read it is held for the cycle, with the fault's
 producer driven for real (the reader's fail path, a raising fold, a readable file); a root gone mid-cycle whose entry stood
 moves the gen and records its own eviction, and a sibling tree the scope held is still served (the eviction is that root's,
-not the sibling's), while one with no entry moves nothing; (5) the invalidation is scoped to what became stale (round 2 of
+not the sibling's), while one with no entry moves nothing; the two pop paths, each found by a thread with no hold on the
+root while another thread's scope holds it (the tree removed, and the tree replaced by a regular file; round 2 of #882,
+where the replaced-root record had no case and its deletion left the module green): the pop moves the gen by one and names
+the root in the table, the holder's next read drops its pair and answers the pop's shape at one lstat of the root, its
+other held tree is still served, and a second read with no entry standing moves nothing; and the held-root lag,
+characterized: a root removed while the same thread's scope holds it is served, pair and stamps, at no stat until that
+scope ends (the served call precedes the root's lstat, so no pop runs and the gen stands), and the next scope's first read
+finds it gone; (5) the invalidation is scoped to what became stale (round 2 of
 #882): an eviction of a root drops from every open scope that root's pair, the stamps indexed from it and the launch folds
 of the agents whose files resolved under it, and nothing else, so a held tree, a held stamp and held launch folds survive
 the eviction of a root they are not under (0 lstats, 0 stats, 0 folds on the next read), a cached agent-file path is not
@@ -65,6 +72,7 @@ import errno
 import json
 import os
 import shutil
+import stat
 import tempfile
 import threading
 import time
@@ -875,6 +883,183 @@ class Guards(_World):
         self.assertEqual(sp.total()["dir_lstat"], 0, "served: nothing was evicted")
         self.assertEqual((self._delta(b)["hit"], self._delta(b)["miss"]), (1, 0), "one validated hit in the scope, before the eviction; "
                                                                                    "none after (the sibling was served)")
+
+    def _sibling_tree(self, tag="other"):
+        """A second session's transcript under `tag` and beside it a subagents tree of D directories (the root, workflows/
+        and D - 2 workflow directories, no agents), aged and walked into the cross-cycle memo outside any scope, owned by
+        nobody alive: (the root, its directories in walk order)."""
+        other_t = Path(self.td.name) / tag / (OTHER_SID + ".jsonl")
+        other_t.parent.mkdir()
+        other_t.write_text("")
+        other = km._subagents_dir(other_t)
+        wfroot = other / "workflows"
+        wfroot.mkdir(parents=True)
+        dirs = [str(other), str(wfroot)] + [str(wfroot / ("wf_%016x" % i)) for i in range(D - 2)]
+        for p in dirs[2:]:
+            os.mkdir(p)
+        _age(other)
+        self.addCleanup(km._SUBAGENT_TREES.pop, str(other), None)
+        got, _stats = km._subagent_tree(str(other))
+        self.assertEqual(list(got), dirs, "the sibling's tree walked into the cross-cycle memo: its D = %d directories in walk order" % D)
+        return other, dirs
+
+    def _read_on_a_thread_with_no_scope(self, root):
+        """`root` read once on a helper thread that holds no scope (_live_scope is thread-local): the read a thread holding
+        the root never makes inside its cycle, since its served call precedes the root's lstat. Returns what the helper
+        saw: its scope (None), _subagent_tree's answer, and the generation right after."""
+        errs, seen = [], {}
+
+        def helper():
+            try:
+                seen["scope"] = _scope()
+                seen["answer"] = km._subagent_tree(str(root))
+                seen["gen"] = km._SUBAGENT_TREES_GEN[0]
+            except Exception:
+                errs.append(traceback.format_exc())
+        th = threading.Thread(target=helper, name="stamps-popper")
+        th.start()
+        th.join(30)
+        self.assertFalse(th.is_alive(), "the helper returned")
+        self.assertEqual(errs, [])
+        self.assertIsNone(seen.get("scope"), "the helper thread holds no scope")
+        return seen
+
+    def _assert_not_a_tree(self, answer, shape, what):
+        """What _subagent_tree answers for a root that is not a tree: (), () when nothing is at the path ("missing"); (), (its
+        lstat,) with a regular file's mode when a file stands in its place ("replaced"). Keys on dirs == () and the stat
+        count and mode, not on tuple equality of stat results (two lstats of one file are two objects)."""
+        self.assertIsNotNone(answer, "%s: no answer" % what)
+        dirs, stats = answer
+        self.assertEqual(dirs, (), "%s: directories %r; keyed on () (what is at the root is no tree)" % (what, dirs))
+        if shape == "missing":
+            self.assertEqual(stats, (), "%s: stats %r; keyed on () (nothing at the root)" % (what, stats))
+        else:
+            self.assertEqual(len(stats), 1, "%s: %d stats; keyed on one, the root's own lstat" % (what, len(stats)))
+            self.assertTrue(stat.S_ISREG(stats[0].st_mode), "%s: the one stat is the regular file's standing in the tree's place" % what)
+
+    def _holder_drops_its_pair_after_another_threads_pop(self, other, other_dirs, shape):
+        """The body the two pop-path guards share. This thread's scope holds the sibling's tree (D directories) and this
+        session's; the sibling is removed on disk ("missing") or removed and a regular file written in its place
+        ("replaced"); a thread with no scope reads it, the pop. Keys, in order: the pop's answer; the eviction record (the
+        gen moved by exactly one, the table naming the root at that value); the holder's next read of the sibling, which
+        drops its pair at the lookup and answers the pop's shape at one lstat of the root (a pop that recorded no eviction
+        leaves the D directories served at 0 lstats for the rest of the cycle); this session's tree still served, 0
+        lstats, since the eviction is the sibling's; and the accept side, a second read of the same root with no entry
+        standing, which moves no gen and records nothing new."""
+        oset = set(other_dirs)
+        sc = self._open()
+        b = self._stats()
+        with self._spy() as sp, _Spy(oset, other) as osp:
+            km._subagent_tree(str(other)); km._subagent_tree(str(self.sub))
+        self.assertEqual((osp.total()["dir_lstat"], sp.total()["dir_lstat"]), (D, D), "the holds: each tree validated once, D lstats each")
+        self.assertEqual(self._delta(b)["hit"], 2)
+        self.assertIn(str(other), sc["trees"]); self.assertIn(str(self.sub), sc["trees"])
+        shutil.rmtree(other)
+        if shape == "replaced":
+            Path(other).write_text("")                    # a regular file where the tree was
+        g0 = km._SUBAGENT_TREES_GEN[0]
+        seen = self._read_on_a_thread_with_no_scope(other)
+        self._assert_not_a_tree(seen.get("answer"), shape, "the helper's read, the %s-root pop" % shape)
+        self.assertNotIn(str(other), km._SUBAGENT_TREES, "the pop removed the cross-cycle entry")
+        with _Spy(oset, other) as osp:
+            got = km._subagent_tree(str(other))
+        moved, served, lstats = km._SUBAGENT_TREES_GEN[0] - g0, len(got[0]), osp.total()["dir_lstat"]
+        self.assertEqual((moved, served, lstats), (1, 0, 1),
+                         "(_SUBAGENT_TREES_GEN's move on the %s-root pop, directories the holding thread is answered for that root on its "
+                         "next read, its os.lstat of the root) %r; keyed on (1, 0, 1): one eviction event recorded (_subagent_root_evicted), "
+                         "the holder's pair dropped at the lookup since the vouch fails on that record, and the root's own lstat paid; a "
+                         "pop that recorded nothing is (0, D = %d, 0), the held pair served stale for the rest of the cycle"
+                         % (shape, (moved, served, lstats), D))
+        self.assertEqual(km._SUBAGENT_ROOT_EVICTED.get(str(other)), seen.get("gen"),
+                         "the table names the %s root at the value the gen moved to: %r against %r; keyed on equality (the record that "
+                         "outdates every scope's hold on this root)" % (shape, km._SUBAGENT_ROOT_EVICTED.get(str(other)), seen.get("gen")))
+        self._assert_not_a_tree(got, shape, "the holder's read after the pop")
+        self.assertNotIn(str(other), sc["trees"], "the holder's scope no longer holds the popped root")
+        with self._spy() as sp:
+            dirs, _stats = km._subagent_tree(str(self.sub))
+        self.assertEqual((sp.total()["dir_lstat"], len(dirs)), (0, D),
+                         "this session's held tree on the read after the sibling's pop: (lstats, directories) %r; keyed on (0, D = %d), "
+                         "served, since the eviction recorded is the sibling's; one process-wide generation emptied this hold too"
+                         % ((sp.total()["dir_lstat"], len(dirs)), D))
+        # accept: no entry stands, so a second read of the same root pops nothing, moves no gen and records nothing new
+        g1, rec1 = km._SUBAGENT_TREES_GEN[0], km._SUBAGENT_ROOT_EVICTED.get(str(other))
+        with _Spy(oset, other) as osp:
+            again = km._subagent_tree(str(other))
+        self._assert_not_a_tree(again, shape, "a second read with no entry standing")
+        self.assertEqual(osp.total()["dir_lstat"], 1, "the second read costs the root's lstat alone")
+        self.assertEqual((km._SUBAGENT_TREES_GEN[0], km._SUBAGENT_ROOT_EVICTED.get(str(other))), (g1, rec1),
+                         "a %s root with no entry standing moves no gen and records nothing new: (gen, record) %r against %r"
+                         % (shape, (km._SUBAGENT_TREES_GEN[0], km._SUBAGENT_ROOT_EVICTED.get(str(other))), (g1, rec1)))
+        with self._spy() as sp:
+            km._subagent_tree(str(self.sub))
+        self.assertEqual(sp.total()["dir_lstat"], 0, "this session's tree still served")
+        d = self._delta(b)
+        self.assertEqual((d["hit"], d["miss"]), (2, 0), "memos.subagentTree over the case: (hit, miss) %r; keyed on the two holds' validated "
+                                                        "hits and no walk (the pops and the served reads count as neither)" % ((d["hit"], d["miss"]),))
+
+    def test_a_root_replaced_by_a_file_mid_cycle_is_popped_by_a_thread_with_no_hold_and_the_holder_drops_its_pair(self):
+        """_subagent_tree's replaced-root pop path (correctness-2, tests-2, kernel-1, extra7-2, extra9-1 and extra10-1 of the
+        round-1 review: the one eviction record in the change with no case arming it, so a kernel whose replaced-root pop
+        recorded nothing left the module green and a held tree served for the rest of the cycle). A regular file where the
+        sibling's subagents tree was, found by a thread with no scope while this thread's scope holds the tree (a
+        same-thread read of a held root is served before the root's lstat and never pops: the lag case below). The pop
+        answers (), (the file's lstat,), moves the gen by one and names the root in the table; the holder's next read drops
+        its pair and answers the same at one lstat; the holder's other tree is still served; a second read moves nothing."""
+        other, dirs = self._sibling_tree()
+        self._holder_drops_its_pair_after_another_threads_pop(other, dirs, "replaced")
+
+    def test_a_root_removed_mid_cycle_is_popped_by_a_thread_with_no_hold_and_the_holder_drops_its_pair(self):
+        """The missing-root twin of the case above, the same shape through the other pop path, so the two records are told
+        apart: a kernel whose missing-root pop records nothing reds this case (and the same-thread guard above, and the
+        cached-agent-file case) and leaves the replaced one green, and a kernel whose replaced-root pop records nothing does
+        the reverse. The pop answers (), ()."""
+        other, dirs = self._sibling_tree()
+        self._holder_drops_its_pair_after_another_threads_pop(other, dirs, "missing")
+
+    def test_a_root_removed_while_this_thread_holds_it_is_served_until_its_scope_ends_and_found_gone_by_the_next(self):
+        """The held-root lag, characterized (fresh-1 of the round-1 review, as its refuters narrowed it: the contract the
+        change states, not a defect). The served call precedes the root's lstat, so a root this thread's scope holds is
+        served after its removal on disk, its pair and its stamps, at no stat and with no pop (the cross-cycle entry stands,
+        the gen does not move), until the scope ends; the next scope's first read lstats the root, pops the entry, records
+        the eviction and answers (), (). Keys on (D directories, 0 lstats, 0 stats) served after the removal, and on the next
+        scope's pop (one lstat, the gen moved by one, the table naming this root). A read that checked the root on disk
+        before serving the hold, the option the review measured and declined for its per-read cost, answers () at one
+        lstat per read there."""
+        root = str(self.sub)
+        sc = self._open()
+        b = self._stats()
+        with self._spy() as sp:
+            km._subagent_tree(root)
+        self.assertEqual(sp.total()["dir_lstat"], D, "the hold: the cycle's one validation")
+        held_stamp = km._dir_stamp(self.dirs[3])
+        self.assertIsNotNone(held_stamp[1])
+        shutil.rmtree(self.sub)
+        g0 = km._SUBAGENT_TREES_GEN[0]
+        with self._spy() as sp:
+            dirs, _stats = km._subagent_tree(root)
+            stamp = km._dir_stamp(self.dirs[3])
+        t = sp.total()
+        self.assertEqual((len(dirs), t["dir_lstat"], t["dir_stat"]), (D, 0, 0),
+                         "(directories answered, os.lstat, os.stat) on this thread's read of a held root after its removal on disk: %r; "
+                         "keyed on (D = %d, 0, 0), the served pair and stamp (the served call precedes the root's lstat: the lag the "
+                         "design states, one cycle at most); a read that lstats the root before serving answers () at one lstat"
+                         % ((len(dirs), t["dir_lstat"], t["dir_stat"]), D))
+        self.assertEqual(stamp, held_stamp, "the removed directory's stamp is served from the hold too: %r against the held %r" % (stamp, held_stamp))
+        self.assertEqual(km._SUBAGENT_TREES_GEN[0], g0, "no pop ran on the served read: the gen stands")
+        self.assertIn(root, km._SUBAGENT_TREES, "the cross-cycle entry stands: nothing has found the root gone")
+        self.assertIn(root, sc["trees"], "the scope still holds the pair")
+        self.assertEqual((self._delta(b)["hit"], self._delta(b)["miss"]), (1, 0), "the hold's one validated hit, and nothing since")
+        km._subagent_scope_close()                        # the cycle ends
+        self._open()                                      # the next cycle
+        with self._spy() as sp:
+            got = km._subagent_tree(root)
+        self.assertEqual(got, ((), ()), "the next scope's first read finds nothing at the root: %r" % (got,))
+        self.assertEqual(sp.total()["dir_lstat"], 1, "one lstat, the root's (which raised); no held pair in the new scope")
+        self.assertEqual(km._SUBAGENT_TREES_GEN[0] - g0, 1,
+                         "_SUBAGENT_TREES_GEN moved by %d on the next scope's read; keyed on exactly one, the missing-root pop of the standing "
+                         "entry" % (km._SUBAGENT_TREES_GEN[0] - g0))
+        self.assertEqual(km._SUBAGENT_ROOT_EVICTED.get(root), km._SUBAGENT_TREES_GEN[0], "the table names this root at that value")
+        self.assertNotIn(root, km._SUBAGENT_TREES, "the entry left the cross-cycle memo")
 
 
 class ScopedInvalidation(_World):

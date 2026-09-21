@@ -3671,7 +3671,12 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   every later reader of the tree on that thread, the agent-file lookup's
   stamp re-check included, pays no stat; a change on disk after the
   validation is seen by the next cycle's first reader, one cycle later at
-  most, and the key a chat build records for a subagents tree the
+  most (the tree's own removal or replacement included: the served read
+  precedes the root's lstat, so a root held earlier in the cycle is served
+  until the cycle ends unless a read with no hold on it, the other loop's
+  first read of it in its own cycle or a handler thread's, finds it missing
+  or replaced first, after which the holder's next lookup drops the pair),
+  and the key a chat build records for a subagents tree the
   agent-file miss walk looked through is the served read's stamp per
   directory, never a stat taken after it, so a file landing after the
   hold under a directory the served listing lacked leaves the recorded
