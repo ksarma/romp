@@ -33995,12 +33995,10 @@ def _awaiting_nest(agents, commands, cmd_owner, path):
     # held beyond the call, so the next call in the cycle reads again and a file that became readable is seen then (a fault
     # held for the cycle would attribute nothing to that agent all cycle). A file that resolved to nothing (ap None) is a
     # state, held. The cycle map's entry is (ids, the transcript's own subagents root, the generation read before the file
-    # was resolved) and is served while _subagent_vouched says that root has not left the walk memo since (2026-09-21, round 1 of #882's ruling):
-    # the fold is produced through the file's resolution under that tree (_subagent_file -> _subagent_tree), so the own
-    # root's eviction makes it stale (a fold kept past it attributed from a file the re-read tree no longer names) and any
-    # other root's eviction does not (before 2026-09-21 every eviction emptied the map and re-folded every awaiting agent's file
-    # on both threads for the rest of the cycle). A file resolved through a SIBLING root, the /clear-fork miss path, is
-    # tracked by the own root alone, not by the sibling it was found under.
+    # was resolved) and is served while _subagent_vouched says that root has not left the walk memo since (2026-09-21, round 1 of #882's ruling;
+    # before it every eviction emptied the map and re-folded every awaiting agent's file on both threads for the rest of the
+    # cycle). The root is the transcript's own whatever tree the file was found under: the rule, its bound for a file found
+    # under a sibling's tree and the test that executes both are stated once, in _subagent_scope's docstring.
     launch_sets = sc["launches"] if sc is not None else {}
     faulted = {}
     pkey = str(path or "")
@@ -35307,8 +35305,10 @@ def _subagent_tree_charge(kind, t0):
 # unowned sibling root a _subagent_file miss scan inserted, or _subagent_tree's missing or replaced root; a session departing
 # is one such root). An eviction of root r costs, per open scope that held r: one read of r at its next lookup in the cycle (a
 # walk, or a validation of D_r lstats when a read on another thread has re-inserted it since), which re-indexes the stamps of
-# r's directories with no extra stat, and one re-fold per awaiting agent whose file was resolved under r (a stat each on a
-# quiescent file); every other root's pair, stamps and launch folds are untouched, so the cost of an eviction is D_r + A_r
+# r's directories with no extra stat, and one re-fold per awaiting agent of the transcripts whose OWN subagents root is r (a
+# stat each on a quiescent file; A_r is 0 for an unowned sibling root whatever files were found under it: the fold's root,
+# its bound and the test that executes both are stated once, in _subagent_scope's docstring); every other root's pair,
+# stamps and launch folds are untouched, so the cost of an eviction is D_r + A_r
 # plus one stat per stamp the scope took itself (the next sentence but one), not the sum over every held root (which it was until 2026-09-21, round 1 of #882's ruling; a lab lifted from
 # tests/test_subagent_tree_stamps_per_cycle.py's world and run outside the repo, its records kept outside it too: at
 # (R, D, A, N) = (1, 8, 3, 3) and (3, 8, 3, 3) with one or three unrelated roots evicted between each pair of the N reads,
@@ -35371,10 +35371,24 @@ def _subagent_scope():
     _subagent_tree validated or cleanly walked this cycle, vouched by the root itself), `stamps` (directory -> ((dir,
     mtime_ns), root, g0), the shape _dir_stamp answers, indexed from every held tree under that tree's root and by
     _dir_stamp's own successful stats under root None, which no root vouches for) and `launches` ((transcript, agentId) ->
-    (launch ids, the transcript's own subagents root, g0), _awaiting_nest's per-agent fold, vouched by the root its file was
-    resolved under). An eviction is honoured by the evicting thread at its next lookup of an entry that depended on the
-    evicted root and by the other thread at its next such lookup; every other entry is served on (before 2026-09-21 one
-    process-wide value emptied all three maps on any eviction)."""
+    (launch ids, the transcript's own subagents root, g0), _awaiting_nest's per-agent fold, vouched by that own root). An
+    eviction is honoured by the evicting thread at its next lookup of an entry that depended on the evicted root and by the
+    other thread at its next such lookup; every other entry is served on (before 2026-09-21 one process-wide value emptied
+    all three maps on any eviction).
+
+    The fold's root, stated here once (every other home points here). A launch fold is keyed on the transcript's OWN
+    subagents root whatever tree the agent's file resolved under (_awaiting_nest: own_root = _subagents_dir(path), named
+    from the transcript and never derived from the resolved path; the key was chosen for the file under the own tree,
+    whose fold kept past that root's eviction attributed from a file the re-read tree no longer names), so the own root's
+    eviction drops every fold of that transcript's agents, a file found under a sibling's tree (the /clear-fork miss path)
+    included, and a sibling root's eviction drops none of them and costs no fold. The bound that follows: a fold whose file
+    lies under a sibling root that left the memo, the tree removed on disk and popped by a thread with no hold on it
+    included, is served until the cycle ends (or until the own root's own eviction), so the attribution from the gone file
+    stands for the rest of the cycle; the next cycle's first read resolves the file again (to nothing, when it is gone) and
+    folds it again. Executed at both edges by tests/test_subagent_tree_stamps_per_cycle.py ScopedInvalidation
+    test_a_fold_resolved_under_a_siblings_tree_is_keyed_on_the_own_root_and_served_past_the_siblings_removal_until_the_cycle_ends:
+    0 folds after the sibling's eviction with the attribution served and the sibling's pair dropped, A + 1 folds after the
+    own root's, the command still nested under the gone file's agent in the same cycle, and top-level in the next."""
     return getattr(_live_scope, "subtrees", None)
 
 
@@ -35583,8 +35597,9 @@ def _subagent_tree_memo_report():
     validateMs (the time in each, every thread), and the gauges roots (entries) and dirs (directories held). A validation
     happens at most once per pusher cycle and once per jobs pass since 2026-09-19 (_subagent_scope), plus, per root that
     left the memo in the cycle (an ownership eviction, a missing or replaced root), one read of that root at its next lookup
-    and one fold per awaiting agent under it, with every other held root untouched (since 2026-09-21; the comment block at
-    _subagent_scope_open derives it), so the two loops' own reads pay per cycle or pass, in dirStats, the sum over the roots
+    and one fold per awaiting agent of the transcripts whose own root it is (the fold's root: _subagent_scope's docstring),
+    with every other held root untouched (since 2026-09-21; the comment block at _subagent_scope_open derives it), so the two
+    loops' own reads pay per cycle or pass, in dirStats, the sum over the roots
     read of D_r - 1 (`dirs` less `roots` when every held root is read: one validation per root, whatever the readers, agents
     and reads consult it; before the scope N x that for N reads per session, and N x A x D stamp re-check stats per session
     besides, which the counter did not see), plus D_r for a root whose command row's owner lookup re-checked stamps before

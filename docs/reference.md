@@ -3688,13 +3688,19 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   often of an unowned sibling root an agent-file miss scan inserted; a tree
   found missing or replaced; a session departing is one such root) drops
   from every open scope that root's pair, the stamps indexed from it, the
-  launch folds of the agents whose files resolved under it and, since no
-  root vouches for them, the stamps the scope took itself (an agent-file
+  launch folds keyed on it (a fold is keyed on the agent's transcript's own
+  subagents root whatever tree the file resolved under, so an unowned
+  sibling's eviction drops no fold; the rule, its bound for a file found
+  under a sibling's tree and the test that executes both,
+  `ScopedInvalidation.test_a_fold_resolved_under_a_siblings_tree_is_keyed_on_the_own_root_and_served_past_the_siblings_removal_until_the_cycle_ends`
+  in `tests/test_subagent_tree_stamps_per_cycle.py`, are stated once in
+  `_subagent_scope`'s docstring in `kernel/kernel.py`) and, since no root
+  vouches for them, the stamps the scope took itself (an agent-file
   lookup's re-check before the tree was read that cycle, the project
   directory on a miss), and nothing else, so an eviction costs one read of
-  that root at its next lookup in the cycle plus one fold per agent under
-  it, its D plus its A, plus one stat per such own stamp, not a
-  re-validation of every held tree (since 2026-09-21; before it one
+  that root at its next lookup in the cycle plus those folds plus one stat
+  per such own stamp, not a re-validation of every held tree (since
+  2026-09-21; before it one
   process-wide generation emptied every scope on any eviction, and a lab
   lifted from `tests/test_subagent_tree_stamps_per_cycle.py`'s world, run
   outside the repo with its records kept outside it, measured R roots of D

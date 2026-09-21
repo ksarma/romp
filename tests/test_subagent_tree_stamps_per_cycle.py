@@ -58,12 +58,17 @@ characterized: a root removed while the same thread's scope holds it is served, 
 scope ends (the served call precedes the root's lstat, so no pop runs and the gen stands), and the next scope's first read
 finds it gone; (5) the invalidation is scoped to what became stale (since 2026-09-21,
 round 1 of #882's ruling): an eviction of a root drops from every open scope that root's pair, the stamps indexed from it and the launch folds
-of the agents whose files resolved under it, and nothing else, so a held tree, a held stamp and held launch folds survive
+keyed on it (the transcript's own subagents root, whatever tree the agent's file resolved under: the rule and its bound
+are stated once, in _subagent_scope's docstring), and nothing else, so a held tree, a held stamp and held launch folds survive
 the eviction of a root they are not under (0 lstats, 0 stats, 0 folds on the next read), a cached agent-file path is not
 answered after another thread found its tree gone (the stamps of the removed tree are dropped, whether indexed from the held
 tree or taken as own stats by a lookup that preceded any tree read), a stamp the scope took itself, vouched by no root, is
 re-taken after any eviction (1 stat) where a tree-indexed one is served (0), held launch folds are
-re-read when their own root leaves the memo (the attribution changes), and the table of evicted roots at its cap is
+re-read when their own root leaves the memo (the attribution changes), a fold of a file found under a sibling's tree (the
+/clear-fork shape) survives the sibling's eviction (0 folds, the attribution served, the sibling's pair dropped) and is
+dropped by the own root's (A + 1 folds), and once the sibling's tree is gone and popped by another thread the fold from the
+gone file is served until the cycle ends and re-read by the next cycle's first read (the command top-level there: the
+bound's edge), and the table of evicted roots at its cap is
 cleared with every held entry dropped once, each map by execution (the pair D lstats, an indexed stamp 1 stat, the launch
 folds A folds), not through the shared predicate alone. Before 2026-09-21 one process-wide generation emptied every scope's three maps on
 any root's eviction: every held tree paid its D lstats again, every held stamp its stat, every awaiting agent its fold.
@@ -1251,8 +1256,9 @@ class Guards(_World):
 
 class ScopedInvalidation(_World):
     """(5) An eviction drops from every open scope what became stale and nothing else (since 2026-09-21): the evicted
-    root's pair, the stamps indexed from that tree and the launch folds of the agents whose files resolved under it. Every
-    other root's pair, stamps and launch folds are still served. Before 2026-09-21 one process-wide generation
+    root's pair, the stamps indexed from that tree and the launch folds keyed on it (a fold's root is the transcript's own
+    subagents root whatever tree the agent's file resolved under; the rule, its bound and the case here that executes both
+    are stated once, in _subagent_scope's docstring). Every other root's pair, stamps and launch folds are still served. Before 2026-09-21 one process-wide generation
     (_SUBAGENT_TREES_GEN alone) emptied every scope's three maps on any root's eviction, so an ownership eviction of an
     unrelated root (most often an unowned sibling a miss scan inserted, forgotten by the next jobs pass) cost every held
     tree its D lstats again, every held stamp its stat and every awaiting agent its fold, once per forget rather than once
@@ -1335,8 +1341,8 @@ class ScopedInvalidation(_World):
         self.assertEqual((aw2 or {}).get("count"), A)
         self.assertEqual((len(folded), t["file_stat"], t["dir_lstat"], t["dir_stat"]), (0, 0, 0, 0),
                          "(folds, agent-file stats, tree lstats, stamp stats) on the read after an unrelated root's eviction: %r; keyed on "
-                         "every held launch fold being served (0 folds, 0 file stats), since the agents' files resolved under a tree that "
-                         "did not leave the memo, and on the tree and its stamps beside them (0, 0); one process-wide generation emptied "
+                         "every held launch fold being served (0 folds, 0 file stats), since the transcript's own root, the root every "
+                         "fold is keyed on, did not leave the memo, and on the tree and its stamps beside them (0, 0); one process-wide generation emptied "
                          "the launches map with the rest, re-folded A = %d files and re-validated the tree (D = %d lstats)"
                          % ((len(folded), t["file_stat"], t["dir_lstat"], t["dir_stat"]), A, D))
 
@@ -1461,12 +1467,12 @@ class ScopedInvalidation(_World):
         self.assertEqual(r3, r1)
 
     def test_held_launch_folds_are_dropped_when_their_own_root_leaves_the_memo(self):
-        """The launches half, behavioural (extra7-1's refuters: a launch fold is produced through the agent file's
-        resolution under the session's own tree, so it is stale when THAT tree leaves the memo and fresh across any other
+        """The launches half, behavioural (extra7-1's refuters: a launch fold is keyed on the session's own subagents root,
+        the rule _subagent_scope's docstring states, so it is stale when THAT root leaves the memo and fresh across any other
         root's eviction; a fold that survived its own root's eviction served a mixed-vintage attribution). A command row
         the ledger does not attribute; agent 0's transcript gains its launch mid-cycle, and the held folds keep the
         command top-level for the rest of the cycle (the lag the scope accepts). Then the own root leaves the memo (nobody
-        alive owns it): the folds resolved under it are dropped, the read after re-folds every agent's file and the command
+        alive owns it): the folds keyed on it are dropped, the read after re-folds every agent's file and the command
         nests under agent 0. Keys on the folds (A) and the nesting: a launches map not vouched by its own root served the
         held folds (0 folds, the command still top-level)."""
         cmd = {"tid": "toolu_stamps_cmd1", "desc": "run the parser test chunk", "t": 130, "type": "local_bash"}
@@ -1495,12 +1501,147 @@ class ScopedInvalidation(_World):
             aw3 = km._session_awaiting(SID, self.path, True)
         self.assertEqual(sorted(folded), names,
                          "folds on the read after the own root's eviction: %r; keyed on every agent's fold being redone (A = %d, one each), "
-                         "since the files were resolved under the tree that left the memo; a launches map not vouched by its own root "
+                         "since the root that left the memo is the transcript's own, the root every fold is keyed on; a launches map not vouched by its own root "
                          "served the held folds (0)" % (sorted(folded), A))
         self.assertEqual((aw3 or {}).get("count"), A, "the command nests under agent 0, whose re-read fold names its launch: %r" % (aw3,))
         agent0 = [it for it in (aw3 or {}).get("items", []) if it.get("agentId") == self.aids[0]]
         self.assertEqual([w["id"] for w in (agent0[0].get("waits", []) if agent0 else [])], [cmd["tid"]],
                          "the command row nested under agent 0: %r" % (agent0,))
+
+    def _sibling_resolved_agent(self):
+        """The /clear-fork shape, S = 2 transcripts in one project directory: a second transcript beside this session's and,
+        under ITS subagents tree (D_sib = 3 directories: the root, workflows/ and one workflow directory), a fourth awaiting
+        agent of THIS session whose transcript names one background command's launch. Warmed outside any scope (the
+        premise: the miss scan resolves the file under the sibling's tree and inserts the sibling root into the walk memo),
+        then the agent-file memo's entry for the agent is dropped, so the cycle's first read resolves it through the miss
+        walk again, which reads the sibling's tree into the scope (R = 2 roots held). Returns (the sibling transcript's
+        path, the sibling root, its directories, the agent's file, the agent id, the command)."""
+        pdir = self.tpath.parent
+        sib_t = pdir / (OTHER_SID + ".jsonl")
+        sib_t.write_text("")
+        sib = km._subagents_dir(sib_t)
+        wf = sib / "workflows" / ("wf_%016x" % 0x7c40)
+        wf.mkdir(parents=True)
+        aid = "a%016x" % 0x7c40
+        cmd = {"tid": "toolu_stamps_sibcmd", "desc": "run the tests", "t": 130, "type": "local_bash"}
+        (wf / ("agent-%s.meta.json" % aid)).write_text(json.dumps(
+            {"agentType": "Workflow", "description": "sort the notes", "spawnDepth": 1, "toolUseId": "toolu_stamps_sib0"}))
+        ap = wf / ("agent-%s.jsonl" % aid)
+        ap.write_text(json.dumps({"type": "assistant", "timestamp": "2026-09-10T10:00:00.000Z", "message": {"content": [
+            {"type": "tool_use", "id": cmd["tid"], "name": "Bash",
+             "input": {"run_in_background": True, "command": "uv run pytest -q", "description": cmd["desc"]}}]}}) + "\n")
+        _age(sib)
+        sibdirs = [str(sib), str(sib / "workflows"), str(wf)]
+        self.live_aids.append(aid)
+        km._bg_live_norm = lambda sid, path, live=None: [cmd]
+        self.addCleanup(km._SUBAGENT_TREES.pop, str(sib), None)
+        self.addCleanup(km._SUBAGENT_META_CACHE.pop, str(sib), None)
+        self.addCleanup(lambda: [km._AGENT_LAUNCH_IDS_CACHE.pop(k, None) for k in list(km._AGENT_LAUNCH_IDS_CACHE)
+                                 if str(k).startswith(str(sib))])
+        aw = km._session_awaiting(SID, self.path, True)
+        self.assertEqual((aw or {}).get("count"), A + 1, "premise: A + 1 agents, the command nested under the fourth: %r" % (aw,))
+        self.assertEqual(km._SUBAGENT_FILE_CACHE.get((self.path, aid), (None, None))[1], ap,
+                         "premise: the fourth agent's file resolved under the SIBLING root")
+        self.assertIn(str(sib), km._SUBAGENT_TREES, "premise: the miss scan inserted the sibling root into the walk memo")
+        km._SUBAGENT_FILE_CACHE.pop((self.path, aid), None)   # no entry: the cycle's first read walks and reads the sibling's tree
+        return str(sib_t), str(sib), sibdirs, ap, aid, cmd
+
+    @staticmethod
+    def _nested_under(aw, aid):
+        """The ids of the rows nested under agent `aid` in an awaiting answer ([] when none, or no such row)."""
+        rows = [it for it in (aw or {}).get("items", []) if it.get("agentId") == aid]
+        return [w["id"] for w in (rows[0].get("waits", []) if rows else [])]
+
+    def test_a_fold_resolved_under_a_siblings_tree_is_keyed_on_the_own_root_and_served_past_the_siblings_removal_until_the_cycle_ends(self):
+        """The fold's root, executed at both edges (the rule and its bound are stated once, in _subagent_scope's docstring).
+        A launch fold is keyed on the transcript's OWN subagents root whatever tree the agent's file resolved under, so the
+        sibling root's eviction drops none of this session's folds (0 folds, the attribution still served) while it does
+        drop the sibling's held pair (its next read walks), and the own root's eviction drops all of them (A + 1 folds, the
+        agent whose file lies under the sibling's tree included). The bound: with the sibling's tree gone on disk and
+        popped by a thread with no hold on it, the fold from the gone file is served until the cycle ends (the command
+        still nests under an agent whose file no longer exists), and the next cycle's first read resolves the file again,
+        to nothing, so the command is top-level there and the own agents fold once more. S = 2 transcripts in one project
+        directory, A = 3 + 1 agents, R = 2 roots read, D = 8, D_sib = 3. A fold keyed on the root the file resolved under
+        re-folds the agent at the sibling's eviction (1 fold where 0); a launches map carried across cycles serves the gone
+        file's attribution in cycle two (the command still nested, 0 folds where A)."""
+        sib_t, sib, sibdirs, ap, aid, cmd = self._sibling_resolved_agent()
+        names = sorted("agent-%s.jsonl" % a for a in self.aids + [aid])
+        own_names = sorted("agent-%s.jsonl" % a for a in self.aids)
+        sc = self._open()
+        folded = []
+        with self._counting_fold(folded):
+            aw1 = km._session_awaiting(SID, self.path, True)
+        self.assertEqual(((aw1 or {}).get("count"), sorted(folded), self._nested_under(aw1, aid)), (A + 1, names, [cmd["tid"]]),
+                         "the hold: one fold per agent, the command nested under the sibling-resolved agent: %r" % (aw1,))
+        self.assertIn(sib, sc["trees"], "premise: the miss walk read the sibling's tree into the scope (R = 2)")
+        held = sc["launches"].get((self.path, aid))
+        self.assertIsNotNone(held, "premise: the sibling-resolved agent's fold is held")
+        b = self._stats()
+        km._subagent_trees_forget([{"path": self.path}])   # this session alive, the sibling's root owned by nobody: the sibling leaves
+        self.assertEqual(self._delta(b)["evict"], 1)
+        self.assertNotIn(sib, km._SUBAGENT_TREES)
+        self.assertIn(str(self.sub), km._SUBAGENT_TREES)
+        del folded[:]
+        with self._counting_fold(folded), self._spy() as sp:
+            aw2 = km._session_awaiting(SID, self.path, True)
+        got = (len(folded), self._nested_under(aw2, aid), sp.total()["file_stat"])
+        self.assertEqual(got, (0, [cmd["tid"]], 0),
+                         "(folds, the command's nesting, agent-file stats) on the read after the SIBLING root's eviction: %r; keyed on 0 "
+                         "folds with the attribution still served, since every fold of this session is keyed on the transcript's own root, "
+                         "which did not leave the memo, the agent whose file lies under the sibling's tree included; a fold keyed on the root "
+                         "its file resolved under is dropped here and folded again (1)" % (got,))
+        self.assertTrue(km._subagent_vouched(held[1], held[2]), "the held fold is still vouched after the sibling's eviction")
+        b = self._stats()
+        with _Spy(set(sibdirs), sib) as ssp:
+            dirs, _stats = km._subagent_tree(sib)
+        d = self._delta(b)
+        got = (len(dirs), ssp.total()["dir_lstat"], d["served"], d["miss"])
+        self.assertEqual(got, (len(sibdirs), len(sibdirs), 0, 1),
+                         "(directories, os.lstat on the sibling's directories, served, miss) on the sibling tree's read after its eviction: "
+                         "%r; keyed on its held pair being dropped at the lookup and the read walking (D_sib = %d lstats, one miss, nothing "
+                         "served): what the sibling's eviction drops is the sibling's pair, not this session's folds" % (got, len(sibdirs)))
+        b = self._stats()
+        km._subagent_trees_forget([{"path": sib_t}])      # the sibling's session alive, this session's root owned by nobody: the own root leaves
+        self.assertEqual(self._delta(b)["evict"], 1)
+        self.assertNotIn(str(self.sub), km._SUBAGENT_TREES)
+        self.assertIn(sib, km._SUBAGENT_TREES)
+        del folded[:]
+        with self._counting_fold(folded):
+            aw3 = km._session_awaiting(SID, self.path, True)
+        got = (sorted(folded), self._nested_under(aw3, aid))
+        self.assertEqual(got, (names, [cmd["tid"]]),
+                         "(folds, the command's nesting) on the read after the OWN root's eviction: %r; keyed on every fold of the session "
+                         "being redone (A + 1 = %d, the agent whose file lies under the sibling's tree included, since its fold too is keyed "
+                         "on the own root) and the command nesting again under the fresh fold; a fold keyed on the root its file resolved "
+                         "under survives the own root's eviction here (A folds, not A + 1)" % (got, A + 1))
+        held3 = sc["launches"].get((self.path, aid))
+        self.assertIsNotNone(held3, "premise: the fold re-held after the own root's eviction")
+        shutil.rmtree(sib)                                # the bound's edge: the sibling's tree gone on disk...
+        seen = self._read_on_a_thread_with_no_scope(sib)  # ...and popped by a thread with no hold on it
+        self.assertEqual(seen.get("answer"), ((), ()), "the missing-root pop on the thread with no scope")
+        self.assertEqual(km._SUBAGENT_ROOT_EVICTED.get(sib), seen.get("gen"), "the pop recorded the sibling's eviction")
+        self.assertFalse(ap.exists(), "premise: the agent's file is gone with the sibling's tree")
+        del folded[:]
+        with self._counting_fold(folded):
+            aw4 = km._session_awaiting(SID, self.path, True)
+        got = (len(folded), self._nested_under(aw4, aid), (aw4 or {}).get("count"))
+        self.assertEqual(got, (0, [cmd["tid"]], A + 1),
+                         "(folds, the command's nesting, count) on the same cycle's read after the sibling's tree went and another thread "
+                         "popped it: %r; keyed on the fold from the gone file being served (0 folds, the command still nested under the agent "
+                         "whose file no longer exists): the bound the design accepts, a fold keyed on the own root stands until the cycle "
+                         "ends whatever became of the sibling's tree" % (got,))
+        self.assertTrue(km._subagent_vouched(held3[1], held3[2]), "the fold, keyed on the own root, is still vouched after the sibling's pop")
+        km._subagent_scope_close()                        # the cycle ends
+        self._open()                                      # the next cycle
+        del folded[:]
+        with self._counting_fold(folded):
+            aw5 = km._session_awaiting(SID, self.path, True)
+        got = (sorted(folded), self._nested_under(aw5, aid), (aw5 or {}).get("count"))
+        self.assertEqual(got, (own_names, [], A + 2),
+                         "(folds, the command's nesting, count) on the next cycle's first read: %r; keyed on the bound's edge, the fold "
+                         "re-read by the next cycle (the gone file resolves to nothing, so no fold for it and the command is top-level: "
+                         "A + 2 = %d rows) and the own agents folded once more (A = %d); a launches map carried across cycles serves the "
+                         "gone file's attribution in cycle two (0 folds, the command still nested)" % (got, A + 2, A))
 
     def test_the_table_of_evicted_roots_at_its_cap_is_cleared_and_every_held_entry_dropped_once(self):
         """The table is bounded: an eviction of a root not in it while it holds _SUBAGENT_ROOT_EVICTED_MAX roots clears it
