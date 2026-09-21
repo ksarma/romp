@@ -635,10 +635,11 @@ class ReturnFromBackground(unittest.TestCase):
     def _dial(self, name, r, boot_tab, tap):
         """The phone's first chat dial carries skeleton=1 (the kernel serves one full plus statuses), the desktop's does not (F5's rule end to
         end); and on a phone opened on another tab the chat pane's idle prefetch asks for nothing while the chat is display:none and asks
-        for its first background full once the Chat tab is shown (F1's outcome; the roads are render.ts's: on Chromium and WebKit the
-        visibility publisher's show hook and the panes word's belt carry the re-arm and are witnessed jointly, those legs red only when
-        both go; on Firefox neither road carries it and the leg pins the outcome alone, see the comment on
-        test_firefox_phone_opened_on_the_feed_tab_arms_the_chain_when_chat_is_shown)."""
+        for its first background full once the Chat tab is shown (F1's outcome). The re-arm roads are render.ts's, the visibility
+        publisher's show hook and the panes word's belt; what each engine's leg pins is what its single-road runs showed, never the two
+        roads credited to a leg as a pair: the Chromium leg and the WebKit leg each red only with both roads removed and neither
+        witnesses a road alone, the Firefox leg pins the outcome alone, and each road's executed witness is another test (the pointers
+        are in the comment above test_phone_opened_on_the_feed_tab_arms_the_chain_when_chat_is_shown)."""
         where = name + ": "
         boot_chat = [d for d in (r.get("dials") or []) if d.get("app") == "chat" and d.get("phase") == "boot"]
         self.assertTrue(boot_chat, where + "the chat pane dialed at boot")
@@ -940,15 +941,23 @@ class ReturnFromBackground(unittest.TestCase):
 
     # The F1 legs (stage 0, review round 1): a phone opened on the Feed tab holds the chat's idle chain while the chat is display:none
     # (paneHidden) and the Chat tab's show re-arms it, by one of two roads in render.ts: the chat-visibility hook (onShown, the published
-    # word's flip from hidden to shown) and the panes-word belt (the shell's word saying the chat is on). On Chromium and WebKit the two
-    # roads are the only re-arm, so the legs there red when BOTH go (the pass-3 record) and pass through either alone: the hook's own
-    # witness is tests/test_pane_hidden_word_browser.py (real engines) and the belt's is the executed panes-handler case in
-    # ui/webview/skeleton-tabs-wiring.test.ts. The ACTIVE tab is the transcript-less `docs` (review round 3, extra9-1), chosen to leave
+    # word's flip from hidden to shown) and the panes-word belt (the shell's word saying the chat is on). What each leg pins is what the
+    # single-road runs showed (each road removed alone, then both: pass 3's record, and pass 8's runs at this head, the hook-alone
+    # run repeated): the Chromium leg and the WebKit leg each red only with BOTH roads removed and stay green with either alone
+    # removed, so each pins that one of the two re-arms the chain on its engine and neither witnesses the hook or the belt by itself
+    # (one of the reviewer's round-2 refuters saw the WebKit leg red with the hook alone removed at an earlier head, before `docs`
+    # became the active tab; the other saw it green there, and at this head it is green in every run). The roads' executed witnesses
+    # are other tests: the hook's are tests/test_pane_hidden_word_browser.py (PaneHiddenWordInBrowsers.test_chromium and
+    # test_webkit: the onShown counter runs once at the re-show, red at 0 != 1 with the onShown call removed) and the onShown case in
+    # ui/webview/chat-visibility.test.ts; the belt's is the executed panes-word BELT case in ui/webview/skeleton-tabs-wiring.test.ts
+    # (the chat's panes handler lifted and run, red with the belt line removed); render.ts's wiring of both, the third argument and
+    # the wasChatOff line, is regex-pinned in those two node files, a text pin beside the executed ones. The ACTIVE tab is the
+    # transcript-less `docs` (review round 3, extra9-1), chosen to leave
     # no build rAF pending while hidden; measured, its full still carries two events (the kernel's head events for a session with no
     # transcript), so render.ts still defers its build, and the tab stays for the strip pin in _dial (docs whole and active while the
     # three transcript-bearing tabs are still skeletons behind the Feed tab: the diet's shape, read off the DOM).
     def test_phone_opened_on_the_feed_tab_arms_the_chain_when_chat_is_shown(self):
-        self._leg("phone", "hung", 12, tap="chat", boot_tab="feed", active_sid=SESSIONS[3][0])   # Chromium: the observer speaks for the hidden-since-load frame, so the hook runs at the show; the belt runs too
+        self._leg("phone", "hung", 12, tap="chat", boot_tab="feed", active_sid=SESSIONS[3][0])   # Chromium: the observer speaks for the hidden-since-load frame, so the hook runs at the show and the belt runs too; the leg reds only with both roads removed (the single-road runs, the comment above), so it pins the pair and neither road alone
 
     def test_firefox_phone_opened_on_the_feed_tab_arms_the_chain_when_chat_is_shown(self):
         # THE OUTCOME ON FIREFOX, NOT A ROAD (review round 3, extra9-1, traced): Firefox runs no rAF in a display:none iframe (idle
@@ -962,7 +971,7 @@ class ReturnFromBackground(unittest.TestCase):
         self._leg("phone", "hung", 12, engine="firefox", tap="chat", boot_tab="feed", active_sid=SESSIONS[3][0])
 
     def test_webkit_phone_opened_on_the_feed_tab_arms_the_chain_when_chat_is_shown(self):
-        self._leg("phone", "hung", 12, engine="webkit", tap="chat", boot_tab="feed", active_sid=SESSIONS[3][0])   # Safari's engine: requestIdleCallback is absent and the chain runs on the 16 ms fallback; its observer speaks while hidden, so the hook and the belt both run, and the leg reds when both go
+        self._leg("phone", "hung", 12, engine="webkit", tap="chat", boot_tab="feed", active_sid=SESSIONS[3][0])   # Safari's engine: requestIdleCallback is absent and the chain runs on the 16 ms fallback; its observer speaks while hidden, so the hook runs at the show and the belt runs too; like the Chromium leg it reds only with both roads removed and stays green with either alone removed (the single-road runs, the comment above), so it pins the pair and neither road alone
 
     def test_phone_refused_30s_slow(self):
         self._leg("phone", "refused", 30)
