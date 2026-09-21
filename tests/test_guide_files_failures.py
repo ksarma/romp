@@ -244,14 +244,18 @@ class TheViewerDoesIt(unittest.TestCase):
         # the img's error does not bubble: one capture-phase listener on the body per open, its twin removing the label
         self.assertIn('body.addEventListener("error", onError, true);', self.viewer)
         self.assertIn('const FIGERR_MARK = "data-fv-figerr";', self.viewer)
-        # "where the picture would be": the label is the note's neighbour, not its text, to the pairing and the place; the
-        # seventh entry is the figure's "Open the picture" control (the link-navigation follow-on's L3), the figure's other
-        # text-free neighbour, which both walks skip the same way (its own pins: ui/webview/file-figure-open.test.ts and
-        # tools/markdown-viewer-plan-linknav.test.mjs read the same literal)
+        # "where the picture would be": the label is the note's neighbour, not its text, to the pairing and the place. These two
+        # pins read the lists' CONTENTS (Slice 7's entry in each), not whether a walk reads them. The figure's "Open the picture"
+        # control (the link-navigation follow-on's L3), the figure's other text-free neighbour, is kept out of the text walks and
+        # of the structural read the same way, and no list pin for it stands here: a pin on a list's membership stayed green while
+        # the structural read ignored both lists, and Python cannot execute readPlace, so its guards are the executed cases in
+        # ui/webview/file-view-place-blocks.test.ts (readPlace over a top-level figure wearing the control reads the figure, at the
+        # root and nested in a wrapper), ui/webview/anchor-map.test.ts (the control at the box's top level is no block's node, and
+        # the caption beside a labelled control maps) and ui/webview/md-config-figure-gate-place.test.ts (the place beside a
+        # glyph-only and a labelled control), each red under its predicate's or entry's removal (the file review's landing round,
+        # correctness-1 with extra9-1)
         self.assertRegex(_read("ui", "webview", "anchor-map.ts"), re.compile(r'^  "fv-figerr",', re.M))
-        self.assertRegex(_read("ui", "webview", "anchor-map.ts"), re.compile(r'^  "fv-figopen",', re.M))
-        self.assertIn('const CONTROL_CLASSES = ["code-copy", "katex", "md-fnback", "md-frontmatter-head", "fv-gate", "fv-figerr", "fv-figopen"];',
-                      _read("ui", "webview", "reader-place.ts"))
+        self.assertRegex(_read("ui", "webview", "reader-place.ts"), re.compile(r'^const CONTROL_CLASSES = \[.*"fv-figerr".*\];$', re.M))
         for sheet in ("styles.css", "feed.css"):
             self.assertRegex(_read("ui", "webview", sheet), re.compile(r"^\.fileview-md \.fv-figerr \{", re.M), sheet)
 

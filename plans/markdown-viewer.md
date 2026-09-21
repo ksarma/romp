@@ -8655,7 +8655,7 @@ opens the source's file, and since its round 2 a failed local figure with a box 
 nothing) and ui/webview/file-view-figure-recent-browser.test.ts (Chromium over the real Files page: a picture
 opened from a figure, by the control and by the plain click, takes no Recent row while Back returns to the report at the
 reader's block, a Forward step onto the picture mints its row, and a link's open still takes its row).
-Fifteen standing suites were re-aimed, not undone:
+Sixteen standing suites were re-aimed, not undone:
 ui/webview/file-view-text-size.test.ts (its real-module bar leg at 380, 420, 480 and 600 px in the chat and feed modals
 reads the group hidden on a fresh open and, once a link is followed, measures the two glyphs among the actions, case 8), ui/webview/file-view.test.ts and ui/webview/file-view-links.test.ts
 (the delegate's open through openFromViewer; the model import), ui/webview/file-view-figure-error.test.ts and
@@ -8666,8 +8666,10 @@ ui/webview/file-view-notice.test.ts (its Escape cases run every keydown handler 
 order, the capture phase first, since the trail's listener is an open's newest registration, and the close hooks'
 removal carries the capture flag its add did), ui/webview/md-url-view.test.ts (the local-file mode's sibling link opens
 through openFromViewer with a push, and the door's shape: the tag set, the host's opener called, the tag cleared in a
-finally) and tests/test_guide_files_failures.py (both walks' control lists carry fv-figopen, the figure's other
-text-free neighbour, as the seventh entry), and in the sweep after the review ui/webview/pdf-new-tab.test.ts (its count
+finally) and tests/test_guide_files_failures.py (re-aimed twice: first to hold both walks' control lists' seventh entry,
+fv-figopen, the figure's other text-free neighbour, then in the file review's landing round, correctness-1, to name the
+executed cases of the control's exclusion in that pin's place, since a pin on a list's membership stayed green while the
+structural read ignored both lists and Python cannot execute readPlace), and in the sweep after the review ui/webview/pdf-new-tab.test.ts (its count
 of the gesture reads inside openFileView, which held the links' two, counts the links' two and the figure's four as two
 regions and the stretches before, between and after them as none, so a read anywhere else in the function, its own
 open's, still fails), and at the merge of the fork's main and in the file review's landing round
@@ -8678,9 +8680,17 @@ tools/markdown-viewer-plan-gate-adopt.test.mjs (main's pin of the "Fix: the gate
 held copy of that section's re-parse paragraph, re-derived, with the derived figures filled from the seam test's pins), and
 in the landing round ui/webview/anchor-map.test.ts (the control at the box's top level is no block's node, executed beside
 the failed figure's label's case: the img's html block owns its img alone, or the panel's wrap, the control answers no
-block, the paragraph after pairs and paints, and beside prose the caption maps) and
-ui/webview/md-config-figure-gate-place.test.ts (readPlace over a loaded figure wearing the control, inside the block's
-paragraph and beside its text). The guide's Links in a file paragraph gained two sentences, the trail's and
+block, the paragraph after pairs and paints, and beside prose the caption maps; and, extra9-1, the caption beside a control
+carrying a text node of its own maps and paints, the executed case of anchor-map.ts's fv-figopen entry, which a glyph-only
+control cannot red on), ui/webview/md-config-figure-gate-place.test.ts (readPlace over a loaded figure wearing the control,
+inside the block's paragraph and beside its text; and, extra9-1, wearing a control that carries a text node of its own, the
+executed case of reader-place.ts's fv-figopen entry) and, correctness-1, ui/webview/file-view-place-blocks.test.ts (readPlace
+over a top-level html-block figure wearing the control reads the figure at the figure's box, at the root's level and nested in
+an html wrapper: the consumer of the structural read's element lists, driven where a pin on the two control lists' contents
+stayed green while the structural read read neither, since the control stood in the text read's list alone and a top-level
+control's box, ending above the edge, sent the level's search past the figure to the paragraph after it; the structural read
+now leaves a figure's two companions out by the pair predicate the map's pairing uses, blockElementsOf with isFigureCompanion,
+and not the text read's wider isControl, since a gated figure's top-level placeholder IS its block's element). The guide's Links in a file paragraph gained two sentences, the trail's and
 the figure control's, and the browser plan's navigation-stack section (plans/file-browser.md) a pointer sentence.
 tools/markdown-viewer-plan-linknav.test.mjs holds this section to the tree: the section is present once after "## Out of
 scope" and carries the ask, what existed, the six decisions, the tests and the open points in that order; the trail

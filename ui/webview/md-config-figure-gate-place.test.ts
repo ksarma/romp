@@ -119,10 +119,15 @@ const figerr = (src: string, alt: string): FakeElement => el("span", { class: "f
 const LOCAL = "figs/missing.png";
 /** The "Open the picture" control file-view.ts places after a loaded figure (decideFigureControl, the link-navigation follow-on's
  *  L3): `button.fv-figopen[data-fv-figopen]`, the img's next sibling, holding a glyph and no text. reader-place.ts lists its class
- *  among the controls noteText skips; the entry is defensive, since a control with no text contributes nothing to the walk
- *  whether it is listed or not, so the entry itself is held by the source pin in file-figure-open.test.ts and the scenes below
- *  hold the pairing and the place with the control beside the img (the file review's landing round, tests-2). */
+ *  among the controls noteText skips; for this glyph-only control the entry is inert (a control with no text node contributes
+ *  nothing to the walk whether it is listed or not: its title and aria-label are attributes, which no text walk reads), so the
+ *  glyph-only scenes below hold the pairing and the place with the control beside the img and cannot red on the entry (the file
+ *  review's landing round, tests-2), and the entry itself is executed by the labelled variant (figopenLabelled, below). */
 const figopen = (): FakeElement => el("button", { class: "fileview-btn fileview-icon fv-figopen", "data-fv-figopen": "", type: "button", title: "Open the picture" }, [el("svg", { viewBox: "0 0 16 16" }, [])]);
+/** The same control carrying a text node of its own ("Open"): the label-bearing variant the reader-place.ts entry keeps out of the text
+ *  read. The real control has none; this is what the entry is for, and what reds on its removal (the file review's landing round,
+ *  extra9-1). */
+const figopenLabelled = (): FakeElement => { const b = figopen(); b.appendChild(txt("Open")); return b; };
 const LOADED = "figs/plot.png";
 
 /** `.fileview-body > div.fileview-md > [h1, p1, p2, X, p3, p4]`, each box 40px tall with an 8px gap, stacked so that
@@ -178,4 +183,21 @@ test("readPlace: an html block whose figure the gate wrapped reads as its block,
   const q = readPlace(H(s2.body), doc);
   assert.ok(q, "paragraph 2 at the edge: a place");
   assert.equal(doc.slice(q!.start, q!.end), PARA(2));
+});
+
+test("readPlace: a loaded figure's Open the picture control carrying a text node of its own, beside the img inside the block's <p>, still reads as the html block, the control's text skipped as the anchor map skips it: the executed case of reader-place.ts's fv-figopen entry (the file review's landing round, extra9-1: without the entry the text read counts the label against a parse of the source reading nothing and refuses the pairing, so readPlace answers null; the glyph-only scenes above read the same with the entry and without it)", () => {
+  const html = `<p><img src="${LOADED}" alt="fig"></p>`;
+  const doc = docWith(html);
+  const spans = sourceBlockSpans(doc);
+  const b = spans.findIndex((sp) => doc.slice(sp.start, sp.end) === html);
+  assert.ok(b > 0, "the fixture holds the html block as one block");
+  const ctrl = figopenLabelled();
+  assert.equal(ctrl.textContent, "Open", "the fixture: the control carries a text node");
+  const s = scene(el("p", {}, [el("img", { src: LOADED, alt: "fig" }), ctrl]));
+  assert.equal(renderedBlockIndex(El(s.md), doc, El(s.blocks[3])), b, "the anchor map pairs the rendered element to the block");
+  const place = readPlace(H(s.body), doc);
+  assert.ok(place, "a place (without reader-place.ts's fv-figopen entry: null, the label read as the block's text against a source that never held it)");
+  assert.equal(doc.slice(place!.start, place!.end), html, "the html block");
+  assert.equal(place!.top, -20, "the block's box, the reader 20px into it");
+  assert.equal(place!.height, 40, "the block's height");
 });

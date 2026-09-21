@@ -170,7 +170,7 @@ const CONTROL_CLASSES = [
   "md-frontmatter-head",    // the front matter's fold control (md-config.ts): its label is the viewer's
   "fv-gate",                // a gated figure's placeholder (figure-gate.ts): its label names the host, and holds the media
   "fv-figerr",              // a failed figure's label (file-view.ts, Slice 7): the img's next sibling, naming the source that failed
-  "fv-figopen",             // a figure's "Open the picture" control (file-view.ts, the link-navigation follow-on's L3): the img's next sibling, a glyph with no text
+  "fv-figopen",             // a figure's "Open the picture" control (file-view.ts, the link-navigation follow-on's L3): the img's next sibling, a glyph with no text; defensive: inert while the control has no text node of its own (anchor-map.test.ts's labelled caption case is what reds on its removal); the executed subject is isFigureCompanion, below
 ];
 const isControl = (n: DNode): boolean => CONTROL_CLASSES.some((cls) => hasClass(n, cls));
 /** A figure's two companions alone (CONTROL_CLASSES' last two entries, the failed figure's label and the "Open the picture"

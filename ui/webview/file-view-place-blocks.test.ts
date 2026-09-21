@@ -870,3 +870,51 @@ test("a stand-in node enumerates its primitives alone, and a dump of one names n
   assert.ok(p.parentNode === root && root.childNodes[0] === p && t.parentNode === p, "the edges still hold the tree");
   assert.equal(root.textContent, "alpha"); assert.equal(p.getAttribute("class"), "row");
 });
+
+// ── the link-navigation follow-on's L3: a figure's "Open the picture" control beside a top-level figure ─────────────
+/** The control file-view.ts places after a loaded figure (decideFigureControl): `button.fv-figopen[data-fv-figopen]`, the img's
+ *  next sibling in the img's own parent, holding the glyph's clone and no text of its own; its box the one the sheets give it
+ *  (`vertical-align: top; top: 6px; padding: 3px`: about 22px at the figure's top), so it ends above the edge while the figure it
+ *  stands beside ends below it. */
+function figureOpenControl(img: FakeElement): FakeElement {
+  const doc = img.ownerDocument, parent = img.parentNode as FakeElement;
+  const b = doc.createElement("button"); b.setAttribute("class", "fileview-btn fileview-icon fv-figopen"); b.setAttribute("data-fv-figopen", ""); b.setAttribute("type", "button"); b.setAttribute("title", "Open the picture");
+  const svg = doc.createElement("svg"); svg.setAttribute("viewBox", "0 0 16 16"); b.appendChild(svg);
+  parent.childNodes.splice(parent.childNodes.indexOf(img) + 1, 0, b); b.parentNode = parent;
+  b.box = { top: img.box!.top + 6, bottom: img.box!.top + 28 };
+  return b;
+}
+const FIG = '<img src="figs/plot.png" alt="fig">';
+
+test("readPlace, Rendered: a top-level html-block figure wearing the Open the picture control (the control's box ends above the edge while the figure's ends below it) reads as the figure, at the same box as without the control, at the root's level and nested in an html wrapper (the file review's landing round, correctness-1: the control was in the text read's list and not in the structural read's, so the level's search landed on the control, took its bottom for a box above the edge and read the paragraph after the figure)", () => {
+  const placeIn = (body: FakeElement, doc: string) => { const p = readPlace(H(body), doc); assert.ok(p, "a place"); return [doc.slice(p!.start, p!.end), p!.top, p!.height]; };
+  // the root's level: the bare <img> is a top-level element between two paragraphs, the reader 100px into it
+  const doc = "# Report\n\n" + PARA(1) + "\n\n" + FIG + "\n\n" + PARA(2) + "\n\n" + PARA(3) + "\n";
+  assert.ok(sourceBlockSpans(doc).some((sp) => doc.slice(sp.start, sp.end) === FIG), "the fixture holds the figure as one html block");
+  const r = rendered(doc, 0, stack(5, { 2: 400 }));
+  assert.deepEqual(r.blocks.map((b) => b.tagName), ["H1", "P", "IMG", "P", "P"], "the fixture: the figure is a top-level element");
+  const img = r.blocks[2];
+  toEdge(r.md, img, 100);
+  assert.deepEqual(placeIn(r.body, doc), [FIG, -100, 400], "without the control: the figure, 100px in");
+  const ctrl = figureOpenControl(img);
+  assert.equal(r.md.childNodes.indexOf(ctrl), r.md.childNodes.indexOf(img) + 1, "the control is the img's next sibling at the root's level");
+  assert.equal(renderedBlockIndex(El(r.md), doc, El(ctrl)), -1, "the map pairs the control to no block (anchor-map.test.ts holds this; the pairing was never the defect)");
+  assert.deepEqual(placeIn(r.body, doc), [FIG, -100, 400], "with the control: the figure still, at the same box (before the fix: the paragraph after it, 308px below the edge)");
+  const p = readPlace(H(r.body), doc)!;
+  assert.equal(doc.slice(p.next!.start, p.next!.end), PARA(2), "the block after it is the paragraph");
+  // nested in an html wrapper (readRendered's descent, the structural read's second site): the figure and a paragraph inside a
+  // centred div, the div's box holding both as a browser lays them out
+  const docW = "# Report\n\n" + PARA(1) + "\n\n<div align=\"center\">\n\n" + FIG + "\n\n" + PARA(2) + "\n\n</div>\n\n" + PARA(3) + "\n";
+  const rw = rendered(docW, 0, stack(4, { 2: 456 }));
+  assert.deepEqual(rw.blocks.map((b) => b.tagName), ["H1", "P", "DIV", "P"], "the fixture: the div at the top level, the figure and paragraph 2 nested in it");
+  const div = rw.blocks[2];
+  const kids = div.childNodes.filter((n): n is FakeElement => n instanceof FakeElement);
+  assert.deepEqual(kids.map((k) => k.tagName), ["IMG", "P"], "the fixture: the figure and the paragraph are the wrapper's element children");
+  sameNodes(renderedBlockWrappers(El(rw.md), docW, renderedBlockIndex(El(rw.md), docW, El(div))), [div], "the div is its block's wrapper, so the read descends into it");
+  kids[0].box = { top: div.box!.top, bottom: div.box!.top + 400 }; kids[1].box = { top: div.box!.top + 408, bottom: div.box!.top + 448 };
+  toEdge(rw.md, kids[0], 100);
+  assert.deepEqual(placeIn(rw.body, docW), [FIG, -100, 400], "without the control: the nested figure, 100px in");
+  const ctrlW = figureOpenControl(kids[0]);
+  assert.equal(div.childNodes.indexOf(ctrlW), div.childNodes.indexOf(kids[0]) + 1, "the control is the img's next sibling inside the wrapper");
+  assert.deepEqual(placeIn(rw.body, docW), [FIG, -100, 400], "with the control: the nested figure still (before the fix: the nested paragraph after it)");
+});
