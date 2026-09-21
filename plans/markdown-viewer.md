@@ -8605,7 +8605,7 @@ the contract said the same; the claim was false, and the follow-on is a privacy 
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui/webview, docs, plans, tools,
 upstream or tests alone (45 files, the ledger entry's where line; run 2026-09-21 at the head that carries the author's
 closing pass after the file review's round 10, where the merge-base is the fork's main the branch merged after the fixes for the
-file review's round 10, the second parent of the merge commit before this pass's, and the listing is the branch's whole delta over it; the run at the head that carries the
+file review's round 10, and the listing is the branch's whole delta over it; the run at the head that carries the
 fixes for the file review's round 8, where the merge-base was 5e5ee79ed, the fork's main merged into the branch before
 landing, listed 43, before ui/webview/css-rules.mjs and ui/webview/css-rules.d.mts, the rule reader the closed set over the
 control's sheet rules stands on, joined the delta in the fixes for the file review's round 10 (under tools/ there; the
