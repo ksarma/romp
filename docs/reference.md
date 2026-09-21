@@ -3671,8 +3671,19 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   every later reader of the tree on that thread, the agent-file lookup's
   stamp re-check included, pays no stat; a change on disk after the
   validation is seen by the next cycle's first reader, one cycle later at
-  most; a root evicted mid-cycle, a session departing, empties every open
-  scope, so a tree read after it is validated once more in that cycle; a
+  most; a root that leaves the memo mid-cycle (an ownership eviction, most
+  often of an unowned sibling root an agent-file miss scan inserted; a tree
+  found missing or replaced; a session departing is one such root) drops
+  from every open scope that root's pair, the stamps indexed from it and the
+  launch folds of the agents whose files resolved under it, and nothing
+  else, so an eviction costs one read of that root at its next lookup in
+  the cycle plus one fold per agent under it, its D plus its A, not a
+  re-validation of every held tree (since round 2 of #882; before it one
+  process-wide generation emptied every scope on any eviction, and the lab
+  in `tests/test_subagent_tree_stamps_per_cycle.py` measured R roots of D
+  directories and A agents with one unrelated root evicted between each
+  pair of N reads at R x D x N lstats and R x A x N folds per cycle, against
+  R x D and R x A once scoped, the figure with no eviction); a
   thread outside a cycle, a WS or HTTP handler's build or the act-now nudge
   pass, reads per call as before), with `hit` and `miss`
   (trees vouched for by one stat per known directory against trees walked),
@@ -3688,9 +3699,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   tree read before its agent-file lookups, up to twice that when a command
   row's owner lookup re-checks stamps before the tree is read, plus the
   project and sibling directory stats an agent-file miss pays, and a
-  handler thread's per-call reads and a re-validation after an eviction
-  land in the same counter, so the figure is bounded per scoped reader set,
-  not per interval), `walkMs`
+  handler thread's per-call reads and the re-read of a root that left the
+  memo mid-cycle land in the same counter, so the figure is bounded per
+  scoped reader set, not per interval), `walkMs`
   and `validateMs` (the time in each, every thread), and the gauges `roots`
   (entries) and `dirs` (directories held); a directory stamped within the
   last two seconds, or one whose listing failed, is stored unvouched and
