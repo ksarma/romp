@@ -2215,7 +2215,9 @@ class BackendHelpers(unittest.TestCase):
     def test_a_retirement_written_in_the_gap_is_overwritten_by_the_restore_the_documented_residual(self):
         # THE RESIDUAL round 6 of the review names (2026-09-20; its correctness-3 and kernel-3, the reviewer's ruling): a None
         # written between the step's clear and the retry by _connect_landed's follower-served launch or by
-        # _stamp_launch_login (a legitimate retirement at a launch) is indistinguishable BY VALUE from the None the step's
+        # _stamp_launch_login (a legitimate retirement at a launch), or by a CONCURRENT set_auth's own clear on another
+        # request or pusher thread (the third writer of the same value in the same gap, which this list omitted until
+        # round 6's fix-up of 2026-09-21; the next test drives it), is indistinguishable BY VALUE from the None the step's
         # own clear wrote, and the record carries no generation, per-write stamp or writer tag to tell them apart
         # (write_reg writes a flat dict; _REG_CACHE's stat triple moves on every RMW of any field), so the compare-and-swap
         # puts the report back over that retirement, in that gap; the next launch retires it again. Pinned as the DOCUMENTED
@@ -2234,6 +2236,51 @@ class BackendHelpers(unittest.TestCase):
             self.assertFalse(self.be.set_auth_guarded(web.sid, "key"))
         self.assertEqual(self._reg(web.sid).get("apiKeyAuth"), True,
                          "the documented residual: the report went back over a retirement written in the gap")
+
+    def test_a_concurrent_picks_own_clear_written_in_the_gap_is_overwritten_by_the_restore_the_residuals_third_writer(self):
+        # THE RESIDUAL'S THIRD WRITER (round 6's fix-up, 2026-09-21; the cluster A verifier drove it): the residual's list of
+        # None-writers in the gap between the step's clear and the retry named the two loop-thread launch retirements and
+        # omitted set_auth's own clear from a CONCURRENT caller on another request or pusher thread (the already-applying
+        # and request roads through _mirror_pick; set_auth's docstring says several threads call it on one session). Driven
+        # with a real second thread, the values chosen so each writer leaves a mark: the record's report True at the door;
+        # the step's clear (None, replaced True); the loop's fresh report False in the gap (a bool, which the compare-and-swap
+        # leaves standing); a second thread's differing pick, a stored login on the request road, clears it again (None);
+        # the step's fault; the retry sees None and puts True back, over the concurrent pick's clear and over the newer
+        # report that clear replaced. Without the concurrent clear the field would read False, so the final True is this
+        # writer's mark. The concurrent pick's live pair and record pair go back to the door-time pair with the step's
+        # restore (the guard's snapshot-and-restore, unchanged here and not asserted). Pinned as the DOCUMENTED BEHAVIOUR
+        # beside the launch-retirement cell: a change that closes the gap must update both pins. Green at the closing
+        # commit by design; the mutation that drops the retry's restore (restore always empty) reds it at the last
+        # assertion, None is not True, and the cell without its concurrent pick ends False at that assertion.
+        rec = {"id": sb._logins.mint_id(), "label": "Work", "tokenCmd": "token-read 'romp login Work'",
+               "addedAt": int(time.time()) - 86400}
+        sb._logins.write_record(self.d, rec)
+        web = self._sess("web", auth="login", launched="login")
+        web.auth_live = "login"
+        self.be._update_reg(web.sid, apiKeyAuth=True)
+        self._queue_loop(web)
+        gap = []
+
+        def report_then_concurrent_pick_then_raise(*a, **k):
+            if gap:
+                return ""   # the concurrent pick's own reconnect ask, on the second thread: nothing to record
+            gap.append("after the clear: %r" % self._reg(web.sid).get("apiKeyAuth"))
+            self.be._update_reg(web.sid, apiKeyAuth=False)   # the loop thread's fresh report, after the step's clear
+            gap.append("after the report: %r" % self._reg(web.sid).get("apiKeyAuth"))
+            answered = []
+            t = threading.Thread(target=lambda: answered.append(self.be.set_auth(web.sid, "login:" + rec["id"], chip=False)))
+            t.start()
+            t.join(10)
+            r = self._reg(web.sid)
+            gap.append((answered, r.get("auth"), r.get("authLogin"), r.get("apiKeyAuth")))
+            raise RuntimeError("a synthetic fault after the mirror")
+        with mock.patch.object(web, "_note_reconnect_ask", side_effect=report_then_concurrent_pick_then_raise):
+            self.assertFalse(self.be.set_auth_guarded(web.sid, "key"))
+        self.assertEqual(gap[:2], ["after the clear: None", "after the report: False"], gap)
+        self.assertEqual(gap[2], ([True], "login", rec["id"], None),
+                         "the concurrent pick answered True on the request road and its own clear landed in the gap")
+        self.assertEqual(self._reg(web.sid).get("apiKeyAuth"), True,
+                         "the documented residual's third writer: the report went back over a concurrent pick's clear written in the gap")
 
     def test_a_skipped_record_write_on_each_live_pick_road_raises_restores_files_the_row_and_answers_refused(self):
         # round 6 of the review (2026-09-20; its kernel-1, extra7-1 and extra8-2, all refuters, the refuters' shape): set_auth's

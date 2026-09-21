@@ -19444,9 +19444,10 @@ class SdkBackend:
         record-would-not-read wording); set_auth_followers (the unwritten bucket, taken only after the restore); the drain,
         through the door (kernel/kernel.py _apply_pending_ops); and set_auth's dormant road, a plain False since its record
         write is its whole change. The mirror sites that still drop the bool are the non-pick writers, a NAMED RESIDUAL
-        (derived by git grep -nE '_mirror_auth(_pending)?[(]' -- kernel bin cli postal, minus the two defs, this method,
-        follow_default_auth's live clear and the guard's two retry sites): _served_by_connect, _recover_picked_pending_at_init
-        (two sites), _connect_landed (two sites), _follow_default_unlanded (three sites) and _follow_default (four sites); a
+        (derived by git grep -nE '_mirror_auth(_pending)?[(]' -- kernel bin cli postal, minus the two defs, this sentence's
+        own mention of the command, this method, follow_default_auth's live clear and the guard's two retry sites):
+        _served_by_connect, _recover_picked_pending_at_init (two sites), _connect_landed (two sites),
+        _follow_default_unlanded (three sites) and _follow_default (four sites); a
         skip there leaves the record's flag stale with no row, as before this change. A caller of set_auth outside the
         guard (a test, a backend fake) gets the raise, with the live object moved."""
         if not s._mirror_auth(token=token, **fields):
@@ -19521,10 +19522,13 @@ class SdkBackend:
         # pending already the pick reach the seed having written no record, and the row said "its record wrote" on both
         token = StepWrite() if token is None else token
         value = self.login_display(login_id) if login_id else side   # the stored login's display label (T346), else the side word; `value` is spent
-        # The machine seed (write_sdk_default) is written at the END, at the single `return True` every accepted road
-        # reaches, so a refused per-session record write never moves it (round 3 of the review, 2026-09-20; its
-        # regression-2 with kernel-1). It USED to run here, before the record write, so a refused write still moved the
-        # remembered account and the next session born inherited a pick the user's own session was told did not apply.
+        # The machine's record of the last pick (write_sdk_default; the comment at the write says what the write is since
+        # fork PR #819) is written at the END, at the single `return True` every accepted road reaches, so a refused
+        # per-session record write never moves it (round 3 of the review, 2026-09-20; its regression-2 with kernel-1). It
+        # USED to run here, before the record write, so a refused write still moved the remembered account and, while a
+        # flag-less write still seeded the next spawn (before fork PR #819), the next session born inherited a pick the
+        # user's own session was told did not apply. This comment called the write "the machine seed", that PR's removed
+        # mechanism, until round 6's fix-up (2026-09-21; the merge-runs verifier).
         # the pick, the side the connect in progress launches, the side the running process launched and the side a
         # reconnect is applying, each as (side, stored login id): "" for the machine's own login and for the key
         pick = (side, login_id)
@@ -20100,8 +20104,9 @@ class SdkBackend:
         blaming a write that succeeded, and no reconnect callback is left queued from a rolled-back state. The chip fires
         HERE, after a True return, outside the guard, with its own containment and a problem row; _ack_cmd_chip's durable
         write is best-effort besides. Two statements after s._mirror_auth in set_auth touch the filesystem, and each is
-        contained where it sits: the chip's write and the machine seed's (write_sdk_default, which round 3's commit moved
-        after the mirror and the owner's lenses over that commit, 2026-09-20, found raising inside the step on every road;
+        contained where it sits: the chip's write and the machine's last-pick record's (write_sdk_default, the machine seed
+        until fork PR #819; round 3's commit moved it after the mirror and the owner's lenses over that commit, 2026-09-20,
+        found it raising inside the step on every road;
         best-effort in set_auth since, with its own row). The rest is post-commit and cannot raise: _note_reconnect_ask is
         memory-only, request_reconnect goes through _call_on_loop (a queued callback, never a raise), _poke swallows, and the
         log line writes through _backend_log/_exit_log (best-effort); the lenses executed each under a fault. The rule is
@@ -20558,8 +20563,9 @@ class SdkBackend:
         from both ends). What the step covers stops at s._mirror_auth; every statement after it in set_auth is post-commit,
         and each that touches the filesystem is kept out of this rollback: the /auth chip, which set_auth_guarded fires
         after a True return OUTSIDE this guard with its own containment (its durable write raised inside the step at the
-        round-3 base), and the machine seed's write, which round 3's commit moved after the mirror and which is best-effort
-        inside set_auth with its own row (the owner's lenses over that commit, 2026-09-20, found it raising inside the step
+        round-3 base), and the machine's last-pick record's write (write_sdk_default, the machine seed until fork PR #819),
+        which round 3's commit moved after the mirror and which is best-effort inside set_auth with its own row (the owner's
+        lenses over that commit, 2026-09-20, found it raising inside the step
         on the door, the walk and the dormant road); request_reconnect through _call_on_loop, _poke and the log line cannot
         raise. So a chat or seed write that cannot land never rolls a pick whose record wrote back, never answers 409 for a
         write that succeeded, and leaves no reconnect callback queued from a rolled-back state. apiKeyAuth rides the
@@ -20608,9 +20614,12 @@ class SdkBackend:
         # retry below writes into NO carrier: it is the RESTORE, and that absence is its tag, so it never reads as the step's
         # write. A caller that hands a step and no carrier gets a carrier no mirror writes into, so its step reads as having
         # landed nothing; every step caller in this file hands one (tests/test_billing_route.py pins the census).
-        # (2) the record's apiKeyAuth, which round 4 READ AT THE DOOR and the retry wrote back. Its other writers are the
-        # loop thread's, at any moment relative to a step: _note_auth_source's persist of the CLI's report (a bool),
-        # _connect_landed's follower-served launch and _stamp_launch_login's retirement (both None); its readers
+        # (2) the record's apiKeyAuth, which round 4 READ AT THE DOOR and the retry wrote back. Its writers besides this
+        # step's own clear (set_auth's already-applying and request roads through _mirror_pick, None): on the loop thread, at
+        # any moment relative to a step, _note_auth_source's persist of the CLI's report (a bool), _connect_landed's
+        # follower-served launch and _stamp_launch_login's retirement (both None); on another request or pusher thread, a
+        # CONCURRENT set_auth's clear on those same two roads (set_auth's docstring: several threads call it on one
+        # session) and its dormant road (None; a session with no live object); and this retry, the restore. Its readers
         # SdkSession.__init__ (auth_live and api_key_auth), follow_default_auth's dormant road, billing_view, _live_row,
         # cli/spend_rebuild.py and cli/spend_repair.py, and no longer this frame, which reads the record no more. A report
         # that landed during the step was overwritten by the door-time value. The retry now puts back what the STEP'S OWN
@@ -20619,10 +20628,13 @@ class SdkBackend:
         # and wins. THE DISTINGUISHER CHECK: none exists in the record (write_reg writes a flat dict through os.replace; no
         # field is a generation, a per-write stamp or a writer tag; _REG_CACHE's (mtime_ns, size, ino) triple is filesystem
         # metadata that every RMW of any field moves, so it cannot tell an apiKeyAuth write from a queue mirror), so the
-        # compare is by value, and no record machinery is added. THE RESIDUAL, named: a None written between the step's clear
-        # and this retry by _connect_landed's follower-served launch or by _stamp_launch_login (a legitimate retirement at a
-        # launch) is indistinguishable by value from the step's own None, so the report goes back over that retirement in
-        # that gap, until the next launch retires it again; tests/test_billing_route.py pins it as the documented behaviour.
+        # compare is by value, and no record machinery is added. THE RESIDUAL, named (its writer list corrected by round 6's
+        # fix-up, 2026-09-21, after the cluster A verifier drove the third writer): a None written between the step's clear
+        # and this retry by _connect_landed's follower-served launch, by _stamp_launch_login (a legitimate retirement at a
+        # launch) or by a CONCURRENT set_auth's own clear on another request or pusher thread (its already-applying and
+        # request roads through _mirror_pick: a differing pick landing in the gap) is indistinguishable by value from the
+        # step's own None, so the report goes back over that retirement or that clear in that gap, until the next launch
+        # retires it again; tests/test_billing_route.py pins each as the documented behaviour, one cell per writer class.
         token = StepWrite() if token is None else token
         with s._hold_lock:
             before = (s._auth_pending_target(), bool(getattr(s, "_relaunch_bounded", False)),
