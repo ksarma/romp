@@ -114,8 +114,9 @@ This module holds five things, and it never skips: a pin that skips reports gree
    copy renamed test_ci_sdk_pin_v2.py ran green with the belt inert, a skip in it a plain skip.
 5. The launcher census (ChildPytestLaunchers; round 3's ruling, 2026-09-20). The workflow's flag blocks the plugin in
    the step's own process; a pytest child a test spawns is a new pytest process in the same interpreter, where the SDK
-   step installed anyio, and without the flag it auto-loads the plugin (at round 3's head one of nine launchers passed
-   it, while this docstring, ci.yml and tests/README.md said the cells' plugin set was the box's). The rule: every argv
+   step installed anyio, and without the flag it auto-loads the plugin (on 2026-09-20, before the launchers gained the
+   flag, one of nine passed it, while this docstring, ci.yml and tests/README.md said the cells' plugin set was the
+   box's). The rule: every argv
    under tests/ that runs pytest passes -p no:anyio or is in LAUNCHERS_LISTED with a reason (empty: pytest accepts the
    flag where anyio is absent, so no launcher has had a reason to lack it), and the population is derived from the
    modules' syntax by child_pytest_launchers, keyed on the argv PROPERTY and not a spelling: a list or tuple literal,
@@ -1453,8 +1454,8 @@ class PopulationCheckReds(unittest.TestCase):
 # The launcher census (round 3's ruling, 2026-09-20; item 5 of the module docstring): every pytest the suite itself
 # spawns passes -p no:anyio. The workflow's flag blocks anyio's plugin in the step's own process; a pytest child a test
 # spawns is a new pytest process in the same interpreter, where the SDK step installed anyio, and without the flag it
-# auto-loads the plugin. At round 3's head one of nine launchers passed the flag, and this module, ci.yml and
-# tests/README.md said the cells' plugin set was the box's. The rule now: every argv under tests/ that runs pytest
+# auto-loads the plugin. On 2026-09-20, before the launchers gained the flag, one of nine passed it, and this module,
+# ci.yml and tests/README.md said the cells' plugin set was the box's. The rule now: every argv under tests/ that runs pytest
 # passes the flag or is in LAUNCHERS_LISTED with a reason. The population is derived from the modules' syntax by
 # child_pytest_launchers (its docstring and _launchers_in's are the rule); the derivation case prints the listing:
 #   python -m pytest tests/test_ci_sdk_pin.py -q -p no:cacheprovider -p no:anyio -k ChildPytestLaunchers -rP
@@ -1692,8 +1693,8 @@ class ChildPytestLaunchers(unittest.TestCase):
     """Every pytest the suite itself spawns passes -p no:anyio, held on the population of launchers under tests/ (item
     5 of the module docstring). A child pytest is a new pytest process in the cell's interpreter, where the SDK step
     installed anyio; the workflow's flag reaches the step's own process alone, so a launcher without the flag auto-loads
-    the plugin there (at round 3's head eight of nine did, and a synthetic broken anyio/pytest_plugin.py in a CI-shaped
-    venv red tests in each of the six modules that spawned them, none of which imports the SDK; the same six were green
+    the plugin there (on 2026-09-20, before the launchers gained the flag, eight of nine did, and a synthetic broken
+    anyio/pytest_plugin.py in a CI-shaped venv red tests in each of the six modules that spawned them, none of which imports the SDK; the same six were green
     with the flag on every launcher, 2026-09-20). The population is derived by child_pytest_launchers, keyed on the argv
     property; the flag check keys on the argv's constant elements and its message says so; a launcher without the flag
     is named with its file, line and enclosing function unless LAUNCHERS_LISTED carries it with a reason, and a listed
