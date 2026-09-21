@@ -1215,22 +1215,31 @@ class _LinkDrop(unittest.TestCase):
         ONE derivation (the maintainer's round 4: a hand-kept pair of a count and a drive drifted apart twice, one drive behind each time):
         `population_drive.py --check <tests_dir> <pass-7 head tests_dir>` in the builder's cache outside the repo lists the
         records by `population6.py` and names the drive whose reports directory holds the NEWEST counted record by the
-        record's own end mark, so the count and the date are one read of one listing and a complete record landing after the
-        named drive moves the date with it (pass 10; pass 9 dated by the newest log's header stamp, which a unit run logged
-        like a drive made unreachable). It refuses to print anything when the two can disagree: a complete unmutated record
-        the listing does not hold; a newest record in a directory with no headered lab log; that log with no end line (a drive
-        in flight); a record of the DATING drive ending more than a second after that drive's end stamp (the log's whole seconds
-        against the record's milliseconds; an older drive's records are not held to their own stamp); a record of the dating
-        drive outside the listing; a lab drive newer than the dating one that is in flight or ended with no class record (a
-        log whose pytest target is another module, named in its header or read from its body's test ids, is no lab drive and
-        is skipped with a note). A counted record beside no headered lab log (a copy of an older record, a drive another script
-        logged) is counted by the listing, dates nothing and is named to stderr, refused only when it is the newest: the count
-        can hold records no drive dates while the date stays on the newest dated one. Then it runs this helper over each record's windows
+        record's own end mark (the maximum by end mark then path: two records of one drive sharing an end mark take the
+        lexically greatest path, and a tie across reports directories, a copied record, is refused, since nothing dates it;
+        the maintainer's round 6, extra9-5: max() over a set of paths made the drive a coin flip), so the count and the date are
+        one read of one listing and a complete record landing after the named drive moves the date with it (pass 10; pass 9
+        dated by the newest log's header stamp, which a unit run logged like a drive made unreachable). It refuses to print
+        anything when the two can disagree: a complete unmutated record the listing does not hold; a newest record in a
+        directory with no headered lab log; that log with no end line (a drive in flight); a record of the DATING drive ending
+        more than a second after that drive's end stamp (the log's whole seconds against the record's milliseconds; an older
+        drive's records are not held to their own stamp); a record of the dating drive outside the listing; a HEADERED lab drive
+        newer than the dating one that is in flight or ended with no class record (a log whose pytest target is another module,
+        named in its header or read from its body's test ids, is no lab drive and is skipped with a note). Headered is the key
+        throughout (the maintainer's round 6, extra8-3): a log's first line, written by the lab's run script, carries the start
+        stamp newness is decided by, the pytest target that tells a lab drive from another module's run and, with its end line,
+        completion; a log with no header is invisible to every reader of the tool, dated by nothing and refused by nothing, so a
+        drive another script logged without the header is outside this derivation by construction. A counted record beside no
+        headered lab log (a copy of an older record, a drive another script logged) is counted by the listing, dates nothing and
+        is named to stderr, refused only when it is the newest: the count can hold records no drive dates while the date stays
+        on the newest dated one. Then it runs this helper over each record's windows
         (`excuse_census.py`, the pass-7 head's module's copy for the frame-only key) and the floor over each window with the miss
         planted (`census_module.py`), prints the figure-bearing spans of this paragraph (three, two of them in one sentence),
         of _minus_attach_rows' docstring and of the waits and delivery comments WHOLE, and under --check reads this module for
-        them, whitespace and comment markers folded, so a retyped figure is its exit 3, not a paste; `--as-of <log>` re-derives
-        a paste dated to an earlier drive after later drives have landed. The post times
+        them, whitespace and comment markers folded, so a retyped figure is its exit 3, not a paste; a bare --check after a
+        later drive has landed exits 3 too, since the newest record moved the date, and that is staleness, re-derived by
+        `--as-of <log>` (a paste dated to an earlier drive stays derivable after later drives) and repaired by a re-paste as of
+        the newest drive (the maintainer's round 6, correctness-4: the paste is re-derived at the final head). The post times
         are DERIVED from the change record (its t0 plus i x NOTICE_GAP_S, _change's own sleeps between the posts, on the
         poster's clock at millisecond resolution); each notice's answer in the record carries the remote kernel's own stamp
         for the notice too (`at`, `t`), but in whole seconds and on the other clock, too coarse for a millisecond gap check,
