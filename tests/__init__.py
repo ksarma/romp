@@ -93,8 +93,10 @@ def remove_made_dirs():
 # the controller's, and each level cost 20 bytes (`/romp-tests-XXXXXXXX`) of the AF_UNIX path budget:
 # the deepest hosts-on lab (tests/test_session_host_restart.py, `host-served-XXXXXXXX/xdg/romp` plus the
 # host's `hosts/<sid8>.sock`) came to TMPDIR + 90 bytes under -n and TMPDIR + 70 alone, so at a 17-byte
-# TMPDIR the socket path was 107 = SOCK_PATH_MAX exactly, one byte more failed every session-host test
-# under xdist and passed it alone, and 76 sweep logs read the red as a flake. Beside, every process is
+# TMPDIR the socket path was 107 = SOCK_PATH_MAX exactly: at 18 bytes that lab's test (ServedRestart)
+# overflowed under xdist and passed alone, and the TMPDIR + 72 shapes (tests/test_session_host.py
+# HostProcess, test_host_transport EndToEnd and AttachStandDown: a bare mkdtemp root, `tmp` + tail)
+# overflowed from a 36-byte TMPDIR under -n; 76 sweep logs read the red as a flake. Beside, every process is
 # one level under the handed dir whatever the worker count, and the bound is TMPDIR + 70 <= 107 (a
 # 37-byte TMPDIR; tests/test_tempdir_hygiene.py HarnessSocketBudget derives it from the roots the
 # harness makes and the tests' own lab shapes). A nested process appends its pid and root to

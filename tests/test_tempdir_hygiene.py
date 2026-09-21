@@ -899,8 +899,10 @@ class BareRunLeavesNothing(unittest.TestCase):
 # the harness adds, the lab's own shape, and the socket tail. Until 2026-09-21 an xdist worker's root
 # nested inside the controller's, a second 20-byte level, and the deepest hosts-on lab
 # (tests/test_session_host_restart.py: `host-served-XXXXXXXX/xdg/romp`) came to 107 bytes exactly under
-# the sweep's 17-byte TMPDIR: one more byte failed every session-host test under -n and passed it alone,
-# and 76 sweep logs read that as a flake. Nothing here is typed from that story: the level is measured on
+# the sweep's 17-byte TMPDIR: at 18 that lab's test (ServedRestart, TMPDIR + 90) overflowed under -n and
+# passed alone, the TMPDIR + 72 shapes (HostProcess, EndToEnd, AttachStandDown: a bare mkdtemp root)
+# overflowed from a 36-byte TMPDIR under -n, and 76 sweep logs read the red as a flake. Nothing here is
+# typed from that story: the level is measured on
 # roots the harness mints (a controller-shaped and a worker-shaped process, by execution), the lab shapes
 # are read from the tests' own text (every write into a `session-hosts` file whose value is not the literal
 # off — a loop variable, a helper's argument and a with-open handle read through their bindings, a value
