@@ -63,7 +63,10 @@ the root in the table, the holder's next read drops its pair and answers the pop
 other held tree is still served, and a second read with no entry standing moves nothing; and the held-root lag,
 characterized: a root removed while the same thread's scope holds it is served, pair and stamps, at no stat until that
 scope ends (the served call precedes the root's lstat, so no pop runs and the gen stands), and the next scope's first read
-finds it gone; (5) the invalidation is scoped to what became stale (since 2026-09-21,
+finds it gone; and the served counter at every edge of these, asserted: a served read of a held root, removed or not,
+lands in served, and a stale hold dropped at the lookup, a missing-root pop and a replaced-root pop move it by nothing (a
+stale hold dropped after the forget reads (hit, miss, served, evict) == (0, 1, 0, 1)), so hit + miss + served is the reads
+answered a tree; (5) the invalidation is scoped to what became stale (since 2026-09-21,
 round 1 of #882's ruling): an eviction of a root drops from every open scope that root's pair, the stamps indexed from it and the launch folds
 keyed on it (the transcript's own subagents root, whatever tree the agent's file resolved under: the rule and its bound
 are stated once, in _subagent_scope's docstring), and nothing else, so a held tree, a held stamp and held launch folds survive
@@ -870,12 +873,17 @@ class Guards(_World):
         with self._spy() as sp:
             km._subagent_tree(str(self.sub)); km._subagent_tree(str(self.sub))
         self.assertEqual(sp.total()["dir_lstat"], D, "two reads in one scope cost one validation")
+        self.assertEqual((self._delta(b)["hit"], self._delta(b)["served"]), (1, 1),
+                         "the first read validated and the second was served the held pair: %r" % (self._delta(b),))
         # accept: a forget over a live set that owns the root evicts nothing, moves no gen, and the scope keeps serving
         km._subagent_trees_forget([{"path": self.path}])
         self.assertEqual(self._delta(b)["evict"], 0)
         with self._spy() as sp:
             km._subagent_tree(str(self.sub))
         self.assertEqual(sp.total()["dir_lstat"], 0, "served: nothing was evicted, the held pair stands")
+        served_before_eviction = self._delta(b)["served"]
+        self.assertEqual(served_before_eviction, 2, "memos.subagentTree served so far: %d; keyed on 2, the first pair's second read and "
+                                                    "the read after the forget that evicted nothing, both answered the held pair" % served_before_eviction)
         # refuse: nobody alive evicts the root; the next read in the SAME scope walks again instead of being served the evicted pair
         km._subagent_trees_forget([])
         self.assertEqual(self._delta(b)["evict"], 1)
@@ -883,10 +891,39 @@ class Guards(_World):
         with self._spy() as sp:
             dirs, _stats = km._subagent_tree(str(self.sub))
         d = self._delta(b)
-        self.assertEqual(d["miss"], 1, "the read after the forget walked (a miss), not the held pair: _subagent_trees_forget moves "
-                                       "_SUBAGENT_TREES_GEN and _subagent_scope empties a scope opened under the older value")
+        self.assertEqual(d["miss"], 1, "the read after the forget walked (a miss), not the held pair: _subagent_trees_forget moved "
+                                       "_SUBAGENT_TREES_GEN and recorded the root's eviction, so the hold was dropped at this lookup "
+                                       "(_subagent_vouched against the root's record) and the disk read")
+        self.assertEqual(d["served"], served_before_eviction,
+                         "memos.subagentTree served after the read that dropped the stale hold and walked: %d; keyed on the %d served reads "
+                         "before the eviction alone (the early return is the one site that moves served; a hold dropped at the lookup lands "
+                         "in miss, or in hit when the entry still stands, never in served)" % (d["served"], served_before_eviction))
         self.assertEqual(sp.total()["dir_lstat"], D, "a walk: the root and each child by lstat, D = %d" % D)
         self.assertEqual(len(dirs), D)
+
+    def test_a_stale_hold_dropped_at_the_lookup_lands_in_miss_and_moves_served_by_nothing(self):
+        """The rule that a read answered a tree lands in exactly one of hit, miss and served, at the stale-hold edge (the
+        owner's pass before round 2 of #882: a kernel counting served on the dropped hold left the module green, the counter
+        being pinned only where reads are served). The scope holds the root; the forget evicts it (nobody alive); the next
+        read finds its hold stale at the lookup, drops it and reads the disk (the forget popped the entry, so a walk). Keys
+        on the (hit, miss, served, evict) delta over the forget and that read == (0, 1, 0, 1): the early return alone moves
+        served, so a hold dropped at the lookup is a validation or a walk and lands in hit or miss, here miss."""
+        root = str(self.sub)
+        sc = self._open()
+        km._subagent_tree(root)
+        self.assertIn(root, sc["trees"], "premise: the root is held")
+        b = self._stats()
+        km._subagent_trees_forget(set())
+        with self._spy() as sp:
+            out = km._subagent_tree(root)
+        d = self._delta(b)
+        got = (d["hit"], d["miss"], d["served"], d["evict"])
+        self.assertEqual(got, (0, 1, 0, 1),
+                         "(hit, miss, served, evict) over the forget and the read that dropped the stale hold: %r; keyed on (0, 1, 0, 1): one "
+                         "eviction, the read landing in miss alone (the entry left with the eviction, so it walked) and served moved by "
+                         "nothing (the early return alone moves it; a kernel that counts the dropped hold reads (0, 1, 1, 1))" % (got,))
+        self.assertEqual((len(out[0]), sp.total()["dir_lstat"]), (D, D), "the walk: D directories at D lstats")
+        self.assertIn(root, sc["trees"], "the walk re-holds the root")
 
     def test_a_stamp_stat_that_raises_is_answered_and_not_held_while_one_that_succeeds_is_held(self):
         sc = self._open()
@@ -1289,31 +1326,41 @@ class Guards(_World):
         with self._spy() as sp, _Spy(oset, other) as osp:
             km._subagent_tree(str(other)); km._subagent_tree(str(self.sub))
         self.assertEqual((osp.total()["dir_lstat"], sp.total()["dir_lstat"]), (D, D), "the holds: each tree validated once, D lstats each")
-        self.assertEqual(self._delta(b)["hit"], 2)
+        self.assertEqual((self._delta(b)["hit"], self._delta(b)["served"]), (2, 0), "the two holds are validated hits, not served reads")
         self.assertIn(str(other), sc["trees"]); self.assertIn(str(self.sub), sc["trees"])
         shutil.rmtree(other)
         if shape == "replaced":
             Path(other).write_text("")                    # a regular file where the tree was
         g0 = km._SUBAGENT_TREES_GEN[0]
+        s_pop = self._stats()
         seen = self._read_on_a_thread_with_no_scope(other)
         self._assert_not_a_tree(seen.get("answer"), shape, "the helper's read, the %s-root pop" % shape)
         self.assertNotIn(str(other), km._SUBAGENT_TREES, "the pop removed the cross-cycle entry")
+        self.assertEqual(self._delta(s_pop)["served"], 0,
+                         "memos.subagentTree served over the %s-root pop on the thread with no hold: %d; keyed on 0 (a pop answers no tree "
+                         "and moves none of hit, miss and served; the early return alone moves served)" % (shape, self._delta(s_pop)["served"]))
+        s_drop = self._stats()
         with _Spy(oset, other) as osp:
             got = km._subagent_tree(str(other))
-        moved, served, lstats = km._SUBAGENT_TREES_GEN[0] - g0, len(got[0]), osp.total()["dir_lstat"]
-        self.assertEqual((moved, served, lstats), (1, 0, 1),
+        self.assertEqual(self._delta(s_drop)["served"], 0,
+                         "memos.subagentTree served over the holder's read that dropped its stale pair and lstat'd the %s root: %d; keyed on 0 "
+                         "(a hold dropped at the lookup is not a served read, and what the lstat found is no tree)" % (shape, self._delta(s_drop)["served"]))
+        moved, answered, lstats = km._SUBAGENT_TREES_GEN[0] - g0, len(got[0]), osp.total()["dir_lstat"]
+        self.assertEqual((moved, answered, lstats), (1, 0, 1),
                          "(_SUBAGENT_TREES_GEN's move on the %s-root pop, directories the holding thread is answered for that root on its "
                          "next read, its os.lstat of the root) %r; keyed on (1, 0, 1): one eviction event recorded (_subagent_root_evicted), "
                          "the holder's pair dropped at the lookup since the vouch fails on that record, and the root's own lstat paid; a "
                          "pop that recorded nothing is (0, D = %d, 0), the held pair served stale for the rest of the cycle"
-                         % (shape, (moved, served, lstats), D))
+                         % (shape, (moved, answered, lstats), D))
         self.assertEqual(km._SUBAGENT_ROOT_EVICTED.get(str(other)), seen.get("gen"),
                          "the table names the %s root at the value the gen moved to: %r against %r; keyed on equality (the record that "
                          "outdates every scope's hold on this root)" % (shape, km._SUBAGENT_ROOT_EVICTED.get(str(other)), seen.get("gen")))
         self._assert_not_a_tree(got, shape, "the holder's read after the pop")
         self.assertNotIn(str(other), sc["trees"], "the holder's scope no longer holds the popped root")
+        served_reads = 0                                  # this session's held tree, read twice below and answered the held pair each time
         with self._spy() as sp:
             dirs, _stats = km._subagent_tree(str(self.sub))
+        served_reads += 1
         self.assertEqual((sp.total()["dir_lstat"], len(dirs)), (0, D),
                          "this session's held tree on the read after the sibling's pop: (lstats, directories) %r; keyed on (0, D = %d), "
                          "served, since the eviction recorded is the sibling's; one process-wide generation emptied this hold too"
@@ -1329,10 +1376,13 @@ class Guards(_World):
                          % (shape, (km._SUBAGENT_TREES_GEN[0], km._SUBAGENT_ROOT_EVICTED.get(str(other))), (g1, rec1)))
         with self._spy() as sp:
             km._subagent_tree(str(self.sub))
+        served_reads += 1
         self.assertEqual(sp.total()["dir_lstat"], 0, "this session's tree still served")
         d = self._delta(b)
-        self.assertEqual((d["hit"], d["miss"]), (2, 0), "memos.subagentTree over the case: (hit, miss) %r; keyed on the two holds' validated "
-                                                        "hits and no walk (the pops and the served reads count as neither)" % ((d["hit"], d["miss"]),))
+        self.assertEqual((d["hit"], d["miss"], d["served"]), (2, 0, served_reads),
+                         "memos.subagentTree over the case: (hit, miss, served) %r; keyed on the two holds' validated hits, no walk, and served "
+                         "moved by the %d reads of this session's held tree the scope answered alone (the %s-root pop, the holder's drop and "
+                         "the second read with no entry standing count as none of the three)" % ((d["hit"], d["miss"], d["served"]), served_reads, shape))
 
     def test_a_root_replaced_by_a_file_mid_cycle_is_popped_by_a_thread_with_no_hold_and_the_holder_drops_its_pair(self):
         """_subagent_tree's replaced-root pop path (correctness-2, tests-2, kernel-1, extra7-2, extra9-1 and extra10-1 of the
@@ -1385,7 +1435,11 @@ class Guards(_World):
         self.assertEqual(km._SUBAGENT_TREES_GEN[0], g0, "no pop ran on the served read: the gen stands")
         self.assertIn(root, km._SUBAGENT_TREES, "the cross-cycle entry stands: nothing has found the root gone")
         self.assertIn(root, sc["trees"], "the scope still holds the pair")
-        self.assertEqual((self._delta(b)["hit"], self._delta(b)["miss"]), (1, 0), "the hold's one validated hit, and nothing since")
+        d = self._delta(b)
+        self.assertEqual((d["hit"], d["miss"], d["served"]), (1, 0, 1),
+                         "memos.subagentTree over the hold and the read after the removal: (hit, miss, served) %r; keyed on (1, 0, 1), the hold's "
+                         "validated hit and the one read the scope answered from the held pair (a served read of a removed held root lands in "
+                         "served: the lag is visible there), the served stamp moving none of the three" % ((d["hit"], d["miss"], d["served"]),))
         km._subagent_scope_close()                        # the cycle ends
         self._open()                                      # the next cycle
         with self._spy() as sp:
@@ -1397,6 +1451,10 @@ class Guards(_World):
                          "entry" % (km._SUBAGENT_TREES_GEN[0] - g0))
         self.assertEqual(km._SUBAGENT_ROOT_EVICTED.get(root), km._SUBAGENT_TREES_GEN[0], "the table names this root at that value")
         self.assertNotIn(root, km._SUBAGENT_TREES, "the entry left the cross-cycle memo")
+        d2 = self._delta(b)
+        self.assertEqual((d2["hit"], d2["miss"], d2["served"]), (d["hit"], d["miss"], d["served"]),
+                         "(hit, miss, served) after the next scope's pop: %r against %r before it; keyed on equality, the missing-root pop "
+                         "moving none of the three (it answered no tree)" % ((d2["hit"], d2["miss"], d2["served"]), (d["hit"], d["miss"], d["served"])))
 
 
 class ScopedInvalidation(_World):
