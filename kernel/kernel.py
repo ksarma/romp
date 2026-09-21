@@ -69896,7 +69896,7 @@ function pinched(vv,L){return !(L>0&&(vv.scale||1)<L/(L-0.5));}
 // height = L, the deep pan with the keyboard up) can sum to L plus an ulp in doubles (3e-5 over 844), which an exact test read as
 // outside and sent to the hold road, 0 with no hold where the excess arm publishes 277 (the fixer pass of the author's pass 9, scale
 // 1.3856); a report whose bottom overshoots by less than the half pixel that rounds away is inside to the pixel, and the stale
-// report (654 over) is not.
+// report (232 over: offsetTop 200 plus height 422 against a layout height of 390, the harness's rotation cell asserts it) is not.
 function kbPx(vv,L){return Math.max(0,panPx(vv)-zoomPx(vv,L));}
 function inside(vv,L){return Math.round((vv.offsetTop||0)+(vv.height||0))<=L;}
 function fit(){try{var vv=window.visualViewport;

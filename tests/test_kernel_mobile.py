@@ -913,7 +913,8 @@ out.webkitKbDownZoomed = { appTop: appTop(), appH: appH(), barH: barH(), innerHe
 // the rotation under the zoom: the layout viewport is 390 (the fixed bar rides its bottom, 346..390) and the visual viewport's
 // report is still the one above (422 at scale 2), so h is 844 against a layout height of 390
 LAYOUT.h = 390; BAR.top = null; fire(WIN, 'resize'); flush();
-out.rotatedUnderZoom = { appTop: appTop(), appH: appH(), barH: barH(), innerHeight: global.innerHeight, clientHeight: clientHeight() };
+out.rotatedUnderZoom = { appTop: appTop(), appH: appH(), barH: barH(), innerHeight: global.innerHeight, clientHeight: clientHeight(),
+  vvBottom: Math.round(visualViewport.offsetTop + visualViewport.height) };   // the stale report's bottom edge, what inside() compares
 // the author's pass 8 (2026-09-20): the FINE-POINTER road under the same model. The pointer turns fine while the zoom stands and the layout
 // viewport (844) is parted from innerHeight (422 at scale 2): the road reads the layout viewport (clientHeight, the fork line after
 // upstream's h assignment), so the published band is 0..844 and the bar (800..844) is wholly inside it, the strip its whole height.
@@ -1315,6 +1316,11 @@ class MobileFitExecutes(unittest.TestCase):
         self.assertEqual({k: wd[k] for k in ("appTop", "appH", "barH")}, {"appTop": "0px", "appH": "844px", "barH": "44px"}, "the keyboard gone under the zoom: the clamp binds at zero slack")
         self.assertEqual({k: rot[k] for k in ("appTop", "appH", "barH")}, {"appTop": "0px", "appH": "844px", "barH": "44px"},
                          "a rotation under the zoom with a stale visual-viewport report: the difference is negative and the max binds at 0, no negative pan")
+        # the close of the author's pass 9: the stale report's bottom edge against the layout height, the overshoot inside() refuses, is
+        # the figure the kernel's kbPx comment names (232: offsetTop 200 plus height 422 against 390; it had said 654, the coarse road's
+        # h of 844 substituted for the visual viewport's height, a number inside() never reads)
+        self.assertEqual((rot["vvBottom"], rot["clientHeight"], rot["vvBottom"] - rot["clientHeight"]), (622, 390, 232),
+                         "the stale report is outside the layout viewport by inside()'s own operands: %r" % (rot,))
         signs = {k: (r["clientHeight"] - px(r["appH"]) > 0) - (r["clientHeight"] - px(r["appH"]) < 0) for k, r in (("slack", wp), ("zero", wd), ("negative", rot))}
         self.assertEqual(signs, {"slack": 1, "zero": 0, "negative": -1}, "the clamp's difference driven at both signs and zero: %r" % (signs,))
         self.assertEqual({k: back[k] for k in ("appTop", "appH", "barH")}, {"appTop": "0px", "appH": "844px", "barH": "44px"})
