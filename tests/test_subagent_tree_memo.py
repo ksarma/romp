@@ -398,8 +398,9 @@ class Reported(_Tree):
         km._subagent_dirs(str(self.subdir))                         # a hit: one lstat per known directory
         rep = km._PERF_STATS.snapshot()["memos"]["subagentTree"]
         self.assertEqual(set(rep), {"hit", "miss", "served", "evict", "dirStats", "walkMs", "validateMs", "roots", "dirs"},
-                         "the report's keys; served (reads a cycle scope answered from its held pair) since round 2 of #882, its moving "
-                         "edge pinned in tests/test_subagent_tree_stamps_per_cycle.py")
+                         "the report's keys; served (reads a cycle scope answered from its held pair) since 2026-09-21 (round 1 of "
+                         "#882's fresh-3 asked for the absorbed reads to be counted), its moving edge pinned in "
+                         "tests/test_subagent_tree_stamps_per_cycle.py")
         self.assertEqual((rep["miss"] - base["miss"], rep["hit"] - base["hit"]), (1, 1))
         self.assertGreaterEqual(rep["dirStats"] - base["dirStats"], 2, "the hit paid a stat per directory beyond the root")
         self.assertGreaterEqual(rep["roots"], 1)
