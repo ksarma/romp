@@ -85,7 +85,8 @@ SEEDS = {
     "kernel/sdk_backend.py": {"self.state_dir"}, "kernel/codex_backend.py": {"self.state"},
 }
 PARAM_SEEDS = {   # function -> parameters a caller OUTSIDE the module hands a root-derived path (kernel/host_transport.py)
-    "kernel/session_host.py": {"read_journal_dir": {"directory"}, "Journal.__init__": {"directory"}},
+    "kernel/session_host.py": {"Journal.__init__": {"directory"}},   # read_journal_dir's `directory` seeded here until PR 884 moved
+                                                                     # the orphan reader to kernel/host_transport.py (by descriptor)
 }
 PARAM_NAME_SEEDS = {rel: {"state_dir", "state"} for rel in HANDED_ROOT}   # every parameter of these names, in every def, is the root
 
