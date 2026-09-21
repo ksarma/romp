@@ -13,6 +13,7 @@ If you're interested in reporting bugs and making PRs, please try to reproduce t
 ```bash
 python3 -m pytest -q       # the Python pipeline (kernel/, cli/, postal/)
 bats tests/*.bats          # the shell surfaces (hooks, postal, manager)
+node --test tools/ci-browser-legs.test.mjs   # the browser-legs roster against the tree (CI's shell job, no npm ci)
 cd vscode-extension && npm ci && npm test
 ```
 
@@ -70,6 +71,13 @@ branch) every checker turns the line red with the promotion remedy (a roster lin
 own, or no line), so the owner promotes it in that merge. A pending line whose PR closes without the
 leg never turns red on its own and is removed by hand;
 `grep 'pending #' vscode-extension/ci-browser-legs-excluded.txt` lists the pending lines.
+Before you push, `node --test tools/ci-browser-legs.test.mjs` from the repo root runs the tree checks
+CI's shell job runs (no `npm ci` needed); from `vscode-extension/`, after `npm ci`,
+`node esbuild.js --tests && node --test out-tests/ui/webview/ci-browser-legs-census.test.js` runs the
+parsed census (it needs the TypeScript compiler, so it lives in the extension's suite and in `npm test`),
+and `bash scripts/ci-browser-legs.sh --check` runs the step's pre-run checks alone, without starting a
+browser; the step itself is `bash scripts/ci-browser-legs.sh` with `ROMP_BROWSER_LEGS_REQUIRE=1`, after
+`node esbuild.js --tests`.
 
 `tests/gitleaks-config.bats` checks the secret-scanning rules in `.gitleaks.toml`
 against the real scanner and skips itself when `gitleaks` is not installed

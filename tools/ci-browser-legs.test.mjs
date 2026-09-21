@@ -26,7 +26,9 @@
 //     source reaches that engine, and whether a line names a browser leg at all, is the census test's to say); an
 //     exclusions reason "pending #<PR>: <why>" (a leg an open PR brings) names a PR and its source is ABSENT from the
 //     tree: a present source is red here as arrived, and the promotion remedy derived from that source (a roster line, a
-//     reason of its own, or no line) is the census test's and the script's to print;
+//     reason of its own, or no line) is the census test's and the script's to print; the header binds the grandfather
+//     reason to one commit in one line, every row carrying the reason carries the header's sentence, and whether each such
+//     source existed at that commit is the census test's history read (this job's checkout is depth 1 and fetches nothing);
 //   - the script the step calls (vscode-extension/scripts/ci-browser-legs.sh) exists, is executable, calls the census
 //     module once (--tsv) and node --test through xargs with the reporter scripts/ci-browser-legs-reporter.mjs beside the
 //     spec reporter, and prints "no legs in the roster" on an empty roster; run on synthetic trees with a stub node on PATH
@@ -128,6 +130,13 @@ function extensionJob() {
   assert.equal(hits.length, 1, 'ci.yml has one ' + JOB + ' job');
   return hits[0];
 }
+/** The job's cap in minutes, read from its one plain timeout-minutes line (asserted, not skipped: a matrix expression here
+ *  needs the pins that derive from the cap re-anchored). */
+function jobCap(job) {
+  const capLine = job.lines.find((l) => /^    timeout-minutes: \d+$/.test(l));
+  assert.ok(capLine, 'the ' + JOB + ' job has one plain timeout-minutes line (a matrix expression here needs this pin re-anchored, not skipped)');
+  return { cap: Number(/(\d+)$/.exec(capLine)[1]), capLine };
+}
 
 test('the step exists once in the ' + JOB + ' job, directly after the Chromium install step, with the switch, the run line and the job\'s default working directory', () => {
   const job = extensionJob();
@@ -146,11 +155,17 @@ test('the step exists once in the ' + JOB + ' job, directly after the Chromium i
   assert.match(job.lines.join('\n'), /^    defaults:\n      run:\n        working-directory: vscode-extension$/m, 'the job\'s default working directory is vscode-extension');
   const comment = step.comments.join('\n');
   // the three numbers are a property of the comment, not a spelling: a step duration in seconds, a job duration in minutes and the
-  // 40-minute cap, all three measured on the runner (the first run's placeholder held none of them, and the pin that accepted it
-  // by its spelling was the kind that lets a filled sentence go red for its wording)
+  // job's cap, read from the job's own timeout-minutes line so a raised cap turns a stale sentence red (a lowered one is already
+  // red in tests/test_ci_bats_bound.py::ExtensionJobCeiling, which floors the cap at 40; this pin is about the SENTENCE matching
+  // the line, not about the cap's value); all three measured on the runner (the first run's placeholder held none of them, and
+  // the pin that accepted it by its spelling was the kind that lets a filled sentence go red for its wording)
+  const { cap } = jobCap(job);
   assert.ok(/measured on the runner/.test(comment), 'the step\'s comment says its numbers were measured on the runner');
-  assert.ok(/\b\d+ s\b/.test(comment) && /\b\d+ min\b/.test(comment) && /40-minute cap/.test(comment),
-    'the step\'s comment carries the three numbers: the step\'s seconds, the job\'s minutes and the 40-minute cap');
+  assert.ok(/\b\d+ s\b/.test(comment), 'the step\'s comment carries the step\'s seconds');
+  const minutes = /\b(\d+) min\b/.exec(comment);
+  assert.ok(minutes, 'the step\'s comment carries the job\'s minutes');
+  assert.ok(new RegExp('\\b' + cap + '-minute cap\\b').test(comment), 'the comment names the job\'s cap as ci.yml sets it (' + cap + ' minutes): a cap change rewrites the sentence');
+  assert.ok(Number(minutes[1]) < cap, 'the stated job minutes (' + minutes[1] + ') sit under the cap (' + cap + ')');
   assert.ok(comment.includes(ROSTER) && comment.includes(EXCLUDED), 'the comment names both files');
   assert.ok(!step.lines.join('\n').includes(String.fromCharCode(0x2014)), 'no em dash');
 });
@@ -164,9 +179,7 @@ function testTimeoutMs() {
 
 test('the step is bounded twice: its own timeout-minutes fits the margin under the job\'s cap at the measured head and the job\'s comment derives that number; node\'s --test-timeout in the script sits above the largest own { timeout } a rostered leg passes and under the step\'s bound, so a hung leg fails by name before the step is cut', () => {
   const job = extensionJob();
-  const capLine = job.lines.find((l) => /^    timeout-minutes: \d+$/.test(l));
-  assert.ok(capLine, 'the ' + JOB + ' job has one plain timeout-minutes line (a matrix expression here needs this pin re-anchored, not skipped)');
-  const cap = Number(/(\d+)$/.exec(capLine)[1]);
+  const { cap, capLine } = jobCap(job);
   const step = steps(job).find((s) => s.name === STEP);
   assert.ok(step, 'the step exists (the first test holds the rest of its shape)');
   const bound = Number(step.fields['timeout-minutes']);
@@ -273,6 +286,27 @@ test('both files are well formed: each line is a bundle path naming a source in 
   }
   const rostered = new Set(roster.map((e) => e.bundle));
   for (const e of excluded) assert.ok(!rostered.has(e.bundle), where(EXCLUDED, e) + ' is also in ' + ROSTER + ': a leg is in one file or the other, keep one');
+});
+
+/** The exclusions header's one bound line: the grandfather sentence and the commit it is bound to, [sentence, sha]. */
+const BOUND_LINE = /^# Every grandfather reason, "([^"]+)", is bound to commit ([0-9a-f]{40}):/;
+function grandfatherBound(text) {
+  const hits = text.split('\n').filter((l) => l.startsWith('#')).map((l) => BOUND_LINE.exec(l)).filter(Boolean);
+  assert.equal(hits.length, 1, EXCLUDED + '\'s header holds exactly one line binding the grandfather reason to a commit (the form: # Every grandfather reason, "<sentence>", is bound to commit <40 hex>: ...; that line is the bound\'s one home, the census test reads it); found ' + hits.length);
+  return { sentence: hits[0][1], sha: hits[0][2] };
+}
+
+test('the exclusions header binds the grandfather reason to one commit, in one line the checkers read, and every row carrying the reason carries the whole sentence; whether each such source existed at that commit is read from history by the census test in the vscode-extension job, not here (CI\'s Shell job checks out at depth 1 and fetches nothing, so this module cannot read that commit)', () => {
+  const text = read(path.join(EXT, EXCLUDED));
+  const { sentence, sha } = grandfatherBound(text);
+  assert.ok(sentence.length > 20, 'the bound line quotes the grandfather sentence: ' + JSON.stringify(sentence));
+  const rows = parseExcluded(text).filter((e) => e.reason !== null && /existing before the roster/.test(e.reason));
+  assert.ok(rows.length > 0, 'the exclusions hold grandfather rows (' + rows.length + '); zero means the wording stopped matching, not that the rows left');
+  for (const e of rows) assert.ok(e.reason.includes(sentence), EXCLUDED + ' line ' + e.n + ' (' + e.bundle + ') carries a grandfather wording that is not the header\'s bound sentence, so the bound does not read it: write the sentence as the header quotes it, or a reason of its own; the reason reads: ' + e.reason);
+  assert.ok(text.includes('does not run that history read'), 'the header says which checker reads history and which does not');
+  // the history read itself (git cat-file -e <sha>:<source> for each row, after a depth-1 fetch when the clone lacks the commit)
+  // is ' + path.relative(REPO, CENSUS_TEST) + '\'s: this module states it does not run it, so a green here is the header\'s shape alone
+  assert.ok(read(CENSUS_TEST).includes('is bound to commit'), path.relative(REPO, CENSUS_TEST) + ' reads the bound line (a presence pin: the executed check lives there, in the vscode-extension job, and this module does not run it because the Shell job\'s depth-1 checkout lacks commit ' + sha + ' and fetches nothing)');
 });
 
 // ── the script ────────────────────────────────────────────────────────────────────────────────────────

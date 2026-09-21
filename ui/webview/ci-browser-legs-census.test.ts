@@ -9,7 +9,10 @@
 // source reaches it, and carries the embedded-driver sentence when and only when the leg is one. An exclusions reason "pending
 // #<PR>: <why>" names a leg an open PR brings and stands while its source is absent; once the source is present the line is red
 // here with the promotion remedy derived from the census's record of that source (a roster line for a shared Chromium leg, a
-// reason of its own for any other leg, no line for a module that is no leg). tools/ci-browser-legs.test.mjs, in CI's Shell job with
+// reason of its own for any other leg, no line for a module that is no leg). The grandfather reason is bound, in one header line,
+// to the roster's creation commit: this test reads the commit from the header, fetches it at depth 1 when the checkout lacks it
+// (a fetch that fails is a red hold-off, never a pass) and refuses a row carrying the sentence whose source is not in the tree at
+// that commit. tools/ci-browser-legs.test.mjs, in CI's Shell job with
 // no node_modules, holds the parse-free half (file shape, duplicates, both files, reasons, the ci.yml pins) and runs the script
 // over synthetic trees with a stub node that answers the census call from a table; the script's reading of the REAL census is
 // executed here, over the tree and over a synthetic root. The planted forms under tests/fixtures/browser-legs-plants are the
@@ -182,6 +185,34 @@ const PLANT_TABLE: Plant[] = [
   { dir: W, file: "p28-string-param-callsites.test.ts", leg: true, cls: "own", gap: "never imports the shared launcher", engines: ["chromium", "webkit"], strictRefused: true },
 ];
 const bundleOf = (p: Plant): string => "out-tests/" + p.dir + "/" + p.file.replace(/\.test\.ts$/, ".test.js");
+
+test("every grandfather row's source existed at the commit the exclusions header binds the reason to: the header holds one bound line; the commit is fetched at depth 1 when the checkout lacks it, and a fetch or object read that fails is a red hold-off naming the reason, never a pass; a source absent at that commit is refused with the remedy", (t) => {
+  const text = read(path.join(EXT, EXCLUDED));
+  const hits = text.split("\n").filter((l) => l.startsWith("#")).map((l) => /^# Every grandfather reason, "([^"]+)", is bound to commit ([0-9a-f]{40}):/.exec(l)).filter((m): m is RegExpExecArray => m !== null);
+  assert.equal(hits.length, 1, EXCLUDED + "'s header holds exactly one line binding the grandfather reason to a commit (the bound's one home); found " + hits.length);
+  const sentence = hits[0][1], sha = hits[0][2];
+  const git = (args: string[]) => spawnSync("git", ["-C", REPO, ...args], { encoding: "utf8", timeout: 120000 });
+  let have = git(["cat-file", "-e", sha]);
+  if (have.status !== 0) {
+    const shallow = git(["rev-parse", "--is-shallow-repository"]).stdout.trim();
+    const fetch = git(["fetch", "--depth=1", "origin", sha]);
+    assert.equal(fetch.status, 0, "the grandfather check could not run: commit " + sha + " is not in this clone (shallow: " + shallow + ") and `git fetch --depth=1 origin " + sha + "` failed (exit " + fetch.status + "): " + fetch.stderr.trim() + "; the bound cannot be read here, so this is a red hold-off, not a pass");
+    have = git(["cat-file", "-e", sha]);
+    assert.equal(have.status, 0, "the grandfather check could not run: after `git fetch --depth=1 origin " + sha + "` the commit is still not readable (git cat-file -e exit " + have.status + "): " + have.stderr.trim() + "; a red hold-off, not a pass");
+    t.diagnostic("fetched commit " + sha + " at depth 1 (the clone lacked it; shallow: " + shallow + ")");
+  }
+  const rows = parseExcluded(text).filter((e) => e.reason !== null && e.reason.includes(sentence));
+  assert.ok(rows.length > 0, "the exclusions hold grandfather rows (" + rows.length + "); zero means the sentence stopped matching, not that the rows left");
+  for (const e of rows) {
+    const rel = path.relative(REPO, sourceOf(e.bundle));
+    const r = git(["cat-file", "-e", sha + ":" + rel]);
+    if (r.status === 0) continue;
+    const where = EXCLUDED + " line " + e.n + " (" + e.bundle + ")";
+    if (r.status === 128 && /does not exist in|exists on disk, but not in/.test(r.stderr)) assert.fail(where + ": the grandfather reason is bound to commit " + sha + " and " + rel + " is not in the tree at that commit, so the reason does not apply to this leg: run it in the step and add its bundle to " + ROSTER + " with the step's measured seconds, or give it a reason of its own");
+    assert.fail(where + ": the grandfather check could not read " + sha + ":" + rel + " (git cat-file -e exit " + r.status + ": " + r.stderr.trim() + "); a red hold-off, not a pass");
+  }
+  t.diagnostic(rows.length + " grandfather rows bound to " + sha + ", every source in the tree at that commit");
+});
 
 test("every planted form under tests/fixtures/browser-legs-plants is classified or refused as recorded, none is silent; a form the census cannot classify refuses with file and line; the plants in neither file are exactly the plants that are legs", async () => {
   const { census, rosterGap, engineNames, classOf } = await load();

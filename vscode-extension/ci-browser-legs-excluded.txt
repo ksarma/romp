@@ -18,8 +18,15 @@
 # the one that calls inBrowser beside its own Firefox launch is refused by the roster gate too); a leg whose only
 # playwright is in a driver string it runs as a child process carries the sentence "loads playwright in a child process
 # it drives from a string; the switch never reaches it", checked both ways, and can never be rostered; every other leg
-# predates the roster and has not been measured in the gating job,
-# so its owner moves it to the roster with the step's measured numbers. To move a leg, delete its line here and add
+# carries the grandfather reason, the sentence quoted on the next line, so its owner moves it to the roster with the
+# step's measured numbers.
+# Every grandfather reason, "existing before the roster, unmeasured in the gating job; its owner moves it to the roster with measured numbers", is bound to commit ff436587f4e826e2450517517efdf0b3208c9359: a source that did not exist at that commit may not carry it.
+# That commit is main at the roster's creation, and this line is the bound's one home: ui/webview/ci-browser-legs-census.test.ts
+# (the vscode-extension job) reads the commit and the sentence from here, fetches the commit at depth 1 when the checkout
+# lacks it (a fetch or object read that fails is a red naming the reason, never a pass), and refuses a row carrying the
+# sentence whose source is not in the tree at that commit; tools/ci-browser-legs.test.mjs (the Shell job, a depth-1
+# checkout that fetches nothing) holds this header to one such line and does not run that history read.
+# To move a leg, delete its line here and add
 # the bundle path to ci-browser-legs.txt (a leg in both files turns the checkers red); a leg that launches through
 # its own playwright copy first switches its launch to inBrowser in ui/webview/real-viewer-leg.ts, the one shared
 # launcher and the one read of ROMP_BROWSER_LEGS_REQUIRE, and drops its own playwright, launch, skip and todo, or the
