@@ -444,12 +444,18 @@ test("spacerRow mints the `view` marker only when handed one, and only the one w
   // the marker is spread only when handed the one word: the shown view's row carries none, a null row handed nothing carries none, the
   // switched-away view's row carries the word, and a value the parameter's type does not name, handed past the type, mints nothing (the
   // type is gone at run time; the builder's guard holds the word there, and the kernel admits the key and checks no value, so the guard is
-  // the one hold on the word). scroll-movers.test.ts and scroll-journal-audit.test.ts read the unmarked numeric shape; the frame's post hands
-  // the marker on the switched-away arm alone, the census cell below pins that spelling and the test above runs it through the frame.
+  // the one hold on the word). The three foreign values below are a SAMPLE of what the type does not name, not the population: another word
+  // answers a guard on truthiness, a case variant of the word answers a guard that lowers before comparing (that guard left every leg and
+  // tsc green before the case variant was asserted), a truthy non-string answers a guard that holds strings to the word and lets a non-string
+  // through; the guard's equality with the one word is what holds the rest. scroll-movers.test.ts and scroll-journal-audit.test.ts read the
+  // unmarked numeric shape; the frame's post hands the marker on the switched-away arm alone, the census cell below pins that spelling and
+  // the test above runs it through the frame.
   assert.ok(!("view" in spacerRow("A", 1, 2, 0, 0, 9114, 902)), "no marker on the active view's row");
   assert.deepEqual(spacerRow("A", 1, 2, 0, 0, null, null), { sid: "A", top: [1, 2], bot: [0, 0], dTop: 1, dBot: 0, sh: null, ch: null }, "a null row handed no marker carries no `view` key");
   assert.deepEqual(spacerRow("A", 1, 2, 0, 0, null, null, "inactive"), { sid: "A", top: [1, 2], bot: [0, 0], dTop: 1, dBot: 0, sh: null, ch: null, view: "inactive" }, "the switched-away view's row: nulls and the marker, minted by the builder on the owner's approval of 2026-09-21");
   assert.ok(!("view" in (spacerRow as any)("A", 1, 2, 0, 0, null, null, "away")), "a value the type does not name is not minted: the marker is the one word or nothing");
+  assert.ok(!("view" in (spacerRow as any)("A", 1, 2, 0, 0, null, null, "Inactive")), "a case variant of the word is not minted: the guard is the word's exact spelling, not a lowered comparison");
+  assert.ok(!("view" in (spacerRow as any)("A", 1, 2, 0, 0, null, null, true)), "a truthy non-string is not minted: the guard is equality with the word, not truthiness or a string test");
 });
 
 test("an inactive view's spacer write files no row, and a write that changes nothing files none", () => {
