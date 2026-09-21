@@ -1674,36 +1674,107 @@ def _name_part(call, part, assigned):
     return _literal_str(expr, assigned)
 
 
+# A mkdtemp's `dir=` that names a directory AT OR ABOVE the run's root, by shape, each with the reason it is scored as
+# directly under the root (the deeper of the two readings) rather than listed as unfollowed.
+ABOVE_ROOT_DIR_SHAPES = {
+    "system_tmp()": "tests/test_session_host.py's system_tmp(): the recorded system dir (ROMP_TESTS_SYSTEM_TMPDIR), above the "
+                    "run's root, the sanctioned way out of it for an AF_UNIX path built to an exact length",
+    "ROMP_TESTS_SYSTEM_TMPDIR": "the recorded system dir read directly (os.environ[...], os.environ.get(...), the package's "
+                                "SYSTEM_TMPDIR), alone or with `or tempfile.gettempdir()`, `or None`, or in a conditional whose "
+                                "other arm is None: above the run's root, or the default when the record is unset",
+    "tempfile.gettempdir()": "the process temp dir, which the package redirected to the root: a mint there sits directly under "
+                             "it, the default reading",
+    "~": "the user's home (os.path.expanduser(\"~\"), Path.home(), os.environ[\"HOME\"], through str() or Path() and a "
+         "name bound to one): outside the run's root altogether (tests/test_kernel_sysmeta.py fabricates a repo under HOME "
+         "to see the ~ abbreviation); scored as directly under the root, since HOME is no path the harness makes or bounds",
+}
+
+
+def _above_root_leaf(expr, assigned, depth):
+    if isinstance(expr, ast.Call):
+        name = _call_name(expr)
+        if name == "system_tmp":
+            return "system_tmp()"
+        if name == "gettempdir":
+            return "tempfile.gettempdir()"
+        if name == "expanduser" and len(expr.args) == 1 and isinstance(expr.args[0], ast.Constant) and expr.args[0].value == "~":
+            return "~"
+        if name == "home" and isinstance(expr.func, ast.Attribute) and ast.unparse(expr.func.value) == "Path" and not expr.args:
+            return "~"
+        if name in ("str", "Path", "fspath") and len(expr.args) == 1:
+            return _above_root(expr.args[0], assigned, depth)
+        if (name == "get" and isinstance(expr.func, ast.Attribute) and ast.unparse(expr.func.value) == "os.environ"
+                and expr.args and isinstance(expr.args[0], ast.Constant) and expr.args[0].value == "ROMP_TESTS_SYSTEM_TMPDIR"
+                and (len(expr.args) == 1 or _above_root(expr.args[1]))):
+            return "ROMP_TESTS_SYSTEM_TMPDIR"
+        return None
+    if isinstance(expr, ast.Subscript) and ast.unparse(expr.value) == "os.environ" and isinstance(expr.slice, ast.Constant):
+        return {"ROMP_TESTS_SYSTEM_TMPDIR": "ROMP_TESTS_SYSTEM_TMPDIR", "HOME": "~"}.get(expr.slice.value)
+    if isinstance(expr, (ast.Name, ast.Attribute)):
+        if ast.unparse(expr).endswith("SYSTEM_TMPDIR"):
+            return "ROMP_TESTS_SYSTEM_TMPDIR"
+        if assigned is not None and depth:                         # `home = Path(os.path.expanduser("~"))` then dir=str(home)
+            keys = [_above_root(v, assigned, depth - 1) for v in assigned.get(ast.unparse(expr), ())]
+            return keys[0] if keys and None not in keys and len(set(keys)) == 1 else None
+    return None
+
+
+def _above_root(expr, assigned=None, depth=3):
+    """The ABOVE_ROOT_DIR_SHAPES key `expr` matches ("None" for the literal None, the default), or None. EVERY leaf of the
+    expression, through `or`, a conditional, str()/Path() and a name's bindings, must be one of the shapes or None, so a
+    dir= the reader cannot follow is never waved through because a system-dir read sits somewhere inside it."""
+    if isinstance(expr, ast.Constant) and expr.value is None:
+        return "None"
+    if isinstance(expr, ast.BoolOp) and isinstance(expr.op, ast.Or):
+        keys = [_above_root(v, assigned, depth) for v in expr.values]
+    elif isinstance(expr, ast.IfExp):
+        keys = [_above_root(expr.body, assigned, depth), _above_root(expr.orelse, assigned, depth)]
+    else:
+        keys = [_above_root_leaf(expr, assigned, depth)]
+    if None in keys:
+        return None
+    return next((k for k in keys if k != "None"), "None")
+
+
 def _dir_bytes(expr, assigned, tail, depth=4):
     """[(bytes below the process temp root, chain)] for every directory `expr` can name, NESTING INCLUDED: a
     mkdtemp/TemporaryDirectory with no `dir=` sits directly under the root (`/` + prefix + tail + suffix); one with
-    `dir=<expr>` sits under each directory <expr> names, its bytes added (a dir the reader cannot follow — the recorded
-    system dir, a helper's answer — is taken as the root itself, the deeper reading for anything under the system dir);
-    os.path.join, Path, `/` and str(...) add their literal components; a name is followed through its bindings. A prefix
-    or suffix that cannot be read gives bytes None with the call's text as the chain: the caller lists it."""
+    `dir=<expr>` sits under each directory <expr> names, its bytes added; one whose `dir=` the reader cannot follow is a
+    hole the caller lists, unless the dir is one of the ABOVE_ROOT_DIR_SHAPES (the recorded system dir, system_tmp(),
+    the process temp dir), which sit at or above the root and are scored as directly under it, the deeper reading (until
+    2026-09-21 EVERY unfollowed dir= was scored that way, in silence); os.path.join, Path, `/` and str(...) add their
+    literal components; a name is followed through its bindings. Each answer is (bytes, chain, problem): a prefix or
+    suffix that cannot be read, or a dir= neither followed nor one of those shapes, gives bytes None with the call's text
+    as the chain and the problem named ("unreadable", "unfollowed"): the caller lists it."""
     if isinstance(expr, ast.Call):
         name = _call_name(expr)
         if name in ("mkdtemp", "TemporaryDirectory"):
             prefix, suffix = _name_part(expr, "prefix", assigned), _name_part(expr, "suffix", assigned)
             if prefix is None or suffix is None:
-                return [(None, ast.unparse(expr))]
+                return [(None, ast.unparse(expr), "unreadable")]
             own = 1 + len(os.fsencode(prefix)) + tail + len(os.fsencode(suffix))
             chain = "/" + prefix + "X" * tail + suffix
             d = _dir_argument(expr)
-            parents = [] if d is None or (isinstance(d, ast.Constant) and d.value is None) else _dir_bytes(d, assigned, tail, depth)
-            if not parents:
-                return [(own, chain)]
-            return [(None, c) if b is None else (b + own, c + chain) for b, c in parents]
+            if d is None or (isinstance(d, ast.Constant) and d.value is None):
+                return [(own, chain, None)]
+            parents = _dir_bytes(d, assigned, tail, depth)
+            if parents:
+                return [(None, c, p) if b is None else (b + own, c + chain, None) for b, c, p in parents]
+            if _above_root(d, assigned):
+                return [(own, chain, None)]               # at or above the root: scored as directly under it, the deeper reading
+            return [(None, chain + " dir=" + ast.unparse(d), "unfollowed")]
         if name in ("Path", "join", "str", "realpath", "abspath", "fspath") and expr.args:
             rest = expr.args[1:]
             if all(isinstance(a, ast.Constant) and isinstance(a.value, str) for a in rest):
                 add, comps = sum(1 + len(os.fsencode(a.value)) for a in rest), "".join("/" + a.value for a in rest)
-                return [(None, c) if b is None else (b + add, c + comps) for b, c in _dir_bytes(expr.args[0], assigned, tail, depth)]
+                return [(None, c, p) if b is None else (b + add, c + comps, None)
+                        for b, c, p in _dir_bytes(expr.args[0], assigned, tail, depth)]
         return []
     if (isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Div) and isinstance(expr.right, ast.Constant)
             and isinstance(expr.right.value, str)):
         add = 1 + len(os.fsencode(expr.right.value))
-        return [(None, c) if b is None else (b + add, c + "/" + expr.right.value) for b, c in _dir_bytes(expr.left, assigned, tail, depth)]
+        return [(None, c, p) if b is None else (b + add, c + "/" + expr.right.value, None)
+                for b, c, p in _dir_bytes(expr.left, assigned, tail, depth)]
     if isinstance(expr, ast.Attribute) and expr.attr == "name":          # TemporaryDirectory().name
         return _dir_bytes(expr.value, assigned, tail, depth)
     if isinstance(expr, (ast.Name, ast.Attribute)) and depth:
@@ -1715,12 +1786,15 @@ def _dir_bytes(expr, assigned, tail, depth=4):
 
 
 def harness_dirs(sources, tail):
-    """(dirs, unreadable): every directory the tests' own tempfile.mkdtemp and TemporaryDirectory calls can make, one
-    Dir per shape (bytes below the process temp root with the nesting through `dir=` followed, the module, the line, the
-    chain of names with mkdtemp's tail as X's); `unreadable` lists the calls whose prefix or suffix the reader cannot
-    read, a hole in the bound for the caller to refuse by name. The mints of romp itself under a state root (sdk/,
-    hosts/<sid>/, sessions/) are the product's shapes, not the harness's, and are outside this scan."""
-    dirs, unreadable = [], []
+    """(dirs, unreadable, unfollowed): every directory the tests' own tempfile.mkdtemp and TemporaryDirectory calls can
+    make, one Dir per shape (bytes below the process temp root with the nesting through `dir=` followed, the module, the
+    line, the chain of names with mkdtemp's tail as X's); `unreadable` lists the calls whose prefix or suffix the reader
+    cannot read; `unfollowed` lists the calls whose `dir=` it can neither follow to a mkdtemp nor match to one of the
+    ABOVE_ROOT_DIR_SHAPES (until 2026-09-21 such a call was scored as sitting directly under the root, in silence). Both
+    are holes in the bound for the caller to refuse by name. The mints of romp itself under a state root (sdk/,
+    hosts/<sid>/, sessions/) are the product's shapes, not the harness's, and a directory a test makes with os.mkdir or
+    os.makedirs under one of these is outside the scan too: the arms measure the mkdtemp/TemporaryDirectory paths."""
+    dirs, unreadable, unfollowed = [], [], []
     for label, text in sources:
         if "mkdtemp" not in text and "TemporaryDirectory" not in text:
             continue
@@ -1728,12 +1802,12 @@ def harness_dirs(sources, tail):
         scope_of = _scoper(tree)
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and _call_name(node) in ("mkdtemp", "TemporaryDirectory"):
-                for b, chain in dict.fromkeys(_dir_bytes(node, scope_of(node), tail)):
+                for b, chain, problem in dict.fromkeys(_dir_bytes(node, scope_of(node), tail)):
                     if b is None:
-                        unreadable.append("%s:%d: %s" % (label, node.lineno, chain))
+                        (unfollowed if problem == "unfollowed" else unreadable).append("%s:%d: %s" % (label, node.lineno, chain))
                     else:
                         dirs.append(Dir(b, label, node.lineno, chain))
-    return dirs, unreadable
+    return dirs, unreadable, unfollowed
 
 
 def tree_sources():
@@ -1788,7 +1862,7 @@ def assert_path_fits(case, what, tmpdir_bytes, harness, deepest, ceiling):
     slack = ceiling - 1 - total
     case.assertGreaterEqual(
         slack, 0,
-        "%s: the longest directory path the harness can produce UNDER XDIST NESTING (a worker's root beside the controller's, "
+        "%s: the longest mkdtemp/TemporaryDirectory path the harness can produce UNDER XDIST NESTING (a worker's root beside the controller's, "
         "measured on roots minted that way; an alone run verifies nothing about this figure) is %d bytes = %d (TMPDIR) + %d "
         "(%d romp-tests-* root level(s), measured on roots the harness minted) + %d (%s, %s:%d, the nesting through dir= "
         "followed); held against PC_PATH_MAX = %d (the NUL included, so %d usable), slack %d."
@@ -1803,7 +1877,8 @@ def assert_name_fits(case, what, name, source, ceiling):
     slack = ceiling - n
     case.assertGreaterEqual(
         slack, 0,
-        "%s: the longest single component of any path the harness can produce UNDER XDIST NESTING is %d bytes (%r, from %s; "
+        "%s: the longest single component of any mkdtemp/TemporaryDirectory path the harness can produce UNDER XDIST NESTING, or of its own "
+        "names (a root, the state dir, the children file, the marker, the kernel's socket names), is %d bytes (%r, from %s; "
         "a name is the same length alone and nested, but the figure is the tree's, not one run's); held against "
         "PC_NAME_MAX = %d, slack %d." % (what, n, name, source, ceiling, slack))
     return n, slack
@@ -1826,7 +1901,12 @@ class HarnessSocketBudget(unittest.TestCase):
     write (on, off, opaque; a removal, a touch or a truncating open reads as on), a read, a comparison, a message, a
     docstring, a bound name or handle whose every use is one of those, a child Python's source read the same way — or
     named in `unaccounted` (NON_WRITE_SHAPES lists each shape with its reason), so a write in a shape the reader does not
-    know is red by name, never dropped."""
+    know is red by name, never dropped.
+
+    THE SCAN'S POPULATION. The directory and component arms read every tempfile.mkdtemp and TemporaryDirectory call in
+    tests/*.py (the nesting through dir= followed; a dir= the reader cannot follow is refused unless it is one of the
+    ABOVE_ROOT_DIR_SHAPES) and the hosts-on labs' state suffixes; a directory a test makes with os.mkdir or os.makedirs
+    under one of those, and romp's own mints under a state root, are outside the scan."""
 
     def _child(self, env_overrides, hold_dir):
         """A Python process that imports the tests package under the environment given and reports its root, its
@@ -2078,10 +2158,15 @@ class HarnessSocketBudget(unittest.TestCase):
         self._release(ctl)
         self.assertEqual(harness.levels, 1, "one romp-tests-* level for a worker under xdist nesting: %r" % (harness,))
         sources = tree_sources()
-        dirs, unreadable = harness_dirs(sources, tail)
+        dirs, unreadable, unfollowed = harness_dirs(sources, tail)
         self.assertEqual(unreadable, [], "a mkdtemp whose prefix or suffix the reader cannot read is a hole in the directory "
                          "and component bounds: name it with a literal (a unique marker comes from the minted basename, not "
                          "into the prefix), or extend _literal_str")
+        self.assertEqual(unfollowed, [], "a mkdtemp/TemporaryDirectory whose dir= the reader can neither follow to a mkdtemp nor "
+                         "match to an ABOVE_ROOT_DIR_SHAPES entry was, until 2026-09-21, scored as sitting directly under the root "
+                         "in silence: bind the dir to a mkdtemp the reader can see, spell an above-root dir in one of those shapes, "
+                         "or extend _dir_bytes / ABOVE_ROOT_DIR_SHAPES with the shape and its reason:\n"
+                         + "\n".join("  %s: %s" % kv for kv in sorted(ABOVE_ROOT_DIR_SHAPES.items())))
         self.assertTrue(dirs, "no mkdtemp in the tree? the reader found no directory")
         labs = hosts_on_labs(sources, tail)[0]
         state_roots = [Dir(lab.bytes, lab.file, lab.line, "/" + lab.prefix + "X" * tail + "".join("/" + comp for comp in lab.comps))
@@ -2137,10 +2222,25 @@ class HarnessSocketBudget(unittest.TestCase):
                     helper("long-one-")
                     helper("s-")
                     tempfile.mkdtemp(prefix=make_prefix())
+                    tempfile.mkdtemp(prefix="ee-", dir=make_dir())
+                    tempfile.mkdtemp(prefix="ff-", dir=system_tmp())
+                    tempfile.mkdtemp(prefix="gg-", dir=os.environ.get("ROMP_TESTS_SYSTEM_TMPDIR") or None)
+                    tempfile.mkdtemp(prefix="hh-", dir=(os.environ.get("ROMP_TESTS_SYSTEM_TMPDIR") or tempfile.gettempdir()) if short else None)
+                    tempfile.mkdtemp(prefix="ii-", dir=os.path.join(make_dir(), "x"))
+                    tempfile.mkdtemp(prefix="jj-", dir=os.environ.get("ROMP_TESTS_SYSTEM_TMPDIR") or make_dir())
+                    home = Path(os.path.expanduser("~"))
+                    tempfile.mkdtemp(prefix="kk-", dir=str(home))
         ''')
-        dirs, unreadable = harness_dirs([("t.py", planted)], tail)
+        dirs, unreadable, unfollowed = harness_dirs([("t.py", planted)], tail)
         self.assertEqual(unreadable, ["t.py:13: tempfile.mkdtemp(prefix=make_prefix())"])
+        self.assertEqual(unfollowed, ["t.py:14: /ee-%s dir=make_dir()" % ("X" * tail),
+                                      "t.py:18: /ii-%s dir=os.path.join(make_dir(), 'x')" % ("X" * tail),
+                                      "t.py:19: /jj-%s dir=os.environ.get('ROMP_TESTS_SYSTEM_TMPDIR') or make_dir()" % ("X" * tail)],
+                         "a dir= the reader can neither follow nor match whole to an above-root shape is listed, not scored under the root")
         by_line = {d.line: d for d in dirs}
+        for n, p in ((15, "ff-"), (16, "gg-"), (17, "hh-"), (21, "kk-")):
+            self.assertEqual((by_line[n].bytes, by_line[n].chain), (1 + 3 + tail, "/" + p + "X" * tail),
+                             "an above-root shape (ABOVE_ROOT_DIR_SHAPES): scored as directly under the root")
         self.assertEqual(by_line[7].bytes, 1 + 3 + tail + 2)
         self.assertEqual(by_line[8].bytes, by_line[7].bytes + 1 + 3 + tail)
         self.assertEqual(by_line[9].bytes, by_line[8].bytes + 2 + 3 + 1 + 3 + tail, by_line[9])
