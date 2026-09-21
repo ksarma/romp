@@ -52716,6 +52716,49 @@ def _price_sig(name):
     return (m.group(1), m.group(2), m.group(3)) if m else None
 
 
+_PRICE_RATE_STRING = re.compile(r"-?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?")   # the one form a quoted rate is admitted in, matched
+#   WHOLE (fullmatch): an optional minus, digits, one dot with digits after it, an exponent with its own sign; why in _price_rate_value
+
+
+def _price_rate_value(raw):
+    """The ONE read of a value where a rate belongs, shared by the feed worker's row parse (_refresh_remote_prices) and the
+    override file's (_model_prices): the float the rate is, else a ValueError into the caller's per-row try, so a rate this
+    refuses makes that row the rejected row each road already has (the feed's: counted in `matched`, never cached, said as
+    unreadable; the file's: skipped alone, classed `row`, counted, named once on stderr). The rule (the review of PR 878,
+    round 3, 2026-09-21): accept a JSON number always, an int or a float and never a bool; accept a STRING only when the
+    whole of it is a plain decimal (_PRICE_RATE_STRING), and then hold the parsed value to exactly what a JSON number is
+    held to, finite, the one range check either road has ever had. Everything else is refused: null, a list, an object, a
+    bool (an int to isinstance, so it is refused first: `true` once priced a rate at a dollar a token) and any other
+    string. A predicate, not a type check, because the hazard was never that the rate is a string, it is the COERCION:
+    round 2 refused every string, a regression on "0.5", which both earlier heads accepted, and the alternative, a bare
+    float() on a string, accepts everything the regex refuses: "inf", "-inf", "nan" and "1e999" (which reads as inf),
+    " 0.5", "0.5 " and "0.5\\n" (whitespace either side, a trailing newline included), "1_0" (an underscore separator, which
+    reads as 10.0), "+0.5" (a leading plus), ".5" and "5." (a bare dot). The leading plus is refused by this decision:
+    JSON's own number grammar has no leading plus, so the string arm admits no sign form the number arm does not (the
+    exponent's sign is JSON's and stays); the reviewer named the plus among float()'s leniencies; and no price is written
+    with one, so nothing legitimate is refused, and a refusal is visible on the row road. A leading zero ("007" reads as
+    7.0) is admitted: the round's regex admits it and its value is unambiguous, so admitting it hides nothing. A negative
+    rate passes as the JSON number -0.5 does. An int too wide for a float (json.loads yields a 400-digit integer as an int,
+    and float() raises OverflowError on it) is the not-finite refusal, not an escape from the row's try. The premise,
+    answered here so the next reader does not derive it again: the live feed sends NUMBERS. The document at PRICE_FEED_URL,
+    fetched once at 2026-09-21T16:46:51Z (HTTP 200, 4,337 rows), carried a JSON number at every one of the 9,438 values present
+    under the four keys the worker reads and a string at none, and 0 strings among the 14,185 values under every cost- or
+    price-named key; no on-box cache of an earlier response exists to compare against. So on the feed's road the string arm
+    is belt and braces against a later change of the document's types, not load-bearing today; on the file's road it is
+    load-bearing, the quoted "0.5" a hand wrote and both earlier heads read."""
+    if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):   # a bool first (it is an int to isinstance), then
+        raise ValueError("a rate that is not a number")                    # null, a list, an object: refused, never coerced
+    if isinstance(raw, str) and not _PRICE_RATE_STRING.fullmatch(raw):    # a string only in the strict decimal form, whole
+        raise ValueError("a rate that is not a number")
+    try:
+        value = float(raw)
+    except OverflowError:                                                   # an int wider than a float: not finite, the row road
+        raise ValueError("a rate that is not a finite number")
+    if not math.isfinite(value):                                            # JSON NaN or Infinity parse; "1e999" reads as inf
+        raise ValueError("a rate that is not a finite number")
+    return value
+
+
 def _refresh_remote_prices(now):
     """Best-effort, stale-while-revalidate: if the cached feed is older than PRICE_TTL, kick a background
     fetch and return immediately (the caller uses defaults/config + whatever's cached). The match is
@@ -52758,7 +52801,10 @@ def _refresh_remote_prices(now):
     and every line write stay outside the lock. A feed row whose rate is not a
     finite number (JSON NaN or Infinity, which json.loads accepts) is a row the parser REJECTS, counted in
     `matched` and never cached: cached, it priced a session's cost as NaN and the /analytics body would not parse
-    in the browser while the status read live feed."""
+    in the browser while the status read live feed. Every rate the parse reads goes through _price_rate_value (round
+    3): a JSON number, or a string in the strict decimal form, and never a bare float() on a string, which read "1_0"
+    as 10.0 and " 0.5" as 0.5 here until then (the live feed sends numbers, so that arm is belt and braces on this
+    road; the facts are in the helper's docstring)."""
     if _price_feed_off():
         if _price_feed_first("offSaid"):               # the latch under the lock, the line outside it
             _price_feed_line(now, "price feed: off (ROMP_PRICE_FEED=off)")
@@ -52800,14 +52846,12 @@ def _refresh_remote_prices(now):
                 if sig not in want or want[sig] in out:
                     continue
                 matched.add(want[sig])               # signed to a built-in id, parsed or not: the status tells the two apart
-                try:
-                    inp = float(v["input_cost_per_token"])
-                    row = {"in": inp, "out": float(v["output_cost_per_token"]),
-                           "cache_w": float(v.get("cache_creation_input_token_cost") or inp),
-                           "cache_r": float(v.get("cache_read_input_token_cost") or inp)}
-                    if not all(math.isfinite(x) for x in row.values()):   # JSON NaN or Infinity parses: a rejected row,
-                        raise ValueError("a rate that is not a finite number")   # never a cached one (the review of PR 878)
-                    out[want[sig]] = row
+                try:                                 # every rate through _price_rate_value (round 3): a JSON number, or a
+                    inp = _price_rate_value(v["input_cost_per_token"])   # string in the strict decimal form, else this row is
+                    row = {"in": inp, "out": _price_rate_value(v["output_cost_per_token"]),   # rejected (the continue below);
+                           "cache_w": _price_rate_value(v.get("cache_creation_input_token_cost") or inp),   # `or inp`: a cache
+                           "cache_r": _price_rate_value(v.get("cache_read_input_token_cost") or inp)}       # rate absent, null
+                    out[want[sig]] = row                 # or zero takes the input rate, the rule this parse arrived with
                 except Exception:
                     continue
             with _price_feed_lock:                   # the landing, whole: the rows and the fields that describe them
@@ -52885,10 +52929,13 @@ def _model_prices(now=None, refresh=True):
     test-and-set under the lock (_price_feed_first) and every line written outside it. A rate the row omits (the KEY
     absent) keeps the table's for an id the table names (`base` is that id's row), and is zero for any other id: the
     merge resolves `base` by the exact id, never through _price_for's signature or family fallback. A rate the row
-    carries is accepted only as a JSON number, an int or a float and never a bool: present and null, a string (a
-    numeric one too), a list, an object, false or true is a rejected row, never a coerced one (the review of PR 878,
-    round 2: `float(x or 0)` priced such a row at zero per token, or at one dollar per token for true, while the
-    block read a clean override and stderr said nothing)."""
+    carries is read by _price_rate_value: a JSON number, an int or a float and never a bool, or a string that is a
+    plain decimal whole ("0.5", "3e-06"), read as that number; present and null, any other string ("", " 0.5", "1_0",
+    "inf", "nan", "1e999", "+0.5"), a list, an object, false or true is a rejected row, never a coerced one (the
+    review of PR 878, round 2: `float(x or 0)` priced such a row at zero per token, or at one dollar per token for
+    true, while the block read a clean override and stderr said nothing; round 3: refusing every string was a
+    regression on the quoted "0.5" both earlier heads accepted, so the string is admitted through a strict parse and
+    never through the bare float() whose leniencies the helper's docstring lists)."""
     if now is None:
         now = int(time.time())
     if refresh:
@@ -52913,12 +52960,8 @@ def _model_prices(now=None, refresh=True):
             row = {}
             for kk in ("in", "out", "cache_w", "cache_r"):
                 raw = v[kk] if kk in v else base.get(kk, 0)   # the table's rate only when the KEY is absent
-                if isinstance(raw, bool) or not isinstance(raw, (int, float)):   # present and not a JSON number (null, a
-                    raise ValueError("a rate that is not a number")             # string, a list, an object, a bool): rejected
-                row[kk] = float(raw)
-            if not all(math.isfinite(x) for x in row.values()):
-                raise ValueError("a rate that is not a finite number")
-        except Exception:
+                row[kk] = _price_rate_value(raw)              # a JSON number, or a string in the strict decimal form (round 3):
+        except Exception:                                     # anything else raises there, into this row's reject path
             rejected.append(k)
             continue
         prices[k] = row

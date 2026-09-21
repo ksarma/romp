@@ -279,10 +279,15 @@ class TheSectionScopesItsClaimToWhatTheCodeDoes(_Pins):
                          "configured (the catalog refresh and the release check's git ls-remote still run)" % self.DOC)
         refresh = _pydef(KERNEL, "_refresh_remote_prices")
         self.assertTrue(refresh, "kernel/kernel.py defines _refresh_remote_prices at the top level")
-        self.assertQuoted("math.isfinite", refresh, "kernel/kernel.py _refresh_remote_prices",
-                          "'parsed strictly as numeric pricing': the worker parses the four rates as floats and rejects a row "
-                          "whose rate is not finite; executed in tests/test_price_feed_off.py")
-        self.assertQuoted('float(v["input_cost_per_token"])', refresh, "kernel/kernel.py _refresh_remote_prices")
+        self.assertQuoted('_price_rate_value(v["input_cost_per_token"])', refresh, "kernel/kernel.py _refresh_remote_prices",
+                          "'parsed strictly as numeric pricing': the worker reads the four rates through the one strict read (round 3 "
+                          "of the review of PR 878), a JSON number or a plain decimal in quotes, never a bare float() on a string; "
+                          "executed in tests/test_price_feed_off.py LiveFeed")
+        self.assertNotIn("float(v[", refresh, "kernel/kernel.py _refresh_remote_prices: no bare float() of a feed value (round 3)")
+        helper = _pydef(KERNEL, "_price_rate_value")
+        self.assertTrue(helper, "kernel/kernel.py defines _price_rate_value at the top level")
+        self.assertQuoted("math.isfinite", helper, "kernel/kernel.py _price_rate_value",
+                          "and rejects a rate that is not finite; executed in tests/test_price_feed_off.py")
 
     def test_the_trigger_is_the_last_attempt_stamped_before_the_fetch_and_both_documents_say_so(self):
         # regression-3 and extra7-3 of the second round: the section keyed the fetch on the age of the table the kernel

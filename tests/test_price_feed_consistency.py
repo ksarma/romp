@@ -477,6 +477,26 @@ class APartialLandingIsSaid(H.PriceFeedCase):
         self.assertNotIn("n/a", log, "never the body")
         self.assertEqual(len(self.calls), 1)
 
+    def test_a_landing_with_one_row_read_from_quotes_and_one_quoted_shape_refused_is_said_as_partial(self):
+        """Round 3's two arms in one landing (2026-09-21): the row whose quoted rates are plain decimals whole is cached at
+        those numbers and the row whose quoted rate only a bare float() would read ("1_0", 10.0 there) is unreadable, so the
+        landing is partial and said as such, the status telling the two rows apart. Red over the 2a5fc1dce archive: its
+        float() read both rows, 2 parsed, the second cached at $10 a token, nothing said."""
+        self.body = json.dumps({"claude-fable-5-1": {"input_cost_per_token": "11e-6", "output_cost_per_token": "55e-6"},
+                                "claude-opus-4-8": {"input_cost_per_token": "1_0", "output_cost_per_token": 25e-6}}).encode()
+        resp, log = self._analytics()
+        self.assertEqual(log.count("price feed: fetch landed with rows for 1 known model unreadable (2 signed to a built-in id, "
+                                   "1 parsed); "), 1, log)
+        st = km._price_feed_status(NOW)
+        self.assertEqual((st["source"], st["rows"], st["matched"], st["lastError"]), ("feed", 1, 2, None))
+        self.assertEqual(km._price_cache["remote"]["claude-fable-5-1"], {"in": 11e-6, "out": 55e-6, "cache_w": 11e-6, "cache_r": 11e-6},
+                         "the quoted plain decimals are read as the numbers they spell, the omitted cache rates the input rate")
+        self.assertNotIn("claude-opus-4-8", km._price_cache["remote"], "the row only a bare float() would read is not cached")
+        self.assertEqual(km._model_prices(NOW, refresh=False)["claude-opus-4-8"], km.DEFAULT_MODEL_PRICES["claude-opus-4-8"],
+                         "the default prices it")
+        self.assertNotIn("1_0", log + json.dumps(st), "never the body")
+        self.assertEqual(len(self.calls), 1)
+
     def test_control_a_landing_whose_signed_rows_all_parse_says_nothing(self):
         resp, log = self._analytics()                              # FEED: one row signed, that one parsed
         self.assertEqual(log, "")

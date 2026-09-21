@@ -24,7 +24,13 @@ not a JSON number (null, a string, a list, an object, a bool) is a rejected row 
 coerced to 0.0 or 1.0 (TheOverrideFileIsSaid); the TTL check and its stamp take _price_feed_lock with the attempt's
 fields, so two builds arriving together start ONE request, and the in-flight mark is a per-flight token that only its
 own flight clears (OneFlightPerWindow); the stderr tail's age has a day arm (LiveFeed); and the status dict's keys are
-the harness's reset keys, with the dead `rows` field gone (TheFeedDictIsWhatTheHarnessResets).
+the harness's reset keys, with the dead `rows` field gone (TheFeedDictIsWhatTheHarnessResets). Round 3 (2026-09-21)
+re-ruled the string: a rate in quotes that is a plain decimal whole ("0.5", "3e-06") is read as that number, on the file's
+road and the feed's, through _price_rate_value, the one read both parses share, and any other string (" 0.5", "1_0", "inf",
+"nan", "1e999", "+0.5", "") is rejected as round 2 had it, never coerced by the bare float() that read those (the accept
+and reject cases in TheOverrideFileIsSaid and LiveFeed; the two arms in one landing in tests/test_price_feed_consistency.py
+APartialLandingIsSaid). The live feed sends numbers (the helper's docstring carries the count and the fetch time), so on
+the feed's road the string arm is belt and braces; on the file's road it restores the quoted "0.5" both earlier heads read.
 
 Hermetic: urllib.request.urlopen is replaced by a recorder (the worker imports urllib inside `work`, so the
 module attribute is what it calls) that answers the feed's url alone and refuses any other request with a canned
@@ -956,6 +962,55 @@ class LiveFeed(PriceFeedCase):
                 self.assertNotIn("NaN", json.dumps(km._version_info()["priceFeed"]) + json.dumps(km._model_prices(NOW, refresh=False)),
                                  "no NaN reaches a table or the block")
 
+    def test_a_feed_row_whose_rates_are_plain_decimals_in_quotes_is_cached_at_those_numbers(self):
+        """Round 3: the feed's four rates go through _price_rate_value, the read the override file's rates take, so a quoted
+        plain decimal is read as that number and the row is cached and priced as live. A GUARD at this tree: the head's bare
+        float() read these too, so it is green over the 2a5fc1dce archive; what moved is the arm's edge (the next case). The
+        live feed sends numbers (the helper's docstring has the count), so this arm is belt and braces on this road."""
+        self.body = json.dumps({"claude-fable-5-1": {"input_cost_per_token": "11e-6", "output_cost_per_token": "55e-6",
+                                                     "cache_creation_input_token_cost": "13.75e-6",
+                                                     "cache_read_input_token_cost": "1.1e-6"}}).encode()
+        resp, log = self._analytics()
+        self.assertEqual(km._price_cache["remote"]["claude-fable-5-1"], {"in": 11e-6, "out": 55e-6, "cache_w": 13.75e-6, "cache_r": 1.1e-6},
+                         "each quoted plain decimal is read as the number it spells")
+        st = km._price_feed_status(NOW)
+        self.assertEqual((st["source"], st["reason"], st["rows"], st["matched"], st["lastError"]), ("feed", None, 1, 1, None), "live, whole")
+        self.assertEqual(log, "", "a landing whose rows all parse says nothing")
+        self.assertEqual(len(self.calls), 1)
+
+    def test_a_feed_row_whose_quoted_rate_only_a_bare_float_would_read_is_a_rejected_row(self):
+        """The edge of round 3's arm on the feed's road: a rate the strict read refuses makes the row unreadable, counted in
+        `matched`, never cached, the default pricing that id and the landing said as one with no usable row. Red over the
+        2a5fc1dce archive at the cache assertion for the shapes its bare float() read and cached: "1_0" as $10 a token, the
+        padded and the plus-signed forms as 11e-6, true as $1 a token and false as $0, and "1_0" in the optional cache key.
+        "inf", "nan" and "1e999" were that head's finite check's already, and "", "abc", null, a list and an object raised in
+        its float(): guards. Each shape is its own fetch (the cache reset to stale), and each landing is said once."""
+        shapes = {"1_0": "1_0", "padded": " 11e-6", "trailing": "11e-6 ", "plus": "+11e-6", "inf": "inf", "nan": "nan",
+                  "1e999": "1e999", "empty": "", "text": "abc", "true": True, "false": False, "null": None, "list": [], "object": {}}
+        for name, value in shapes.items():
+            with self.subTest(rate=name):
+                self.body = json.dumps({"claude-fable-5-1": {"input_cost_per_token": value, "output_cost_per_token": 55e-6}}).encode()
+                self._refresh_once_and_assert_rejected()
+        with self.subTest(rate="1_0 in the optional cache key"):
+            self.body = json.dumps({"claude-fable-5-1": {"input_cost_per_token": 11e-6, "output_cost_per_token": 55e-6,
+                                                         "cache_read_input_token_cost": "1_0"}}).encode()
+            self._refresh_once_and_assert_rejected()
+
+    def _refresh_once_and_assert_rejected(self):
+        """One fetch of self.body from a stale cache: the one row it names signs to claude-fable-5-1 and does not parse."""
+        km._price_cache.update(t=0, remote={})             # as stale as a cache gets: the next attempt fetches
+        err = io.StringIO()
+        with redirect_stderr(err):
+            km._refresh_remote_prices(NOW)
+            self._join()
+        self.assertNotIn("claude-fable-5-1", km._price_cache["remote"], "a row whose rate the strict read refuses is never cached")
+        self.assertEqual(km._model_prices(NOW, refresh=False)["claude-fable-5-1"]["in"], 10e-6, "the default prices it")
+        self.assertEqual(err.getvalue().count("price feed: fetch landed with no usable row (1 signed to a built-in id, "
+                                              "none parsed); "), 1, err.getvalue())
+        st = km._price_feed_status(NOW)
+        self.assertEqual((st["source"], st["reason"], st["rows"], st["matched"]), ("defaults", "empty", 0, 1),
+                         "signed to a built-in id and not parsed: the status tells the two apart")
+
     def test_a_populated_cache_under_off_is_served_with_its_age(self):
         self._analytics()                                          # a fetch landed while the feed was on
         self.assertEqual(len(self.calls), 1)
@@ -1257,9 +1312,57 @@ class TheOverrideFileIsSaid(PriceFeedCase):
     def test_a_rate_that_is_true_is_a_rejected_row_never_a_dollar_a_token(self):
         self._rate_present_and_not_a_number("true")
 
-    def test_a_rate_written_as_a_numeric_string_is_a_rejected_row_never_parsed(self):
-        """The rule says a JSON number: "0.5" is text, and text is not a rate (float("0.5") was accepted at both earlier heads)."""
-        self._rate_present_and_not_a_number('"0.5"')
+    def _reset_for_the_next_shape(self):
+        """Between two shapes in one case: a fresh memo (the build would serve the last shape's payload) and a fresh row latch
+        (the row's key is the same, so its line would be said once for the whole loop). Both keys exist at every head the
+        loops below run over except the base archive, where the status dict is absent (guarded as setUp guards it)."""
+        km._ANALYTICS_MEMO.clear()
+        feed = getattr(km, "_price_feed", None)
+        if feed is not None:
+            feed["overrideRowsSaid"] = frozenset()
+
+    def test_a_rate_written_as_a_plain_decimal_in_quotes_is_read_as_that_number(self):
+        """Round 3 of the review re-ruled the string. "0.5" was accepted at both earlier heads and round 2 refused it outright, a
+        regression, so a string that is a plain decimal WHOLE (an optional minus, digits, at most one dot with digits after it,
+        an optional exponent, nothing else) is read as that number through _price_rate_value's strict parse, never through the
+        bare float() that also read " 0.5" and "1_0" (the next case). The row is an override in effect; nothing is classed,
+        counted or said. Red over the 2a5fc1dce archive at the merged rate (the table's 10e-6 there, the row rejected). Over the
+        84b27dd39 archive the first assertion passes (the base's float() read the string too) and the case reds off its subject
+        at the omitted rates, the base fetching the feed so its table is the feed row's: no evidence there either way."""
+        shapes = {'"0.5"': 0.5, '"3e-06"': 3e-06, '"1E5"': 100000.0, '"10"': 10.0, '"-0.5"': -0.5, '"007"': 7.0}
+        os.environ["ROMP_PRICE_FEED"] = "off"
+        for shape, value in shapes.items():
+            with self.subTest(shape=shape):
+                self._reset_for_the_next_shape()
+                km.PRICE_CONFIG.write_text('{"claude-fable-5-1": {"in": %s}}' % shape)
+                resp, log = self._analytics()
+                prices = km._model_prices(NOW, refresh=False)
+                self.assertEqual(prices["claude-fable-5-1"]["in"], value, "a plain decimal in quotes is read as that number (round 3)")
+                self.assertEqual(prices["claude-fable-5-1"]["out"], km.DEFAULT_MODEL_PRICES["claude-fable-5-1"]["out"],
+                                 "the rates the row omits are the table's, as for any override row")
+                pf = resp.get("priceFeed") or {}
+                self.assertEqual((pf.get("overrideFault"), pf.get("overrideRowsRejected"), pf.get("overrides")), (None, 0, 1),
+                                 "an override in effect: nothing classed, nothing counted as skipped")
+                self.assertEqual(log.count("in model-prices.json could not be read"), 0, "and nothing said:\n" + log)
+
+    def test_a_quoted_rate_that_only_a_bare_float_would_read_is_a_rejected_row(self):
+        """The other edge of round 3's predicate, the reason a bare float() was not restored: every string float() reads that is
+        not a plain decimal whole is the row road's report. "inf", "-inf" and "nan" (float reads them as such), "1e999" (reads
+        as inf), whitespace either side and a trailing newline, an underscore separator ("1_0" reads as 10.0), a leading plus
+        (refused by the decision _price_rate_value's docstring states: JSON's grammar has none), a bare dot either side, an
+        empty string, text and hex. Guards at this tree against the arm widening, green over the 2a5fc1dce archive (every
+        string was refused there); with the strict-form check cut out of _price_rate_value (a mutant that reads every string
+        with float()) the seven shapes only that check refuses go red ("1_0", the three padded forms, "+0.5", ".5", "5.") and
+        the other seven stay green as the finite check's or float()'s own refusals; red over the 84b27dd39 archive at the merged rate for the twelve shapes `float(x or 0)` read
+        (10.0 for "1_0", 0.5 for the padded, newline-tailed, plus-signed and bare-dot forms, 5.0 for "5.", inf, -inf and nan
+        cached as rates, inf for "1e999", 0.0 for ""); "abc" and "0x10" red there off their subject, the base fetching the
+        feed so its table is the feed row's."""
+        shapes = ('"1_0"', '" 0.5"', '"0.5 "', '"0.5\\n"', '"inf"', '"-inf"', '"nan"', '"1e999"', '"+0.5"', '""', '"abc"',
+                  '".5"', '"5."', '"0x10"')
+        for shape in shapes:
+            with self.subTest(shape=shape):
+                self._reset_for_the_next_shape()
+                self._rate_present_and_not_a_number(shape)
 
     def test_control_an_absent_rate_key_inherits_the_tables_rate_and_is_no_fault(self):
         """The other side of the predicate: a rate whose KEY is absent takes the table's rate for an id the table names

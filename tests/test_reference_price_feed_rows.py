@@ -138,9 +138,13 @@ FAIL_CLASS = "_price_feed_error_class(e)"
 # the unreadable-row sentence (the review of PR 878, re-ruled 2026-09-21), and the kernel's shape behind each clause
 SKIPPED = ("A row the kernel cannot read (not an object, a rate that is not a number, or a rate that is not a finite number) is "
            "skipped and every other row applies, wherever in the file the bad row sits")
-NOT_A_NUMBER = ("a rate whose key is present is accepted only as a JSON number, an int or a float and never a bool, so a null, a "
-                "string (a numeric one too), a list, an object, `true` or `false` where a rate belongs makes that row a skipped "
-                "row, never a rate of zero or one")
+NOT_A_NUMBER = ("A rate whose key is present is accepted in two forms, a JSON number or a plain decimal number in quotes (`\"0.5\"`, "
+                "`\"3e-06\"`: an optional minus, digits, at most one dot with digits after it, an optional exponent, nothing else), and "
+                "the quoted form is read as the number it spells. Anything else where a rate belongs (a null, a list, an object, `true`, "
+                "`false` or any other string: `\" 0.5\"`, `\"1_0\"`, `\"inf\"`, `\"nan\"`, `\"1e999\"`, `\"+0.5\"`, `\"\"`) makes that row "
+                "a skipped row, said like any other, never a rate of zero or one")
+OLD_EVERY_STRING = "a string (a numeric one too)"   # round 2 refused every string; round 3 admits the strict decimal form (2026-09-21)
+RATE_READ = "row[kk] = _price_rate_value(raw)"   # round 3: the one read of a rate, shared with the feed worker's parse
 OLD_TWO_CLASSES = "(not an object, or a rate that is not a finite number)"   # the round-2 predicate names three
 OLD_VOIDS = "voids that row and every row after it"   # the first round's consequence, gone from the doc with the re-ruling
 WHOLE = "a file it cannot read or parse as a JSON object is ignored whole"
@@ -287,7 +291,9 @@ class AnUnreadableRowOrFileIsSaid(_Pins):
         self.assertQuoted(SKIPPED, flat, DOC, "one try wraps each row, so the rows around a rejected one are kept, wherever it sits")
         self.assertNotIn(OLD_VOIDS, flat, "%s: the first round's consequence, whose reach depended on the bad row's position" % DOC)
         self.assertNotIn(OLD_TWO_CLASSES, flat, "%s: the predicate names the third class, a rate present and not a number" % DOC)
-        self.assertQuoted(NOT_A_NUMBER, flat, DOC, "the predicate as the kernel applies it: present, then a JSON number and never a bool")
+        self.assertQuoted(NOT_A_NUMBER, flat, DOC, "the predicate as the kernel applies it: present, then a JSON number and never a bool, "
+                          "or a plain decimal in quotes (round 3); every other string the skipped row's road")
+        self.assertNotIn(OLD_EVERY_STRING, flat, "%s: round 2 refused every string, a regression on the quoted 0.5 (round 3)" % DOC)
         self.assertQuoted(WHOLE, flat, DOC)
         self.assertQuoted(SAID_ONCE, flat, DOC, "one latch per fault class, the row's keyed by row, on the cost view's road")
         self.assertNotIn(OLD_UNCONDITIONAL, flat, "%s: the lines are written under `if refresh:`, the cost view's road; a kernel "
@@ -370,8 +376,13 @@ class AnUnreadableRowOrFileIsSaid(_Pins):
         self.assertTrue(prices, "kernel/kernel.py defines _model_prices at the top level")
         where = "kernel/kernel.py _model_prices"
         self.assertQuoted(REJECT_OBJECT, prices, where, "a row that is not an object is rejected")
-        self.assertQuoted(REJECT_NUMBER, prices, where, "a rate that is present and not a JSON number is rejected (round 2)")
-        self.assertQuoted(REJECT_FINITE, prices, where, "a rate that is not a finite number is rejected")
+        self.assertQuoted(RATE_READ, prices, where, "each rate is read by _price_rate_value inside the row's try (round 3), so its "
+                          "two refusals below land in this row's reject path; executed in %s" % OVERRIDE_CASES)
+        helper = _pydef(KERNEL, "_price_rate_value")
+        self.assertTrue(helper, "kernel/kernel.py defines _price_rate_value at the top level")
+        self.assertQuoted(REJECT_NUMBER, helper, "kernel/kernel.py _price_rate_value",
+                          "a rate that is present and not a JSON number, nor a string in the strict decimal form, is rejected (rounds 2 and 3)")
+        self.assertQuoted(REJECT_FINITE, helper, "kernel/kernel.py _price_rate_value", "a rate that is not a finite number is rejected")
         tree = ast.parse(textwrap.dedent(prices))
         loops = [n for n in ast.walk(tree) if isinstance(n, ast.For) and any(isinstance(b, ast.Try) for b in n.body)]
         self.assertEqual(len(loops), 1, "%s: one loop whose body opens a try, the loop over the file's rows (the loop that writes "
@@ -386,7 +397,8 @@ class AnUnreadableRowOrFileIsSaid(_Pins):
         enclosing = [n for n in ast.walk(tree) if isinstance(n, ast.Try) and any(c is loop for c in ast.walk(n))]
         self.assertEqual(enclosing, [], "%s: no try encloses the loop; the first round's one did, and a rejected row ended it "
                          "(the doc's old 'and every row after it')" % where)
-        self.assertBefore(REJECT_FINITE, 'prices.fault = "row"', prices, where, "the class is assigned after the loop that skips")
+        self.assertBefore(RATE_READ, 'prices.fault = "row"', prices, where, "the class is assigned after the loop that skips (the read "
+                          "that refuses sits inside the loop; round 3 moved the raises into _price_rate_value)")
         self.assertBefore('prices.fault = "row"', "prices.rejected = len(rejected)", prices, where,
                           "the count beside the class, both on the merged table")
 

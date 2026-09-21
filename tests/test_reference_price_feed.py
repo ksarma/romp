@@ -131,11 +131,21 @@ OLD_OMITS = "and a rate the row omits keeps the table's."
 BASE_EXACT = "base = prices.get(k, {})"
 PARTIAL_GUARD = "tests/test_price_feed_off.py APartialOverrideRow.test_an_omitted_rate_keeps_the_tables_only_for_an_id_the_table_names"
 # the merge's read of a row's rate (the second round of the review of PR 878): the table's rate only when the KEY is
-# absent, and a present value accepted only as a JSON number, never coerced
+# absent, and a present value accepted only as a JSON number, never coerced; round 3 moved the read into _price_rate_value,
+# the one read both parses share, and admitted a string in the strict decimal form through it
 INHERIT = "v[kk] if kk in v else base.get(kk, 0)"
-TYPE_CHECK = "isinstance(raw, bool) or not isinstance(raw, (int, float))"
+RATE_READ = "row[kk] = _price_rate_value(raw)"
+TYPE_CHECK = "isinstance(raw, bool) or not isinstance(raw, (int, float, str))"
+STRICT_STRING = "isinstance(raw, str) and not _PRICE_RATE_STRING.fullmatch(raw)"
 REJECT_NUMBER = 'raise ValueError("a rate that is not a number")'
 OLD_INHERIT = "v.get(kk, base.get(kk, 0))"
+DOC_ACCEPTS = ("A rate whose key is present is accepted in two forms, a JSON number or a plain decimal number in quotes (`\"0.5\"`, "
+               "`\"3e-06\"`: an optional minus, digits, at most one dot with digits after it, an optional exponent, nothing else), and "
+               "the quoted form is read as the number it spells")
+DOC_REFUSES = ("Anything else where a rate belongs (a null, a list, an object, `true`, `false` or any other string: `\" 0.5\"`, `\"1_0\"`, "
+               "`\"inf\"`, `\"nan\"`, `\"1e999\"`, `\"+0.5\"`, `\"\"`) makes that row a skipped row, said like any other, never a rate of "
+               "zero or one")
+OLD_EVERY_STRING = "a string (a numeric one too)"   # round 2's predicate refused every string; round 3 admits the strict decimal form
 # where each clause of the modal's line sits (the second round): the words, and gear.js raPriceNote's push order behind them
 UNREC_SITS = "after the source and before the override count"
 OVR_SITS = "after the source (and after the unrecognised clause when there is one) and before the skipped-rows clause when there is one"
@@ -330,20 +340,33 @@ class ThePartialRowRule(_Pins):
     def test_a_present_rate_that_is_not_a_number_is_a_skipped_row_never_a_coerced_one(self):
         # the second round of the review of PR 878: `float(v.get(kk, base.get(kk, 0)) or 0)` priced a row whose rate was
         # null, "", [], {} or false at zero per token and true at a dollar per token while the block read a clean
-        # override; the doc states the predicate that ships, and the kernel raises into the per-row reject path
+        # override; round 3 (2026-09-21) re-ruled the string, which round 2 had refused outright: a plain decimal in quotes
+        # is read as that number through a strict parse, never a bare float(); the doc states the predicate that ships, and
+        # the kernel's one read of a rate, _price_rate_value, raises into the per-row reject path of both its callers
         self.assertSection()
         flat = _flat(SECTION)
-        self.assertQuoted("a rate whose key is present is accepted only as a JSON number, an int or a float and never a bool", flat, self.DOC)
-        self.assertQuoted("a null, a string (a numeric one too), a list, an object, `true` or `false` where a rate belongs makes that "
-                          "row a skipped row, never a rate of zero or one", flat, self.DOC)
+        self.assertQuoted(DOC_ACCEPTS, flat, self.DOC, "the two admitted forms: a JSON number, a plain decimal in quotes (round 3)")
+        self.assertQuoted(DOC_REFUSES, flat, self.DOC, "every other string is the skipped row's road, with the shapes a bare float() read")
+        self.assertNotIn(OLD_EVERY_STRING, flat, "%s: round 2's predicate refused every string, a regression on the quoted 0.5 both "
+                         "earlier heads accepted (round 3)" % self.DOC)
         prices = _pydef(KERNEL, "_model_prices")
         self.assertTrue(prices, "kernel/kernel.py defines _model_prices at the top level")
         where = "kernel/kernel.py _model_prices"
-        self.assertQuoted(TYPE_CHECK, prices, where, "a bool first (it is an int to isinstance), then anything not an int or a float")
-        self.assertQuoted(REJECT_NUMBER, prices, where, "raised inside the row's try, so the row lands in the reject path that "
-                          "already exists; executed in tests/test_price_feed_off.py TheOverrideFileIsSaid (seven shapes and the "
-                          "absent-key control)")
-        self.assertLess(prices.find(TYPE_CHECK), prices.find(REJECT_NUMBER), "%s: the check, then the raise" % where)
+        self.assertQuoted(RATE_READ, prices, where, "every present or inherited rate goes through the one read, inside the row's try, "
+                          "so a refusal lands in the reject path that already exists; executed in tests/test_price_feed_off.py "
+                          "TheOverrideFileIsSaid (the accepted quoted shapes, the refused ones and the absent-key control)")
+        self.assertNotIn("isinstance(raw", prices, "%s holds no type check of its own: the predicate has one home" % where)
+        helper = _pydef(KERNEL, "_price_rate_value")
+        self.assertTrue(helper, "kernel/kernel.py defines _price_rate_value at the top level")
+        where = "kernel/kernel.py _price_rate_value"
+        self.assertQuoted(TYPE_CHECK, helper, where, "a bool first (it is an int to isinstance), then anything not an int, a float or a str")
+        self.assertQuoted(STRICT_STRING, helper, where, "a string only when the WHOLE of it matches the strict decimal form (fullmatch, "
+                          "so a trailing newline is refused where `$` would let it through)")
+        self.assertQuoted(REJECT_NUMBER, helper, where, "the row road's report, the same for either refusal")
+        self.assertLess(helper.find(TYPE_CHECK), helper.find(STRICT_STRING), "%s: the type check, then the string's form" % where)
+        self.assertIn(REJECT_NUMBER, helper[helper.find(STRICT_STRING):], "%s: the form check, then its raise" % where)
+        self.assertQuoted("math.isfinite", helper, where, "then the check a JSON number gets, finite; executed in tests/test_price_feed_off.py "
+                          "LiveFeed and TheOverrideFileIsSaid (inf, nan, 1e999 in quotes; JSON NaN and Infinity)")
         # by ast, since the docstring names the old expression: no float() of an `or` expression is left in the merge
         coerced = [n for n in ast.walk(ast.parse(textwrap.dedent(prices)))
                    if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "float"

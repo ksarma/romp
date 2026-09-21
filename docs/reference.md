@@ -1154,11 +1154,15 @@ yes. The gear reports a machine that is missing node or the comment tools.
   before the skipped-rows clause when there is one. A row the kernel cannot
   read (not an object, a rate that is not a number, or a rate that is not a
   finite number) is skipped and every other row applies, wherever in the file
-  the bad row sits: a rate whose key is present is accepted only as a JSON
-  number, an int or a float and never a bool, so a null, a string (a numeric
-  one too), a list, an object, `true` or `false` where a rate belongs makes
-  that row a skipped row, never a rate of zero or one; a file it cannot read or
-  parse as a JSON object is ignored whole. The kernel says so on its stderr the
+  the bad row sits. A rate whose key is present is accepted in two forms, a
+  JSON number or a plain decimal number in quotes (`"0.5"`, `"3e-06"`: an
+  optional minus, digits, at most one dot with digits after it, an optional
+  exponent, nothing else), and the quoted form is read as the number it
+  spells. Anything else where a rate belongs (a null, a list, an object,
+  `true`, `false` or any other string: `" 0.5"`, `"1_0"`, `"inf"`, `"nan"`,
+  `"1e999"`, `"+0.5"`, `""`) makes that row a skipped row, said like any
+  other, never a rate of zero or one; a file it cannot read or parse as a JSON
+  object is ignored whole. The kernel says so on its stderr the
   first time the cost view prices with the file in that state (the spend
   ceiling's check and `/version` price with the same file and write no line):
   once per kernel life for the file, and once per kernel life for each skipped
