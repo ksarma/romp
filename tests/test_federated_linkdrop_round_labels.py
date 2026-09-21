@@ -31,10 +31,15 @@ escapes both, so the population is spelling-keyed and says so) plus the ledger e
 adds, the helper and its test, are outside the glob and so outside this population, and are held clean another way: the
 helper's own test pins by execution that neither text spells a numbered-round form (the rule credits no PR's round), which
 is all this guard would ask of them. Their TEXT is the COMMITTED one (_show: `git show HEAD:<path>` through _git), the same
-commit the premise below is checked against, so the verdict is a function of the commit and the same committed tree gets one
-verdict on every machine whatever its checkout holds (pass 11's closing fixer pass: the earlier module read the checkout's
-text against HEAD's premise, so a mislabel committed at HEAD and removed in the working tree read clean); an uncommitted
-edit is judged once committed, and a plant that reds this module is committed in a scratch repository. Every line of them is
+commit the premise below is checked against, and the module LIST is held equal to HEAD's (family(): the checkout's glob
+against `git ls-tree` at HEAD through _git, _committed_modules, a difference in either direction a refusal naming it), so
+the verdict is a function of the commit: the same committed tree gets one verdict on every machine whose checkout holds the
+family HEAD holds, and a checkout that differs from HEAD in the family's modules (one deleted with rm, an untracked sixth) is
+refused, naming the difference, not judged (pass 11's closing fixer pass: the earlier module read the checkout's text against
+HEAD's premise, so a mislabel committed at HEAD and removed in the working tree read clean; its second closing fixer pass: the
+list still came from the checkout's glob, so a module deleted from the checkout with rm left the population and its committed
+text went unjudged); an uncommitted edit to a file's text is judged once committed, and a plant that reds this module is
+committed in a scratch repository. Every line of them is
 the branch's own because every file of them is ADDED over the branch's merge base with origin/main, and setUpModule verifies
 that premise by git before any cell runs (scope(): `git diff --name-status <merge base> HEAD` over the population, every
 file `A`). Where git cannot answer (no repository under the root, GIT_DIR pointed elsewhere, origin/main not fetched or no
@@ -49,9 +54,11 @@ lands, since the checkout action writes origin/<branch> at the pushed commit; it
 refs/remotes/pull/N/merge and no origin/main, which is the first skip); where git answers and a file of the population is
 not added while another is, or a file is neither added nor at the merge base (an uncommitted one), the module REFUSES,
 naming the files, since a whole-file read would then judge other work's lines or uncommitted text. family() REFUSES, with
-the derivation named, a glob that reads no module, a file of the population that is not in the tree, and this module outside
-its own population (its path the parameter `me`, this module's own by default), and every cell reads the population through
-it, so a selected run of any one cell gets the one stated refusal; _read refuses a file that is not in the tree the same
+the derivation named, a glob that reads no module, a file of the population that is not in the tree, a checkout whose family
+modules differ from HEAD's, and this module outside its own population (its path the parameter `me`, this module's own by
+default), and every cell reads the population through it, so a selected run of any one cell gets the one stated refusal (and
+where git does not answer for HEAD, family() SKIPS with that reason before scope() is asked, the list at HEAD being
+underivable); _read refuses a file that is not in the tree the same
 way, _show one git does not answer for at HEAD, and sibling_glob returns the reason when the pin's file or function is not
 found. A cell reads the sibling pin's glob from that pin's source and runs it, holding the two populations equal, so a
 family module the sibling sees and this census does not is a red.
@@ -69,7 +76,7 @@ is refused by construction, whichever module it hangs off); a module of the tabl
 every callee is a name or an attribute chain; every name called is a definition of this module or one of BUILTINS (held equal
 both ways); the dunder names read are exactly DUNDERS; no attribute read is a dunder or str.format; no reflective or file
 primitive is called or read but the one open() in _read and the one glob.glob in _family_modules, both of whose paths pass
-_under, which REFUSES at run time, over the value, a path that is absolute or leaves the root (pinned by execution in
+_under (as does the directory _committed_modules lists at HEAD), which REFUSES at run time, over the value, a path that is absolute or leaves the root (pinned by execution in
 test_every_path_the_module_reads_is_under_the_tree); the one subprocess.run is inside _git, its command git under `-C root`,
 and the population's text is read through _show alone, a git show at HEAD through _git: the census cell's call-graph CLOSURE
 over this module's own definitions (every name it calls that is a definition here, followed transitively, _closure) holds
@@ -87,6 +94,7 @@ No probe is spelled with a digit after the word in this docstring, since the mod
 the helper's form space is pinned in its own test module.
 """
 import ast
+import fnmatch
 import glob
 import os
 import re
@@ -113,10 +121,11 @@ PACKAGE = "tests/__init__.py"   # a file of the tree at the merge base that this
 # glob.os, unittest.loader, is refused by construction, not by a list of the names to refuse); the builtins it calls and the
 # module-level dunder names it reads, closed the same way; and the primitives it neither calls nor reads, but the one open()
 # inside _read
-IMPORTS = ("ast", "glob", "os", "re", "subprocess", "tests.review_round_labels_rule", "unittest")
+IMPORTS = ("ast", "fnmatch", "glob", "os", "re", "subprocess", "tests.review_round_labels_rule", "unittest")
 MEMBERS = {"ast": ("Attribute", "Call", "ClassDef", "Constant", "FunctionDef", "Import", "ImportFrom", "Load", "Name", "iter_child_nodes", "parse", "unparse", "walk"),
+           "fnmatch": ("fnmatch",),
            "glob": ("glob",),
-           "os": ("pardir", "path.commonpath", "path.dirname", "path.isabs", "path.isfile", "path.join", "path.realpath", "path.relpath", "sep"),
+           "os": ("curdir", "pardir", "path.basename", "path.commonpath", "path.dirname", "path.isabs", "path.isfile", "path.join", "path.normpath", "path.realpath", "path.relpath", "sep"),
            "re": ("match", "search"),
            "subprocess": ("TimeoutExpired", "run"),
            "tests.review_round_labels_rule": ("FORM_CLASSES", "form_class", "forms", "mentions", "offences"),
@@ -127,13 +136,18 @@ PRIMITIVES = ("open", "getattr", "setattr", "delattr", "hasattr", "__import__", 
 
 
 def family(here=HERE, root=ROOT, me=None):
-    """(the family's files, relative to `root`; how they were derived): the tree glob over `here` plus the ledger entry. REFUSES
-    (an AssertionError naming the derivation) a glob that reads no module, a file of the population that is not in the tree,
-    and this module outside its own population, so every cell that reads the population gets the one stated refusal, a
-    selected run of one cell included, and no cell judges an empty or a partial population (the census over the entry alone
-    would pass on its one credited mention). `here`, `root` and `me` (this module's path relative to `root`, its own unless
-    given) are parameters so each refusal is pinned by execution over the tree; the cells read the tree's own."""
-    how = "the glob tests/%s over the tree, plus the ledger entry %s" % (FAMILY_GLOB, ENTRY)
+    """(the family's files, relative to `root`; how they were derived): the tree glob over `here`, held equal to the family's
+    modules at HEAD (_committed_modules), plus the ledger entry. REFUSES (an AssertionError naming the derivation) a glob that
+    reads no module, a file of the population that is not in the tree, a checkout whose family modules differ from HEAD's in
+    either direction (the text judged is HEAD's, so a module deleted from the checkout with rm would otherwise leave the
+    population with its committed text unjudged, and an untracked sixth would be read with no commit behind it: pass 11's
+    second closing fixer pass), and this module outside its own population, so every cell that reads the population gets the
+    one stated refusal, a selected run of one cell included, and no cell judges an empty or a partial population (the census
+    over the entry alone would pass on its one credited mention); SKIPS (unittest.SkipTest, the reason named) where git does
+    not answer for HEAD under `root`, since the list at HEAD is then underivable and nothing is read in its place. `here`,
+    `root` and `me` (this module's path relative to `root`, its own unless given) are parameters so each refusal is pinned by
+    execution over the tree; the cells read the tree's own."""
+    how = "the glob tests/%s over the tree, held equal to the family's modules at HEAD, plus the ledger entry %s" % (FAMILY_GLOB, ENTRY)
     modules = _family_modules(here, root)
     if not modules:
         raise AssertionError("the glob read no module of the family (%s): a broken glob or a moved directory is not a clean tree" % how)
@@ -141,6 +155,15 @@ def family(here=HERE, root=ROOT, me=None):
     missing = [f for f in files if not os.path.isfile(_under(root, f))]
     if missing:
         raise AssertionError("a file of the population is not in the tree (%s): %r" % (how, missing))
+    committed = _committed_modules(here, root)
+    if committed is None:
+        raise unittest.SkipTest("the round-labels guard skipped: git does not answer for HEAD under the root (no repository there, or GIT_DIR points elsewhere), "
+                                "so the family's modules at HEAD, the list the checkout's glob is held equal to, are not derivable, and neither are this "
+                                "branch's own lines (the population would have been %s)" % how)
+    if committed != modules:
+        raise AssertionError("the family's modules at HEAD differ from the checkout's glob (%s), and the text judged is HEAD's, so the population is refused "
+                             "rather than read from either side alone: at HEAD and not in the checkout %r, in the checkout and not at HEAD %r"
+                             % (how, [m for m in committed if m not in modules], [m for m in modules if m not in committed]))
     me = os.path.relpath(os.path.realpath(__file__), root) if me is None else me
     if me not in modules:
         raise AssertionError("this module is outside its own population (%s), so its probes could not be assembled at run time: %r" % (how, modules))
@@ -244,6 +267,21 @@ def _family_modules(here, root, pattern=FAMILY_GLOB):
     for m in modules:
         _under(root, m)
     return modules
+
+
+def _committed_modules(here, root, pattern=FAMILY_GLOB):
+    """The family's modules AT HEAD under `here` by `pattern`, relative to `root`, sorted, the list family() holds the checkout's
+    glob equal to; None when git does not answer for HEAD under `root`. `git ls-tree -r -z --name-only HEAD -- <here>` through
+    _git (paths relative to `root`, git's -C; -z so no path is quoted), kept to the direct children of `here` whose file name
+    matches `pattern` by fnmatch, the glob's own matcher; `here` passes _under first, so a directory outside the root is
+    refused the way the glob's is."""
+    directory = os.path.relpath(here, root)
+    _under(root, directory)
+    listing = _git(["ls-tree", "-r", "-z", "--name-only", "HEAD", "--", directory], root)
+    if listing is None:
+        return None
+    return sorted(p for p in listing.split("\0") if p and os.path.normpath(os.path.dirname(p) or os.curdir) == os.path.normpath(directory)
+                  and fnmatch.fnmatch(os.path.basename(p), pattern))
 
 
 def sibling_glob(pin=SIBLING_PIN, root=ROOT):
@@ -418,7 +456,11 @@ class RoundLabels(unittest.TestCase):
         module's path outside its own population (pass 11's closing fixer pass: that refusal was reachable and run by no
         cell), _read over a file that is not there, _show over one not committed at HEAD (and the entry's committed text read
         through it), and sibling_glob over a pin whose file is missing, each a stated refusal
-        naming what it could not read, never a bare exception or an empty census. Then scope()'s roads by execution over the
+        naming what it could not read, never a bare exception or an empty census. The list at HEAD (_committed_modules, git
+        ls-tree through _git) is the checkout's glob for the family's directory and empty for a directory of the tree with no
+        family module; the refusal of a checkout that differs from HEAD (a module deleted with rm, an untracked sixth) is
+        driven outside the tree, in a scratch repository, since driving it here would mean deleting or adding a file of the
+        tree. Then scope()'s roads by execution over the
         tree: the population is added over the merge base (the road setUpModule took to reach this cell), a main that is no
         ref is a skip naming it, HEAD as the main (the merge base HEAD, nothing added over it, every file already there: the
         landed shape, CI's checkout of a push to the target branch) is a skip saying this guard's job is done, the population
@@ -433,6 +475,8 @@ class RoundLabels(unittest.TestCase):
         self.assertEqual(pattern, FAMILY_GLOB, "the sibling pin (%s) globs %r while this census globs %r: the two populations are keyed on different spellings" % (source, pattern, FAMILY_GLOB))
         sibling = _family_modules(HERE, ROOT, pattern)
         self.assertEqual(sibling, modules, "the sibling pin's glob and this census's population differ: %r" % (sorted(set(sibling) ^ set(modules)),))
+        self.assertEqual(_committed_modules(HERE, ROOT), modules, "the family's modules at HEAD (git ls-tree) are the checkout's glob: family() held them equal on the way to this cell")
+        self.assertEqual(_committed_modules(os.path.join(ROOT, "upstream"), ROOT), [], "a directory of the tree with no family module lists none at HEAD")
         with self.assertRaises(AssertionError) as none:
             family(here=os.path.join(ROOT, "upstream"))
         self.assertIn("read no module of the family", str(none.exception))
@@ -474,8 +518,8 @@ class RoundLabels(unittest.TestCase):
 
     def test_every_path_the_module_reads_is_under_the_tree(self):
         """_under, the road every open() and glob.glob() of this module takes (the pin above holds them there), by execution:
-        it refuses an absolute path, a path that steps out of the root, a directory outside the root handed to the glob and a
-        pattern that names a directory, each with its reason, and it accepts the population's own reads (the entry's path,
+        it refuses an absolute path, a path that steps out of the root, a directory outside the root handed to the glob or to
+        the listing at HEAD and a pattern that names a directory, each with its reason, and it accepts the population's own reads (the entry's path,
         this module through the glob over its directory). Pass 11's closing fixer pass planted _read over an absolute path
         and read a file outside the tree with the earlier pin green, since os.path.join discards its root for an absolute
         second argument and the pin read the constants' shapes alone."""
@@ -488,6 +532,9 @@ class RoundLabels(unittest.TestCase):
         with self.assertRaises(AssertionError) as outside:
             _family_modules(os.path.join(ROOT, os.pardir), ROOT)
         self.assertIn("leaves the tree", str(outside.exception))
+        with self.assertRaises(AssertionError) as listed:
+            _committed_modules(os.path.join(ROOT, os.pardir), ROOT)
+        self.assertIn("leaves the tree", str(listed.exception))
         with self.assertRaises(AssertionError) as directory:
             _family_modules(HERE, ROOT, os.path.join("tests", FAMILY_GLOB))
         self.assertIn("holds a path separator", str(directory.exception))
