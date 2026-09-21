@@ -1083,8 +1083,8 @@ class HeldPairRule(unittest.TestCase):
         # expression pinned with a loud miss, and the frame types that reach the feed arm, so a fifth writer or a new producer of
         # the arm's frame reds here until the rule's docstring classifies it
         fed = open(os.path.join(ROOT, "ui", "webview", "federation.ts"), encoding="utf-8").read()
-        # every `feedHeld` token in the module's CODE, classified by the property of its site (the author's fixer pass after
-        # the author's fixer pass after the maintainer's round 5, refusal-1: the census read `c.feedHeld =` and `conn.feedHeld =`, two receiver spellings, so a fifth writer
+        # every `feedHeld` token in the module's CODE, classified by the property of its site
+        # (the author's fixer pass after the maintainer's round 5, refusal-1: the census read `c.feedHeld =` and `conn.feedHeld =`, two receiver spellings, so a fifth writer
         # through another variable name or an Object.assign left it green): the declaration once; a member write whatever the
         # receiver's name and the assignment's form (plain, compound, delete); a member read; any other form (an object key, a
         # quoted name, a destructuring) is unclassified and reds until a row classifies it

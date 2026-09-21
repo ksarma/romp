@@ -71,6 +71,11 @@ MENTION = re.compile(r"\bround[- ](\d+)\b|\b(?:the|this|that) round\b(?![- ]?tri
 QUALIFIER = re.compile(r"\bmaintainer's\s+$", re.I)   # what must stand immediately before a numbered mention: on its line, or ending the line above when the mention opens its line (THE RULE, the docstring)
 MARKER = re.compile(r"^\s*(?:#|//|/\*|\*|<!--)?\s*")               # a comment marker and the whitespace around it, which a wrapped line begins with
 
+# a doubled attribution in one run of prose (the maintainer's round 6, H): the same possessive's "pass after" twice in a row
+# ("the author's fixer pass after the author's fixer pass after ..."), or the same attribution twice adjacent
+DOUBLED = re.compile(r"\b(the (?:author's|maintainer's))\s+(?:fixer\s+)?pass after\s+\1\s+(?:fixer\s+)?pass after\b"
+                     r"|\b(the (?:author's|maintainer's) (?:fixer pass|pass|round)(?:[- ]\d+)?)\s+\2\b", re.I)
+
 # a hunk header of a unified diff: the new side's first line number (and its count, absent for one line)
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 
@@ -100,6 +105,20 @@ def offences(line, rounds=REVIEWER_ROUNDS, prev=None):
         elif int(n) not in rounds:
             out.append((m.group(0), "the maintainer held rounds %s" % ", ".join(str(r) for r in sorted(rounds))))
     return out
+
+
+def joined_runs(lines):
+    """(first line number, last line number, the prose) for every run of consecutive added lines, each line's comment marker
+    stripped and the lines joined by a space, whitespace collapsed: a comment read across its line breaks."""
+    out, run = [], []
+    for ln, line in lines:
+        if run and ln != run[-1][0] + 1:
+            out.append(run)
+            run = []
+        run.append((ln, line))
+    if run:
+        out.append(run)
+    return [(r[0][0], r[-1][0], re.sub(r"\s+", " ", " ".join(MARKER.sub("", l.rstrip()) for _, l in r)).strip()) for r in out]
 
 
 def previous_line(lines, ln):
@@ -189,6 +208,27 @@ class RoundLabels(unittest.TestCase):
                                   "docstring). REVIEWER_ROUNDS is %s; the lines came from %s; %d added lines carrying a mention read "
                                   "in %d of the %d files the branch changes:\n%s"
                                   % (sorted(REVIEWER_ROUNDS), how, read, len(carrying), len(added), "\n".join(bad)))
+
+    def test_no_added_comment_repeats_an_attribution_across_its_line_breaks(self):
+        """A mechanical rewrite over prose owes a read-back (the maintainer's round 6, H): the round-word sweep inlined the full
+        qualifier on a continuation line whose line above already ended with it, and a per-line census cannot see a doubling that
+        spans the break. So the added lines are read as prose, joined_runs, and a doubled attribution in one run is refused
+        (DOUBLED). A list of distinct forms is not a repeat, and the probes below say so."""
+        added, how = branch_population()
+        bad = []
+        for rel, lines in sorted(added.items()):
+            for first, last, text in joined_runs(lines):
+                bad += ["%s:%d-%d: %r" % (rel, first, last, text[max(0, m.start() - 40):m.end() + 30]) for m in DOUBLED.finditer(text)]
+        self.assertEqual(bad, [], "an added comment repeats an attribution across its line breaks; the lines came from %s:\n%s" % (how, "\n".join(bad)))
+        A, M, R = "the author's", "the maintainer's", "round"
+        self.assertEqual(len(DOUBLED.findall("(%s fixer pass after %s fixer pass after %s %s 5, refusal-1: the census read)" % (A, A, M, R))), 1,
+                         "the sweep's doubling, the qualifier inlined on a line whose line above ended with it")
+        self.assertEqual(len(DOUBLED.findall("%s %s 5 %s %s 5 on panel-3" % (M, R, M, R))), 1, "the same attribution twice adjacent")
+        self.assertEqual(len(DOUBLED.findall("%s pass 4 %s pass 4" % (A, A))), 1)
+        for clean in ("the pass after %s %s 4, the pass after %s %s 5" % (M, R, M, R), "%s pass 4 and %s pass 5" % (A, A),
+                      "(%s fixer pass after %s %s 5, refusal-1: the census read)" % (A, M, R), "%s %s 5 and %s %s-4 ruling" % (M, R, M, R)):
+            self.assertEqual(DOUBLED.findall(clean), [], "a list of distinct forms is not a repeat: %r" % clean)
+        self.assertEqual(joined_runs([(3, "# a"), (4, "#  b"), (7, "// c"), (8, " * d")]), [(3, 4, "a b"), (7, 8, "c d")], "runs by consecutive numbers, markers stripped")
 
     def test_the_diff_reader_numbers_added_lines_in_the_new_side(self):
         """The reader over `git diff -U0`: two files, a hunk after removed lines (the new side's numbering does not move for
