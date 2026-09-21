@@ -702,13 +702,29 @@ function legsCount(sentence) {
 }
 /** The Tests paragraph's disclosure, state B's sentence: its opening words, and the clauses it must carry. */
 const DISCLOSURE = 'The browser legs named here skip at launch in the Test step of the job that gates a landing';
+/** The clauses on the derivation's key (the file review's round 10, extra6-1 and extra6-2): that the legs are derived by the
+ *  file name and not the property, PR 887's census as the property's one definition to come, and the two modules of the
+ *  follow-on's diff the property reaches and the name does not (each held to exist on disk by the module-existence pin above,
+ *  as every test module the section names is). Held here since the author's closing pass after the file review's round 10,
+ *  mechanism-3: the corrected disclosure was in no pin, and the wording the round called false put back left every pin green. */
+const NAME_CLAUSES = [
+  ['derives the legs BY NAME', 'that the derivation of the legs is by the file name'],
+  ['a name and not the property that makes a module a browser leg', 'that the name is not the property'],
+  ['vscode-extension/scripts/browser-legs-census.mjs', 'PR 887\'s census by its path, the property\'s reader'],
+  ['that census is the one definition of a browser leg once it lands', 'that the census is the one definition once it lands'],
+  ['ui/webview/file-trail.test.ts', 'the first module the property reaches and the name does not'],
+  ['ui/webview/file-view-text-size.test.ts', 'the second module the property reaches and the name does not'],
+];
 const DISCLOSURE_CLAUSES = [
   ['which runs before that job installs Chromium', 'why they skip there'],
   ['so none of their browser scenarios runs where landing is gated', 'that none of their browser scenarios runs where landing is gated (a source pin in a leg runs there without a browser)'],
   ['what gates the follow-on there is its source pins', 'what does gate the follow-on there'],
   ['the shared roster of browser legs, ' + ROSTER.join('/'), 'the road that runs them with a browser, the shared roster by its file name'],
   ['a change of its own that this branch does not carry', 'that the roster is not this branch\'s to add'],
+  ...NAME_CLAUSES,
 ];
+/** The clauses of DISCLOSURE_CLAUSES a disclosure sentence lacks, each with what it says. */
+const missingClauses = (sentence) => DISCLOSURE_CLAUSES.filter(([clause]) => !sentence.includes(clause));
 
 test('the follow-on\'s browser legs and the job that gates a landing, a two-state pin over the shared convention: the legs are derived by name from the tree (the -browser.test.ts modules whose own text names the follow-on; the property-keyed definition of a browser leg is PR 887\'s compiler census, once it lands) and each launches through real-viewer-leg.ts\'s inBrowser, the helper a roster\'s switch reaches, read comment-stripped under any launch spelling, with no launch and no stand-down (a skip or todo call or option) of its own; where the tree carries the roster, the exclusions, the step directly after the Chromium install in the vscode-extension job and the helper\'s switch (state A) every leg is a roster line and no exclusions line and the roster\'s tree test exists, and the Tests paragraph no longer says none of their browser scenarios runs where landing is gated; where it carries none of the four (state B) the Tests paragraph discloses that the legs skip in the gating job\'s Test step, what gates the follow-on there and the roster by name as the road, with no count of the legs in any wording; a tree with some of the four is refused, naming them; behind L6\'s gate every browser leg the delta adds or modifies is among the derived legs', (t) => {
   const legs = browserLegs();
@@ -772,6 +788,13 @@ test('the follow-on\'s browser legs and the job that gates a landing, a two-stat
   // the count guard, driven: a count of the legs in any wording is one, a number quantifying another noun is not
   for (const counted of ['the eight browser legs skip', 'derives the eight legs from the tree', 'the legs, eight of them, skip', '8 Chromium legs', 'the two pytest modules it added', 'the modules, two of them,']) assert.ok(legsCount(counted), 'a count of the legs: ' + counted);
   for (const fine of ['one compiled bundle path per line', 'the legs skip at launch', 'no leg runs there', 'the roster of browser legs, vscode-extension/ci-browser-legs.txt, one compiled bundle path per line', 'three runs of the legs', "the file review's round 8, extra8-2: the legs were the feature's evidence", 'in 3 runs the legs passed', 'one of the modules the section names', 'two of the legs']) assert.equal(legsCount(fine), null, 'no count of the legs (a partitive of a subset is none, a label is none): ' + fine);
+  // the clause read, driven: a synthetic disclosure carrying every clause lacks none, and the same sentence with the file review's round 9's
+  // wording of the derivation in place of the name-keyed clauses (the wording the file review's round 10, extra6-2, called false) lacks
+  // exactly those (the author's closing pass after the file review's round 10, mechanism-3)
+  const synthetic = DISCLOSURE + ', ' + DISCLOSURE_CLAUSES.map(([clause]) => clause).join(', ') + ' as SKIP).';
+  assert.deepEqual(missingClauses(synthetic), [], 'a disclosure carrying every clause lacks none');
+  const round9 = DISCLOSURE + ', ' + DISCLOSURE_CLAUSES.filter((c) => !NAME_CLAUSES.includes(c)).map(([clause]) => clause).join(', ') + ', derives the legs from the tree, as the browser modules whose own text names this follow-on, holds each to a launch through inBrowser as SKIP).';
+  assert.deepEqual(missingClauses(round9), NAME_CLAUSES, 'the file review\'s round 9\'s wording of the derivation lacks exactly the clauses on the key, the census and the two modules');
   assert.deepEqual(rosterLines('# a comment\n\nout-tests/ui/webview/a-browser.test.js\n  # indented comment\nout-tests/ui/webview/b-browser.test.js\n'), ['out-tests/ui/webview/a-browser.test.js', 'out-tests/ui/webview/b-browser.test.js'], 'roster lines: comments and blanks dropped, lines as written');
   assert.deepEqual(excludedBundles('# c\nout-tests/ui/webview/a-browser.test.js\tlaunches Firefox\n'), ['out-tests/ui/webview/a-browser.test.js'], 'exclusions: the bundle before the tab');
   // the tree's state
@@ -793,7 +816,7 @@ test('the follow-on\'s browser legs and the job that gates a landing, a two-stat
     assert.ok(disclosureAt >= 0, 'the Tests paragraph discloses that the legs skip in the gating job\'s Test step (the tree carries none of the roster, the exclusions, the step and the switch: ' + picture + '); the sentence opens ' + JSON.stringify(DISCLOSURE));
     const sentence = tests.slice(disclosureAt, tests.indexOf('as SKIP). ', disclosureAt) + 'as SKIP).'.length);
     assert.ok(sentence.length > DISCLOSURE.length && sentence.endsWith('as SKIP).'), 'the disclosure runs to its closing citation of the gating run\'s log: ' + sentence.slice(-120));
-    for (const [clause, what] of DISCLOSURE_CLAUSES) assert.ok(sentence.includes(clause), 'the disclosure says ' + what + ' (' + JSON.stringify(clause) + '): ' + sentence);
+    assert.deepEqual(missingClauses(sentence).map(([clause, what]) => what + ' (' + JSON.stringify(clause) + ')'), [], 'the disclosure carries every clause; the ones it lacks say: ' + sentence);
     assert.equal(legsCount(sentence), null, 'the sentence counts no legs (the legs are derived here, never typed there): ' + legsCount(sentence) + ' in: ' + sentence);
     assert.equal((tests.match(new RegExp(ROSTER.join('\\/'), 'g')) || []).length, 1, 'the roster is named once in the Tests paragraph, as the road');
     t.diagnostic('state B: the tree carries none of the roster, the exclusions, the step and the switch; the Tests paragraph discloses the skip and names the roster as the road');
