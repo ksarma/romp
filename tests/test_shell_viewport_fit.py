@@ -77,12 +77,14 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         self.js = km._LANDING_MOBILE_JS
 
     def test_it_drives_app_h_off_the_live_visual_viewport(self):
-        # pinch-aware since 2026-08-19: desktop (fine pointer) reads innerHeight outright — pinch-immune
+        # pinch-aware since 2026-08-19: desktop (fine pointer) reads the layout height outright, pinch-immune
         # in every browser, no scale arithmetic (desktop Firefox does not reliably report vv.scale during
         # a pinch); the visual viewport drives the fit only on coarse-pointer devices, where the soft
         # keyboards and collapsing toolbars it exists for live, scale-guarded against mobile pinches.
+        # The layout height is layoutH() (the root's clientHeight), not window.innerHeight, which WebKit
+        # shrinks to the visual viewport under a pinch (tests/test_layout_viewport_height.py).
         self.assertIn("var coarse=window.matchMedia&&matchMedia('(pointer: coarse)').matches;", self.js)
-        self.assertIn("var h=(!coarse||!vv)?window.innerHeight:Math.round(vv.height*(vv.scale||1));", self.js)
+        self.assertIn("var h=(!coarse||!vv)?layoutH():Math.round(vv.height*(vv.scale||1));", self.js)
         self.assertIn("setProperty('--app-h',h+'px')", self.js)
 
     def test_it_refits_on_the_events_ios_actually_changes_the_height_on(self):
