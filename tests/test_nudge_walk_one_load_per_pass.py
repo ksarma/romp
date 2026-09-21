@@ -2151,9 +2151,9 @@ class _WalkHarness(unittest.TestCase):
         module's attribute is outside it); the
         names the restoring rebind moves, subtracted, so a stub a case leaves on one of the judge's directory or path names is
         overwritten by the rebind and not named (setUp's check has the same edge); TICK_REBOUND_KM and TICK_REBOUND_JD, the
-        allowance for a global the tick itself rebinds, empty today and checked only to name a live global; and _INTERPRETER_GLOBALS,
-        the warnings registry the interpreter writes into a module's globals on the first warning raised from it, set aside by name
-        (a kernel warning inside a harness case is no stub; before this, it red the case's cleanup naming the registry)."""
+        allowance for a global the tick itself rebinds, empty today and checked, after both restores, only to name a live global; and
+        _INTERPRETER_GLOBALS, the warnings registry the interpreter writes into a module's globals on the first warning raised from it,
+        set aside by name (a kernel warning inside a harness case is no stub; before this, it red the case's cleanup naming the registry)."""
         journals = [jd._overrides_dir() / (sid + ".jsonl") for sid in SIDS + (SID_C,)]   # under this test's root, resolved before the rebind back
         for k, v in self.saved.items():
             setattr(km, k, v)
@@ -2181,8 +2181,6 @@ class _WalkHarness(unittest.TestCase):
         pre_rebind = dict(vars(jd))                      # the judge's globals AT the restoring rebind, so the names it moves are the diff
         jd._rebind_state(self.saved_state)               # the root goes back the way it was found (the parse entries go with it)
         moved = {k for k, v in vars(jd).items() if pre_rebind.get(k, _UNSET) is not v}
-        stale = ([k for k in TICK_REBOUND_KM if k not in self.before_km] + [k for k in TICK_REBOUND_JD if k not in self.before_jd])
-        self.assertEqual(stale, [], "an allowance row names a global the snapshot holds; these name none: %r" % stale)
         leaked = {}
         for label, mod, before, allowed, subtract in (("kernel", km, self.before_km, TICK_REBOUND_KM, set()),
                                                       ("judge", jd, self.before_jd, TICK_REBOUND_JD, moved)):
@@ -2206,10 +2204,15 @@ class _WalkHarness(unittest.TestCase):
                     delattr(getattr(mod, cls_name), attr)
             if names:
                 leaked[label + " class attributes"] = ["%s.%s" % k for k in names]
+        stale = ([k for k in TICK_REBOUND_KM if k not in self.before_km] + [k for k in TICK_REBOUND_JD if k not in self.before_jd])
+        if stale:                                        # read after both restores, so a stale row reds this cleanup with no leak left in place
+            leaked["stale allowance rows"] = stale
         self.assertEqual(leaked, {}, "every kernel and judge global, and every attribute of every class either module defines, is the "
                                      "object setUp's first snapshot held once the saved names are back (the names the rebind moves "
                                      "subtracted); these were rebound, added or deleted by this case outside REPLACED_KM, CASE_KM, "
-                                     "REPLACED_JD, CASE_JD, the two doors and Sessions.backend_for, and are put back here: %r"
+                                     "REPLACED_JD, CASE_JD, the two doors and Sessions.backend_for, and are put back here; a key "
+                                     "'stale allowance rows' names a TICK_REBOUND row for a global the snapshot does not hold (checked "
+                                     "after the restores, so a stale row never leaves a leak in place): %r"
                                      % leaked)
 
     def _toggle(self, enabled):
