@@ -62,8 +62,10 @@ receiver read by a pattern, an array pattern over anything but a list, is refuse
 stay untyped with the receiver inside them), an assignment, which types the name in the scope that DECLARES it (a closure's
 write to an outer name types the outer binding), a helper's return (its expression body, the last child of the function that
 is not a parameter, so `(page) => page` returns its parameter; or its `return` statements), a helper's parameters (from the
-types of the arguments at each call of it, or a default's), and a for-of's declaration over a list (a pattern there is
-followed the same way); a write of a receiver into a member of a declared object (`pages[app] = page`) makes that object a
+types of the arguments at each call of it, or a default's), and a for-of's DECLARATION over a list (a pattern there is
+followed the same way; a for-of whose target is no declaration, a bound name, a member, an object or array pattern written as
+an assignment target, `for await` included, binds no element, so one over a receiverish iterable is refused at the statement:
+the maintainer's round 6, correctness-1); a write of a receiver into a member of a declared object (`pages[app] = page`) makes that object a
 TABLE of the receiver's type, whose every member read is one. Names resolve by function scope: every binding of the tree is
 declared before the typing starts (a parameter, a declaration, a function's or a class's name, an import binding, a catch
 variable, the names inside a destructuring pattern), a parameter or a declaration inside a helper shadows the module's, and
@@ -129,7 +131,10 @@ node:fs, the one module-level `const require = createRequire(...)` (a second cre
 refused) and `require("playwright")` (a require of any other module or of a built name, and `require` read as a value, are
 refused); a dynamic `import()` is refused whatever its argument. A loop's exit is a bound this census reads only where the
 header states it: a while, do or for statement whose header (the condition, a for's incrementor) holds a receiver, the budget
-or its poll is refused, since its exit depends on what it reads and no timeout caps it (the budget's waitFor is the driver's
+or its poll, or CALLS a helper the walk resolves to one that reads a receiver, the budget, its poll or fetch, in its own body
+or through the helpers it calls over the calls the walk follows (the maintainer's round 6, tests-1: the same poll written one
+call out of the header passed, since the rule keyed on a node in the header and not on what the header's callees resolve to),
+is refused, since its exit depends on what it reads and no timeout caps it (the budget's waitFor is the driver's
 one receiver-reading loop, its own `while` reading the budget's clock; the driver's counter loops call receivers in their
 bodies and are followed, a for-of is bounded by its iterable), and a helper in a call cycle (it calls itself, directly or
 through another helper, a call inside a callback of its body included, over the graph of the calls the walk follows) is
@@ -140,6 +145,8 @@ a `timeout` on a launch or a context or a `waitUntil` on a navigation is a wait 
 there is an option the walk cannot name. Disclosed, the class the census cannot see, drawn as the rule over what the walk
 resolves to no receiver and not as a list of shapes: (1) a wait spelled by CONTROL FLOW rather than by a call the census
 reads: a loop whose exit is decided in its body (`for (;;) { if (await ...count()) break; }`, a flag a receiver read sets),
+a loop whose header calls a helper the walk does NOT resolve to a function (one held in a literal's member, reached through a
+road the walk does not follow), since the header rule follows the helpers the walk resolves and no other,
 a loop whose header reads no receiver (a busy loop over Date.now in the driver; one inside a callback handed to evaluate is
 bounded by budget.bounded since pass 11, and one handed to waitForFunction by its capped timeout), CPU-bound work, and an awaited
 object whose `then` never settles, since the census reads call sites and their timeouts and resolves no loop's exit beyond the
@@ -587,11 +594,16 @@ class Walk:
             return None
         if k == "ForOfStatement":
             ki = self.kind_of(kids[1])
-            if isinstance(ki, tuple) and ki[0] == "list" and kids[0]["k"] == "VariableDeclarationList":
-                for d in self.kids(kids[0]):
-                    dk = self.kids(d)
-                    if dk:
-                        self._bind_pattern(self.scope_of(d), dk[0], ki[1], d)   # the element's type into the name or the pattern
+            if kids[0]["k"] == "VariableDeclarationList":
+                if isinstance(ki, tuple) and ki[0] == "list":
+                    for d in self.kids(kids[0]):
+                        dk = self.kids(d)
+                        if dk:
+                            self._bind_pattern(self.scope_of(d), dk[0], ki[1], d)   # the element's type into the name or the pattern
+            elif receiverish(ki):
+                # the target is no declaration (a bound name, a member, an object or array pattern as an assignment target, `for await`
+                # over any of them): the walk bound no element, so the type would flow to a name or a member it cannot type
+                self.refuse(n, "a for-of over %s whose element the walk did not bind: its target is a %s, not a declaration, so the element reaches a name or a member the walk does not type" % (show(ki), kids[0]["k"]))
             return None   # a table, a record or a receiver iterated is refused in _consume
         if k == "ImportDeclaration":
             spec = next((c for c in kids if c["k"] == "StringLiteral"), None)
@@ -1071,12 +1083,32 @@ class Walk:
             return self.kids(n)[-1:]
         return [c for role, c in zip(n.get("roles", []), self.kids(n)) if role in ("condition", "incrementor")]
 
+    def _reads(self, fnid, seen):
+        """Whether the helper (by id) reads a receiver, the budget, its poll or fetch: in its own body, or in a helper it calls,
+        over the calls the walk follows (_invoke's edges), a seen set against cycles. A helper the walk did not resolve to a
+        function is not here: a header calling one is the disclosed class."""
+        if fnid in seen:
+            return False
+        seen.add(fnid)
+        node = self.fn_nodes.get(fnid)
+        if node is None:
+            return False
+        for m in self._subtree(node):
+            k = self.kind_of(m)
+            if receiverish(k) or k in AUX or (m["k"] == "Identifier" and m.get("t") == "fetch"):
+                return True
+        return any(self._reads(dst, seen) for src, dst in self.call_edges if src == fnid)
+
     def _loops(self):
-        """A while, do or for statement whose HEADER holds a receiver, the budget or its poll is refused: its exit depends on
-        what it reads, a wait with no timeout this census can read. The budget's waitFor is the driver's one receiver-reading
-        loop, and its own `while` reads the budget's clock alone. A for-of is bounded by its iterable and followed (a list's
-        elements are typed); a loop whose header reads no receiver is followed whatever its body reads (the driver's counter
-        loops call receivers inside); a loop whose exit is decided in its body is the disclosed class's first member."""
+        """A while, do or for statement whose HEADER holds a receiver, the budget or its poll, or calls a helper the walk
+        RESOLVES to one that reads a receiver, the budget, its poll or fetch (in its body or through the helpers it calls,
+        _reads), is refused: its exit depends on what it reads, a wait with no timeout this census can read. Keyed on what the
+        header's callees resolve to and not on a node in the header (the maintainer's round 6, tests-1: `const c9 = async () =>
+        pages.feed.locator(s).count(); while (!(await c9())) {}` passed with no refusal). The budget's waitFor is the driver's
+        one receiver-reading loop, and its own `while` reads the budget's clock alone. A for-of is bounded by its iterable and
+        followed (a list's elements are typed); a loop whose header reads no receiver and calls no such helper is followed
+        whatever its body reads (the driver's counter loops call receivers inside); a loop whose exit is decided in its body, or
+        whose header calls a helper the walk does not resolve, is the disclosed class's first member."""
         for n in self.nodes:
             if n["k"] not in LOOP_KINDS:
                 continue
@@ -1084,6 +1116,10 @@ class Walk:
                 hit = next((m for m in self._subtree(h) if receiverish(self.kind_of(m)) or self.kind_of(m) in AUX), None)
                 if hit is not None:
                     self.refuse(n, "a %s whose header reads %s: a loop whose exit depends on what it reads, a wait with no timeout this census can read (the budget's poll is the driver's one such loop)" % (n["k"], show(self.kind_of(hit))))
+                    break
+                helper = next((m for m in self._subtree(h) if isinstance(self.kind_of(m), tuple) and self.kind_of(m)[0] == "fn" and self._reads(self.kind_of(m)[1], set())), None)
+                if helper is not None:
+                    self.refuse(n, "a %s whose header calls a helper that reads a receiver, the budget, its poll or fetch (resolved through the calls the walk follows): a loop whose exit depends on what it reads, a wait with no timeout this census can read" % n["k"])
                     break
 
     def _cycles(self):
@@ -1249,7 +1285,7 @@ CONTROLS = ("count-control", "identity-control", "hook-control", "evaluate-fn-co
 # the disclosed class, passing by disclosure (the rule is the module docstring's Disclosed paragraph; these are its witness rows,
 # by member): a wait with no timer, promise, script, module or playwright name as a node, and a call on a root the walk resolves
 # to no receiver and reads nothing of (a known global or a known member of a global or a module, with any argument, however reached)
-DISCLOSED = ("busy-loop", "thenable-await", "poll-break-loop", "cpu-bound-work", "array-sort-cpu", "date-now-bound-busy",
+DISCLOSED = ("busy-loop", "thenable-await", "poll-break-loop", "poll-header-unresolved-helper", "cpu-bound-work", "array-sort-cpu", "date-now-bound-busy",
              "fs-blocking-read", "fs-blocking-fifo", "fs-alias-read", "fs-member-bound", "named-import-known-member", "fs-default-import-read", "fs-namespace-import-read")
 PLANTS = (
     ("var-held-page", "const p = pages.feed; await p.locator(cfg.provSel).textContent();", "unlisted"),
@@ -1423,6 +1459,21 @@ PLANTS = (
     ("options-computed-key", 'await pages.feed.locator(%s).waitFor({ ["timeout"]: 60000 });' % SEL, "refused"),
     # the disclosed class's first member, redrawn as control flow: a loop whose exit is decided in its body
     ("poll-break-loop", "for (;;) { if (await pages.feed.locator(%s).count()) break; }" % SEL, "passed"),
+    # pass 11 (the maintainer's round 6, tests-1): the same poll one call out of the header, two calls out, the budget one call out and a
+    # fetch behind a helper are refused (the header's callees resolved over the calls the walk follows); a poll behind a helper the walk
+    # does not resolve (one held in a literal's member) is the disclosed class's first member, pinned as passing
+    ("poll-header-one-out", "const c9 = async () => pages.feed.locator(%s).count(); while (!(await c9())) {}" % SEL, "refused"),
+    ("poll-header-two-hop", "const inner7 = async () => pages.feed.locator(%s).count(); const outer7 = async () => inner7(); while (!(await outer7())) {}" % SEL, "refused"),
+    ("budget-header-one-out", "const lf = () => budget.left(); while (lf() > 0) {}", "refused"),
+    ("fetch-header-helper", "const fh = async () => (await fetch(cfg.tunnelsUrl)).ok; while (!(await fh())) {}", "refused"),
+    ("poll-header-unresolved-helper", "const o9 = { c: async () => pages.feed.locator(%s).count() }; while (!(await o9.c())) {}" % SEL, "passed"),
+    # pass 11 (the maintainer's round 6, correctness-1): a for-of whose target is no declaration binds no element and is refused at the
+    # statement, in every target spelling: a bound name, an object pattern, a member, an array pattern, and `for await` over a bound name
+    ("for-of-bound-name", "let fo1; for (fo1 of [pages.feed]) await fo1.locator(%s).textContent();" % SEL, "refused"),
+    ("for-of-object-target", "let fo2; for ({ p: fo2 } of [{ p: pages.feed }]) await fo2.locator(%s).textContent();" % SEL, "refused"),
+    ("for-of-member-target", "for (out.fo3 of [pages.feed]) await out.fo3.locator(%s).textContent();" % SEL, "refused"),
+    ("for-of-array-target", "let fo4; for ([fo4] of [[pages.feed]]) await fo4.locator(%s).textContent();" % SEL, "refused"),
+    ("for-await-bound-name", "let fo5; for await (fo5 of [pages.feed]) await fo5.locator(%s).textContent();" % SEL, "refused"),
     ("cpu-bound-work", '"x".repeat(2 ** 30);', "passed"),
     ("array-sort-cpu", "new Array(2 ** 26).fill(0).sort();", "passed"),
     ("date-now-bound-busy", "const nowF = Date.now; for (const t0 = nowF(); nowF() - t0 < 100000;) {}", "passed"),
@@ -1517,6 +1568,9 @@ REFUSED_CELLS = {
     # the delay's NAME is the parameter's but an inner declaration shadows it: resolved by scope, not by spelling
     "sleep-shadowed-delay": ("const budget5 = makeBudget({ sleep: (ms) => new Promise((r) => { const ms = 100000; setTimeout(r, ms); }) });", "a timer under the budget's sleep whose delay is not the sleep's own argument"),
     "receiver-loop": ("while (!(await pages.feed.locator(s).count())) {}", "a WhileStatement whose header reads a locator"),
+    # pass 11 (the maintainer's round 6, tests-1 and correctness-1): a header's callee resolved to a reading helper; a for-of with no declaration
+    "helper-header-loop": ("const c9 = async () => pages.feed.locator(s).count(); while (!(await c9())) {}", "a WhileStatement whose header calls a helper that reads"),
+    "for-of-no-declaration": ("let fk; for (fk of [pages.feed]) {}", "a for-of over a list of a page whose element the walk did not bind"),
     "budget-loop": ("do {} while (budget.left() > 0);", "a DoStatement whose header reads a budget"),
     "call-cycle": ("const pc = async () => (await pages.feed.locator(s).count()) || pc(); await pc();", "a helper in a call cycle"),
     "unread-option": ('await pages.feed.goto(u, { timeout: budget.capped(x), waitUntil: "load" });', "page.goto({ waitUntil }): an option the driver does not pass"),
