@@ -157,9 +157,13 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         # PR E's author's pass 1b (applying the maintainer's round 1 addendum) marked a spacer row whose view was switched away before its frame `view: "inactive"` (sh and ch null: no
         # geometry, and the row says so; ui/webview/scroll-write.ts spacerRow). The chat allowlist did not name the key, so the kernel
         # dropped it with a stderr line, and the stored row was byte-identical to an active view's row read with #content missing: the
-        # marker was the only distinguisher and never reached the journal (the maintainer's round 2 ruling). The fixture census below is green with or
-        # without the key, so this is the regression pin: the marked row through the real dispatch, stored whole. The key carries one
-        # fixed word and no host name, and is the chat surface's alone.
+        # marker was the only distinguisher and never reached the journal (the maintainer's round 2 ruling). The fixture census below
+        # mirrored the table, so it stayed green while the poster's real row lost its marker: a table key with no fixture reds it, and
+        # always did, but a key the table lacked and a poster sent was outside what it could see. The second spacer fixture row added
+        # with the key, the inactive shape beside the numeric one, makes the census an executed pin of the marker's shape too (drop the
+        # key from the table now and the census reds with this test: the maintainer's round 3 ruling G, correcting a comment that said
+        # the census was green either way); this test is the dispatch-level pin: the marked row through the real handler, stored whole.
+        # The key carries one fixed word and no host name, and is the chat surface's alone.
         row = {"sid": WID, "top": [40, 48], "bot": [0, 0], "dTop": 8, "dBot": 0, "sh": None, "ch": None, "view": "inactive"}
         err = self.post("chat", "spacer", row)
         self.assertEqual(err, "", "the marker is admitted whole, nothing said: %s" % err)
