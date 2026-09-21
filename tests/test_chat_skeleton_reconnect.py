@@ -1169,26 +1169,43 @@ class SkeletonReconnect(unittest.TestCase):
         # record outlived its set, and _watched_tab demoted the page's own declared tab out of _push's active-first batch. By reading,
         # no client of this tree posts a second ready on one socket (render.ts once at evaluation, the shim's re-post on a new socket
         # alone, federation.ts once per remote socket, the extension's pipe once per up): the arm's own re-base branch is the road, and
-        # this drives it. Red before: the record stood through the reset and the build order was ['docs', 'web', 'tests'].
+        # this drives it over the client shape the ?skeleton=1 handshake mints (kernel.py's _ws: reconnect, dietSkeleton and
+        # skeletonOnReady, no redial), the way the socket meets it: the pre-ready pusher cycle (fresh: the branch skipped, no record),
+        # the first ready (the reset re-arms `reconnect`, the connect push resolves and RECORDS), then the second ready, the re-base.
+        # The pass-8 verify (kernel-1) found the first cut of this test drove a minted shape no handshake produces (reconnect with
+        # neither redial nor skeletonOnReady) through the socket's FIRST ready; the reset's behaviour is shape-independent, so the
+        # fix was right and the sentence promised a road the pin did not travel. Red before (this test as written against the kernel
+        # before the reset's pop, mutations note MJ9): the record stood through the reset and the build order was
+        # ['api', 'docs', 'web', 'tests'], api (the stale record) first and web (the page's declared tab) third.
         km._PENDING_REVEAL.clear()
         row = {"state": "working", "since": 1781100000, "model": "", "effort": "", "mode": "", "backend": "sdk"}
         km._live_map = lambda: {S2: dict(row), S1: dict(row)}
+        ready = lambda cl: km.Handler._dispatch_ws(_Self(lambda x: km._push([x], connect=True)), {"type": "ready", "proto": 2}, cl)
         try:
             with contextlib.redirect_stderr(io.StringIO()):
                 self.assertFalse(km._reveal_request(S2, "W1", via="ack", cols=1), "parked, one column declared")
-                c = self._client(active=S1, reconnect=True, wid="W1", col="")
+                c = self._client(active=S1, reconnect=True, dietSkeleton=True, skeletonOnReady=True, wid="W1", col="")
                 km._clients.append(c)
-                km._push([c])
-            self.assertEqual(c.get("preferred"), S2, "test_12f's state: the record stands after the resolve")
+                km._push([c])                                   # the pre-ready pusher cycle: fresh, the branch skipped
+                self.assertNotIn("preferred", c, "the pre-ready pop under `fresh` writes no record")
+                ready(c)                                        # the first ready: the reset re-arms, the connect push resolves and records
+            self.assertEqual(c.get("preferred"), S2, "the first ready's connect push recorded the preference")
+            self.assertEqual(km._watched_tab(c), S2, "the readers see the record while it stands")
             del self.built[:]
             c["_frames"].clear()
+            km._built_chat.clear()                              # the pusher's warm memo, cleared so the second push's build ORDER is observable
             with contextlib.redirect_stderr(io.StringIO()):
-                km.Handler._dispatch_ws(_Self(lambda cl: km._push([cl], connect=True)), {"type": "ready", "proto": 2}, c)   # the re-base: the reset, then the connect push
+                ready(c)                                        # the second ready: the re-base (the reset, then the connect push)
             self.assertEqual(self._names(self.built), ["web", "docs", "api", "tests"],
                              "the re-based renderer's active-first batch is the page's declared tab (web), the transcript-less docs with it, "
                              "then the rest in strip order; before the reset dropped the record, api (the stale record) was built first and "
                              "web third: %r" % (self._names(self.built),))
-            self.assertNotIn("preferred", c, "the reset forgets the record with the set it belongs to")
+            sent = [f["id"] for f in c["_frames"] if f["type"] == "session"]
+            self.assertEqual(self._names(sent)[:1], ["web"], "the first session frame the re-base sends is the page's declared tab: %r" % (self._names(sent),))
+            for k in ("preferred", "skeleton", "skeletonOrder", "reconnect", "skeletonOnReady"):
+                self.assertNotIn(k, c, "%s: the reset forgets the record with the set it belongs to" % k)
+            self.assertEqual(sorted(self._names(c.get("echat", {}))), ["api", "docs", "tests", "web"],
+                             "echat cleared by the reset and refilled by the connect push with the four served whole")
             self.assertEqual(km._watched_tab(c), S1, "the readers see the page's own declared tab again")
             self.assertEqual(c["active"], S1, "the page's declaration was never overwritten")
             # the family rule both ways: a DECLARED redial keeps its beliefs through a ready, the record among them (the reset's guard)
@@ -1207,7 +1224,8 @@ class SkeletonReconnect(unittest.TestCase):
         # pop, then a second strip sender (_push_session_now) and a second push, neither of which may re-enter: road A (a redial), road B
         # (a skeleton column: the pre-ready pop skips the branch under `fresh`, the ready-time re-arm enters once), road C (a redial of a
         # skeleton column). The spy counts the branch's pops of `preferred` by caller and what each found. Red under a kernel whose
-        # resolve reads the flag without consuming it (every sender re-enters: two pops, the second finding the record).
+        # resolve reads the flag without consuming it (every sender re-enters: three pops from the three senders on each road, the
+        # second finding the record; `3 != 1`, mutations note MI5).
         class _PopSpy(dict):
             def __init__(self, *a, **k):
                 super().__init__(*a, **k)

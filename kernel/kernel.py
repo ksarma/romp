@@ -54994,7 +54994,9 @@ def _client_reset_chat_base(client):
             #   _watched_tab demoted the page's own declared tab out of _push's active-first batch. By reading, no client of this tree posts a
             #   second ready on one socket (render.ts posts once at evaluation, the shim re-posts on a new socket alone, federation.ts once per
             #   remote socket, the extension's pipe once per up), so the arm's own re-base branch is the road; driven by
-            #   tests/test_chat_skeleton_reconnect.py test_12g. A declared redial keeps its record with its set, as the guard above says.
+            #   tests/test_chat_skeleton_reconnect.py test_12g over the ?skeleton=1 handshake's own client shape (reconnect, dietSkeleton,
+            #   skeletonOnReady): the first ready's connect push records, the second ready re-bases. A declared redial keeps its record
+            #   with its set, as the guard above says.
         # A SKELETON client (a later chat column, ?skeleton=1 at its handshake, 2026-09-11): the pop above took the
         # `reconnect` the handshake armed, with the set a pre-ready pusher cycle may have built into a document that
         # could not hear it. Re-armed HERE, from the survivor, so the ready arm's connect push serves the page the same
@@ -62078,9 +62080,13 @@ def _take_live_wake_sids():
 def _watched_sids():
     """The chat tabs connected clients are looking at, by each alive, ready chat client's own declaration: its active sid (the
     ?active= connect hint or the activeTab message), the page's word, for the live-wake exemption. _push's active-first set
-    equals this set except while a parked-reveal preference's record stands on a client, when _push reads the record in the
-    declaration's place (_watched_tab, _watched_set); the exemption stays on the page's word (the reviewer's round-5 ruling),
-    so the two sets are named apart here (pass 8, the author's label, taking the reviewer's round-6 finding kernel-1)."""
+    differs from this set in two ways, its population and its field: _push filters its targets by _client_ready alone and
+    reaps a socket a handler thread marked dead (`alive` False) at the cycle's end, so such a socket's declaration counts
+    there for that cycle and never here; and while a parked-reveal preference's record stands on a client, _push reads the
+    record in the declaration's place (_watched_tab, _watched_set). Over live clients with no record standing the two sets
+    are equal. The exemption stays on the page's word (the reviewer's round-5 ruling), so the two sets are named apart here
+    (pass 8, the author's label, taking the reviewer's round-6 finding kernel-1; the population difference stated at the
+    pass-8 verify's finding kernel-3)."""
     with _clients_lock:
         return {str(c["active"]) for c in _clients
                 if c.get("app") == "chat" and c.get("alive", True) and _client_ready(c) and c.get("active")}
