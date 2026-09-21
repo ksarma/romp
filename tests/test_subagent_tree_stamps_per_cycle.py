@@ -55,8 +55,10 @@ the walk) is held for the cycle like a clean one, its pair and its stamps, and w
 launch fold that did not read the file is folded once per read (the call-local
 hold) and again by the next read (not held for the cycle) while one that read it is held for the cycle, with the fault's
 producer driven for real (the reader's fail path, a raising fold, a readable file); the generation is read before each disk
-read, so an eviction landing inside the root's lstat, an own stat or a launch fold's resolution leaves that hold outdated
-and the next lookup validates, stats or folds it once more (D lstats, 1 stat, 1 fold) instead of serving it; a root gone mid-cycle whose entry stood
+read, the pair's two hold sites (the validated hit's and the clean walk's, both in _subagent_tree) under the one read before
+the root's lstat, so an eviction landing inside the root's lstat (the walk's hold), inside a validation lstat after the hit
+was read (the hit's hold), inside an own stat or inside a launch fold's resolution leaves that hold outdated and the next
+lookup validates, walks, stats or folds it once more (D lstats, D lstats, 1 stat, 1 fold) instead of serving it; a root gone mid-cycle whose entry stood
 moves the gen and records its own eviction, and a sibling tree the scope held is still served (the eviction is that root's,
 not the sibling's), while one with no entry moves nothing; the two pop paths, each found by a thread with no hold on the
 root while another thread's scope holds it (the tree removed, and the tree replaced by a regular file; round 1 of #882,
@@ -1072,14 +1074,17 @@ class Guards(_World):
                              % (cost3,))
 
     def test_an_eviction_landing_inside_the_roots_read_outdates_the_pair_so_the_next_read_validates_again(self):
-        """The generation is read BEFORE the disk read at each of the three hold sites (the pair's before the root's lstat,
-        here; the own stat's before its stat and the launch fold's before its file's resolution, the two cases below), so an
-        eviction that lands inside the read leaves the hold outdated and the next lookup validates, stats or folds once more
-        instead of serving an entry under a value that already counts the eviction: the safe side, one re-validation, as the
-        ledger and the docstrings state. Fires the own root's eviction (nobody alive owns it: _subagent_trees_forget) from
-        inside os.lstat of the root, the read's first call, so the read's walk re-inserts the root and the hold is under the
-        generation from before the eviction. Keys on the second read costing D lstats (a validation): a generation read after
-        the root's lstat counts the eviction and serves the pair (0)."""
+        """The generation is read BEFORE the disk read at every hold site: the pair's two, both in _subagent_tree under the one
+        read before the root's lstat (_subagent_scope_hold after a clean walk, the site this case drives, since the forget
+        inside the root's lstat pops the entry and the read walks; and after a validated hit, the twin case below, which the
+        owner's pass before round 2 of #882 found unpinned), the own stat's before its stat and the launch fold's before its
+        file's resolution (the two cases after the twin), so an eviction that lands inside the read leaves the hold outdated
+        and the next lookup validates, walks, stats or folds once more instead of serving an entry under a value that already
+        counts the eviction: the safe side, one re-validation, as the ledger and the docstrings state. Fires the own root's
+        eviction (nobody alive owns it: _subagent_trees_forget) from inside os.lstat of the root, the read's first call, so the
+        read's walk re-inserts the root and the hold is under the generation from before the eviction. Keys on the second
+        read costing D lstats (a validation): a generation read after the root's lstat counts the eviction and serves the
+        pair (0)."""
         root = str(self.sub)
         self._open()
         real_lstat, fired = os.lstat, [0]
@@ -1101,6 +1106,52 @@ class Guards(_World):
                          "eviction inside it: %r; keyed on (D = %d, D): the hold is outdated by that eviction, so this read validates again; "
                          "a generation read after the root's lstat counts the eviction and serves the pair (0, D)"
                          % ((sp.total()["dir_lstat"], len(dirs2)), D))
+        with self._spy() as sp:
+            km._subagent_tree(root)
+        self.assertEqual(sp.total()["dir_lstat"], 0, "held again, under a generation that counts the eviction: served")
+
+    def test_an_eviction_landing_inside_a_validation_lstat_after_the_hit_was_read_outdates_the_hit_paths_hold_too(self):
+        """The pair's other hold site, the validated hit's (the case above drives the clean walk's). _subagent_tree holds the
+        pair from two sites under the one generation read before the root's lstat, _subagent_scope_hold after a validated hit
+        and after a clean walk; a hit's hold under a generation read after the validation would count an eviction that landed
+        inside the validation and serve the pair past it (the owner's pass before round 2 of #882: that variant left the module
+        green, every ordering case popping the entry inside the root's lstat and so driving the walk). Fires the forget inside
+        os.lstat of the SECOND directory, a validation lstat after `hit` was read at the memo: the forget pops the entry, the
+        validation goes on and the pair is held through the hit path, under the older generation. Premise: the read took the
+        hit path (hit +1, miss 0) with the one eviction inside it, and the entry the forget popped was not re-inserted (a hit
+        stores nothing). Keys on the next read costing D lstats with miss +1, a walk: the hold is outdated by the eviction
+        inside its validation and the entry is gone; a hit-path hold under a generation read after the validation serves the
+        pair (0 lstats, served +1)."""
+        root, second = str(self.sub), self.dirs[1]
+        sc = self._open()
+        real_lstat, fired = os.lstat, [0]
+
+        def racing(p, *a, **k):
+            st = real_lstat(p, *a, **k)
+            if str(p) == second and not fired[0]:
+                fired[0] = 1
+                km._subagent_trees_forget([])              # the eviction, inside a validation lstat (hit already read at the memo)
+            return st
+        b = self._stats()
+        with mock.patch.object(os, "lstat", racing):
+            dirs1, _s1 = km._subagent_tree(root)
+        d1 = self._delta(b)
+        self.assertEqual((fired[0], len(dirs1)), (1, D), "premise: the eviction ran inside the read and the read answered the tree")
+        self.assertEqual((d1["hit"], d1["miss"], d1["evict"]), (1, 0, 1),
+                         "premise: the read took the HIT path (validated, no walk) with the one eviction inside its validation: %r" % (d1,))
+        self.assertNotIn(root, km._SUBAGENT_TREES, "premise: the entry the forget popped was not re-inserted (the hit path stores nothing)")
+        self.assertIn(root, sc["trees"], "premise: the hit path held the pair")
+        with self._spy() as sp:
+            dirs2, _s2 = km._subagent_tree(root)
+        d2 = self._delta(b)
+        self.assertEqual((sp.total()["dir_lstat"], len(dirs2)), (D, D),
+                         "(os.lstat on the tree's directories, directories) on the read after a HIT-path hold whose generation was read "
+                         "before an eviction inside its validation: %r; keyed on (D = %d, D): the hold is outdated, so this read reads the "
+                         "disk again (a walk, the entry being gone); a hit-path hold under a generation read after the validation counts "
+                         "the eviction and serves the pair (0, D)" % ((sp.total()["dir_lstat"], len(dirs2)), D))
+        self.assertEqual((d2["miss"] - d1["miss"], d2["served"] - d1["served"]), (1, 0),
+                         "that read is a walk and not a served read: (miss, served) moved %r; keyed on (1, 0)" % ((d2["miss"] - d1["miss"], d2["served"] - d1["served"]),))
+        self.assertIn(root, km._SUBAGENT_TREES, "the walk re-inserted the root")
         with self._spy() as sp:
             km._subagent_tree(root)
         self.assertEqual(sp.total()["dir_lstat"], 0, "held again, under a generation that counts the eviction: served")
