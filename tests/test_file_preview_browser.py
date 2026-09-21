@@ -11,9 +11,10 @@ text plus "open"), an absolute path outside the session's folder and the user's 
 note under `a-_b/c_/`, directories whose names begin and end with an underscore: CommonMark's flanking rules make those
 underscores an emphasis pair, and the chat rendered the path's middle as <em>, so its link walk never saw the token and the
 link never rendered (the 2026-09-19 browser census, Entry 5: the lab's own random temp name did this on one CI run; the
-population note md-emphasis-population.md has the class); the fixed synthetic path reproduces it on every run at the head
-before the chat's path-aware emphasis (md-config.ts pathAwareEmphasis), where the driver prints eleven links, or ten on the
-rare run whose random temp names also pair, and is the twelfth link after it. The route itself, asked by hand for a refused
+population note md-emphasis-population.md, a note kept outside the repo, has the class); the fixed synthetic path
+reproduces it on every run at the head before the chat's path-aware emphasis (md-config.ts pathAwareEmphasis), where the
+driver prints eleven links, or ten on the rare run whose random temp names also pair, and is the twelfth link after it.
+The route itself, asked by hand for a refused
 path, answers 403 with the reason and no text. The acceptance includes
 latency: the card stamps the time from the dwell's end to its rendered content; a cached markdown slice (the guide,
 warmed on the pusher's path) must render within 250 ms, and a cold one (a file whose time the test rewrites after the

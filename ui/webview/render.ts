@@ -1490,8 +1490,9 @@ function md(src: string, repo: string | null = prRepoFor()): string {
 // but newlines KEPT — Shift+Enter in the composer means a new line, and the singleton's breaks:false
 // (right for assistant markdown, where a lone newline is a soft wrap) ran a multi-line message together
 // into one paragraph once it landed in the chat (the user 2026-09-06). userMarked is the breaks:true
-// instance in chat-md.ts; the singleton and every assistant surface are untouched. The same PR-reference
-// walk as md(): a `#123` the user typed links to the session's repository too.
+// instance in chat-md.ts; that change left the singleton and every assistant surface untouched (since 2026-09-19 both
+// chat instances take pathAwareEmphasis and md() parses through chatMdHtml: the grammar comment above the singleton says how).
+// The same PR-reference walk as md(): a `#123` the user typed links to the session's repository too.
 function userMd(src: string, repo: string | null = prRepoFor()): string {
   try {
     const clean = sanitizeMd(userMdHtml(src));   // the sanitized <body>, its math rendered

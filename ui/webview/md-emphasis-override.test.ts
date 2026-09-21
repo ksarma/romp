@@ -7,18 +7,29 @@
 //     no pair at all because `/_b` counted as a nested opener), and marked reads a refused opener as text and never
 //     retries it, so the person's emphasis vanished and both underscores showed. Now a run strictly inside a linkable
 //     token is hidden from the closer scan, so the opener pairs with the next closer outside the token;
-//   - the built-in decides the pair on a stand-in `this` of `{ rules, lexer }` and nothing else. That is a contract with
-//     the installed marked, pinned here by a recording proxy: an upgrade whose emStrong reads more from `this` goes red
-//     here by name, where it would otherwise throw inside the override and land in render.ts md()'s catch, which shows
-//     the whole reply as escaped text;
+//   - the built-in decides the pair on a stand-in `this` of `{ rules, lexer }` and nothing else, and the lexer half is a
+//     fake with one member, inlineTokens. That is a contract with the installed marked, pinned here by a recording proxy
+//     at BOTH levels, the reads of `this` and the reads of `this.lexer`: an upgrade whose emStrong reads more from
+//     either goes red here by name, where a read the real half lacks would throw inside the override and land in
+//     render.ts md()'s catch, which shows the whole reply as escaped text, and a read the faked half lacks would return
+//     undefined without a throw and the override would return different pairs with nothing saying so. The pin promises
+//     exactly that much: it records what the INSTALLED marked reads, it cannot know what a later version would read,
+//     and it reds only once that version is installed and this file runs (the version is held by the lockfile, not
+//     enforced by a build check: md-config.ts's DRY_LEXER comment has the fact);
+//   - the override reads no punctuation class from marked: the wholeness test's class is its own, read by code point
+//     (md-config.ts flankedInside), so a memo entry depends on the masked string alone and the string is the whole key.
+//     At the 2026-09-20 head the override read marked's `punctuation` through the memo, so a second instance whose lexer
+//     carried a different class could take, or leave behind, an entry computed under the other's class, and the render
+//     order decided the output (the 2026-09-21 review, B); nothing reachable arms it on marked 12.0.2, whose inline
+//     grammars share one punctuation RegExp, and a throwaway instance whose lexer carries a class of its own does;
 //   - the override reaches the built-in through Tokenizer.prototype (marked's use() gives an override no handle to the
 //     tokenizer it replaced), so an emStrong override registered EARLIER on the same instance would never see a `_` run.
 //     Right while no extension in mdExtensions overrides emStrong, pinned by reading the list and by execution;
-//   - cost: one linear scan per masked paragraph string, remembered in a short most-recently-used list across a
-//     standing pair's body lex (round 2 made the one-slot memo that list of eight, so a link's label or a `*` pair's body
-//     lexed between two prose delimiters no longer evicts the paragraph's entry while fewer than eight DISTINCT such
-//     strings holding a `_` run come between them; md-emphasis-atomic.test.ts counts the scans and pins that bound),
-//     and a binary search per delimiter. Before, the whitespace bounds were walked on every call ahead of the memo (a 20 KB run with
+//   - cost: one linear scan per masked paragraph string per parse, remembered in a memo that lives with the parse's lexer
+//     (md-config.ts linkableMemos: a link's label or a `*` pair's body lexed between two prose delimiters takes an entry
+//     of its own and evicts nothing; the 2026-09-20 review's list of eight most-recently-used entries evicted the
+//     paragraph's at eight distinct such strings and rescanned it once per gap, a quadratic term md-emphasis-atomic.test.ts
+//     now counts and times on the shape that thrashed it), and a binary search per delimiter. Before, the whitespace bounds were walked on every call ahead of the memo (a 20 KB run with
 //     no whitespace and a pair every eleven characters cost sixteen times the base grammar, a run of `(_a_)` thirty),
 //     and a standing pair's body lex evicted the one-slot memo (`_(_a_)_.` repeated, fifty times the base). Measured
 //     here as a ratio to the base grammar on the same string in the same process, the best of interleaved passes, as
@@ -28,7 +39,7 @@
 // placeholder session id.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { Marked, Tokenizer, type MarkedExtension } from "marked";
+import { Lexer, Marked, Tokenizer, type MarkedExtension } from "marked";
 import { hideEdges } from "../test-dom-shim";
 import * as chatMd from "./chat-md";
 import { mdExtensions, pathAwareEmphasis } from "./md-config";
@@ -212,14 +223,30 @@ test("the shapes around it stand: a balanced interior pair, a pair with no close
 
 // ── the stand-in's contract ──────────────────────────────────────────────────────────────────────────────────────────
 
-test("the dry-run stand-in is `{ rules, lexer }` and the installed marked's emStrong reads nothing else from `this`: measured by a recording proxy over every dry call a reply makes", () => {
+test("the dry-run stand-in is `{ rules, lexer }` and the installed marked's emStrong reads nothing else from `this`, and from the stand-in's lexer, the faked half with one member, it reads inlineTokens alone: measured by a recording proxy at both levels over every dry call a reply makes. The pin records what the INSTALLED marked reads and cannot know what a later version would read; it reds by name once that version is installed and this runs", () => {
   const orig = Tokenizer.prototype.emStrong;
   const dryCalls: string[][] = [];
   const read = new Set<string>();
+  const lexerRead = new Set<string>();
   Tokenizer.prototype.emStrong = function (this: Tokenizer, ...args: [string, string, string?]) {
-    if (this instanceof Tokenizer) return orig.apply(this, args);       // a real tokenizer (a `*` run falling through, the singleton): untouched
+    // a real tokenizer arrives here from an instance that reads the prototype at CALL time (the singleton, this file's
+    // `base`, any instance with no emStrong override) or from one whose use() captured this patch; the chat's instances
+    // captured the built-in when they were built (marked's use() reads the previous tokenizer at registration), so a
+    // `*` run falling through the override never reaches this patch. Kept, though no arrival takes it in this test's
+    // order, so a parse on such an instance inside the patched window is attributed to it and not read as a
+    // stand-in-contract failure: untouched
+    if (this instanceof Tokenizer) return orig.apply(this, args);
     dryCalls.push(Object.keys(this));
-    const seen = new Proxy(this as object, { get(t, k, r) { read.add(String(k)); return Reflect.get(t, k, r); } });
+    // the reads of `this`, and, when it reads `lexer`, the reads of that lexer: the faked half of the stand-in, whose one
+    // member is inlineTokens, so a read of any other member returns undefined without a throw and only this records it
+    const seen = new Proxy(this as object, {
+      get(t, k, r) {
+        read.add(String(k));
+        const v = Reflect.get(t, k, r);
+        if (k === "lexer" && v !== null && typeof v === "object") return new Proxy(v as object, { get(lt, lk, lr) { lexerRead.add(String(lk)); return Reflect.get(lt, lk, lr); } });
+        return v;
+      },
+    });
     return orig.apply(seen as Tokenizer, args);
   };
   try {
@@ -232,10 +259,56 @@ test("the dry-run stand-in is `{ rules, lexer }` and the installed marked's emSt
     assert.ok(dryCalls.length >= 8, "the reply reached the built-in on the stand-in " + dryCalls.length + " times");
     for (const keys of dryCalls) assert.deepEqual(keys.sort(), ["lexer", "rules"], "the stand-in carries rules and lexer, nothing else");
     assert.deepEqual([...read].sort(), ["lexer", "rules"], "and it read both");
+    assert.deepEqual([...lexerRead].sort(), ["inlineTokens"], "the built-in read " + JSON.stringify([...lexerRead].sort()) + " from the stand-in's lexer, whose one member is inlineTokens (DRY_LEXER in md-config.ts): a read the fake lacks returns undefined without a throw, and the override would return different pairs with nothing else saying so");
   } finally {
     Tokenizer.prototype.emStrong = orig;
   }
   assert.equal(chatMd.chatMdHtml("see /a-_b/c_/d.md"), "<p>see /a-_b/c_/d.md</p>\n", "the prototype is restored");
+});
+
+// ── the memo's key ───────────────────────────────────────────────────────────────────────────────────────────────────
+
+test("the override reads no punctuation class from marked, so a memo entry depends on the masked string alone: a throwaway instance whose lexer carries a whitespace-only punctuation class renders `_see __init__.py now_` as the chat does, whichever instance renders the paragraph first (at the 2026-09-20 head the override asked marked's class and the render order decided the output: the second instance took the first's entry)", () => {
+  // nothing reachable arms this today: marked 12.0.2 builds one punctuation RegExp and every inline grammar spreads it, so the
+  // chat's two instances hand emStrong the same object; a marked that split the class per grammar would have armed the hole
+  const inline = (Lexer as unknown as { rules: { inline: Record<string, { punctuation: RegExp }> } }).rules.inline;
+  assert.ok(inline.normal.punctuation === inline.gfm.punctuation && inline.gfm.punctuation === inline.breaks.punctuation, "marked's inline grammars share one punctuation RegExp");
+  // the mutation: an emStrong registered LAST (so marked runs it first) gives this parse's lexer a copy of the inline rules
+  // with a whitespace-only class and falls through to the override; the shared grammar object is untouched
+  const ODD = /^\s/u;
+  let mutated = 0;
+  const odd = {
+    tokenizer: {
+      emStrong(this: Tokenizer) {
+        const rules = this.rules as unknown as { inline: Record<string, unknown> };
+        if (rules.inline.punctuation !== ODD) { rules.inline = { ...rules.inline, punctuation: ODD }; mutated++; }
+        return false as const;
+      },
+    },
+  } as MarkedExtension;
+  const oddMarked = new Marked({ gfm: true, breaks: true }, ...mdExtensions, pathAwareEmphasis, odd);
+  const oddHtml = (src: string): string => oddMarked.parse(src) as string;
+  // the class is in force for the built-in on that instance: a run followed by punctuation must be preceded by whitespace
+  // or punctuation, and `(` is neither to a whitespace-only class
+  assert.equal(chatMd.chatMdHtml("(_(a)_)"), "<p>(<em>(a)</em>)</p>\n", "the chat's class admits `(` before the opener");
+  assert.equal(oddHtml("(_(a)_)"), "<p>(_(a)_)</p>\n", "the mutated class does not: the mutation reaches the built-in's own read");
+  assert.ok(mutated > 0, "the mutation ran");
+  // a fresh paragraph per render (no render is a hit from an earlier one); `__init__.py` is whole under the override's own
+  // class (`.` beside its interior run), so both instances emphasise the sentence around the literal name
+  let n = 0;
+  const fresh = (): [string, string] => { const k = "k" + (n++); return ["_see __init__.py now_ " + k, "<p><em>see __init__.py now</em> " + k + "</p>\n"]; };
+  // the mutated instance renders first, then the chat renders the same paragraph: the chat's answer is its own
+  const [first, wantFirst] = fresh();
+  const oddFirst = oddHtml(first);
+  assert.equal(chatMd.chatMdHtml(first), wantFirst, "the chat, after the mutated instance rendered the same paragraph: at the 2026-09-20 head the chat took the mutated instance's entry from the shared memo, computed under that instance's class, and rendered the sentence literal (the memo was keyed on the string alone while its value read marked's class)");
+  assert.equal(chatMd.userMdHtml(first), wantFirst, "and the user's instance");
+  assert.equal(oddFirst, wantFirst, "the mutated instance itself: the override's own class decides, not the class its lexer carries (at the head this rendered literal: `__init__.py` was not whole under a class without `.`)");
+  // the other order
+  const [second, wantSecond] = fresh();
+  assert.equal(chatMd.chatMdHtml(second), wantSecond, "the chat first");
+  assert.equal(oddHtml(second), wantSecond, "then the mutated instance: the same (at the head it took the chat's entry, so the order, not the class, decided its output)");
+  const [alone, wantAlone] = fresh();
+  assert.equal(oddHtml(alone), wantAlone, "the mutated instance alone");
 });
 
 // ── the chain ────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -272,7 +345,11 @@ function ratio(src: string, passes = 4): number {
 }
 
 test("the override costs at most a few times the base grammar whatever the paragraph's shape: a 20 KB run with no whitespace and a pair every eleven characters, a 20 KB run of nested pairs with no path, and a 25 KB run of pairs whose bodies hold pairs", () => {
-  const BOUND = 4;   // the memo held: about one to two; the bounds walk before it: sixteen and more; loose for a loaded box
+  // a round number CHOSEN with headroom for a loaded box, not derived (the 2026-09-21 review, B): the memo held, so these
+  // shapes read about one to one and a half (the bounds walk before it read sixteen and more); the measured worst shape
+  // across every cost row is `paths` here, the whitespace-free run at 1.4 to 1.7 at loads 6 to 33, and the shape that
+  // violated the bound, the rescan after an eviction, is timed in md-emphasis-atomic.test.ts and gone with the per-parse memo
+  const BOUND = 4;
   const paths = "/abcdefgh-_".repeat(1819);         // one linkable token; every pair inside it is refused, so marked lexes twice the text tokens
   const nested = "(_a_)".repeat(4000);              // no path; every pair stands; two lookups per pair
   const bodies = "_(_a_)_.".repeat(3125);           // every outer pair's body holds a pair: the body lex takes its own masked string

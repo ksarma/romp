@@ -4156,8 +4156,9 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   // A link's destination is put in the form the sanitizer keeps BEFORE the HTML exists (file-view-links.ts
   // viewerWalkTokens: `notes.md:7` reads as a scheme to DOMPurify, `file:///a.md` is a scheme it refuses, and an
   // anchor it strips is a label nothing can sort afterwards). Handed to THIS parse only: the marked singleton is
-  // the chat's too, and the chat's anchors must not learn the viewer's forms. A walkTokens an extension put on
-  // the defaults runs as well: per-call options replace, not compose. The link hook is the file kind's alone: a URL
+  // the hover preview's and the anchor map's too (the chat's own instances render a reply and the user's bubble since
+  // 2026-09-19, chat-md.ts), and neither the chat's anchors nor the preview's must learn the viewer's forms. A walkTokens an
+  // extension put on the defaults runs as well: per-call options replace, not compose. The link hook is the file kind's alone: a URL
   // document has no directory for `notes.md:7` to sit in, and its links resolve against the URL below. Every kind
   // collects the code tokens: the lexer expanded the note's leading tabs to spaces before it cut them, and the fence
   // pass below reads each fence's text back out of the note for its Copy button (fence-source.ts).

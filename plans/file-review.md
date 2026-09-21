@@ -3960,7 +3960,9 @@ document stands on its own, each with the reasoning it was given.
     walk, unchanged and in the same order) and marked's parser, over a copy of the singleton's defaults as
     marked.parse copies them, on THIS parse's tokens alone. Nothing is registered on the singleton (no marked.use,
     no renderer hook; the module imports marked's types alone), so the chat's `md()` (render.ts, still marked.parse)
-    and md-config.ts are untouched and the feed renders as before. The map's `placeTokens` (anchor-map.ts) runs the rule
+    and md-config.ts are untouched and the feed renders as before. Since 2026-09-19 the chat's `md()` parses on the
+    chat's own instance, `chatMdHtml` in chat-md.ts (the singleton's list plus the chat's path-aware emphasis); the
+    sentence before this one is the record as of 2026-09-18. The map's `placeTokens` (anchor-map.ts) runs the rule
     on the lex line, after `Lexer.lex` and before anything reads the tree, so the text walk, `tagOf`, `topTags`,
     `blockEnds` and the pairing never meet the converted token as html; the `open` array `blockEnds` collected (the
     formatting tags a paragraph left open, whose wrapper element the pairing did not model, recorded under Slice 5

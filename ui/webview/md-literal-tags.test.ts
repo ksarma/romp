@@ -156,7 +156,7 @@ test("source: one rule, two callers. file-view.ts viewerHtml, mdBlock's parse, r
   assert.match(MAP, /\n {2}try \{ tokens = Lexer\.lex\(N\); literalizeUnclosedTags\(tokens\); \} catch \(e\) \{ lexError = /, "the rule right after the lex, before anything reads the tokens");
   assert.match(MAP, /^const VOID_TAGS = VOID_ELEMENTS;/m, "one void list, the module's");
   assert.equal((MAP.match(/literalizeUnclosedTags\(/g) || []).length, 1, "one call in the map");
-  assert.ok(!CONFIG.includes("md-literal-tags") && !CONFIG.includes("literalize"), "md-config.ts registers nothing for the rule: the singleton's grammar is the chat's too");
+  assert.ok(!CONFIG.includes("md-literal-tags") && !CONFIG.includes("literalize"), "md-config.ts registers nothing for the rule: the chat's instances take the singleton's list plus pathAwareEmphasis (chat-md.ts), so the rule reaches neither");
   assert.ok(!RENDER.includes("md-literal-tags") && !CHAT.includes("md-literal-tags"), "the chat's modules never import the rule");
   assert.match(RENDER, /\nfunction md\(src: string, repo: string \| null = prRepoFor\(\)\): string \{\n(?:[^\n]*\n){0,12}?[^\n]*const dirty = chatMdHtml\(src\);[^\n]*\n/, "md() still parses with a plain parse, the chat instance's (chat-md.ts chatMdHtml, since the path-aware emphasis of 2026-09-19), never the viewer's recipe");
   assert.match(CHAT, /^export function chatMdHtml\(src: string\): string \{\n {2}return chatMarked\.parse\(src\) as string;\n\}/m, "chatMdHtml is marked's parse on the chat instance and nothing else");

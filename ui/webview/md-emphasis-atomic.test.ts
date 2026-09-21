@@ -2,12 +2,21 @@
 // marked on the chat's two instances (chat-md.ts). md-emphasis-paths.test.ts runs the population note's two tables and
 // md-emphasis-override.test.ts the interior-run edge and the stand-in's contract; this file pins what the 2026-09-20
 // review's round 2 found beside them:
-//   - a linkable token with a `_` run beside punctuation strictly inside it (`__init__.py`, `_drafts/a_.md`, `/a/_b_`) is
-//     one word to the emphasis rule, its edge runs included. Round 1 hid the run inside and left the edge run visible,
+//   - a linkable token with a `_` run strictly inside it beside a character that can flank a delimiter run (`__init__.py`,
+//     `_drafts/a_.md`, `/a/_b_`) is one word to the emphasis rule, its edge runs included. Round 1 hid the run inside and left the edge run visible,
 //     and the built-in's closer scan then paired the edge run across the hidden middle with a partner outside the token
 //     (the spec pairs it with the run inside, which the protection had taken away): `_see __init__.py now_` lost its
 //     emphasis, `see __init__.py and stop__` bolded half the sentence, `_see _drafts/a_.md now_` cut the path from its
 //     start and lost the kernel's link. Every row here rendered right on the tree before round 1 and wrong at its head;
+//   - the class that test asks is the override's own, CommonMark 0.31.2 section 6.2's (Unicode whitespace, punctuation
+//     or a symbol, `*` and `_` among them), read by CODE POINT on either side of the run (md-config.ts flankedInside).
+//     The 2026-09-20 review's head asked marked's `punctuation` rule instead, written to exclude the delimiters and read
+//     over one UTF-16 code unit, and the rule had two holes, both the failure it was added to stop (the 2026-09-21
+//     review, A): an interior run whose only neighbour is a `*` (ASCII, excluded by design; the URI arm admits `*`) and
+//     one whose neighbour is an astral punctuation mark or symbol (a lone surrogate to a one-unit read) left the token
+//     un-whole, its end-edge run paired with a prose opener before it, and the walk linked a piece that is not the token.
+//     The rows are in the URI arm alone: the path and bare arms are ASCII (path-links.ts CLICKABLE_PATH_RE, isWordCh),
+//     so a `*` or a non-ASCII character splits a path token there and no row can arm either hole (the controls);
 //   - a plain token, one with no such run inside, keeps the edge rule: its edge run opens or closes as the spec says, as
 //     on the base grammar (`_see /tmp/x_`, `_x/y.md and more_`, `_see _posts/x.md now_`), also when another, protected
 //     token stands in the same pair, and when the walk's ASCII word class splits an accented path into two tokens the
@@ -20,13 +29,18 @@
 //     letting a whole token's end-edge run pair (the review's closing pass); and it ran marked's escape rule over the
 //     tail once per delimiter, where the override now reads the forms at the masked string's `++` positions and runs
 //     the rule not at all;
-//   - cost: one scan of the paragraph per masked string while the nested lexes marked runs on strings of their own (a
-//     link's label, a `*` pair's or a `~~` pair's body) bring fewer than eight DISTINCT strings holding a `_` run
-//     between two of the paragraph's delimiters, the memo a most-recently-used list of eight keyed by masked string (a
-//     one-slot memo rescanned the paragraph once per link, eight to twelve times the base grammar at 20 KB); past that
-//     bound one rescan per such gap, pinned as it is; a run inside a token refused before the built-in scans. Counted by
-//     execution, and measured as a ratio to the base grammar on the same string in the same process, the best of
-//     interleaved passes, as md-emphasis-override.test.ts measures.
+//   - cost: one scan of the paragraph per masked string per parse, whatever the nested lexes marked runs on strings of
+//     their own (a link's label, a `*` pair's or a `~~` pair's body) bring between two of the paragraph's delimiters: the
+//     memo lives with the parse's lexer, keyed by masked string (md-config.ts linkableMemos). The 2026-09-20 review's
+//     memo was a module-global most-recently-used list of eight: eight distinct such strings between two delimiters
+//     evicted the paragraph's entry and every later prose delimiter rescanned the whole paragraph, a term quadratic in
+//     its length that no cost row of the time could see, since every row hit the memo (the 2026-09-21 review, B: a 20 KB
+//     paragraph of eight distinct `*` bodies per prose pair cost 13.8 to 16.9 times the base grammar with 571 rescans,
+//     against a stated bound of four; the row is in the cost test below and read about one after the per-parse memo).
+//     A run inside a token is refused before the built-in scans. Counted by execution, and measured as a ratio to the
+//     base grammar on the same string in the same process, the best of interleaved passes, as
+//     md-emphasis-override.test.ts measures; the bound, four, is a round number chosen with headroom for a loaded box
+//     over the measured worst shape, the whitespace-free path run at 1.4 to 1.7 (loads 6 to 33), not a derived figure.
 // The walk runs over a small DOM stand-in fed marked's HTML (no jsdom), the chat's own options minus the fenced gate, with
 // a map holding the kernel-shaped keys (the tokens the kernel's tokeniser reads over the raw markdown), as the kernel's
 // verdict would. Synthetic fixtures only: invented paths, a placeholder session id.
@@ -187,9 +201,70 @@ const WHOLE: Row[] = [
   { text: "_see __init__.py and /a-_b/c_/d.md now_", after: "<p><em>see __init__.py and /a-_b/c_/d.md now</em></p>\n", keys: ["__init__.py", "/a-_b/c_/d.md"], links: ["/a-_b/c_/d.md"] },
   { text: "_see __note/a.md__~~x.py~~ now_", after: "<p><em>see __note/a.md__<del>x.py</del> now</em></p>\n", keys: ["__note/a.md__~~x.py"], links: [] },
 ];
+// The wholeness class by code point (the 2026-09-21 review, A; its class derivation's rows), inside the URI arm, the one arm
+// that admits `*` and a non-ASCII character (the path and bare arms are ASCII by CLICKABLE_PATH_RE and isWordCh, so no row
+// there can arm either hole: the controls at the end). A URI token begins with `file:` and so has no start-edge run; its end
+// edge can be a `_` run (trailingPunct trims no `_`), so the shape is a URI ending in a `_` run, holding an interior run
+// whose only neighbour is the character under test, with a prose `_` opener before it. Two faces. ASCII, by design: the
+// 2026-09-20 head asked marked's punctuation rule, which excludes `*` on purpose, so a `*` beside the interior run left the
+// token un-whole. Astral, by accident: that rule read one UTF-16 code unit, so an astral punctuation mark (U+10100, Po) or
+// symbol (U+1F600, U+1F449, So) beside the run was a lone surrogate to it. On both faces the end-edge run stayed visible,
+// the prose opener paired with it across the hidden middle, and the walk linked a piece that is not the token (`/x/a*_b/c`
+// for `file:///x/a*_b/c_`). Positions: before the run, after it, between two runs, two symbols, at the paragraph's start
+// and end, with a later closer, glued to the URI, as a strong, two URIs in one pair, and with two, three and five escaped
+// astral symbols before the opener (each shortens marked's mask by one unit, so shiftedEscapes' correction accumulates).
+// A URI is ungated to the walk (never in the kernel's map), so `keys` is empty and `links` is the URI's path, whole.
+const URI = (tail: string): string => "file:///x/" + tail;
+const CODE_POINT: Row[] = [
+  // the `*` face (ASCII, by design)
+  { text: "_see " + URI("a*_b/c_") + " now", after: "<p>_see " + URI("a*_b/c_") + " now</p>\n", keys: [], links: ["/x/a*_b/c_"] },
+  { text: "_see " + URI("a_*b/c_") + " now", after: "<p>_see " + URI("a_*b/c_") + " now</p>\n", keys: [], links: ["/x/a_*b/c_"] },
+  { text: "_see " + URI("a*_b/c_") + " now_", after: "<p><em>see " + URI("a*_b/c_") + " now</em></p>\n", keys: [], links: ["/x/a*_b/c_"] },
+  { text: "__see " + URI("a*_b/c__") + " now", after: "<p>__see " + URI("a*_b/c__") + " now</p>\n", keys: [], links: ["/x/a*_b/c__"] },
+  { text: "see _" + URI("a*_b/c_") + " now", after: "<p>see _" + URI("a*_b/c_") + " now</p>\n", keys: [], links: ["/x/a*_b/c_"] },
+  { text: "_see \u{1F600}" + URI("a*_b/c_") + " now", after: "<p>_see \u{1F600}" + URI("a*_b/c_") + " now</p>\n", keys: [], links: ["/x/a*_b/c_"] },
+  // the astral face (by accident): a symbol or a punctuation mark before the run, after it, between two runs, two of them
+  { text: "_see " + URI("a\u{1F600}_b/c_") + " now", after: "<p>_see " + URI("a\u{1F600}_b/c_") + " now</p>\n", keys: [], links: ["/x/a\u{1F600}_b/c_"] },
+  { text: "_see " + URI("a\u{10100}_b/c_") + " now", after: "<p>_see " + URI("a\u{10100}_b/c_") + " now</p>\n", keys: [], links: ["/x/a\u{10100}_b/c_"] },
+  { text: "_see " + URI("a_\u{1F600}b/c_") + " now", after: "<p>_see " + URI("a_\u{1F600}b/c_") + " now</p>\n", keys: [], links: ["/x/a_\u{1F600}b/c_"] },
+  { text: "_see " + URI("a_\u{10100}b/c_") + " now", after: "<p>_see " + URI("a_\u{10100}b/c_") + " now</p>\n", keys: [], links: ["/x/a_\u{10100}b/c_"] },
+  { text: "_see " + URI("a_\u{1F600}_b/c_") + " now", after: "<p>_see " + URI("a_\u{1F600}_b/c_") + " now</p>\n", keys: [], links: ["/x/a_\u{1F600}_b/c_"] },
+  { text: "_see " + URI("a\u{1F600}\u{1F449}_b/c_") + " now", after: "<p>_see " + URI("a\u{1F600}\u{1F449}_b/c_") + " now</p>\n", keys: [], links: ["/x/a\u{1F600}\u{1F449}_b/c_"] },
+  // at the paragraph's start and end, with a later closer, two URIs in one pair
+  { text: "\u{1F600} _see " + URI("a\u{1F600}_b/c_") + " now \u{1F600}", after: "<p>\u{1F600} _see " + URI("a\u{1F600}_b/c_") + " now \u{1F600}</p>\n", keys: [], links: ["/x/a\u{1F600}_b/c_"] },
+  { text: "_see " + URI("a\u{1F600}_b/c_") + " now_", after: "<p><em>see " + URI("a\u{1F600}_b/c_") + " now</em></p>\n", keys: [], links: ["/x/a\u{1F600}_b/c_"] },
+  { text: "_see " + URI("a*_b/c_") + " and file:///y/d\u{1F600}_e/f_ now_", after: "<p><em>see " + URI("a*_b/c_") + " and file:///y/d\u{1F600}_e/f_ now</em></p>\n", keys: [], links: ["/x/a*_b/c_", "/y/d\u{1F600}_e/f_"] },
+  // two, three and five escaped astral symbols before the opener: the mask is that many units short, the correction accumulates
+  { text: "\\\u{1F600} ".repeat(2) + "_see " + URI("a\u{1F600}_b/c_") + " now", after: "<p>" + "\\\u{1F600} ".repeat(2) + "_see " + URI("a\u{1F600}_b/c_") + " now</p>\n", keys: [], links: ["/x/a\u{1F600}_b/c_"] },
+  { text: "\\\u{1F600} ".repeat(3) + "_see " + URI("a\u{1F600}_b/c_") + " now", after: "<p>" + "\\\u{1F600} ".repeat(3) + "_see " + URI("a\u{1F600}_b/c_") + " now</p>\n", keys: [], links: ["/x/a\u{1F600}_b/c_"] },
+  { text: "\\\u{1F600} ".repeat(5) + "_see " + URI("a\u{1F600}_b/c_") + " now", after: "<p>" + "\\\u{1F600} ".repeat(5) + "_see " + URI("a\u{1F600}_b/c_") + " now</p>\n", keys: [], links: ["/x/a\u{1F600}_b/c_"] },
+  // the controls that were whole at the 2026-09-20 head too, one BMP code unit each: `\u00bb` (Pf), `-`, `\u20ac` (Sc), `+` (Sm),
+  // and two escaped astral symbols before a whole token
+  { text: "_see " + URI("a\u00bb_b/c_") + " now", after: "<p>_see " + URI("a\u00bb_b/c_") + " now</p>\n", keys: [], links: ["/x/a\u00bb_b/c_"] },
+  { text: "_see " + URI("a-_b/c_") + " now", after: "<p>_see " + URI("a-_b/c_") + " now</p>\n", keys: [], links: ["/x/a-_b/c_"] },
+  { text: "_see " + URI("a\u20ac_b/c_") + " now", after: "<p>_see " + URI("a\u20ac_b/c_") + " now</p>\n", keys: [], links: ["/x/a\u20ac_b/c_"] },
+  { text: "_see " + URI("a+_b/c_") + " now", after: "<p>_see " + URI("a+_b/c_") + " now</p>\n", keys: [], links: ["/x/a+_b/c_"] },
+  { text: "\\\u{1F600} ".repeat(2) + "_see " + URI("a\u00bb_b/c_") + " now", after: "<p>" + "\\\u{1F600} ".repeat(2) + "_see " + URI("a\u00bb_b/c_") + " now</p>\n", keys: [], links: ["/x/a\u00bb_b/c_"] },
+];
+// The class's other edge, identical to the base grammar on both renderers and NOT whole: an astral LETTER (U+10400 Lu,
+// U+1D400 Lu) is neither punctuation nor a symbol, so a rule keyed on "astral" rather than on the class would be wrong here;
+// an unpaired surrogate is a character of no class, and the residual for the left-side read is a lone LOW surrogate with a
+// `.` before it, which a read that stepped back one unit without checking for the high half would take for punctuation;
+// the path arm splits its token at a `*` or a non-ASCII character, so those rows never reach the test; U+3000 is
+// whitespace to the URI arm and ends the token before the run.
+const NOT_WHOLE: string[] = [
+  "_see " + URI("a\u{10400}_b/c_") + " now",
+  "_see " + URI("a\u{1D400}_b/c_") + " now",
+  "_see " + URI("a.\uDE00_b/c_") + " now",
+  "_see " + URI("a_\uD83Db/c_") + " now",
+  "_see " + URI("a\uD83D_b/c_") + " now",
+  "_see /tmp/a*_b/c_ now",
+  "_see /tmp/a\u{1F600}_b/c_ now",
+  "_see " + URI("a\u3000_b/c_") + " now",
+];
 
-test("a linkable token with a `_` run beside punctuation inside it is one word whole, its edge runs too: a prose pair spanning it keeps its emphasis, a stray closer after it pairs with nothing, and the walk links the token whole under the kernel's key; the base grammar renders every row differently", () => {
-  for (const r of WHOLE) {
+test("a linkable token with a `_` run beside punctuation inside it is one word whole, its edge runs too: a prose pair spanning it keeps its emphasis, a stray closer after it pairs with nothing, and the walk links the token whole under the kernel's key; the base grammar renders every row differently. The class is read by code point: a `*` (excluded by marked's rule on purpose) and an astral punctuation mark or symbol (a lone surrogate to a one-unit read) beside the interior run of a URI token make it whole too, where the 2026-09-20 head cut the token from its edge", () => {
+  for (const r of [...WHOLE, ...CODE_POINT]) {
     for (const [who, render] of RENDERERS) {
       const html = render(r.text);
       assert.equal(html, r.after, who + ": " + JSON.stringify(r.text));
@@ -197,7 +272,17 @@ test("a linkable token with a `_` run beside punctuation inside it is one word w
     }
     assert.notEqual(baseHtml(r.text), r.after, "the base grammar renders it differently: " + JSON.stringify(r.text));
   }
-  assert.equal(WHOLE.length, 24);
+  for (const r of CODE_POINT) {
+    const b = baseHtml(r.text);
+    assert.match(b, /<em>/, "the base grammar pairs a run inside the URI: " + b);
+    assert.ok(!walkLinks(b, r.keys).includes(r.links[0]), "and its walk never sees the token whole: " + JSON.stringify(walkLinks(b, r.keys)) + " over " + b);
+  }
+  for (const text of NOT_WHOLE) {
+    const b = baseHtml(text);
+    assert.match(b, /<em>/, "not whole: the run beside a letter, a lone surrogate or outside the token pairs as the spec says: " + b);
+    for (const [who, render] of RENDERERS) assert.equal(render(text), b, who + ": identical to the base grammar: " + JSON.stringify(text));
+  }
+  assert.equal(WHOLE.length, 24); assert.equal(CODE_POINT.length, 23); assert.equal(NOT_WHOLE.length, 8);
   assert.ok(WHOLE.some((r) => r.after.includes("<em>")) && WHOLE.some((r) => r.after.includes("<strong>")) && WHOLE.some((r) => !/<(em|strong)>/.test(r.after)), "the rows hold an em, a strong and a literal outcome");
 });
 
@@ -225,10 +310,19 @@ test("a plain token, one with no run beside punctuation inside it, keeps the edg
   // build's head, before interior runs were hidden, rendered the row literal and linked both), and the walk's ASCII word
   // class (path-links.ts isWordCh, the third parity follow-up) splits an accented path into two tokens whose second
   // begins with a run at its edge
+  // and the WIDENING face of the whole-token rule's cost (md-config.ts states the class with both faces; the 2026-09-21
+  // review, D): the run inside a whole token is hidden, so when another prose run stands past the token the surviving
+  // prose run re-pairs across it and the chat emphasises a span the writer never marked, forward (the spec gave `<em>see
+  // drafts/a</em>.md and old_ now`) and backward (the spec gave `_see x-<em>y.md now</em>`), and a widening can spend a
+  // plain token's end-edge run (`/tmp/x_`, which main linked, is `/tmp/x` in the DOM, no longer the kernel's key). The
+  // path arm buys the whole link in exchange; the bare-name arm in prose buys none
   const FACES: Array<[string, string, string[], string[]]> = [
     ["_see /tmp/_x/y.md and /tmp/z_ now_", "<p><em>see /tmp/_x/y.md and /tmp/z</em> now_</p>\n", ["/tmp/_x/y.md", "/tmp/z_"], ["/tmp/_x/y.md"]],
     ["_see _posts/x.md and /tmp/_y/z.md now_", "<p>_see <em>posts/x.md and /tmp/_y/z.md now</em></p>\n", ["_posts/x.md", "/tmp/_y/z.md"], ["/tmp/_y/z.md"]],
     ["_see /a-_b/cé_/d.md now_", "<p><em>see /a-_b/cé</em>/d.md now_</p>\n", ["/a-_b/cé_/d.md"], []],
+    ["_see drafts/a_.md and old_ now", "<p><em>see drafts/a_.md and old</em> now</p>\n", ["drafts/a_.md"], ["drafts/a_.md"]],
+    ["_see x-_y.md now_", "<p><em>see x-_y.md now</em></p>\n", ["x-_y.md"], []],
+    ["_see final_.pdf and /tmp/x_ now", "<p><em>see final_.pdf and /tmp/x</em> now</p>\n", ["final_.pdf", "/tmp/x_"], []],
   ];
   for (const [text, want, keys, links] of FACES) for (const [who, render] of RENDERERS) {
     const html = render(text);
@@ -370,9 +464,10 @@ const SHAPES: Array<[string, string]> = [
   ["prose naming a member path per sentence", "The build wrote /a-_b/c_/d.md and then ~/code/my_proj/_drafts/a.md, then foo/__pycache__/bar.pyc. ".repeat(40)],
 ];
 
-test("one scan of the paragraph per masked string while fewer than eight distinct nested strings holding a `_` run are lexed between two of its delimiters: a link's label, a `*` pair's or a `~~` pair's body leaves the paragraph's entry in the memo (a one-slot memo rescanned the paragraph once per such body); at eight distinct such strings the entry is evicted and the paragraph scanned once more, pinned as it is", () => {
-  // the memo is keyed by the masked string's text and shared by the chat's two instances, so each render below gets a
-  // paragraph no earlier render in this process has seen (a distinct first word), and the count it pins is the first parse's
+test("one scan of the paragraph per masked string per parse, whatever the nested lexes between two of its delimiters bring: a link's label, a `*` pair's or a `~~` pair's body takes an entry beside the paragraph's and evicts nothing, any number of distinct such strings included (the eight-slot list the 2026-09-20 review shipped evicted the paragraph's entry at eight and rescanned it once per gap); the same paragraph parsed three times is scanned three times, once per parse", () => {
+  // the memo lives with the parse's lexer and is keyed by the masked string's text, so a paragraph is scanned once per
+  // parse; each render below still gets a paragraph no earlier render has seen (a distinct first word), so the count it
+  // pins is one parse's and never a hit from an earlier test
   let seq = 0;
   for (const [what, src] of SHAPES) {
     for (const [who, render] of RENDERERS) {
@@ -382,25 +477,34 @@ test("one scan of the paragraph per masked string while fewer than eight distinc
       assert.ok(n.all <= 1 + fresh.length, who + ", " + what + ": scans in all " + n.all);
     }
   }
-  // the memo holds the paragraph's entry across the standing pair's body lex too, and the same paragraph parsed again
-  // (the other instance, or a repaint) is a hit, not a scan
+  // the memo holds the paragraph's entry across the standing pair's body lex too; the same paragraph parsed again (the
+  // other instance, or a repaint) is a new parse with a memo of its own, so it scans once more, beside marked's whole parse
   const again = "P" + (seq++) + " " + SHAPES[4][1];
   const twice = paragraphScans(again, () => { chatMd.chatMdHtml(again); chatMd.userMdHtml(again); chatMd.chatMdHtml(again); });
-  assert.equal(twice.paragraph, 1, "the same paragraph parsed three times is scanned once");
-  // the bound, as it is (MEMO_SLOTS = 8, most recently used first, keyed by masked string): k distinct nested strings
-  // holding a `_` run between two prose pairs leave the paragraph's entry in place for k up to seven and evict it at eight,
-  // so the second prose pair scans the paragraph again, once; twelve IDENTICAL labels are one entry, a hit
+  assert.equal(twice.paragraph, 3, "the same paragraph parsed three times is scanned three times, once per parse (the module-global list scanned it once and held it across parses)");
+  // no bound: k distinct nested strings holding a `_` run between two prose pairs leave the paragraph's entry in place for
+  // every k (the eight-slot list evicted it at eight and the second prose pair rescanned the paragraph), each distinct
+  // string scanned once itself; twelve IDENTICAL labels are one entry, a hit
   const distinct = (k: number, shape: (i: number) => string): string => Array.from({ length: k }, (_, i) => shape(i)).join("");
-  for (const [what, k, want] of [["seven distinct link labels", 7, 1], ["nine distinct link labels", 9, 2], ["eight distinct link labels", 8, 2]] as Array<[string, number, number]>) {
+  for (const [what, k] of [["seven distinct link labels", 7], ["eight distinct link labels", 8], ["nine distinct link labels", 9], ["forty distinct link labels", 40]] as Array<[string, number]>) {
     const p = "P" + (seq++) + " _x_ " + distinct(k, (i) => "[_a" + i + "_](u) ") + "_y_";
-    assert.equal(paragraphScans(p, () => { chatMd.chatMdHtml(p); }).paragraph, want, what + " between two prose pairs: the paragraph was scanned " + want + " time(s) by the bound");
+    const n = paragraphScans(p, () => { chatMd.chatMdHtml(p); });
+    assert.equal(n.paragraph, 1, what + " between two prose pairs: the paragraph was scanned " + n.paragraph + " time(s)");
+    assert.equal(n.all, 1 + k, what + ": one scan per distinct masked string, the paragraph and each label: " + n.all);
   }
-  for (const [what, k, want] of [["seven distinct `*` bodies", 7, 1], ["nine distinct `*` bodies", 9, 2]] as Array<[string, number, number]>) {
+  for (const [what, k] of [["seven distinct `*` bodies", 7], ["nine distinct `*` bodies", 9]] as Array<[string, number]>) {
     const p = "P" + (seq++) + " _x_ " + distinct(k, (i) => "*_a" + i + "_* ") + "_y_";
-    assert.equal(paragraphScans(p, () => { chatMd.chatMdHtml(p); }).paragraph, want, what + " between two prose pairs: the paragraph was scanned " + want + " time(s) by the bound");
+    assert.equal(paragraphScans(p, () => { chatMd.chatMdHtml(p); }).paragraph, 1, what + " between two prose pairs: the paragraph was scanned once");
   }
   const same = "P" + (seq++) + " _x_ " + "[_a_](u) ".repeat(12) + "_y_";
   assert.equal(paragraphScans(same, () => { chatMd.chatMdHtml(same); }).paragraph, 1, "twelve identical labels are one entry: one scan");
+  // the shape that evicted the eight-slot list at EVERY prose pair (eight distinct `*` bodies between every two of them),
+  // 571 times over, 20 KB: one scan of the paragraph and one of each of the eight distinct bodies, 4,568 body lexes in
+  // all (the list scanned the paragraph 571 times here, once per gap)
+  const thrash = "P" + (seq++) + " " + ("_x_" + "*_0**_1**_2**_3**_4**_5**_6**_7*").repeat(571);
+  const t = paragraphScans(thrash, () => { chatMd.chatMdHtml(thrash); });
+  assert.equal(t.paragraph, 1, "the thrashing paragraph (" + thrash.length + " characters) was scanned " + t.paragraph + " times");
+  assert.equal(t.all, 9, "scans in all, the paragraph and eight distinct bodies: " + t.all);
 });
 
 /** The chat grammar's time over the base grammar's on the same string, the best of `passes` interleaved passes: the
@@ -414,8 +518,15 @@ function ratio(src: string, passes = 4): number {
   return best;
 }
 
-test("the override costs at most a few times the base grammar on a 20 KB paragraph of each shape: links, `*` pairs or `~~` pairs with a `_` pair inside beside prose pairs (eight to twelve times before the memo survived them), a whitespace-free path run, prose naming a path per sentence, and escaped bangs beside pairs (2.3 times when the escape rule ran once per delimiter)", () => {
-  const BOUND = 4;   // about one; loose for a loaded box
+test("the override costs at most a few times the base grammar on a 20 KB paragraph of each shape: links, `*` pairs or `~~` pairs with a `_` pair inside beside prose pairs (eight to twelve times before the memo survived them), a whitespace-free path run, prose naming a path per sentence, escaped bangs beside pairs (2.3 times when the escape rule ran once per delimiter), and eight distinct nested bodies between EVERY two prose pairs, the shape that evicted the eight-slot memo at every gap (13.8 to 16.9 times before the per-parse memo)", () => {
+  // The bound is a round number, CHOSEN with headroom for a loaded box, not derived: the measured worst shape across the
+  // rows is the whitespace-free path run at 1.4 to 1.7 (the 2026-09-21 review's runs at loads 6 to 33 on a 60-core box;
+  // marked lexes twice the text tokens there), every other row near one. It is honest because the cost is linear: the
+  // one superlinear term, the rescan after an eviction, is gone with the per-parse memo, and its shape is the last row
+  // (red at 13.8 to 31.8 with the eight-slot list across those runs, 571 rescans of the paragraph, doubling per doubling
+  // of length: no constant could bound it). The ratio is the best of interleaved passes in one process (ratio), so the box's load is a
+  // noise term the headroom absorbs; a red here at about one on a loaded box is the noise, at four and more the term.
+  const BOUND = 4;
   const LONG: Array<[string, string]> = [
     ["links with a pair in the label", "[_a_](u) _b_ ".repeat(1600)],
     ["`*` pairs with a pair in the body", "**_a_** _b_ ".repeat(1800)],
@@ -425,6 +536,7 @@ test("the override costs at most a few times the base grammar on a 20 KB paragra
     ["pairs whose bodies hold pairs, no whitespace", "_(_a_)_.".repeat(3125)],
     ["an escaped bang before every pair", "\\! _a_ ".repeat(2860)],
     ["pairs, then as many escaped bangs", "_a_ ".repeat(2500) + "\\! ".repeat(2500)],
+    ["eight distinct nested `_` bodies between every two prose pairs", ("_x_" + "*_0**_1**_2**_3**_4**_5**_6**_7*").repeat(571)],
   ];
   for (const [what, src] of LONG) {
     const r = ratio(src);

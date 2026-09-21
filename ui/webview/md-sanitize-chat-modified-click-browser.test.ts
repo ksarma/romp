@@ -38,14 +38,15 @@ function bundle(entry: string): string {
   const r = requireCjs("esbuild").buildSync({ ...BUILD, entryPoints: [path.join(UI, entry)] });
   return r.outputFiles[0].text;
 }
-// md() as render.ts runs it, minus the PR-ref linkifier: marked with the chat's options and extensions, then sanitizeMd
+// md() as render.ts runs it, minus the PR-ref linkifier: the chat's own marked instance (chat-md.ts chatMdHtml, the one
+// render.ts's md() parses through since the chat's path-aware emphasis of 2026-09-19; the probe stood the singleton in
+// before, a grammar the chat no longer renders on), then sanitizeMd. Importing chat-md.ts brings md-config.ts with it,
+// which registers the math fill as sanitizeMd's post-pass at load; nothing here configures the singleton.
 function probeBundle(): string {
   const contents = [
-    'import { marked } from "marked";',
+    'import { chatMdHtml } from "./chat-md";',
     'import { sanitizeMd } from "./md-sanitize";',
-    'import { applyMdConfig } from "./md-config";',
-    "applyMdConfig();",
-    "(window as any).__mdProbe = (s: string) => sanitizeMd(marked.parse(s) as string).innerHTML;",
+    "(window as any).__mdProbe = (s: string) => sanitizeMd(chatMdHtml(s)).innerHTML;",
   ].join("\n");
   const r = requireCjs("esbuild").buildSync({ ...BUILD, stdin: { contents, resolveDir: UI, sourcefile: "md-probe.ts", loader: "ts" } });
   return r.outputFiles[0].text;
@@ -116,7 +117,11 @@ async function inBrowser(t: any, body: (page: any, tabs: Tabs, errors: string[],
 
 test("a modified click on a footnote's back link: the platform's tab key and Shift are left to the browser; the other key (Super on Linux and Windows) scrolls the transcript like a plain click", { timeout: 90000 }, async (t) => {
   await inBrowser(t, async (page, tabs, errors, navs) => {
-    // the message through the chat's own pipeline (marked + sanitizeMd, as md() runs them), inserted as render.ts does
+    // the probe's aim: the chat's instance, not the singleton, so a path's underscores stay literal (md-config.ts
+    // pathAwareEmphasis; the singleton would pair them as emphasis)
+    const aim = await page.evaluate(() => (window as any).__mdProbe("see /a-_b/c_/d.md today") as string);
+    assert.doesNotMatch(aim, /<em>/, "the probe renders the chat instance's grammar (chat-md.ts chatMdHtml), on which a path's underscores are literal: " + aim);
+    // the message through the chat's own pipeline (the chat instance's parse + sanitizeMd, as md() runs them), inserted as render.ts does
     const shape = await page.evaluate((src: string) => {
       const content = document.getElementById("content") as HTMLElement;
       const turn = document.createElement("div"); turn.className = "turn turn-assistant fx-turn";

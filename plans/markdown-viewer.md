@@ -1162,7 +1162,9 @@ as built departs from the text above, why, and which test holds each rule:
    true, breaks: false` and registers every extension in one list, `mdExtensions`: the double-tilde `del` rule (moved
    here from chat-md.ts and file-view.ts, which each held a copy), the math placeholders, front matter, footnotes,
    callouts, `==mark==`, wikilinks and embeds. render.ts, file-view.ts and anchor-map.ts each call it at load;
-   chat-md.ts builds its `breaks: true` instance for the person's own words from the same list; the fill
+   chat-md.ts builds its `breaks: true` instance for the person's own words from the same list (since 2026-09-19 it
+   builds a reply's instance from that list too, `chatMarked`, and both chat instances add the chat's path-aware
+   emphasis, md-config.ts `pathAwareEmphasis`; the clause before this parenthesis is the record as of the slice); the fill
    (`registerMdPostPass(renderMathPlaceholders)`) is registered beside the list. The singleton and not a private
    `Marked` instance, because `marked.use` writes the module defaults the static `Lexer.lex` reads: anchor-map.ts
    keeps `Lexer.lex` and sees every token the renderer rendered, whichever module loaded first (measured 2026-09-08:

@@ -1,6 +1,7 @@
 // Emphasis never cuts a file path in the chat (md-config.ts pathAwareEmphasis, on chat-md.ts's two instances),
 // executed over the REAL marked. The class, measured row by row before the fix (the population note,
-// md-emphasis-population.md: 55 rows and 20 adversarial ones): the chat renders a reply with marked and then links
+// md-emphasis-population.md, a note kept outside the repo: 55 rows and 20 adversarial ones, the rows executed and
+// count-asserted below): the chat renders a reply with marked and then links
 // the file paths it finds in the rendered text, one text node at a time (path-links.ts linkifyPathTokens), and a
 // path's own punctuation makes its underscores legal emphasis delimiters under CommonMark's flanking rules, so
 // `/a-_b/c_/d.md` rendered `/a-<em>b/c</em>/d.md`, `__init__.py` rendered strong, the walk never saw the token whole
@@ -15,22 +16,29 @@
 // fences included; the adversarial rows change only where the note says, A08 the one accepted loss; the base grammar
 // still cuts every member row (the defect, reproduced, so the reason for the road is on record); a footnote reference
 // inside a refused pair is numbered once (the built-in lexes a pair's body before it returns, so the override runs it
-// dry); and the instance boundary: the singleton, which the viewer and the hover preview render on, keeps GitHub's
-// rendering of `foo/__pycache__/bar.pyc`. The walk runs over a small DOM stand-in fed marked's HTML (no jsdom), the
+// dry); the instance boundary: the singleton, which the viewer and the hover preview render on, keeps GitHub's
+// rendering of `foo/__pycache__/bar.pyc`, and a census over ui/webview of every product module that imports marked, so
+// a renderer added later takes a verdict here; and THE RULE, one grammar decides linking and protection, by execution:
+// md-config.ts is bundled at test time with a stub in path-links.ts's place and the override's answer follows the stub
+// (the 2026-09-21 review, F: a source grep for five spellings of the path grammar could not see a fresh restatement).
+// The walk runs over a small DOM stand-in fed marked's HTML (no jsdom), the
 // chat's own options minus the fenced gate, with a map holding the wanted tokens, as the kernel's verdict would.
 // Synthetic fixtures only: invented paths (`/a-_b/c_/d.md` and the like), a placeholder session id.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
+import { createRequire } from "node:module";
+import * as os from "node:os";
 import * as path from "node:path";
 import { Marked, marked } from "marked";
 import { hideEdges } from "../test-dom-shim";
 import * as chatMd from "./chat-md";
 import { applyMdConfig, mdExtensions } from "./md-config";
-import { linkifyPathTokens } from "./path-links";
+import { BARE_FILE_EXTS, isFileUri, linkifyPathTokens, looksLikeBareFileName, looksLikeFilePath, PathTokenScanner, trailingPunct } from "./path-links";
 
 const UI = path.resolve(process.cwd(), "..", "ui", "webview");
 const read = (f: string): string => fs.readFileSync(path.join(UI, f), "utf8");
+const pkgRequire = createRequire(path.resolve(process.cwd(), "package.json"));
 const SID = "11111111-2222-3333-4444-555555555555";
 
 // the road before the fix: the singleton's configuration (gfm, breaks off, the shared list, nothing else) on a private
@@ -365,7 +373,7 @@ test("the instance boundary: the singleton (the viewer, the hover preview, the a
   assert.match(CONFIG, /^import \{ isFileUri, looksLikeBareFileName, looksLikeFilePath, PathTokenScanner, trailingPunct \} from "\.\/path-links";/m, "the scanner and the gates are the walk's own, imported");
   const override = CONFIG.slice(CONFIG.indexOf("const DRY_LEXER = "), CONFIG.indexOf("} as MarkedExtension;", CONFIG.indexOf("export const pathAwareEmphasis")));
   assert.ok(override.includes("function linkableRuns(") && override.includes("emStrong(this: Tokenizer"), "the override's code, from its first constant to its close");
-  assert.doesNotMatch(override, /\[~\.|BARE_FILE_EXTS|A-Za-z0-9|\\\.\[|new RegExp\(/, "and never restated: no path grammar of its own in the override's code (no regex of its own at all)");
+  assert.doesNotMatch(override, /\[~\.|BARE_FILE_EXTS|A-Za-z0-9|\\\.\[|new RegExp\(/, "none of these five path-grammar spellings appears in the override's code: a verbatim copy of path-links.ts's grammar shows here; a fresh restatement would not, and the stub test below catches that by execution (the override's one regex of its own is the emphasis spec's flanking class, not a path grammar)");
   assert.match(CONFIG, /Tokenizer\.prototype\.emStrong\.call\(dry, src, tokens\.hidden, prevChar\)/, "the built-in decides the pair, on the dry stand-in, over the masked string with every run inside a token hidden");
   assert.match(CHAT, /^export const chatMarked = new Marked\(\{ gfm: true, breaks: false \}, \.\.\.mdExtensions, pathAwareEmphasis\);/m, "the reply instance");
   assert.match(CHAT, /^export const userMarked = new Marked\(\{ gfm: true, breaks: true \}, \.\.\.mdExtensions, pathAwareEmphasis\);/m, "the user instance");
@@ -377,5 +385,132 @@ test("the instance boundary: the singleton (the viewer, the hover preview, the a
   assert.doesNotMatch(read("file-view.ts"), /pathAwareEmphasis|chatMarked|chatMdHtml/, "the viewer takes none of it");
   const FEED = read("feed.ts");
   assert.match(FEED, /^const noticeMarked = new Marked\(\{ gfm: true, breaks: true \}\);/m, "the feed's notice cards render on a bare instance of their own, on neither the singleton nor the chat's instances");
-  assert.doesNotMatch(FEED, /from "\.\/md-config"|from "\.\/chat-md"|from "\.\/path-links"/, "which takes nothing from the grammar modules and links no paths (chat-md.ts's header says so)");
+  // the subject is the bare noticeMarked instance and feed.ts's own imports; the feed PAGE still configures the singleton,
+  // through the file-view.ts its bundle carries (applyMdConfig at load), for the viewer it embeds and not for the cards
+  assert.doesNotMatch(FEED, /from "\.\/md-config"|from "\.\/chat-md"|from "\.\/path-links"/, "noticeMarked takes nothing from the grammar modules and links no paths (chat-md.ts's header says so)");
+});
+
+// ── the census: every product module under ui/webview that imports marked, and the instance each renders or lexes on ──
+// A hand list of source greps sees only the modules it names (the 2026-09-21 review, extra9-2: a markdown renderer added
+// later took no verdict at all), so the boundary is pinned as a census read from the directory: every non-test .ts file
+// whose import lines name the marked module, `import type` included (three importers take types alone), whatever marked API
+// the module calls (a new Marked, marked.parse, the static Lexer.lex, Parser.parseInline, a hook on Lexer.prototype). The
+// expected set names, per module, the instance it renders or lexes on, so a reader of a red here takes the verdict: the
+// singleton (GitHub's rendering, no override), the chat's two (pathAwareEmphasis), the feed's bare instance, or the static
+// lexer and parser, which read the singleton's module defaults.
+const MARKED_IMPORTERS: Record<string, string> = {
+  "anchor-map": "the static Lexer.lex and Parser.parseInline over the singleton's module defaults (applyMdConfig at load)",
+  "chat-md": "chatMarked and userMarked, the chat's two instances, both taking pathAwareEmphasis",
+  feed: "noticeMarked, a bare instance of its own for the notice cards",
+  "file-view": "viewerHtml on the singleton's defaults (marked.lexer, marked.parser; applyMdConfig at load)",
+  math: "types only; its extensions live in mdExtensions and run inside whichever instance is parsing",
+  "md-block-start": "a hook on Lexer.prototype, every instance's block-start memo; renders nothing",
+  "md-config": "applyMdConfig configures the singleton; pathAwareEmphasis reaches Tokenizer.prototype.emStrong from the chat's instances",
+  "md-literal-tags": "types only; a token walk viewerHtml and the anchor map call",
+  "md-wiki": "types only; referenced by no product module",
+  "reader-place": "the static Lexer.lex, an html-block test for the reader's place; renders nothing",
+  render: "marked.parse on the singleton for the hover preview (previewMdClean); md() and userMd() through chat-md's two instances",
+};
+test("the instance boundary as a census over the tree: exactly these eleven product modules under ui/webview import marked, each on a named instance; a module added later that imports marked, whatever API it calls, goes red here and takes a verdict", () => {
+  const importers = fs.readdirSync(UI)
+    .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts") && !f.endsWith(".d.ts"))
+    .filter((f) => /^import\b[^;]*?\bfrom\s+["']marked["']|require\(["']marked["']\)/m.test(read(f)))
+    .map((f) => f.slice(0, -3))
+    .sort();
+  assert.deepEqual(importers, Object.keys(MARKED_IMPORTERS).sort(), "the product modules under ui/webview importing marked changed; a module new to this list renders or lexes markdown on SOME instance and must say which: the singleton (GitHub's rendering, no override), the chat's two (pathAwareEmphasis), the feed's bare noticeMarked, or the static lexer and parser (the singleton's defaults). Known: " + JSON.stringify(MARKED_IMPORTERS, null, 1));
+  assert.equal(importers.length, 11);
+  const typeOnly = importers.filter((m) => /^import type\b[^;]*?\bfrom\s+["']marked["']/m.test(read(m + ".ts")) && !/^import\s+(?!type\b)[^;]*?\bfrom\s+["']marked["']/m.test(read(m + ".ts")));
+  assert.deepEqual(typeOnly, ["math", "md-literal-tags", "md-wiki"], "the importers that take types alone (the census must accept `import type`, or it misses them)");
+  assert.match(read("reader-place.ts").split("\n").slice(200).join("\n"), /^import\b[^;]*?\bfrom\s+["']marked["']/m, "reader-place.ts imports marked mid-file: the census reads whole files, not a header");
+});
+
+// ── THE RULE by execution: the override obtains its grammar by import from path-links.ts ─────────────────────────────
+// One grammar decides linking and protection: the walk's own scanner, trailing-punctuation trim and shape gates, imported
+// and never restated. A source grep for five spellings of that grammar (the boundary test above keeps it as a secondary
+// guard) cannot see a restatement under a sixth spelling (the 2026-09-21 review, F), so the property is checked by
+// execution: md-config.ts is bundled here with esbuild's build API and a plugin that resolves its `./path-links` import to
+// a stub of this test's making (esbuild's alias option is for bare package names), a Marked is built from the bundle's
+// own mdExtensions and pathAwareEmphasis (and the bundle's own marked, so the built-in the override reaches is the
+// bundle's), and the override's answer must FOLLOW the stub: with every gate refusing, or a scanner that yields no token,
+// the override protects nothing and renders every member row as the base grammar does; with a bare gate that admits
+// `.zzz` alone, `the _final_.zzz file` turns literal and `the _final_.pdf file` keeps its emphasis. A path grammar restated
+// inside the override under any spelling protects rows the stub refused and reds here.
+function stubBuild(stub: string | null): Promise<{ parse(src: string): string }> {
+  const esbuild = pkgRequire("esbuild") as typeof import("esbuild");
+  const plugin: import("esbuild").Plugin = {
+    name: "path-links-stub",
+    setup(build) {
+      build.onResolve({ filter: /^\.\/path-links$/ }, (args) => (stub && args.importer.endsWith("md-config.ts") ? { path: stub } : undefined));
+    },
+  };
+  return esbuild.build({
+    stdin: { contents: 'export * from "./md-config";\nexport { Marked } from "marked";\n', resolveDir: UI, loader: "ts", sourcefile: "stub-entry.ts" },
+    bundle: true, platform: "node", format: "cjs", target: "node18", write: false, logLevel: "silent", plugins: stub ? [plugin] : [],
+    nodePaths: [path.resolve(process.cwd(), "node_modules")],   // marked, katex and dompurify live under vscode-extension/, as the single-file recipe's NODE_PATH says
+  }).then((r) => {
+    const mod = { exports: {} as Record<string, unknown> };
+    new Function("module", "exports", "require", r.outputFiles[0].text)(mod, mod.exports, pkgRequire);
+    const { Marked: M, mdExtensions: exts, pathAwareEmphasis: pae } = mod.exports as { Marked: typeof Marked; mdExtensions: unknown[]; pathAwareEmphasis: unknown };
+    assert.equal(typeof pae, "object", "the bundle exports the override");
+    const m = new M({ gfm: true, breaks: false }, ...(exts as ConstructorParameters<typeof Marked>), pae as ConstructorParameters<typeof Marked>[0]);
+    return { parse: (src: string) => m.parse(src) as string };
+  });
+}
+test("THE RULE by execution: the override's protection follows the grammar it imports from path-links.ts. With a stub in that module's place whose gates refuse every token, or whose scanner yields none, every member row renders as the base grammar does; with a stub whose bare gate admits `.zzz` alone, `_final_.zzz` turns literal and `_final_.pdf` keeps its emphasis; the unstubbed bundle renders as the shipped chat does", async () => {
+  const REAL = JSON.stringify(path.join(UI, "path-links.ts"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "romp-md-emphasis-stub-"));
+  try {
+    const stubFile = (name: string, body: string): string => { const f = path.join(dir, name + ".ts"); fs.writeFileSync(f, body); return f; };
+    const refuse = stubFile("refuse", `export { PathTokenScanner, trailingPunct } from ${REAL};\nexport const isFileUri = (): boolean => false;\nexport const looksLikeFilePath = (): boolean => false;\nexport const looksLikeBareFileName = (): boolean => false;\n`);
+    const noToken = stubFile("no-token", `export { trailingPunct, isFileUri, looksLikeFilePath, looksLikeBareFileName } from ${REAL};\nexport class PathTokenScanner { constructor(_text: string) {} next(_from: number): [number, number] | null { return null; } }\n`);
+    const zzz = stubFile("zzz", `export { PathTokenScanner, trailingPunct, isFileUri, looksLikeFilePath } from ${REAL};\nexport const looksLikeBareFileName = (tok: string): boolean => /\\.zzz$/.test(tok);\n`);
+    const [control, refused, scanless, admitting] = await Promise.all([stubBuild(null), stubBuild(refuse), stubBuild(noToken), stubBuild(zzz)]);
+    const members = MEMBERS.map((id) => byId(CASES, id));
+    // the control: the bundle machinery renders as the shipped chat does (a Marked from the bundle's own exports and marked)
+    for (const r of members) assert.equal(control.parse(r.text), r.after, "the unstubbed bundle, " + r.id + ": " + JSON.stringify(r.text));
+    assert.equal(control.parse("the _final_.zzz file"), "<p>the <em>final</em>.zzz file</p>\n", "the shipped bare gate refuses .zzz");
+    assert.equal(chatMd.chatMdHtml("the _final_.zzz file"), "<p>the <em>final</em>.zzz file</p>\n");
+    // every gate refusing, or no token at all: the override protects nothing, so every row of both tables and every probe
+    // beside them renders as the base grammar does (the member rows show the arm is not vacuous: the shipped override
+    // changes all twenty); the probes beside the tables are the shapes a restatement would reach first, a bare name with an
+    // extension the shipped gate does not know, a path with a run inside, a URI, a pair spanning a path
+    for (const r of members) assert.notEqual(baseHtml(r.text), r.after, r.id + " is a member row: the shipped override changes it");
+    const probes = [...CASES, ...ADVERSARIAL].map((r) => r.text).concat(["the _final_.zzz file", "__init__.xyz", "see _final_.qqq and old_ now", "_see drafts/a_.md and old_ now", "_see file:///x/a*_b/c_ now", "_see /tmp/_build/out.md now_", "the _final_.pdf file"]);
+    for (const text of probes) {
+      const b = baseHtml(text);
+      assert.equal(refused.parse(text), b, "every gate refusing: the override still changed " + JSON.stringify(text) + " (a path grammar of its own decided, not the imported gates)");
+      assert.equal(scanless.parse(text), b, "no token from the scanner: the override still changed " + JSON.stringify(text) + " (a tokenisation of its own decided, not the imported scanner)");
+    }
+    // a bare gate of the stub's own: the override follows it both ways
+    assert.equal(admitting.parse("the _final_.zzz file"), "<p>the _final_.zzz file</p>\n", "the stub's bare gate admits .zzz, so the override protects the name the shipped gate leaves emphasised");
+    assert.equal(admitting.parse("the _final_.pdf file"), "<p>the <em>final</em>.pdf file</p>\n", "and refuses .pdf, so the name the shipped gate protects keeps its emphasis");
+    assert.equal(admitting.parse("see /a-_b/c_/d.md today"), "<p>see /a-_b/c_/d.md today</p>\n", "the file gate, re-exported real, still protects a path");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the bare-name gate's live values decide, not a hand list: `the _final_.<ext> file` renders literal exactly when the imported gates admit the token the scanner and the trim derive from it, over every member of BARE_FILE_EXTS and non-members beside them", () => {
+  const exts = [...BARE_FILE_EXTS, "zzz", "xyz", "Md", "abcdefghi", "0", "q"];
+  const literal: string[] = [], emphasised: string[] = [];
+  for (const ext of exts) {
+    const text = "the _final_." + ext + " file";
+    // the token as the override derives it: the walk's scanner, then the trailing-punctuation trim, then the gates
+    const scan = new PathTokenScanner(text);
+    let tok = "", m: [number, number] | null, from = 0;
+    while ((m = scan.next(from))) {
+      let t = text.slice(m[0], m[1]);
+      const trail = trailingPunct(t);
+      if (trail) t = t.slice(0, t.length - trail[0].length);
+      if (t.includes("final")) { tok = t; break; }
+      from = m[1];
+    }
+    assert.ok(tok, "the scanner yields the token for " + JSON.stringify(text));
+    const gated = isFileUri(tok) || looksLikeFilePath(tok) || looksLikeBareFileName(tok);
+    (gated ? literal : emphasised).push(ext);
+    const want = gated ? "<p>the _final_." + ext + " file</p>\n" : "<p>the <em>final</em>." + ext + " file</p>\n";
+    for (const [who, render] of RENDERERS) assert.equal(render(text), want, who + ", ." + ext + " (" + JSON.stringify(tok) + (gated ? " passes" : " fails") + " the imported gates): " + JSON.stringify(text));
+  }
+  assert.ok(literal.length >= BARE_FILE_EXTS.size, "the members of BARE_FILE_EXTS all render literal: " + literal.length);
+  assert.deepEqual(emphasised.sort(), ["0", "abcdefghi", "q", "xyz", "zzz"].sort(), "the non-members keep their emphasis (`Md` is a member: the gate lowercases)");
 });

@@ -73,20 +73,23 @@ function bundle(entry: string): string {
   const r = requireCjs("esbuild").buildSync({ ...BUILD, entryPoints: [path.join(UI, entry)] });
   return r.outputFiles[0].text;
 }
-// md() as render.ts runs it, minus the PR-ref linkifier: marked with the chat's options and extensions, then sanitizeMd;
-// and the page's own chrome openers (the lightbox, the viewer, the file browser) for the second leg, from the same source
-// files the chat bundle is built from. They are a second instance of each module beside render.js's, which is what lets
-// the leg bind its own poster: the DOM they build, and the anchors they click, are the ones render.js's delegate sees.
+// md() as render.ts runs it, minus the PR-ref linkifier: the chat's own marked instance (chat-md.ts chatMdHtml, the one
+// render.ts's md() parses through since the chat's path-aware emphasis of 2026-09-19; the probe stood the singleton in
+// before, a grammar the chat no longer renders on), then sanitizeMd; and the page's own chrome openers (the lightbox,
+// the viewer, the file browser) for the second leg, from the same source files the chat bundle is built from. They are a
+// second instance of each module beside render.js's, which is what lets the leg bind its own poster: the DOM they build,
+// and the anchors they click, are the ones render.js's delegate sees. applyMdConfig stays for the chrome's viewer, which
+// renders a note on the singleton (file-view.ts calls it at load too); the message probe does not use the singleton.
 function probeBundle(): string {
   const contents = [
-    'import { marked } from "marked";',
+    'import { chatMdHtml } from "./chat-md";',
     'import { sanitizeMd } from "./md-sanitize";',
     'import { applyMdConfig } from "./md-config";',
     'import { openFileView, initFileView } from "./file-view";',
     'import { openLightbox } from "./preview";',
     'import { initFileBrowse, openFileBrowse } from "./file-browse";',
     "applyMdConfig();",
-    "(window as any).__mdProbe = (s: string) => sanitizeMd(marked.parse(s) as string).innerHTML;",
+    "(window as any).__mdProbe = (s: string) => sanitizeMd(chatMdHtml(s)).innerHTML;",
     "(window as any).__chrome = { openFileView, initFileView, openLightbox, initFileBrowse, openFileBrowse };",
   ].join("\n");
   const r = requireCjs("esbuild").buildSync({ ...BUILD, stdin: { contents, resolveDir: UI, sourcefile: "md-probe.ts", loader: "ts" } });
@@ -134,6 +137,11 @@ test("a scheme-less href in a message never navigates the chat document: //host,
       if (u.pathname === "/docs/note.md") return route.fulfill({ status: 200, contentType: "text/markdown; charset=utf-8", body: NOTE });
       return route.fulfill({ status: 404, body: "" });
     });
+    // the probe's aim: the chat's instance, not the singleton, so a path's underscores stay literal (md-config.ts
+    // pathAwareEmphasis; the singleton would pair them as emphasis)
+    await page.goto(CHAT);
+    const aim = await page.evaluate(() => (window as any).__mdProbe("see /a-_b/c_/d.md today") as string);
+    assert.doesNotMatch(aim, /<em>/, "the probe renders the chat instance's grammar (chat-md.ts chatMdHtml), on which a path's underscores are literal: " + aim);
     for (const c of CASES) {
       // a fresh chat page per case: no viewer left open, no recorded open, and a document that DID leave (the defect) comes back
       try { await page.goto(CHAT); } catch { await page.goto(CHAT); }

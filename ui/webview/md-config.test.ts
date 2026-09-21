@@ -116,7 +116,7 @@ test("math: the placeholders KaTeX fills after the sanitize are the singleton's 
   assert.equal(html("a ~~b~~ ~c~"), "<p>a <del>b</del> ~c~</p>\n", "the ~~-only del rule rides in the same list");
 });
 
-test("the fixture renders every construct's element, once each, in order; the user-text instance renders each single-line snippet identically", () => {
+test("the fixture renders every construct's element, once each, in order; the user-text instance renders each single-line snippet identically to the singleton (a parity control with the viewer's grammar on rows with no linkable token; the two chat instances' own contract is md-emphasis-paths.test.ts's)", () => {
   const out = html(FIXTURE);
   const order = ['<details class="md-frontmatter">', "<h1>Heading One</h1>", '<sup class="md-fnref">', "<mark class=\"md-mark\">marked text</mark>", "<del>struck</del>", "~single~",
     '<div class="md-footnote" id="fn-1">', "<p>Para after footnote def.</p>", '<div class="md-footnote" id="fn-2">', '<blockquote class="md-callout md-callout-note"><p class="md-callout-title">Title</p>',

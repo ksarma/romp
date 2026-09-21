@@ -1,12 +1,15 @@
 // The Slice 4 constructs in the CHAT's markdown bodies under styles.css, in headless Chromium (plans/markdown-viewer.md,
-// "one markdown configuration, Obsidian constructs included"): the grammar sits on the marked singleton, so a reply, a
-// notice and the person's own bubble render callouts, ==mark==, front matter and footnotes too (the open ruling the
-// build note records). The slice's review round 1 found every construct rule scoped `.fileview-md` alone: in a reply a
+// "one markdown configuration, Obsidian constructs included"): the chat's two instances take the singleton's list
+// (chat-md.ts, plus the chat's own pathAwareEmphasis), so a reply, a notice and the person's own bubble render callouts,
+// ==mark==, front matter and footnotes too (the open ruling the build note records). The slice's review round 1 found
+// every construct rule scoped `.fileview-md` alone: in a reply a
 // <mark> wore the browser's yellow-on-black, a `> [!NOTE]` was a plain quote whose first line read "Note" in body weight
 // and the quote's dim colour, front matter and a footnote definition were bare, in both themes and inside the bubble.
-// The fixture goes through the chat's own path (marked under applyMdConfig then sanitizeMd, as render.ts md() does; the
-// user instance of chat-md.ts for the bubble, as userMd() does) into `.assistant.md`, `.notice-md.md` and
-// `.user-bubble.md`, and, for contrast, into `.fileview-md` on the same page. The computed styles are what the
+// The fixture goes through the chat's own path (the chat instance's parse, chat-md.ts chatMdHtml, then sanitizeMd, as
+// render.ts md() does; the user instance of chat-md.ts for the bubble, as userMd() does) into `.assistant.md`,
+// `.notice-md.md` and `.user-bubble.md`, and, for contrast, through the viewer's grammar (the singleton under
+// applyMdConfig, then sanitizeMd) into `.fileview-md` on the same page; until 2026-09-21 one helper on the singleton
+// filled every root, and the chat roots have rendered on the chat's instances since 2026-09-19. The computed styles are what the
 // assertions read: the chat's dress equals the viewer's (the shared rules are doubled `.md X, .fileview-md X`), the
 // comment highlight `mark.cmt-hl` keeps its own tint (its rule ties a `.md mark` rule on specificity and stands earlier
 // in the sheet, so the construct rule keys on the renderer's own class, mark.md-mark, and never names it), a callout's
@@ -50,16 +53,19 @@ const STYLES = fs.readFileSync(path.join(UI, "styles.css"), "utf8").replace('@im
 
 const BUILD = { bundle: true, write: false, format: "iife", platform: "browser", target: "es2020",
   nodePaths: [path.join(EXT, "node_modules")], external: ["*.png", "*.svg", "*.woff", "*.ttf", "../media/*.woff2"], logLevel: "silent" };
-/** The chat's two renderers, minus the PR-reference walk: the singleton under md-config.ts and the bubble's instance, each through sanitizeMd. */
+/** The chat's two renderers, minus the PR-reference walk (chat-md.ts chatMdHtml for a reply and a notice, userMdHtml for the
+ *  bubble, each through sanitizeMd), and the viewer's stand-in for the `.fileview-md` roots: the singleton under md-config.ts,
+ *  the grammar the viewer renders on, through the same sanitizer. Two helpers because the page holds both kinds of root. */
 function probeBundle(): string {
   const contents = [
     'import { marked } from "marked";',
     'import { applyMdConfig } from "./md-config";',
     'import { sanitizeMd } from "./md-sanitize";',
-    'import { userMdHtml } from "./chat-md";',
+    'import { chatMdHtml, userMdHtml } from "./chat-md";',
     "applyMdConfig();",
-    "(window as any).__md = (s: string) => sanitizeMd(marked.parse(s) as string).innerHTML;",
+    "(window as any).__md = (s: string) => sanitizeMd(chatMdHtml(s)).innerHTML;",
     "(window as any).__userMd = (s: string) => sanitizeMd(userMdHtml(s)).innerHTML;",
+    "(window as any).__viewerMd = (s: string) => sanitizeMd(marked.parse(s) as string).innerHTML;",
   ].join("\n");
   const r = requireCjs("esbuild").buildSync({ ...BUILD, stdin: { contents, resolveDir: UI, loader: "ts", sourcefile: "chat-styles-probe.ts" } });
   return r.outputFiles[0].text;
@@ -95,12 +101,12 @@ const PAGE = `<!DOCTYPE html><html><head><meta charset=utf-8><style>${STYLES}</s
 <script>${probeBundle()}</script>
 <script>
   var reply = ${JSON.stringify(REPLY)}, typed = ${JSON.stringify(TYPED)};
-  document.getElementById("ff").innerHTML = window.__md(${JSON.stringify(FIRST_FOLD)});
-  document.getElementById("fb").innerHTML = window.__md(${JSON.stringify(FIRST_BLOCK)});
+  document.getElementById("ff").innerHTML = window.__viewerMd(${JSON.stringify(FIRST_FOLD)});
+  document.getElementById("fb").innerHTML = window.__viewerMd(${JSON.stringify(FIRST_BLOCK)});
   document.getElementById("a").innerHTML = window.__md(reply) + '<p>A <mark class="cmt-hl">commented</mark> passage in the reply</p>';
   document.getElementById("n").innerHTML = window.__md(reply);
   document.getElementById("u").innerHTML = window.__userMd(typed);
-  document.getElementById("f").innerHTML = window.__md(reply);
+  document.getElementById("f").innerHTML = window.__viewerMd(reply);
 </script></body></html>`;
 
 let pw: any = null;
@@ -201,6 +207,11 @@ test("a reply's constructs wear the viewer's dress in the chat's markdown bodies
     await page.setContent(PAGE, { waitUntil: "load" });
     assert.deepEqual(errors, [], "the probe bundle ran clean");
     assert.deepEqual(await page.evaluate("window.__pageErrors"), [], "no script error on the page");
+    // the two helpers' aims: the chat roots' renders the chat's instance, on which a path's underscores stay literal
+    // (md-config.ts pathAwareEmphasis), and the viewer roots' renders the singleton, which pairs them as GitHub does
+    const aims = await page.evaluate('({ chat: window.__md("see /a-_b/c_/d.md today"), viewer: window.__viewerMd("see /a-_b/c_/d.md today") })') as { chat: string; viewer: string };
+    assert.doesNotMatch(aims.chat, /<em>/, "__md renders the chat instance's grammar (chat-md.ts chatMdHtml): " + aims.chat);
+    assert.match(aims.viewer, /<em>b\/c<\/em>/, "__viewerMd renders the singleton's, the viewer's grammar: " + aims.viewer);
     const readAll = async () => ({
       a: await page.evaluate(READ_DRESS + '("a")') as Dress, n: await page.evaluate(READ_DRESS + '("n")') as Dress,
       f: await page.evaluate(READ_DRESS + '("f")') as Dress,

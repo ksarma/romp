@@ -91,7 +91,11 @@ test('decision 52 records the report paraphrased, the rule, the one shared funct
   assert.ok(d52.includes('Matching is by element name, ASCII case-insensitive, innermost first'));
   assert.ok(d52.includes('so `<b>x<b>y</b>` keeps the inner pair as HTML and makes the first `<b>` text, `<B>x</b>` is closed and `<b>x *y</b>*` is closed through the emphasis'));
   assert.ok(d52.includes('One rule in one code path is the design point that keeps the risk low: one module, `ui/webview/md-literal-tags.ts`, exports `literalizeUnclosedTags(tokens)`, and two callers run it on their own token trees of the same source under the one configuration (md-config.ts)'));
-  assert.ok(d52.includes('Nothing is registered on the singleton (no marked.use, no renderer hook; the module imports marked\'s types alone), so the chat\'s `md()` (render.ts, still marked.parse) and md-config.ts are untouched'));
+  // decision 52's dated record (2026-09-18): md() parsed with marked.parse then. A plans/ document is a dated record (the
+  // plan's preamble; test 7 below holds the other plan to the same convention), so the sentence stands as history and the
+  // pointer sentence after it names the current parse, chatMdHtml (the code pin in the next test reads render.ts and chat-md.ts)
+  assert.ok(d52.includes('Nothing is registered on the singleton (no marked.use, no renderer hook; the module imports marked\'s types alone), so the chat\'s `md()` (render.ts, still marked.parse) and md-config.ts are untouched'), 'the dated record: the chat\'s md() parsed with marked.parse as of 2026-09-18');
+  assert.ok(d52.includes('and the feed renders as before. Since 2026-09-19 the chat\'s `md()` parses on the chat\'s own instance, `chatMdHtml` in chat-md.ts (the singleton\'s list plus the chat\'s path-aware emphasis); the sentence before this one is the record as of 2026-09-18.'), 'the dated pointer right after the record names chatMdHtml and the date as the current parse, so the record and the code pin below agree');
   assert.ok(d52.includes('Deliberately left, recorded here: `<hr>` inline is void, stays HTML and still splits its paragraph in the parser; a start tag whose end tag stands in a LATER block renders as text now'));
   assert.ok(d52.includes('a block-level element closed within its block mid-line (`<div>x</div>`) still splits the paragraph in the parser, a known gap'));
   assert.ok(d52.includes('inside an inline `<svg>` or `<math>` the rule applies by name'), 'the foreign-content consequence is recorded');
