@@ -967,7 +967,16 @@ test("round 5's fifth addendum, third fix-up: the lexer resolves a substitution 
   // bash's `${!..}` and zsh's `(`, `=`, `~` and `^` openers may split. Pinned in both directions; the rows with the shells that write
   // are the round-6 rows of tools/romp-track-bash-guard.test.mjs.
   const splitRefused = (cmd) => { const r = evaluate(payload(cmd)); assert.ok(r && /may split into several words/.test(r), `refused, may split: ${cmd}: ${r}`); };
-  for (const cmd of ['cp "$@"', 'cp "${@}"', 'cp "${@:2}"', 'cp "${@#x}"', 'cp "${arr[@]}"', 'cp "${arr[@]:1}"', 'cp "${!m[@]}"', 'cp "${(@)arr}"', 'cp "${=s}"', 'cp "${(s: :)s}"', 'cp "${(f)s}"', 'cp "${(z)s}"', 'cp "$arr[@]"', 'cp "x$@"', 'cp "${!BB@}"']) splitRefused(cmd);
+  for (const cmd of ['cp "$@"', 'cp "${@}"', 'cp "${@:2}"', 'cp "${@#x}"', 'cp "${arr[@]}"', 'cp "${arr[@]:1}"', 'cp "${!m[@]}"', 'cp "${(@)arr}"', 'cp "${=s}"', 'cp "${(s: :)s}"', 'cp "${(f)s}"', 'cp "${(z)s}"', 'cp "$arr[@]"', 'cp "x$@"', 'cp "${!BB@}"', 'cp "$=s"', 'cp $=s']) splitRefused(cmd);   // `"$=s"` and `$=s`: zsh's unbraced flag (round 6's third commit)
   for (const cmd of ['cp "$x"', 'cp "${x}"', 'cp "$*"', 'cp "${arr[*]}"', 'cp "${x:-a b}"', 'cp "${x#zz}"', 'cp "$1"', 'cp "$#"', 'cp "`cat f`"', 'cp "$((1+2))"', 'cp "a $x b"']) assert.equal(evaluate(payload(cmd)), null, `double-quoted and one field: no write: ${cmd}`);
-  assert.deepEqual(['"$x"', '"$@"', '"${a[@]}"', '"${(@)a}"', '"${=s}"', '"$a[@]"', '"${!p@}"', '$x', '"a"x'].map((raw) => guard.dqSingleField(raw)), [true, false, false, false, false, false, false, false, false], 'the predicate: one field only for a wholly double-quoted word with no splitting form; a word not wholly quoted is never exempt');
+  assert.deepEqual(['"$x"', '"$@"', '"${a[@]}"', '"${(@)a}"', '"${=s}"', '"$a[@]"', '"${!p@}"', '$x', '"a"x', '"$=s"', '"$^s"', '"$~s"'].map((raw) => guard.dqSingleField(raw)), [true, false, false, false, false, false, false, false, false, false, false, false], 'the predicate: one field only for a wholly double-quoted word with no splitting form; a word not wholly quoted is never exempt; zsh\'s unbraced flags (round 6\'s third commit) are never proven one field');
+  // zsh's unbraced flags are expansions (round 6's third commit: `cp ../base/report.md $~X` was a copy onto the literal name `$~X`, allowed while zsh copied onto X's value)
+  assert.deepEqual(seg('cp a $~X $^Y $=Z').words.slice(2).map((w) => [w.text, w.literal]), [['$~X', false], ['$^Y', false], ['$=Z', false]], 'unbraced flags: expansions of the name, for the Bash tool\'s command');
+  assert.deepEqual(seg('cp a $~X', 'bash').words[2].literal, true, 'a literal dollar in a script handed to bash');
+  assert.deepEqual(seg('cp a $~X', 'zsh').words[2].literal, false, 'and an expansion in one handed to zsh');
+  assert.ok(/is not a literal path/.test(evaluate(payload('X=docs/report.md; cp base/report.md $~X'))), 'so a target spelled with a flag is one the hook cannot read');
+  // THE SPLIT TARGET (round 6's third commit): each field bash and zsh open beside the whole text dash opens
+  assert.deepEqual(seg("echo x > $(echo 'a docs/report.md')").redirects.map((r) => r.target.text), ['a docs/report.md', 'a', 'docs/report.md'], 'a resolved text with a blank at a redirection target: the whole text and each field');
+  assert.deepEqual(targets("echo x > $(echo 'a docs/report.md')"), [report].concat(targets('echo x > a')).concat(targets("echo x > 'a docs/report.md'")).sort(), 'the tracked field is a target by name');
+  assert.deepEqual(targets("echo x > $(echo 'docs/report.md ')"), [report, report + ' '].sort(), 'a trailing blank: the stripped field is the tracked file, beside the whole text dash opens (a name ending in a blank)');
 });

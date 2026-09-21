@@ -4291,7 +4291,7 @@ document stands on its own, each with the reasoning it was given.
     `echo "$(echo '..')" | bash` from docs/ were `ALLOWED writers=[bash,zsh,dash]` (`writers=[bash,zsh]` for the here-string, which
     dash rejects): the `$(...)` was read as the command it runs, an echo that writes nothing, and the text it prints, which the
     guard could see, was never the script. THE RULE, stated at `resolvedSub` in the lexer (`literalOutput` reads the command) and
-    here in the same words: a `$(...)` or a backtick whose command is one echo or printf with literal operands and no redirection prints text the guard can see, and that text stands in the word where the shell puts it, whole where no shell splits an expansion's result (inside double quotes, as a here-string, as a redirection target, in a here-document body, as the word of a `${...}` operator) and split at blanks into the words the shell makes among unquoted operands, so the word is literal and a script it forms is read as the here-string form already is; when echo's two readings differ, a word that is the substitution alone keeps both texts and a script formed from it is read under each. Measured: `bash -c "$(echo 'echo x > report.md')"` writes in all three; `$(echo cp)
+    here in the same words: a `$(...)` or a backtick whose command is one echo or printf with literal operands and no redirection prints text the guard can see, and that text stands in the word where the shell puts it, whole where no shell splits an expansion's result (inside double quotes, as a here-string, in a here-document body, as the word of a `${...}` operator), split at blanks into the words the shell makes among unquoted operands, and at a redirection target both, the whole text as dash opens it and each blank-separated field as zsh opens it (bash opens the one field, or none of several), each a redirection of its own, so the word is literal and a script it forms is read as the here-string form already is; when echo's two readings differ, a word that is the substitution alone keeps both texts and a script formed from it is read under each. Measured: `bash -c "$(echo 'echo x > report.md')"` writes in all three; `$(echo cp)
     ../base/report.md report.md` and the substitution alone as the command line copy in all three, split into the words the shell
     runs; `x=$(echo 'report.md'); cp ../base/report.md $x` copies in all three (the value resolves); `bash -c $(echo 'cp a b')`,
     split, hands `cp` alone to bash and `"$(echo 'cp a b')"` is a command named so (no shell writes: both allowed); `bash -c
@@ -4420,22 +4420,71 @@ document stands on its own, each with the reasoning it was given.
     scratch PATH, so a row the running shell writes before the named consumer is reached is measured on a runner without that
     consumer; a runner lacking zsh is reproduced in the test file itself. The construct matrix pins the key set of CONSTRUCT_HEADS
     by kind (F), derives its population sentence from its tables (G), and the four constructs the param-word note named without a
-    row have rows. THE RESIDUAL PROPERTY. The guard refuses a write only when it resolves the command to a writer it models (the
+    row have rows.
+    ROUND 6, THIRD COMMIT (2026-09-21; the round's three verifiers on the second commit's head, every finding a command a shell
+    wrote onto the tracked file while the guard allowed it, each closed by refusing and none relabelled). ZSH'S UNBRACED FLAGS:
+    `$=name`, `$^name` and `$~name` are zsh's `${=name}`, `${^name}` and `${~name}` without the braces (zshexpn), and the lexer
+    read a `$` before `=`, `^` or `~` as a literal dollar, so `cp "$=X"` with two paths in X was a one-operand cp the split rule
+    never saw, and `cp ../base/report.md $~X` a copy onto the literal name `$~X`, both allowed while zsh split, or substituted,
+    and copied; expansionAt reads the three as expansions under zsh's grammar (a script handed to bash or dash keeps the literal
+    dollar) and dqSingleField proves none of them one field. THE SPLIT TARGET: the resolved substitution's rule called a
+    redirection target a place no shell splits, and bash and zsh split it (zsh opens every blank-separated field under MULTIOS,
+    bash the one field or none of several, an ambiguous redirect) while dash opens the whole text, so `echo x > $(echo
+    'report.md ')` was judged on the untracked name `report.md ` and allowed while bash and zsh wrote report.md, and `> $(echo x
+    report.md)` while zsh wrote x and report.md; endWord records each field the resolver's blanks cut as a redirection of its
+    own beside the whole text (expandedFields), and the rule's sentence on decision 47 says so. THE ALIAS ROAD INTO A TEXT
+    PARSED LATER: a text the shell parses after the segment handing it over has run (eval's and trap's operands, a sourced
+    standard input, a `$(...)`, a backtick, a `<(...)`) was lexed as its own text, its line count starting at 1, so an alias
+    bound on line 1 never stood on an earlier line and `alias c=cp; eval 'c ../base/report.md report.md'` copied in zsh and dash
+    (bash under `expand_aliases`) while allowed, as did `trap`, `. /dev/stdin`, `echo $(c ..)` and a backtick; lineOf gives such
+    a text coordinates strictly between the outer segment's line and the next (`lineBase`, `lineStep`; recurse), so a binding on
+    or before the outer line is seen inside it, a binding made inside it is seen on its later lines and on every later outer
+    line, and never on the outer line itself, as the shells parse (`eval 'alias c=cp'; c a b` expands in none of them). A
+    SOURCED PROCESS SUBSTITUTION and A DESCRIPTOR AS THE SCRIPT: `. <(echo 'cp a b')` and `source <(..)` (bash and zsh; zsh's `.
+    =(..)` too) are read as `bash <(..)` is; a script operand naming a numbered descriptor (`/dev/fd/N`, `/proc/self/fd/N`:
+    `bash /dev/fd/3 3<<'EOF'` ran the body in every shell, `bash /dev/fd/9 9<<< '..'` and `. /dev/fd/3 3<<< '..'` in bash and
+    zsh) reads every body the command carries (isStdinName; the lexer keeps no descriptor on a body, so the over-read is the
+    safe side); and a `--rcfile` or `--init-file` process substitution is read whether or not `-i` is spelled (bash reads it
+    only when interactive: the refusal without `-i` is a stated cost). THE SED SCRIPT: sed's `w` and `W` commands and the `w`
+    flag of `s` write the file they name, and sed was a writer through `-i` alone, so `sed -n 'w report.md' ../base/report.md`
+    and `sed 's/x/y/w report.md' ..` wrote in every shell while allowed; sedWriteFiles reads a literal script over GNU sed's
+    command grammar and sedScriptWrites judges each file by name (a plain-string name in the script resolves first:
+    `f=report.md; sed -n "w $f"` refuses by name), a script whose reader stops at a letter the grammar lacks refuses naming the
+    letter (sed itself rejects such a script; a reader that misread an address would stop the same way, so it does not guess),
+    and a script the resolver cannot read stays the residual, named in the property. A GLOB IN THE COMMAND NAME: `/usr/bin/[c]p
+    a b` ran cp in every shell while the walk read an unknown command; the sorted matches stand in the name's place through THE
+    HEAD SPLICE (several make the first the command and the rest its leading operands, as the shells do), a pattern the guard
+    cannot expand is a name it cannot read, and one matching nothing stands as spelled. ZSH'S OTHER HEADS: `=cp a b` (zsh's
+    `=cmd`, the path of cp) is spliced under zsh's grammar, `emulate sh -c TEXT` runs TEXT as a script of zsh, and `zf_mv`,
+    `zf_ln`, `zf_rm` and `zf_rmdir` (zsh/files) are the coreutils commands by another name. A CAT OF THE STANDARD INPUT inside a
+    `$(...)` with nothing in the list feeding it (`echo 'cp a b' | { bash -c "$(cat)"; }`, `| bash -c 'eval "$(cat)"'`: every
+    shell ran the piped text) is UNRESOLVABLE under THE OUTPUT MODEL, refused where a script is built from it; a cat after a
+    pipe inside the list stays the producer outside the model. THE RESIDUAL TABLE gains the members of its classes the verifier
+    found (a `$(which cp)` head and the `${...}` operator heads, setarch and linux64, uniq, awk's redirect, scp, openssl, shred,
+    bash's history -w, zsh's sysopen and mapfile, a sed script the resolver cannot read, a written sed -f file), the writer
+    class is restated to cover a write form of a program the hook models, and the child test that reproduces a runner lacking
+    zsh counts the rows' NOT RUN line, not the probe's. Stated, not decided here: deleting or moving a tracked file (`rm
+    report.md`, `mv report.md other.md`) is allowed, since the guard's contract is the write that lands on a tracked file;
+    whether the tracked set shrinking is a write for it to refuse is a scope question raised with the round.
+    THE RESIDUAL PROPERTY. The guard refuses a write only when it resolves the command to a writer it models (the
     writer cases of extract's switch, a write redirection, an interpreter's write call it scans) reached through a road it reads
     (the wrapper set, the shells' script roads, the readings of the resolver, the alias and hash roads), with a target it can
-    place or cannot read. Every write that still reaches a tracked file is one the guard does not resolve to such a writer through
-    such a road, whether or not its text stands in the command, and falls in one of these classes, each measured by execution in
-    tools/romp-track-bash-guard.test.mjs (THE RESIDUAL TABLE, whose rows are the population this statement is over): a writer
-    outside the model, a program that writes the file by its own nature and is not among the writers the hook models (rsync,
-    patch, tar -x, ed, ex, vim, make, shuf -o, gawk -i inplace, curl -o, wget -O, find -exec, a git alias or a subcommand that
-    writes the tree, sed's e command, busybox's applets); a reader outside the roads, a program that runs a command or a script
-    the hook does not follow into it (xargs, an interpreter's system, exec or subprocess call, a wrapper outside the set, a shell
-    outside SHELLS, a file the command writes and then runs or sources); a command name the resolver never reads, a command whose
-    name is an expansion of a kind the resolver does not read ("$@", $1, $*, "${a[@]}", a loop variable, a name read, printf -v or
-    a nameref filled, ${SHELL}); a script held in a variable, a plain-string name whose value holds whitespace (the readability
-    rule stores no such value), run as a command or handed to a shell (`$c`, `bash -c "$c"`, `eval "$c"`); a producer outside the
-    output model, a pipe into a shell from anything but a literal echo or printf, alone or in a subshell or group of such commands
-    (a call of a function the command defines, a tee or a further pipe, a cat of a file); zsh's glob grouping, a `(..)` inside a
+    place or cannot read. Every write that still reaches a tracked file is one the guard does not resolve to such a writer
+    through such a road, whether or not its text stands in the command, and falls in one of these classes, each measured by
+    execution in tools/romp-track-bash-guard.test.mjs (THE RESIDUAL TABLE, whose rows are the population this statement is
+    over): a writer outside the model, a program, or a write form of a program the hook models, that writes the file by its own
+    nature and is not among the write forms the hook reads (rsync, patch, tar -x, ed, ex, vim, make, shuf -o, gawk -i inplace,
+    awk's print redirect, uniq, scp, openssl -out, shred, curl -o, wget -O, find -exec, a git alias or a subcommand that writes
+    the tree, bash's history -w, zsh's sysopen and mapfile modules, sed's e command and a w command in a sed script the resolver
+    cannot read, busybox's applets); a reader outside the roads, a program that runs a command or a script the hook does not
+    follow into it (xargs, an interpreter's system, exec or subprocess call, a wrapper outside the set, a shell outside SHELLS,
+    a file the command writes and then runs or sources); a command name the resolver never reads, a command whose name is an
+    expansion of a kind the resolver does not read ("$@", $1, $*, "${a[@]}", a loop variable, a name read, printf -v or a
+    nameref filled, ${SHELL}, a substitution outside the output model such as $(which cp), a ${...} operator form the resolver
+    does not read); a script held in a variable, a plain-string name whose value holds whitespace (the readability rule stores
+    no such value), run as a command or handed to a shell (`$c`, `bash -c "$c"`, `eval "$c"`); a producer outside the output
+    model, a pipe into a shell from anything but a literal echo or printf, alone or in a subshell or group of such commands (a
+    call of a function the command defines, a tee or a further pipe, a cat of a file); zsh's glob grouping, a `(..)` inside a
     word handed to zsh, read as a subshell by the lexer's zsh grammar while zsh globs it (a lexer gap, stated since the first
     commit of this round); an opaque expansion from a cwd outside every project, a leading opaque expansion, or one after a
     literal head outside every project, from a cwd in no project (B2 as ruled, with its boundary). A shape outside these classes

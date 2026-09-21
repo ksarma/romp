@@ -7354,9 +7354,9 @@ test("round 6, second commit, THE OUTPUT MODEL: a subshell or a `{ }` group of e
 // statement over: a shape added here must be under one of its classes (the class is a key of RESIDUAL_CLASSES, whose text the
 // property carries), and a row that stops writing, or that the hook starts refusing, reds here (a rule to state, not drift).
 const RESIDUAL_CLASSES = {
-  'a writer outside the model': 'a program that writes the file by its own nature and is not among the writers the hook models (rsync, patch, tar -x, ed, ex, vim, make, shuf -o, gawk -i inplace, curl -o, wget -O, find -exec, a git alias or a subcommand that writes the tree, sed\'s e command, busybox\'s applets)',
+  'a writer outside the model': 'a program, or a write form of a program the hook models, that writes the file by its own nature and is not among the write forms the hook reads (rsync, patch, tar -x, ed, ex, vim, make, shuf -o, gawk -i inplace, awk\'s print redirect, uniq, scp, openssl -out, shred, curl -o, wget -O, find -exec, a git alias or a subcommand that writes the tree, bash\'s history -w, zsh\'s sysopen and mapfile modules, sed\'s e command and a w command in a sed script the resolver cannot read, busybox\'s applets)',
   'a reader outside the roads': 'a program that runs a command or a script the hook does not follow into it (xargs, an interpreter\'s system, exec or subprocess call, a wrapper outside the set, a shell outside SHELLS, a file the command writes and then runs or sources)',
-  'a command name the resolver never reads': 'a command whose name is an expansion of a kind the resolver does not read ("$@", $1, $*, "${a[@]}", a loop variable, a name read, printf -v or a nameref filled, ${SHELL})',
+  'a command name the resolver never reads': 'a command whose name is an expansion of a kind the resolver does not read ("$@", $1, $*, "${a[@]}", a loop variable, a name read, printf -v or a nameref filled, ${SHELL}, a substitution outside the output model such as $(which cp), a ${...} operator form the resolver does not read)',
   'a script held in a variable': 'a plain-string name whose value holds whitespace (the readability rule stores no such value), run as a command or handed to a shell (`$c`, `bash -c "$c"`, `eval "$c"`)',
   'a producer outside the output model': 'a pipe into a shell from anything but a literal echo or printf, alone or in a subshell or group of such commands (a call of a function the command defines, a tee or a further pipe, a cat of a file)',
   'zsh\'s glob grouping': 'a `(..)` inside a word handed to zsh, read as a subshell by the lexer\'s zsh grammar while zsh globs it (a lexer gap, stated since the first commit of this round)',
@@ -7408,6 +7408,34 @@ const RESIDUAL_TABLE = [
   ['RT-curl-o', 'a writer outside the model', 'curl', 'curl -s -o report.md file://$PWD/../base/report.md', ['bash', 'zsh', 'dash']],
   ['RT-wget-O', 'a writer outside the model', 'wget', 'wget -q -O report.md file://$PWD/../base/report.md', ['bash', 'zsh', 'dash']],
   ['RT-zsh-glob-group', "zsh's glob grouping", null, "zsh -c 'cp ../base/(r)eport.md report.md'", ['bash', 'zsh', 'dash']],
+  // round 6's third commit (the residuals verifier): members of the stated classes the table lacked, each measured; `=cp`, `emulate -c` and
+  // zsh/files' zf_ builtins are read now (the rows test above), so they are not here
+  ['RT-which-head', 'a command name the resolver never reads', 'which', '$(which cp) ../base/report.md report.md', ['bash', 'zsh', 'dash']],
+  ['RT-command-v-head', 'a command name the resolver never reads', null, '"$(command -v cp)" ../base/report.md report.md', ['bash', 'zsh', 'dash']],
+  ['RT-strip-prefix-head', 'a command name the resolver never reads', null, 'c=xcp; ${c#x} ../base/report.md report.md', ['bash', 'zsh', 'dash']],
+  ['RT-strip-suffix-head', 'a command name the resolver never reads', null, 'c=cpx; ${c%x} ../base/report.md report.md', ['bash', 'zsh', 'dash']],
+  ['RT-substring-head', 'a command name the resolver never reads', null, 'c=xcp; ${c:1} ../base/report.md report.md', ['bash', 'zsh']],
+  ['RT-pattern-head', 'a command name the resolver never reads', null, 'c=cx; ${c/x/p} ../base/report.md report.md', ['bash', 'zsh']],
+  ['RT-lowercase-head', 'a command name the resolver never reads', null, 'c=CP; ${c,,} ../base/report.md report.md', ['bash']],
+  ['RT-indirect-head', 'a command name the resolver never reads', null, 'c=d; d=cp; ${!c} ../base/report.md report.md', ['bash']],
+  ['RT-array-index-head', 'a command name the resolver never reads', null, 'declare -a a=(cp); ${a[0]} ../base/report.md report.md', ['bash']],
+  ['RT-mapfile-head', 'a command name the resolver never reads', null, 'mapfile -t a <<< cp; ${a[0]} ../base/report.md report.md', ['bash']],
+  ['RT-zsh-lower-head', 'a command name the resolver never reads', null, 'c=CP; ${c:l} ../base/report.md report.md', ['zsh']],
+  ['RT-zsh-P-head', 'a command name the resolver never reads', null, 'c=d; d=cp; ${(P)c} ../base/report.md report.md', ['zsh']],
+  ['RT-zsh-e-head', 'a command name the resolver never reads', null, 'c=cp; ${(e)c} ../base/report.md report.md', ['zsh']],
+  ['RT-setarch', 'a reader outside the roads', 'setarch', 'setarch x86_64 cp ../base/report.md report.md', ['bash', 'zsh', 'dash']],
+  ['RT-linux64', 'a reader outside the roads', 'linux64', 'linux64 cp ../base/report.md report.md', ['bash', 'zsh', 'dash']],
+  ['RT-sed-f-written', 'a reader outside the roads', 'sed', "printf 'w report.md\\n' > ../scratch/s.sed; sed -n -f ../scratch/s.sed ../base/report.md", ['bash', 'zsh', 'dash']],
+  ['RT-uniq', 'a writer outside the model', 'uniq', 'uniq ../base/report.md report.md', ['bash', 'zsh', 'dash']],
+  ['RT-awk-redirect', 'a writer outside the model', 'awk', "awk '{print > \"report.md\"}' ../base/report.md", ['bash', 'zsh', 'dash']],
+  ['RT-awk-begin-redirect', 'a writer outside the model', 'awk', "awk 'BEGIN{printf \"x\" > \"report.md\"}'", ['bash', 'zsh', 'dash']],
+  ['RT-scp', 'a writer outside the model', 'scp', 'scp -q ../base/report.md report.md', ['bash', 'zsh', 'dash']],
+  ['RT-openssl-out', 'a writer outside the model', 'openssl', 'openssl rand -out report.md 4', ['bash', 'zsh', 'dash']],
+  ['RT-shred', 'a writer outside the model', 'shred', 'shred -n1 report.md', ['bash', 'zsh', 'dash']],
+  ['RT-history-w', 'a writer outside the model', null, 'set -o history; history -s x; history -w report.md', ['bash']],
+  ['RT-zsh-sysopen', 'a writer outside the model', null, 'zmodload zsh/system; sysopen -w -o trunc -u fd report.md; syswrite -o $fd x', ['zsh']],
+  ['RT-zsh-mapfile', 'a writer outside the model', null, 'zmodload zsh/mapfile; mapfile[report.md]=x', ['zsh']],
+  ['RT-sed-w-unread-script', 'a writer outside the model', 'sed', 'printf report.md > ../scratch/n; sed -n "w $(cat ../scratch/n)" ../base/report.md', ['bash', 'zsh', 'dash']],
 ];
 test("round 6, second commit, THE RESIDUAL TABLE: every shape the round could name that still reaches a tracked file, run through the hook (allowed) and the shells (the writers as measured), each under a class of THE RESIDUAL PROPERTY, and the property's paragraph on the hook header names every class", () => {
   const w = sixthPassWorld();
@@ -7445,6 +7473,10 @@ test("round 6, second commit, THE RESIDUAL TABLE: every shape the round could na
   } finally { process.env.HOME = savedHome; w.rm(); }
 });
 
+// the rows' NOT RUN line runMatrixAgainstPin prints once per program a matrix's rows need and this box lacks (round 6's third commit: the
+// child test below counted the probe's own line, printed at every matrix's start whether or not a row was skipped, so a no-op rows
+// report passed it; the pattern is pinned against both lines in the third commit's rows test)
+const ROWS_NOT_RUN_LINE = /NOT RUN: real zsh is not on this runner, so its evidence leg did not run: the (piped-script|stdin-script|heredoc-body) matrix's \d+ rows whose evidence needs zsh, their verdicts compared and their writers and parsing not/;
 test("round 6, second commit (rulings E and tests-2), a runner lacking zsh reproduced: the three matrices with a named consumer run as a child under a PATH linking every program but zsh, the runner's own child marker removed; the child passes, prints the NOT RUN line per matrix, skips exactly the rows whose evidence needs zsh (the fixture's `needs`) and measures the rest, so the hard invariant holds on the rows the box can measure", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-bash-guard-nozsh-'));
   try {
@@ -7465,10 +7497,11 @@ test("round 6, second commit (rulings E and tests-2), a runner lacking zsh repro
     const r = _spawnSync(process.execPath, ['--test', '--test-name-pattern', 'the piped-script matrix|the stdin-script matrix|the heredoc-body matrix', fileURLToPath(import.meta.url)], { env, encoding: 'utf8', timeout: 900000, maxBuffer: 64 * 1024 * 1024 });
     const out = String(r.stdout || '') + String(r.stderr || '');
     assert.equal(r.status, 0, `the child passes without zsh: ${out.slice(0, 3000)}`);
-    const loud = out.split('\n').filter((l) => /NOT RUN: real zsh is not on this runner, so its evidence leg did not run: the (piped-script|stdin-script|heredoc-body) matrix/.test(l));
-    assert.ok(loud.length >= 3, `one loud line per matrix at least (${loud.length}): ${loud.join(' | ')}`);
+    const loud = out.split('\n').filter((l) => ROWS_NOT_RUN_LINE.test(l));   // the rows' line (round 6's third commit), never the probe's
+    assert.equal(loud.length, 3, `one rows' loud line per matrix (${loud.length}): ${loud.join(' | ')}`);
     const needsZsh = (pin) => Object.values(pin.needs).filter((n) => n.includes('zsh')).length;
     for (const [label, pin] of [['the piped-script matrix', PIPED_SCRIPT_MATRIX_PIN], ['the stdin-script matrix', STDIN_SCRIPT_MATRIX_PIN], ['the heredoc-body matrix', HEREDOC_BODY_MATRIX_PIN]]) {
+      assert.ok(loud.some((l) => l.includes(`${label}'s ${needsZsh(pin)} rows whose evidence needs zsh`)), `${label}'s rows' line names the count of rows needing zsh (${needsZsh(pin)})`);
       const m = out.match(new RegExp(`# ${label}: rows (\\d+), .*not run, a program the evidence needs not on this box: ([^\\n]*)`));
       assert.ok(m, `the child printed ${label}'s summary`);
       const zsh = m[2].match(/(\d+) naming zsh/);
@@ -7477,4 +7510,174 @@ test("round 6, second commit (rulings E and tests-2), a runner lacking zsh repro
       console.log(`# without zsh, ${label}: ${m[1]} rows, ${naming} naming zsh, ${needsZsh(pin)} needing it and not run, ${naming - needsZsh(pin)} naming it measured all the same`);
     }
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ── round 6, third commit (2026-09-21): the round's three verifiers on the second commit's head ─────────────────────────────────
+//
+// Every finding was a command a shell wrote while the guard allowed it, closed by refusing (none relabelled): zsh's unbraced
+// expansion flags read as a literal dollar; a redirection target the rule called a place no shell splits, which bash and zsh split;
+// the alias road stopping at a text the shell parses after the definition (eval, trap, a sourced stdin, a substitution); a sourced
+// process substitution and a script on a numbered descriptor read as files outside the command; sed's `w`; a glob in the command
+// name; zsh's `=cmd`, `emulate -c` and zsh/files; a `$(cat)` of the standard input. Each row runs through the hook as a process from
+// the tracked docs/ cwd and from the cwd in no project, and unguarded in bash, zsh and dash over a fresh world, the writers pinned.
+
+test("round 6, third commit, the rows: zsh's unbraced flags (`$=`, `$^`, `$~`) are expansions, the split target names every field bash and zsh open, the alias road reaches eval, trap, a sourced stdin and a substitution, `. <(..)`, `/dev/fd/N` and `--rcfile <(..)` are scripts read, sed's `w` is a writer, a glob in the command name is expanded, zsh's `=cmd`, `emulate -c` and zf_ builtins are read, a `$(cat)` of the standard input is UNRESOLVABLE; each with the shells that write, and the twins that stay allowed", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const A = ['bash', 'zsh', 'dash'];
+    const BZ = ['bash', 'zsh'];
+    const BD = ['bash', 'dash'];
+    const ZD = ['zsh', 'dash'];
+    const B = ['bash'];
+    const Z = ['zsh'];
+    const D = ['dash'];
+    const N = [];
+    const CP = 'cp ../base/report.md report.md';
+    const SPLIT = 'may split into several words';
+    const CAT = 'a cat of the standard input';
+    const HD = (sh, body) => `${sh} /dev/fd/3 3<<'EOF'\n${body}\nEOF`;
+    // [id, cwd, command, the shells that write, the verdict: by name, allowed, or refused with the reason including a text]
+    const rows = [
+      // (1) ZSH'S UNBRACED FLAGS: `$=X` splits (the split rule sees an expansion now), `$~X` and `$^X` are targets the hook cannot read
+      ['R6T-F-dq-eq', 'nad', `X='../base/report.md report.md'; cp "$=X"`, Z, ['text', SPLIT]],
+      ['R6T-F-eq', 'nad', `X='../base/report.md report.md'; cp $=X`, Z, ['text', SPLIT]],
+      ['R6T-F-mv-dq-eq', 'nad', `X='../base/report.md report.md'; mv "$=X"`, Z, ['text', SPLIT]],
+      ['R6T-F-eq-target', 'nad', 'RT=report.md; echo poison > $=RT', Z, ['literal', '$=RT']],
+      ['R6T-F-tilde', 'nad', 'X=report.md; cp ../base/report.md $~X', Z, ['literal', '$~X']],
+      ['R6T-F-caret', 'nad', 'X=report.md; cp ../base/report.md $^X', Z, ['literal', '$^X']],
+      ['R6T-F-dq-tilde', 'nad', 'X=report.md; cp ../base/report.md "$~X"', Z, ['literal', '"$~X"']],
+      ['R6T-F-bash-twin', 'nad', `bash -c 'X=report.md; cp ../base/report.md $~X'`, N, 'allow'],   // a script handed to bash keeps the literal dollar: a copy onto the file named `$~X`, untracked
+      // (2) THE SPLIT TARGET: each field bash and zsh open is a redirection beside the whole text dash opens
+      ['R6T-T-interior', 'nad', 'echo poison > $(echo x report.md)', Z, 'name'],
+      ['R6T-T-interior-after', 'nad', "echo poison > $(echo 'report.md x')", Z, 'name'],
+      ['R6T-T-trailing', 'nad', "echo poison > $(echo 'report.md ')", BZ, 'name'],
+      ['R6T-T-leading', 'nad', "echo poison > $(echo ' report.md')", BZ, 'name'],
+      ['R6T-T-tab', 'nad', "echo poison > $(echo $'\\treport.md')", BZ, 'name'],
+      ['R6T-T-dashdash', 'nad', 'echo poison > $(echo -- report.md)', Z, 'name'],
+      ['R6T-T-backtick', 'nad', "echo poison > `echo 'report.md '`", BZ, 'name'],
+      ['R6T-T-append', 'nad', "echo poison >> $(echo 'report.md ')", BZ, 'name'],
+      ['R6T-T-clobber', 'nad', "echo poison >| $(echo 'report.md ')", BZ, 'name'],
+      ['R6T-T-two-subs', 'nad', "echo poison > $(echo 'report')$(echo '.md ')", BZ, 'name'],
+      ['R6T-T-printf', 'nad', 'echo poison > $(printf "x report.md")', Z, 'name'],
+      ['R6T-T-command-text', 'nad', `echo poison > $(echo ${CP})`, Z, 'name'],
+      ['R6T-T-zsh-c', 'nad', `zsh -c "echo poison > \\$(echo 'report.md ')"`, A, 'name'],
+      ['R6T-T-dq-twin', 'nad', `echo poison > "$(echo 'report.md ')"`, N, 'allow'],   // quoted: the whole text in every shell, an untracked name
+      ['R6T-T-untracked-twin', 'nad', "echo hi > $(echo '../scratch/a b.md')", N, 'allow'],
+      // (3) THE ALIAS ROAD into a text the shell parses after the definition ran
+      ['R6T-A-eval-sq', 'nad', `alias c=cp; eval 'c ../base/report.md report.md'`, ZD, 'name'],
+      ['R6T-A-eval-bare', 'nad', 'alias c=cp; eval c ../base/report.md report.md', ZD, 'name'],
+      ['R6T-A-trap', 'nad', `alias c=cp; trap 'c ../base/report.md report.md' EXIT`, ZD, 'name'],
+      ['R6T-A-source-stdin', 'nad', "alias c=cp; . /dev/stdin <<'EOF'\nc ../base/report.md report.md\nEOF", ZD, 'name'],
+      ['R6T-A-same-line-sub', 'nad', 'alias c=cp; echo $(c ../base/report.md report.md)', Z, 'name'],
+      ['R6T-A-nl-eval', 'nad', "alias c=cp\neval 'c ../base/report.md report.md'", ZD, 'name'],
+      ['R6T-A-nl-trap', 'nad', "alias c=cp\ntrap 'c ../base/report.md report.md' EXIT", ZD, 'name'],
+      ['R6T-A-nl-herestring', 'nad', "alias c=cp\n. /dev/stdin <<< 'c ../base/report.md report.md'", Z, 'name'],
+      ['R6T-A-nl-procsub', 'nad', "alias c=cp\n. <(echo 'c ../base/report.md report.md')", Z, 'name'],
+      ['R6T-A-nl-sub', 'nad', 'alias c=cp\necho $(c ../base/report.md report.md)', ZD, 'name'],
+      ['R6T-A-nl-backtick', 'nad', 'alias c=cp\n`c ../base/report.md report.md`', ZD, 'name'],
+      ['R6T-A-nl-bare-sub', 'nad', 'alias c=cp\n$(c ../base/report.md report.md)', ZD, 'name'],
+      ['R6T-A-zsh-heredoc', 'nad', "zsh <<'EOF'\nalias c=cp; eval 'c ../base/report.md report.md'\nEOF", A, 'name'],
+      ['R6T-A-dash-heredoc', 'nad', "dash <<'EOF'\nalias c=cp; eval 'c ../base/report.md report.md'\nEOF", A, 'name'],
+      ['R6T-A-bash-heredoc', 'nad', "bash <<'EOF'\nshopt -s expand_aliases\nalias c=cp; eval 'c ../base/report.md report.md'\nEOF", A, ['text', 'through `eval` through the command name `c`']],   // refused with the road named (the shopt leaves the directory unknown, so not by name)
+      ['R6T-A-eval-defines', 'nad', "shopt -s expand_aliases; eval $'alias c=cp\\nc ../base/report.md report.md'", B, ['text', 'through `eval` through the command name `c`']],   // bash parses eval's text line by line: a binding on its first line is seen on its second
+      ['R6T-A-eval-defines-next-line', 'nad', "eval 'alias c=cp'\nc ../base/report.md report.md", D, 'name'],   // an eval'd definition is seen by the next outer line
+      ['R6T-A-eval-defines-same-line-twin', 'nad', "eval 'alias c=cp'; c ../base/report.md report.md", N, 'allow'],   // and by no shell on the line itself, parsed whole before eval ran
+      ['R6T-A-fresh-shell-twin', 'nad', `alias c=cp; bash -c 'c ../base/report.md report.md'`, N, 'allow'],   // a fresh shell inherits no alias
+      // (4) a sourced process substitution, a script on a numbered descriptor, a startup file
+      ['R6T-S-dot-procsub', 'nad', `. <(echo '${CP}')`, BZ, 'name'],
+      ['R6T-S-source-procsub', 'nad', `source <(echo '${CP}')`, BZ, 'name'],
+      ['R6T-S-dot-eqsub', 'nad', `. =(echo '${CP}')`, Z, 'name'],
+      ['R6T-S-dot-printf', 'nad', `. <(printf '${CP}\\n')`, BZ, 'name'],
+      ['R6T-S-dot-subshell', 'nad', `. <( (echo '${CP}') )`, BZ, 'name'],
+      ['R6T-S-dot-fd3-herestring', 'nad', `. /dev/fd/3 3<<< '${CP}'`, BZ, 'name'],
+      ['R6T-S-bash-fd3', 'nad', HD('bash', CP), A, 'name'],
+      ['R6T-S-bash-fd3-first', 'nad', `bash 3<<'EOF' /dev/fd/3\n${CP}\nEOF`, A, 'name'],
+      ['R6T-S-dash-fd3', 'nad', HD('dash', CP), A, 'name'],
+      ['R6T-S-zsh-fd3', 'nad', HD('zsh', CP), A, 'name'],
+      ['R6T-S-sh-fd3', 'nad', HD('sh', CP), A, 'name'],
+      ['R6T-S-bash-fd9-herestring', 'nad', `bash /dev/fd/9 9<<< '${CP}'`, BZ, 'name'],
+      ['R6T-S-rcfile', 'nad', `bash --rcfile <(echo '${CP}') -i </dev/null`, BZ, 'name'],
+      ['R6T-S-init-file', 'nad', `bash --init-file <(echo '${CP}') -i </dev/null`, BZ, 'name'],
+      ['R6T-S-rcfile-noninteractive-cost', 'nad', `bash --rcfile <(echo '${CP}') </dev/null`, N, 'name'],   // the cost: the file is read whether or not `-i` is spelled
+      ['R6T-S-dot-file-twin', 'nad', '. ../scratch/other.md', N, 'allow'],   // a file's contents are not in the command (the residual)
+      // (5) THE SED SCRIPT: `w`, `W` and the `w` flag write the file they name; the twins where the letter is text
+      ['R6T-W-w', 'nad', "sed -n 'w report.md' ../base/report.md", A, 'name'],
+      ['R6T-W-W', 'nad', "sed -n 'W report.md' ../base/report.md", A, 'name'],
+      ['R6T-W-s-flag', 'nad', "sed 's/x/y/w report.md' ../base/report.md", A, 'name'],
+      ['R6T-W-s-gw', 'nad', "sed 's/N/x/gw report.md' ../base/report.md", A, 'name'],
+      ['R6T-W-s-delim', 'nad', "sed 's|N|x|w report.md' ../base/report.md", A, 'name'],
+      ['R6T-W-e', 'nad', "sed -n -e 'w report.md' ../base/report.md", A, 'name'],
+      ['R6T-W-two-e', 'nad', "sed -e 's/x/y/' -e 'w report.md' ../base/report.md", A, 'name'],
+      ['R6T-W-expression-eq', 'nad', "sed --expression='w report.md' ../base/report.md", A, 'name'],
+      ['R6T-W-regex-addr', 'nad', "sed -n '/N/w report.md' ../base/report.md", A, 'name'],
+      ['R6T-W-range', 'nad', "sed -n '1,2w report.md' ../base/report.md", A, 'name'],
+      ['R6T-W-block', 'nad', "sed -n '1{w report.md\n}' ../base/report.md", A, 'name'],
+      ['R6T-W-readable-name', 'nad', 'f=report.md; sed -n "w $f" ../base/report.md', A, 'name'],   // the readability rule resolves the name, and the script is literal
+      ['R6T-W-y-twin', 'nad', "sed -n 'y/w/x/' ../base/report.md", N, 'allow'],
+      ['R6T-W-replacement-twin', 'nad', "sed 's/a/w report.md/' ../base/report.md", N, 'allow'],
+      ['R6T-W-a-text-twin', 'nad', "sed -n 'a w report.md' ../base/report.md", N, 'allow'],
+      ['R6T-W-untracked-twin', 'nad', "sed -n 'w ../scratch/copy.md' ../base/report.md", N, 'allow'],
+      ['R6T-W-unknown-letter', 'nad', "sed -n 'k report.md' ../base/report.md", N, ['text', 'which I do not read, before its end']],   // sed rejects the script; the reader stopped and refuses, the safe side
+      // (6) a glob in the command name
+      ['R6T-G-bracket', 'nad', '/usr/bin/[c]p ../base/report.md report.md', A, 'name'],
+      ['R6T-G-bracket-last', 'nad', '/usr/bin/c[p] ../base/report.md report.md', A, 'name'],
+      ['R6T-G-no-match-twin', 'nad', '/usr/bin/nosuch[c]p ../base/report.md report.md', N, 'allow'],
+      // (7) zsh's `=cmd`, `emulate -c`, zsh/files
+      ['R6T-Z-equals', 'nad', '=cp ../base/report.md report.md', Z, 'name'],
+      ['R6T-Z-emulate', 'nad', `emulate sh -c '${CP}'`, Z, 'name'],
+      ['R6T-Z-zf-mv', 'nad', 'zmodload zsh/files; zf_mv ../base/report.md report.md', Z, 'name'],
+      ['R6T-Z-zf-ln', 'nad', 'zmodload zsh/files; zf_ln -f ../base/report.md report.md', Z, 'name'],
+      // (8) a cat of the standard input inside a substitution: UNRESOLVABLE
+      ['R6T-C-group', 'nad', `echo '${CP}' | { bash -c "$(cat)"; }`, A, ['text', CAT]],
+      ['R6T-C-subshell', 'nad', `echo '${CP}' | (bash -c "$(cat)")`, A, ['text', CAT]],
+      ['R6T-C-bare', 'nad', `echo '${CP}' | bash -c "$(cat)"`, BD, ['text', CAT]],   // zsh runs the substitution in the shell that reads the pipe's other end: cat reads nothing there
+      ['R6T-C-eval', 'nad', `echo '${CP}' | bash -c 'eval "$(cat)"'`, A, ['text', CAT]],
+      ['R6T-C-group-eval', 'nad', `echo '${CP}' | { eval "$(cat)"; }`, A, ['text', CAT]],
+      ['R6T-C-nested', 'nad', `echo '${CP}' | bash -c 'bash -c "$(cat)"'`, A, ['text', CAT]],
+      ['R6T-C-cat-file-twin', 'nad', 'echo x | bash -c "$(cat ../scratch/other.md)"', N, 'allow'],   // a cat of a file: the producer outside the output model, the residual
+    ];
+    let n = 0;
+    for (const [id, cwd, raw, writers, expect] of rows) {
+      const cmd = w.fill(raw);
+      const at = w.cwds[cwd];
+      const h = w.hook(cmd, at);
+      n++;
+      assert.ok(!h.reason.includes('an error of my own'), `${id}: no internal error: ${h.reason.split('\n')[0]}`);
+      if (expect === 'allow') assert.equal(h.status, 0, `${id}: allowed: ${cmd}: ${h.reason}`);
+      else {
+        assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`);
+        assert.ok(!/\u2014/.test(h.reason) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash, no romp noun`);
+        if (expect === 'name') assert.match(h.reason, BY_NAME_RE, `${id}: by name: ${h.reason.split('\n')[0]}`);
+        else if (expect[0] === 'text') assert.ok(h.reason.includes(expect[1]), `${id}: refused, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
+        else assert.ok(NOT_LITERAL.test(h.reason) && h.reason.includes(expect[1]), `${id}: refused as not literal, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
+      }
+      assert.equal(w.hook(cmd, w.cwds.out).status, 0, `${id}: from a cwd in no project the relative write reaches no tracked file: ${cmd}`);
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+        const r = w.run(cmd, at, shell);
+        assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
+      }
+    }
+    assert.equal(n, 89);
+    // the lexer's side of the flags and the split target, pinned in-process
+    assert.deepEqual(lex('cp a $=X $^Y $~Z').segments[0].words.slice(2).map((w) => w.literal), [false, false, false], "zsh's unbraced flags are expansions for the Bash tool's command");
+    assert.deepEqual(lex('cp a $=X', 'bash').segments[0].words[2].literal, true, 'and a literal dollar in a script handed to bash');
+    assert.deepEqual(lex('cp a $=X', 'dash').segments[0].words[2].literal, true, 'and to dash');
+    assert.deepEqual(lex("echo x > $(echo 'a b c')").segments[0].redirects.map((r) => r.target.text), ['a b c', 'a', 'b', 'c'], 'the whole text and each field');
+    assert.deepEqual(lex("echo x > $(echo 'a b')y").segments[0].redirects.map((r) => r.target.text), ['a by', 'a', 'by'], 'a glued tail rides on the last field');
+    assert.deepEqual(lex("echo x > \"$(echo 'a b')\"").segments[0].redirects.map((r) => r.target.text), ['a b'], 'a quoted substitution splits nowhere');
+    assert.deepEqual(lex("echo x > $(echo 'ab')").segments[0].redirects.map((r) => r.target.text), ['ab'], 'no blank, one redirection');
+    assert.deepEqual([...'=^~'].map((f) => guard.dqSingleField(`"$${f}s"`)), [false, false, false], 'the unbraced flags are never proven one field');
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+// A runner-lacking-zsh check the round's verifier made (the loud-line assertion above matched the probe's own line): the rows' line is the
+// one that says a skip happened, and the probe's line, printed at every matrix's start, must not stand in for it.
+test("round 6, third commit: the rows' NOT RUN line is distinct from the probe's, so a child that skipped no row cannot satisfy the per-matrix count with the probe's line alone", () => {
+  const probeLine = "NOT RUN: real zsh is not on this runner, so its evidence leg did not run: the piped-script matrix (file:///x.mjs:6220:19)";
+  const rowsLine = "NOT RUN: real zsh is not on this runner, so its evidence leg did not run: the piped-script matrix's 43 rows whose evidence needs zsh, their verdicts compared and their writers and parsing not (file:///x.mjs:6173:9)";
+  const old = /NOT RUN: real zsh is not on this runner, so its evidence leg did not run: the (piped-script|stdin-script|heredoc-body) matrix/;
+  assert.ok(old.test(probeLine) && old.test(rowsLine), "the earlier pattern matched both lines (the verifier's mutant, a no-op rows report, passed it)");
+  assert.ok(!ROWS_NOT_RUN_LINE.test(probeLine) && ROWS_NOT_RUN_LINE.test(rowsLine), "the pattern the child test counts matches the rows' line alone");
 });
