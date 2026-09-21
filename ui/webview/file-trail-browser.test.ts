@@ -11,7 +11,7 @@
 // unchanged viewer at the first Back assertion (no Back button existed); (2) Forward after Back; (3) an open from
 // outside, the Recent row and the shell's relay, starts the trail over; (4) the chords, with and without a text field
 // holding the keyboard, and a key another listener prevented; (5) a section link, a web address and a same-file line
-// target push nothing; (7) closing the viewer ends the trail. Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there; the launch is real-viewer-leg.ts's inBrowser, the shared helper). Synthetic values only: the notes-api world, a placeholder session id, example.invalid addresses.
+// target push nothing; (7) closing the viewer ends the trail; (8) the boundary of the road L1 names beyond the contract: on the Files page a link to a .md page at the page's own origin, written as a full address, opens a tab and the trail stands, there being no opener here that takes such a page in place (under the chat's opener the URL view replaces the viewer and ends the trail: file-view-links-browser.test.ts; the guide's trail sentence names that road since the file review's round 10, ui-2). Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there; the launch is real-viewer-leg.ts's inBrowser, the shared helper). Synthetic values only: the notes-api world, a placeholder session id, example.invalid addresses.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -29,6 +29,10 @@ const NOTES = ROOT + "/docs/notes.md";
 const GUIDE = ROOT + "/docs/guide.md";
 const PLOT = ROOT + "/docs/figs/plot.svg";
 const WEB = "https://example.invalid/elsewhere";
+// a markdown page at the page's own origin, written as a full address: the one URL the chat's document-level opener takes in place
+// (md-links.ts isMarkdownUrl, file-view.ts openUrlView; L1); on this page, which has no such opener, the anchor's own tab
+const EVIDENCE_URL = "http://romp.test/pub/evidence.md";
+const EVIDENCE_TEXT = "# Evidence\n\nEvidence paragraph one.\n";
 const PARA = (i: number): string => `Paragraph ${i}: ` + "lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor ".repeat(3).trim() + ".";
 // the report: forty paragraphs, then the links paragraph (a link to the notes, `./notes.md`: a slash, so the Raw view's path
 // grammar links the token too; a web address; a same-document section link; a same-file line target; a picture; a
@@ -38,7 +42,7 @@ const PARA = (i: number): string => `Paragraph ${i}: ` + "lorem ipsum dolor sit 
 const LINKS_PARA = "Read [the notes](./notes.md) and [the web](" + WEB + "); jump to [results](#results), to [line forty](report.md:40), to [the plot](figs/plot.svg) or to [[guide]].";
 const REPORT_TEXT = "# Report\n\n" + Array.from({ length: 40 }, (_, i) => PARA(i + 1)).join("\n\n") + "\n\n" + LINKS_PARA + "\n\n"
   + Array.from({ length: 40 }, (_, i) => PARA(i + 41)).join("\n\n") + "\n\n## Results\n\nThe results paragraph.\n";
-const NOTES_TEXT = "# Notes\n\nBack to [the report](report.md) or on to [the guide](guide.md).\n\n" + Array.from({ length: 30 }, (_, i) => `Note ${i + 1}: a short line of notes.`).join("\n\n") + "\n";
+const NOTES_TEXT = "# Notes\n\nBack to [the report](report.md) or on to [the guide](guide.md), or read [the evidence](" + EVIDENCE_URL + ").\n\n" + Array.from({ length: 30 }, (_, i) => `Note ${i + 1}: a short line of notes.`).join("\n\n") + "\n";
 const GUIDE_TEXT = "# Guide\n\nOne rule per line.\n";
 const PLOT_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="40"><rect width="120" height="40" fill="#456"/></svg>';
 const DOCS: Record<string, string> = { [REPORT]: REPORT_TEXT, [NOTES]: NOTES_TEXT, [GUIDE]: GUIDE_TEXT, [PLOT]: PLOT_SVG };
@@ -107,6 +111,7 @@ async function inViewer(t: any, host: "files" | "chat", body: (h: H) => Promise<
       const u = new URL(route.request().url());
       if (u.pathname === "/files" || u.pathname === "/chat") return route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: PAGE(host) });
       if (u.pathname === "/dist/" + host + ".js") return route.fulfill({ status: 200, contentType: "application/javascript", body: js });
+      if (u.href === EVIDENCE_URL) return route.fulfill({ status: 200, contentType: "text/markdown; charset=utf-8", body: EVIDENCE_TEXT });   // the page a tab opens at the address
       if (u.pathname === "/file") {
         const p = u.searchParams.get("path") || "";
         const text = DOCS[p];
@@ -262,6 +267,23 @@ test("in a browser, the Files page: a wikilink pushes like any path link; an ope
     await h.page.keyboard.press("Alt+ArrowLeft");
     await h.frames(2);
     assert.equal(await h.page.evaluate(() => !!document.getElementById("romp-fileview")), false, "no viewer opened by a chord with none up");
+  });
+});
+
+test("in a browser, the Files page: a plain click on a link to a .md page at the page's own origin, written as a full address, opens a tab as any web address does and the trail stands, since the Files pane's document has no opener taking such a page in place (the chat's document-level opener does: file-view-links-browser.test.ts drives the URL view replacing the viewer and ending the trail there); case 8, the boundary of the road the guide's trail sentence names since the file review's round 10, ui-2", async (t) => {
+  await inViewer(t, "files", async (h) => {
+    await h.open(REPORT);
+    await h.follow("the notes", "notes.md");
+    const s1 = await h.shape();
+    assert.deepEqual(s1, { back: ["report.md@rendered"], current: "notes.md", forward: [] }, "a trail stands before the URL link is followed");
+    const [tab] = await Promise.all([h.ctx.waitForEvent("page", { timeout: 10000 }), h.page.locator("#romp-fileview .fileview-body a", { hasText: "the evidence" }).first().click()]);
+    await tab.waitForLoadState();
+    assert.equal(tab.url(), EVIDENCE_URL, "the page's own .md address opened in a tab of its own here");
+    await tab.close();
+    await h.frames(3);
+    assert.equal(await h.base(), "notes.md", "the viewer still shows the notes");
+    assert.deepEqual(await h.shape(), s1, "the trail stands");
+    enabledTo((await h.nav()).back, "Back to report.md", "Back is still live");
   });
 });
 

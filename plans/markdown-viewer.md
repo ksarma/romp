@@ -8227,7 +8227,15 @@ contract named no such case. Held by file-trail.test.ts (the pure cases, the thr
 Reload file driven in Chromium at the module's end: a link push, Edit, a change, a Save refused as changed on disk,
 Reload file, the fresh card's Back still titled with the report's name, then Back to the report with the reloaded file
 ahead) and file-trail-browser.test.ts (the Files page: a link followed, a Recent row and the relay rooting the trail,
-the section link, the web address, the same-file target, the close; the chat modal: the default opener).
+the section link, the web address, the same-file target, the close, and since the file review's round 10 (ui-2) the
+same-origin .md URL followed by a plain click, which on the Files page opens a tab and leaves the trail standing, that
+page's document having no opener that takes such a page in place; the chat modal: the default opener). The replace
+itself, under the chat's document-level opener (render.ts, the one caller of openUrlView), is held by file-trail.test.ts's
+wiring pin alone in the tree, the trail's end after openUrlView's guard; for round 10 it was driven once in Chromium in a
+scratch copy, a file reached over the trail linking a .md page at the page's own origin, the click replacing the viewer
+with the URL view, no tab, the trail empty and the bar without the pair, in a harness with a private launcher that this
+follow-on's convention pin refuses in a module it touches, so the case is recorded and not landed (the guide's trail
+sentence names the road and its boundary since that round).
 
 L2. **Back and Forward.** Two glyph buttons in the icon family (icons.ts `ICON_BACK`, `ICON_FORWARD`: an arrow left and
 an arrow right), the bar's first group (`.fileview-group.fileview-nav`), before the pane's "‹ Files" link, which keeps
@@ -8618,7 +8626,9 @@ tests/test_guide_trail_chords_and_figure_button.py, added in its round 2, both n
 **Tests.** `ls ui/webview/file-trail*.test.ts ui/webview/file-figure-open*.test.ts` lists the follow-on's four
 modules: ui/webview/file-trail.test.ts (the pure functions, the chord table, the titles, and the wiring pinned at
 source: the one tag, both exits, the reload, the bar and the listener), ui/webview/file-trail-browser.test.ts
-(Chromium over the real Files page and a chat-modal page: the contract's cases 1 to 5 and 7),
+(Chromium over the real Files page and a chat-modal page: the contract's cases 1 to 5 and 7, and the Files page's
+boundary of the road L1 names beyond the contract, the same-origin .md URL opening a tab there; the replace under the
+chat's opener is a source pin in the tree, L1 says where),
 ui/webview/file-figure-open.test.ts (L3's source pins) and ui/webview/file-figure-open-browser.test.ts (Chromium over
 the real chat modal: case 6 and L4; since the author's closing pass after the file review's round 8,
 a top-level html-block figure wearing the production control with the reader partway into it, the control's box

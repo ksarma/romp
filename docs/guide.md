@@ -537,7 +537,11 @@ left it (while you are not editing the file and no text box
 holds the keyboard, Cmd+[ and Cmd+] on a Mac do the same, and so do Alt+Left and Alt+Right
 on a Files or chat page open in a browser tab of its own; in the dashboard those two keys
 move the keyboard between the panes); a file opened from the chat, from a listing or from
-the Files pane's **Recent** list starts the trail over, and closing the viewer ends it. A
+the Files pane's **Recent** list starts the trail over, and closing the viewer ends it, as
+does, in the chat, following a link to a page on the dashboard's own web address that ends
+in .md: the page opens in the viewer in the file's place as a web document rather than a
+file of the session, and the trail ends there (in the Files pane such a link opens a tab, as
+any web address does, and the trail stands). A
 picture in a rendered file that comes from a file or a web address has an
 **Open the picture** button at its top-right corner (top-left for a picture floated to
 the right), shown while the pointer is over the picture or the button holds the keyboard
