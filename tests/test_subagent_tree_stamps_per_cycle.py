@@ -32,7 +32,11 @@ directories (round 1 of #882's correctness-1:
 the own tree's note was a fresh stat, one per walk), and two such rows share the project directory's one stamp stat, an own
 stat _dir_stamp holds in the scope keyed by directory under root None (dirStats moves by (D - 1) + 1 at one row and at two,
 where the cost term as stated before the owner's pass before round 2 of #882, per agent, predicted (D - 1) + G; the term's
-one home is _subagent_tree_memo_report's docstring); the scope is closed after the cycle; and a read
+one home is _subagent_tree_memo_report's docstring); the scope is closed after the cycle; the bound's counts are backed by a
+census of every filesystem call class under the tree (os.stat, os.lstat, os.scandir, os.listdir, os.access, os.readlink,
+os.open, os.walk, io.open) pinned by equality, {lstat: D, stat: A} over the cycle and {} on each served path (the tree read,
+the stamp, the agent-file hit), so a read through a class the counts do not see fails by name (the owner's pass before round 2
+of #882: a guarded listing on the served path left the module green); and a read
 outside any cycle (a handler thread's) still pays per call, with dirStats now counting the stats of both validators;
 (2) per cycle, not sticky: a directory and a fourth agent landing between two cycles are seen by the second cycle's
 first read (a re-walk; the listing equals os.walk's and the sidecar reaches the map) while its later reads that cycle
@@ -90,8 +94,10 @@ mechanisms of their own (the fold checkpoint writer's realpath per checkpointed 
 walk) are stubbed to nothing here, so what the spy counts is this memo's path alone. Synthetic fixtures only: a
 private placeholder sid, invented agent ids and descriptions, a temp state root with session hosts off.
 """
+import builtins
 import contextlib
 import errno
+import io
 import json
 import os
 import shutil
@@ -156,19 +162,51 @@ def _scope():
 
 class _Spy:
     """os.stat and os.lstat counted per calling thread by what the path is: one of the tree's directories (`dir_stat`,
-    `dir_lstat`), a file under the tree (`file_stat`: the agent files and sidecars), or elsewhere (uncounted). The patch
-    is the os module's attribute, which is what the kernel and os.path look up at call time (pathlib on 3.10 binds the os
-    functions at import; every path counted here is stat'd through os.stat, os.lstat or os.path)."""
+    `dir_lstat`), a file under the tree (`file_stat`: the agent files and sidecars), or elsewhere (uncounted); and beside
+    those counts a CENSUS of every filesystem call under the tree by call class (`tree_calls`): os.stat, os.lstat,
+    os.scandir, os.listdir, os.access, os.readlink, os.open, os.walk and io.open (builtins.open is the same function and
+    is patched too), keyed by the class's name, for every path that is the root or lies under it, directories and files
+    alike. The counts key on what the bound derives (D lstats, A file stats); the census is pinned by EQUALITY where the
+    bound's cases and the served paths run (_assert_bound, the served-paths case), so a read of the tree through a class
+    the counts do not see, a listing, an access, an open, a file's lstat, fails closed by the class's name (the owner's
+    pass before round 2 of #882: the spy saw os.stat and os.lstat alone, and a guarded os.scandir on the served tree path
+    left the module green). The patch is the os module's attribute, which is what the kernel, os.path and, from 3.12,
+    pathlib look up at call time (pathlib on 3.10 binds the os functions at import, outside the census; the kernel runs
+    on 3.12). Not in the census, stated: a DirEntry's stat or is_dir, reached only from a scandir the census counts by
+    the directory listed (a listing on a served path is seen; what is done with its entries is not), and any call on a
+    path outside the tree (the project directory)."""
     KEYS = ("dir_stat", "dir_lstat", "file_stat")
+    CLASSES = ("stat", "lstat", "scandir", "listdir", "access", "readlink", "open", "walk")   # the os functions wrapped; io.open beside them
 
     def __init__(self, dirset, root):
-        self.dirset, self.root, self.by = dirset, str(root) + os.sep, {}
+        self.dirset, self.tree, self.root, self.by, self.census = dirset, str(root), str(root) + os.sep, {}, {}
 
     def _c(self):
         return self.by.setdefault(threading.get_ident(), dict.fromkeys(self.KEYS, 0))
 
+    def _seen(self, cls, p):
+        """One call of class `cls` on `p`: counted in this thread's census when `p` is a path (not a descriptor) that is the
+        root or lies under it."""
+        if p is None or isinstance(p, int):
+            return
+        try:
+            s = os.fsdecode(p)
+        except TypeError:
+            s = str(p)
+        if s == self.tree or s.startswith(self.root):
+            c = self.census.setdefault(threading.get_ident(), {})
+            c[cls] = c.get(cls, 0) + 1
+
+    def _wrapped(self, cls, real):
+        spy = self
+
+        def w(*a, **k):
+            spy._seen(cls, a[0] if a else k.get("path", k.get("top")))
+            return real(*a, **k)
+        return w
+
     def __enter__(self):
-        real_stat, real_lstat, spy = os.stat, os.lstat, self
+        real_stat, real_lstat, real_open, spy = os.stat, os.lstat, io.open, self
 
         def st(p, *a, **k):
             s = str(p)
@@ -176,19 +214,27 @@ class _Spy:
                 spy._c()["dir_stat"] += 1
             elif s.startswith(spy.root):
                 spy._c()["file_stat"] += 1
+            spy._seen("stat", p)
             return real_stat(p, *a, **k)
 
         def lst(p, *a, **k):
             if str(p) in spy.dirset:
                 spy._c()["dir_lstat"] += 1
+            spy._seen("lstat", p)
             return real_lstat(p, *a, **k)
+
+        def opn(f, *a, **k):
+            spy._seen("io.open", f)
+            return real_open(f, *a, **k)
         self._patches = [mock.patch.object(os, "stat", st), mock.patch.object(os, "lstat", lst)]
+        self._patches += [mock.patch.object(os, cls, self._wrapped(cls, getattr(os, cls))) for cls in self.CLASSES[2:]]
+        self._patches += [mock.patch.object(io, "open", opn), mock.patch.object(builtins, "open", opn)]
         for p in self._patches:
             p.start()
         return self
 
     def __exit__(self, *exc):
-        for p in self._patches:
+        for p in reversed(self._patches):
             p.stop()
         return False
 
@@ -201,6 +247,17 @@ class _Spy:
 
     def thread(self, ident):
         return dict(self.by.get(ident) or dict.fromkeys(self.KEYS, 0))
+
+    def tree_calls(self, ident=None):
+        """The census: {call class: count} over every filesystem call under the tree the spy saw, summed over threads (one
+        thread's when `ident` is given); {} when it saw none. Compared by equality, so a class absent from the expectation
+        fails by its name."""
+        out = {}
+        for i, c in list(self.census.items()):
+            if ident is None or i == ident:
+                for cls, n in c.items():
+                    out[cls] = out.get(cls, 0) + n
+        return dict(sorted(out.items()))
 
 
 class _World(unittest.TestCase):
@@ -450,9 +507,12 @@ class _World(unittest.TestCase):
                          "2026-09-21 those reads moved no counter)" % (what, d["served"], flat.count("served")))
         return flat
 
-    def _assert_bound(self, what, t, d, rec):
-        """The per-cycle bound, derived from D and A: the counts one pusher cycle or one jobs pass pays on the tree. The
-        counts first, so a red names the cost, then the scope's presence inside the cycle and its absence after."""
+    def _assert_bound(self, what, sp, d, rec):
+        """The per-cycle bound, derived from D and A: the counts one pusher cycle or one jobs pass pays on the tree, read from
+        the spy `sp`. The counts first, so a red names the cost, then the census of every call class under the tree by
+        equality (so a class the counts do not see fails by name), then the scope's presence inside the cycle and its
+        absence after."""
+        t, c = sp.total(), sp.tree_calls()
         self.assertEqual(rec.get("counts"), [A] * CALLS, "the stubbed job made its %d reads and each saw the A agents: %r" % (CALLS, rec))
         self._assert_asks(what, rec.get("asked") or [], d, CALLS)
         self.assertEqual(t["dir_stat"], 0,
@@ -475,6 +535,12 @@ class _World(unittest.TestCase):
         self.assertEqual(t["file_stat"], A,
                          "os.stat on the agent files over one %s: %d; expected A = %d, one launch fold per agent per cycle "
                          "(_awaiting_nest's launches held in the scope); before it was CALLS x A = %d" % (what, t["file_stat"], A, CALLS * A))
+        self.assertEqual(c, {"lstat": D, "stat": A},
+                         "filesystem calls under the tree over one %s, by call class (the census wraps os.%s and io.open, on every "
+                         "path that is the root or under it): %r; keyed on equality with {lstat: D = %d, stat: A = %d}, the one "
+                         "validation's lstats and the A agent-file stats and nothing else, so a read of the tree through any other "
+                         "class, or one more of these, fails here by the class's name (a guarded listing, an access or an open on a "
+                         "served path moves none of the counts above)" % (what, ", ".join(_Spy.CLASSES), c, D, A))
         self.assertIsNotNone(rec.get("scope"), "the %s opened the subagents-tree scope on its thread (_subagent_scope_open)" % what)
         self.assertTrue(getattr(km._live_scope, "subtrees", None) is None,
                         "the scope ends with the %s (_subagent_scope_close in its finally): the slot still holds a scope" % what)
@@ -489,7 +555,7 @@ class BoundPerCycleAndPerPass(_World):
         b = self._stats()
         with self._spy() as sp:
             km._pusher_cycle()
-        self._assert_bound("pusher cycle", sp.total(), self._delta(b), rec)
+        self._assert_bound("pusher cycle", sp, self._delta(b), rec)
 
     def test_one_jobs_pass_validates_the_tree_once_however_many_readers(self):
         rec = {}
@@ -497,7 +563,7 @@ class BoundPerCycleAndPerPass(_World):
         b = self._stats()
         with self._spy() as sp:
             km._jobs_cycle()
-        self._assert_bound("jobs pass", sp.total(), self._delta(b), rec)
+        self._assert_bound("jobs pass", sp, self._delta(b), rec)
         self.assertIn(str(self.sub), km._SUBAGENT_TREES, "the interrupt tick's forget kept the alive session's root")
 
     def _miss_walk_cycle(self, G):
@@ -579,6 +645,45 @@ class BoundPerCycleAndPerPass(_World):
         self.assertIsNone(held[1], "the project directory's stamp is an own stat, vouched by no root (root None): %r" % (held,))
         self.assertEqual([k for k in stamps if str(k).startswith(proj) and k not in self.dirset and not str(k).startswith(str(self.sub))], [proj],
                          "the project directory is held once, keyed by directory alone and not per agent: %r" % (sorted(str(k) for k in stamps),))
+
+    def test_the_served_tree_read_the_served_stamp_and_the_agent_file_hit_make_no_filesystem_call_of_any_class_under_the_tree(self):
+        """The premise the bound's zeros rest on, by census rather than by two counts (the owner's pass before round 2 of
+        #882: the count pins saw os.stat and os.lstat alone, so a guarded os.scandir, an os.access or an os.open on the
+        served tree path, and a listing on _dir_stamp's served path, left the module green). Inside one scope, after the
+        hold, each of the three served paths runs under the spy's census on its own: the tree read _subagent_tree answers
+        from the held pair, the stamp _dir_stamp answers from the held stamps, and the agent-file hit _subagent_file answers
+        from its memo with its stamp re-check served. Each makes no filesystem call of any class the census wraps on any
+        path that is the root or under it, keyed on the census == {} per path, so a new call class on a served path fails
+        here by its name and by the path it ran on."""
+        root, aid, sd = str(self.sub), self.aids[0], self.dirs[3]
+        sc = self._open()
+        km._subagent_tree(root)                              # the hold: the cycle's one validation, its stamps indexed
+        self.assertIn(root, sc["trees"], "premise: the pair is held")
+        self.assertIn(sd, sc["stamps"], "premise: the directory's stamp is held, indexed from the tree")
+        self.assertIsNotNone(km._SUBAGENT_FILE_CACHE.get((self.path, aid), (None, None))[1], "premise: the agent's file is memoized (setUp's warm read)")
+        classes = "os.%s and io.open" % ", ".join(_Spy.CLASSES)
+        b = self._stats()
+        with self._spy() as sp:
+            pair = km._subagent_tree(root)
+        self.assertIs(pair, sc["trees"][root][0], "premise: the tree read was answered the held pair")
+        self.assertEqual(self._delta(b)["served"], 1, "premise: the read moved served")
+        self.assertEqual(sp.tree_calls(), {},
+                         "filesystem calls under the tree on the served tree read, by class: %r; keyed on {} (no call of any class the "
+                         "census wraps, %s, on the root or under it); a listing, an access or an open on this path shows here by name"
+                         % (sp.tree_calls(), classes))
+        with self._spy() as sp:
+            st = km._dir_stamp(sd)
+        self.assertEqual(st, sc["stamps"][sd][0], "premise: the stamp was answered the held one")
+        self.assertEqual(sp.tree_calls(), {},
+                         "filesystem calls under the tree on the served stamp, by class: %r; keyed on {} (%s); a listing of the directory or "
+                         "its parent on this path shows here by name" % (sp.tree_calls(), classes))
+        with self._spy() as sp:
+            ap = km._subagent_file(self.path, aid)
+        self.assertEqual(ap, km._SUBAGENT_FILE_CACHE[(self.path, aid)][1], "premise: the hit was answered the memo's resolution")
+        self.assertEqual(sp.tree_calls(), {},
+                         "filesystem calls under the tree on the agent-file hit, by class: %r; keyed on {} (%s): the stamp re-check served "
+                         "from the scope and nothing read of the file itself; an lstat of the cached file or a listing shows here by name"
+                         % (sp.tree_calls(), classes))
 
     def test_outside_a_cycle_every_reader_validates_for_itself_and_dirstats_counts_both_validators(self):
         """A handler thread's read (a WS or HTTP build, the act-now nudge pass) holds no scope and pays what it paid: the
