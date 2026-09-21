@@ -33,10 +33,11 @@ the own tree's note was a fresh stat, one per walk), and two such rows share the
 stat _dir_stamp holds in the scope keyed by directory under root None (dirStats moves by (D - 1) + 1 at one row and at two,
 where the cost term as stated before the owner's pass before round 2 of #882, per agent, predicted (D - 1) + G; the term's
 one home is _subagent_tree_memo_report's docstring); the scope is closed after the cycle; the bound's counts are backed by a
-census of every filesystem call class under the tree (os.stat, os.lstat, os.scandir, os.listdir, os.access, os.readlink,
-os.open, os.walk, io.open) pinned by equality, {lstat: D, stat: A} over the cycle and {} on each served path (the tree read,
-the stamp, the agent-file hit), so a read through a class the counts do not see fails by name (the owner's pass before round 2
-of #882: a guarded listing on the served path left the module green); and a read
+census, by call class, of the filesystem calls under the tree made through the classes the spy wraps (os.stat, os.lstat,
+os.scandir, os.listdir, os.access, os.readlink, os.open, os.walk, io.open; a class outside that set, os.statvfs say, is outside
+the census, the exclusions stated in _Spy's docstring) pinned by equality, {lstat: D, stat: A} over the cycle and {} on each
+served path (the tree read, the stamp, the agent-file hit), so a read through a wrapped class the counts do not see fails by
+name (the owner's pass before round 2 of #882: a guarded listing on the served path left the module green); and a read
 outside any cycle (a handler thread's) still pays per call, with dirStats now counting the stats of both validators;
 (2) per cycle, not sticky: a directory and a fourth agent landing between two cycles are seen by the second cycle's
 first read (a re-walk; the listing equals os.walk's and the sidecar reaches the map) while its later reads that cycle
@@ -170,18 +171,22 @@ def _scope():
 class _Spy:
     """os.stat and os.lstat counted per calling thread by what the path is: one of the tree's directories (`dir_stat`,
     `dir_lstat`), a file under the tree (`file_stat`: the agent files and sidecars), or elsewhere (uncounted); and beside
-    those counts a CENSUS of every filesystem call under the tree by call class (`tree_calls`): os.stat, os.lstat,
-    os.scandir, os.listdir, os.access, os.readlink, os.open, os.walk and io.open (builtins.open is the same function and
-    is patched too), keyed by the class's name, for every path that is the root or lies under it, directories and files
-    alike. The counts key on what the bound derives (D lstats, A file stats); the census is pinned by EQUALITY where the
-    bound's cases and the served paths run (_assert_bound, the served-paths case), so a read of the tree through a class
-    the counts do not see, a listing, an access, an open, a file's lstat, fails closed by the class's name (the owner's
+    those counts a CENSUS, by call class, of the filesystem calls under the tree made through the classes it wraps
+    (`tree_calls`, CLASSES): os.stat, os.lstat, os.scandir, os.listdir, os.access, os.readlink, os.open, os.walk and
+    io.open (builtins.open is the same function and is patched too), keyed by the class's name, for every path that is the
+    root or lies under it, directories and files alike. The counts key on what the bound derives (D lstats, A file stats);
+    the census is pinned by EQUALITY where the bound's cases and the served paths run (_assert_bound, the served-paths
+    case), so a read of the tree through a wrapped class the counts do not see, a listing, an access, an open, a file's
+    lstat, fails closed by the class's name (the owner's
     pass before round 2 of #882: the spy saw os.stat and os.lstat alone, and a guarded os.scandir on the served tree path
     left the module green). The patch is the os module's attribute, which is what the kernel, os.path and, from 3.12,
     pathlib look up at call time (pathlib on 3.10 binds the os functions at import, outside the census; the kernel runs
     on 3.12). Not in the census, stated: a DirEntry's stat or is_dir, reached only from a scandir the census counts by
-    the directory listed (a listing on a served path is seen; what is done with its entries is not), and any call on a
-    path outside the tree (the project directory)."""
+    the directory listed (a listing on a served path is seen; what is done with its entries is not), any call on a
+    path outside the tree (the project directory), and any os call class not in CLASSES (os.statvfs, the xattr reads,
+    os.pathconf: a read through one of them on a served path is not seen; the owner's pass before round 2 of #882 planted
+    os.statvfs on the served tree read and the module stayed green, where os.listdir, os.readlink and os.path.exists
+    planted there each red by the class's name)."""
     KEYS = ("dir_stat", "dir_lstat", "file_stat")
     CLASSES = ("stat", "lstat", "scandir", "listdir", "access", "readlink", "open", "walk")   # the os functions wrapped; io.open beside them
 
@@ -256,7 +261,7 @@ class _Spy:
         return dict(self.by.get(ident) or dict.fromkeys(self.KEYS, 0))
 
     def tree_calls(self, ident=None):
-        """The census: {call class: count} over every filesystem call under the tree the spy saw, summed over threads (one
+        """The census: {call class: count} over the filesystem calls under the tree the spy saw through the classes it wraps, summed over threads (one
         thread's when `ident` is given); {} when it saw none. Compared by equality, so a class absent from the expectation
         fails by its name."""
         out = {}
@@ -656,7 +661,7 @@ class BoundPerCycleAndPerPass(_World):
         self.assertEqual([k for k in stamps if str(k).startswith(proj) and k not in self.dirset and not str(k).startswith(str(self.sub))], [proj],
                          "the project directory is held once, keyed by directory alone and not per agent: %r" % (sorted(str(k) for k in stamps),))
 
-    def test_the_served_tree_read_the_served_stamp_and_the_agent_file_hit_make_no_filesystem_call_of_any_class_under_the_tree(self):
+    def test_the_served_tree_read_the_served_stamp_and_the_agent_file_hit_make_no_filesystem_call_of_any_class_the_census_wraps_under_the_tree(self):
         """The premise the bound's zeros rest on, by census rather than by two counts (the owner's pass before round 2 of
         #882: the count pins saw os.stat and os.lstat alone, so a guarded os.scandir, an os.access or an os.open on the
         served tree path, and a listing on _dir_stamp's served path, left the module green). Inside one scope, after the
