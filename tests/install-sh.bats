@@ -628,10 +628,12 @@ setup_gitleaks_stub() {   # <exit-code>: records its args, reports the range's c
     # hook appends, counted in the source root the stub is handed, as gitleaks'
     # own `git -C <root> log` would. `git rev-list --count` is the right count
     # HERE because every fixture below adds one text file per commit; gitleaks
-    # counts a commit only once it has scanned a hunk of a file that is neither
-    # deleted nor binary, so a fixture with an empty, deletion-only or
-    # binary-only commit would need the hook's rule (scannable_commits in
-    # .githooks/pre-push) instead.
+    # counts a commit only once it has scanned a hunk of a file that is not a
+    # deletion (a binary add is diffed as text under the hook's --text, and
+    # counted), so a fixture with an empty commit, a deletion-only commit, a
+    # mode-only change or an empty new file (or, under --no-renames, a pure
+    # rename counting as a deletion and an addition) would need the hook's rule
+    # (scannable_commits in .githooks/pre-push) instead.
     unset ROMP_NO_GITLEAKS
     GL_ARGS="$TEST_DIR/gitleaks.args"
     export ROMP_GITLEAKS="$TEST_DIR/gitleaks-stub"

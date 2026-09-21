@@ -45,13 +45,20 @@
 # unscanned too; the count the hook checks it against is read from the OBJECTS,
 # never from the patch stream gitleaks reads, so a transform of that stream (an
 # attribute, a config key) cannot empty the scan and the count alike. The
-# transform cases at the end hold that line, and a replace ref, under which the
-# scans and the push can read different objects, is refused before either scan,
-# where a scan would run at all: a clone with no denylist and no credential scan
-# makes no clean report a replace ref could falsify. The last section is the
-# identifier scan's own transform: a text file whose PATH's diff attribute makes
-# git call it binary is read by neither content check, and is refused rather
-# than scanned, with the tip or the commit, the path and the attribute named.
+# transform cases at the end show each named transform closed; a count read
+# from an equally hardened log stream would pass every one of them too, so ONE
+# case holds the derivation itself: a git shim that strips --root from the
+# scanner's log alone, under log.showRoot=false with a root credential, where a
+# stream count agrees with the shortened scan and the object count does not. A
+# replace ref, under which the scans and the push can read different objects,
+# is refused before either scan, where a scan would run at all: a clone with no
+# denylist and no credential scan makes no clean report a replace ref could
+# falsify. The last section is the identifier scan's own transform: a text file
+# git calls binary (its path's diff attribute; its size over
+# core.bigFileThreshold; a driver named one of check-attr's reserved words) is
+# read by one content check or neither, and is refused rather than scanned on
+# git's own verdict from each read, with the tip or the commit, the path and
+# what the attribute reads named.
 
 ROMP_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
 HOOK="$ROMP_DIR/.githooks/pre-push"
@@ -1009,6 +1016,45 @@ scan_direct() {   # <sha>
     [[ "$output" != *"romp pre-push"* ]]
 }
 
+# Two more arms of the count (round 3's tests-3): a blob the count's size read
+# cannot find, which fails the count (exit 3) rather than counting as empty,
+# and an added gitlink, which counts by its sha and is no blob the size read
+# asks about. The first runs the REAL scanner on purpose: under
+# ROMP_NO_GITLEAKS=1 the count never runs, and with the real scanner a hook
+# that miscounted the missing blob would still be refused on gitleaks' own ERR
+# line, so only the exact clause tells the arms apart.
+
+@test "a commit whose added file's BLOB is missing from the store fails the count with the REAL scanner, the exact clause naming the read: a blob that cannot be found is never counted as empty" {
+    real_gitleaks
+    commit_file base.txt "notes-api" "base"
+    commit_file probe.py "token = \"$(probe_token)\"" "a credential"
+    blob="$(git -C "$REPO" rev-parse HEAD:probe.py)"
+    remove_file probe.py "redact"
+    rm "$REPO/.git/objects/${blob:0:2}/${blob:2}"       # loose in a fresh repo
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    run _hook_in "$REPO" -c 'echo "$1" | git cat-file --batch-check' _ "$blob"   # the size read as the count makes it
+    [[ "$output" == *"missing"* ]]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the COMMITS of refs/heads/main (${sha:0:10}) could not be counted for the credential scan (a git read exited 3)"* ]]
+    [[ "$output" == *"gitleaks could not scan"* ]]
+}
+
+@test "an ADDED gitlink (a submodule entry, its commit not in this store) passes the real scanner cleanly, counted by both: a gitlink counts by its sha and is no blob the size read asks about" {
+    real_gitleaks
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" update-index --add --cacheinfo "160000,0123456789abcdef0123456789abcdef01234567,sub"   # a superproject holds no object for the submodule's commit
+    git -C "$REPO" commit -qm "an added gitlink"
+    run _hook_in "$REPO" -c 'git ls-tree HEAD sub'
+    [[ "$output" == "160000 commit 0123456789abcdef0123456789abcdef01234567"* ]]
+    run _hook_in "$REPO" -c 'echo 0123456789abcdef0123456789abcdef01234567 | git cat-file --batch-check'   # the size read, asked about it, would say missing
+    [[ "$output" == *"missing"* ]]
+    run_hook
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"2 commits scanned"* ]]
+    [[ "$output" != *"romp pre-push"* ]]
+}
+
 @test "a scan gitleaks reports as clean after its own git wrote to stderr is refused as unscanned: exit 0 is not a completed scan" {
     real_gitleaks
     commit_file probe.py "token = \"$(probe_token)\"" "a credential"
@@ -1059,15 +1105,16 @@ scan_direct() {   # <sha>
     [[ "$output" != *"romp pre-push"* ]]
 }
 
-# Both reads ask git for no colour. With color.ui or color.diff set to always,
-# git colours `log -p` written to a pipe; gitleaks finds no file header in the
-# coloured stream and reports `0 commits scanned` with no ERR line, and a count
-# read from the same coloured stream agreed with it, so a push carrying a
-# credential passed both conditions (found by execution, 2026-09-21, the review
-# round's derivation). The scanner's git is given --no-color through --log-opts
-# and the hook's own count reads with --no-color too.
+# The scanner's git is asked for no colour. With color.ui or color.diff set to
+# always, git colours `log -p` written to a pipe; gitleaks finds no file header
+# in the coloured stream and reports `0 commits scanned` with no ERR line, and a
+# count once read from the same coloured stream agreed with it, so a push
+# carrying a credential passed both conditions (found by execution, 2026-09-21,
+# the review round's derivation). The scanner's git is given --no-color through
+# --log-opts; the hook's own count reads the objects (rev-list, diff-tree --raw,
+# cat-file), which carry no colour whatever color.ui or color.diff says.
 
-@test "a credential is found under color.ui=always: the scanner's git and the hook's own count both ask git for no colour" {
+@test "a credential is found under color.ui=always: the scanner's git is asked for no colour, and the hook's count reads the objects, which colour cannot reach" {
     real_gitleaks
     commit_file probe.py "token = \"$(probe_token)\"" "a credential"
     commit_file clean.txt "nothing to see" "a clean tip"
@@ -1118,7 +1165,7 @@ scan_direct() {   # <sha>
     real_gitleaks
     commit_file file.txt "nothing to see" "clean"
     sha="$(git -C "$REPO" rev-parse HEAD)"
-    fail_diff_tree_stdin                                # the count's read alone: gitleaks' git and the identifier scan's diff-tree run unchanged
+    fail_diff_tree_stdin                                # the shim keys on the count read's own shape (diff-tree --stdin), not on the derivation: gitleaks' git and the identifier scan's diff-tree run unchanged
     run _hook_in "$REPO" -c 'echo "$1" | git diff-tree --stdin -r --raw --no-renames --root' _ "$sha"
     [ "$status" -eq 128 ]
     run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1" >/dev/null' _ "$sha"
@@ -1144,7 +1191,13 @@ scan_direct() {   # <sha>
 # passes; log.showRoot set to false is neutralised the same way, by --root on
 # the scanner's log, so a root commit's credential is found and a clean root
 # passes, and a scanner whose git does not honour the option refuses on the
-# count, naming the key and the remedy.
+# count, the line stating the facts and naming the key as a candidate cause.
+# What these cases hold is that each named transform is closed. They do not
+# hold WHERE the count comes from: a count read from a log stream given the
+# same options would pass every one of them too, since the option that
+# neutralises a key for the scanner's git neutralises it for such a count
+# alike. The one case that tells the derivations apart is in the log.showRoot
+# section below (a git shim stripping --root from the scanner's log alone).
 # The identifier scan, when armed, refuses a TEXT file under a -diff attribute
 # before either scan reads it (the attribute section at the end), so the two
 # -diff cases here, the credential half's, run with the denylist absent.
@@ -1511,7 +1564,7 @@ gitleaks_without_root_option() {   # <file>: the rewritten argument list, one wo
     export ROMP_GITLEAKS="$TEST_DIR/shim/gitleaks"
 }
 
-@test "a scanner whose git does not honour --root (a wrapper removing the option from the scanner's log options) is refused on the count under log.showRoot=false with a root credential: the line names the key, says the option was not honoured, and gives the remedy; no finding" {
+@test "a scanner whose git does not honour --root (a wrapper removing the option from the scanner's log options) is refused on the count under log.showRoot=false with a root credential: the line states the short count and the key false with a root in range, names the key as a candidate cause, and gives the remedy; no finding" {
     real_gitleaks
     commit_file probe.py "token = \"$(probe_token)\"" "a credential in the root commit"
     commit_file clean.txt "nothing to see" "a clean tip"
@@ -1522,7 +1575,7 @@ gitleaks_without_root_option() {   # <file>: the rewritten argument list, one wo
     [ "$status" -eq 1 ]
     [[ "$output" == *"the CREDENTIAL scan of refs/heads/main (${sha:0:10}) covered 1 of the 2 commits with content to scan"* ]]
     [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
-    [[ "$output" == *"romp pre-push: log.showRoot is false in this clone's configuration and the scanner's git did not honour the --root option the hook passes on its log, which hides a root commit's diff; set the key to true (git config log.showRoot true) or unset it and push again, or ROMP_NO_GITLEAKS=1 skips the credential scan for this one push"* ]]
+    [[ "$output" == *"romp pre-push: the scanner covered fewer commits than the push has content for while log.showRoot is false in this clone's configuration and the range holds a root commit; if the scanner's git did not honour the --root option the hook passes on its log, that key is what hid the root commit's diff: set it to true (git config log.showRoot true) or unset it and push again, or ROMP_NO_GITLEAKS=1 skips the credential scan for this one push"* ]]
     [[ "$output" == *"gitleaks could not scan"* ]]
     [[ "$output" != *"gitleaks found a credential"* ]]
     # the wrapper removed --root alone: the options after the range are the hook's own list less that one word
@@ -1548,6 +1601,77 @@ gitleaks_without_root_option() {   # <file>: the rewritten argument list, one wo
     [[ "$output" != *"log.showRoot"* ]]
 }
 
+# The arm's line is an inference from two facts (a short count; the key false
+# with a root commit in the range), and a log shortened for any OTHER reason
+# meets both. By execution (the round 3 refuter: a --max-count and a --skip on
+# the scanner's log with --root honoured): the line printed all the same, and
+# setting the key lifted nothing. So the line states the two facts and names
+# the key as a CANDIDATE cause, conditionally, and promises nothing beyond the
+# bypass.
+
+@test "a count shortfall from a NON-key cause under log.showRoot=false with a root commit in range prints the two facts and the key as a candidate, conditionally: no assertion that the option went unhonoured, no promise that the key lifts the refusal" {
+    real_gitleaks
+    commit_file probe.py "token = \"$(probe_token)\"" "a credential in the root commit"
+    commit_file clean.txt "nothing to see" "a clean tip"
+    git -C "$REPO" config log.showRoot false
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    gitleaks_git_short                                               # one commit fewer by the scanner's git, --root untouched: the key is not the cause
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the CREDENTIAL scan of refs/heads/main (${sha:0:10}) covered 1 of the 2 commits with content to scan"* ]]
+    [[ "$output" == *"romp pre-push: the scanner covered fewer commits than the push has content for while log.showRoot is false in this clone's configuration and the range holds a root commit; if the scanner's git did not honour the --root option"* ]]
+    [[ "$output" != *"and the scanner's git did not honour"* ]]     # the retired assertion of a cause
+    [[ "$output" != *"set the key to true"* ]]                      # the retired promise's wording
+    [[ "$output" == *"ROMP_NO_GITLEAKS=1 skips the credential scan for this one push"* ]]
+}
+
+# The count's DERIVATION, held apart from its hardening (round 3's tests-1): a
+# count read from a `git log -p` stream given the same plain-stream options as
+# the scanner's passes every transform case above, since each option
+# neutralises its key for both logs alike. What tells the derivations apart is
+# a transform that reaches the scanner's log and not the hook's object reads: a
+# git shim that strips --root from every invocation carrying the word `log`
+# (gitleaks' `git -C <root> log ...`; the hook's own `git log -1` reads carry
+# no --root) and leaves diff-tree alone. Under log.showRoot=false with a
+# credential in the root commit, the scanner reads one commit fewer; a
+# stream-derived count reads the same and agrees (exit 0, the credential
+# published: confirmed by execution on a scratch hook with that derivation,
+# round 3), the object-derived count says two and refuses.
+git_stripping_root_from_log() {
+    local real_git
+    real_git="$(command -v git)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'args=(); islog=0\n'
+        printf 'for a in "$@"; do [ "$a" = log ] && islog=1; args+=("$a"); done\n'
+        printf 'if [ "$islog" -eq 1 ]; then kept=(); for a in "${args[@]}"; do [ "$a" = --root ] || kept+=("$a"); done; args=("${kept[@]}"); fi\n'
+        printf 'exec %q "${args[@]}"\n' "$real_git"
+    } > "$TEST_DIR/shim/git"
+    chmod 755 "$TEST_DIR/shim/git"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+
+@test "the count is derived from the OBJECTS: a git shim stripping --root from every log invocation (the scanner's; diff-tree untouched) under log.showRoot=false with a root credential is refused on the count with the key line, where a count read from the log stream would agree with the shortened scan and pass" {
+    real_gitleaks
+    commit_file probe.py "token = \"$(probe_token)\"" "a credential in the root commit"
+    commit_file clean.txt "nothing to see" "a clean tip"
+    git -C "$REPO" config log.showRoot false
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    git_stripping_root_from_log
+    # the transform as the two reads meet it: the log loses the root's hunk (one of two), diff-tree keeps the root's entry
+    run _hook_in "$REPO" -c 'git log -p -U0 --format="commit %H" --root "$1" | grep -c "^@@"' _ "$sha"
+    [ "$output" = 1 ]
+    run _hook_in "$REPO" -c 'echo "$1" | git diff-tree --stdin -r --raw --no-renames --root | grep -c "^:"' _ "$(git -C "$REPO" rev-parse "$sha^")"
+    [ "$output" = 1 ]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the CREDENTIAL scan of refs/heads/main (${sha:0:10}) covered 1 of the 2 commits with content to scan"* ]]
+    [[ "$output" == *"log.showRoot is false in this clone's configuration and the range holds a root commit"* ]]
+    [[ "$output" == *"gitleaks could not scan"* ]]
+    [[ "$output" != *"gitleaks found a credential"* ]]
+}
+
 # ── the replace-ref gate: only where a scan would run ────────────────────
 # The refusal above prevents a false CLEAN REPORT, and only a scan that runs
 # makes one. Where the denylist file is absent and the credential scan is
@@ -1555,7 +1679,13 @@ gitleaks_without_root_option() {   # <file>: the rewritten argument list, one wo
 # reported, so a replace ref falsifies nothing and the push is not the hook's
 # to refuse: a clone that never asked for either scan is unaffected, the rule
 # CLAUDE.md states. The gate reads the two predicates the scans' own early
-# returns read (identifier_scan_armed, credential_scan_armed).
+# returns read (identifier_scan_armed, credential_scan_armed), and it is per
+# CLONE, read once ahead of the per-ref loops: a push a scan would read nothing
+# of (a deletion of a remote ref alone, which both scans skip before reading a
+# byte; a denylist of comments alone, which arms a scan that greps for nothing)
+# is refused under a replace ref all the same, whatever object the ref
+# replaces. Fail-safe, and left so: a gate inside the two per-ref loops would
+# refuse twice.
 
 # A PATH with no gitleaks on it: every directory of PATH that holds one is
 # replaced by a shadow directory linking to everything else in it, so the
@@ -1630,24 +1760,45 @@ path_without_gitleaks() {
     [[ "$output" == *"git push --no-verify"* ]]
 }
 
-# ── a diff attribute that hides a text file from the identifier scan ─────
+@test "a push that only DELETES a remote ref is refused under a replace ref when a scan is armed: the gate is per clone, though both scans skip a delete line before reading a byte" {
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    commit_file file.txt "nothing to see" "clean"                # a second commit: the substitute is built over the commit's parent
+    git -C "$REPO" push -q origin main
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    substitute_for "$sha"
+    run _hook_in "$REPO" "$HOOK" origin git@example.invalid:x/y.git <<< "refs/heads/main $ZERO refs/heads/main $sha"   # the denylist armed (setup); a line neither scan reads past
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"this clone carries a replace ref (refs/replace/$sha)"* ]]
+    [[ "$output" != *"the scan is incomplete"* ]]
+    [[ "$output" != *"personal identifier"* ]]
+    [[ "$output" == *"git push --no-verify"* ]]
+}
+
+# ── a text file git calls binary, hidden from the identifier scan ────────
 # Both content checks read what git calls text: git grep -I skips a blob git
 # calls binary and diff-tree -p prints no line for one, and git calls a blob
-# binary by its PATH's diff attribute as well as by its bytes (a -diff line or
-# the binary macro, in .gitattributes, .git/info/attributes or the file
-# core.attributesFile names; a driver with diff.<driver>.binary true). Found by
-# execution (2026-09-21): a text file under -diff carrying a denylist string
-# went through a real push with the denylist armed and nothing printed. The
-# hook now reads the diff attribute of every regular file at the tip and in
-# each new commit, and a hidden path whose blob is text by git's byte rule (no
-# NUL in the first 8000 bytes) refuses the push rather than being scanned,
-# naming the tip or the commit, the path and the attribute; a hidden blob that
-# is binary by its bytes passes as binaries always have. The advice names the
-# attribute as the cause and what to do about it (drop it, or keep the file text
-# on purpose with an explicit diff line that outranks it), and a rename or copy
-# of such a file is refused the same way, since its bytes reach the remote under
-# the new path. The first two cases push for real with the hook installed, so
-# the remote's state is asserted too.
+# binary by its PATH's diff attribute (a -diff line or the binary macro, in
+# .gitattributes, .git/info/attributes or the file core.attributesFile names;
+# a driver with diff.<driver>.binary true, whatever its name) and by its SIZE
+# (over core.bigFileThreshold, in the diff and not in the grep) as well as by
+# its bytes. Found by execution (2026-09-21): a text file under -diff carrying
+# a denylist string went through a real push with the denylist armed and
+# nothing printed, and so did one over the size key, and one under a driver
+# named `set` or `unspecified`, check-attr's own words. The hook keeps no list
+# of git's rules: it takes git's own verdict from each half's read (the same
+# grep, asked what it read; a --numstat over the pairs the per-commit diff
+# reads), and a blob so named whose bytes are text (no NUL in the first 8000)
+# refuses the push rather than being scanned, naming the tip or the commit,
+# the path and what its diff attribute reads; a blob that is binary by its
+# bytes passes as binaries always have. The line quotes the attribute for the
+# report alone and never decides by it (a driver may be named `set`,
+# `unspecified` or `unset`). The advice names the attribute as the cause where
+# one is named and what to do about it (drop it, or keep the file text on
+# purpose with an explicit diff line that outranks it), the configuration key
+# where none is, and a rename or copy of such a file is refused the same way,
+# since its bytes reach the remote under the new path. The real-push cases
+# push with the hook installed, so the remote's state is asserted too.
 
 # The hook installed for one real push of main to the bare remote; the
 # fixture's own commits run no hooks before or after.
@@ -1777,6 +1928,64 @@ attributes() {   # <line>: a committed .gitattributes
     [[ "$output" != *"personal identifier"* ]]
 }
 
+# The per-commit read judges the PAIR the diff judges (-M): a renamed file is
+# read with the path it came from, so a file under -diff renamed to a plain
+# path and changed in the same commit prints "Binary files ... differ" and its
+# new lines go unread, while a PURE rename prints nothing at all (the same blob
+# under a new path) and is judged as the addition of its new path, the rule
+# the case above set. So the explicit diff line for the NEW path, the remedy
+# the advice names, lifts a pure rename's refusal; a changed rename from a
+# hidden path is refused, the line saying the earlier path counted.
+
+@test "the explicit diff line for the NEW path lifts a pure rename's refusal: the same rename with a later \"notes-b.txt diff\" line passes, the tip's grep reading the file" {
+    add_remote
+    attributes 'notes-*.txt -diff'
+    commit_file notes-a.txt "nothing to see" "a clean file under a pattern -diff"
+    git -C "$REPO" push -q origin main
+    before="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" mv notes-a.txt notes-b.txt
+    git -C "$REPO" commit -qm "rename"
+    printf '%s\n' 'notes-*.txt -diff' 'notes-b.txt diff' > "$REPO/.gitattributes"
+    git -C "$REPO" add .gitattributes
+    git -C "$REPO" commit -qm "keep notes-b.txt text on purpose"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    run _hook_in "$REPO" -c 'git check-attr diff notes-a.txt notes-b.txt'          # the old path still hidden by the pattern, the new one text
+    [[ "$output" == *"notes-a.txt: diff: unset"* ]]
+    [[ "$output" == *"notes-b.txt: diff: set"* ]]
+    run _hook_in "$REPO" -c 'git grep -I -l -e "" "$1" -- notes-b.txt' _ "$sha"    # the tip's grep reads it
+    [ "$status" -eq 0 ]
+    run_hook "$before"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "a file under -diff renamed to a plain path AND changed in the same commit, the change carrying the string, removed before the tip, is refused: the diff judged the pair by the path it came from and printed no hunk" {
+    add_remote
+    attributes 'notes-*.txt -diff'
+    printf 'line %s\n' 1 2 3 4 5 6 7 8 9 10 > "$REPO/notes-a.txt"                 # ten lines, so one added line keeps the pair above git's similarity floor
+    git -C "$REPO" add notes-a.txt
+    git -C "$REPO" commit -qm "a clean file under a pattern -diff"
+    git -C "$REPO" push -q origin main
+    before="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" mv notes-a.txt plain.txt
+    printf 'seen on TESTHOST\n' >> "$REPO/plain.txt"
+    git -C "$REPO" add plain.txt
+    git -C "$REPO" commit -qm "rename and change"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    size="$(git -C "$REPO" cat-file -s "$leak:plain.txt")"
+    remove_file plain.txt "remove it"                                            # the tip is clean: only the per-commit half can name it
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1"' _ "$leak"   # the road as git applies it: a rename pair, no hunk
+    [[ "$output" == *"rename from notes-a.txt"* ]]
+    [[ "$output" == *"Binary files a/notes-a.txt and b/plain.txt differ"* ]]
+    run _hook_in "$REPO" -c 'git check-attr diff plain.txt'
+    [[ "$output" == *"diff: unspecified"* ]]
+    run_hook "$before"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"romp pre-push: plain.txt in commit ${leak:0:10} is text that git calls binary although its diff attribute reads unspecified, so no attribute of its path accounts for the verdict (the diff read it as a rename, so the attribute of the path it came from counted too) (the blob is $size bytes; core.bigFileThreshold is not set in this clone's configuration)"* ]]
+    [[ "$output" != *"ADDS a personal identifier"* ]]
+    [[ "$output" != *"at the tip of"* ]]
+}
+
 @test "with no denylist a -diff text file passes and no such line prints: the identifier scan is a no-op, attribute or not" {
     export ROMP_PRIVATE_STRINGS="$TEST_DIR/does-not-exist.txt"
     attributes 'notes.txt -diff'
@@ -1786,23 +1995,270 @@ attributes() {   # <line>: a committed .gitattributes
     [ -z "$output" ]
 }
 
-# The check's own reads fail closed like every other: the attribute read and
-# the hidden blob's content read, each against its refusing input.
+# The size key: core.bigFileThreshold makes git call every blob over it binary
+# in a diff (not in a grep), so the per-commit read prints no hunk for a text
+# file over it while check-attr answers `unspecified` for its path: a banned
+# string in such a file, added in a middle commit and removed before the tip,
+# went through a real push with the denylist armed and nothing printed (the
+# round 3 refuters, 2026-09-21). The threshold is stated in the clone's
+# configuration, below the file's size.
+big_text_file() {   # <path> <last line>: a 150-byte text line, then the line given; text by its bytes, over a threshold of 100
+    head -c 150 /dev/zero | tr '\0' 'a' > "$REPO/$1"
+    printf '\n%s\n' "$2" >> "$REPO/$1"
+}
 
-@test "a check-attr that fails refuses the push as unscanned, naming the read" {
-    commit_file file.txt "nothing to see" "clean"
+@test "a text file over core.bigFileThreshold carrying a banned string in a middle commit, the tip clean, is refused rather than scanned, the line naming the commit, the blob's size and the key's value; the remote holds nothing" {
+    git -C "$REPO" config core.bigFileThreshold 100
+    big_text_file big.txt "seen on TESTHOST"
+    git -C "$REPO" add big.txt
+    git -C "$REPO" commit -qm "a banned string in a big text file"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file big.txt "remove it"                              # the tip is clean: only the per-commit half can name it
+    # the road as git applies it: the diff prints no hunk, and the attribute names nothing
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1" -- big.txt' _ "$leak"
+    [[ "$output" == *"Binary files"* ]]
+    run _hook_in "$REPO" -c 'git check-attr diff big.txt'
+    [[ "$output" == *"diff: unspecified"* ]]
+    push_main_through_hook
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: big.txt in commit ${leak:0:10} is text that git calls binary although its diff attribute reads unspecified, so no attribute of its path accounts for the verdict (the blob is 168 bytes; core.bigFileThreshold is 100 in this clone's configuration); the identifier scan did not read it, so the push is refused rather than scanned"* ]]
+    [[ "$output" == *"Where a line names no attribute, a configuration key can be what makes git call the file binary: core.bigFileThreshold"* ]]
+    [[ "$output" != *"at the tip of"* ]]
+    [[ "$output" != *"personal identifier"* ]]
+    [[ "$output" == *"git push --no-verify"* ]]
+    ! remote_holds_main
+}
+
+@test "an explicit \"<path> diff\" line outranks the key: the same big text file is judged by content (a hit at the tip and in the commit), never as hidden" {
+    git -C "$REPO" config core.bigFileThreshold 100
+    attributes 'big.txt diff'
+    big_text_file big.txt "seen on TESTHOST"
+    git -C "$REPO" add big.txt
+    git -C "$REPO" commit -qm "a banned string in a big text file under an explicit diff line"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1" -- big.txt' _ "$leak"   # the hunk prints
+    [[ "$output" == *"+seen on TESTHOST"* ]]
+    [[ "$output" != *"Binary files"* ]]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the tip of refs/heads/main (${leak:0:10}) would publish a personal identifier in:"* ]]
+    [[ "$output" == *"commit ${leak:0:10} ADDS a personal identifier in:"* ]]
+    [[ "$output" == *"  big.txt"* ]]
+    [[ "$output" != *"git calls binary"* ]]
+    [[ "$output" != *"hides from the identifier scan"* ]]
+}
+
+@test "the tip half applies no size rule: a big text file carrying the string AT the tip under the key is a HIT by the tip grep, which reads it, and the tip is never called hidden; the commit whose diff printed no hunk for it is" {
+    git -C "$REPO" config core.bigFileThreshold 100
+    big_text_file big.txt "seen on TESTHOST"
+    git -C "$REPO" add big.txt
+    git -C "$REPO" commit -qm "a banned string in a big text file at the tip"
     sha="$(git -C "$REPO" rev-parse HEAD)"
-    git_refusing '[ "${1:-}" = check-attr ]' 128 "fatal: shim: check-attr refused"
-    run _hook_in "$REPO" -c 'printf "file.txt\0" | git check-attr --stdin -z diff'
+    run _hook_in "$REPO" -c 'git grep -i -I -l -F -e TESTHOST "$1" --' _ "$sha"       # the grep reads it: the key is the diff's rule, not the grep's
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"big.txt"* ]]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the tip of refs/heads/main (${sha:0:10}) would publish a personal identifier in:"* ]]
+    [[ "$output" == *"  big.txt"* ]]
+    [[ "$output" != *"big.txt at the tip of refs/heads/main (${sha:0:10}) is text that git calls binary"* ]]
+    [[ "$output" == *"big.txt in commit ${sha:0:10} is text that git calls binary although its diff attribute reads unspecified"* ]]   # the per-commit diff printed no hunk: git's verdict on that read, stated
+    [[ "$output" == *"BLOCKED"* ]]
+}
+
+# check-attr's three reserved words (set, unspecified, unset) are also names a
+# driver may take: `diff=set` on a path with diff.set.binary true makes
+# check-attr answer `set`, the word a bare `diff` attribute answers, and a
+# verdict read from the value passed the path over (a real push published a
+# banned string under drivers named set and unspecified, 2026-09-21). The hook
+# decides by git's verdict and quotes the answer, so the driver is named.
+
+@test "a text file under a driver NAMED set (diff.set.binary true) is refused, the line naming the driver: check-attr's reserved word decides nothing; the remote holds nothing" {
+    git -C "$REPO" config diff.set.binary true
+    attributes 'notes.txt diff=set'
+    commit_file notes.txt "seen on TESTHOST" "a banned string under a driver named set"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    run _hook_in "$REPO" -c 'git check-attr diff notes.txt'
+    [[ "$output" == *"diff: set"* ]]
+    run _hook_in "$REPO" -c 'git grep -i -I -l -F -e TESTHOST "$1" --' _ "$sha"
+    [ "$status" -eq 1 ]
+    push_main_through_hook
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"romp pre-push: notes.txt at the tip of refs/heads/main (${sha:0:10}) is text that its diff attribute (diff=set, binary) hides from the identifier scan, so the push is refused rather than scanned"* ]]
+    [[ "$output" == *"romp pre-push: notes.txt in commit ${sha:0:10} is text that its diff attribute (diff=set, binary) hides from the identifier scan"* ]]
+    [[ "$output" != *"personal identifier"* ]]
+    ! remote_holds_main
+}
+
+@test "a text file under a driver NAMED unspecified (diff.unspecified.binary true) is refused the same way; the remote holds nothing" {
+    git -C "$REPO" config diff.unspecified.binary true
+    attributes 'notes.txt diff=unspecified'
+    commit_file notes.txt "seen on TESTHOST" "a banned string under a driver named unspecified"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    run _hook_in "$REPO" -c 'git check-attr diff notes.txt'
+    [[ "$output" == *"diff: unspecified"* ]]
+    push_main_through_hook
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"notes.txt at the tip of refs/heads/main (${sha:0:10}) is text that its diff attribute (diff=unspecified, binary) hides from the identifier scan"* ]]
+    [[ "$output" == *"notes.txt in commit ${sha:0:10} is text that its diff attribute (diff=unspecified, binary) hides from the identifier scan"* ]]
+    [[ "$output" != *"personal identifier"* ]]
+    ! remote_holds_main
+}
+
+@test "a driver merely NAMED unspecified, with no attribute naming it on any path, hides nothing: a clean push passes with nothing printed (the control: unspecified is also check-attr's answer for a path with no attribute)" {
+    git -C "$REPO" config diff.unspecified.binary true
+    commit_file notes.txt "nothing to see" "a clean file with no attribute"
+    run _hook_in "$REPO" -c 'git check-attr diff notes.txt'
+    [[ "$output" == *"diff: unspecified"* ]]
+    run_hook
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+# The check's own reads fail closed like every other, each against its refusing
+# input: the scratch directory, the tip's listing and the grep's read list, each
+# commit's listing and its numstat, a numstat that answers for fewer paths than
+# the listing names, a path with a newline, the hidden blob's content read; and
+# the label's check-attr, which cannot lift a refusal git's verdict made. The
+# replace-ref listing (refuse_replace_refs) is here too. The round 3 refuters
+# deleted each such arm alone and together and the suite stayed green, which is
+# why each has a case: a refusal that never fires cannot be told from an arm
+# that is not there.
+
+fail_for_each_ref()      { git_refusing '[ "${1:-}" = for-each-ref ]' 128 "fatal: shim: for-each-ref refused"; }
+fail_ls_tree_z()         { git_refusing '[ "${1:-}" = ls-tree ] && [ "${3:-}" = -z ]' 128 "fatal: shim: ls-tree -z refused"; }   # the verdict check's listing alone: a plain ls-tree shim clears tip_listed in the symlink pass first
+fail_grep_read_list()    { git_refusing '[ "${1:-}" = grep ] && [ "${5:-}" = -z ]' 2 "shim: git grep -l -z refused"; }         # the read list alone: the content grep carries no -z
+fail_diff_tree_raw()     { git_refusing 'case " $* " in *" --raw "*) true ;; *) false ;; esac' 128 "fatal: shim: diff-tree --raw refused"; }             # the changed-path listing alone: the added-lines diff carries no --raw, and the count's --stdin --raw read runs only with the credential scan armed, which setup disarms
+fail_diff_tree_numstat() { git_refusing 'case " $* " in *" --numstat "*) true ;; *) false ;; esac' 128 "fatal: shim: diff-tree --numstat refused"; }   # the verdict read alone: the generic diff-tree shim is consumed by the added-lines arm
+empty_diff_tree_numstat() { git_refusing 'case " $* " in *" --numstat "*) true ;; *) false ;; esac' 0 ""; }                      # a numstat that exits 0 and answers nothing: a short read, not a failed one
+check_attr_answering() {   # <printf format of the answer, NUL-delimited>: a git whose check-attr prints that and exits 0, the real git for every other command
+    local real_git
+    real_git="$(command -v git)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if [ "${1:-}" = check-attr ]; then printf %q; exit 0; fi\n' "$1"
+        printf 'exec %q "$@"\n' "$real_git"
+    } > "$TEST_DIR/shim/git"
+    chmod 755 "$TEST_DIR/shim/git"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+
+@test "a replace-ref listing that fails (git for-each-ref exiting 128) refuses the push as unscanned, naming the read" {
+    commit_file file.txt "nothing to see" "clean"
+    fail_for_each_ref
+    run _hook_in "$REPO" -c 'git for-each-ref --format="%(refname)" refs/replace/'
     [ "$status" -eq 128 ]
     run_hook
     [ "$status" -eq 1 ]
-    [[ "$output" == *"the DIFF ATTRIBUTES of the paths refs/heads/main (${sha:0:10}) publishes could not be read (git check-attr exited 128)"* ]]
+    [[ "$output" == *"the REPLACE REFS of this clone could not be listed (git for-each-ref exited 128), so whether the scans read what the push transfers is unknown"* ]]
     [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
     [[ "$output" != *"BLOCKED"* ]]
 }
 
-@test "a hidden blob whose content cannot be read refuses the push as unscanned, naming the path and the attribute: an unread blob is not a binary one" {
+@test "a scratch directory that cannot be made (TMPDIR at a missing path) refuses the push as unscanned, naming mktemp" {
+    commit_file file.txt "nothing to see" "clean"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    export TMPDIR="$TEST_DIR/no-such-dir"
+    run _hook_in "$REPO" -c 'mktemp -d "$TMPDIR/romp-pre-push.XXXXXX"'
+    [ "$status" -ne 0 ]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the BINARY VERDICTS on the paths refs/heads/main (${sha:0:10}) publishes could not be checked (no scratch directory: mktemp failed)"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"BLOCKED"* ]]
+}
+
+@test "a tip whose tree cannot be listed for the verdict check (ls-tree -z exiting 128, the symlink pass's plain ls-tree untouched) refuses the push as unscanned, naming the read" {
+    commit_file file.txt "nothing to see" "clean"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    fail_ls_tree_z
+    run _hook_in "$REPO" -c 'git ls-tree -r -z -l "$1"' _ "$sha"
+    [ "$status" -eq 128 ]
+    run _hook_in "$REPO" -c 'git ls-tree -r "$1"' _ "$sha"      # the symlink pass's listing works, so tip_listed stays 1 and the -z read is reached
+    [ "$status" -eq 0 ]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the TREE of the tip of refs/heads/main (${sha:0:10}) could not be listed for the BINARY VERDICT check (git ls-tree exited 128)"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"SYMLINKS of the tip"* ]]
+}
+
+@test "a grep that cannot list the files it read (git grep -l -z exiting 2, the content grep untouched) refuses the push as unscanned, naming the read" {
+    commit_file file.txt "nothing to see" "clean"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    fail_grep_read_list
+    run _hook_in "$REPO" -c 'git grep --no-color -I -l -z -e "" "$1" --' _ "$sha"
+    [ "$status" -eq 2 ]
+    run _hook_in "$REPO" -c 'git grep --no-color -i -I -l -F -e x "$1" --' _ "$sha"   # the content grep: no match, exit 1, not the shim
+    [ "$status" -eq 1 ]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the FILES the grep of the tip of refs/heads/main (${sha:0:10}) reads could not be listed for the BINARY VERDICT check (git grep exited 2)"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"could not be fully scanned"* ]]
+}
+
+@test "a commit whose changed paths cannot be listed for the verdict check (diff-tree --raw exiting 128, the added-lines diff untouched) refuses the push as unscanned, naming the read" {
+    commit_file file.txt "nothing to see" "clean"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    fail_diff_tree_raw
+    run _hook_in "$REPO" -c 'git diff-tree -r --raw --no-renames --root -c -z --no-commit-id "$1"' _ "$sha"
+    [ "$status" -eq 128 ]
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1" >/dev/null' _ "$sha"
+    [ "$status" -eq 0 ]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the CHANGED PATHS of commit ${sha:0:10} could not be listed for the BINARY VERDICT check (git diff-tree exited 128)"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"ADDED LINES"* ]]
+    [[ "$output" != *"BINARY VERDICTS of commit"* ]]      # an empty listing names no post-image, so the numstat reads are not reached: one cause
+}
+
+@test "a commit whose binary verdicts cannot be read (diff-tree --numstat exiting 128, the added-lines diff untouched) refuses the push as unscanned, naming that read and not the short-answer one" {
+    commit_file file.txt "nothing to see" "clean"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    fail_diff_tree_numstat
+    run _hook_in "$REPO" -c 'git diff-tree -r -m -M --numstat --root -z --no-commit-id "$1"' _ "$sha"
+    [ "$status" -eq 128 ]
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1" >/dev/null' _ "$sha"
+    [ "$status" -eq 0 ]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the BINARY VERDICTS of commit ${sha:0:10} could not be read (git diff-tree --numstat -M exited 128)"* ]]
+    [[ "$output" == *"the BINARY VERDICTS of commit ${sha:0:10} could not be read (git diff-tree --numstat --no-renames exited 128)"* ]]   # both verdict reads, each named
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"answered for fewer paths"* ]]       # the reads' own failures and not a third cause: the short-answer arm is gated on both having exited 0
+    [[ "$output" != *"ADDED LINES"* ]]
+}
+
+@test "a numstat that exits 0 and answers for FEWER paths than the commit changes is a short read, refused as unscanned: a missing answer is not an answer of text" {
+    commit_file file.txt "nothing to see" "clean"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    empty_diff_tree_numstat
+    run _hook_in "$REPO" -c 'git diff-tree -r -m -M --numstat --root -z --no-commit-id "$1"' _ "$sha"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the BINARY VERDICTS of commit ${sha:0:10} could not be read (git diff-tree --numstat answered for fewer paths than the commit changes)"* ]]
+    [[ "$output" != *"exited"* ]]
+}
+
+@test "a path holding a newline byte is refused as unscanned at the tip and in the commit: the listings are joined line by line, and such a path would be judged by nothing" {
+    commit_file file.txt "nothing to see" "clean"
+    printf 'x\n' > "$REPO/"$'odd\nname.txt'
+    git -C "$REPO" add -- $'odd\nname.txt'
+    git -C "$REPO" commit -qm "a path with a newline"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"a path at the tip of refs/heads/main (${sha:0:10}) holds a newline, which the BINARY VERDICT check cannot judge"* ]]
+    [[ "$output" == *"a path commit ${sha:0:10} changes holds a newline, which the BINARY VERDICT check cannot judge"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+}
+
+@test "a hidden blob whose content cannot be read refuses the push as unscanned, naming the path: an unread blob is not a binary one" {
     attributes 'notes.txt -diff'
     commit_file notes.txt "nothing to see" "a clean -diff file"
     sha="$(git -C "$REPO" rev-parse HEAD)"
@@ -1812,9 +2268,57 @@ attributes() {   # <line>: a committed .gitattributes
     [ "$status" -eq 128 ]
     run_hook
     [ "$status" -eq 1 ]
-    [[ "$output" == *"the CONTENT of notes.txt at the tip of refs/heads/main (${sha:0:10}), which its diff attribute (unset) hides from the identifier scan, could not be read (git cat-file exited 128)"* ]]
+    [[ "$output" == *"the CONTENT of notes.txt at the tip of refs/heads/main (${sha:0:10}), which git calls binary and the identifier scan therefore skipped, could not be read (git cat-file exited 128)"* ]]
     [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
-    [[ "$output" != *"is text that its diff attribute"* ]]  # unread, so not called text either
+    [[ "$output" != *"is text that"* ]]                      # unread, so not called text either
+}
+
+# The label's read: check-attr answers for the report line alone, after git's
+# verdict and the byte rule have refused the blob, so its failure changes the
+# words and never the verdict. Three faults, three clauses: a read that fails,
+# an answer about another path, and no answer at all (the short read the
+# round 3 refuters found fail-open in the batch read this replaced).
+
+@test "a check-attr that fails leaves the refusal standing, the failure in the attribute's place: the label read cannot lift a verdict git made" {
+    attributes 'notes.txt -diff'
+    commit_file notes.txt "nothing to see" "a clean -diff file"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    git_refusing '[ "${1:-}" = check-attr ]' 128 "fatal: shim: check-attr refused"
+    run _hook_in "$REPO" -c 'git check-attr -z diff -- notes.txt'
+    [ "$status" -eq 128 ]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"notes.txt at the tip of refs/heads/main (${sha:0:10}) is text that git calls binary although its diff attribute could not be read (git check-attr exited 128), so no attribute of its path accounts for the verdict"* ]]
+    [[ "$output" == *"the push is refused rather than scanned"* ]]
+    [[ "$output" != *"(unset)"* ]]
+    [[ "$output" != *"BLOCKED"* ]]
+}
+
+@test "a check-attr that answers about ANOTHER path leaves the refusal standing, the answer named as out of step with the path asked" {
+    attributes 'notes.txt -diff'
+    commit_file notes.txt "nothing to see" "a clean -diff file"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    check_attr_answering 'other.txt\0diff\0unset\0'
+    run _hook_in "$REPO" -c 'git check-attr -z diff -- notes.txt | tr "\0" "|"'
+    [ "$output" = "other.txt|diff|unset|" ]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"notes.txt at the tip of refs/heads/main (${sha:0:10}) is text that git calls binary although its diff attribute could not be read (git check-attr answered out of step with the path asked), so no attribute of its path accounts for the verdict"* ]]
+    [[ "$output" != *"(unset)"* ]]
+}
+
+@test "a check-attr that answers NOTHING (a truncated read) leaves the refusal standing, the short answer named: the push does not pass" {
+    attributes 'notes.txt -diff'
+    commit_file notes.txt "nothing to see" "a clean -diff file"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    check_attr_answering ''
+    run _hook_in "$REPO" -c 'git check-attr -z diff -- notes.txt'
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"notes.txt at the tip of refs/heads/main (${sha:0:10}) is text that git calls binary although its diff attribute could not be read (git check-attr answered nothing for the path asked), so no attribute of its path accounts for the verdict"* ]]
+    [[ "$output" == *"the push is refused rather than scanned"* ]]
 }
 
 
@@ -1928,7 +2432,7 @@ fail_config_showroot() { git_refusing '[ "${1:-}" = config ] && [ "${2:-}" = --t
     run_hook                                            # the read intact: the arm fires beside the coverage line (the wrapper case above pins the whole line)
     [ "$status" -eq 1 ]
     [[ "$output" == *"covered 1 of the 2 commits with content to scan"* ]]
-    [[ "$output" == *"romp pre-push: log.showRoot is false in this clone's configuration"* ]]
+    [[ "$output" == *"romp pre-push: the scanner covered fewer commits than the push has content for while log.showRoot is false in this clone's configuration"* ]]
     fail_config_showroot
     run _hook_in "$REPO" -c 'git config --type=bool log.showRoot'    # the read as the hook makes it fails under the shim
     [ "$status" -eq 128 ]

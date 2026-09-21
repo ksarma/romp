@@ -111,15 +111,26 @@ so there is no list to write. **gitleaks** covers them, in two places:
   count of the commits with content to scan, or no count at all (the two
   coverage conditions). `log.showRoot` set to false would hide a root commit's
   diff from the scanner's log: the hook passes `--root` on the scanner's log so
-  a root commit's diff is scanned whatever `log.showRoot` says, and a scanner
-  whose git does not honour it refuses on the count and says so, naming the key
-  and the remedy. `ROMP_GITLEAKS` points at a binary. This is the same hook as
-  the identifier scan and both report before it refuses, so one push tells you
-  about both.
+  a root commit's diff is scanned whatever `log.showRoot` says, and a count that
+  comes up short beside that key and a root commit is refused with the key named
+  as a candidate cause and its remedy. `ROMP_NO_GITLEAKS=1` skips the credential
+  scan for one push, and `ROMP_GITLEAKS` points at a binary. A clone that
+  carries any replace ref (`git replace`) is refused before either scan runs
+  when either scan is armed, whatever the ref replaces and whether or not that
+  object is in the push: under a replacement what a scan reads and what the push
+  transfers can differ, so a clean report could be false; the remedy is
+  `git replace -d <object>`, or a push from a clone that carries none. This is
+  the same hook as the identifier scan and both report before it refuses, so
+  one push tells you about both.
 - **CI's `Secret scan (gitleaks)` job** scans all of history, every branch and
   tag the checkout brings, on every PR and every push to `main`, from a
   pinned, checksummed binary. It needs `fetch-depth: 0`: a default checkout
-  scans one commit and reports clean.
+  scans one commit and reports clean. It reads the patch stream as the runner's
+  git shapes it: a committed `-diff` attribute hides that path's credential from
+  the job once the file is gone from `HEAD`, where the hook's `--text` still
+  finds it (verified 2026-09-21 on the pinned scanner; the tree's one
+  `.gitattributes` sets `-text`, not `-diff`, so the road is latent rather than
+  live). Closing that home is its own fix-tier PR, not the hook's.
 
 Three things follow for anyone touching this:
 - **A hit means rotate, not amend.** A credential that reached a commit is
