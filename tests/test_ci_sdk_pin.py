@@ -95,8 +95,8 @@ This module holds five things, and it never skips: a pin that skips reports gree
    second, in-process case pins the method's name against unittest's loader over the class. The loader is not the
    collector: pytest's UnitTestCase.collect calls the loader and then drops the class, or the method, whose __test__
    is False, which the loader never reads, so the loader case alone read green with the test out of every run
-   (2026-09-21: `__test__ = False` on the class or on the method, 48 of 49 collected and no InstalledVersion item, the
-   loader case 1 passed, exit 0), and the collect-only case is red on both. What neither case can see is a road that
+   (2026-09-21: `__test__ = False` on the class or on the method, the collector listed one item fewer and no
+   InstalledVersion item, the loader case 1 passed, exit 0), and the collect-only case is red on both. What neither case can see is a road that
    drops this module from a RUN without touching the file, the residual stated here and above tests/conftest.py's
    tuple: a module-level __test__ = False empties the module's collection, this census with it (the child would list
    nothing, and never runs); the child hands pytest the file as an argument, and pytest asks pytest_ignore_collect
@@ -529,7 +529,7 @@ class NeverSkips(unittest.TestCase):
         # nothing runs, so no grandchild), must list the guarded test's node id as one whole line. Keyed on that line's
         # PRESENCE, never on a collected count: a count reds on every test added to this file. This is the road the
         # loader case above cannot see: with `__test__ = False` on InstalledVersion or on its method the collector
-        # listed 48 of 49 and no InstalledVersion item while the loader case read 1 passed, exit 0 (2026-09-21). What
+        # listed one item fewer and no InstalledVersion item while the loader case read 1 passed, exit 0 (2026-09-21). What
         # this case does not see is a road that drops the module from a RUN without touching the file, itself included
         # (a module-level `__test__ = False` empties the module's collection: the child would list nothing, and never
         # runs); the module docstring, item 4, and the comment above _NEVER_SKIP_FILES in tests/conftest.py state that
