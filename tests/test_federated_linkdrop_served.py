@@ -680,9 +680,9 @@ class _LinkDrop(unittest.TestCase):
     # _outline_caught_up_whole's docstring names, which reads every counted record's marks, prints the sentence below whole and
     # under --check reads this comment for it, the markers folded; pass 10, the maintainer's round 5 extra8-3, after this paragraph and the delivery sentence below
     # were hand-kept copies of a population dated one drive apart). A census over a growing record is dated by construction:
-    # the 25-drive census quoted here before missed three bounds later drives moved (redialed2's maximum from 0.81 to 1.04 s,
-    # rowDown's minimum from 4.6 to 4.3 s, closed's maximum from 0.030 to 0.27 s), so a later drive may move one again and the
-    # caps are floors far above every bound, not fits.
+    # the table below states each span's bounds as of the drive it names and nothing before or after it; drives after an
+    # earlier paste of this comment moved bounds that paste carried (the repo's history holds those pastes), so a later
+    # drive may move one again and the caps are floors far above every bound, not fits.
     # The spans by mark pair over every unmutated recorded drive as of the drive at `r8/lab-ci6.log` (2026-09-20; 71
     # drives, 44 new-bundle and 27 old-hub): closed, drop -> closed, 0.008 to 0.267 s; rowDown, closed -> rowDown,
     # 4.31 to 14.5 s; rowUp, resume -> rowUp, 0.762 to 13.2 s; redialed, rowUp -> redialed, 0.786 to 4.6 s; localUp,
