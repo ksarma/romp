@@ -8,7 +8,7 @@ the conflicts duplicated rows (main carried one row three times on 2026-09-06). 
 and `scripts/upstream-ledger.py render` prints the table on demand (CI publishes it to the job
 summary; nothing is committed).
 
-This module guards seven things, each a pure function over text with synthetic fixtures, the real
+This module guards eight things, each a pure function over text with synthetic fixtures, the real
 tree last:
 1. every `upstream/*.md` parses: `---` delimiters, `key: value` lines, the required keys, no unknown
    keys, `status` in the vocabulary, ISO dates, `pr` blank or an integer, the filename shape, the
@@ -26,11 +26,17 @@ tree last:
    synthetic row into an entry that parses and round-trips its cells, sees an existing entry whether
    or not it parses, keeps the entry's header values under `--replace` and takes the row's under
    `--force`, and names every value it kept or changed;
-7. the real tree: `check()` over `upstream/` and UPSTREAM.md returns no problems.
+7. the real tree: `check()` over `upstream/` and UPSTREAM.md returns no problems;
+8. `stale` reads every `offered` entry's PR through one injectable gh runner and reports each whose
+   PR is merged or closed (or whose offered field names no PR number), exit 1; exit 0 when every
+   such PR is open; exit 2 when the clone has no `upstream` remote or gh fails. `check` validates
+   the status word and ties it to nothing, so two entries read `offered` for two days after their
+   PRs merged (2026-09-19 to 2026-09-21); this is the check that would have caught them.
 """
 import contextlib
 import importlib.util
 import io
+import json
 import os
 import re
 import shutil
@@ -1066,6 +1072,207 @@ class AddedDate(unittest.TestCase):
         for l in lines:
             self.assertIn("added = today (no commit introduced this row)", l)
         self.assertIn("2 rows whose first commit the pickaxe could not find (added = today; set the date by hand): 0001, 0002", report)
+
+
+def _answer(state, merged_at=None, closed_at=None, sha=None):
+    """What `gh pr view --json state,mergedAt,closedAt,mergeCommit` prints for one PR, as an object."""
+    return {"state": state, "mergedAt": merged_at, "closedAt": closed_at,
+            "mergeCommit": {"oid": sha} if sha else None}
+
+
+class FakeGh:
+    """The injected runner: answers `gh pr view N -R repo --json ...` from a table and records every
+    command it was handed, so a test asserts both the answers' effect and the reads' shape and count."""
+
+    def __init__(self, answers):
+        self.answers = answers   # PR number -> the object, or an Exception instance to raise
+        self.calls = []
+
+    def __call__(self, cmd):
+        self.calls.append(list(cmd))
+        n = int(cmd[3])
+        a = self.answers[n]
+        if isinstance(a, Exception):
+            raise a
+        return json.dumps(a)
+
+
+class Stale(unittest.TestCase):
+    """Check 8: `stale` reports every offered entry whose PR is no longer open, and nothing else."""
+
+    FOUR = {
+        "2026-09-01-open-offer.md": dict(title="Open offer", status="offered", offered="their PR #10"),
+        "2026-09-02-merged-offer.md": dict(title="Merged offer", status="offered", offered="their PR #11"),
+        "2026-09-03-closed-offer.md": dict(title="Closed offer", status="offered", offered="their PR #12"),
+        "2026-09-04-merged-entry.md": dict(title="Merged entry", status="merged", offered="their PR #13", closed="2026-09-05"),
+    }
+    ANSWERS = {
+        10: _answer("OPEN"),
+        11: _answer("MERGED", merged_at="2026-09-19T10:09:44Z", closed_at="2026-09-19T10:09:44Z", sha="0123456789abcdef0123456789abcdef01234567"),
+        12: _answer("CLOSED", closed_at="2026-09-20T23:04:42Z"),
+        13: _answer("MERGED", merged_at="2026-09-05T00:00:00Z", closed_at="2026-09-05T00:00:00Z", sha="fedcba9876543210fedcba9876543210fedcba98"),
+    }
+
+    def _entries(self, files):
+        out = []
+        for name, over in files.items():
+            e, got = _parse(name, _entry(name, **over))
+            self.assertEqual(got, [], name)
+            out.append(e)
+        return out
+
+    def test_the_pure_decision_returns_the_merged_and_the_closed_offer_with_their_wording_and_nothing_else(self):
+        got = L.stale_rows(self._entries(self.FOUR), self.ANSWERS)
+        self.assertEqual(got, [
+            "upstream/2026-09-02-merged-offer.md: their PR #11 merged 2026-09-19T10:09:44Z as 012345678, entry still offered",
+            "upstream/2026-09-03-closed-offer.md: their PR #12 closed 2026-09-20T23:04:42Z unmerged, entry still offered",
+        ])
+        # the merged ENTRY names a merged PR and is right to; the open offer is not a row
+        self.assertFalse([l for l in got if "merged-entry" in l or "open-offer" in l], got)
+
+    def test_an_offered_field_with_no_pr_number_is_reported_not_skipped(self):
+        files = {"2026-09-01-no-number.md": dict(title="No number", status="offered", offered="the maintainer took it onto a branch")}
+        got = L.stale_rows(self._entries(files), {})   # nothing was read for it, and nothing had to be
+        self.assertEqual(len(got), 1, got)
+        self.assertTrue(got[0].startswith("upstream/2026-09-01-no-number.md: stale-unparseable: offered 'the maintainer took it onto a branch' names no PR number"), got[0])
+        self.assertTrue(got[0].endswith(", entry still offered"), got[0])
+        blank = {"2026-09-01-blank.md": dict(title="Blank", status="offered", offered="")}
+        got = L.stale_rows(self._entries(blank), {})
+        self.assertEqual(len(got), 1, got)
+        self.assertIn("stale-unparseable", got[0])
+
+    def test_a_state_that_is_neither_open_nor_merged_nor_closed_is_stale_too(self):
+        files = {"2026-09-01-odd.md": dict(title="Odd", status="offered", offered="their PR #14")}
+        got = L.stale_rows(self._entries(files), {14: _answer("DRAFTISH")})
+        self.assertEqual(got, ["upstream/2026-09-01-odd.md: their PR #14 state 'DRAFTISH' is not OPEN, entry still offered"])
+
+    def test_offered_number_reads_the_forms_the_entries_use(self):
+        for field, want in (("their PR #1883", 1883),
+                            ("their PR #994 (commit b40df67a, slice 1)", 994),   # a tail after the number
+                            ("their #12", 12),
+                            ("", None),
+                            ("fork PR #323", None),                                # a fork PR is not an upstream one
+                            ("PR 994", None)):
+            with self.subTest(field=field):
+                e, got = _parse("2026-09-01-field.md", _entry("2026-09-01-field.md", status="offered", offered=field))
+                self.assertEqual(got, [])
+                self.assertEqual(L.offered_number(e), want)
+
+    def test_repo_from_url_reads_every_spelling_git_uses(self):
+        for url in ("https://github.com/example-owner/example-repo.git", "https://github.com/example-owner/example-repo",
+                    "https://github.com/example-owner/example-repo/", "git@github.com:example-owner/example-repo.git",
+                    "ssh://git@github.com/example-owner/example-repo.git", "  https://github.com/example-owner/example-repo.git\n"):
+            with self.subTest(url=url):
+                self.assertEqual(L.repo_from_url(url), "example-owner/example-repo")
+        self.assertIsNone(L.repo_from_url("no-push://upstream-is-fetch-only"))   # the fork's push sentinel names no repository
+        self.assertIsNone(L.repo_from_url(""))
+
+    def _root(self, files, remote="https://github.com/example-owner/example-repo.git"):
+        """A ledger root that is a git repository, with an `upstream` remote unless remote is None."""
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d)
+        (d / "upstream").mkdir()
+        for name, over in files.items():
+            (d / "upstream" / name).write_text(_entry(name, **over), encoding="utf-8")
+        _git(d, "init", "-q", "-b", "main")
+        if remote:
+            _git(d, "remote", "add", "upstream", remote)
+        return d
+
+    def _run(self, root, runner):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = L.main(["--root", str(root), "stale"], run=runner)
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_the_command_exits_1_with_stale_rows_and_reads_each_pr_once(self):
+        files = dict(self.FOUR)
+        files["2026-09-05-second-closed-offer.md"] = dict(title="Second closed offer", status="offered", offered="their PR #12 (slice 2)")
+        d = self._root(files)
+        gh = FakeGh(self.ANSWERS)
+        rc, out, err = self._run(d, gh)
+        self.assertEqual(rc, 1, (out, err))
+        lines = out.rstrip("\n").split("\n")
+        self.assertEqual(lines[:-1], [
+            "upstream/2026-09-02-merged-offer.md: their PR #11 merged 2026-09-19T10:09:44Z as 012345678, entry still offered",
+            "upstream/2026-09-03-closed-offer.md: their PR #12 closed 2026-09-20T23:04:42Z unmerged, entry still offered",
+            "upstream/2026-09-05-second-closed-offer.md: their PR #12 closed 2026-09-20T23:04:42Z unmerged, entry still offered",
+        ])
+        self.assertEqual(lines[-1], "stale: 3 stale of 4 offered entries; 3 distinct PRs read from example-owner/example-repo")
+        # one read per distinct PR (two entries name #12), none for the merged entry's #13, in the shape gh takes
+        self.assertEqual([c[3] for c in gh.calls], ["10", "11", "12"])
+        for c in gh.calls:
+            self.assertEqual(c[0], L.gh_binary())
+            self.assertEqual(c[1:3] + c[4:], ["pr", "view", "-R", "example-owner/example-repo", "--json", "state,mergedAt,closedAt,mergeCommit"])
+
+    def test_the_command_exits_0_when_every_offered_pr_is_open_and_still_prints_the_denominators(self):
+        d = self._root(self.FOUR)
+        gh = FakeGh({10: _answer("OPEN"), 11: _answer("OPEN"), 12: _answer("OPEN")})
+        rc, out, err = self._run(d, gh)
+        self.assertEqual(rc, 0, (out, err))
+        self.assertEqual(out, "stale: 0 stale of 3 offered entries; 3 distinct PRs read from example-owner/example-repo\n")
+        self.assertEqual(err, "")
+
+    def test_the_summary_counts_one_entry_and_one_pr_in_the_singular(self):
+        one = {"2026-09-01-lone-offer.md": dict(title="Lone offer", status="offered", offered="their PR #12")}
+        rc, out, err = self._run(self._root(one), FakeGh(self.ANSWERS))
+        self.assertEqual(rc, 1, (out, err))
+        self.assertEqual(out.rstrip("\n").split("\n")[-1], "stale: 1 stale of 1 offered entry; 1 distinct PR read from example-owner/example-repo")
+        rc, out, err = self._run(self._root(one), FakeGh({12: _answer("OPEN")}))
+        self.assertEqual(rc, 0, (out, err))
+        self.assertEqual(out, "stale: 0 stale of 1 offered entry; 1 distinct PR read from example-owner/example-repo\n")
+
+    def test_the_command_exits_2_with_no_upstream_remote_and_reads_nothing(self):
+        for remote in (None, "no-push://upstream-is-fetch-only"):
+            with self.subTest(remote=remote):
+                d = self._root(self.FOUR, remote=remote)
+                gh = FakeGh(self.ANSWERS)
+                rc, out, err = self._run(d, gh)
+                self.assertEqual(rc, 2, (out, err))
+                self.assertEqual(out, "")
+                self.assertIn("no git remote named `upstream`", err)
+                self.assertEqual(gh.calls, [])
+
+    def test_a_gh_failure_exits_2_naming_the_pr_rather_than_passing_it_as_open(self):
+        d = self._root(self.FOUR)
+        gh = FakeGh({10: _answer("OPEN"), 11: L.GhError("`gh pr view 11` exited 1: could not resolve to a PullRequest"), 12: _answer("OPEN")})
+        rc, out, err = self._run(d, gh)
+        self.assertEqual(rc, 2, (out, err))
+        self.assertEqual(out, "")
+        self.assertIn("stale: could not read their PR #11 of example-owner/example-repo: `gh pr view 11` exited 1", err)
+
+    def test_the_command_exits_2_when_the_ledger_does_not_parse(self):
+        d = self._root({"2026-09-01-broken.md": dict(title="Broken", status="shipped")})
+        gh = FakeGh({})
+        rc, out, err = self._run(d, gh)
+        self.assertEqual(rc, 2, (out, err))
+        self.assertIn("status 'shipped' is not one of", err)
+        self.assertIn("fix what `check` reports first", err)
+        self.assertEqual(gh.calls, [])
+
+    def test_the_parser_knows_stale_and_its_help_names_gh_and_the_network(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as cm:
+            L.main(["stale", "--help"])
+        self.assertEqual(cm.exception.code, 0)
+        help_text = out.getvalue()
+        self.assertIn("gh", help_text)
+        self.assertIn("network", help_text)
+        self.assertIn("not part of `check`", help_text)
+        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as cm:
+            L.main(["--help"])
+        self.assertIn("stale", out.getvalue())
+
+    def test_run_gh_raises_gh_error_on_a_missing_binary_and_a_non_zero_exit(self):
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d)
+        with self.assertRaises(L.GhError) as cm:
+            L.run_gh([str(d / "no-such-gh"), "pr", "view", "1"])
+        self.assertIn("no-such-gh", str(cm.exception))
+        with self.assertRaises(L.GhError) as cm:
+            L.run_gh(["sh", "-c", "echo boom >&2; exit 3"])
+        self.assertIn("exited 3: boom", str(cm.exception))
+        self.assertEqual(L.run_gh(["sh", "-c", "printf ok"]), "ok")
 
 
 class RealTree(unittest.TestCase):
