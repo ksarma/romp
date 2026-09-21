@@ -1428,7 +1428,7 @@ test("the inertness premise, held where CI runs: MD_PURIFY is its six-key litera
 // plan's count follows. The two property names are matched BARE (`\b(?:innerHTML|outerHTML)\b`, a read or a write under any
 // spelling), not as `innerHTML =`: a write spelled `x["innerHTML"] = s`, `Object.assign(x, { innerHTML: s })` or
 // `x.innerHTML ||= s` reaches the same setter and the assignment spelling did not match it (the fork PR review's round 2,
-// finding guards-1, 2026-09-20: such a write planted inside an existing post-adoption callee left this test green); a read of
+// its finding on the guards, 2026-09-20: such a write planted inside an existing post-adoption callee left this test green); a read of
 // either in the region or a reached module is as suspect as a write, so the judged lines include a type annotation and the
 // decoder's reads. The node scene records the write itself, by the property's setter, whatever the spelling
 // (file-view-figures-gate-adopt.test.ts, Reparse). Derivation command, for a reader by hand (the test runs the same over
@@ -1503,7 +1503,8 @@ test("no re-parse after the adoption: mdBlock's post-adoption region and every m
   assert.deepEqual(called, ["keepVideoShape", "linkHref", "resolveDocRelative", "linkMarkdownAnchors", "addFigureControls", "linkifyFileText"], "the passes after the adoption call these and nothing else (a new call widens this list first)");
   // a pass written as a method call on an imported binding (`ns.pass(box)`, `hljs.highlight(...)`) is no bare call, so the list
   // above would not see it: every binding file-view.ts imports, under any form and from any source, is asserted absent as the
-  // object of a method call in the region and in every reached local (the round-2 verification named this blind spot, 2026-09-20)
+  // object of a method call in the region and in every reached local (the fork PR review's round-2 verification named this blind
+  // spot, 2026-09-20)
   const bindings = new Set<string>();
   for (const m of codeOnly(VIEW).matchAll(/^import (?:type )?(.+?) from "[^"]+";?/gm)) {
     const clause = m[1].trim();
