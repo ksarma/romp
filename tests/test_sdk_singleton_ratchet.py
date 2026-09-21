@@ -682,12 +682,13 @@ MUTATIONS = {
 }
 # The pins derive() deselects, each a reader of tests/conftest.py's text, which the plant changes, so its red under a
 # plant is the plant's and not a case's (each class's docstring says how): the applicability pin, which reds under any
-# plant, and the conftest roster pin, which reds under a plant that changes a text the conftest renders for the refusal
-# (refusal_text_names is keyed on those texts, so a case reading the changed text alone leaves the derived population
-# while the roster, which the plant does not touch, still names it). No case is deselected. derive_deselect_targets
-# refuses a node id here that names no test of this module (pytest ignores an unmatched --deselect without a word, so
-# a renamed pin would print as a red again under every plant it reads), and TheDerivationIsRunnable resolves every
-# node id here and executes that refusal, so a renamed pin reds the suite, not the next manual derivation.
+# plant, and the conftest roster pin, which reds under a plant after which a copy of this module is a piece of no text
+# the conftest renders for the refusal or its links (refusal_text_names is keyed on those texts, so a case reading that
+# copy alone leaves the derived population while the roster, which the plant does not touch, still names it). No case
+# is deselected. derive_deselect_targets refuses a node id here that names no test of this module (pytest ignores an
+# unmatched --deselect without a word, so a renamed pin would print as a red again under every plant it reads), and
+# TheDerivationIsRunnable resolves every node id here and executes that refusal, so a renamed pin reds the suite, not
+# the next manual derivation.
 MODULE_PATH = "tests/test_sdk_singleton_ratchet.py"    # this module from the repository root: what a node id opens on
 DERIVE_DESELECT = (MODULE_PATH + "::TheMutationCellsApply",
                    MODULE_PATH + "::TheCaseRostersNameEveryCase::"
@@ -720,9 +721,10 @@ NUMBER_OF_CELLS = re.compile(r"\b(?:\w+-)?(?:one|two|three|four|five|six|seven|e
 
 def cell_counts(table=None):
     """The count of cells by block and in total, computed from the table (MUTATIONS unless another is given): what
-    `--count` prints and what the floor pin's message quotes. No sentence in this module states the count; a count
-    written in prose is measured once and outlives the cell added after it, and this one is read at the tree it runs
-    in. A key that opens on no block's prefix, or on more than one, is a loud error, never an uncounted cell."""
+    `--count` prints and what the floor pin's message quotes. No sentence in this module states the count (the module
+    docstring is held to that by TheMutationCellsApply, the rest of the module by reading); a count written in prose is
+    measured once and outlives the cell added after it, and this one is read at the tree it runs in. A key that opens
+    on no block's prefix, or on more than one, is a loud error, never an uncounted cell."""
     table = MUTATIONS if table is None else table
     counts = {block: 0 for block, _, _ in CELL_BLOCKS}
     for cell in table:
@@ -737,8 +739,9 @@ def cell_counts(table=None):
 def docstring_block_ids(doc):
     """The derive ids each block's paragraph of the module docstring carries, by block name: the collapsed docstring is
     cut at the block heads (CELL_BLOCKS' opening words followed by BLOCK_HEAD_TAIL, each exactly once), and a block's
-    paragraph runs from its head to the next head or the end. A docstring that carries BLOCK_HEAD_TAIL more times than
-    CELL_BLOCKS has blocks raises, so a third block written there is never read as the tail of the second."""
+    paragraph runs from its head to the next head or the end. A docstring that carries BLOCK_HEAD_TAIL other than once
+    per block of CELL_BLOCKS raises, and so does a block's head occurring other than once, so a third block written
+    there is never read as the tail of the second."""
     text = re.sub(r"\s+", " ", doc)
     if text.count(BLOCK_HEAD_TAIL) != len(CELL_BLOCKS):
         raise AssertionError("the docstring opens %d block heads (%r) and CELL_BLOCKS names %d blocks"
@@ -874,17 +877,18 @@ def derive(cell):
     plant is the plant's and not a case's: the applicability pin (TheMutationCellsApply), which reds under any plant (a
     replacement that removes its old text fails the exact-once count, and one that appends beside the old text puts a
     new text the pin holds absent into the file), and the conftest roster pin (TheCaseRostersNameEveryCase's conftest
-    test), which reds under a plant that changes a text the conftest renders for the refusal (refusal_text_names is
-    keyed on those texts, so a case reading the changed text alone leaves the derived population while the roster,
-    which the plant does not touch, still names it, and the pin reports a roster entry with no class). Neither is a
-    case, and neither is any cell's set; a red this prints with no case id is a pin's, and the fix is a deselect here or
-    a pin that reads the plant's text no longer, never a case list. A node id in that tuple that names no test of this
-    module is a loud error before the plant (derive_deselect_targets, run by derive_command before the scratch
-    directory is made: pytest ignores an unmatched --deselect without a word). The run's environment is the test
-    recipe's (every ROMP_* variable and the pytest variables nested_run pops dropped, TMPDIR fresh). The parts are
-    functions the suite executes (TheDerivationIsRunnable): the node ids' resolution, the command, the red lines'
-    reading, and this function over a faked subprocess.run, so the derivation's code is run by the suite and not by
-    the next manual derivation alone."""
+    test), which reds under a plant after which a copy of this module is a piece of no text the conftest renders for
+    the refusal or its links (refusal_text_names is keyed on those texts, so a case reading that copy alone leaves the
+    derived population while the roster, which the plant does not touch, still names it, and the pin reports a roster
+    entry with no class). Neither is a case, and neither is any cell's set; a red this prints with no case id is a
+    pin's, and the fix is a deselect here or a pin that reads the plant's text no longer, never a case list. A node id
+    in that tuple that names no test of this module is a loud error before the plant (derive_deselect_targets, run by
+    derive_command before the scratch directory is made: pytest ignores an unmatched --deselect without a word). The
+    run's environment is the test recipe's (every ROMP_* variable and every name of DERIVE_ENV_DROPPED, NESTED_RUN_POPS
+    and the session id, dropped; TMPDIR the scratch directory; PYTHONDONTWRITEBYTECODE set). The parts are functions
+    the suite executes (TheDerivationIsRunnable): the node ids' resolution, the command, the red lines' reading, and
+    this function over a faked subprocess.run, so the derivation's code is run by the suite and not by the next manual
+    derivation alone."""
     target, subs = MUTATIONS[cell]
     cmd = derive_command()                    # resolves DERIVE_DESELECT: a node id naming no test refuses here, before the plant
     scratch = tempfile.mkdtemp(prefix="derive-")
@@ -2182,9 +2186,10 @@ def nested_run(text, follower=None, sdk_stub=False, conftest=None):
     directory's own conftest.py is, when `conftest` gives its text, the road W's session-scoped fixture takes),
     verbose and with the all-outcomes summary, so the outer test reads each case's outcome and the ratchet's text.
     The child's environment is the precedent's (tests/test_tempdir_hygiene.py, RunLeavesNothing): a fresh TMPDIR,
-    the parent's pytest variables dropped so the child records its own run, and the bin directory the scratch
-    module loads the kernel from. `follower` is the text of a second module written beside the first. Returns
-    (returncode, stdout and stderr).
+    the parent's pytest variables dropped so the child records its own run (NESTED_RUN_POPS, which also drops the
+    recipe's temp-root variable and the colour-forcing ones, below), and the bin directory the scratch module loads the
+    kernel from. `follower` is the text of a second module written beside the first. Returns (returncode, stdout and
+    stderr).
 
     The child runs -vv, not -v, so its output has one shape on a box and on CI: pytest's short summary (-rA) repeats
     each error's message, whole when CI is set in the environment (pytest's running_on_ci) or at -vv, and trimmed to
@@ -2800,11 +2805,12 @@ def private_kernel_loaders(sources=None):
 def ratchet_comment_text(text=None):
     """The ratchet's design comment in tests/conftest.py, the hash stripped, joined by one space with whitespace
     collapsed, so a needle reads across the wrapped lines of a paragraph: the contiguous block of comment lines that
-    opens with RATCHET_COMMENT_OPENS and ends at the first line that is not a comment, the code it documents. A text
-    without the opener raises naming where it looked. The author's pass before round 7 found the first form joining
-    every comment line in the file, so the stated-limit paragraph could leave the design comment for the end of the
-    file with its pin green. `text` is the conftest's when None; a synthetic text pins the block's end and the raise
-    (TheCaseRostersNameEveryCase's third test: the round-8 review found the raise executed by no test)."""
+    opens with RATCHET_COMMENT_OPENS and ends at the first line that does not open on a hash, the code it documents or
+    a blank line. A text without the opener raises naming where it looked. The author's pass before round 7 found the
+    first form joining every comment line in the file, so the stated-limit paragraph could leave the design comment for
+    the end of the file with its pin green. `text` is the conftest's when None; a synthetic text pins the block's end
+    and the raise (TheCaseRostersNameEveryCase's third test: the round-8 review found the raise executed by no
+    test)."""
     where = "tests/conftest.py" if text is None else "the text given"
     if text is None:
         with open(os.path.join(HERE, "conftest.py")) as f:
@@ -3051,8 +3057,8 @@ LEDGER_ENTRY = os.path.join(ROOT, "upstream", "2026-09-19-sdk-singleton-ratchet.
 
 
 def ledger_entry_body():
-    """The ratchet's ledger entry, the body past its header block, whitespace collapsed. A missing entry fails the test
-    that reads it, never skips it: a skipping pin reports green."""
+    """The ratchet's ledger entry, the body past its header block, whitespace collapsed. A missing entry is a loud
+    error in the test that reads it, never a skip: a skipping pin reports green."""
     with open(LEDGER_ENTRY) as f:
         lines = f.read().split("\n")
     assert lines[0] == "---", "the entry opens with a header block: %r" % lines[:1]
@@ -3066,10 +3072,10 @@ class TheResidualIsWorded(unittest.TestCase):
     first builder that leaves its build masks a later sandboxed test's reach as a cache hit; with the measurement's
     opener (measured as a pair and module alone), the measurement that shows it, the order-independent instrument (the
     module-alone sweep) and the follow-up arm as its own PR, in that order. Keyed on the needles below: each sentence
-    held verbatim in the text with whitespace collapsed, in the stated order; a word outside every needle is not read,
-    which is how the ledger entry carried a head label before the opener, with this pin green, after both its twins
-    dropped it (the round-7 review; the opener has been a needle since). An edit that drops a needle or reorders them
-    reds here naming the copy and the sentence."""
+    held verbatim in the text with whitespace collapsed, in the stated order (the two measured figures' order between
+    themselves is not read); a word outside every needle is not read, which is how the ledger entry carried a head
+    label before the opener, with this pin green, after both its twins dropped it (the round-7 review; the opener has
+    been a needle since). An edit that drops a needle or reorders them reds here naming the copy and the sentence."""
 
     def _assert_worded(self, text, where):
         for needle in (RESIDUAL_GREEN, RESIDUAL_MASK, RESIDUAL_OPENER, RESIDUAL_INSTRUMENT, RESIDUAL_FOLLOWUP) + RESIDUAL_MEASURED:
@@ -3138,19 +3144,21 @@ def reader_population(source=None):
     call sites, never on a parameter's spelling: the functions defined as statements of the module (module_statements:
     the top level and the bodies of module-level if and try, so a reader under a version gate or a try is read and a
     method or a nested function is not) to which some call in the module passes the nested run's output as the first
-    positional argument or as a keyword argument. The output is decided mechanically: nested_run returns (returncode,
-    output), and the module binds that pair by tuple unpacking
+    positional argument or as a keyword argument; the callee is matched by its name's spelling against those functions,
+    and the run by the spelling nested_run, neither resolved to a declaration, so a call of a local spelled like a
+    stated function counts, which can only put that function ON the roster's demanded side, never off it. The output is
+    decided mechanically: nested_run returns (returncode, output), and the module binds that pair by tuple unpacking
     where a run is made (setUpClass: cls.rc, cls.out = nested_run(...)), so the output is whatever the unpacking's
     second target names, an attribute or a bare name, and a read of a name so bound (self.out, cls.out) is a read of
     the output. The AST does not resolve self to its class, so an attribute of the same name bound anywhere else would
     count as the output too, which can only put a helper ON the roster's demanded side, never off it. A nested_run
-    result bound in any other shape (a bare name, an index) is a shape this does not read and raises, and so does a
-    module with no binding at all, so the population cannot come back silently short of a reader reached through
-    those names; the output is recognised by the names the unpacking binds, at the call site, and a call that passes
-    it under another name (a local it was copied to, a forwarding parameter spelled otherwise) is outside the
-    population, since no name is resolved. Returns (readers, bindings): the readers and the names the unpacking bound.
-    `source` is this module's when None; a synthetic text pins the derivation itself
-    (TheReadersRosterNamesEveryReader)."""
+    result bound in any other shape (the pair bound to one name or attribute without unpacking, an index, an unpacking
+    of another length) is a shape this does not read and raises, and so does a module with no binding at all, so the
+    population cannot come back silently short of a reader reached through those names; the output is recognised by the
+    names the unpacking binds, at the call site, and a call that passes it under another name (a local it was copied
+    to, a forwarding parameter spelled otherwise) is outside the population, since no name is resolved. Returns
+    (readers, bindings): the readers and the names the unpacking bound. `source` is this module's when None; a
+    synthetic text pins the derivation itself (TheReadersRosterNamesEveryReader)."""
     tree = ast.parse(inspect.getsource(sys.modules[__name__]) if source is None else source)
     functions = {n.name for n in module_statements(tree) if isinstance(n, ast.FunctionDef)}
     bindings = set()
@@ -3221,9 +3229,10 @@ def refusal_text_names(conftest_source=None, module_source=None):
     gate folds to both texts, the union again); a constant bound in another shape is no text. A conftest in which no
     such text is found raises, and so does a module with no copy, so the population cannot come back silently short of
     a name, and a version gate's dead arm never hides its live one (before 2026-09-21 both maps kept the LAST binding
-    of a name); a case class that references one of these names reads the refusal's line or a
-    link clause, present or absent, and is on the conftest roster's population (case_population). Sources are the two
-    files' when None; synthetic texts pin the derivation itself (TheCaseRostersNameEveryCase)."""
+    of a name); a case class that references one of these names, by a name resolved to the module's declaration, reads
+    the refusal's line or a link clause, present or absent, and is on the conftest roster's population
+    (case_population). Sources are the two files' when None; synthetic texts pin the derivation itself
+    (TheCaseRostersNameEveryCase)."""
     if conftest_source is None:
         with open(os.path.join(HERE, "conftest.py")) as f:
             conftest_source = f.read()
@@ -3310,20 +3319,20 @@ def case_population(source=None, names=None):
     the module's declaration: to the function's own def, keyed on that declaration and not on its spelling, or to a
     module-scope binding of one of `names` (a name of `names` the module never binds is read as the module's, which
     can only put a class on the roster's demanded side), so a method's or a nested function's local spelled like
-    either is no reference; two module-level defs of one name RAISE naming the name and both lines, as two classes
-    of one name do, since a reference to the name could be read for either (the roster class's third test plants
-    both, 2026-09-21) (the author's pass before round 8 found a module-level helper reading the refusal's line, called
-    from a case, leaving the case off this set while the conftest's sentence claimed every case that reads the refusal
-    through a named copy; a function reached through a method of _NestedRun alone is outside like _NestedRun's own
-    references, and a helper the module does not define as a statement, an import or a lambda bound by assignment,
-    is not followed); _NestedRun is the base whose helpers every case inherits (a reference there would put every
-    case on the roster's side, so the chain excludes it, and the third test of TheCaseRostersNameEveryCase holds
-    that with a helper of its synthetic base referencing a name and calling a reading function: the round-7 review
-    found this sentence and the class docstring's naming the base without the exclusion), `names` being this
-    module's copies of the refusal's texts as refusal_text_names derives them from the conftest's texts when None is
-    given, so a class reading those lines through a literal copy of the text is outside this set, which is why the
-    roster pin says it keys on the names; and the class-name to id map. `source` is this module's when None; a
-    synthetic text pins the derivation itself (TheCaseRostersNameEveryCase)."""
+    either is no reference; two defs of one name among the functions defined as statements RAISE naming the name and
+    both lines, as two classes of one name do, since a reference to the name could be read for either (the roster
+    class's third test plants both, 2026-09-21) (the author's pass before round 8 found a module-level helper reading
+    the refusal's line, called from a case, leaving the case off this set while the conftest's sentence claimed every
+    case that reads the refusal through a named copy; a function reached through a method of _NestedRun alone is
+    outside like _NestedRun's own references, and a helper the module does not define as a statement, an import or a
+    lambda bound by assignment, is not followed); _NestedRun is the base whose helpers every case inherits (a reference
+    there would put every case on the roster's side, so the chain excludes it, and the third test of
+    TheCaseRostersNameEveryCase holds that with a helper of its synthetic base referencing a name and calling a reading
+    function: the round-7 review found this sentence and the class docstring's naming the base without the exclusion),
+    `names` being this module's copies of the refusal's texts as refusal_text_names derives them from the conftest's
+    texts when None is given, so a class reading those lines through a literal copy of the text is outside this set,
+    which is why the roster pin says it keys on the names; and the class-name to id map. `source` is this module's when
+    None; a synthetic text pins the derivation itself (TheCaseRostersNameEveryCase)."""
     tree = ast.parse(inspect.getsource(sys.modules[__name__]) if source is None else source)
     names = set(refusal_text_names() if names is None else names)
     defined = [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]
@@ -3345,10 +3354,10 @@ def case_population(source=None, names=None):
     functions = {id(f) for f in stated}
 
     def references(node):
-        """(functions, texts) `node` references: the module-level function DECLARATIONS (by node identity) and the names
-        of `names` that a Name read under `node` resolves to, each resolved in the scope it is read in, so a method's or
-        a nested function's local spelled like either is no reference; a name of `names` the module never binds is read
-        as the module's (it can only put a class on the roster's demanded side)."""
+        """(functions, texts) `node` references: the DECLARATIONS among the functions defined as statements (by node
+        identity) and the names of `names` that a Name read under `node` resolves to, each resolved in the scope it is
+        read in, so a method's or a nested function's local spelled like either is no reference; a name of `names` the
+        module never binds is read as the module's (it can only put a class on the roster's demanded side)."""
         found_functions, found_names = set(), set()
         for n in ast.walk(node):
             if not (isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)):
@@ -3362,7 +3371,7 @@ def case_population(source=None, names=None):
         return found_functions, found_names
 
     referenced = {id(f): references(f) for f in stated}
-    reaching = {f for f, (_, texts) in referenced.items() if texts}        # the module-level functions reading a name,
+    reaching = {f for f, (_, texts) in referenced.items() if texts}        # the stated functions reading a name,
     grew = True                                                           # directly or through another such function
     while grew:
         more = {f for f, (funcs, _) in referenced.items() if f not in reaching and funcs & reaching}
@@ -3422,10 +3431,12 @@ def case_list_ids(doc):
 
 
 def conftest_roster_ids(text):
-    """The ids the conftest's roster of the refusal's cases names, read from ratchet_comment_text(): the parenthesis
-    that follows CONFTEST_ROSTER_OPENS, its entries split on semicolons, each opening with its id, or its ids joined
-    by "and", before the entry's first comma; the last entry may open with "and". An entry in any other shape raises.
-    Ids in roster order, duplicates kept for the pin to name."""
+    """The ids the conftest's roster of the refusal's cases names, read from ratchet_comment_text(): the first
+    parenthesis after CONFTEST_ROSTER_OPENS, with no parenthesis between the opener and it and a period after it, so a
+    parenthetical written into the sentence before the roster is a loud read failure and not a shorter roster; its
+    entries split on semicolons, each opening with its id, or its ids joined by "and", before the entry's first comma;
+    an entry may open with "and". An entry in any other shape raises, and so does a text with no such parenthesis after
+    the opener. Ids in roster order, duplicates kept for the pin to name."""
     m = re.search(re.escape(CONFTEST_ROSTER_OPENS) + r"[^()]*\(([^()]*)\)\.", text)
     if not m:
         raise AssertionError("no roster in one parenthesis follows %r in the conftest's comments"
@@ -3453,26 +3464,27 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
     excludes it, and the third test holds the exclusion; the round-7 review found this sentence and case_population's
     naming the base without it), to a str constant of this module, bound by a statement of the module or under a
     module-level if or try (module_statements), whose value is a piece of a text the conftest renders for the refusal
-    or for a link to it, or to a function defined as a statement of the module whose body references such a constant
-    or another such function, transitively (case_population; the author's pass before round 8 found a module-level
-    helper reading the refusal's line, called from a case, leaving the case off the population with the module green,
-    so the third test plants one called through a second function) (refusal_text_names, derived from the conftest's
-    texts, the renderers and the constants they name read from its statements the same way: the author's pass before
-    round 7 found the first form a hand-kept list of four names that omitted REFUSED_FOUND_TAIL, the clause's last
-    words, so a case reading the clause through its tail alone was off the population with the module green); a class
-    reading those lines through a literal copy of the text is outside the population, and the pin reads no literal. The
-    third test runs the derivations and both readers over synthetic texts. derive() deselects the conftest test
-    (DERIVE_DESELECT): it reads the texts the conftest renders, which a plant can change, so under a plant that stops
-    rendering one text the cases reading that text's copy alone leave the derived population while the roster, which
-    the plant does not touch, still names them, and the test reds on a roster entry that lost no class. That red is the
-    plant's, not a case's, and this class is no cell's set. The case-list test's verdict does not depend on the
-    conftest's texts (it holds the module docstring's list to the classes' SCRATCH bindings; the names case_population
-    derives on the way are unused by it), though its derivation reads them through case_population's names default and
-    raises under a conftest that renders no refusal text, a red the plant's, which derive prints with no case id (the
-    round-7 review found this sentence saying the test reads no conftest text); the third test reads synthetic texts
-    only, under a HERE pointed at a directory with no conftest, so a call of its that falls to a default read is a loud
-    FileNotFoundError (the round-7 review found its SCRATCH-shape call reading the real conftest through the names
-    default); both stay selected."""
+    or for a link to it, or to a function defined as a statement of the module, at its own level or under a
+    module-level if or try, whose body references such a constant or another such function, transitively, a reference
+    being a name resolved in the scope it is read in to the module's declaration (tests/ast_bindings.py), so a local
+    spelled like one is none (case_population; the author's pass before round 8 found a module-level helper reading the
+    refusal's line, called from a case, leaving the case off the population with the module green, so the third test
+    plants one called through a second function) (refusal_text_names, derived from the conftest's texts, the renderers
+    and the constants they name read from its statements the same way: the author's pass before round 7 found the first
+    form a hand-kept list of four names that omitted REFUSED_FOUND_TAIL, the clause's last words, so a case reading the
+    clause through its tail alone was off the population with the module green); a class reading those lines through a
+    literal copy of the text is outside the population, and the pin reads no literal. The third test runs the
+    derivations and both readers over synthetic texts. derive() deselects the conftest test (DERIVE_DESELECT): it reads
+    the texts the conftest renders, which a plant can change, so under a plant that stops rendering one text the cases
+    reading that text's copy alone leave the derived population while the roster, which the plant does not touch, still
+    names them, and the test reds on a roster entry that lost no class. That red is the plant's, not a case's, and this
+    class is no cell's set. The case-list test's verdict does not depend on the conftest's texts (it holds the module
+    docstring's list to the classes' SCRATCH bindings; the names case_population derives on the way are unused by it),
+    though its derivation reads them through case_population's names default and raises under a conftest that renders
+    no refusal text, a red the plant's, which derive prints with no case id (the round-7 review found this sentence
+    saying the test reads no conftest text); the third test reads synthetic texts only, under a HERE pointed at a
+    directory with no conftest, so a call of its that falls to a default read is a loud FileNotFoundError (the round-7
+    review found its SCRATCH-shape call reading the real conftest through the names default); both stay selected."""
 
     def _assert_same(self, what, derived, named):
         self.assertEqual(len(named), len(set(named)), "%s names an id twice: %r" % (what, sorted(named)))
@@ -3488,10 +3500,10 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
         _, readers, _ = case_population(names=names)
         self._assert_same("the conftest's roster of the refusal's cases (keyed on a reference, in the case class or a "
                           "module-defined base other than _NestedRun, to one of %s, this module's copies of the texts "
-                          "the conftest renders for the refusal and its links, or to a module-level function whose "
-                          "body references one of them, directly or through other module-level functions; a reference "
-                          "is a name resolved to its module-level declaration in the scope it is read in, so a local "
-                          "spelled like one is none)"
+                          "the conftest renders for the refusal and its links, or to a function this module defines "
+                          "as a statement of its own level or under a module-level if or try whose body references "
+                          "one of them, directly or through other such functions; a reference is a name resolved in "
+                          "the scope it is read in to the module's declaration, so a local spelled like one is none)"
                           % ", ".join(names), readers, conftest_roster_ids(ratchet_comment_text()))
 
     def test_the_derivation_reads_the_classes_by_shape_and_the_rosters_by_their_openers(self):
@@ -3584,7 +3596,8 @@ class TheCaseRostersNameEveryCase(unittest.TestCase):
         self.assertEqual((ids, readers), ({"S98", "S99", "Z", "G", "F", "SH"}, {"S98", "S99", "F"}),
                          "(ids, readers): an id per class in _NestedRun's tree from its SCRATCH binding; a reader by a "
                          "reference, in the class or a module-defined base other than _NestedRun, to a name or to a "
-                         "module-level function whose body references a name directly or through another (via reads "
+                         "function the module defines as a statement of its own level or under a module-level if or "
+                         "try whose body references a name directly or through another such function (via reads "
                          "SWAPPED through reads; _NestedRun's helper's references to SWAPPED and to reads put no case "
                          "among the readers, and unused, referenced by no class, puts none; Shadow's method locals spelled "
                          "reads and SWAPPED resolve to the locals, not to the module's declarations, so it is no reader)")
@@ -3703,12 +3716,13 @@ class TheReadersRosterNamesEveryReader(unittest.TestCase):
     a reader when some call passes the nested run's output, recognised by the names the unpacking binds where a run is
     made, as its first positional argument or as a keyword argument, whatever its parameter is called and wherever in
     the file that statement sits (a call passing the output under another name, a renamed local or a forwarding
-    parameter, is outside: no name is resolved); the roster is read by shape (readers_roster_names), and the two are
-    held equal both ways, the failure naming the missing and the extra names, so a reader added without its entry reds
-    here and so does an entry whose helper is gone. The round-7 review found the candidates read from the module's
-    top-level statements alone and the output read from the first positional argument alone, so a reader under a
-    version gate or a try, or one passed the output by keyword, was outside the population with the module green: the
-    second test plants all three and reads them found; since the round-8 review found module_statements'
+    parameter, is outside: no name is resolved; the callee is matched by its name's spelling, not resolved to its
+    declaration, which can only demand an entry, never drop one); the roster is read by shape (readers_roster_names),
+    and the two are held equal both ways, the failure naming the missing and the extra names, so a reader added without
+    its entry reds here and so does an entry whose helper is gone. The round-7 review found the candidates read from
+    the module's top-level statements alone and the output read from the first positional argument alone, so a reader
+    under a version gate or a try, or one passed the output by keyword, was outside the population with the module
+    green: the second test plants all three and reads them found; since the round-8 review found module_statements'
     except-handler, else and finally arms pinned by no test, it also plants a reader under each of those arms, and
     one passed an output bound to a bare name by a module-level unpacking (the Name arm of the binding read, which
     the same review found executed by no test). Until round 7 the derivation matched the spelling `out` in the
@@ -3731,7 +3745,7 @@ class TheReadersRosterNamesEveryReader(unittest.TestCase):
         self.assertEqual(set(named), readers, "the module docstring's roster of readers and the call sites differ "
                          "(a reader: a function defined as a statement of the module or under a module-level if or "
                          "try, passed a name the nested_run unpacking binds, %r, as the first positional or a keyword "
-                         "argument): "
+                         "argument, the callee matched by its name's spelling): "
                          "missing from it %r, in it with no reader %r"
                          % (sorted(bindings), sorted(readers - set(named)), sorted(set(named) - readers)))
 
@@ -3828,18 +3842,25 @@ class TheReadersRosterNamesEveryReader(unittest.TestCase):
 
 class TheDeriveEnvironmentIsNestedRuns(unittest.TestCase):
     """derive() runs the module under the environment nested_run gives its children, from the same name: nested_run
-    removes NESTED_RUN_POPS from the child's environment and nothing beside it, read from its source by AST
-    (_assert_pops_in_one_loop), and DERIVE_ENV_DROPPED opens on that tuple. What the check keys on: the removals
-    written as env.pop or as del of an env entry. Exactly one for loop holds an env.pop call, whatever its target's
-    shape; it iterates the name NESTED_RUN_POPS and binds one variable; every env.pop in the function sits in that
-    loop's body by node identity (not by its argument's spelling, so a pop of the same variable name written in a
-    second loop or in a comprehension is outside the body and reds) and pops the loop's variable; no del of an env
-    entry is written anywhere in the function. Outside what it reads: a rebinding of env to a filtered comprehension
-    removes entries by neither form, and assignments to env are not read (nested_run sets two keys under sdk_stub).
-    Before this pin the two tuples were kept by hand and could diverge with the module green; the round-7 review
-    found the pin's first form keyed on each pop argument's spelling and on the count of every Name-target loop, so a
-    del, a comprehension pop and a tuple-target loop stayed green and an unrelated loop redded with a message about
-    pops. The second test runs the check over synthetic sources of each shape."""
+    removes NESTED_RUN_POPS from the child's environment in one loop and no removal written as env.pop or as del of an
+    env entry sits outside it, read from its source by AST (_assert_pops_in_one_loop), and DERIVE_ENV_DROPPED opens on
+    that tuple. What the check keys on: the removals written as env.pop or as del of an env entry, env read as the Name
+    spelled env, not resolved to a binding. Exactly one for loop holds an env.pop call, whatever its target's shape; it
+    iterates the name NESTED_RUN_POPS and binds one variable; every env.pop in the function sits in that loop's body by
+    node identity (not by its argument's spelling, so a pop of the same variable name written in a second loop or in a
+    comprehension is outside the body and reds) and pops the loop's variable; no del of an env entry is written
+    anywhere in the function. Outside what it reads: env.clear() and env.popitem() remove entries by neither form and
+    pass the check (this pass planted each after the loop and the pin stayed green); env.update and env.setdefault
+    write entries and are not read, as assignments to env are not (nested_run sets two keys under sdk_stub); a
+    rebinding of env to a filtered comprehension removes entries by neither form; and a removal through another name
+    bound to the same dict is outside the spelling. Written into nested_run today, the two removing calls are loud for
+    another reason, not silent: the child loses a variable the scratch head reads (ROMP_RATCHET_BIN; under popitem the
+    key set last, which under sdk_stub is the stub's variable instead), a KeyError ends its collection or its case, and
+    the cases' outer tests red on that (measured in this pass under each plant). Before this pin the two tuples were
+    kept by hand and could diverge with the module green; the round-7 review found the pin's first form keyed on each
+    pop argument's spelling and on the count of every Name-target loop, so a del, a comprehension pop and a
+    tuple-target loop stayed green and an unrelated loop redded with a message about pops. The second test runs the
+    check over synthetic sources of each shape."""
 
     def _assert_pops_in_one_loop(self, source):
         """The check, over one function's source (see the class docstring for what it keys on)."""
@@ -3929,9 +3950,11 @@ class TheDerivationIsRunnable(unittest.TestCase):
     mkdtemp under the test's directory, it prints the cell, the head, the plant, the run line, the red lines, the
     summary and the cell's text, runs derive_command()'s argv in the added tree under the recipe's environment, and
     removes the tree and the scratch directory; and its three loud errors over the same fakes (a run exiting neither 0
-    nor 1, an old text occurring 0 times or twice in the tree's file, a plant that does not parse) each raise naming
-    the cell with the tree removed and no run made where the error comes before the run (the author's pass before round
-    8 found the three branches executed by no test). Before this class no test called derive: the round-7 review found
+    nor 1, an old text occurring 0 times or twice in the tree's file, a plant that does not parse) each raise with the
+    tree removed and no run made where the error comes before the run, the first two a SystemExit naming the cell, the
+    third a SyntaxError over the planted text, which names the planted file (its path in the scratch tree, gone by the
+    time it is read, since derive's finally removed the tree) and never the cell (the author's pass before round 8
+    found the three branches executed by no test). Before this class no test called derive: the round-7 review found
     the two behaviours last added to it (the second --deselect and the refusal) executed by no run of the suite, so
     derive replaced by a raiser left the module green. The module's --derive arm (its __main__ block, compiled from
     this file's source by main_block and run with derive replaced by a recorder over a synthetic table written out
@@ -3970,10 +3993,14 @@ class TheDerivationIsRunnable(unittest.TestCase):
         """MODULE_PATH is the one spelling of this module's path in code, read from the source by AST: every str
         constant outside a docstring whose text carries the module's file name is the constant MODULE_PATH's own
         binding assigns (the node ids, the command's last element, derive_red_lines' regex, derive's dirty check and
-        the --count test's argv all read the name from it), so a renamed module changes one line. The author's pass
-        before round 8 found derive's dirty check (the paths given to git status) and the --count test's argv spelled
-        by hand: the first a silent miss under a rename, since git status over a path it knows nothing about warns of
-        nothing."""
+        the --count test's argv all read the name from it), so a renamed module changes one line of code. The path is
+        spelled in prose too, outside this pin's key: the module docstring's --derive and --count command lines and its
+        count sentence, the mutation table's comment, comments in tests/conftest.py, tests/ast_bindings.py's docstring
+        and the ledger entry's where: line (a list kept by hand, read by no pin); of these only a --count spelling in
+        the module docstring is held, by TheMutationCellsApply's count test, so a rename that fixes the code and that
+        one spelling leaves the rest stale with this module green. The author's pass before round 8 found derive's
+        dirty check (the paths given to git status) and the --count test's argv spelled by hand: the first a silent
+        miss under a rename, since git status over a path it knows nothing about warns of nothing."""
         tree = ast.parse(inspect.getsource(sys.modules[__name__]))
         binding = next(n for n in module_statements(tree) if isinstance(n, ast.Assign) and len(n.targets) == 1
                        and isinstance(n.targets[0], ast.Name) and n.targets[0].id == "MODULE_PATH")
@@ -4227,15 +4254,15 @@ class TheMutationCellsApply(unittest.TestCase):
     same cells. Each cell's old text occurs exactly once in its target file and differs from its replacement, and the
     mutated file parses: a fixture edit that moves an anchor reds here instead of retiring the cell silently, and a
     recipe that would not compile is caught before a derivation runs it. Every key is carried by exactly one docstring
-    cell as "derive: <id>", inside a parenthesis that opens with the cell's rule ("(red: "), and every derive id in the
-    docstring is a key: the composition, pinned both ways. The table is not short: a population that comes back under
-    TABLE_FLOOR, the table's length when the pin was written, is a failure, not a pass (the roster pin's convention).
-    derive() deselects this class, and under any plant it reds: a replacement that removes its old text fails the
-    exact-once count, and one that appends beside the old text (the new text containing the old, so the count holds
-    after the plant) puts a new text into the file that this class holds absent. It is no cell's set. The refusals
-    of cell_counts (a key opening on no block's prefix, or on the prefixes of two blocks) and of docstring_block_ids
-    (a block's head written twice or not at all) run here over synthetic tables, blocks and docstrings, since the
-    module's own table and docstring reach neither."""
+    cell as "derive: <id>", inside a parenthesis that opens with the cell's rule ("(red: ", held present in the cell's
+    text), and every derive id in the docstring is a key: the composition, pinned both ways. The table is not short: a
+    population that comes back under TABLE_FLOOR, the table's length when the pin was written, is a failure, not a pass
+    (the roster pin's convention). derive() deselects this class, and under any plant it reds: a replacement that
+    removes its old text fails the exact-once count, and one that appends beside the old text (the new text containing
+    the old, so the count holds after the plant) puts a new text into the file that this class holds absent. It is no
+    cell's set. The refusals of cell_counts (a key opening on no block's prefix, or on the prefixes of two blocks) and
+    of docstring_block_ids (a block's head written twice or not at all) run here over synthetic tables, blocks and
+    docstrings, since the module's own table and docstring reach neither."""
 
     def test_each_cells_old_text_occurs_exactly_once_and_the_mutation_parses(self):
         for cell, (target, subs) in MUTATIONS.items():

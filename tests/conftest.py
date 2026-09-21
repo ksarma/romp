@@ -596,8 +596,10 @@ def restore_env(name, prior):
 #     gone report; the fixture records the refused object on _SDK_REFUSED instead, the list both links read. The
 #     fixture's tests pin it, every case whose outer class reads the refusal's line or a link clause, present or
 #     absent, through one of that module's named copies of these texts, by a reference in the class, in a
-#     module-defined base other than _NestedRun, or in a module-level function referenced from there, directly or
-#     through other module-level functions, the names derived there from this file's texts by refusal_text_names,
+#     module-defined base other than _NestedRun, or in a function that module defines as a statement of its own
+#     level or under a module-level if or try, referenced from there, directly or through other such functions,
+#     each reference a name resolved in the scope it is read in to the module's declaration, so a local spelled
+#     like one is none, the names derived there from this file's texts by refusal_text_names,
 #     a roster derived from the classes and held equal to them both ways by
 #     TheCaseRostersNameEveryCase in tests/test_sdk_singleton_ratchet.py, whose failure names the ids missing here
 #     and the ids here with no class
