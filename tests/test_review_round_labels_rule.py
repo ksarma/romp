@@ -301,7 +301,9 @@ class RoundLabelRule(unittest.TestCase):
             self.assertEqual(len(rule.offences("the\n    # reviewer's pass %d" % hi, SET)), 1, "the qualifier wrapped at a comment marker reads the same")
             self.assertEqual(rule.offences("the maintainer's pass over the tree", SET), [], "an unnumbered pass is not read")
             self.assertEqual(rule.offences("%s pass %d" % (A, hi), SET), [], "the author's pass is the author's")
-            self.assertEqual([x[1] for x in rule.offences("a\nreview %s %d\nthe maintainer's pass %d\n" % (R, hi + 1, hi), SET)], [2, 3], "a wrong-party pass sits at its line, in text order with the round offences")
+            self.assertEqual([x[1] for x in rule.offences("a\nthe maintainer's pass %d\nreview %s %d\n" % (hi, R, hi + 1), SET)], [2, 3],
+                             "a wrong-party pass before a round offence in the text comes before it in the offences: text order, not the order the passes are read in")
+            self.assertEqual([x[1] for x in rule.offences("a\nreview %s %d\nthe maintainer's pass %d\n" % (R, hi + 1, hi), SET)], [2, 3], "and after it in the text, after it in the offences")
         with self.subTest(clause="f: a round credited to the author is refused"):
             for text in ("%s %s %d" % (A, R, lo), "%s review %s %d" % (A, R, lo), "%s %ss %d and %d" % (A, R, lo, hi), "the author’s %s %d" % (R, hi), "%s %s %d" % (A, R, hi + 1)):
                 o = rule.offences(text, SET)
