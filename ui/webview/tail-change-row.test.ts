@@ -37,7 +37,11 @@ test("with a unit predicate the tail is the last child that carries a unit: a ho
   // a view with NO unit-carrying child: the spacer rule stands in for the whole scan (a second pass after the unit pass, never a per-child
   // OR, which would name a band beside units and undo the case above), so the row names the placeholder or the loader as it did before the
   // predicate (the maintainer's round 3 ruling C: with the predicate alone the label was "" exactly where a transcript-less view can report);
-  // a band as the only non-spacer child of a unit-less view is then the answer too, re-ruled from the round-2 pin that read "" for it
+  // a band as the only non-spacer child of a unit-less view is then the answer too, re-ruled from the round-2 pin that read "" for it.
+  // One more shape empties a view and is outside this pin by construction: a view with no top spacer is empty between trimUnitsFrom's last
+  // removal and the same task's appendItem (the tail paint re-rendering every unit of a short transcript), a same-task transient that no read
+  // observes (showActive's read of an empty view runs in its own task, and an observer delivers between tasks), so the loader is never
+  // appended for it and no row can name it; inferred from the code, not executed (the second closing lens over the closing pass)
   assert.equal(tailLabel([{ className: "tx-empty" }], isUnit), "tx-empty", "the empty transcript's placeholder (its swirl removing itself on error is a height change)");
   assert.equal(tailLabel([{ className: "tx-loading" }], isUnit), "tx-loading", "the deferred build's loading hint, the only child of a non-empty session's view for one frame (render.ts appends it to an EMPTY view, never under a spacer); a row can name it after a rerender of every view (rerenderAll, whose callers are an external settings change of any kind, the compact toggle among them, and a self-host name adopted after views were built), which empties every view with `shown` kept, while a first visit's view is not yet shown and files no tailchange row");
   assert.equal(tailLabel([{ className: "tx-spacer tx-spacer-top" }, { className: "rail-band" }], isUnit), "rail-band", "no unit anywhere: the last child that is not a spacer, whatever it is");
