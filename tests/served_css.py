@@ -271,10 +271,14 @@ TOKENIZER_SURFACE = {
     "handle_pi": ("comment", "a `<?...>` to the first `>`; HTML has no processing instructions and reads `<?` as a bogus comment to the first `>`, the same extent"),
     "unknown_decl": ("refused", "a `<![CDATA[` marked section refuses: html.parser consumes it to `]]>` where HTML reads a bogus comment to the FIRST `>` (in foreign content,"
                                 " svg or math, HTML does read a CDATA section, but this reader refuses those containers). Any other `<![...]>` form html.parser reports here"
-                                " (`<![if !IE]>`, to the first `>`) is a comment: HTML reads a bogus comment of the same extent. On every release with the HTML5"
-                                " tokenizer backport (3.10.20, 3.11.15, 3.12.3, 3.13.14 and 3.14.6, executed) html.parser ends every `<![` form but CDATA at the first"
-                                " `>` itself and never reaches _markupbase.parse_marked_section (the TOKENIZER_EXTENTS spy); older 3.10 and 3.11 patch releases routed"
-                                " it there, where an unknown keyword raised"),
+                                " (`<![if !IE]>`, to the first `>`) is a comment: HTML reads a bogus comment of the same extent. On every BUILD carrying the"
+                                " CVE-2025-69534 html.parser fixes (executed here: the uv builds 3.10.20, 3.11.15, 3.13.14, 3.14.0 to 3.14.6 and 3.15.0b4, and"
+                                " Ubuntu's 3.12.3-1ubuntu0.17, whose distro patches carry them; python.org's own 3.12.3 predates the fixes and is not the build"
+                                " that ran) html.parser ends every `<![` form but CDATA at the first `>` itself and never reaches _markupbase.parse_marked_section"
+                                " (the TOKENIZER_EXTENTS spy). A build without those fixes dispatches `<![` to that reader, whose unknown-keyword branch raises"
+                                " AssertionError (read from _markupbase, which still carries it; no build here takes that route, so it is stated, not executed)."
+                                " Which handler reports the form differs by build: `<![if a]>` reaches unknown_decl on the 3.10 to 3.12 builds here and"
+                                " handle_comment on 3.13.14 and later, a comment span of the same extent either way"),
 }
 # the rest of html.parser's public surface (the fixer pass of the author's pass 9): the parse_* layer, where the EXTENT of each
 # construct is decided, and the loop and plumbing around it, each with the extent the tokenizer takes and HTML's beside it;
@@ -298,20 +302,24 @@ TOKENIZER_EXTENTS = {
                                 " abrupt close"),
     "parse_bogus_comment": ("extent", "`<!foo>` and `</3>` to the first `>`. HTML: the bogus-comment state, the same extent"),
     "parse_html_declaration": ("extent", "the `<!` dispatch: `<!--` to parse_comment; `<![CDATA[` to unknown_decl, consumed to `]]>` (REFUSED); `<!doctype` to the first"
-                                         " `>`, even inside a quoted identifier; any other `<![` to the first `>` (unknown_decl when it ends with `]`, else a comment); the"
+                                         " `>`, even inside a quoted identifier; any other `<![` to the first `>`, a comment span (through unknown_decl when it ends with `]`"
+                                         " on the 3.10 to 3.12 builds here, through handle_comment on 3.13.14 and later); the"
                                          " rest to parse_bogus_comment. HTML: the markup-declaration-open state; the DOCTYPE and bogus-comment extents are the same (a `>`"
                                          " inside a DOCTYPE's quoted identifier ends it in HTML too), the CDATA section's is not, so it is refused"),
-    "parse_marked_section": ("unreached", "_markupbase's `<![` reader, never called by html.parser on the releases the shapes ran under (3.10.20, 3.11.15, 3.12.3,"
-                                          " 3.13.14, 3.14.6: parse_html_declaration handles `<![` itself); a spy asserts it. HTML has no marked sections"),
-    "parse_declaration": ("unreached", "_markupbase's `<!` reader, never called by html.parser on those releases (parse_html_declaration is); a spy asserts it. HTML has"
+    "parse_marked_section": ("unreached", "_markupbase's `<![` reader, never called by html.parser on a build carrying the CVE-2025-69534 fixes (every build the"
+                                          " shapes ran under; the unknown_decl row names them: parse_html_declaration handles `<![` itself); a spy asserts it. HTML"
+                                          " has no marked sections"),
+    "parse_declaration": ("unreached", "_markupbase's `<!` reader, never called by html.parser on those builds (parse_html_declaration is); a spy asserts it. HTML has"
                                        " no such construct"),
     "parse_pi": ("extent", "`<?` to the first `>` (handle_pi, a comment span). HTML: a bogus comment to the first `>`, the same extent"),
     "set_cdata_mode": ("extent", "entering a script, style or other text element: the content runs to the element's own end tag (a `</style>` inside a script is"
                                  " script text). HTML: the RAWTEXT, RCDATA, script-data and PLAINTEXT states, the same rule"),
     "clear_cdata_mode": ("extent", "leaving that content at the element's end tag. HTML: the same"),
     "feed": ("plumbing", "buffers the page; this reader feeds the whole page in one call, so no construct is split across a buffer boundary. HTML: no equivalent"),
-    "close": ("plumbing", "flushes an unterminated construct at the end of the page (an unterminated `<!--` is a comment to the end, an unterminated start tag is"
-                          " text; an unterminated script or style element refuses here). HTML: the EOF rules, the same for a comment and a tag"),
+    "close": ("plumbing", "flushes an unterminated construct at the end of the page: an unterminated `<!--`, `<?`, `<!` or `<![` is a comment to the end (the"
+                          " `<!` an empty one) and an unterminated DOCTYPE a DOCTYPE to the end; an unterminated start tag or end tag emits NOTHING, not"
+                          " text (the close of the author's pass 9: the row had said text; a shape pins it); an unterminated script or style element refuses"
+                          " here. HTML: the EOF rules, the same extents (EOF in a comment, a bogus comment or a DOCTYPE emits it, EOF in a tag emits nothing)"),
     "reset": ("plumbing", "the initial state, set by the constructor. HTML: no equivalent"),
     "getpos": ("plumbing", "the line and column of the construct in hand, which this reader maps onto absolute offsets (a CRLF page with a multi-line start tag"
                            " maps to the right offsets, a shape). HTML: no equivalent"),

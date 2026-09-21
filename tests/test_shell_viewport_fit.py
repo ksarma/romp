@@ -470,6 +470,31 @@ class ParsedSheetReads(unittest.TestCase):
         self.assertEqual(spans(page), ["<!--\r\n a\r\n-->"])
         self.assertEqual([(e.kind, e.start, page[e.content_start:e.content_end]) for e in served_css.elements(page)],
                          [("link", page.index("<link"), ""), ("style", page.index("<style"), "\r\n#a{top:0}")])
+        # close: an unterminated `<!--`, `<?`, `<!` or `<![` is a comment span to the end of the page and an unterminated DOCTYPE a DOCTYPE
+        # to the end; an unterminated start tag or end tag emits NOTHING, no element, no span and no text (the close of the author's pass 9:
+        # the row had said text). The events are captured on the reader itself, so what the tokenizer hands it at the end is what is pinned
+        class Events(served_css._Elements):
+            def __init__(self, html):
+                self.seen = []
+                super().__init__(html)
+            def handle_data(self, data):
+                self.seen.append(("data", data))
+                super().handle_data(data)
+            def handle_decl(self, decl):
+                self.seen.append(("decl", decl))
+                super().handle_decl(decl)
+            def handle_starttag(self, tag, attrs):
+                self.seen.append(("start", tag))
+                super().handle_starttag(tag, attrs)
+        self.assertEqual([spans(p) for p in ("<link rel=stylesheet href=x><!-- x <style>#a{top:0}</style>", "x<?y", "x<!", "<![if a]")],
+                         [["<!-- x <style>#a{top:0}</style>"], ["<?y"], ["<!"], ["<![if a]"]])
+        self.assertEqual(([e.kind for e in Events("<link rel=stylesheet href=x><!-- x <style>#a{top:0}</style>").elements], Events("<!DOCTYPE html").seen),
+                         (["link"], [("decl", "DOCTYPE html")]))
+        for p in ("<div", "<div a='x", "</div", "<link rel=stylesheet href=x><div"):
+            r = Events(p)
+            self.assertEqual(([e.kind for e in r.elements], r.comments, [ev for ev in r.seen if ev[0] != "start" or ev[1] != "link"]),
+                             (["link"] if p.startswith("<link") else [], [], []), "an unterminated tag emits nothing at the end of the page: %r" % (p,))
+        self.assertEqual(Events("x<div").seen, [("data", "x")], "the text before the unterminated tag is all the tokenizer emits")
 
     def test_the_viewport_meta_is_read_from_the_element(self):
         # the author's pass 9 (2026-09-20): meta elements join the layer (D in the maintainer's round 5 ruling: the one regex over raw page text
