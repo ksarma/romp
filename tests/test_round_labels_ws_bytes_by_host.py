@@ -50,7 +50,10 @@ Exits, for a later change that reds here: a line that names an author's pass nam
 maintainer's round of THIS PR names it as the maintainer's; a round of another PR's review in one of these files is written with
 that review named ("the parked-pane change's review, its third round"), which the numbered form does not match; a new
 maintainer's round on this PR is a new ruling, and REVIEWER_ROUNDS is raised with it; after a merge of main, BASE is raised to
-the new merge base (until it is, the population test skips and says so).
+the new merge base (until it is, the population test skips and says so). A later added test line, in this module or in any other
+file the branch adds to, that writes out a doubled article beside an attribution (a probe of DOUBLED as a literal) is itself in
+the population and is refused by the doubled-attribution test: assemble it at run time, as every probe in this module is (the
+fixer pass over the second closing lens after the maintainer's round 6, F1-6).
 """
 import re
 import subprocess
