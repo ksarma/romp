@@ -7910,8 +7910,10 @@ reached local calls, resolved the same way (`parseSrcset` from figure-gate.ts, `
 and `pictureDest` from file-comments.ts, the figure controls' reads; until the landing round the walk followed a reached
 local's local calls alone, so those three modules sat outside the judged set while this paragraph stated a conclusion
 over a set it had not walked, and a live re-parse write planted in any of them left the seam test green); then every
-module those name in an import or re-export, transitively, under every static form the language has, a type-only import
-and a path outside ui/webview included, so file-view.ts itself re-enters through file-comments.ts's type import of the
+module those name in an import the compiler parses (an import declaration under any clause, an export with a
+specifier, an import-equals, and a require() or import() of a string literal), transitively, under any quote and any
+line break, a type-only import and a path outside ui/webview included, a specifier that is not a string literal
+refused with its line, so file-view.ts itself re-enters through file-comments.ts's type import of the
 viewer's action type and brings every module it imports along: forty-six modules
 (../../vendor/track-changents/engine.js, actions.ts, anchor-map.ts, backend-names.ts, capped-read.ts, card-layout.ts,
 code-block.ts, commands.ts, comments.ts, ctx-color.ts, docreview.ts, fence-source.ts, figure-gate.ts,
@@ -7948,9 +7950,11 @@ reads from that assertion: thirteen outside mdBlock, all the viewer's own consta
 the trail's two arrows in the bar, the figure control's glyph parsed once onto a holder that enters no document and
 cloned into each control, the loading glyph, codeBlock's numbered rows over escaped or hljs text), and the one inside it
 the highlight's write in the fence pass, judged above. file-view-seam.test.ts derives the callee list (every bare call
-in the region, with no method call on an imported binding in the region or in a reached local, so a pass in that form is
-red there rather than hidden from the list), the reached locals, the imported callees, the module set, the package list
-and the import forms the resolver follows (a synthetic module holding each form), the judged sites per module and the
+in the region, with no method call on an imported binding, a require-bound one, gclock, included, in the region or in
+a reached local, so a pass in that form is red there rather than hidden from the list), the reached locals, the
+imported callees, the module set, the package list and the import forms the resolver follows (synthetic modules
+holding each form, the spellings the regex resolver once dropped among them, and a specifier that is not a string
+literal asserted to refuse), the judged sites per module and the
 whole file's count from the code and pins them (its test "no re-parse after the adoption"), so a new such site anywhere
 in file-view.ts or in a reached module, or a new callee or import, is red there until it is judged;
 tools/markdown-viewer-plan-gate-adopt.test.mjs holds this paragraph whole and fills its derived figures (the callees,

@@ -14,6 +14,7 @@ import * as assert from "node:assert/strict";
 import { inspect } from "node:util";
 import { assertHiddenEvent, hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
 import { codeOnly, stripComments } from "../test-code-only";   // the comment stripper every source pin below reads through (the compiler's ranges)
+import * as ts from "typescript";                              // the compiler enumerates the census's imports and bindings (the test build keeps typescript a runtime require)
 import * as fs from "node:fs";
 import * as path from "node:path";
 import DOMPurify from "dompurify";   // the module-global instance md-sanitize.ts imports, for the record pin on the seam's constraint
@@ -1396,9 +1397,14 @@ test("the inertness premise, held where CI runs: MD_PURIFY is its six-key litera
 // file-comments-model.ts and file-comments.ts through parseSrcset, figurePath and pictureDest; before the file review's landing
 // round the walk followed a reached local's LOCAL calls alone, so those three modules sat outside the judged set while this
 // header already promised the transitive reach, and a live re-parse write planted in any of them left this test green); then
-// every module those modules name in an import or re-export, transitively, under every static form the language has (a named
-// import, a type-only one, a namespace or default import, a side-effect import, an `export ... from`, and a dynamic `import()`
-// or `require()` of a string) and from every path relative to the importing module (`./x` and the vendored engine anchor-map.ts
+// every module those modules name in an import the compiler parses (an import declaration under any clause: a named import, a
+// type-only one, a namespace or default import, a side-effect import; an `export ... from`; an `import x = require()`; and a
+// dynamic `import()` or `require()` of a string literal), under any quote and across any line break, a specifier that is not a
+// string literal refused with its file and line (the file review's landing round, tests-1 with extra5-1, extra7-1 and extra7-2:
+// the regex resolver before it read a double-quoted specifier at a line's start alone, so a single-quoted import in any reached
+// module dropped that module and its whole closure from the judged set with nothing red, and its binding reader read
+// `import ... from` lines alone, so file-view.ts's require-bound gclock was outside the method-call guard), transitively, and
+// from every path relative to the importing module (`./x` and the vendored engine anchor-map.ts
 // reads from `../../vendor/`, and gesture-clock.js), so the closure (REACHED_MODULES) is the whole set of modules a pass in the region can reach
 // through the viewer's own code, on the safe side: a type-only import is followed too, since deciding which imports the
 // compiler erases is a judgement this census need not make, and file-view.ts itself re-enters the set through file-comments.ts's
@@ -1417,7 +1423,8 @@ test("the inertness premise, held where CI runs: MD_PURIFY is its six-key litera
 // file review's landing round found RE_PARSE matching a name under a quote alone while the command spelled the wider form,
 // and widened RE_PARSE to the command's form, the same lines matching at that head under both). The derivation itself is
 // pinned (the callee list, the reached locals, the imported callees, the module
-// set, the package list, and the import forms the resolver follows, by a synthetic module holding each form), so a new pass,
+// set, the package list, and the import forms the resolver follows, by synthetic modules holding each form, the spellings the
+// regex resolver once dropped among them, with a non-literal specifier asserted to refuse), so a new pass,
 // call or import widens it here first, and a new such site after the adoption is red until it is judged in this list. The
 // judged sites: mdBlock holds one write, the hljs highlight's, inside the fence pass BEFORE the adoption (escaped text: hljs
 // creates spans alone); a reached local holds one, the figure control's glyph parsed onto a holder that enters no document;
@@ -1450,7 +1457,8 @@ const IMPORTED_CALLEES: Record<string, string> = { figurePath: "file-comments-mo
  *  language's globals (derived below; a new one is judged here first; neither parses markup, and DOMParser is RE_PARSE's). */
 const GLOBAL_CALLS = ["Number", "URL"];
 /** The modules a post-adoption pass reaches (derived below): the region's and the reached locals' imported callees' modules,
- *  then every module those name in an import or re-export, transitively, under every static form; paths relative to
+ *  then every module those name in an import the compiler parses, transitively, under any quote and any line break (a
+ *  specifier that is not a string literal refuses); paths relative to
  *  ui/webview, a suffix kept as written (`.js` for the two JavaScript modules) and `.ts` supplied where the import has none.
  *  A new import widens this list first. */
 const REACHED_MODULES = ["../../vendor/track-changents/engine.js", "actions.ts", "anchor-map.ts", "backend-names.ts", "capped-read.ts", "card-layout.ts", "code-block.ts", "commands.ts", "comments.ts", "ctx-color.ts", "docreview.ts", "fence-source.ts", "figure-gate.ts", "file-comments-model.ts", "file-comments-regions.ts", "file-comments.ts", "file-trail.ts", "file-view-links.ts", "file-view.ts", "gesture-clock.js", "host-prefix.ts", "icons.ts", "keybindings.ts", "link-opener.ts", "math.ts", "md-block-start.ts", "md-config.ts", "md-links.ts", "md-literal-tags.ts", "md-sanitize.ts", "media.ts", "path-links.ts", "pdf-cap.ts", "pick-held.ts", "pinch.ts", "preview.ts", "reader-place.ts", "region-geometry.ts", "session-badge.ts", "settings.ts", "status-widgets.ts", "tab-state.ts", "tab-widgets.ts", "url-links.ts", "viewer-grammars.ts", "widget-prefs.ts"];
@@ -1506,44 +1514,96 @@ test("no re-parse after the adoption: mdBlock's post-adoption region and every m
   const called = [...new Set([...after.matchAll(/(?<![.\w])([A-Za-z_]\w*)\(/g)].map((m) => m[1]))].filter((n) => !["if", "for", "while", "return", "switch", "catch"].includes(n));
   assert.deepEqual(called, ["keepVideoShape", "linkHref", "resolveDocRelative", "linkMarkdownAnchors", "addFigureControls", "linkifyFileText"], "the passes after the adoption call these and nothing else (a new call widens this list first)");
   // a pass written as a method call on an imported binding (`ns.pass(box)`, `hljs.highlight(...)`) is no bare call, so the list
-  // above would not see it: every binding file-view.ts imports, under any form and from any source, is asserted absent as the
-  // object of a method call in the region and in every reached local (the fork PR review's round-2 verification named this blind
-  // spot, 2026-09-20)
-  const bindings = new Set<string>();
-  for (const m of codeOnly(VIEW).matchAll(/^import (?:type )?(.+?) from "[^"]+";?/gm)) {
-    const clause = m[1].trim();
-    const named = /\{([^}]*)\}/.exec(clause);
-    if (named) for (const raw of named[1].split(",")) { const name = raw.replace(/\btype\s+/, "").trim().split(/\s+as\s+/).pop(); if (name) bindings.add(name); }
-    const rest = clause.replace(/\{[^}]*\}/, "").trim();
-    for (const part of rest.split(",")) { const p = part.trim(); if (!p) continue; const ns = /^\* as (\w+)$/.exec(p); bindings.add(ns ? ns[1] : p); }
-  }
-  assert.ok(bindings.has("hljs") && bindings.has("linkifyFileText") && bindings.has("marked"), "the reader sees the default, the named and the singleton imports");
+  // above would not see it: every binding file-view.ts imports, under any form and from any source (the compiler's tree, so a
+  // require-bound one, gclock, and a clause wrapped over lines are in the set; the file review's landing round, extra7-1), is
+  // asserted absent as the object of a method call in the region and in every reached local (the fork PR review's round-2
+  // verification named this blind spot, 2026-09-20)
+  /** Every binding a module imports, by the compiler's tree: a default, a namespace, a named one (as renamed), an
+   *  `import x = require()`, and a variable bound to require() or to await import() (destructured or not), under any quote and
+   *  across any line break. */
+  const bindingsOf = (src: string, file: string): Set<string> => {
+    const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const names = new Set<string>();
+    const isLoader = (e: ts.Expression): boolean => ts.isCallExpression(e) && ((ts.isIdentifier(e.expression) && e.expression.text === "require") || e.expression.kind === ts.SyntaxKind.ImportKeyword);
+    const bindName = (nm: ts.BindingName): void => { if (ts.isIdentifier(nm)) names.add(nm.text); else for (const el of nm.elements) if (ts.isBindingElement(el)) bindName(el.name); };
+    const walk = (n: ts.Node): void => {
+      if (ts.isImportDeclaration(n) && n.importClause) { const c = n.importClause; if (c.name) names.add(c.name.text); if (c.namedBindings) { if (ts.isNamespaceImport(c.namedBindings)) names.add(c.namedBindings.name.text); else for (const el of c.namedBindings.elements) names.add(el.name.text); } }
+      else if (ts.isImportEqualsDeclaration(n)) names.add(n.name.text);
+      else if (ts.isVariableDeclaration(n) && n.initializer) { const init = ts.isAwaitExpression(n.initializer) ? n.initializer.expression : n.initializer; if (isLoader(init)) bindName(n.name); }
+      ts.forEachChild(n, walk);
+    };
+    walk(sf);
+    return names;
+  };
+  const bindings = bindingsOf(VIEW, "file-view.ts");
+  assert.ok(bindings.has("hljs") && bindings.has("linkifyFileText") && bindings.has("marked") && bindings.has("gclock"), "the reader sees the default, the named, the singleton and the require-bound imports (gclock: `const gclock = require(\"./gesture-clock.js\")`)");
+  // the binding reader, pinned by execution over a synthetic module holding each binding form: a default, a namespace, a named
+  // and a renamed one, a default beside a namespace under single quotes, a clause wrapped over lines, a namespace wrapped over
+  // lines, an import-equals, a require-bound name, a destructured require and an awaited import()
+  const bindingForms = 'import a from "./a";\nimport * as b from "./b";\nimport { c, d as e } from "./c";\nimport f, * as g from \'./f\';\nimport {\n  h,\n} from "./h";\nimport * as\n  i from "./i";\nimport j = require("./j");\nconst k = require("./k");\nconst { l } = require("./l");\nconst m = await import("./m");\n';
+  assert.deepEqual([...bindingsOf(bindingForms, "x.ts")].sort(), ["a", "b", "c", "e", "f", "g", "h", "i", "j", "k", "l", "m"], "the binding reader sees every binding form, under any quote and across a line break (a form it missed would leave a method call on that binding unguarded)");
+  /** The imported bindings `text` calls a method on (`ns.pass(box)`): the shape the bare-call list above cannot see. */
+  const methodCallsIn = (text: string): string[] => [...bindings].filter((b) => new RegExp("\\b" + b + "\\.\\w+\\(").test(text)).sort();
+  assert.deepEqual(methodCallsIn("gclock.learnAll(box); hljs.highlight(raw, { language: lang }); linkifyFileText(box);"), ["gclock", "hljs"], "the guard, driven: a method call on the require-bound binding and on the default import is seen, a bare call is not (the file review's landing round, extra7-1: `gclock.learnAll(box)` planted after the adoption had left this test green, gclock being outside the binding set)");
   for (const b of bindings) assert.doesNotMatch(after, new RegExp("\\b" + b + "\\.\\w+\\("), "no method call on the imported binding `" + b + "` after the adoption: a pass in that form would hide from the callee list above");
-  /** file-view.ts's named imports from `./`: the binding to the module, for resolving a bare call. */
+  /** file-view.ts's named imports from `./`: the binding to the module, for resolving a bare call (the compiler's tree, so any
+   *  quote and any line break; a type-only clause included, as the reader before it took `import type {`). */
   const importsOf = (src: string): Record<string, string> => {
     const map: Record<string, string> = {};
-    for (const m of codeOnly(src).matchAll(/import (?:type )?\{([^}]*)\} from "\.\/([^"]+)"/g)) for (const raw of m[1].split(",")) { const name = raw.replace(/\btype\s+/, "").trim().split(/\s+as\s+/).pop(); if (name) map[name] = m[2] + ".ts"; }
+    const sf = ts.createSourceFile("file-view.ts", src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    for (const st of sf.statements) {
+      if (!ts.isImportDeclaration(st) || !st.importClause?.namedBindings || !ts.isNamedImports(st.importClause.namedBindings)) continue;
+      if (!ts.isStringLiteral(st.moduleSpecifier) || !st.moduleSpecifier.text.startsWith("./")) continue;
+      const rel = st.moduleSpecifier.text.slice(2);
+      for (const el of st.importClause.namedBindings.elements) map[el.name.text] = /\.[cm]?[jt]s$/.test(rel) ? rel : rel + ".ts";
+    }
     return map;
   };
-  /** Every module `src` (at `from`, a path relative to ui/webview) names in a static import, a re-export, a dynamic import or a
-   *  require of a string literal, under every form, as a path relative to ui/webview (`x` to `x.ts`, a path with a suffix as
-   *  written); the npm packages it imports apart. */
+  /** Every module `src` (at `from`, a path relative to ui/webview) names in an import the compiler parses: an import declaration
+   *  under any clause (named, type-only, namespace, default, default beside a namespace or a clause, side-effect), an export
+   *  with a module specifier, an `import x = require()`, and a require() or import() whose argument is a string literal, under
+   *  any quote and across any line break; each as a path relative to ui/webview (`x` to `x.ts`, a suffix kept as written), the
+   *  npm packages apart. A specifier that is not a string literal (a template, with or without a substitution, a variable, an
+   *  expression) REFUSES with the file, the form and the line, on the safe side: a module the walk cannot name is a module it
+   *  cannot judge (the file review's landing round, tests-1, extra5-1, extra7-1, extra7-2). */
   const importTargets = (src: string, from: string): { local: string[]; packages: string[] } => {
     const local = new Set<string>(), packages = new Set<string>();
-    const STATIC = /^\s*(?:import|export)\s+(?:type\s+)?(?:\{[^}]*\}|\*(?:\s+as\s+\w+)?|\w+(?:\s*,\s*\{[^}]*\})?)\s+from\s*"([^"]+)"|^\s*import\s*"([^"]+)"|\bimport\s*\(\s*"([^"]+)"|\brequire\s*\(\s*"([^"]+)"/gm;
-    for (const m of codeOnly(src, from.endsWith(".js") ? "js" : "ts").matchAll(STATIC)) {
-      const spec = m[1] ?? m[2] ?? m[3] ?? m[4];
-      if (!spec.startsWith(".")) { packages.add(spec); continue; }
-      const rel = path.posix.normalize(path.posix.join(path.posix.dirname(from), spec));
+    const sf = ts.createSourceFile(from, src, ts.ScriptTarget.Latest, true, from.endsWith(".js") ? ts.ScriptKind.JS : ts.ScriptKind.TS);
+    const lineOf = (n: ts.Node): number => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
+    const take = (spec: ts.Node | undefined, form: string, holder: ts.Node): void => {
+      if (!spec || !ts.isStringLiteral(spec)) throw new Error(from + ":" + lineOf(holder) + ": " + form + " whose specifier is not a string literal (refused, on the safe side): " + holder.getText(sf).split("\n")[0].slice(0, 100));
+      if (!spec.text.startsWith(".")) { packages.add(spec.text); return; }
+      const rel = path.posix.normalize(path.posix.join(path.posix.dirname(from), spec.text));
       local.add(/\.[cm]?[jt]s$/.test(rel) ? rel : rel + ".ts");
-    }
+    };
+    const walk = (n: ts.Node): void => {
+      if (ts.isImportDeclaration(n)) take(n.moduleSpecifier, "import", n);
+      else if (ts.isExportDeclaration(n)) { if (n.moduleSpecifier) take(n.moduleSpecifier, "export from", n); }
+      else if (ts.isImportEqualsDeclaration(n)) { if (ts.isExternalModuleReference(n.moduleReference)) take(n.moduleReference.expression, "import = require", n); }
+      else if (ts.isCallExpression(n)) { const c = n.expression; const isReq = ts.isIdentifier(c) && c.text === "require"; if (isReq || c.kind === ts.SyntaxKind.ImportKeyword) take(n.arguments[0], isReq ? "require()" : "import()", n); }
+      ts.forEachChild(n, walk);
+    };
+    walk(sf);
     return { local: [...local].sort(), packages: [...packages].sort() };
   };
-  // the forms the resolver follows, pinned by execution over a synthetic module holding each one, so a form it misses is red
-  // here rather than unfollowed (the walk before the file review's landing round followed the named form alone and asserted the
-  // namespace and default forms absent; preview.ts's namespace import of pinch.ts is followed now)
+  // the forms the resolver follows, pinned by execution over synthetic modules holding each one (the walk before the file
+  // review's landing round followed the named form alone and asserted the namespace and default forms absent; preview.ts's
+  // namespace import of pinch.ts is followed now); the spellings the regex resolver once dropped are followed here by
+  // execution, each with a specifier of its own so the expected list grows with them (both refuters of tests-1: same-named
+  // twins resolve to the same module and pass unpatched), and a non-literal specifier is asserted to refuse with its line
   const forms = 'import { a } from "./a";\nimport type { B } from "./b";\nimport * as c from "./c";\nimport d from "./d";\nimport e, { e2 } from "./e";\nexport { f } from "./f";\nexport * from "./g";\nimport "./h";\nconst i = await import("./i");\nconst j = require("./j");\nimport k from "../k/k.js";\nimport { l } from "pkg-l";\nimport m from "pkg-m/sub";\n';
   assert.deepEqual(importTargets(forms, "x.ts"), { local: ["../k/k.js", "a.ts", "b.ts", "c.ts", "d.ts", "e.ts", "f.ts", "g.ts", "h.ts", "i.ts", "j.ts"], packages: ["pkg-l", "pkg-m/sub"] }, "the resolver follows every import form and keeps the packages apart");
+  // the spellings the regex resolver dropped silently (the file review's landing round): a single-quoted named import, a
+  // single-quoted side-effect import, a single-quoted require, a single-quoted `export *`, a default beside a namespace, an
+  // import after another statement on its line, a clause wrapped over lines, a namespace wrapped over lines, an import-equals,
+  // a type-only re-export and a namespace re-export
+  const more = "import { a } from './a';\nimport './b';\nconst c = require('./c');\nexport * from './d';\nimport e, * as f from \"./e\";\nexport {}; import { g } from \"./g\";\nimport {\n  h,\n} from \"./h\";\nimport * as\n  i from \"./i\";\nimport j = require(\"./j\");\nexport type { K } from './k';\nexport * as l from \"./l\";\n";
+  assert.deepEqual(importTargets(more, "x.ts"), { local: ["a.ts", "b.ts", "c.ts", "d.ts", "e.ts", "g.ts", "h.ts", "i.ts", "j.ts", "k.ts", "l.ts"], packages: [] }, "the spellings the regex resolver once dropped are followed: single quotes, default beside a namespace, an import after another statement on its line, a clause or a namespace wrapped over lines, an import-equals, a type-only and a namespace re-export");
+  // and a specifier that is not a string literal is refused with the file, the form and the line, never dropped: a template
+  // with and without a substitution, a variable and an expression, under import() and under require()
+  for (const [bad, form] of [["export function f() { return import(`./x`); }", "import()"], ["const s = './x'; export function f() { return import(s); }", "import()"], ["const q = import('./' + name);", "import()"], ["const p = require(`./x`);", "require()"], ["const p = require(`./${name}`);", "require()"], ["const p = require(spec);", "require()"]] as const) {
+    assert.throws(() => importTargets(bad, "x.ts"), new RegExp("^Error: x\\.ts:1: " + form.replace(/[()]/g, "\\$&") + " whose specifier is not a string literal \\(refused, on the safe side\\): "), "a non-literal specifier is refused with its line, never dropped: " + bad);
+  }
   const source = (m: string): string => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", m), "utf8");
   const viewImports = importsOf(VIEW);
   const localFns = new Set([...codeOnly(VIEW).matchAll(/^(?:export )?function (\w+)\(/gm)].map((m) => m[1]));
