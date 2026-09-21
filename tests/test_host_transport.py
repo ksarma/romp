@@ -2832,6 +2832,91 @@ class BackendHostRules(unittest.TestCase):
         self.assertEqual([r["sid"] for r in self._rows(d, "host.directory-loose")], [SIDS[0], SIDS[2]], "the first and the third observers")
         self.assertEqual(stat.S_IMODE(os.lstat(hosts).st_mode), 0o775)
 
+    def test_hosts_loose_then_refused_then_loose_again_by_three_sids_is_two_loose_rows_the_second_at_the_third_observation(self):
+        """A REFUSAL IS A STATE OF THE SHARED DIRECTORY, and the loose latch forgets it (the reviewer's ruling of 2026-09-21
+        09:32Z on fork PR #884's fifth commit; THE RULE at _file_loose_directory_rows, the mirror at _refused_directory_row):
+        hosts/ 0775 read by the first session (a loose row), replaced by a symlink to a directory elsewhere, and on the
+        second arm by a regular file, and read by the second (a refused row, the shared subject's, and the answer False),
+        the plant removed and a new hosts/ at 0775 with the three <sid>/ under it made and read by the third: a SECOND
+        loose row, the third session's. Three observations of two states, loose, refused, loose, with a transition away
+        and back, so the third announces; the latch then reads the new mode, and the refused row stands at one. The <sid>/
+        directories 0700 throughout, no row of theirs. Red before at the fifth commit, where the refusal left the loose
+        latch standing at the 0775 it had observed before the plant, so the third read was the same mode and filed
+        nothing: one loose row, `Lists differ: [(hosts, '0775')] != [(hosts, '0775'), (hosts, '0775')]`, both arms.
+        Mutation (a scratch copy, python -B): the refusal's pop of the loose entry
+        dropped reds here the same way; _row_owner answering the sid for the shared path reds here at the latch read (no
+        shared bucket) and the shared-subject cases above at their row counts."""
+        elsewhere = Path(tempfile.mkdtemp()); self.addCleanup(shutil.rmtree, elsewhere, True)
+        for arm in ("a symlink", "a regular file"):
+            with self.subTest(arm=arm):
+                d, be = self._be()
+                Path(d, "session-hosts").write_text("off")
+                hosts = Path(d) / "hosts"
+                def plant_dirs():
+                    for sid in SIDS:
+                        self._sid_dir(d, sid, hosts_mode=0o775, sid_mode=0o700, identity={"pid": 7, "start": "p"})
+                plant_dirs()
+                sessions = [self._session_for(sid, "web%d" % i) for i, sid in enumerate(SIDS)]
+                be._loose_rows_new_episode(sessions[0])
+                self.assertIs(be._host_lease_applies(sessions[0]), True)
+                self.assertEqual(self._loose(d), [(str(hosts), "0775")], "the first observation, loose")
+                shutil.rmtree(hosts)
+                if arm == "a symlink":
+                    hosts.symlink_to(elsewhere)
+                else:
+                    hosts.write_text("not a directory")
+                be._loose_rows_new_episode(sessions[1])
+                self.assertIs(be._host_lease_applies(sessions[1]), False, "refused: no host this kernel can vouch for")
+                self.assertEqual(self._refused(d), [("host.directory-refused", None, None)], "the second observation, refused, the shared subject's")
+                hosts.unlink()
+                plant_dirs()
+                be._loose_rows_new_episode(sessions[2])
+                self.assertIs(be._host_lease_applies(sessions[2]), True)
+                self.assertEqual(self._loose(d), [(str(hosts), "0775"), (str(hosts), "0775")],
+                                 "%s: the directory seen loose again after the refusal is a transition, filed at the third observation" % arm)
+                self.assertEqual([r["sid"] for r in self._rows(d, "host.directory-loose")], [SIDS[0], SIDS[2]], "the first and the third observers")
+                self.assertEqual(be._loose_filed[None], {str(hosts): 0o775}, "the latch reads the new mode")
+                self.assertEqual(len(self._refused(d)), 1, "the refused row stands at one")
+                self.assertEqual(stat.S_IMODE(os.lstat(hosts).st_mode), 0o775, "the reads changed no mode")
+                self.assertEqual(sorted(os.listdir(elsewhere)), [], "nothing behind the link was written")
+
+    def test_a_sids_own_directory_loose_then_refused_then_loose_again_in_one_episode_is_two_loose_rows_and_another_sids_latch_stands(self):
+        """THE PER-SID MIRROR of the previous case (the same ruling): hosts/ 0700, the first and the second session's <sid>/
+        at 0775 with an identity of ours, each read in its own episode (a loose row each); the first session's directory
+        replaced by a regular file at its path and read again in the same episode (the refused row, this session's:
+        `host directory <hosts/<sid>> is not a directory`, the answer False), then a new <sid>/ of ours at 0775 made at the
+        path and read: a SECOND loose row for it, in the one episode, the refusal having been a state of the directory. The
+        second session's latch stands untouched through the refusal (its entry, the 0775 it observed), and hosts/, tight,
+        has no row. Red before at the fifth commit: two loose rows where three are expected, `Lists differ: [(<c1>, '0775'),
+        (<c2>, '0775')] != [(<c1>, '0775'), (<c2>, '0775'), (<c1>, '0775')]`.
+        Mutation (a scratch copy, python -B): the refusal's pop dropped reds here the same way."""
+        d, be = self._be()
+        Path(d, "session-hosts").write_text("off")
+        c1, c2 = SIDS[0], SIDS[1]
+        dirs = {sid: self._sid_dir(d, sid, hosts_mode=0o700, sid_mode=0o775, identity={"pid": 7, "start": "p"}) for sid in (c1, c2)}
+        hosts = Path(d) / "hosts"
+        sessions = {sid: self._session_for(sid, "web%d" % i) for i, sid in enumerate((c1, c2))}
+        for sid in (c1, c2):
+            be._loose_rows_new_episode(sessions[sid])
+            self.assertIs(be._host_lease_applies(sessions[sid]), True)
+        expect = [(str(dirs[c1]), "0775"), (str(dirs[c2]), "0775")]
+        self.assertEqual(self._loose(d), expect, "each session's own loose directory once; hosts/ is tight")
+        shutil.rmtree(dirs[c1])
+        dirs[c1].write_text("not a directory")
+        self.assertIs(be._host_lease_applies(sessions[c1]), False, "refused: the plant at the directory's path")
+        self.assertEqual(self._refused(d), [("host.directory-refused", None, None)])
+        self.assertEqual(self._rows(d, "host.directory-refused")[0]["sid"], c1, "this session's subject")
+        self.assertEqual(be._loose_filed[c2], {str(dirs[c2]): 0o775}, "another session's latch is untouched by the refusal")
+        dirs[c1].unlink()
+        self._sid_dir(d, c1, hosts_mode=0o700, sid_mode=0o775, identity={"pid": 7, "start": "p"})
+        self.assertIs(be._host_lease_applies(sessions[c1]), True, "a new directory of ours at the path, its identity vouches")
+        self.assertEqual(self._loose(d), expect + [(str(dirs[c1]), "0775")],
+                         "the directory seen loose again after the refusal, in the same episode, is a transition and files")
+        self.assertEqual(be._loose_filed[c1], {str(dirs[c1]): 0o775}, "the latch reads the new mode")
+        self.assertEqual(be._loose_filed[c2], {str(dirs[c2]): 0o775}, "and the other session's still stands")
+        self.assertEqual(be._loose_filed[None], {str(hosts): 0o700}, "hosts/ observed tight, no row")
+        self.assertEqual(len(self._refused(d)), 1)
+
     def test_the_connect_loop_opens_the_loose_row_episode_at_its_top_before_the_first_descent(self):
         """WHERE the episode opens, pinned by the structure of the connect loop (kernel/sdk_backend.py, SdkSession._amain,
         its `while not self.ended` reconnect loop), since driving that loop needs the SDK's client. What it guards: the
