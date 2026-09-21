@@ -209,7 +209,10 @@ def branch_population():
         raise unittest.SkipTest("the merge base with origin/main is %s, not BASE %s: a merged head (raise BASE to the new merge base) or "
                                 "another branch (this guard is that branch's); the branch's added lines are not derivable here, so nothing "
                                 "was read" % (mb.strip()[:9], BASE[:9]))
-    diff, why = _git("-c", "diff.noprefix=false", "-c", "diff.mnemonicPrefix=false", "diff", "--no-color", "--no-ext-diff", "-U0", BASE, "HEAD")
+    # the four prefix settings pinned, so no clone's diff configuration (noprefix, mnemonicPrefix, or srcPrefix and dstPrefix, which git
+    # 2.46 added) moves the +++ path the reader strips b/ from
+    diff, why = _git("-c", "diff.noprefix=false", "-c", "diff.mnemonicPrefix=false", "-c", "diff.srcPrefix=a/", "-c", "diff.dstPrefix=b/",
+                     "diff", "--no-color", "--no-ext-diff", "-U0", BASE, "HEAD")
     if diff is None:
         raise unittest.SkipTest("the diff of BASE %s against HEAD could not be read (%s), so the branch's added lines cannot be derived: "
                                 "nothing was read" % (BASE[:9], why))
