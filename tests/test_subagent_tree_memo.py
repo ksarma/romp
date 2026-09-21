@@ -429,7 +429,12 @@ class UnreadableRoot(_Tree):
     noted the tree absent to the chat build, which showed no subagents until the fault cleared; the module's own cases
     drove only ENOENT there. Two faults: an EIO by mock on os.lstat of the root alone (every other path reads) and a REAL
     EACCES from the parent directory without search permission (nothing under it reads either; skipped as root, whom
-    permission bits do not bind). The scope is open under the fault, so "nothing held" is executed, not implied."""
+    permission bits do not bind). The scope is open under the fault, so "nothing held" is executed, not implied, and it is
+    the WHOLE scope that is compared, its three maps (trees, stamps, launches) each empty: a pin over one map is narrower
+    than "no scope entry", and a stamps entry recorded on the raise left the trees-only pin green (the owner's pass before
+    round 2 of #882, its fixes-by-execution lens)."""
+
+    EMPTY = {"trees": {}, "stamps": {}, "launches": {}}   # the scope as _subagent_scope_open mints it: nothing held in any of its three maps
 
     def _standing(self):
         """The memo entry and the cached sidecar map, standing before the fault; the workflow agent's resolution cold."""
@@ -446,7 +451,8 @@ class UnreadableRoot(_Tree):
         served from a hold (a served read never reaches the disk); what the fault must leave empty."""
         km._subagent_scope_open()
         self.addCleanup(km._subagent_scope_close)
-        self.assertEqual(km._subagent_scope()["trees"], {}, "premise: nothing held before the fault")
+        self.assertEqual(km._subagent_scope(), self.EMPTY,
+                         "premise: nothing held before the fault, in any of the scope's three maps (trees, stamps, launches)")
 
     def _fault_holds(self, root, entry, m, errno_expected):
         """Under the fault: the sidecar map first (the reader the chat build asks), then the memo, the feed key, the lookup."""
@@ -467,7 +473,10 @@ class UnreadableRoot(_Tree):
         self.assertIs(meta, m, "the standing map is answered, unheld (its cache entry neither popped nor re-keyed)")
         self.assertEqual({k: km._SUBAGENT_TREE_STATS[k] - before[k] for k in ("hit", "miss", "served", "evict", "dirStats")},
                          {"hit": 0, "miss": 0, "served": 0, "evict": 0, "dirStats": 0}, "no counter moves: the read answered no tree")
-        self.assertEqual(km._subagent_scope()["trees"], {}, "nothing is held in the cycle scope")
+        self.assertEqual(km._subagent_scope(), self.EMPTY,
+                         "nothing is held in the cycle scope, in any of its three maps (trees, stamps, launches): the fail-closed read "
+                         "records no scope entry, so the next call retries (keyed on the whole scope by equality; a pin over the trees "
+                         "map alone stayed green with a stamps entry recorded on the raise)")
         with self.assertRaises(km._SubagentTreeUnreadable) as cm:
             km._subagent_tree(root)
         self.assertEqual(cm.exception.error.errno, errno_expected, "the raise carries the lstat's own error")
@@ -476,7 +485,8 @@ class UnreadableRoot(_Tree):
             km._subagent_dirs(root)                             # never [], which is absence
         self.assertIs(km._subagent_dirs_ident(SID, root), entry,
                       "the feed key's component is the standing entry, not the missing root's (d,), (None,)")
-        self.assertEqual(km._subagent_scope()["trees"], {}, "still nothing held after the direct reads")
+        self.assertEqual(km._subagent_scope(), self.EMPTY,
+                         "still nothing held after the direct reads, in any of the three maps (trees, stamps, launches)")
 
     def _fold_has_the_calls_lifetime(self):
         """The awaiting fold over a resolution that could not be made is held for the call alone, never the cycle."""
@@ -546,6 +556,9 @@ class UnreadableRoot(_Tree):
             self.assertEqual(faults, ["PermissionError"], "and the caller is told the lookup could not be made")
             self.assertIs(km._SUBAGENT_FILE_CACHE[(str(self.tpath), AID_WF)], standing, "its memo entry is untouched")
             row, cmd = self._fold_has_the_calls_lifetime()
+            self.assertEqual(km._subagent_scope(), self.EMPTY,
+                             "at the fault's end nothing is held in any of the scope's three maps (trees, stamps, launches): under the "
+                             "parent at mode 000 every stat of the lookup's re-check fails too, and a stat that raises is never held")
         finally:
             os.chmod(parent, 0o755)
         self._the_next_call_reads_again(root, m, row, cmd)
