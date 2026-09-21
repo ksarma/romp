@@ -224,12 +224,6 @@ def _free_port():
     return p
 
 
-def inspect_getsource_module():
-    """The kernel module's source text, read from its file (inspect.getsource on a load_source module is reliable, but
-    reading the file keeps the AST test independent of import machinery)."""
-    return source_and_tree(os.path.join(BIN, "romp-kernel"))[0]
-
-
 # ── the discriminator: READ-BEFORE-REPAIR, WARN, REFUSE, UNKNOWN, the group judgment, the lookup bound ──────────────
 
 class Discriminator(unittest.TestCase):
