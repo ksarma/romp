@@ -5,10 +5,15 @@ A documented command, not a test (round 12 of fork PR #778, tests-2, extra8-1, e
 every heading of the documentation as GitHub does, and the only thing that can say whether its reading of CommonMark's
 emphasis rules is right is a renderer. This recipe runs one: for every heading corpus_headings() derives (every ATX heading
 of the anchor pin's population and of plans/) and every shape battery() generates, node renders `## <heading>` with the marked
-in vscode-extension/node_modules (12.0.2 at this writing; the version is read from its package.json and recorded), and the
-h element's inner HTML, its tags removed and its entities decoded, is the text content GitHub's anchor filter slugs. The
-slug is github-slugger's: lowercased, everything but letters, numbers, marks, spaces, hyphens and underscores removed,
-spaces to hyphens. GitHub itself renders with cmark-gfm rather than marked, replaces an emoji shortcode before it slugs,
+in vscode-extension/node_modules (12.0.2 at this writing; the version is read from its package.json and recorded) and hands
+back the h element's inner HTML; its tags removed and then every character reference decoded (Python's html.unescape, which
+knows the whole HTML5 named set, as cmark-gfm's entity table does, and the numeric forms), it is the text content GitHub's
+anchor filter slugs. The slug is github-slugger's: lowercased, everything but letters, numbers, marks, spaces, hyphens and
+underscores removed, spaces to hyphens, letters, numbers and marks being Unicode's L, N and M categories (read from
+unicodedata). The first table's node program decoded five names (amp, lt, gt, quot, apos) beside the numeric forms and left
+any other name encoded, so its name entered the slug (`&copy; sign` gave copy-sign where the renderer's text is a copyright
+sign and a word, slugged -sign); the third round-12 fix-up moved the decode and the slug to Python and put two such shapes
+in the battery. GitHub itself renders with cmark-gfm rather than marked, replaces an emoji shortcode before it slugs,
 numbers a repeated slug and prefixes the id with user-content-; the module docstring says how each bears on the check.
 
 The result is written to tests/fixtures/docs_anchor_slugs.json, one row per heading text, sorted, and
@@ -17,11 +22,14 @@ node_modules). Run it when a heading is added or changed in the corpus, when bat
 moves marked: `python3 tests/docs-anchors-oracle.py` rewrites the table; `--check` rewrites nothing and exits 1 naming
 the rows that would change. Without node, or without marked under vscode-extension/node_modules (`npm ci` there
 installs it), it exits 2 saying so; it never skips."""
+import html
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
+import unicodedata
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -34,28 +42,33 @@ ORACLE_JS = r"""
 const { marked } = require(process.env.ROMP_MARKED);
 const fs = require('fs');
 const headings = JSON.parse(fs.readFileSync(0, 'utf8'));
-const ENT = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
-function decode(s) {
-  return s.replace(/&(#x([0-9a-f]+)|#([0-9]+)|([a-z]+));/gi, (m, _a, hex, dec, name) => {
-    if (hex) return String.fromCodePoint(parseInt(hex, 16));
-    if (dec) return String.fromCodePoint(parseInt(dec, 10));
-    if (name in ENT) return ENT[name];
-    return m;
-  });
-}
-// github-slugger: lowercase, drop everything but letters, numbers, marks, spaces, hyphens and underscores, spaces to hyphens
-function slug(text) {
-  return text.toLowerCase().replace(/[^\p{L}\p{N}\p{M} _-]/gu, '').replace(/ /g, '-');
-}
+// the h element's inner HTML, as marked wrote it: text_content and github_slug below do the rest in Python
 const out = [];
 for (const h of headings) {
   const html = marked.parse('## ' + h, { gfm: true, async: false });
   const m = /^<h2(?:[^>]*)>([\s\S]*)<\/h2>\s*$/.exec(html);
-  if (!m) { out.push([h, null, html]); continue; }
-  out.push([h, slug(decode(m[1].replace(/<[^>]*>/g, '')))]);
+  out.push(m ? [h, m[1]] : [h, null, html]);
 }
 process.stdout.write(JSON.stringify(out));
 """
+
+_TAG = re.compile(r"<[^>]*>")
+
+
+def text_content(inner_html):
+    """The h element's text content, which GitHub's anchor filter slugs: the tags gone, then every character reference decoded,
+    named or numeric. The tags go first, as a browser's textContent has it: a `&lt;tag&gt;` in the text is text, not a tag.
+    html.unescape knows every HTML5 named reference (html.entities.html5), as cmark-gfm does; the node program this replaces
+    (the first table's) knew five names and left any other's text in the slug."""
+    return html.unescape(_TAG.sub("", inner_html))
+
+
+def github_slug(text):
+    """github-slugger's rule: lowercased, everything but letters, numbers, marks, spaces, hyphens and underscores removed, spaces
+    to hyphens. Letters, numbers and marks are Unicode's L, N and M categories, the node program's \\p{L}\\p{N}\\p{M}, read from
+    unicodedata; a no-break space (`&nbsp;` decoded) is none of them and goes."""
+    kept = "".join(ch for ch in text.lower() if ch in " _-" or unicodedata.category(ch)[0] in "LNM")
+    return kept.replace(" ", "-")
 
 
 def marked_version():
@@ -69,10 +82,10 @@ def render(headings, node):
     if r.returncode != 0:
         sys.exit("node failed:\n" + r.stderr)
     rows = json.loads(r.stdout)
-    bad = [(h, html) for h, s, *html in rows if s is None]
+    bad = [(h, rendered) for h, inner, *rendered in rows if inner is None]
     if bad:
         sys.exit("marked rendered no heading for:\n" + "\n".join("  %r -> %r" % b for b in bad))
-    return [[h, s] for h, s, *_ in rows]
+    return [[h, github_slug(text_content(inner))] for h, inner, *_ in rows]
 
 
 def derive(node):

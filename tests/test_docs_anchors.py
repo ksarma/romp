@@ -22,15 +22,23 @@ is every ATX heading of that population and of every tracked markdown file under
 grammar of emphasis runs generates (both delimiters, one to three on each side, seven contents, three surroundings) plus
 the pairing and flanking shapes CommonMark's own examples name, and tests/fixtures/docs_anchor_slugs.json holds, for each,
 the slug the renderer gives it: marked 12.0.2, the extension's, run by tests/docs-anchors-oracle.py, which renders the
-heading, takes the h element's text content as GitHub's anchor filter does and slugs it by github-slugger's rule. The
-test below fails on a heading with no row, a row with no heading, and any disagreement, naming each; CI's Python job has
-no node and no marked (the extension job alone installs vscode-extension/node_modules), so the table is the oracle there,
-and the recipe refuses to run without them rather than skipping; CI's extension job, which has both, runs its --check (a pin below reads the step). Round 11 checked seventeen headings somebody chose and
-an underscore arm that stripped unbalanced runs CommonMark leaves literal, admitted one intraword underscore inside a span
-and read no whitespace flanking; over the derived corpus that arm agreed on every real heading (none carries such a
-shape) and disagreed on 123 of the battery's 457 shapes, 111 underscore runs and 12 whitespace-flanked asterisk runs; the
-slugger below disagreed on none of the 987 rows at the round-12 commit, before the merge of main (the table's corpus field
-names the counts at this head). What GitHub does that the oracle does not: it renders with cmark-gfm,
+heading, takes the h element's text content as GitHub's anchor filter does (the tags gone, then every character reference
+decoded by html.unescape, the whole HTML5 named set as cmark-gfm decodes it; the first table's node program knew five names,
+amp, lt, gt, quot and apos, and left any other's name in the slug, so the battery carries a `&copy;` and a `&nbsp;` since
+the third round-12 fix-up) and slugs it by github-slugger's rule. The test below fails on a heading with no row, a row with
+no heading, and any disagreement, naming each; CI's Python job has no node and no marked (the extension job alone installs
+vscode-extension/node_modules), so the table is the oracle there, and the recipe refuses to run without them rather than
+skipping; CI's extension job, which has both, runs its --check whether or not the test steps before it passed (a pin below
+reads the step and its condition). Round 11 checked seventeen headings somebody chose and an underscore arm that stripped
+unbalanced runs CommonMark leaves literal, admitted one intraword underscore inside a span and read no whitespace flanking;
+over the derived corpus that arm agreed on every real heading (none carries such a shape, at the round-12 commit and at the
+third fix-up's head) and disagreed on 123 of the battery's 457 shapes at the round-12 commit: 110 carrying an underscore,
+10 an asterisk run with whitespace, or an end of the text, on both sides and 3 neither (a kbd tag, an ampersand entity, lt and
+gt entities beside a numeric one), a class the round-12 sentence did not name, that arm dropping no tag and decoding no entity; the third fix-up's
+two entity shapes fall in that class, 125 of 459, and RoundEleven below recomputes the split from the table and the round-11
+slugger, kept here for it (the round-12 sentence had 111 and 12, remembered, not derived). The slugger below disagreed on
+none of the 987 rows at the round-12 commit, before the merge of main, and on none of the 991 at the third fix-up (the
+table's corpus field names the counts at this head). What GitHub does that the oracle does not: it renders with cmark-gfm,
 which agrees with marked on everything the corpus and the battery hold; it replaces an emoji shortcode (`:name:`) before
 it slugs, so one contributes nothing where this module keeps the name (no heading here carries one); and it prefixes the
 id with user-content- and resolves the bare anchor by script, which the link never sees. Letters and digits here are
@@ -236,7 +244,9 @@ def corpus_headings():
 
 # the shapes CommonMark's emphasis section names, beside the generated grid: pairing across a foreign run, the rule of three,
 # strong inside em and em inside strong, delimiters beside punctuation, intraword runs of each character, runs alone, escapes,
-# code spans holding delimiters, a tag, entities, an autolink, strikethrough, non-Latin text
+# code spans holding delimiters, a tag, entities, an autolink, strikethrough, non-Latin text; and, since the third round-12
+# fix-up, a named character reference outside the five the first oracle decoded and a no-break space reference, which the
+# renderer decodes to a sign and a space its slug then drops
 _BATTERY_SHAPES = (
     "*a _b* c_", "_a *b_ c*", "**a *b** c*", "*a **b* c**", "***a** b*", "*a **b*** c", "**a *b*** c", 'a*"foo"*', "*(*foo*)*",
     "_(_foo_)_", "foo-_(bar)_", "_foo_bar_baz_", "*foo*bar", "_foo_bar", "__foo, __bar__, baz__", "*foo**bar**baz*", "***foo** bar*",
@@ -248,7 +258,7 @@ _BATTERY_SHAPES = (
     "* *", "_ _", "*_*", "_*_", "*__*", "_**_", "**_a_**", "__*a*__", "***a***", "___a___", "**a**b", "__a__b", "a**b**", "a__b__",
     "*a **b** c*", "_a __b__ c_", "**bold** and __strong__ and *em* and _em_", "ROMP_STATE_DIR and ROMP_SERVICE_NO_LOAD",
     "x _y_z_ w", "`code_with_underscores` and `*stars*`", "[a _link_ text](x.md) and ![img](y.png)", "a_ _b", "foo_bar_ baz",
-    "2*3*4", "2 * 3 * 4")
+    "2*3*4", "2 * 3 * 4", "&copy; sign", "a&nbsp;b")
 
 
 def battery():
@@ -270,6 +280,24 @@ def battery():
 def _table():
     with open(TABLE, encoding="utf-8") as f:
         return json.load(f)
+
+
+# the round-11 slugger of fork PR #778, its five substitutions and its rule verbatim, kept for RoundEleven below, which recomputes
+# the figure the module docstring and the ledger state for it: it read a code span, an image, a link, an asterisk run pair and an
+# underscore pair with no word character on either side, and nothing else (no tag, no entity, no flanking, no pairing)
+_ROUND11_INLINE = [(re.compile(r"`([^`]*)`"), r"\1"),
+                   (re.compile(r"!\[[^\]]*\]\([^)]*\)"), ""),
+                   (re.compile(r"\[([^\]]*)\]\([^)]*\)"), r"\1"),
+                   (re.compile(r"\*{1,3}([^*]+)\*{1,3}"), r"\1"),
+                   (re.compile(r"(?<!\w)_{1,3}([^_](?:[^_]|(?<=[^\W_])_(?=[^\W_]))*)_{1,3}(?!\w)"), r"\1")]
+_WS_ASTERISK = re.compile(r"(?:^|\s)\*+(?:\s|$)")
+
+
+def _round11_slug(heading):
+    text = heading
+    for pat, rep in _ROUND11_INLINE:
+        text = pat.sub(rep, text)
+    return _KEEP.sub("", text.strip().lower()).replace(" ", "-")
 
 
 class InPageAnchors(unittest.TestCase):
@@ -343,6 +371,46 @@ class AgainstTheRenderer(unittest.TestCase):
         self.assertIsNotNone(check, "the extension job runs no `python tests/docs-anchors-oracle.py --check` step: in CI the table is never "
                                     "held to the renderer, so a table edited to agree with a wrong slugger passes")
         self.assertGreater(check.start(), install, "the recipe needs the extension's marked: the --check step must follow npm ci")
+        # third round-12 fix-up: the step checks a committed table against the renderer, a subject none of the test steps before it
+        # (the served-page pytest is the job's long phase and goes red for reasons of its own) bears on, so it runs after a red one
+        # too and one run reports both; its condition names only cancellation and the install's outcome (the id below), since
+        # without marked the recipe can only say to run npm ci. A text pin over the workflow, the weaker guarantee: nothing here runs
+        # Actions, so what it holds is that the step's condition reads no other step's result
+        blocks = re.split(r"^      - ", steps, flags=re.M)
+        step = [b for b in blocks if "tests/docs-anchors-oracle.py --check" in b]
+        deps = [b for b in blocks if "run: npm ci" in b]
+        self.assertEqual((len(step), len(deps)), (1, 1), "the --check step and the npm ci step must each be one step of the job")
+        cond = re.search(r"^\s+if: (.*?)\s*$", step[0], re.M)
+        self.assertIsNotNone(cond, "the --check step has no if: and so is skipped whenever a test step before it fails, though its "
+                                   "subject, the committed table against the renderer, is independent of theirs")
+        self.assertEqual(cond.group(1), "${{ !cancelled() && steps.deps.outcome == 'success' }}",
+                         "the --check step's condition must name only cancellation and the install's outcome, no other step's result")
+        self.assertRegex(deps[0], re.compile(r"^\s+id: deps\s*$", re.M), "the npm ci step carries no `id: deps` for the --check step's condition to read")
+
+
+class RoundEleven(unittest.TestCase):
+    """The figure the module docstring and the ledger's round-12 paragraph state for round 11's arm is derived, not remembered (third
+    round-12 fix-up of fork PR #778): the round-12 commit wrote the split of its 123 battery disagreements as 111 underscore runs
+    and 12 whitespace-flanked asterisk runs, where the derivation over the table gives 110, 10 and 3 with neither, a class the
+    sentence did not name (a tag and entities, which that arm neither dropped nor decoded). The classes are predicates over the
+    shape's text, in this order: it carries an underscore; else an asterisk run with whitespace or an end on both sides; else
+    neither. The battery is the fixed grammar and list above, so the counts move only when it does, and this message says so."""
+
+    def test_the_round_eleven_slugger_disagrees_with_the_table_on_the_derived_split(self):
+        want = dict(_table()["rows"])
+        shapes = battery()
+        self.assertEqual([b for b in shapes if b not in want], [], "a battery shape has no row: regenerate the table (%s)" % REGENERATE)
+        disagree = [h for h in shapes if _round11_slug(h) != want[h]]
+        underscore = [h for h in disagree if "_" in h]
+        asterisk = [h for h in disagree if "_" not in h and _WS_ASTERISK.search(h)]
+        neither = [h for h in disagree if "_" not in h and not _WS_ASTERISK.search(h)]
+        self.assertGreater(len(disagree), 0, "round 11's arm agrees with the renderer on every battery shape: the slugger kept here is not its")
+        self.assertEqual([h for h in neither if "<" not in h and "&" not in h], [],
+                         "the third class is what round 11 neither dropped nor decoded, a tag or an entity, and holds something else")
+        self.assertEqual((len(disagree), len(underscore), len(asterisk), len(neither)), (125, 110, 10, 5),
+                         "the round-11 figure (disagreements over the battery; with an underscore; with a whitespace-flanked asterisk run; "
+                         "neither) moved: restate it in this module's docstring and the ledger's round-12 paragraph with its vintage. "
+                         "The third class now: %r" % (neither,))
 
 
 class Slugs(unittest.TestCase):
@@ -365,6 +433,10 @@ class Slugs(unittest.TestCase):
         self.assertEqual(slug("_a__b_"), "a__b")
         self.assertEqual(slug("`_a_` and `*b*`"), "_a_-and-b")
         self.assertEqual(slug("[a _link_ text](x.md) and ![img](y.png)"), "a-link-text-and-")
+        # third round-12 fix-up: a named reference outside amp, lt, gt, quot and apos decodes as cmark-gfm decodes it, to a sign
+        # the slug drops (the space before the word stays, as a hyphen), and a no-break space reference to a space the slug drops
+        self.assertEqual(slug("&copy; sign"), "-sign")
+        self.assertEqual(slug("a&nbsp;b"), "ab")
 
     def test_a_correct_link_to_a_heading_with_two_underscores_resolves(self):
         # round 11 of fork PR #778 (correctness-1): the round-10 stripper read the heading's `_STATE_` and `_SERVICE_` as

@@ -279,6 +279,7 @@ jobs:
           # directory was renamed to vscode-extension/.
           cache-dependency-path: vscode-extension/package-lock.json
       - name: Install deps
+        id: deps
         run: npm ci
       - name: Typecheck
         run: npm run typecheck
@@ -367,6 +368,13 @@ jobs:
         # recipe red on 226 rows). This is the one job with node and the extension's marked installed
         # (npm ci above), so the recipe runs HERE: it renders every corpus heading and battery shape and
         # exits 1 naming each row the renderer disagrees with, 2 when node or marked is missing, never a
-        # skip. Sub-second (0.15 s at its introduction). tests/test_docs_anchors.py reads this step.
+        # skip. Sub-second (0.15 s at its introduction). Its subject, the committed table against the
+        # renderer, is independent of every test step before it, and the served-page pytest above is
+        # the job's long phase and goes red for reasons of its own, so this runs after a red step too
+        # and one run reports both, as the tree scan does after the history scan: !cancelled() rather
+        # than always(), which would also fire on the job's cancellation, and only when npm ci (id
+        # deps) succeeded, since without marked the recipe can only say to run npm ci.
+        # tests/test_docs_anchors.py reads this step and its condition.
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         working-directory: ${{ github.workspace }}
         run: python tests/docs-anchors-oracle.py --check
