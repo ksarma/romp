@@ -1366,7 +1366,13 @@ class JournalReads(unittest.TestCase):
 
     def test_a_foreign_entry_with_no_row_to_file_raises_out_of_the_reader(self):
         """`refused` None: a caller with no row to file gets the refusal itself, never a silent skip (the repo's rule that
-        an unavailable authoritative source surfaces an error). Both the listing and the reader."""
+        an unavailable authoritative source surfaces an error). The listing, the reader, the tail check, AND THE REPLAY
+        TRANSPORT built without `on_refused` (the review fix-up of this PR, on the drives verifier's finding: through
+        the PR's first commit HostTransport._read_journal swallowed the refusal when the callback was None, so a peer's
+        segment beside ours ended the stream replay-end with nothing raised, nothing filed and none of our records
+        replayed, the listing having raised before the first record). RED BEFORE at the PR's first commit, the
+        transport arm: `HostFileForeign not raised`, the stream ended with exit cause replay-end and the initialize's
+        answer alone. Now read_messages raises the refusal out of its read loop and the stream has no exit."""
         root = self._root()
         sdir = self._sid_dir(root)
         write_segment(sdir / "journal-0.jsonl", 3)
@@ -1378,6 +1384,28 @@ class JournalReads(unittest.TestCase):
                 list(ht.read_journal_dir(dirs))
             with self.assertRaises(ht.HostFileForeign):
                 ht.journal_has_tail(dirs, 0)
+        self.assertEqual(fu.path_stats, 0)
+        # the replay transport with no on_refused: a peer's segment beside ours
+        root = self._root()
+        sdir = self._sid_dir(root)
+        write_segment(sdir / "journal-0.jsonl", 3)
+        write_segment(sdir / "journal-100.jsonl", 3, first=100, peer=True)
+        got = []
+
+        async def go(dirs):
+            t = ht.HostTransport.from_journal(dirs, ack=-1)
+            await t.connect()
+            try:
+                async for m in t.read_messages():
+                    got.append(m)
+            finally:
+                await t.close()
+            return t
+        with ht.open_host_dirs_if_present(root, SID) as dirs, foreign_uid(sdir / "journal-100.jsonl") as fu:
+            with self.assertRaises(ht.HostFileForeign) as cm:
+                run(go(dirs))
+        self.assertEqual((cm.exception.file, cm.exception.uid), ("journal-100.jsonl", os.geteuid() + 1))
+        self.assertEqual(got, [], "the listing raised before the first record")
         self.assertEqual(fu.path_stats, 0)
 
     def test_a_link_swapped_onto_a_segment_between_the_stat_and_the_open_is_refused_and_never_followed(self):
@@ -3732,6 +3760,37 @@ class WriteOpens(unittest.TestCase):
                         self.assertEqual(fu.path_stats, 0, "a path stat: %r" % (fu.path_stat_calls,))
                     if kind == "regular":
                         self.assertEqual((sdir / name).read_text(), "the peer's bytes", "%s: refused with its bytes intact, no truncation before the fstat" % name)
+
+    def test_a_regular_file_of_ours_at_the_name_after_a_failed_open_is_the_opens_own_errno_and_not_a_kind_refusal(self):
+        """THE RE-ASK ARM'S WORDING (the review fix-up of this PR, on the drives verifier's nit): the open answered ENXIO or
+        EISDIR (a FIFO with no reader, a socket or a directory stood at the name), and the shape question asked again by
+        name finds a REGULAR FILE of ours (a second swap inside the same call, the object the open met gone again). There
+        is no kind to name, so the open's own OSError stands with its errno, the launch error's road, and no HostDirRefused
+        is raised. RED BEFORE at the PR's first commit, both names, both errnos: the arm raised the kind refusal for any
+        entry it found, wording the regular file `is a special file, not a regular file`. The open is wrapped to answer
+        the errno once for the name under the descriptor; the file at the name is regular throughout, so the wrapper is
+        the double swap's only trace (a real one cannot be driven to land between the open and the re-stat)."""
+        import errno as _errno
+        for name in ("host.stderr", "spawn.json"):
+            for err in (_errno.ENXIO, _errno.EISDIR):
+                with self.subTest(file=name, errno=_errno.errorcode[err]):
+                    root = self._root()
+                    sdir = self._sid(root)
+                    (sdir / name).write_text("ours, regular throughout")
+                    real_open, answered = os.open, []
+
+                    def open_and_fail(path, *a, **k):
+                        if os.fspath(path) == name and k.get("dir_fd") is not None and not answered:
+                            answered.append(err)
+                            raise OSError(err, os.strerror(err), name)
+                        return real_open(path, *a, **k)
+                    with mock.patch.object(os, "open", open_and_fail):
+                        with self.assertRaises(OSError) as cm:
+                            self._open(root, name)
+                    self.assertEqual(answered, [err], "the open answered the errno once, for the name under the descriptor")
+                    self.assertNotIsInstance(cm.exception, ht.HostDirRefused, "a regular file of ours refused by kind: %s" % cm.exception)
+                    self.assertEqual(cm.exception.errno, err, "the open's own errno stands")
+                    self.assertEqual((sdir / name).read_text(), "ours, regular throughout", "nothing written, nothing truncated")
 
     def test_the_opener_truncates_only_after_the_checks_and_sets_the_mode_on_the_descriptor(self):
         """The two flags the opener rewrites: a caller's O_TRUNC is applied after the fstat (os.ftruncate on the verified

@@ -755,7 +755,9 @@ def _open_host_file_for_write(name: str, flags: int, dirs: HostDirs) -> int:
     THEN THE OPEN, by name under the same descriptor with O_NOFOLLOW (_open_file_nofollow) AND O_NONBLOCK, so a FIFO
     swapped onto the name between the stat and the open cannot block it: with no reader the open ends with ENXIO (a
     socket at the name answers ENXIO too), which asks the shape question once more by name (a peer's entry is its row,
-    ours is the kind refusal) instead of standing as a bare errno; with a reader the open returns a descriptor the
+    a non-regular entry of ours is the kind refusal) instead of standing as a bare errno; no entry, or a regular file
+    of ours, by then means the object the open met is gone again, and the open's own errno stands, since there is no
+    kind to name; with a reader the open returns a descriptor the
     fstat below refuses. THEN THE FSTAT OF THE DESCRIPTOR, the authoritative check since the entry can change between
     the stat and the open, deciding the same way (another uid's, HostFileForeign, closed unwritten; not a regular file,
     the kind refusal, closed unwritten). A caller's O_TRUNC is taken off the open and applied AFTER these checks
@@ -785,9 +787,12 @@ def _open_host_file_for_write(name: str, flags: int, dirs: HostDirs) -> int:
         fd = _open_file_nofollow(name, (flags & ~os.O_TRUNC) | os.O_NONBLOCK, dirs)
     except OSError as e:
         if e.errno in (errno.ENXIO, errno.EISDIR):  # a FIFO with no reader, a socket or a directory swapped onto the name since the stat
-            st = _stat_name(name, dirs)             # a peer's: HostFileForeign out of here; ours: the kind
-            if st is not None:
+            st = _stat_name(name, dirs)             # a peer's: HostFileForeign out of here; a non-regular entry of ours: the kind
+            if st is not None and not stat.S_ISREG(st.st_mode):
                 raise _not_regular(name, dirs, st.st_mode) from None
+            # no entry, or a regular file of ours, by now: the object the open met is gone again and there is no kind
+            # to name, so the open's own errno stands (the review fix-up of this PR, on the drives verifier's nit:
+            # through the PR's first commit this arm named a regular file of ours a special file)
         raise
     try:
         st = os.fstat(fd)
@@ -1361,7 +1366,8 @@ class HostTransport(_Base):
     @classmethod
     def from_journal(cls, dirs, ack=sh.ACK_NONE, **kw):
         """The replay transport over the orphan journal under `dirs`, the HostDirs the caller's read descent holds
-        (host_transport.open_host_dirs_if_present); `on_refused` in `kw` takes the reader's refusals (read_journal_dir).
+        (host_transport.open_host_dirs_if_present); `on_refused` in `kw` takes the reader's refusals (read_journal_dir);
+        with none given a refusal is raised out of read_messages, never a silent end of the stream (_read_journal).
         The caller keeps the descriptor open through the replay and closes it after."""
         return cls(None, ack=ack, journal_dirs=dirs, **kw)
 
@@ -1644,7 +1650,11 @@ class HostTransport(_Base):
         # file a peer planted under a loose <sid>/ of ours was replayed with no owner check. Now a peer's file is its
         # row (on_refused, the kernel's) and skipped, and a link of ours at a segment or at gaps.json ends the replay
         # after the row: the stream then ends as it does at the journal's end (the Query's initialize answered below,
-        # then the replay-end exit), never a raise out of the read loop for a shape at a name.
+        # then the replay-end exit), never a raise out of the read loop for a shape at a name. WITH NO on_refused the
+        # refusal is RAISED out of the read loop instead, as read_journal_dir raises with `refused` None: a caller with
+        # no row to file gets the refusal, never a silent end (the review fix-up of this PR, on the drives verifier's
+        # finding: through the PR's first commit this arm swallowed it, and a foreign segment beside ours ended the
+        # stream replay-end with none of our records replayed, since the listing raises before the first record).
         try:
             for off, rec in read_journal_dir(self.journal_dirs, self.ack_offset + 1, self.on_refused):
                 self.ack_offset = off
@@ -1659,8 +1669,9 @@ class HostTransport(_Base):
                         return
                     yield item
         except HostDirRefused as e:                          # a link of ours at a segment or at gaps.json: the rest is not replayed
-            if self.on_refused:
-                self.on_refused(e)
+            if self.on_refused is None:                      # no row to file: the refusal itself, out of read_messages
+                raise
+            self.on_refused(e)
         # the Query writes its initialize right after start(); answer it before ending the stream (the SDK
         # treats the end as the CLI's exit), bounded so a client that never asks still ends
         deadline = time.time() + 5.0
