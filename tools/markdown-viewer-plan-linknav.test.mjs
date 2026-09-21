@@ -551,15 +551,23 @@ const codeLines = (src) => {
   return out.join('\n');
 };
 /** Why a leg's code is not routed through the shared helper, or null: it imports inBrowser from real-viewer-leg.ts in an import
- *  statement at a line's start, and calls launch on nothing, under any access spelling (a property access, an optional chain, a
- *  bracket holding a string literal) followed by a call. A launch reached through a name computed at run time
- *  (`pw.chromium["la" + "unch"]()`) is outside this read; a `launch` key in an object is no call and passes. The helper is the
- *  road a browser-legs roster's switch reaches (ci-browser-legs.txt's header names it), so a leg with a launch of its own would
+ *  statement at a line's start, calls launch on nothing, and stands itself down nowhere. A launch under any access spelling (a
+ *  property access, an optional chain, a bracket holding a string literal) followed by a call is refused; a launch reached
+ *  through a name computed at run time (`pw.chromium["la" + "unch"]()`) is outside this read, and a `launch` key in an object is
+ *  no call and passes. A stand-down is the pair's other half (the file review's round 10, tests-2: the guard had refused the
+ *  launch alone): a `skip` or `todo` call under the same spellings, or a `skip:` or `todo:` option (node:test's
+ *  `test(name, { skip }, fn)` form), which defeats a roster's switch as a private launch does, since the switch turns the shared
+ *  helper's launch skip into a failure and a leg that skips itself never reaches it; the convention's road for a leg that must
+ *  not run is the exclusions file, not a private skip. The bound of the read: strings are not stripped, so `skip:` inside a
+ *  message reds too, the safe side, and a computed name is outside it as for launch. The helper is the road a browser-legs
+ *  roster's switch reaches (ci-browser-legs.txt's header names it), so a leg with a launch or a stand-down of its own would
  *  skip under such a step as it does without one. */
 const offRoute = (code) => {
   if (!/^import \{[^}]*\binBrowser\b[^}]*\} from "\.\/real-viewer-leg";/m.test(code)) return 'no import of inBrowser from real-viewer-leg.ts at a line\'s start';
-  const m = /(?:\.|\?\.)\s*launch\s*\(|\[\s*(["'`])launch\1\s*\]\s*\(/.exec(code);
-  return m ? 'a launch outside the helper: ' + m[0] : null;
+  const launch = /(?:\.|\?\.)\s*launch\s*\(|\[\s*(["'`])launch\1\s*\]\s*\(/.exec(code);
+  if (launch) return 'a launch outside the helper: ' + launch[0];
+  const standDown = /(?:\.|\?\.)\s*(?:skip|todo)\s*\(|\[\s*(["'`])(?:skip|todo)\1\s*\]\s*\(|\b(?:skip|todo)\s*:/.exec(code);
+  return standDown ? 'a stand-down outside the helper: ' + standDown[0] : null;
 };
 /** The browser legs among `files` (paths from the repo root, the delta's) that `legs` (the derived legs, basenames) does not hold:
  *  a leg the branch touched that names no follow-on, so no derivation above reaches it and no record names it. */
@@ -692,7 +700,7 @@ const DISCLOSURE_CLAUSES = [
   ['a change of its own that this branch does not carry', 'that the roster is not this branch\'s to add'],
 ];
 
-test('the follow-on\'s browser legs and the job that gates a landing, a two-state pin over the shared convention: the legs are derived by name from the tree (the -browser.test.ts modules whose own text names the follow-on; the property-keyed definition of a browser leg is PR 887\'s compiler census, once it lands) and each launches through real-viewer-leg.ts\'s inBrowser, the helper a roster\'s switch reaches, read comment-stripped under any launch spelling; where the tree carries the roster, the exclusions, the step directly after the Chromium install in the vscode-extension job and the helper\'s switch (state A) every leg is a roster line and no exclusions line and the roster\'s tree test exists, and the Tests paragraph no longer says none of their browser scenarios runs where landing is gated; where it carries none of the four (state B) the Tests paragraph discloses that the legs skip in the gating job\'s Test step, what gates the follow-on there and the roster by name as the road, with no count of the legs in any wording; a tree with some of the four is refused, naming them; behind L6\'s gate every browser leg the delta adds or modifies is among the derived legs', (t) => {
+test('the follow-on\'s browser legs and the job that gates a landing, a two-state pin over the shared convention: the legs are derived by name from the tree (the -browser.test.ts modules whose own text names the follow-on; the property-keyed definition of a browser leg is PR 887\'s compiler census, once it lands) and each launches through real-viewer-leg.ts\'s inBrowser, the helper a roster\'s switch reaches, read comment-stripped under any launch spelling, with no launch and no stand-down (a skip or todo call or option) of its own; where the tree carries the roster, the exclusions, the step directly after the Chromium install in the vscode-extension job and the helper\'s switch (state A) every leg is a roster line and no exclusions line and the roster\'s tree test exists, and the Tests paragraph no longer says none of their browser scenarios runs where landing is gated; where it carries none of the four (state B) the Tests paragraph discloses that the legs skip in the gating job\'s Test step, what gates the follow-on there and the roster by name as the road, with no count of the legs in any wording; a tree with some of the four is refused, naming them; behind L6\'s gate every browser leg the delta adds or modifies is among the derived legs', (t) => {
   const legs = browserLegs();
   assert.ok(legs.length > 0, 'browser legs naming the follow-on are on disk');
   const tests = section.slice(section.indexOf('**Tests.**'));
@@ -707,7 +715,16 @@ test('the follow-on\'s browser legs and the job that gates a landing, a two-stat
     assert.equal(offRoute(codeLines('import { inBrowser } from "./real-viewer-leg";\n' + spelling + '\n')), 'a launch outside the helper: ' + want, 'a private launch is refused under the spelling ' + spelling);
   }
   assert.equal(offRoute(codeLines('import { inBrowser } from "./real-viewer-leg";\nconst b = 1; // pw.chromium.launch()\n')), 'a launch outside the helper: .launch(', 'a launch quoted in a comment after code reds too: the stripper reads line shapes, and this is its safe side');
-  for (const f of legs) assert.equal(offRoute(codeLines(read('ui', 'webview', f))), null, f + ' launches through the helper alone: it imports inBrowser from real-viewer-leg.ts at a line\'s start and calls launch on nothing (a private launch would skip under a roster\'s switch)');
+  // the pair's other half: a stand-down of the leg's own, under the launch spellings and node:test's option form (the file review's
+  // round 10, tests-2)
+  for (const [spelling, want] of [['test("y", (t) => { t.skip("no browser here"); });', '.skip('], ['t?.skip("no browser here");', '?.skip('], ['t["skip"]("no browser here");', '["skip"]('], ["t['todo']('later');", "['todo']("], ['test.todo("later");', '.todo('], ['test("y", { skip: !pw }, () => {});', 'skip:'], ['test("y", { todo: true }, () => {});', 'todo:']]) {
+    assert.equal(offRoute(codeLines('import { inBrowser } from "./real-viewer-leg";\n' + spelling + '\n')), 'a stand-down outside the helper: ' + want, 'a private stand-down is refused under the spelling ' + spelling);
+  }
+  assert.equal(offRoute(codeLines('import { inBrowser } from "./real-viewer-leg";\n// Skips LOUDLY without a playwright browser: the helper calls t.skip(...) itself\ntest("x", (t) => inBrowser(t, async () => {}));\n')), null, 'prose about skipping on a comment line is no stand-down (the stripper drops the line)');
+  assert.equal(offRoute(codeLines('import { inBrowser } from "./real-viewer-leg";\nconst why = "skipped where no browser is installed";\n')), null, 'the word skipped, and skip with neither a call nor an option colon, is no stand-down');
+  assert.equal(offRoute(codeLines('import { inBrowser } from "./real-viewer-leg";\nconst b = 1; // t.skip("x")\n')), 'a stand-down outside the helper: .skip(', 'a stand-down quoted in a comment after code reds too, the stripper\'s safe side');
+  assert.equal(offRoute(codeLines('import { inBrowser } from "./real-viewer-leg";\nconst b = await pw.chromium.launch();\nt.skip("x");\n')), 'a launch outside the helper: .launch(', 'a leg with both halves is refused for the launch first');
+  for (const f of legs) assert.equal(offRoute(codeLines(read('ui', 'webview', f))), null, f + ' launches through the helper alone: it imports inBrowser from real-viewer-leg.ts at a line\'s start, calls launch on nothing and stands itself down nowhere (a private launch, skip or todo would skip under a roster\'s switch)');
   // the step's state, driven on synthetic workflows before the tree's is read
   const job = (name, steps) => '  ' + name + ':\n    steps:\n' + steps.map(([n, run]) => '      - name: ' + n + '\n' + (run ? '        run: ' + run + '\n' : '')).join('');
   const wf = (steps, ...more) => 'jobs:\n' + job(JOB, steps) + more.map(([name, steps]) => job(name, steps)).join('');
