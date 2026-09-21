@@ -55462,6 +55462,20 @@ def _watched_flag(declared, sid, clients):
     return (declared and sid not in withheld) or sid in recs
 
 
+def _watched_set(declared, clients):
+    """_push's set of watched tabs, derived from the project's `declared` set (the tabs `clients` declare active): the
+    project's set itself while no client carries the parked-reveal preference's record, else that set minus the
+    declarations the records replaced plus the records (_watched_records), which is what {_watched_tab(c) for c in clients}
+    computes when `declared` is the unfiltered declaration set (tests/test_chat_skeleton_reconnect.py test_12i checks the
+    two over every configuration of three clients). The project's line stays live and consumed: a filter it gains upstream
+    reaches build_order and the cold-tab gate (test_12j mutates it in a scratch copy and the result moves). [fork] pass 8
+    (the author's label, 2026-09-21, taking the reviewer's round-6 finding regression-4)."""
+    recs, withheld = _watched_records(clients)
+    if not recs:
+        return declared
+    return (set(declared) - withheld) | recs
+
+
 def _send_tab_order(c, tab_order, tab_meta, live):
     """The tab strip to one client through the pusher's ("taborder",) dedup slot — built AND enqueued under the
     client's slot lock so the frame's skeleton list and its queue position agree with every release, which
@@ -61307,7 +61321,7 @@ def _push(targets, connect=False, live_map=None):
                 if redialed:                             # the redial's first strip stands in for the ready it never posts:
                     _consume_pending_reveal(c, why="the pane's redial")   # a reveal parked for its window lands behind the strip
             active = {c.get("active") for c in chat_clients if c.get("active")}
-            active = {_watched_tab(c) for c in chat_clients if _watched_tab(c)}   # [fork] pass 7 (kernel-1): the parked-reveal preference's served session in the hint's place (_watched_tab); build_order and the gate read this set, the project's line above stands
+            active = _watched_set(active, chat_clients)   # [fork] pass 7 (kernel-1), derived since pass 8 (the author's label, 2026-09-21, taking the reviewer's round-6 finding regression-4): the project's set above, consumed as is while no client carries the parked-reveal preference's record, and with one standing the record in the declaration's place; build_order and the gate read this set, and an upstream edit to the line above reaches them instead of being recomputed away
             # Stable: active tabs first — and TRANSCRIPT-LESS sessions with them. A just-created session
             # has no transcript, so its build is near-free, and its creator is guaranteed to be staring
             # at its placeholder — yet the active-first hint can never name it: a client cannot declare
@@ -61336,7 +61350,7 @@ def _push(targets, connect=False, live_map=None):
             _live_scope.chat_floor0 = _chat_floor0_of(_all_chat)
             _all_active = {c.get("active") for c in _all_chat if c.get("active")}   # every connected column's watched tab,
             #                                                                          not this push's targets alone (round two, low 2)
-            _all_active = {_watched_tab(c) for c in _all_chat if _watched_tab(c)}   # [fork] pass 7 (kernel-1): the same read over every connected column, the preference's served session in the hint's place
+            _all_active = _watched_set(_all_active, _all_chat)   # [fork] pass 7 (kernel-1), derived since pass 8 (regression-4): the same derivation over every connected column's declared set, the project's two lines above consumed (this pair merges clean on a fold, the project's continuation comment standing between: the pair with the silent-discard hazard the derivation closes)
             _chat_sig_bump(pushes=1)                     # memos.chatSig.pushes: a push that runs the chat tab loop, the table's per-push denominator
             _sig_tabs = []                               # memos.chatSig: the per-tab rows the warm-tab census folds after the loop (_chat_sig_note_census)
             for s in build_order:

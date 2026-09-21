@@ -1246,6 +1246,120 @@ class SkeletonReconnect(unittest.TestCase):
                 finally:
                     km._PENDING_REVEAL.clear()
 
+    def test_12i_the_watched_set_and_flag_are_derived_from_the_projects_value(self):
+        # pass 8 (the author's label, 2026-09-21, taking the reviewer's round-6 finding regression-4 with kernel-1). The fork's two set
+        # lines in _push and the perf label's line in _push_session_now RECOMPUTED the project's value through _watched_tab, so the
+        # project's line was dead code: an upstream edit to it would merge cleanly and be discarded by the next statement. They derive
+        # from it now (_watched_set, _watched_flag over _watched_records): the project's value stands, consumed as is, while no client
+        # carries the parked-reveal preference's record; with one standing, the record joins and the declaration it replaced leaves
+        # unless a record-less client declares the same tab. Executed over the helpers here; test_12j executes it through the three
+        # functions with the project's line mutated in a scratch copy.
+        A, B, P = S1, S3, S2
+        plain, holder, peer = {"active": A}, {"active": A, "preferred": P}, {"active": B}
+        declared = {A, B}
+        self.assertIs(km._watched_set(declared, [plain, peer]), declared, "no record: the project's set is returned, the same object")
+        self.assertIs(km._watched_flag(True, A, [plain, peer]), True, "no record: the project's answer is returned")
+        self.assertIs(km._watched_flag(False, P, [plain, peer]), False)
+        filtered = {B}   # a project line that filtered `plain` out: its answer participates unchanged
+        self.assertIs(km._watched_set(filtered, [plain, peer]), filtered)
+        self.assertEqual(km._watched_set(declared, [holder, peer]), {P, B}, "a record joins; the declaration it replaced leaves")
+        self.assertEqual(km._watched_set(declared, [holder, plain, peer]), {P, A, B}, "unless a record-less client declares the same tab")
+        self.assertEqual(km._watched_set(set(), [holder]), {P}, "the disclosed residual: a client the project's line filtered out still contributes its record")
+        self.assertEqual((km._watched_flag(True, A, [holder, peer]), km._watched_flag(False, P, [holder, peer]), km._watched_flag(True, B, [holder, peer])),
+                         (False, True, True), "the withheld declaration is not watched, the record is, a peer's declaration stands")
+        self.assertIs(km._watched_flag(True, A, [holder, plain, peer]), True, "the declaration stands when a record-less client also declares it")
+        # over the project's UNFILTERED set the derivation equals the pass-7 recompute, for every configuration of three clients
+        import itertools
+        n = 0
+        for acts in itertools.product((None, A, B, P), repeat=3):
+            for prefs in itertools.product((None, P, B), repeat=3):
+                clients = [dict(kv for kv in (("active", a), ("preferred", pf)) if kv[1]) for a, pf in zip(acts, prefs)]
+                decl = {c.get("active") for c in clients if c.get("active")}
+                want = {km._watched_tab(c) for c in clients if km._watched_tab(c)}
+                self.assertEqual(set(km._watched_set(decl, clients)), want, (clients,))
+                for sid in (A, B, P):
+                    self.assertEqual(bool(km._watched_flag(sid in decl, sid, clients)), sid in want, (sid, clients))
+                n += 1
+        self.assertEqual(n, 4 ** 3 * 3 ** 3, "every configuration was checked")
+
+    def _scratch(self, fn, project_line, mutant_line):
+        """Rebind km.<fn> to a scratch copy of its source with the PROJECT's line replaced by `mutant_line`; the caller restores."""
+        src = inspect.getsource(fn)
+        self.assertEqual(src.count(project_line), 1, fn.__name__ + ": the project's line, once")
+        exec(compile(src.replace(project_line, mutant_line), km.__file__, "exec"), km.__dict__)
+
+    def test_12j_the_projects_line_participates_in_each_of_the_three_derived_readers(self):
+        # pass 8 (the author's label, 2026-09-21, taking the reviewer's round-6 finding regression-4): the pin the ruling asks for. A
+        # scratch copy of each function whose PROJECT line gains a per-client filter (`_probeMuted`) runs beside the original: the
+        # fork's result MOVES with the project's, so the project's line is live and consumed, not dead code under a recompute. Three
+        # pairs, one rule: _push's active set (build_order), _push's _all_active (the cold-tab gate), _push_session_now's perf label.
+        # Red before (the pass-7 recompute): the first two results did not move.
+        MUTE = ' and not c.get("_probeMuted")'
+        P1 = 'active = {c.get("active") for c in chat_clients if c.get("active")}'
+        P2 = '_all_active = {c.get("active") for c in _all_chat if c.get("active")}'
+        P3 = '_active = sid in {c.get("active") for c in targets if c.get("active")}'
+        for P, fn in ((P1, km._push), (P2, km._push), (P3, km._push_session_now)):
+            src = inspect.getsource(fn)
+            self.assertEqual(src.count(P), 1, P)
+            nxt = next(l for l in src[src.index(P):].split("\n")[1:] if l.strip() and not l.strip().startswith("#"))   # past the project's own continuation comment
+            self.assertIn("_watched_", nxt, fn.__name__ + ": the fork's line follows the project's line: %r" % (nxt.strip()[:80],))
+        row = {"state": "working", "since": 1781100000, "model": "", "effort": "", "mode": "", "backend": "sdk"}
+        km._live_map = lambda: {S1: dict(row), S2: dict(row)}
+        push0, now0 = km._push, km._push_session_now
+
+        def scenario1():   # the active set: a record-less client declaring web, filtered out by the mutant project line
+            del km._clients[:]
+            km._built_chat.clear()
+            del self.built[:]
+            c = self._client(active=S1, _probeMuted=True)
+            km._clients.append(c)
+            km._push([c])
+            return self._names(self.built)
+
+        def scenario2():   # _all_active: a connected column that is not a target declares web; the target watches api and both hold web as a skeleton
+            del km._clients[:]
+            km._built_chat.clear()
+            del self.built[:]
+            c1 = self._client(active=S2, skeleton={S1, S3}, skeletonOrder=[S1, S3])
+            c2 = self._client(active=S1, skeleton={S1, S3}, skeletonOrder=[S1, S3], _probeMuted=True)
+            km._clients.extend([c1, c2])
+            skip0 = km._VIEW_STATS.get("chatSkipCold", 0)
+            km._push([c1])
+            return (S1 in self.built, km._VIEW_STATS.get("chatSkipCold", 0) - skip0)
+
+        def scenario3():   # the perf label: the one connected client declares web and is filtered out by the mutant project line
+            del km._clients[:]
+            km._built_chat.clear()
+            c = self._client(active=S1, ready=True, handshake=True, proto=2, skeleton=set(), _probeMuted=True)
+            km._clients.append(c)
+            b0 = km._PERF_STATS.snapshot()["builds"]["chat"]
+            km._push_session_now(S1)
+            b1 = km._PERF_STATS.snapshot()["builds"]["chat"]
+            return (b1["active_built"] - b0["active_built"], b1["bg_miss"].get("targeted", 0) - b0["bg_miss"].get("targeted", 0))
+
+        try:
+            control1 = scenario1()
+            self.assertEqual(control1[0], "web", "control: the declared tab is built first: %r" % (control1,))
+            self._scratch(km._push, P1, P1[:-1] + MUTE + "}")
+            moved1 = scenario1()
+            km._push = push0
+            self.assertNotEqual(moved1[0], "web", "the project's set filtered the client out and the fork's active set followed (build_order moved): %r" % (moved1,))
+            control2 = scenario2()
+            self.assertEqual(control2, (True, 0), "control: web is a watched tab of a connected column, so the gate builds it: %r" % (control2,))
+            self._scratch(km._push, P2, P2[:-1] + MUTE + "}")
+            moved2 = scenario2()
+            km._push = push0
+            self.assertEqual(moved2, (False, 1), "the project's set filtered the column out and the fork's _all_active followed (the gate skipped web): %r" % (moved2,))
+            control3 = scenario3()
+            self.assertEqual(control3, (1, 0), "control: the declared tab's targeted build lands in active_built: %r" % (control3,))
+            self._scratch(km._push_session_now, P3, P3[:-1] + MUTE + "}")
+            moved3 = scenario3()
+            km._push_session_now = now0
+            self.assertEqual(moved3, (0, 1), "the project's answer filtered the client out and the fork's label followed (targeted, background): %r" % (moved3,))
+        finally:
+            km._push, km._push_session_now = push0, now0
+            del km._clients[:]
+
 
 
 class RestartDiet(unittest.TestCase):
