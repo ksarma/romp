@@ -17,7 +17,9 @@ thread-confined scope (_subagent_scope_open in _pusher_cycle and _jobs_cycle, cl
 first reader of a tree in the cycle validates or walks it and holds the (directories, stats) pair and each directory's
 stamp; every later reader on that thread in the cycle, the agent-file lookup's stamp re-check included, pays no stat;
 and the agents' launch folds are held for the cycle too (_awaiting_nest). A change on disk after the validation is
-seen by the NEXT cycle's first reader, one cycle later at most. Nothing failed is held.
+seen by the NEXT cycle's first reader, one cycle later at most. Nothing failed is held for the cycle; a launch fold that
+did not read the file is held for the CALL that observed the fault alone (two lifetimes, round 2 of #882: returned without
+any hold it was folded once per owner lookup, A x (A - 1) times per read where the parent's call-local memo folded A).
 
 Pinned here, through the REAL cycle functions so the clearing point tested is the wired one: (1) the bound: one pusher
 cycle and one jobs pass with three _session_awaiting calls each cost D os.lstat on the tree's directories (the one
@@ -31,9 +33,11 @@ threads: a pusher cycle and a jobs pass running at once each validate once with 
 by the other's; (4) the guards, each against the input it refuses and the input it accepts: a forget that evicts the
 root makes the next read in the same scope walk again while a forget that evicts nothing leaves the scope serving; a
 stamp stat that raises is answered (dir, None) and not held while one that succeeds is held; a walk with a failed
-listing is not held while a clean one is; a launch fold that did not read the file is not held while one that read it is;
-a root gone mid-cycle whose entry stood moves the gen, so a sibling tree the scope held is validated again, while one
-with no entry moves nothing and leaves it served.
+listing is not held while a clean one is; a launch fold that did not read the file is folded once per read (the call-local
+hold) and again by the next read (not held for the cycle) while one that read it is held for the cycle, with the fault's
+producer driven for real (the reader's fail path, a raising fold, a readable file); a root gone mid-cycle whose entry stood
+moves the gen, so a sibling tree the scope held is validated again, while one with no entry moves nothing and leaves it
+served.
 
 Every count is derived from D and A in the test, never written out. The cycle's jobs that read the tree through
 mechanisms of their own (the fold checkpoint writer's realpath per checkpointed file, the spend guard's window-file
@@ -273,6 +277,22 @@ class _World(unittest.TestCase):
         (wf / ("agent-%s.meta.json" % aid)).write_text(json.dumps(
             {"agentType": "Workflow", "description": "tidy note %d" % i, "spawnDepth": 1, "toolUseId": "toolu_stamps_%04d" % i}))
         (wf / ("agent-%s.jsonl" % aid)).write_text("")
+
+    def _grow_to(self, n):
+        """The world grown to `n` awaiting agents (n at most D - 2): an agent's file and sidecar in each empty workflow
+        directory up to n, the tree aged, the live row extended, the memos forgotten and re-warmed OUTSIDE any scope (setUp's
+        idiom), so a read over the grown world measures the hit paths as setUp's world does."""
+        self.assertLessEqual(n, D - 2)
+        for i in range(len(self.aids), n):
+            aid = "a%016x" % (0x7c00 + i)
+            self._add_agent(self.wfroot / ("wf_%016x" % i), i, aid)
+            self.aids.append(aid); self.live_aids.append(aid)
+        _age(self.sub)
+        self._forget_memos()
+        aw = km._session_awaiting(SID, self.path, True)
+        self.assertEqual((aw or {}).get("count"), n, "the re-warm sees the %d agents: %r" % (n, aw))
+        for aid in self.aids:
+            self.assertIsNotNone(km._SUBAGENT_FILE_CACHE.get((self.path, aid), (None, None))[1], "each agent's file resolved")
 
     def _spy(self):
         return _Spy(self.dirset, self.sub)
@@ -597,49 +617,96 @@ class Guards(_World):
         self.assertEqual(self._delta(b)["miss"], 2)
         self.assertEqual(dirs3, dirs2)
 
-    def test_a_launch_fold_that_did_not_read_the_file_is_not_held_while_one_that_read_it_is(self):
-        """The scope's launches memo (_awaiting_nest): a fold whose reader took its fail path (`faults` non-empty) answers
-        set() for that lookup and leaves no entry, so the next lookup that needs it, in the same read or the next read of
-        the cycle, folds that agent's file again; a fold that read the file is held and every later read in the cycle is
-        served it. A held fault would attribute nothing to that agent for the whole cycle after one transient read failure.
-        One _session_awaiting read looks the target's launches up once per OTHER agent (each agent's owner lookup consults
-        every other agent's file), so a fault that lasts the whole first read is attempted A - 1 times in it and held never."""
-        sc = self._open()
-        target = "agent-%s.jsonl" % self.aids[0]
-        real, faulting, faked, folded = km._agent_launch_ids, [True], [], []
+    def test_a_faulted_launch_fold_is_folded_once_per_call_and_not_held_across_calls(self):
+        """Two lifetimes for a launch fold whose reader took its fail path (_awaiting_nest's `faulted`, round 2 of #882): the
+        fault is held for the CALL that observed it, so the owner lookups of one _session_awaiting read fold each agent's file
+        once (each of the A lookups consults every other agent's launches, A x (A - 1) lookups per read), and not beyond that
+        call, so the next read in the same cycle folds again and a file that became readable is seen at that read; a fold that
+        read the file is held for the cycle. Drives the REAL _agent_launch_ids through a counting wrapper, with the fault
+        produced where the reader produces it: os.stat raising EIO on every agent transcript (event_model's reader reports a
+        non-ENOENT stat through on_fail, fold_records' "fail" road). Keys on the folds per read, one per agent, at A = 3
+        (setUp's world) and A = 6 (the world grown): a fault returned without a call-local hold folded A x (A - 1) per read
+        (6 and 30); a fault held for the cycle would fold 0 on the second read and attribute nothing to those agents all cycle."""
+        real_fold, real_stat = km._agent_launch_ids, os.stat
+        folded, fault, under = [], [True], str(self.sub) + os.sep
 
-        def fold(agent_path, faults=None):
-            name = os.path.basename(str(agent_path))
-            if name == target and faulting[0]:
-                faked.append(name)                        # the reader's fail path: the answer stands for a read that did not happen
-                if faults is not None:
-                    faults.append("fail")
-                return set()
-            folded.append(name)
-            return real(agent_path, faults)
-        with mock.patch.object(km, "_agent_launch_ids", fold):   # what _awaiting_nest's launches closure looks up per fold
-            with self._spy() as sp:
-                aw = km._session_awaiting(SID, self.path, True)
-            self.assertEqual((aw or {}).get("count"), A)
-            held = {k[1] for k in sc["launches"] if k[0] == self.path}
-            self.assertEqual(held, set(self.aids) - {self.aids[0]},
-                             "refused: the folds that did not read the file left no entry; the A - 1 folds that read theirs are held: %r" % (held,))
-            self.assertEqual(len(faked), A - 1, "the target's fold was attempted once per other agent's owner lookup in the read, A - 1 = %d "
-                                                "times, each taking the fail path and none held (a held set() would have served the "
-                                                "later lookups: one attempt): %d" % (A - 1, len(faked)))
-            self.assertEqual(sp.total()["file_stat"], A - 1, "the A - 1 real folds each stat'd their file; the faked ones read nothing")
-            faulting[0] = False                           # the file reads again
-            with self._spy() as sp:
-                aw = km._session_awaiting(SID, self.path, True)
-            self.assertEqual((aw or {}).get("count"), A)
-            self.assertEqual(folded.count(target), 1, "the second read in the same cycle folded the target's file (a held set() "
-                                                      "would have been served without a read)")
-            self.assertEqual(sp.total()["file_stat"], 1, "one file stat, the target's fold; the other agents' folds served from the scope")
-            self.assertIn((self.path, self.aids[0]), sc["launches"], "accepted: the fold that read the file is held")
-            with self._spy() as sp:
-                km._session_awaiting(SID, self.path, True)
-            self.assertEqual(sp.total()["file_stat"], 0, "a third read folds nothing: every agent's launches held for the cycle")
-            self.assertEqual(len(folded), A, "each agent's file was folded once in the cycle: %r" % (folded,))
+        def counting(agent_path, *a, **k):
+            folded.append(os.path.basename(str(agent_path)))
+            return real_fold(agent_path, *a, **k)
+
+        def failing(p, *a, **k):
+            s = str(p)
+            if fault[0] and s.startswith(under) and os.path.basename(s).startswith("agent-") and s.endswith(".jsonl"):
+                raise OSError(errno.EIO, "synthetic EIO")
+            return real_stat(p, *a, **k)
+
+        def read():
+            del folded[:]
+            aw = km._session_awaiting(SID, self.path, True)
+            return (aw or {}).get("count"), sorted(folded)
+
+        for n in (A, D - 2):
+            with self.subTest(A=n):
+                if n != len(self.aids):
+                    self._grow_to(n)
+                names = sorted("agent-%s.jsonl" % a for a in self.aids)
+                sc = self._open()
+                try:
+                    fault[0] = True
+                    with mock.patch.object(km, "_agent_launch_ids", counting), mock.patch.object(os, "stat", failing):
+                        c1, f1 = read()
+                        self.assertEqual(c1, n, "the read saw the %d agents" % n)
+                        self.assertEqual(f1, names, "read 1 under the fault: %d folds; each of the A = %d agents' files is folded ONCE per "
+                                                    "read (the call-local hold of the fault), not once per owner lookup that consulted it, "
+                                                    "A x (A - 1) = %d (a fault returned without a hold)" % (len(f1), n, n * (n - 1)))
+                        self.assertEqual([k for k in sc["launches"] if k[0] == self.path], [],
+                                         "refused: a fold that did not read the file is held in no cycle scope")
+                        c2, f2 = read()
+                        self.assertEqual(c2, n)
+                        self.assertEqual(f2, names, "read 2, the fault persisting: %d folds; folded again, A = %d, since the fault is not "
+                                                    "held across calls (a fault held for the cycle would fold 0 here)" % (len(f2), n))
+                        self.assertEqual([k for k in sc["launches"] if k[0] == self.path], [], "still nothing held")
+                        fault[0] = False
+                        c3, f3 = read()
+                        self.assertEqual(c3, n)
+                        self.assertEqual(f3, names, "read 3, the fault lifted: %d folds; the files that became readable are folded at this "
+                                                    "read, A = %d, one each" % (len(f3), n))
+                        self.assertEqual({k[1] for k in sc["launches"] if k[0] == self.path}, set(self.aids),
+                                         "accepted: every fold that read its file is held for the cycle")
+                        c4, f4 = read()
+                        self.assertEqual(c4, n)
+                        self.assertEqual(f4, [], "read 4: every agent's launches served from the scope, 0 folds: %r" % (f4,))
+                finally:
+                    km._subagent_scope_close()
+
+    def test_the_fault_producer_names_the_readers_fail_path_and_a_raising_fold_and_stays_empty_on_a_read(self):
+        """_agent_launch_ids's `faults` producer, driven directly (the case above sees only its effect through the memo): a
+        readable file folds with faults == []; the reader's fail path (os.stat raising EIO on a file that exists, which
+        event_model reports through on_fail) answers (set(), ["fail"]); a fold_records that raises answers (set(), [the
+        exception's type name]), so a wrong stub shape (a TypeError) cannot pass for the reader's fault. Keys on the exact
+        list: a producer with the `on` callback's append deleted answers [] for the fail path, one with the except branch's
+        append deleted answers [] for the raise."""
+        ap = self.wfroot / ("wf_%016x" % 0) / ("agent-%s.jsonl" % self.aids[0])
+        self.assertTrue(ap.is_file())
+        faults = []
+        self.assertEqual(km._agent_launch_ids(ap, faults), set())
+        self.assertEqual(faults, [], "a readable file: the fold read it and recorded no fault")
+        real_stat = os.stat
+
+        def failing(p, *a, **k):
+            if str(p) == str(ap):
+                raise OSError(errno.EIO, "synthetic EIO")
+            return real_stat(p, *a, **k)
+        faults = []
+        with mock.patch.object(os, "stat", failing):
+            ids = km._agent_launch_ids(ap, faults)
+        self.assertEqual((ids, faults), (set(), ["fail"]),
+                         "the reader's fail path (its stat raised on a file that exists): set() and the `on` callback's 'fail', once")
+        faults = []
+        with mock.patch.object(km.em, "fold_records", side_effect=OSError(errno.EIO, "synthetic EIO")):
+            ids = km._agent_launch_ids(ap, faults)
+        self.assertEqual((ids, faults), (set(), ["OSError"]), "a fold that raised: set() and the exception's type name from the except branch")
+        self.assertEqual(km._agent_launch_ids(ap), set(), "no list handed: the producer is optional and the answer stands")
 
     def test_a_root_gone_mid_cycle_with_an_entry_moves_the_gen_and_revalidates_the_held_tree_while_one_without_leaves_it_served(self):
         """_subagent_tree's missing-root pop path (a session's tree removed while the walk memo held it): a pop that removed

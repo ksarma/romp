@@ -33986,20 +33986,27 @@ def _awaiting_nest(agents, commands, cmd_owner, path):
     # per cycle share one resolution and fold per agent (each re-folded every agent's file, a stat and a checkpoint realpath
     # per agent per call). The attribution then sees an agent's file as it stood at the cycle's first fold; a launch appended
     # mid-cycle nests on the next cycle. A fold that did not read the file (the reader's fail path, or a raise) answers set()
-    # for this call and is not held, so the next call reads again; a file that resolved to nothing (ap None) is a state, held.
+    # and has TWO lifetimes, both shorter than the cycle's: it is held in `faulted`, this call's own map, so the call's other
+    # owner lookups are served it (each of the A agents' lookups consults every other agent's launches, so a fault re-folded
+    # per lookup cost A x (A - 1) folds per call where the parent's call-local memo cost A; round 2 of #882), and it is not
+    # held beyond the call, so the next call in the cycle reads again and a file that became readable is seen then (a fault
+    # held for the cycle would attribute nothing to that agent all cycle). A file that resolved to nothing (ap None) is a
+    # state, held.
     launch_sets = sc["launches"] if sc is not None else {}
+    faulted = {}
     pkey = str(path or "")
 
     def launches(aid):
         k = (pkey, aid)
-        if k not in launch_sets:
-            ap = _subagent_file(path, aid) if path else None
-            faults = []
-            ids = _agent_launch_ids(ap, faults) if ap else set()
-            if faults:
-                return ids
-            launch_sets[k] = ids
-        return launch_sets[k]
+        if k in launch_sets:
+            return launch_sets[k]
+        if k in faulted:
+            return faulted[k]
+        ap = _subagent_file(path, aid) if path else None
+        faults = []
+        ids = _agent_launch_ids(ap, faults) if ap else set()
+        (faulted if faults else launch_sets)[k] = ids
+        return ids
 
     def owner_by_transcript(tuid, exclude=None):
         if not tuid:
@@ -35730,7 +35737,8 @@ def _agent_launch_ids(agent_path, faults=None):
     transcript half of _awaiting_nest's attribution: a background command whose tool_use id is in THIS
     file was launched by THIS agent. set() when unreadable; `faults`, a list when given, receives the
     reason (the reader's "fail" path, or the exception's type name) when the answer stands for a read that
-    did not happen, so a caller's memo can decline to hold it (_awaiting_nest's per-cycle map, 2026-09-19)."""
+    did not happen, so a caller can give it the shorter lifetime (_awaiting_nest: its cycle map declines it, its call's own
+    map holds it, 2026-09-19 and round 2 of #882)."""
     def on(kind):
         if kind == "fail" and faults is not None:
             faults.append(kind)

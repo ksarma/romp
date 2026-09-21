@@ -3700,7 +3700,12 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   across cycles and walked again at the next cycle's first read, but held
   for the rest of the cycle it was walked in like any clean walk; a walk
   with a failed listing or child lstat, a missing root and a stamp whose
-  stat fails are not held for the cycle: nothing failed is served);
+  stat fails are not held for the cycle: nothing failed is served; the
+  scope also holds each awaiting agent's launch fold, and a fold that did
+  not read the file, the reader's fail path, is held for the one read
+  that observed it and never for the cycle, so that read folds it once,
+  not once per agent whose owner it was consulted for, and the next read
+  folds it again);
   `nudgeGate` is the auto-nudge walk's
   planner-placement gate, derived once per (parse, store) and served while
   both stand, and on this fork while `cleared.jsonl` stands too, its stat a
