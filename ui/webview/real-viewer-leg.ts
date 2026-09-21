@@ -30,6 +30,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
+import { launchBrowser } from "./browser-legs-require";
 
 export const EXT = process.cwd();                                       // npm test runs in vscode-extension
 export const requireCjs = createRequire(path.join(EXT, "package.json"));
@@ -156,12 +157,12 @@ window.putAtTop = function (text) {
 let pw: any = null;
 try { pw = requireCjs("playwright"); } catch { pw = null; }
 
-/** Launch headless Chromium and run `body` with it, or skip LOUDLY (CI installs no browsers), as the other legs do. */
+/** Launch headless Chromium and run `body` with it, or skip LOUDLY, saying why, as the other legs do; under
+ *  ROMP_BROWSER_LEGS_REQUIRE=1 (the CI step that runs the rostered legs with a browser) the skip is a failure instead
+ *  (browser-legs-require.ts). */
 export async function inBrowser(t: any, body: (browser: any) => Promise<void>): Promise<void> {
-  if (!pw) { t.skip("playwright is not installed under vscode-extension; the browser leg needs it (CI installs no browsers)"); return; }
-  let browser: any;
-  try { browser = await pw.chromium.launch(); }
-  catch (e) { t.skip("no playwright browser on this box; the browser leg needs one (CI installs none): " + String((e as Error).message).split("\n")[0]); return; }
+  const browser = await launchBrowser(t, pw, "chromium");
+  if (!browser) return;
   try { await body(browser); } finally { await browser.close(); }
 }
 
