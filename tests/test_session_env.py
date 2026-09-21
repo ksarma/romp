@@ -575,7 +575,7 @@ class EnvSecretsStayPrivate(unittest.TestCase):
         # under the root, the case its docstring names) with an os.chmod on the DIRECTORY's path, which the probe records.
         # The write-then-tighten this case pins is a chmod on the FILE's path, so the record is read for that path alone;
         # a chmod on the file after the write is still red.
-        self.assertEqual([c for c in chmods if c[0] == str(p)], [], "no chmod on the file's path after the write")
+        self.assertEqual([c for c in chmods if c[0] != str(p.parent)], [], "no chmod after the write except make_dir's tighten of the pre-made directory")
         self.assertEqual(json.loads(p.read_text()), {"env": {"FEATURE_FLAG": "1"}}, "and the env block landed")
 
     def test_a_raising_fchmod_closes_the_descriptor_and_the_launch_goes_without_the_keys(self):
