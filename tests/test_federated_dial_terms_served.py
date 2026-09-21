@@ -1211,7 +1211,7 @@ class FrameRecorderCensus(unittest.TestCase):
                 ('{"type": "bars", "gen": "%s"}' % GEN, {"t": "bars", "slot": "", "gen": GEN, "genKey": True})]
         for text, want in rows:
             self.assertEqual(decl._record(json.loads(text)), want, text)
-        # an int the double cannot hold: JSON.parse rounds 2^53 + 1 to 2^53 and the client refuses it (not a safe integer); the
+        # an int the double cannot hold: JSON.parse maps 2^53 + 1 to 2^53 and the client refuses it (not a safe integer); the
         # exact int here is refused by the same rule, so the two records read alike
         big = decl._record(json.loads('{"type": "delta", "slot": "bars", "base": 0, "rev": 9007199254740993}'))
         self.assertEqual(big["rev"], 2 ** 53 + 1)
