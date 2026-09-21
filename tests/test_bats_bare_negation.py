@@ -217,12 +217,13 @@ candidate (541, 299 of them in tests recorded ok, 495 at line start), the 139 re
 register counted and every one off line start among them.
 
 This module is the first in the repository to run bats under pytest, and so the first detector of a class no test had seen: the
-environment a test module writes at import. Of the 934 test modules (tests/test_*.py), 423 write ROMP_SERVE_TOKEN into
-os.environ at column 0 (410 by `os.environ.setdefault("ROMP_SERVE_TOKEN", ...)`, 13 by assignment), 747 assign XDG_STATE_HOME at
-column 0 (a fresh directory each) and 4 assign ROMP_STATE_DIR (747 pop it), and tests/conftest.py floors XDG_STATE_HOME for every
-run; over every .py under tests/ (947 files, the package's own among them, conftest.py and __init__.py included) a column-0
-os.environ line names the token in 424 and XDG_STATE_HOME in 752 (every figure a grep at fork PR #871's round 2, eleventh
-commit). A column-0 write runs when pytest COLLECTS the module, before any test
+environment a test module writes at import. Of the 934 test modules (tests/test_*.py), 423 write ROMP_SERVE_TOKEN into os.environ
+at column 0 (410 by `os.environ.setdefault("ROMP_SERVE_TOKEN", ...)`, 13 by assignment), 747 assign XDG_STATE_HOME at column 0 (a
+fresh directory each) and 4 assign ROMP_STATE_DIR (747 pop it), and tests/conftest.py floors XDG_STATE_HOME for every run (every
+figure a grep at fork PR #871's round 2, twelfth commit, over tests/test_*.py for a line beginning at column 0 with `os.environ`
+followed by `.setdefault("ROMP_SERVE_TOKEN"`, by `["ROMP_SERVE_TOKEN"] =`, by `["XDG_STATE_HOME"] =` or by `["ROMP_STATE_DIR"] =`;
+two figures over every .py under tests/ that stood here through the eleventh commit are dropped, since the grep behind each
+counted this docstring's own lines). A column-0 write runs when pytest COLLECTS the module, before any test
 runs and whether or not one of the module's tests is selected, in every process that collects it (each xdist worker collects), so
 a subprocess started with a pass-through of the process's environment sees the union of those writes. bats saw
 ROMP_SERVE_TOKEN, which bin/romp reads over the state file (its _romp_token), and romp-sessions.bats's serve-token test, whose grep
@@ -238,6 +239,37 @@ else of the process, pinned by equality on its keys, by the three routes planted
 token-and-state-root pin, seconds), and by the decisive case as a child pytest (the collected-and-deselected pin, the corpus once).
 The class itself, an import-time write that reaches every subprocess of a run, is a finding of its own, filed separately and not
 fixed here: this module closes its own door.
+
+The rule's scope, stated so the four keys are not read as a filtered list: the environment bats needs to run the corpus suites as
+the shell job runs them is those four (derived at fork PR #871's round 2, twelfth commit: bats-core itself reads TMPDIR, for its
+BATS_TMPDIR, CI, only to choose a formatter when both stdin and stdout are terminals, which `-t` and a /dev/null stdin make moot,
+PATH and PWD, and neither TERM nor LANG nor an LC_* variable nor HOME; over the 46 suites, 0 lines read TERM, an LC_* variable,
+LANGUAGE, USER, LOGNAME, SHELL, CI, a GITHUB_* or RUNNER_* variable, EDITOR, VISUAL, PAGER, DISPLAY, an SSH_* variable, TMUX,
+COLUMNS, LINES, NO_COLOR or HOSTNAME, and the two reads of a name outside the four that a setup or a test makes each carry a
+fallback, gitleaks-config.bats's `${ROMP_GITLEAKS:-$(command -v gitleaks || true)}` in its setup and romp-postal.bats's
+`${ROMP_SERVE_TOKEN:-$(cat "$XDG_STATE_HOME/romp/serve-token")}` in two tests, the token route itself; the shell job's runner sets
+CI, GITHUB_* and RUNNER_*, GitHub's documented default environment, and the job adds BATS_TEST_TIMEOUT, and what else the runner's
+shell carries, LANG, USER, SHELL, a TERM or none, is not measured here). What the rule does NOT cover, each by design: a suite
+that reads another variable, which fails under the rule in both rewrites the same way, blamed on the same line of its own, and
+whose key is then added twice, deliberately, to BATS_ENV_KEYS with its reason and to the equality pin's literal; the module's own
+bash -n and declare -f probes (_bash_n, _declared), which run under the process environment plus LC_ALL=C and execute nothing;
+and the inner bats's own variables (BATS_*), which bats sets itself. That failure was not legible before the twelfth commit:
+decide reported the planted suite undecided, `the test fails under both rewrites (blamed on line 2 and line 2): its failure does
+not turn on this negation`, and named the shape and not the cause (measured at the eleventh commit with such a suite planted, its
+setup asserting NEEDED_BY_SUITE non-empty and the variable set in the pytest process: `47 files: 13 candidates, 12 read, 0 inert,
+1 undecided, in 72.79 s`, the report saying nothing of the environment). Since the twelfth commit that shape, `not ok` under both
+rewrites on one known line, the candidate's own included (`! cmd && [ -n "$FOO" ]` fails there under both), runs a CONTROL ARM
+(decide_under_bats, _control_shape, _control_env): the test as written, once, under the process environment less every BATS_*
+variable with the rule's own four values laid over it, the pass-through every bats run saw before the tenth commit, used as a
+diagnostic and never as the verdict. The report then carries one of two sentences after decide's: the suite fails under the rule
+and passes under the process environment, so it reads a variable the rule excludes or the process carries a write that satisfies
+it, with the keys the process holds and the rule does not, sorted, names and never values, and where a key bats legitimately needs
+is added (CONTROL_ENVIRONMENT_DIFFERS); or the suite fails under both environments and its failure is its own
+(CONTROL_OWN_FAILURE); a control run bats gave no verdict on says so and nothing of the environment (CONTROL_NO_VERDICT). The
+candidate stays undecided and the corpus test still fails: only the report became legible. The control runs on no other shape
+(BatsRoad's synthetic-suite pin counts them, one of its eleven candidates, the later-failure test; BatsRoad's fifth-key pin
+reaches both sentences with the planted suite, the variable set in the process and then absent; and the corpus's summary line
+prints the count, 0 at this head).
 
 The gate on the corpus validation in CI is the shell job: its Linux cell installs bats 1.11.1 and its `bats tests/*.bats` runs
 tests/bats-bare-negation-shell-job.bats, which runs the corpus test under python3 with this module ALONE, no conftest and no
@@ -1037,12 +1069,25 @@ def _ere_literal(text):
 # leave the next one open (ROMP_STATE_DIR, which install.sh reads before XDG_STATE_HOME and four modules write at import): this
 # tuple is what bats MAY see. The rule governs every bats run of this module's; its two bash probes (_bash_n, _declared) run
 # under the process's own environment with LC_ALL=C and execute nothing (a parse under -n, a function printed by declare -f), so
-# no suite is reached through them.
+# no suite is reached through them. The rule's scope is the environment bats needs to run the corpus suites as the shell job
+# runs them, derived in the module docstring (bats-core reads TMPDIR, CI, PATH and PWD; no suite reads TERM, an LC_* variable,
+# USER, SHELL, CI or a GITHUB_* variable). A suite that needs a fifth key fails under the rule in both rewrites the same way, and
+# decide_under_bats then runs the test as written under the process environment as a CONTROL (_control_env: a diagnostic, never
+# the verdict) and reports the difference, naming this tuple and the equality pin (CONTROL_ENVIRONMENT_DIFFERS): the key is
+# added here with its reason AND to the pin's literal
+# (BatsCorpus.test_the_environment_handed_to_bats_holds_exactly_the_allowed_keys_and_nothing_else_of_the_process)
 BATS_ENV_KEYS = ("PATH", "HOME", "TMPDIR", "LANG")
 
 
+def _path_without_libexec(path):
+    """The PATH with every directory holding bats's libexec entry point dropped (a directory with a `bats-exec-test` in it: the
+    outer bats's libexec, which it puts first on PATH; the reasons are in _bats_env's docstring)."""
+    return os.pathsep.join(p for p in path.split(os.pathsep) if not os.path.isfile(os.path.join(p, "bats-exec-test")))
+
+
 def _bats_env(scratch):
-    """The environment for a bats run of this module's, built from BATS_ENV_KEYS (the rule and its reasons are at the tuple) and
+    """The environment for a bats run of this module's (every run a verdict is read from; the control arm's one run is the
+    exception, _control_env), built from BATS_ENV_KEYS (the rule and its reasons are at the tuple) and
     nothing else: PATH from the process with every directory holding bats's libexec entry point dropped (an outer bats prepends
     its libexec directory to PATH, and the `bats` there, beside bats-exec-test, is the entry point that expects the BATS_ROOT its
     bin wrapper exported, which an environment built from this rule never carries; the wrapper's own scrub removes BATS_LIBEXEC
@@ -1060,12 +1105,55 @@ def _bats_env(scratch):
     package's root under it, the corpus's scratch and the candidate's directory, some 60 bytes over the run's, and a suite's
     AF_UNIX socket under it must fit sun_path (108 bytes), so the run's TMPDIR stays short (the sweep's 17 bytes; one nested
     root more under -n)."""
-    path = os.environ.get("PATH", os.defpath)
-    built = {"PATH": os.pathsep.join(p for p in path.split(os.pathsep) if not os.path.isfile(os.path.join(p, "bats-exec-test"))),
+    built = {"PATH": _path_without_libexec(os.environ.get("PATH", os.defpath)),
              "HOME": os.path.join(scratch, "home"), "TMPDIR": os.path.join(scratch, "tmp"), "LANG": os.environ.get("LANG", "C")}
     for var in ("HOME", "TMPDIR"):
         os.makedirs(built[var], exist_ok=True)
     return {k: built[k] for k in BATS_ENV_KEYS}
+
+
+def _control_env(rule):
+    """The CONTROL arm's environment (decide_under_bats, on a candidate `not ok` under both rewrites on one line): the process
+    environment less every BATS_* variable, with the rule's own values laid over it (`rule`, a _bats_env: PATH less the libexec
+    directories, the fresh HOME and TMPDIR, LANG), the pass-through every bats run of this module's saw before fork PR #871's
+    round 2, tenth commit. A diagnostic and never a verdict's environment: the test as written runs under it once, and whether it
+    passes there says whether the failure under the rule is the environment's (a variable the rule excludes, or a write of the
+    process that satisfies the suite) or the test's own; the keys it holds beyond the rule's are what the report names
+    (_control_verdict: names, never values, since a credential-shaped name may stand among them)."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("BATS_")}
+    env.update(rule)
+    return env
+
+
+def _control_shape(runs):
+    """Whether a candidate's two sides (BatsRun under each rewrite, _agreed) are the shape the control arm answers: `not ok`
+    under both, blamed on one known line of one file. The candidate's own line is included (`! cmd && [ -n "$FOO" ]` fails there
+    under both rewrites when FOO is absent); a side with no verdict, a pair blamed on two lines (the status reached somewhere
+    the failure moved) and a `not ok` bats printed no frame under are not the shape, and no control runs for them."""
+    return all(r.outcome == "not ok" for r in runs) and runs[0].line is not None and len({(r.file, r.line) for r in runs}) == 1
+
+
+# what the control arm says in a candidate's message and report (decide_under_bats), after decide's own sentence
+CONTROL_ENVIRONMENT_DIFFERS = ("the suite fails under the %d-key rule (BATS_ENV_KEYS: %s) and passes under the process environment: it reads a "
+                               "variable the rule excludes, or the process environment carries a write that satisfies it (the pollution class); "
+                               "the environment difference is %s; a variable bats legitimately needs is added to BATS_ENV_KEYS with its reason "
+                               "and to the equality pin's literal "
+                               "(BatsCorpus.test_the_environment_handed_to_bats_holds_exactly_the_allowed_keys_and_nothing_else_of_the_process)")
+CONTROL_OWN_FAILURE = "the suite fails under both environments: its failure is its own, not this negation"
+CONTROL_NO_VERDICT = "the control run under the process environment gave no verdict (`%s`): nothing is said of the environment"
+
+
+def _control_verdict(control, env):
+    """The control arm's sentence for a candidate, from the control run (BatsRun, the test as written under `env`, a _control_env)
+    and that environment: `ok` there is CONTROL_ENVIRONMENT_DIFFERS with the rule's size and keys and the sorted keys the process
+    holds and the rule does not; `not ok` is CONTROL_OWN_FAILURE; anything else (a run the bound ended, a skip, a file that did
+    not load) is CONTROL_NO_VERDICT with the outcome."""
+    if control.outcome == "ok":
+        keys = sorted(k for k in env if k not in BATS_ENV_KEYS)
+        return CONTROL_ENVIRONMENT_DIFFERS % (len(BATS_ENV_KEYS), ", ".join(BATS_ENV_KEYS), ", ".join(keys) or "none")
+    if control.outcome == "not ok":
+        return CONTROL_OWN_FAILURE
+    return CONTROL_NO_VERDICT % control.outcome
 
 
 # one bats run of a test alone: the outcome (`ok`, `not ok`, or why bats gave no verdict: `skipped`, `did not load`, `no such
@@ -1201,9 +1289,10 @@ def _frame(out, i):
     return (int(m.group(2)), m.group(1)) if m else (None, None)
 
 
-def run_test_alone(tree, relpath, name, scratch, bats="bats", timeout=RUN_TIMEOUT):
+def run_test_alone(tree, relpath, name, scratch, bats="bats", timeout=RUN_TIMEOUT, env=None):
     """The test named `name` of the suite at relpath, run alone under bats with the tree as cwd (`bats -t -f '^<name>$' <relpath>`,
-    the name matched literally: _ere_literal), stdin /dev/null and the environment _bats_env gives, bounded at timeout seconds
+    the name matched literally: _ere_literal), stdin /dev/null and the environment _bats_env gives (or `env` when one is handed
+    in: the control arm's _control_env, the one caller), bounded at timeout seconds
     (_run_bats). Read off the TAP: exactly one test line is a verdict, `ok` (a skipped one is not: `skipped`, with bats's reason)
     or `not ok` with the line the first frame of bats's trace blames, the candidate's own or a caller's or a callee's; `not ok N
     setup_file failed` (bats 1.10.0, on stdout) or `not ok N bats-gather-tests` (1.11.1, on stderr) is a file bash could not load
@@ -1211,7 +1300,8 @@ def run_test_alone(tree, relpath, name, scratch, bats="bats", timeout=RUN_TIMEOU
     bound ended with no test line out is `timed out` (one whose verdict was out when its group was ended, a background child of
     the test holding bats's fd 3, is read like any other: _run_bats's `done`). The detail carries the TAP after the plan line and
     bats's stderr, for the report."""
-    out_text, err_text, ended, status, secs = _run_bats([bats, "-t", "-f", "^%s$" % _ere_literal(name), relpath], tree, _bats_env(scratch), timeout,
+    out_text, err_text, ended, status, secs = _run_bats([bats, "-t", "-f", "^%s$" % _ere_literal(name), relpath], tree,
+                                                        _bats_env(scratch) if env is None else env, timeout,
                                                         done=lambda text: re.search(r"^(ok|not ok) \d+ ", text, re.M) is not None)
     out = out_text.splitlines()
     detail = "\n".join([l for l in out if not re.match(r"^1\.\.\d+$", l)] + [l for l in err_text.splitlines() if l.strip()])
@@ -1278,8 +1368,9 @@ def decide(relpath, cand, extent, runs):
 
 # what became of one candidate of the corpus: the suite's path (tests/<name>), the candidate, its enclosing test's name, the
 # verdict and message (decide), the candidate's line under each rewrite, the run standing for each rewrite's side (_agreed, its
-# seconds the side's and its runs their count), and the seconds every run took together
-Decision = collections.namedtuple("Decision", "relpath cand test verdict message rewritten runs secs")
+# seconds the side's and its runs their count), the seconds every run took together, and the control run (BatsRun: the test as
+# written under the process environment, _control_env) where the sides were the control's shape (_control_shape), None elsewhere
+Decision = collections.namedtuple("Decision", "relpath cand test verdict message rewritten runs secs control", defaults=(None,))
 # how many times each rewrite of a corpus candidate runs (decide_under_bats). The two outcomes decide reads come from separate bats
 # processes, so a differing pair proves a read only when each side's outcome is the test's own and not one run's noise: a side's
 # runs must agree for the pair to count, and a side whose runs disagree is undecided and reported (tests-2, regression-2 and
@@ -1314,7 +1405,12 @@ def decide_under_bats(root, relpath, lines, extents, cand, scratch, bats="bats",
     enclosing test runs alone there (run_test_alone, bounded at timeout seconds); each copy is removed after its run. The runs of
     a side must agree for its outcome to count (_agreed): the two files differ in one word, so a differing pair proves a read
     only when each side's outcome is the test's own, and a side whose runs disagree is undecided, reported as such. A rewritten
-    file bash does not parse, or a pipeline running off the text, is decided without a run: undecided."""
+    file bash does not parse, or a pipeline running off the text, is decided without a run: undecided. A candidate `not ok`
+    under both rewrites on one line (_control_shape) is undecided too, and then the test as written runs ONCE more in a fresh
+    copy of the tree under the process environment (_control_env), the CONTROL arm: a diagnostic whose outcome is never the
+    verdict and whose sentence (_control_verdict) follows decide's in the message, so a suite that needs a variable the rule
+    excludes fails naming the rule and where the key is added, and one failing on its own is told apart from it (fork PR #871's
+    round 2, twelfth commit; before it the message named the shape and not the cause)."""
     o, _ = extents[cand.test]
     test = _test_name(lines[o])
     runs, shown, secs = [], [], 0.0
@@ -1342,7 +1438,19 @@ def decide_under_bats(root, relpath, lines, extents, cand, scratch, bats="bats",
         secs += sum(r.secs for r in side)
         runs.append(_agreed(repl, side))
     verdict, message = decide(relpath, cand, extents[cand.test], runs)
-    return Decision(relpath, cand, test, verdict, message, shown, runs, secs)
+    control = None
+    if _control_shape(runs):
+        d = os.path.join(scratch, "%s.%d.control" % (os.path.basename(relpath), cand.line + 1))
+        tree = os.path.join(d, "tree")
+        shutil.copytree(root, tree, symlinks=True, ignore=shutil.ignore_patterns(".git", "node_modules", "__pycache__", ".pytest_cache"))
+        try:
+            env = _control_env(_bats_env(d))
+            control = run_test_alone(tree, relpath, test, d, bats, timeout, env=env)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+        secs += control.secs
+        message = "%s; the control, the test as written under the process environment, is %s: %s" % (message, _shown(control), _control_verdict(control, env))
+    return Decision(relpath, cand, test, verdict, message, shown, runs, secs, control)
 
 
 def _shown(run):
@@ -1352,18 +1460,22 @@ def _shown(run):
 
 def _row(d):
     """A decision's row in the corpus table, after its head (`<path>:<line> `): the verdict, both outcomes, each side's seconds and
-    the candidate's line under `! true`."""
-    return "%-9s `! true` %s, `! false` %s  (%.2f + %.2f s)  %s" % (d.verdict, _shown(d.runs[0]), _shown(d.runs[1]), d.runs[0].secs, d.runs[1].secs,
-                                                                   d.rewritten[0].strip())
+    the candidate's line under `! true`; then, where a control ran, its outcome (`control ok`, `control not ok @<line>`)."""
+    row = "%-9s `! true` %s, `! false` %s  (%.2f + %.2f s)  %s" % (d.verdict, _shown(d.runs[0]), _shown(d.runs[1]), d.runs[0].secs, d.runs[1].secs,
+                                                                  d.rewritten[0].strip())
+    return row if d.control is None else "%s  control %s" % (row, _shown(d.control))
 
 
 def report(d):
-    """A decision's report in full: the verdict and its message, the line as written and under each rewrite with bats's outcome,
-    and what bats said under each."""
+    """A decision's report in full: the verdict and its message (the control's sentence in it where one ran), the line as written
+    and under each rewrite with bats's outcome, the control's outcome where it ran, and what bats said under each."""
     head = ["%s:%d in test %r: %s: %s" % (d.relpath, d.cand.line + 1, d.test, d.verdict.upper(), d.message)]
     body = ["    under `%s`: %s  ->  %s" % (repl, shown.strip(), _shown(run)) for (repl, _), shown, run in zip(REWRITES, d.rewritten, d.runs)]
     said = ["    bats under `%s` said:\n%s" % (repl, "\n".join("        " + l for l in run.detail.splitlines()) or "        (nothing)")
             for (repl, _), run in zip(REWRITES, d.runs)]
+    if d.control is not None:
+        body.append("    control, the test as written under the process environment  ->  %s" % _shown(d.control))
+        said.append("    bats under the control said:\n%s" % ("\n".join("        " + l for l in d.control.detail.splitlines()) or "        (nothing)"))
     return "\n".join(head + body + said)
 
 
@@ -3653,7 +3765,10 @@ class BatsCorpus(unittest.TestCase):
     cell, through tests/bats-bare-negation-shell-job.bats), and the first skip of the process warns (WITHOUT_BATS_NOTICE). The
     environment every bats run sees is built from BATS_ENV_KEYS and nothing else of this process, pinned here three ways: by
     equality on its keys, by the three routes the import-time writes took planted in this process and closed, and by the shape
-    the finding was found in, a child pytest with a module that writes the environment at import collected and deselected."""
+    the finding was found in, a child pytest with a module that writes the environment at import collected and deselected. A
+    suite that needs a variable the rule excludes fails under both rewrites on one line, and the road then runs it as written
+    under the process environment as a control, so its report names the rule and where the key is added (decide_under_bats;
+    the pin is BatsRoad's, on a synthetic suite); the summary line counts those control runs, 0 over this tree."""
 
     SKIP = CORPUS_SKIP
 
@@ -3676,8 +3791,9 @@ class BatsCorpus(unittest.TestCase):
                 decisions.append(d)
                 print("%s:%d %s" % (d.relpath, d.cand.line + 1, _row(d)), flush=True)
         counts = collections.Counter(d.verdict for d in decisions)
-        print("%d files: %d candidates, %d read, %d inert, %d undecided, in %.2f s" % (
-            len(files), len(decisions), counts["read"], counts["inert"], counts["undecided"], time.monotonic() - t0), flush=True)
+        print("%d files: %d candidates, %d read, %d inert, %d undecided (%d with a control run), in %.2f s" % (
+            len(files), len(decisions), counts["read"], counts["inert"], counts["undecided"], sum(d.control is not None for d in decisions),
+            time.monotonic() - t0), flush=True)
         reports = [report(d) for d in decisions if d.verdict != "read"]
         if reports:
             print("\n\n".join(reports), flush=True)
@@ -4160,6 +4276,60 @@ class BatsRoad(unittest.TestCase):
                       "cause; nothing was decided", decision.message)
         self.assertIn("UNDECIDED", report(decision))
 
+    # a suite whose setup needs a variable the four keys do not carry, around a negation bats would read: the shape a fifth key
+    # takes, and the question the rule leaves open
+    NEEDS = 'setup() {\n    [ -n "$NEEDED_BY_SUITE" ]\n}\n\n@test "needs a variable the four keys do not carry" {\n    true\n    ! false\n}\n'
+
+    def test_a_suite_that_needs_a_variable_the_rule_excludes_fails_naming_the_rule_and_where_the_key_is_added(self):
+        # the fifth-key question of fork PR #871's round 2, twelfth commit: BATS_ENV_KEYS is four keys, so a suite that
+        # legitimately needs another fails under both rewrites the same way, blamed on its own setup line, and before this commit
+        # decide's message named that shape and not the cause (`its failure does not turn on this negation`, nothing of the
+        # environment: measured with this suite planted in the tree at the eleventh commit, `13 candidates, 12 read, 0 inert,
+        # 1 undecided`). Now the shape runs the test as written under the process environment as a control. Two legs on one
+        # suite: with NEEDED_BY_SUITE set in this process the control passes, the candidate stays undecided, and the message says
+        # the suite fails under the rule and passes under the process environment, names the rule's size and keys, lists the
+        # keys the process holds and the rule does not (NEEDED_BY_SUITE among them, no BATS_* and none of the four, names only:
+        # the planted value appears nowhere) and says where a key is added, the tuple and the equality pin; with the variable
+        # absent from this process the control fails too, and the message says the failure is the suite's own. The verdict is
+        # undecided on both legs: the control is a diagnostic, never the verdict, and the corpus test would still fail on it
+        skip_unless_bats_serves(self)
+        value = "a-value-the-report-never-prints"
+        with tempfile.TemporaryDirectory() as d:
+            tree = os.path.join(d, "tree")
+            os.makedirs(os.path.join(tree, "tests"))
+            with open(os.path.join(tree, "tests", "needs.bats"), "w", encoding="utf-8") as f:
+                f.write(self.NEEDS)
+            lines = self.NEEDS.split("\n")
+            extents = bash_test_extents(lines)
+            found = candidates(lines, extents)
+            self.assertEqual([c.line + 1 for c in found], [7])
+            with unittest.mock.patch.dict(os.environ, {"NEEDED_BY_SUITE": value}):
+                beyond = sorted(k for k in os.environ if not k.startswith("BATS_") and k not in BATS_ENV_KEYS)
+                differs = decide_under_bats(tree, "tests/needs.bats", lines, extents, found[0], d, timeout=20, repeats=1)
+            with unittest.mock.patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("NEEDED_BY_SUITE", None)
+                own = decide_under_bats(tree, "tests/needs.bats", lines, extents, found[0], d, timeout=20, repeats=1)
+        for decision in (differs, own):
+            self.assertEqual(decision.verdict, "undecided", decision.message)
+            self.assertEqual([(r.outcome, r.line, r.file) for r in decision.runs], [("not ok", 2, "tests/needs.bats")] * 2, decision.message)
+            self.assertIn("the test fails under both rewrites (blamed on line 2 and line 2): its failure does not turn on this negation; "
+                          "the control, the test as written under the process environment, is ", decision.message)
+        self.assertEqual((differs.control.outcome, differs.control.line), ("ok", None), differs.control.detail)
+        self.assertIn("NEEDED_BY_SUITE", beyond)
+        expected = CONTROL_ENVIRONMENT_DIFFERS % (len(BATS_ENV_KEYS), ", ".join(BATS_ENV_KEYS), ", ".join(beyond))
+        self.assertIn("is ok: " + expected, differs.message)
+        self.assertIn("fails under the 4-key rule (BATS_ENV_KEYS: PATH, HOME, TMPDIR, LANG) and passes under the process environment", differs.message)
+        self.assertIn("added to BATS_ENV_KEYS with its reason and to the equality pin's literal "
+                      "(BatsCorpus.test_the_environment_handed_to_bats_holds_exactly_the_allowed_keys_and_nothing_else_of_the_process)", differs.message)
+        self.assertNotIn(value, report(differs))
+        self.assertIn("undecided `! true` not ok @2, `! false` not ok @2  (", _row(differs))
+        self.assertTrue(_row(differs).endswith("  control ok"), _row(differs))
+        self.assertIn("    control, the test as written under the process environment  ->  ok", report(differs))
+        self.assertEqual((own.control.outcome, own.control.line, own.control.file), ("not ok", 2, "tests/needs.bats"), own.control.detail)
+        self.assertIn("is not ok @2: " + CONTROL_OWN_FAILURE, own.message)
+        self.assertNotIn("passes under the process environment", own.message)
+        self.assertTrue(_row(own).endswith("  control not ok @2"), _row(own))
+
     def test_decide_under_bats_on_a_synthetic_suite_reads_a_last_negation_a_head_and_a_subshell_and_reports_the_rest(self):
         # the per-candidate road end to end on a tree of one suite: a mid-test `! true` is inert (ok under both) and its report
         # carries the message, the rewritten lines and both outcomes; a last `! true` is read (not ok on its line under `! true`);
@@ -4199,6 +4369,15 @@ class BatsRoad(unittest.TestCase):
                          [("mid", "inert"), ("last", "read"), ("head", "read"), ("later failure", "undecided"), ("subshell", "read"),
                           ("read in teardown", "undecided"), ("poll", "undecided"), ("comment_form", "inert"), ("bang helper", "read"),
                           ("bang helper", "read"), ("group", "inert")])
+        # the control arm runs on the one candidate `not ok` under both rewrites on one line, the later failure, and on no other:
+        # not on a read or an inert one, not on the teardown-read whose failure is outside the test, not on the poll whose second
+        # side has no verdict; there it finds the test failing as written too, and says so after decide's sentence
+        self.assertEqual([x.control is not None for x in decisions], [x.test == "later failure" for x in decisions],
+                         "the control arm ran on a candidate whose sides are not both `not ok` on one line, or not on the one whose sides are")
+        self.assertEqual((decisions[3].control.outcome, decisions[3].control.line), ("not ok", 15))
+        self.assertIn("; the control, the test as written under the process environment, is not ok @15: " + CONTROL_OWN_FAILURE, decisions[3].message)
+        self.assertIn("    control, the test as written under the process environment  ->  not ok @15", report(decisions[3]))
+        self.assertIn("bats under the control said:", report(decisions[3]))
         self.assertEqual([(r.outcome, r.line) for r in decisions[8].runs], [("ok", None), ("not ok", 40)])   # bats blames the helper's line, the last it ran
         self.assertEqual([(r.outcome, r.line) for r in decisions[9].runs], [("not ok", 42), ("ok", None)])
         self.assertEqual([s.strip() for s in decisions[10].rewritten], ["! true", "! false"])   # the whole group replaced
