@@ -42,7 +42,9 @@ outside any cycle (a handler thread's) still pays per call, with dirStats now co
 first read (a re-walk; the listing equals os.walk's and the sidecar reaches the map) while its later reads that cycle
 cost nothing, a launch appended to an agent's transcript between two cycles is folded by the second cycle's first read
 (A folds, the launch folds being the cycle's) and nests its command there, and, the contract, a directory created after a
-cycle's validation waits for the next cycle; (3) two
+cycle's validation waits for the next cycle; and the stamps' release at the cycle's end pinned on its own: a second cycle
+over the miss-path world re-takes the project directory's own stat (dirStats D, where a stamps map carried across cycles
+serves the stale stamp and pays D - 1); (3) two
 threads: a pusher cycle and a jobs pass running at once each validate once with their own scope object, never served
 by the other's; (4) the guards, each against the input it refuses and the input it accepts: a forget that evicts the
 root makes the next read in the same scope walk again while a forget that evicts nothing leaves the scope serving; a
@@ -549,26 +551,6 @@ class _World(unittest.TestCase):
                         "the scope ends with the %s (_subagent_scope_close in its finally): the slot still holds a scope" % what)
 
 
-class BoundPerCycleAndPerPass(_World):
-    """(1) The bound: a tree is validated once per pusher cycle and once per jobs pass, however many readers."""
-
-    def test_one_pusher_cycle_validates_the_tree_once_however_many_readers(self):
-        rec = {}
-        km._turn_notify_tick = self._awaiting_job(rec)    # a _job_stage job of _pusher_cycle_jobs, after the push leg
-        b = self._stats()
-        with self._spy() as sp:
-            km._pusher_cycle()
-        self._assert_bound("pusher cycle", sp, self._delta(b), rec)
-
-    def test_one_jobs_pass_validates_the_tree_once_however_many_readers(self):
-        rec = {}
-        km._auto_nudge_tick = self._awaiting_job(rec)     # where the real pass reaches _session_awaiting (the nudge look)
-        b = self._stats()
-        with self._spy() as sp:
-            km._jobs_cycle()
-        self._assert_bound("jobs pass", sp, self._delta(b), rec)
-        self.assertIn(str(self.sub), km._SUBAGENT_TREES, "the interrupt tick's forget kept the alive session's root")
-
     def _miss_walk_cycle(self, G):
         """One pusher cycle over the world plus G live agent rows whose file exists nowhere, under the own tree or a
         sibling's (the ghosts), with the miss path's costs that are each row's own asserted here, derived from D, A and G:
@@ -613,6 +595,27 @@ class BoundPerCycleAndPerPass(_World):
         for ghost in ghosts:
             self.assertIsNone(km._SUBAGENT_FILE_CACHE.get((self.path, ghost), ("unset",))[-1], "the miss is memoized: the file is nowhere")
         return t, d, rec, ghosts
+
+
+class BoundPerCycleAndPerPass(_World):
+    """(1) The bound: a tree is validated once per pusher cycle and once per jobs pass, however many readers."""
+
+    def test_one_pusher_cycle_validates_the_tree_once_however_many_readers(self):
+        rec = {}
+        km._turn_notify_tick = self._awaiting_job(rec)    # a _job_stage job of _pusher_cycle_jobs, after the push leg
+        b = self._stats()
+        with self._spy() as sp:
+            km._pusher_cycle()
+        self._assert_bound("pusher cycle", sp, self._delta(b), rec)
+
+    def test_one_jobs_pass_validates_the_tree_once_however_many_readers(self):
+        rec = {}
+        km._auto_nudge_tick = self._awaiting_job(rec)     # where the real pass reaches _session_awaiting (the nudge look)
+        b = self._stats()
+        with self._spy() as sp:
+            km._jobs_cycle()
+        self._assert_bound("jobs pass", sp, self._delta(b), rec)
+        self.assertIn(str(self.sub), km._SUBAGENT_TREES, "the interrupt tick's forget kept the alive session's root")
 
     def test_one_pusher_cycle_with_an_agent_whose_file_is_nowhere_walks_once_and_its_notes_cost_no_stat(self):
         """The miss path inside the bound (fresh-4 of the round-1 review: no case entered it): one live agent row whose file
@@ -786,6 +789,35 @@ class PerCycleNotSticky(_World):
         agent0 = [it for it in aw2.get("items", []) if it.get("agentId") == self.aids[0]]
         self.assertEqual([w["id"] for w in (agent0[0].get("waits", []) if agent0 else [])], [cmd["tid"]],
                          "the command row nested under agent 0 in cycle two: %r" % (agent0,))
+
+    def test_the_stamps_held_for_a_cycle_are_released_at_its_end_so_the_next_cycle_re_takes_the_project_directorys_stamp(self):
+        """The stamps memo's release at the cycle's end, pinned on its own (the owner's pass before round 2 of #882: a stamps
+        map carried across cycles on this thread, the trees and launches released as today, reddened one case in the module,
+        at a dependency-key outcome whose message named neither the stamps memo nor the cycle's end). Cycle one is the
+        miss-path bound case, one row whose file is nowhere (_miss_walk_cycle asserts its costs): its walk stats the project
+        directory once, an own stat _dir_stamp holds under root None. Cycle two over the same world, unchanged: the tree's one
+        validation (D - 1 lstats into dirStats) and the row's memoized miss re-checked, whose project-directory stamp the new
+        scope does not hold, so it is re-taken (+1). Keys on cycle two's dirStats == (D - 1) + 1 = D, the stamps memo released
+        at cycle one's end (_subagent_scope_close) and not carried; a stamps map carried across cycles serves the stale stamp
+        and pays D - 1. Keyed on dirStats, the memo's own counter, and not on a raw count of os.stat on the project directory,
+        which the cycle stats once more for reasons of its own (_discover_fingerprint)."""
+        self._miss_walk_cycle(1)
+        self.assertIsNone(getattr(km._live_scope, "subtrees", None), "premise: cycle one's scope is closed (its finally ran)")
+        rec = {}
+        km._turn_notify_tick = self._awaiting_job(rec)
+        b = self._stats()
+        with self._spy() as sp:
+            km._pusher_cycle()
+        d = self._delta(b)
+        self.assertEqual(rec.get("counts"), [A + 1] * CALLS, "cycle two's %d reads each saw the A agents and the one row nobody owns: %r" % (CALLS, rec))
+        self.assertEqual(d["dirStats"], D,
+                         "memos.subagentTree dirStats over cycle two, the world unchanged since cycle one: %d; keyed on (D - 1) + 1 = %d, the "
+                         "validation's lstats plus the project directory's stamp stat re-taken, since the stamps memo is released at the "
+                         "cycle's end (_subagent_scope_close) with the other two maps and the own stat cycle one held under root None is not "
+                         "there to serve; a stamps map carried across cycles serves it and pays D - 1 = %d" % (d["dirStats"], D, D - 1))
+        self.assertEqual((d["hit"], d["miss"], d["evict"]), (1, 0, 0), "cycle two's one validated hit, no walk, nothing evicted: %r" % (d,))
+        self.assertEqual(sp.total()["dir_stat"], 0, "no os.stat on the tree's directories in cycle two either: the tree is read before the re-checks")
+        self.assertIsNone(getattr(km._live_scope, "subtrees", None), "cycle two's scope is closed too")
 
     def test_a_directory_created_after_a_cycles_validation_is_listed_by_the_next_cycle_not_this_one(self):
         """The contract the fix accepts, stated as a pin: within one cycle the first reader's validation stands, so a
