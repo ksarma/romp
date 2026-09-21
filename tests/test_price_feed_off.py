@@ -19,8 +19,9 @@ the kernel cannot read is classed in the block (`overrideFault`) and said once (
 row that omits a rate inherits is pinned (APartialOverrideRow).
 
 Hermetic: urllib.request.urlopen is replaced by a recorder (the worker imports urllib inside `work`, so the
-module attribute is what it calls), the feed body is a synthetic LiteLLM shape with invented rates, the clock
-is a constant, and the kernel is loaded under a private name so its cache and status are this module's own.
+module attribute is what it calls) that answers the feed's url alone and refuses any other request with a canned
+URLError (PriceFeedCase's docstring says why), the feed body is a synthetic LiteLLM shape with invented rates, the
+clock is a constant, and the kernel is loaded under a private name so its cache and status are this module's own.
 """
 import ast
 import inspect
@@ -33,6 +34,7 @@ import textwrap
 import threading
 import unittest
 import urllib.error
+import urllib.request
 from contextlib import redirect_stderr
 from unittest import mock
 from romp_load import load_source
@@ -68,6 +70,7 @@ FEED_RESET = {"fetchedAt": None, "attemptedAt": None, "lastError": None, "rows":
               "offSaid": False, "unrecognisedSaid": False, "overrideSaid": False}
 UNRECOGNISED_LINE = "price feed: ROMP_PRICE_FEED is set to "   # the head of the said-but-on line, up to the value's repr
 SERVED_DEFAULTS = "the cost view prices tokens from the built-in defaults"   # the lines' tail with nothing cached and no override
+FOREIGN_REFUSED = "the price feed harness refuses requests that are not the feed: "   # the recorder's URLError reason, then the url
 
 
 class _Resp:
@@ -92,6 +95,19 @@ class PriceFeedCase(unittest.TestCase):
     it, and a recording urlopen (`self.calls`) that serves FEED, raises `self.raise_with`, or parks on
     `self.gate` until the test opens it. Every mutation is undone through addCleanup (a failing setUp still
     restores).
+
+    THE RECORDER COUNTS THE FEED ALONE (2026-09-21). The patch on urllib.request.urlopen is process-wide, so any thread
+    in the process that dials urlopen inside a case's window reaches this recorder, and the postal service's peer
+    dialer is such a thread: three other test modules start one per synthetic peer and never mark the peer down, so
+    the dialers outlive their modules and dial again whenever their backoff returns. Recorded and answered with feed
+    bytes, which parse as JSON, a dialer reads a healthy exchange and dials again at once, hundreds of requests per
+    second for as long as the window stays open: CI's serial CPython 3.12 cell on 2026-09-21 found 677 of its requests
+    in self.calls inside SayOnceLatches' 0.5 s park, the one wide window in the two modules that share this harness.
+    So _urlopen compares the request's url (a str, or a Request's full_url) to km.PRICE_FEED_URL: the feed's request
+    is recorded and answered as before, and any other request is not recorded and is refused with a URLError whose
+    reason is FOREIGN_REFUSED and the url, a failed dial the dialer backs off from. Nothing of the real urlopen is
+    kept for delegation, so a foreign caller inside a test never reaches the network and never sees the feed's bytes,
+    and `self.calls` is the feed's count and nothing else's. The pin is TheRecorderCountsTheFeedAlone.
 
     THE RULE FOR READING A LANDING OR A FAILURE (the review of PR 878, whose round found three cases breaking it): any
     assertion about a landing or a failure reads it after the join, from km._price_feed_status(now) or from a second
@@ -146,6 +162,9 @@ class PriceFeedCase(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def _urlopen(self, url, timeout=None, **kw):
+        target = str(getattr(url, "full_url", url))                # a str, or a Request
+        if target != km.PRICE_FEED_URL:                            # the feed alone: the class docstring's paragraph
+            raise urllib.error.URLError(FOREIGN_REFUSED + target)
         self.calls.append(url)
         if self.gate is not None:
             self.gate.wait(5)
@@ -1012,6 +1031,43 @@ class TheBlockCountsTheTable(PriceFeedCase):
         self.assertEqual(pf["known"], len(km.DEFAULT_MODEL_PRICES))
         sigs = {km._price_sig(k) for k in km.DEFAULT_MODEL_PRICES if km._price_sig(k)}
         self.assertEqual(len(sigs), pf["known"], "every built-in id has its own signature, so rows can reach known")
+
+
+class TheRecorderCountsTheFeedAlone(PriceFeedCase):
+    """The harness's own pin (its docstring's paragraph on the recorder): a request for anything but the feed, made
+    from another thread inside a case's window, is refused with a URLError naming the url and is not counted, and the
+    feed's own request in the same case still is. Red over an archive of the head the first review round left, whose
+    recorder answered every caller with the feed body and counted it: there the thread gets the body and no URLError,
+    and self.calls holds the foreign request."""
+
+    def test_a_request_that_is_not_the_feed_is_refused_and_not_counted(self):
+        os.environ["ROMP_PRICE_FEED"] = "off"
+        self._analytics()                                          # a build under off: the feed itself makes no request
+        url = "http://127.0.0.1:1/peer-exchange"                   # a synthetic far end shaped like a bus exchange; port 1 listens nowhere
+        got = {}
+
+        def dial():
+            req = urllib.request.Request(url, data=b'{"kind": "synthetic"}', headers={"Content-Type": "application/json"})
+            try:
+                with urllib.request.urlopen(req, timeout=1) as r:
+                    got["answered"] = r.read()
+            except Exception as e:                                  # whatever it raised is the subject
+                got["raised"] = e
+        t = threading.Thread(target=dial, name="foreign-dialer")
+        t.start()
+        t.join(5)
+        self.assertFalse(t.is_alive(), "the foreign dial returned")
+        self.assertIsInstance(got.get("raised"), urllib.error.URLError,
+                              "a request that is not the feed is refused with a URLError, never answered: "
+                              "the thread got %r and the recorder holds %r" % (got, self.calls))
+        self.assertEqual(self.calls, [], "the foreign request is not counted")
+        reason = str(got["raised"].reason)
+        self.assertTrue(reason.startswith(FOREIGN_REFUSED), reason)   # the harness's refusal, not a real failed dial
+        self.assertIn(url, reason, "the refusal names the url")
+        os.environ.pop("ROMP_PRICE_FEED", None)
+        km._ANALYTICS_MEMO.clear()                                 # the build under off memoized its payload for 15 s
+        self._analytics(now=NOW + 1)                               # this build starts the case's first fetch (off stamped nothing)
+        self.assertEqual(self.calls, [km.PRICE_FEED_URL], "the feed's own request in the same case still counts")
 
 
 if __name__ == "__main__":
