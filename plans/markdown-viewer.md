@@ -8443,10 +8443,15 @@ from that landing on; file-print-driver-browser.test.ts case (15b) releases pict
 prints. Since the round-7 fixes (the round-6 review's cluster D, 2026-09-20) that case reads the PRINT under print
 media while each line stands, the released picture complete with a non-zero box and the unreleased one still loading
 in the box case (15a) measured for it, and holds the press's print to exactly the unreleased pictures incomplete; the
-sentence beside the button is read off the line and held equal to `anywayWords()`, the leg holding no copy of the
-words (until then its only red at the round-5 wording was a compare against a copy of the sentence spelled in the leg,
-which measured the copy and not the print; the round-6 wording fix changed no print, so the print reads hold at either
-wording and the words are pinned in file-print.test.ts alone). "Keep waiting" waits on the load and error events
+sentence beside the button is read off the rendered line and held to `anywayWords()`, the wiring (the line shows what
+the function says), and to a fixed test-side copy the product never writes, `ANYWAY_SENTENCE` in
+ui/webview/file-print-fixtures.ts, the one constant the census module's text pin and the leg both import, so a wording
+change reds the case at that compare beside the print reads (the round-7 review's cluster A, 2026-09-21: from the
+round-7 fixes to the round-8 fixes the case held the line to `anywayWords()` alone, both sides moving with the product,
+and reddened at no wording; before the round-7 fixes its only red at the round-5 wording was a compare against a copy
+spelled in the leg). The print reads hold at either wording: the sheets hide the line under print media (case (15a)
+measures a 0 by 0 box for it), so nothing on the paper carries the sentence, and what the compare proves is that the
+wording reaches the rendered pre-press DOM, never that it is printed. "Keep waiting" waits on the load and error events
 alone, with no timer (`settlePictures`
 under a null deadline; the state carries `untimed`), until every pending picture settles, then prints; Escape cancels
 that open-ended wait, where the timed wait's Escape stays the viewer's, which closes the card. While that open-ended
@@ -9116,8 +9121,12 @@ the plan's last because this section lands at the same place; it pins nothing of
   the two pictures then landing leaves the line reading two, the aim's count, with nothing printed (extra7-2); Escape
   ends the wait and the last release prints nothing. Since the round-5 review (2026-09-20), case (15b), a picture that
   lands while the line stands prints, and the sentence stays true of it: under the ask over two parked pictures both
-  released, the ask stands with its line unchanged and its last sentence still true (FAILS BEFORE: the line read "Print
-  anyway prints without them." with both complete), and Print anyway prints once with every `<img>` complete, the landed
+  released, the ask stands with its line unchanged and its last sentence still true, the line held to a fixed test-side
+  copy of the sentence the product never writes (`ANYWAY_SENTENCE`, ui/webview/file-print-fixtures.ts, the constant the
+  census module's pin imports too; FAILS at the round-5 wording, "Print anyway prints without them.", at that compare,
+  inside the case whose other reads are the print's boxes under print media and the print stub; from the round-7 fixes
+  to the round-8 fixes the case held the line to `anywayWords()` alone, both sides moving with the product, and reddened
+  at no wording, the round-7 review's cluster A), and Print anyway prints once with every `<img>` complete, the landed
   picture with a box under print media where the parked one had none; under Keep waiting one of the two released leaves
   the line reading two with the same sentence, and Print anyway prints once with the released picture complete and the
   other still loading; under Keep waiting both released print once on the settle, no press. Since the round-7 fixes

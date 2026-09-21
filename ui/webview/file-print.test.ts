@@ -15,6 +15,7 @@ import { hideEdges } from "../test-dom-shim";   // every stand-in below that car
 import { step, RESTING, DISABLED, armedWords, preparingWords, waitingWords, stalledWords, anywayWords, ANYWAY_TITLE, isPrintChord, isPrintKeys, settlePictures, collectPictures, bodyReady, rootKind, PRINT_SETTLE_MS, setPrintSettleMs, printSettleMs,
   WITH_WORDS, WITHOUT_WORDS, ANYWAY_WORDS, KEEP_WORDS, TAB_WORDS, NO_TAB_WORDS, pdfFrameWindow, READY_ROOTS, NOT_READY_ROOTS, LINE_ROOTS, PDF_LOADER_ROOT, printable, figurePrintable, figureHidden, rendered, SVG_NS, PAINTS_SEL,
   type PrintState, type Picture, type Timers, type BodyLike, type PrintableNode, type FigureNode } from "./file-print";
+import { ANYWAY_SENTENCE } from "./file-print-fixtures";   // the sentence's one test-side home, fixed: a compare against it does not move with the product (the round-7 review's cluster A)
 
 // ── the machine ─────────────────────────────────────────────────────────────────────────────────────
 
@@ -84,7 +85,8 @@ test("the words: one picture and many, for the armed line, the wait, the open-en
   assert.equal(armedWords(2), "2 pictures from other hosts are not loaded.");
   assert.equal(preparingWords(1), "Preparing 1 picture…");
   assert.equal(preparingWords(3), "Preparing 3 pictures…");
-  assert.equal(anywayWords(), "Print anyway leaves out any picture still loading.");
+  assert.ok(!/\b(it|its|them|they|their|these|those|this|that)\b/i.test(anywayWords()) && !/\d/.test(anywayWords()), "the sentence names no counted picture: no pronoun standing for the pictures the count covers and no digit (the round-6 review's ui-1, as its refuters corrected it); this pin NARROWS the class of a wording that turns false when a counted picture lands, and does not close it (a count-free wording that is false for another reason passes here): " + anywayWords());
+  assert.equal(anywayWords(), ANYWAY_SENTENCE, "the product's sentence is the fixed test-side copy (file-print-fixtures.ts), the one home a compare cannot move with the product; the driver leg's case (15b) holds the rendered line to the same constant (the round-7 review's cluster A)");
   assert.equal(anywayWords.length, 0, "the sentence takes no count: it is the same words beside every count, true of whichever pictures are still loading at the press (the round-5 review's ui-1)");
   assert.equal(waitingWords(1), "Waiting for 1 picture… Print anyway leaves out any picture still loading.");
   assert.equal(waitingWords(3), "Waiting for 3 pictures… Print anyway leaves out any picture still loading.");
