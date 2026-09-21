@@ -7893,34 +7893,65 @@ stripped and that carries an author's `id` with no residue of the link stays exe
 
 **The re-parse population.** The rule needs every write that re-parses or re-serializes markup after the adoption
 enumerated, a different grep from the walk of attribute writes. The verbs are the HTML-parsing entry points an element
-or a document offers (innerHTML and outerHTML writes, insertAdjacentHTML, createContextualFragment, DOMParser,
-document.write; setHTMLUnsafe and parseHTMLUnsafe, which the installed DOM typings, lib.dom.d.ts, carry; setHTML, the
-Sanitizer API's, which they do not yet), insertAdjacentElement, and a template element, whose content is parsed markup.
-Derived 2026-09-20 at the moved head over comment-stripped code by `grep -nE
-'innerHTML\s*[+]?=|outerHTML\s*=|insertAdjacentHTML|createContextualFragment|DOMParser|document\.write\b|insertAdjacentElement|\bsetHTML\w*\s*\(|parseHTMLUnsafe|createElement\(\s*[^)]*template|\bel\(\s*[^)]*template'`
-over mdBlock's region after the adoption line and over every module a pass in that region reaches (the identifiers
-called there, `keepVideoShape`, `linkHref`, `resolveDocRelative`, `linkMarkdownAnchors` and `linkifyFileText`, resolved
-through file-view.ts's imports to md-links.ts and file-view-links.ts, then each module's `./` imports transitively:
-file-view-links.ts, link-opener.ts, math.ts, md-block-start.ts, md-config.ts, md-links.ts, md-sanitize.ts,
-path-links.ts, url-links.ts): no site. The first spelling of that command lacked setHTML, setHTMLUnsafe and
-parseHTMLUnsafe and matched the double-quoted createElement alone; the fork PR review's verification named the gap, and
-no code line of any ui/webview module matches those three verbs (the same pattern over every comment-stripped module,
-2026-09-20), so the widening is durability. The two sites the grep finds on the road at all are now before the adoption:
-mdBlock's `codeEl.innerHTML = hljs.highlight(raw, { language: lang }).value` (escaped text; hljs creates spans and
-nothing that fetches) and code-block.ts's `code.innerHTML = wrapLinesHtml(code.innerHTML)` (wrapCodeLines, the fence
-pass's re-parse), both inside the fence pass over `clean`. The passes after the adoption write a video's style, a list
-item's class, anchors' attributes (class, title, data-*, target, rel, tabindex, role, an href set, resolved or removed)
-and new anchors and spans in place of the prose's and the code blocks' text nodes (`tn.replaceWith(frag)` over text
-nodes and elements created by `document.createElement`, path-links.ts and url-links.ts), and none re-parses. The same
-grep over the whole of file-view.ts finds fourteen sites: thirteen outside mdBlock, all the viewer's own constant markup
-(the tray's icon constants, the trail's two arrows in the bar, the figure control's glyph parsed once onto a holder that
-enters no document and cloned into each control, the loading glyph, codeBlock's numbered rows over escaped or hljs text),
-and the fourteenth the highlight's write inside the fence pass, judged above; reader-place.ts's two DOMParser reads parse
-the note's source into a document of their own that is read, never adopted. file-view-seam.test.ts derives the callee list (every bare
-call in the region, with no method call on an imported binding and no namespace or default import from `./` in
-file-view.ts or a reached module, so a pass in either form is red there rather than hidden from the list), the module
-set, the two judged sites and the whole file's count of twelve from the code and pins them (its test "no re-parse after
-the adoption"), so a new such site anywhere in file-view.ts, or a new callee or import, is red there until it is judged.
+or a document offers (innerHTML and outerHTML, matched bare, so a read or a write under any spelling;
+insertAdjacentHTML, createContextualFragment, DOMParser, document.write; setHTMLUnsafe and parseHTMLUnsafe, which the
+installed DOM typings, lib.dom.d.ts, carry; setHTML, the Sanitizer API's, which they do not yet),
+insertAdjacentElement, and a template element, whose content is parsed markup. Derived 2026-09-21, at the head of the
+file review's landing round, over comment-stripped code by `grep -nE
+'\b(?:innerHTML|outerHTML)\b|insertAdjacentHTML|createContextualFragment|DOMParser|document\.write\b|insertAdjacentElement|\bsetHTML\w*\s*\(|parseHTMLUnsafe|createElement\(\s*[^)]*template|\bel\(\s*[^)]*template'`
+over mdBlock's region after the adoption line and over every module a pass in that region reaches, walked in three
+steps: the identifiers called there (`keepVideoShape`, `linkHref`, `resolveDocRelative`, `linkMarkdownAnchors`,
+`addFigureControls` and `linkifyFileText`; `addFigureControls` is the trail and figure-control follow-on's pass), each
+resolved through file-view.ts's imports to md-links.ts or file-view-links.ts or to a local function; the local
+functions those reach, transitively over bare calls (the figure control's decision among them), and every imported
+function a reached local calls, resolved the same way (`parseSrcset` from figure-gate.ts, `figurePath` from
+file-comments-model.ts and `pictureDest` from file-comments.ts, the figure controls' reads; until the landing round
+the walk followed a reached local's local calls alone, so those three modules sat outside the judged set while this
+paragraph stated a conclusion over a set it had not walked, and a live re-parse write planted in any of them left the
+seam test green); then every module those name in an import or re-export, transitively, under every static form the
+language has, a type-only import and a path outside ui/webview included, so file-view.ts itself re-enters through
+file-comments.ts's type import of the viewer's action type and brings every module it imports along: forty-six modules
+(../../vendor/track-changents/engine.js, actions.ts, anchor-map.ts, backend-names.ts, capped-read.ts, card-layout.ts,
+code-block.ts, commands.ts, comments.ts, ctx-color.ts, docreview.ts, fence-source.ts, figure-gate.ts,
+file-comments-model.ts, file-comments-regions.ts, file-comments.ts, file-trail.ts, file-view-links.ts, file-view.ts,
+gesture-clock.js, host-prefix.ts, icons.ts, keybindings.ts, link-opener.ts, math.ts, md-block-start.ts, md-config.ts,
+md-links.ts, md-literal-tags.ts, md-sanitize.ts, media.ts, path-links.ts, pdf-cap.ts, pick-held.ts, pinch.ts,
+preview.ts, reader-place.ts, region-geometry.ts, session-badge.ts, settings.ts, status-widgets.ts, tab-state.ts,
+tab-widgets.ts, url-links.ts, viewer-grammars.ts, widget-prefs.ts). The npm packages those modules import (marked,
+DOMPurify, KaTeX, and highlight.js's core with its grammars) are named there and not read: their code is not the
+viewer's, the sanitizer's and the highlighter's parses run before the adoption over `clean`, and a write a package
+makes onto an element handed to it is its caller's site. The grep finds twenty-six matching lines in seven of those
+modules, each judged in the seam test with its reason and none a re-parse under the Rendered box after the adoption:
+file-view.ts's, counted below; code-block.ts's one, `code.innerHTML = wrapLinesHtml(code.innerHTML)` (wrapCodeLines,
+the fence pass's re-parse, run over `clean` before the adoption); anchor-map.ts's three (a type annotation naming the
+property, and its character-reference decoder's two writes onto a textarea created from the document and inserted
+nowhere, whose text is read back); file-comments.ts's one (the Comments panel's loader row, the viewer's own constant
+markup with a same-origin /media path, on a row of the panel); preview.ts's two (the lightbox tray's download and copy
+controls taking icons.ts's constant drawings); reader-place.ts's four (two presence tests of DOMParser and two parses
+of a note's html block into a document of their own, read and never adopted); status-widgets.ts's one (the
+statusline's folder icon, its own constant). The first spelling of that command lacked setHTML, setHTMLUnsafe and
+parseHTMLUnsafe and matched the double-quoted createElement alone; the fork PR review's verification named the gap,
+and no code line of any ui/webview module matches those three verbs (the same pattern over every comment-stripped
+module, 2026-09-20), so the widening is durability. The two sites the grep finds on the road at all are before the
+adoption: mdBlock's `codeEl.innerHTML = hljs.highlight(raw, { language: lang }).value` (escaped text; hljs creates
+spans and nothing that fetches) and code-block.ts's wrapCodeLines, both inside the fence pass over `clean`. The passes
+after the adoption write a video's style, a list item's class, anchors' attributes (class, title, data-*, target, rel,
+tabindex, role, an href set, resolved or removed), new anchors and spans in place of the prose's and the code blocks'
+text nodes (`tn.replaceWith(frag)` over text nodes and elements created by `document.createElement`, path-links.ts and
+url-links.ts), and the figure controls, each a clone of a glyph parsed once onto a holder that enters no document (the
+one such line a reached local holds, file-view.ts's figureControlGlyph), and none re-parses under the box. The same
+grep over the whole of file-view.ts finds fourteen sites: thirteen outside mdBlock, all the viewer's own constant
+markup (the tray's icon constants, the trail's two arrows in the bar, the figure control's glyph parsed once onto a
+holder that enters no document and cloned into each control, the loading glyph, codeBlock's numbered rows over escaped
+or hljs text), and the fourteenth the highlight's write inside the fence pass, judged above. file-view-seam.test.ts
+derives the callee list (every bare call in the region, with no method call on an imported binding in the region or in
+a reached local, so a pass in that form is red there rather than hidden from the list), the reached locals, the
+imported callees, the module set, the package list and the import forms the resolver follows (a synthetic module
+holding each form), the judged sites per module and the whole file's count from the code and pins them (its test "no
+re-parse after the adoption"), so a new such site anywhere in file-view.ts or in a reached module, or a new callee or
+import, is red there until it is judged; tools/markdown-viewer-plan-gate-adopt.test.mjs holds this paragraph whole and
+fills its derived figures (the callees, the module count and list, the two sums) from that test's pinned literals,
+never from a copy.
 
 **The namespace table.** One probe in the three engines, 2026-09-20 (the real sanitizeMd and wrapLinesHtml from the
 bundle, a live-document div's innerHTML set to the split, the figure server's log read after three sentinel round

@@ -1388,36 +1388,94 @@ test("the inertness premise, held where CI runs: MD_PURIFY is its six-key litera
 // engines (the fork PR review's pre-answer record, 2026-09-20; the fourth scene of file-view-figures-gate-adopt-browser.test.ts).
 // The walk of attribute writes above cannot see that road (it writes no fetching attribute), so this test greps for the verbs that
 // re-parse or re-serialize: RE_PARSE, over comment-stripped code, in the region of mdBlock after the adoption line and in every
-// module a pass in that region reaches (the identifiers called there, resolved through file-view.ts's imports, then each module's
-// `./` imports, transitively). The verbs are the HTML-parsing entry points an element or a document offers, the
+// module a pass in that region reaches. The reach is walked in three steps, each derived from the code and pinned: the
+// identifiers called in the region (every bare call there, no method call on an imported binding), each resolved through
+// file-view.ts's named imports to its module or to a local function; the local functions reached from those, transitively over
+// bare calls (REACHED_LOCALS), and every IMPORTED function a reached local calls, resolved the same way to its module
+// (IMPORTED_CALLEES: the figure controls' pass, the first local callee to call imported functions, reads figure-gate.ts,
+// file-comments-model.ts and file-comments.ts through parseSrcset, figurePath and pictureDest; before the file review's landing
+// round the walk followed a reached local's LOCAL calls alone, so those three modules sat outside the judged set while this
+// header already promised the transitive reach, and a live re-parse write planted in any of them left this test green); then
+// every module those modules name in an import or re-export, transitively, under every static form the language has (a named
+// import, a type-only one, a namespace or default import, a side-effect import, an `export ... from`, and a dynamic `import()`
+// or `require()` of a string) and from every path relative to the importing module (`./x` and the vendored engine anchor-map.ts
+// reads from `../../vendor/`, and gesture-clock.js), so the closure (REACHED_MODULES) is the whole set of modules a pass in the region can reach
+// through the viewer's own code, on the safe side: a type-only import is followed too, since deciding which imports the
+// compiler erases is a judgement this census need not make, and file-view.ts itself re-enters the set through file-comments.ts's
+// type import of the viewer's action type, which brings every module file-view.ts imports along. What the walk does not read,
+// stated so a green here is read for what it covers: the npm packages a reached module imports (PACKAGE_IMPORTS, derived and
+// pinned: marked, DOMPurify, KaTeX, and highlight.js's core with its grammars), whose own code is not the viewer's; the sanitizer's and the highlighter's
+// parses run before the adoption over `clean` (pinned above), and a write a package makes onto an element handed to it is that
+// caller's site, judged where the caller is. The verbs are the HTML-parsing entry points an element or a document offers, the
 // string-serializing reads a write can round-trip through, and a template element, whose content is parsed markup: innerHTML and
 // outerHTML writes, insertAdjacentHTML, insertAdjacentElement, createContextualFragment, DOMParser, document.write, setHTMLUnsafe
 // and parseHTMLUnsafe (which the installed lib.dom.d.ts carries), setHTML (the Sanitizer API's, not in those typings yet), and a
 // template created by createElement or this module's `el` helper under any quote (the fork PR review's verification found the
 // first spelling of this list without setHTML, setHTMLUnsafe and parseHTMLUnsafe, and matching the double-quoted createElement
-// alone, 2026-09-20). The derivation itself is pinned (the callee
-// list, which is every bare call in the region and no method call on an imported binding, the module set, and the import forms
-// the resolver follows, so a namespace or default import from `./` in file-view.ts or a reached module is red here rather than
-// unfollowed), so a new pass or import widens it here first, and a new such site after the adoption is red until it is judged in
-// this list. The judged sites: mdBlock holds one write, the hljs highlight's, inside the fence pass BEFORE the adoption (escaped
-// text: hljs creates spans alone), and code-block.ts holds one, wrapCodeLines's, reached from that pass and so before the
-// adoption too. The whole file's count is pinned as well (twelve sites, the highlight's the one inside mdBlock), so a new site
-// anywhere in file-view.ts is red here until it is judged and the plan's count follows. The two property names are matched BARE
-// (`\b(?:innerHTML|outerHTML)\b`, a read or a write under any spelling), not as `innerHTML =`: a write spelled `x["innerHTML"] = s`,
-// `Object.assign(x, { innerHTML: s })` or `x.innerHTML ||= s` reaches the same setter and the assignment spelling did not match it
-// (the fork PR review's round 2, finding guards-1, 2026-09-20: such a write planted inside an existing post-adoption callee left
-// this test green); a read of either in the region or a reached module is as suspect as a write, and none exists today, so the
-// counts below did not move with the widening (measured at the head that widened it). The node scene records the write itself,
-// by the property's setter, whatever the spelling (file-view-figures-gate-adopt.test.ts, Reparse). Derivation command, for a
-// reader by hand (the test runs the same over codeOnly): grep -nE '\b(?:innerHTML|outerHTML)\b|insertAdjacentHTML|
-// createContextualFragment|DOMParser|document\.write\b|insertAdjacentElement|\bsetHTML\w*\s*\(|parseHTMLUnsafe|
-// createElement\(\s*[^)]*template|\bel\(\s*[^)]*template' over file-view.ts's mdBlock after the adoption line and over the
-// modules named below.
+// alone, 2026-09-20). The derivation itself is pinned (the callee list, the reached locals, the imported callees, the module
+// set, the package list, and the import forms the resolver follows, by a synthetic module holding each form), so a new pass,
+// call or import widens it here first, and a new such site after the adoption is red until it is judged in this list. The
+// judged sites: mdBlock holds one write, the hljs highlight's, inside the fence pass BEFORE the adoption (escaped text: hljs
+// creates spans alone); a reached local holds one, the figure control's glyph parsed onto a holder that enters no document;
+// and every other module the walk reaches holds the sites JUDGED_SITES lists for it, each with its reason, or none: a write of
+// the viewer's own constant markup onto a node outside the Rendered box (a tray or status icon, the panel's loader), a write
+// onto a node that enters no document (anchor-map.ts's detached textarea, its character-reference decoder), a parse into a
+// document of its own that is read and never adopted (reader-place.ts's DOMParser), a type annotation naming the property, and
+// code-block.ts's wrapCodeLines, run before the adoption. None re-parses markup under `box` after the adoption. The whole
+// file's count for file-view.ts is pinned as well, in the one assertion below that holds the number (the plan's re-parse
+// paragraph and its tools pin read the count from that assertion, so the figure has one home), and file-view.ts is judged by
+// that count rather than in the per-module loop; a new site anywhere in file-view.ts is red here until it is judged and the
+// plan's count follows. The two property names are matched BARE (`\b(?:innerHTML|outerHTML)\b`, a read or a write under any
+// spelling), not as `innerHTML =`: a write spelled `x["innerHTML"] = s`, `Object.assign(x, { innerHTML: s })` or
+// `x.innerHTML ||= s` reaches the same setter and the assignment spelling did not match it (the fork PR review's round 2,
+// finding guards-1, 2026-09-20: such a write planted inside an existing post-adoption callee left this test green); a read of
+// either in the region or a reached module is as suspect as a write, so the judged lines include a type annotation and the
+// decoder's reads. The node scene records the write itself, by the property's setter, whatever the spelling
+// (file-view-figures-gate-adopt.test.ts, Reparse). Derivation command, for a reader by hand (the test runs the same over
+// codeOnly): grep -nE '\b(?:innerHTML|outerHTML)\b|insertAdjacentHTML|createContextualFragment|DOMParser|document\.write\b|
+// insertAdjacentElement|\bsetHTML\w*\s*\(|parseHTMLUnsafe|createElement\(\s*[^)]*template|\bel\(\s*[^)]*template' over
+// file-view.ts's mdBlock after the adoption line and over the modules REACHED_MODULES names.
 const RE_PARSE = /\b(?:innerHTML|outerHTML)\b|insertAdjacentHTML|createContextualFragment|DOMParser|document\.write\b|insertAdjacentElement|\bsetHTML\w*\s*\(|parseHTMLUnsafe|createElement\(\s*['"`]template|\bel\(\s*['"`]template/;
 /** The local functions of file-view.ts a post-adoption pass reaches, transitively over bare calls (derived below; a new one
  *  widens this list first and is judged against RE_PARSE with the rest). */
 const REACHED_LOCALS = ["keepVideoShape", "addFigureControls", "pxDimension", "decideFigureControl", "figureAnchor", "figureControlAfter", "figureWantsControl", "removeFigureControl", "el", "figureControlGlyph", "oneImg", "linkAround", "figureState", "figureHasPicture", "figureTooSmall", "figureTarget", "linkAbove", "ringOf", "figureBox", "chosenSource", "absUrl"];
-test("no re-parse after the adoption: mdBlock's post-adoption region and every module a pass there reaches, derived from the code, hold no use of innerHTML or outerHTML (a write under any spelling, or a read) and no insertAdjacentHTML, insertAdjacentElement, createContextualFragment, DOMParser, document.write, setHTML, setHTMLUnsafe, parseHTMLUnsafe or template element; the two judged sites sit before the adoption; the whole file holds fourteen sites, thirteen outside mdBlock", () => {
+/** The imported functions a reached local calls, each to the module file-view.ts imports it from (derived below; the figure
+ *  controls' pass reads these three; a new one widens the module set first). */
+const IMPORTED_CALLEES: Record<string, string> = { figurePath: "file-comments-model.ts", parseSrcset: "figure-gate.ts", pictureDest: "file-comments.ts" };
+/** The bare calls in a reached local that are neither a local function, an import nor a name the body binds itself: the
+ *  language's globals (derived below; a new one is judged here first; neither parses markup, and DOMParser is RE_PARSE's). */
+const GLOBAL_CALLS = ["Number", "URL"];
+/** The modules a post-adoption pass reaches (derived below): the region's and the reached locals' imported callees' modules,
+ *  then every module those name in an import or re-export, transitively, under every static form; paths relative to
+ *  ui/webview, a suffix kept as written (`.js` for the two JavaScript modules) and `.ts` supplied where the import has none.
+ *  A new import widens this list first. */
+const REACHED_MODULES = ["../../vendor/track-changents/engine.js", "actions.ts", "anchor-map.ts", "backend-names.ts", "capped-read.ts", "card-layout.ts", "code-block.ts", "commands.ts", "comments.ts", "ctx-color.ts", "docreview.ts", "fence-source.ts", "figure-gate.ts", "file-comments-model.ts", "file-comments-regions.ts", "file-comments.ts", "file-trail.ts", "file-view-links.ts", "file-view.ts", "gesture-clock.js", "host-prefix.ts", "icons.ts", "keybindings.ts", "link-opener.ts", "math.ts", "md-block-start.ts", "md-config.ts", "md-links.ts", "md-literal-tags.ts", "md-sanitize.ts", "media.ts", "path-links.ts", "pdf-cap.ts", "pick-held.ts", "pinch.ts", "preview.ts", "reader-place.ts", "region-geometry.ts", "session-badge.ts", "settings.ts", "status-widgets.ts", "tab-state.ts", "tab-widgets.ts", "url-links.ts", "viewer-grammars.ts", "widget-prefs.ts"];
+/** The npm packages the reached modules import (derived below), which the walk does not read (the header says why). */
+const PACKAGE_IMPORTS = ["dompurify", "highlight.js/lib/core", "highlight.js/lib/languages/bash", "highlight.js/lib/languages/c", "highlight.js/lib/languages/css", "highlight.js/lib/languages/diff", "highlight.js/lib/languages/go", "highlight.js/lib/languages/ini", "highlight.js/lib/languages/java", "highlight.js/lib/languages/javascript", "highlight.js/lib/languages/json", "highlight.js/lib/languages/markdown", "highlight.js/lib/languages/python", "highlight.js/lib/languages/rust", "highlight.js/lib/languages/sql", "highlight.js/lib/languages/typescript", "highlight.js/lib/languages/xml", "highlight.js/lib/languages/yaml", "katex", "marked"];
+/** The re-parse sites RE_PARSE finds in the reached modules other than file-view.ts (judged by its whole-file count below):
+ *  per module, each matching code line (comment-stripped, trimmed) with the judgement that lets it stand. A module absent here
+ *  holds none; a new line, a moved one or a module gaining one is red until it is judged here. */
+const JUDGED_SITES: Record<string, Array<[line: string, why: string]>> = {
+  "anchor-map.ts": [
+    ["let refDecoder: { innerHTML: string; textContent: string | null } | null | undefined;", "a type annotation naming the property: no read, no write"],
+    ['if (d) { d.innerHTML = "&amp;&ltimes;"; if (d.textContent === "&\\u22c9") refDecoder = d; }', "domRefText's probe: a constant reference written onto a textarea created from the document and inserted nowhere, its text read back"],
+    ['if (v === undefined) { refDecoder.innerHTML = ref; v = refDecoder.textContent || ""; refMemo.set(ref, v); }', "the decoder itself: a character reference written onto that detached textarea and read back as text; the textarea enters no document (pinned below)"],
+  ],
+  "code-block.ts": [["code.innerHTML = wrapLinesHtml(code.innerHTML);", "wrapCodeLines, the fence pass's re-parse, run over `clean` before the adoption (pinned above and below)"]],
+  "file-comments.ts": [["w.innerHTML = '<img src=\"/media/romp-swirl-glyph.svg\" alt=\"\"><span>romp</span>'", "the Comments panel's loader row: the viewer's own constant markup with a same-origin /media path, on a row of the panel, never under the Rendered box"]],
+  "preview.ts": [
+    ["dl.innerHTML = ICON_DOWNLOAD;", "the lightbox tray's download control: icons.ts's constant drawing on the tray's own anchor"],
+    ['btn.innerHTML = icon; btn.title = word; btn.setAttribute("aria-label", word);', "the tray's copy control swapping among icons.ts's constant drawings"],
+  ],
+  "reader-place.ts": [
+    ['if (!isHtmlBlock(source, span) || typeof DOMParser !== "function") return false;', "a presence test of the parser, no parse"],
+    ['const body = new DOMParser().parseFromString(source.slice(span.start, span.end) + "\\n<p " + PROBE + "></p>", "text/html").body;', "opensWrapper: the note's html block parsed into a document of its own, read for its shape and never adopted"],
+    ['if (typeof DOMParser !== "function") return null;', "a presence test of the parser, no parse"],
+    ['const parsed = elementsOf(new DOMParser().parseFromString(source.slice(span.start, span.end), "text/html").body);', "ownedElements: the same parse into its own document, its elements counted and compared, never adopted"],
+  ],
+  "status-widgets.ts": [["span.innerHTML = FOLDER_ICON_SVG;", "the statusline's folder icon, this module's constant markup, on the status line"]],
+};
+test("no re-parse after the adoption: mdBlock's post-adoption region and every module a pass there reaches, derived from the code through the reached locals' imported callees and every import form transitively, hold no use of innerHTML or outerHTML (a write under any spelling, or a read) and no insertAdjacentHTML, insertAdjacentElement, createContextualFragment, DOMParser, document.write, setHTML, setHTMLUnsafe, parseHTMLUnsafe or template element outside the judged sites; the two judged sites on the road sit before the adoption; the whole file's count for file-view.ts is pinned in the one assertion the plan's paragraph reads", () => {
   const mdCode = codeOnly(VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0]);
   const adopt = "box.replaceChildren(...Array.from(clean.childNodes));";
   const adoptAt = mdCode.indexOf(adopt);
@@ -1428,23 +1486,24 @@ test("no re-parse after the adoption: mdBlock's post-adoption region and every m
   assert.deepEqual(before.split("\n").filter((l) => RE_PARSE.test(l)).map((l) => l.trim()), ["codeEl.innerHTML = hljs.highlight(raw, { language: lang }).value;"],
     "the one such write in mdBlock is the highlight's, before the adoption (hljs escapes the text: it creates spans and nothing that fetches)");
   assert.ok(before.indexOf('clean.querySelectorAll("pre code")') < before.indexOf("codeEl.innerHTML = hljs.highlight"), "inside the fence pass over `clean`");
-  // the whole file: fourteen sites, the highlight's the one inside mdBlock, the other thirteen the viewer's own constant markup
-  // outside it (the tray's icon constants, the loading glyph, codeBlock's numbered rows, and two judged at the merge of the trail
-  // and figure-control branch, 2026-09-20: the bar's two trail arrows, written at the bar's build outside the box like the other
-  // icon buttons, and the figure control's glyph, parsed once onto a holder that enters no document and cloned into each control,
-  // since the control itself stands under the box during the render and a live write there is what the node scene refuses; the
-  // control had written its glyph through innerHTML, two live re-parses under the box in that scene, red at the merge); the
-  // plan's re-parse paragraph states this count
+  // the whole file: the count below is the figure's one home (the plan's re-parse paragraph and tools/markdown-viewer-plan-gate-adopt.test.mjs
+  // read it from this assertion's literal); the highlight's is the one site inside mdBlock, the others the viewer's own constant
+  // markup outside it (the tray's icon constants, the loading glyph, codeBlock's numbered rows, and two judged at the merge of
+  // the trail and figure-control branch, 2026-09-20: the bar's two trail arrows, written at the bar's build outside the box like
+  // the other icon buttons, and the figure control's glyph, parsed once onto a holder that enters no document and cloned into
+  // each control, since the control itself stands under the box during the render and a live write there is what the node
+  // scene refuses; the control had written its glyph through innerHTML, two live re-parses under the box in that scene, red at
+  // the merge)
   const whole = codeOnly(VIEW).split("\n").filter((l) => RE_PARSE.test(l));
-  assert.equal(whole.length, 14, "fourteen sites in comment-stripped file-view.ts (a new one is judged here and in the plan's count before this number moves)");
-  assert.equal(whole.filter((l) => l.trim() === "codeEl.innerHTML = hljs.highlight(raw, { language: lang }).value;").length, 1, "the highlight's write among them, so thirteen sit outside mdBlock");
+  assert.equal(whole.length, 14, "the whole file's count of re-parse sites in comment-stripped file-view.ts (a new one is judged here and in the plan's paragraph before this number moves)");
+  assert.equal(whole.filter((l) => l.trim() === "codeEl.innerHTML = hljs.highlight(raw, { language: lang }).value;").length, 1, "the highlight's write among them, the one inside mdBlock, so all but one sit outside it");
   assert.equal(whole.filter((l) => /holder\.innerHTML = ICON_EXPAND/.test(l)).length, 1, "the figure control's glyph is parsed onto its holder, never onto the control (the control is placed under the box)");
   // the callees of the post-adoption region: every identifier called there that is not a method, resolved through the imports
   const called = [...new Set([...after.matchAll(/(?<![.\w])([A-Za-z_]\w*)\(/g)].map((m) => m[1]))].filter((n) => !["if", "for", "while", "return", "switch", "catch"].includes(n));
   assert.deepEqual(called, ["keepVideoShape", "linkHref", "resolveDocRelative", "linkMarkdownAnchors", "addFigureControls", "linkifyFileText"], "the passes after the adoption call these and nothing else (a new call widens this list first)");
   // a pass written as a method call on an imported binding (`ns.pass(box)`, `hljs.highlight(...)`) is no bare call, so the list
   // above would not see it: every binding file-view.ts imports, under any form and from any source, is asserted absent as the
-  // object of a method call in the region (the round-2 verification named this blind spot, 2026-09-20)
+  // object of a method call in the region and in every reached local (the round-2 verification named this blind spot, 2026-09-20)
   const bindings = new Set<string>();
   for (const m of codeOnly(VIEW).matchAll(/^import (?:type )?(.+?) from "[^"]+";?/gm)) {
     const clause = m[1].trim();
@@ -1455,41 +1514,94 @@ test("no re-parse after the adoption: mdBlock's post-adoption region and every m
   }
   assert.ok(bindings.has("hljs") && bindings.has("linkifyFileText") && bindings.has("marked"), "the reader sees the default, the named and the singleton imports");
   for (const b of bindings) assert.doesNotMatch(after, new RegExp("\\b" + b + "\\.\\w+\\("), "no method call on the imported binding `" + b + "` after the adoption: a pass in that form would hide from the callee list above");
+  /** file-view.ts's named imports from `./`: the binding to the module, for resolving a bare call. */
   const importsOf = (src: string): Record<string, string> => {
     const map: Record<string, string> = {};
     for (const m of codeOnly(src).matchAll(/import (?:type )?\{([^}]*)\} from "\.\/([^"]+)"/g)) for (const raw of m[1].split(",")) { const name = raw.replace(/\btype\s+/, "").trim().split(/\s+as\s+/).pop(); if (name) map[name] = m[2] + ".ts"; }
     return map;
   };
-  // the resolver follows `import { ... } from "./x"` alone, so the forms it does not follow are asserted absent from every file it reads
-  const NS_OR_DEFAULT_LOCAL = /^import (?:\* as \w+|\w+)(?:,| from) .*"\.\//m;
-  assert.doesNotMatch(codeOnly(VIEW), NS_OR_DEFAULT_LOCAL, "file-view.ts holds no namespace or default import from `./` (the resolver would not follow one)");
+  /** Every module `src` (at `from`, a path relative to ui/webview) names in a static import, a re-export, a dynamic import or a
+   *  require of a string literal, under every form, as a path relative to ui/webview (`x` to `x.ts`, a path with a suffix as
+   *  written); the npm packages it imports apart. */
+  const importTargets = (src: string, from: string): { local: string[]; packages: string[] } => {
+    const local = new Set<string>(), packages = new Set<string>();
+    const STATIC = /^\s*(?:import|export)\s+(?:type\s+)?(?:\{[^}]*\}|\*(?:\s+as\s+\w+)?|\w+(?:\s*,\s*\{[^}]*\})?)\s+from\s*"([^"]+)"|^\s*import\s*"([^"]+)"|\bimport\s*\(\s*"([^"]+)"|\brequire\s*\(\s*"([^"]+)"/gm;
+    for (const m of codeOnly(src, from.endsWith(".js") ? "js" : "ts").matchAll(STATIC)) {
+      const spec = m[1] ?? m[2] ?? m[3] ?? m[4];
+      if (!spec.startsWith(".")) { packages.add(spec); continue; }
+      const rel = path.posix.normalize(path.posix.join(path.posix.dirname(from), spec));
+      local.add(/\.[cm]?[jt]s$/.test(rel) ? rel : rel + ".ts");
+    }
+    return { local: [...local].sort(), packages: [...packages].sort() };
+  };
+  // the forms the resolver follows, pinned by execution over a synthetic module holding each one, so a form it misses is red
+  // here rather than unfollowed (the walk before the file review's landing round followed the named form alone and asserted the
+  // namespace and default forms absent; preview.ts's namespace import of pinch.ts is followed now)
+  const forms = 'import { a } from "./a";\nimport type { B } from "./b";\nimport * as c from "./c";\nimport d from "./d";\nimport e, { e2 } from "./e";\nexport { f } from "./f";\nexport * from "./g";\nimport "./h";\nconst i = await import("./i");\nconst j = require("./j");\nimport k from "../k/k.js";\nimport { l } from "pkg-l";\nimport m from "pkg-m/sub";\n';
+  assert.deepEqual(importTargets(forms, "x.ts"), { local: ["../k/k.js", "a.ts", "b.ts", "c.ts", "d.ts", "e.ts", "f.ts", "g.ts", "h.ts", "i.ts", "j.ts"], packages: ["pkg-l", "pkg-m/sub"] }, "the resolver follows every import form and keeps the packages apart");
+  const source = (m: string): string => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", m), "utf8");
   const viewImports = importsOf(VIEW);
   const localFns = new Set([...codeOnly(VIEW).matchAll(/^(?:export )?function (\w+)\(/gm)].map((m) => m[1]));
   const modules = new Set<string>(); const locals: string[] = [];
   for (const c of called) { if (viewImports[c]) modules.add(viewImports[c]); else if (localFns.has(c)) locals.push(c); else assert.fail("a callee neither imported nor local: " + c); }
   assert.deepEqual(locals, ["keepVideoShape", "addFigureControls"], "two local callees: the video's shape and the figure controls (the trail and figure-control branch's pass, judged at its merge, 2026-09-20)");
-  // a local callee's own bare calls to other local functions are followed too, transitively, so a write two levels down is read
-  // (the figure control's decision sat one call below addFigureControls and wrote its glyph through innerHTML onto a button placed
-  // under the box; the node scene caught it at the merge, and this walk reads it now): every reached local holds no re-parse verb,
-  // except the one judged site, the glyph's holder, an element parsed once and never inserted, whose clone the control takes
+  // a local callee's own bare calls are followed too, transitively: to other local functions (so a write two levels down is read:
+  // the figure control's decision sat one call below addFigureControls and wrote its glyph through innerHTML onto a button placed
+  // under the box; the node scene caught it at the merge, and this walk reads it now), to imported functions (whose modules join
+  // the set: the file review's landing round, fresh-1 with fresh-2) and to the language's globals (pinned, so a new one is judged)
   const localBody = (l: string): string => codeOnly(VIEW.split("function " + l + "(")[1].split("\n}\n")[0]);
-  const reached = [...locals];
-  for (let i = 0; i < reached.length; i++) for (const m of localBody(reached[i]).matchAll(/(?<![.\w])([A-Za-z_]\w*)\(/g)) if (localFns.has(m[1]) && !reached.includes(m[1])) reached.push(m[1]);
+  const reached = [...locals]; const importedCallees: Record<string, string> = {}; const globals = new Set<string>();
+  for (let i = 0; i < reached.length; i++) {
+    const body = localBody(reached[i]);
+    // a name the body binds itself (an inner arrow, a nested function, a variable) is read with the body it stands in;
+    // removeFigureControl's `take` is a handler read from the keyboardTakers register, which the viewer's open fills with its
+    // own takeKeyboard (file-view.ts, judged by its whole-file count above)
+    const inner = new Set([...body.matchAll(/\b(?:const|let|var|function)\s+(\w+)/g)].map((m) => m[1]));
+    for (const m of body.matchAll(/(?<![.\w])([A-Za-z_]\w*)\(/g)) {
+    const n = m[1];
+    if (["if", "for", "while", "return", "switch", "catch"].includes(n) || inner.has(n)) continue;
+    if (localFns.has(n)) { if (!reached.includes(n)) reached.push(n); }
+    else if (viewImports[n]) importedCallees[n] = viewImports[n];
+    else if (bindings.has(n)) assert.fail("a reached local calls the imported binding `" + n + "`, not from `./`: " + reached[i]);
+    else globals.add(n);
+    }
+  }
   assert.deepEqual(reached, REACHED_LOCALS, "the local functions a post-adoption pass reaches, transitively over bare calls (a new one widens this list first)");
+  assert.deepEqual(importedCallees, IMPORTED_CALLEES, "the imported functions a reached local calls, each to its module (a new one widens the module set first)");
+  assert.deepEqual([...globals].sort(), [...GLOBAL_CALLS].sort(), "the globals a reached local calls (a new one is judged here first)");
+  for (const l of reached) for (const b of bindings) assert.doesNotMatch(localBody(l), new RegExp("\\b" + b + "\\.\\w+\\("), "no method call on the imported binding `" + b + "` in the reached local " + l + ": a pass in that form would hide from the walk");
   const GLYPH_HOLDER = 'if (!figureGlyph) { const holder = el("span"); holder.innerHTML = ICON_EXPAND; figureGlyph = holder.firstElementChild ?? null; }';
   assert.deepEqual(reached.flatMap((l) => localBody(l).split("\n").filter((x) => RE_PARSE.test(x)).map((x) => l + ": " + x.trim())), ["figureControlGlyph: " + GLYPH_HOLDER], "the one re-parse a reached local holds is the glyph's holder (figureControlGlyph), judged: parsed once, cloned into each control");
   const glyphBody = localBody("figureControlGlyph");
   assert.equal(glyphBody.split("\n").filter((x) => /\bholder\b/.test(x)).length, 1, "the holder lives on that one line: it is inserted nowhere, so it enters no document");
   assert.match(glyphBody, /return figureGlyph \? figureGlyph\.cloneNode\(true\) : null;/, "and the control takes a clone");
+  // the module closure: the region's imported callees' modules and the reached locals' imported callees' modules, then every
+  // module those name, transitively, under every import form; the packages kept apart and pinned
+  for (const m of Object.values(importedCallees)) modules.add(m);
+  const packages = new Set<string>();
   const queue = [...modules];
-  while (queue.length) { const m = queue.shift() as string; for (const dep of new Set(Object.values(importsOf(web(m))))) if (!modules.has(dep)) { modules.add(dep); queue.push(dep); } }
-  assert.deepEqual([...modules].sort(), ["file-view-links.ts", "link-opener.ts", "math.ts", "md-block-start.ts", "md-config.ts", "md-links.ts", "md-sanitize.ts", "path-links.ts", "url-links.ts"],
-    "the modules a post-adoption pass reaches, transitively over `./` imports (a new import widens this list first)");
-  for (const m of modules) assert.doesNotMatch(codeOnly(web(m)), NS_OR_DEFAULT_LOCAL, m + ": no namespace or default import from `./` (the resolver would not follow one)");
-  for (const m of modules) assert.deepEqual(codeOnly(web(m)).split("\n").filter((l) => RE_PARSE.test(l)), [], m + ": no re-parsing or re-serializing write in a module a post-adoption pass reaches");
-  // code-block.ts, the fence pass's module: its one such write is wrapCodeLines's, and the pass that calls it runs before the chain (pinned above)
-  assert.deepEqual(codeOnly(web("code-block.ts")).split("\n").filter((l) => RE_PARSE.test(l)).map((l) => l.trim()), ["code.innerHTML = wrapLinesHtml(code.innerHTML);"], "code-block.ts's one re-parse is wrapCodeLines's");
-  assert.equal(after.includes("wrapCodeLines("), false, "and nothing after the adoption calls it");
+  while (queue.length) { const m = queue.shift() as string; const t = importTargets(source(m), m); for (const p of t.packages) packages.add(p); for (const dep of t.local) if (!modules.has(dep)) { modules.add(dep); queue.push(dep); } }
+  assert.deepEqual([...modules].sort(), REACHED_MODULES, "the modules a post-adoption pass reaches, transitively over every import form (a new import widens this list first)");
+  assert.ok(modules.has("file-view.ts"), "file-view.ts itself re-enters the set (file-comments.ts's type import of the viewer's action type), and is judged by its whole-file count above, not in the loop below");
+  assert.deepEqual([...packages].sort(), PACKAGE_IMPORTS, "the npm packages the reached modules import, which the walk does not read (the header says why; a new one is judged here first)");
+  // every reached module other than file-view.ts holds exactly the sites judged for it, in order, or none
+  for (const m of modules) {
+    if (m === "file-view.ts") continue;
+    const found = codeOnly(source(m), m.endsWith(".js") ? "js" : "ts").split("\n").filter((l) => RE_PARSE.test(l)).map((l) => l.trim());
+    const judged = JUDGED_SITES[m] ?? [];
+    assert.deepEqual(found, judged.map(([line]) => line), m + ": every re-parsing or re-serializing site in a module a post-adoption pass reaches is judged in JUDGED_SITES with its reason, and none is missing" + (judged.length ? " (judged: " + judged.map(([, why]) => why).join("; ") + ")" : ""));
+  }
+  for (const m of Object.keys(JUDGED_SITES)) assert.ok(modules.has(m), m + " is judged in JUDGED_SITES but the walk no longer reaches it: retire the entry");
+  // the two sums the plan's re-parse paragraph states (its tools pin reads them from these two literals): the matching lines
+  // across the reached set, file-view.ts's included, and the modules holding one
+  assert.equal(whole.length + Object.values(JUDGED_SITES).flat().length, 26, "the matching lines across every module the walk reaches, file-view.ts's among them");
+  assert.equal(Object.keys(JUDGED_SITES).length + 1, 7, "the modules holding a matching line, file-view.ts among them");
+  // the judgements that rest on a claim about the code, pinned: anchor-map.ts's decoder is a textarea inserted nowhere (every line
+  // naming it is the decoder's own), and code-block.ts's wrapCodeLines is called by the fence pass before the chain, never after
+  const decoderLines = codeOnly(source("anchor-map.ts")).split("\n").filter((l) => /\brefDecoder\b/.test(l));
+  assert.equal(decoderLines.length, 7, "anchor-map.ts names refDecoder on its declaration, the probe's four lines and the decoder's two, and nowhere else");
+  assert.ok(decoderLines.every((l) => !/append|insertBefore|replaceChild|prepend|after\(|before\(/.test(l)), "and no line inserts it anywhere: the textarea enters no document");
+  assert.equal(after.includes("wrapCodeLines("), false, "nothing after the adoption calls wrapCodeLines");
 });
 
 // ── editing over pending changes (plans/file-review.md Slice 5) ────────────────────────────────────
