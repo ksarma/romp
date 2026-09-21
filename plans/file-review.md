@@ -4466,6 +4466,69 @@ document stands on its own, each with the reasoning it was given.
     zsh counts the rows' NOT RUN line, not the probe's. Stated, not decided here: deleting or moving a tracked file (`rm
     report.md`, `mv report.md other.md`) is allowed, since the guard's contract is the write that lands on a tracked file;
     whether the tracked set shrinking is a write for it to refuse is a scope question raised with the round.
+    ROUND 6, FOURTH COMMIT (2026-09-21; the round's three verifiers on the third commit's head, every finding a command
+    a shell wrote onto the tracked file while the guard allowed it, each closed by refusing and none relabelled, and
+    each rule keyed on the shells' grammars rather than on the spelling that found it). THE DESCRIPTOR FEED: a script
+    operand naming a numbered descriptor reads a `<` on that descriptor too (`bash /dev/fd/3 3< <(echo 'cp a b')`,
+    `python3 /dev/fd/3 3< <(..)` and `. /dev/fd/3 3< <(..)` ran the printed text in bash and zsh while textsOf skipped
+    every `<` off the standard input; shellScript answers the descriptor named, fdOfName, and stdinBodies reads it; a
+    `<` on a descriptor no operand names stays unread, since the shell reads its script elsewhere). THE EXEC FEED: a
+    bare `exec` with redirections alone opens them for the rest of this shell and for the processes it starts (`exec
+    3<<< 'cp a b'; . /dev/fd/3` and `exec < <(echo 'cp a b'); bash` ran the text in bash and zsh), so its bodies feed
+    every later consumer (execFeeds, shared by every recursion). THE ALIAS BODY: a body holding a `$` or a backtick
+    after quote removal is expanded when the alias is USED (`alias c='$x'`, then `x=cp`, then `c a b` copied in dash,
+    and through a here-document in every shell), so it binds null, refused as a text the resolver does not read, as an
+    expansion at the definition already did; a `-g` alias at a redirection target is refused as one among the words is
+    (`alias -g R=report.md` then `echo x > R` wrote in zsh); zsh's `functions[NAME]=BODY` binds NAME as an alias does.
+    THE BOUND PATH: a path the command made by copying or linking a command is looked up by the head's text however
+    spelled (`'../scratch/c2'`, `"$PWD/../scratch/c2"`, `$x` resolved to it: the lookup read the unquoted literal
+    spelling alone), by a pattern's matches among the paths bound (`../scratch/c?`: the file is made when the command
+    runs, so the filesystem cannot expand the pattern at check time), through PATH for a bare name (`ln -s /usr/bin/cp
+    ../scratch/c2; PATH=../scratch c2 a b`), and a `cat FILE > DEST` binds DEST as cp does; a head through a HOME the
+    command reassigns, or through a PATH set to a value the resolver does not read, is one the hook cannot read while a
+    path is bound. THE COMPOUND PRODUCER: a keyword compound before the pipe (`for i in 1; do echo 'cp a b'; done |
+    bash`; while, until, if and case alike) prints what the list from its head to its closer prints, and the head runs
+    the body a number of times the model does not count, so a printer inside it makes the list UNRESOLVABLE (placed on
+    the closer segment that carries the pipe, listOutput naming the head) and a body with no printer stays outside the
+    model; dash reads `(( list ))` in command position as a subshell in a subshell, so `((echo 'cp a b')) | bash` prints
+    the list's text there (bash and zsh read arithmetic and stop), the reading placed as the producer's. THE OPTION
+    TERMINATOR: `eval -- TEXT` (bash and zsh), `. -- FILE` and `source -- FILE` read past the `--`. THE HEAD CANDIDATES
+    (extract): every plain-string value ANY assignment word of the command gives a name, in every scope and form,
+    whitespace included, shared by every recursion; a word that is one `$name` expansion the readability rule did not
+    resolve stands for each value where it is a command name or a script (scriptTexts, roles 'head' and 'text'), the
+    script road's union, so `c=cp; export c; $c a b`, `(c=mv); c=cp; $c a b`, `c=cp; echo '$c'; $c a b`, `declare c=cp;
+    $c a b`, `eval c=cp` then `$c a b`, `c=cp bash -c '$c a b'`, `env c=cp bash -c '..'`, `f() { local c=cp; $c a b; };
+    f`, `c='cp a b'; $c`, `bash -c "$c"` and `eval "$c"` refuse (the last three were the residual "a script held in a
+    variable", whose class is restated to the names a construct the resolver does not read fills in); a target keeps the
+    readability rule, whose safe side is the refusal it already gives an unreadable name; the glued default word
+    (`${c:-c}p a b` ran cp in every shell while the reading `c` was dropped for the glued `p`) carries its reading with
+    the literal text around it (THE GLUED READING, readingsOf in lex). THE IFS RULE: while the command names IFS, an
+    expansion not inside one pair of double quotes splits at IFS's characters, a rule the resolver does not compute, so
+    the readability rule does not read it there (a target refuses as one the hook cannot read, a copying writer's one
+    operand as split, a command name through scriptTexts) and lex declines to resolve a substitution at a redirection
+    target too (`IFS=:; echo x > $(echo 'report.md:x')` opened report.md in zsh under MULTIOS; `x=a:report.md; IFS=:;
+    tee $x`, `cp $x` and `IFS=: eval '..'` wrote in bash and dash), the rule holding in every text the command hands
+    over. THE FED SUBSTITUTION: a `$(...)`, a backtick or a `<(...)` whose list the resolver does not read runs a
+    command outside the output model, which may read the standard input, so where this command feeds that input with a
+    text the guard read (a pipe from a producer it reads, a closer's redirection, an exec feed, the caller's) the word
+    is UNRESOLVABLE (`echo 'cp a b' | bash -c "$(head -1)"`, `$(sed '')`, `$(tr a a)`, `$(awk 1)`, `$(dd)`,
+    `$(</dev/stdin)`, `$(command cat)`, `$(busybox cat)` and `bash <(cat)` each ran the piped text while the rule that
+    refused `$(cat)` was keyed on the spelling `cat`); with nothing fed the text is not in the command and the word
+    keeps the residual; a process substitution so marked is recorded (cannotRead dropped every `<(..)` before); the
+    cost, stated and pinned: a cat of a FILE in a fed segment refuses too. THE SED FILE: sed's `-f FILE` naming the
+    standard input or a descriptor this command feeds stands for the bodies fed, a `<(..)` for the text it prints, each
+    read over the sed grammar (`sed -n -f /dev/stdin f <<< 'w report.md'`, `-f <(echo 'w report.md')`, `-f /dev/fd/3 ..
+    3<<< '..'`, `--file=<(..)` and the here-document form wrote in bash and zsh, dash through the here-document). THE
+    VALUED NAMES: the value of PS0, PS1, PS2, PS3, PS4 and PROMPT_COMMAND is a script of this shell (bash runs a prompt
+    string's `$(..)` when it prints the prompt or traces a command: `PS4='$(cp a b)'; set -x; :`, `PS4='..' bash -xc :`,
+    `export PS4=..` and `PROMPT_COMMAND='cp a b' bash -i` ran the copy), ENV and BASH_ENV name a file the shell sources,
+    read when it is a `<(..)` the resolver reads (`ENV=<(echo 'cp a b') dash -i`; the lexer keeps a glued `<(..)` in its
+    word as bash does, `ENV=/dev/fd/63`), bash's `${name@P}` runs the value's `$(..)` (each candidate value read), and
+    `mapfile -C CALLBACK` runs the callback (SCRIPT_VALUED_NAMES, STARTUP_FILE_NAMES, readValuedWords). ENV'S OPERAND:
+    after env an assignment operand however quoted is env's (`env 'X=a b' cp a b` copied in every shell while the quoted
+    word was read as the command name). THE RESIDUAL TABLE gains the members its classes lacked (unshare, setpriv, perf
+    and prlimit, wrappers outside the set; parallel, a reader like xargs; an alias in a sourced written file; an eval
+    printing before the pipe; perl's File::Copy) and loses the two THE HEAD CANDIDATES read.
     THE RESIDUAL PROPERTY. The guard refuses a write only when it resolves the command to a writer it models (the
     writer cases of extract's switch, a write redirection, an interpreter's write call it scans) reached through a road it reads
     (the wrapper set, the shells' script roads, the readings of the resolver, the alias and hash roads), with a target it can
@@ -4481,10 +4544,12 @@ document stands on its own, each with the reasoning it was given.
     a file the command writes and then runs or sources); a command name the resolver never reads, a command whose name is an
     expansion of a kind the resolver does not read ("$@", $1, $*, "${a[@]}", a loop variable, a name read, printf -v or a
     nameref filled, ${SHELL}, a substitution outside the output model such as $(which cp), a ${...} operator form the resolver
-    does not read); a script held in a variable, a plain-string name whose value holds whitespace (the readability rule stores
-    no such value), run as a command or handed to a shell (`$c`, `bash -c "$c"`, `eval "$c"`); a producer outside the output
-    model, a pipe into a shell from anything but a literal echo or printf, alone or in a subshell or group of such commands (a
-    call of a function the command defines, a tee or a further pipe, a cat of a file); zsh's glob grouping, a `(..)` inside a
+    does not read); a script held in a variable, a value the command gives a name through a construct the resolver does not read
+    (`read`, `printf -v`, a positional parameter), run as a command or handed to a shell (`$c` after `read c`, `eval "$1"`,
+    `bash -c "$c"` after `printf -v c`; a value an assignment word gives, whitespace included, is read through THE HEAD
+    CANDIDATES since round 6's fourth commit); a producer outside the output model, a pipe into a shell from anything but a
+    literal echo or printf, alone or in a subshell or group of such commands (a call of a function the command defines, a tee
+    or a further pipe, a cat of a file); zsh's glob grouping, a `(..)` inside a
     word handed to zsh, read as a subshell by the lexer's zsh grammar while zsh globs it (a lexer gap, stated since the first
     commit of this round); an opaque expansion from a cwd outside every project, a leading opaque expansion, or one after a
     literal head outside every project, from a cwd in no project (B2 as ruled, with its boundary). A shape outside these classes

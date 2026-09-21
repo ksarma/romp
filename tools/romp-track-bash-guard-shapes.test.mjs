@@ -906,7 +906,7 @@ test("round 5's fifth addendum, third fix-up: the lexer resolves a substitution 
   const two = seg("bash -c \"$(echo 'cp a b\\c')\"").words[2];
   assert.deepEqual([two.literal, two.readings], [false, ['cp a b\\c', 'cp a b']], "echo's two readings (bash as spelled; zsh and dash with the escape interpreted, \\c ending the output) stay on the word that is the substitution alone");
   const mixed = seg("bash -c \"x$(echo 'a\\tb')\"").words[2];
-  assert.deepEqual([mixed.literal, mixed.readings], [false, undefined], 'beside other text a two-reading substitution leaves the word an expansion with no readings');
+  assert.deepEqual([mixed.literal, mixed.readings], [false, ['xa\\tb', 'xa\tb']], 'beside other text a two-reading substitution leaves the word an expansion, its readings each with the literal text around them (THE GLUED READING, round 6\'s fourth commit: `${c:-c}p a b` ran cp while the glued reading was dropped; until then the word had no readings here)');
   assert.deepEqual(seg("bash <<< \"$(echo 'a\\tb')\"").heredocs.length, 2, 'a here-string keeps both readings as texts');
   // THE DEFAULT WORD
   assert.deepEqual(seg("bash -c \"${x:-$(echo 'cp a b')}\"").words[2].readings, ['cp a b'], 'a default word whose text the lexer can read is a reading of the word');
