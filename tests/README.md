@@ -226,7 +226,10 @@ AttachStandDown, a bare mkdtemp root — overflowed from a 36-byte TMPDIR under
 `<parent root>/romp-tests-children`; the parent removes a dead child's root at
 run end, so a worker killed mid-run leaks nothing. `tests/test_tempdir_hygiene.py`
 `HarnessSocketBudget` derives the bound from the roots the harness makes and
-the tests' own lab shapes. A root that cannot be removed at run end (a child
+the tests' own lab shapes, and from the same scan holds the longest directory
+path and the longest single component the harness can produce under xdist
+nesting against `PC_PATH_MAX` and `PC_NAME_MAX` (every shape has its own
+ceiling; the socket is one). A root that cannot be removed at run end (a child
 still writing under it, a 000-mode directory a test left behind) is named on
 stderr: `[tests] not removed at run end: <path>`, instead of the run ending
 green over it. The same conftest gives git no global or system config

@@ -1684,11 +1684,12 @@ class SocketMode(unittest.TestCase):
         main() so the host-crashed row is the one main writes, over a root whose path carries a marker, with a non-empty
         directory planted at the published path so the rename is the leg that fails (the prelude's unlink cannot remove a
         directory, and asyncio's own bind removes only a socket)."""
-        marker = "m4rk3r" + uuid.uuid4().hex[:6]
         # under the system temp dir (system_tmp), not the run's private root: the case exists to force the RENAME leg, and
         # a published path over the budget (a deep run root plus this marker) is refused at the budget check before it,
-        # so the leg never ran on a long-temp runner (the review's round 2, 2026-09-19)
-        root = tempfile.mkdtemp(prefix=marker + "-", dir=system_tmp())
+        # so the leg never ran on a long-temp runner (the review's round 2, 2026-09-19). The marker is the minted basename
+        # (the prefix a literal, so tests/test_tempdir_hygiene.py's directory scan can read it; the tail makes it unique)
+        root = tempfile.mkdtemp(prefix="m4rk3r-", dir=system_tmp())
+        marker = os.path.basename(root)
         self.addCleanup(shutil.rmtree, root, True)
         self._spec_at(root)
         self.assertLessEqual(len(os.fsencode(str(self.pub))), sh.SOCK_PATH_MAX,

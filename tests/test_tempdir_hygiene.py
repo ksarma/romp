@@ -272,73 +272,105 @@ def _bind(out, target, value):
             _bind(out, t, v)
 
 
-def _assignments(tree, scope=None):
-    """Every value a name can hold, keyed by the target's source text (`name`, `self.name`): `name = value` (annotated
-    or augmented too); a `for name in (<literal>, ...)` loop's target, bound to each element (a tuple target over rows,
-    column by column); and a function's parameters, bound to what every call site in the MODULE passes for them (by
-    position, `self`/`cls` skipped; by keyword) and to their defaults, so a value that reaches a write through a
-    helper's argument is still read (2026-09-21). One scope per call: the module's when `scope` is None (a test
-    module's names are few), else the statements of that function only — hosts_on_labs resolves a write site in its
-    enclosing function first and falls back to the module (_Scope), since a 13,000-line module binds `root` to a
-    hundred things and only the enclosing function's binding is the write's. A `with open(...) as fh` handle is NOT
-    recorded here: it is scoped to its statement by _session_hosts_writes, since a module reuses `fh` for every file
-    it writes."""
-    out = {}
-    calls = collections.defaultdict(list)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and _call_name(node):
-            calls[_call_name(node)].append(node)
-    for node in ast.walk(scope if scope is not None else tree):
-        if isinstance(node, ast.Assign):
-            for t in node.targets:
-                _bind(out, t, node.value)
-        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)) and node.value is not None:
-            _bind(out, node.target, node.value)
-        elif isinstance(node, ast.For) and isinstance(node.iter, (ast.Tuple, ast.List)):
-            for elt in node.iter.elts:
-                _bind(out, node.target, elt)
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            params = [a for a in node.args.posonlyargs + node.args.args]
+class _Bindings:
+    """Every value a name can hold in a module, keyed by the target's source text (`name`, `self.name`), read in ONE
+    walk on first use: `name = value` (annotated or augmented too); a `for name in (<literal>, ...)` loop's target, bound
+    to each element (a tuple target over rows, column by column); and a function's parameters, bound to what every call
+    site in the module passes for them (by position, `self`/`cls` skipped; by keyword) and to their defaults, so a value
+    that reaches a write through a helper's argument is still read (2026-09-21). Two views of the same walk: `module`,
+    everything; `local[f]`, what function `f` binds itself (its own parameters included; an inner function's bindings
+    are the inner function's); and `owner[node]`, the innermost function a node sits in. A reader resolves a name in
+    its enclosing function first and the module second (_Scope), since a 13,000-line module binds `root` to a hundred
+    things and only the enclosing function's binding is the write's. Lazy: a module whose tempfile calls all name a
+    literal and no `dir=` never asks, and costs its parse alone. A `with open(...) as fh` handle is NOT recorded: it is
+    scoped to its statement by _session_hosts_writes, since a module reuses `fh` for every file it writes."""
+
+    def __init__(self, tree):
+        self.tree, self.module, self.local, self.owner = tree, None, None, None
+
+    def built(self):
+        if self.module is None:
+            self._build()
+        return self
+
+    def _build(self):
+        module, local, owner, calls, funcs = {}, {}, {}, collections.defaultdict(list), []
+        todo = [(self.tree, None)]
+        while todo:                                        # loop-ok: an explicit stack, one visit per node
+            node, func = todo.pop()
+            if func is not None:
+                owner[node] = func
+            if isinstance(node, ast.Call) and _call_name(node):
+                calls[_call_name(node)].append(node)
+            here = local.get(func) if func is not None else None
+            if isinstance(node, ast.Assign):
+                for t in node.targets:
+                    _bind(module, t, node.value)
+                    if here is not None:
+                        _bind(here, t, node.value)
+            elif isinstance(node, (ast.AnnAssign, ast.AugAssign)) and node.value is not None:
+                _bind(module, node.target, node.value)
+                if here is not None:
+                    _bind(here, node.target, node.value)
+            elif isinstance(node, ast.For) and isinstance(node.iter, (ast.Tuple, ast.List)):
+                for elt in node.iter.elts:
+                    _bind(module, node.target, elt)
+                    if here is not None:
+                        _bind(here, node.target, elt)
+            inner = func
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                funcs.append(node)
+                local[node] = {}
+                inner = node
+            todo.extend((child, inner) for child in ast.iter_child_nodes(node))
+        for f in funcs:                                    # the parameters, once every call in the module is indexed
+            params = list(f.args.posonlyargs + f.args.args)
             if params and params[0].arg in ("self", "cls"):
                 params = params[1:]
-            defaults = node.args.defaults
-            for a, d in zip(params[len(params) - len(defaults):], defaults):
-                _bind(out, ast.Name(a.arg), d)
-            for a, d in zip(node.args.kwonlyargs, node.args.kw_defaults):
-                if d is not None:
-                    _bind(out, ast.Name(a.arg), d)
-            for call in calls.get(node.name, ()):
+            values = []
+            defaults = f.args.defaults
+            values += [(a.arg, d) for a, d in zip(params[len(params) - len(defaults):], defaults)]
+            values += [(a.arg, d) for a, d in zip(f.args.kwonlyargs, f.args.kw_defaults) if d is not None]
+            names = {a.arg for a in params + f.args.kwonlyargs}
+            for call in calls.get(f.name, ()):
                 for a, v in zip(params, call.args):
                     if isinstance(v, ast.Starred):
                         break
-                    _bind(out, ast.Name(a.arg), v)
-                names = {a.arg for a in params + node.args.kwonlyargs}
-                for kw in call.keywords:
-                    if kw.arg in names:
-                        _bind(out, ast.Name(kw.arg), kw.value)
-    return out
+                    values.append((a.arg, v))
+                values += [(kw.arg, kw.value) for kw in call.keywords if kw.arg in names]
+            for name, v in values:
+                _bind(module, ast.Name(name), v)
+                _bind(local[f], ast.Name(name), v)
+        self.module, self.local, self.owner = module, local, owner
+
+
+def _assignments(tree):
+    """The module-wide view of _Bindings, for the literal-pin rule."""
+    return _Bindings(tree).built().module
 
 
 class _Scope:
-    """A function's bindings first, the module's for a name the function never binds (`self.lab` set in setUp, a
-    module-level root): the one method the readers use, `.get(key, default)`."""
+    """The bindings a name at `node` resolves through: its enclosing function's first, the module's for a name the
+    function never binds (`self.lab` set in setUp, a module-level root). `.get(key, default)` is the one method the
+    readers use; `.module` is the module-wide view, for a root a caller handed in."""
 
-    def __init__(self, local, module):
-        self.local, self.module = local, module
+    def __init__(self, bindings, node):
+        self.bindings, self.node = bindings, node
 
     def get(self, key, default=()):
-        return self.local.get(key) or self.module.get(key, default)
+        b = self.bindings.built()
+        local = b.local.get(b.owner.get(self.node))
+        return (local.get(key) if local else None) or b.module.get(key, default)
+
+    @property
+    def module(self):
+        return self.bindings.built().module
 
 
-def _owners(tree):
-    """{node: the innermost function it sits in} for every node of the module (module-level nodes are absent). ast.walk
-    is breadth-first, so an inner function's pass overwrites the outer's for the nodes it holds."""
-    owner = {}
-    for f in ast.walk(tree):
-        if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            for sub in ast.walk(f):
-                owner[sub] = f
-    return owner
+def _scoper(tree):
+    """scope_of(node) -> the _Scope a name at `node` resolves through, over one lazy _Bindings of the module."""
+    bindings = _Bindings(tree)
+    return lambda node: _Scope(bindings, node)
 
 
 def _pinned(node, assigned, depth=3):
@@ -910,6 +942,12 @@ class BareRunLeavesNothing(unittest.TestCase):
 # enclosing function's assignments, then the module's, to the mkdtemp that made it), the socket tail
 # comes from the kernel's own host_sock and sock_names, and the budget is the kernel's constant. The
 # canonical TMPDIR is the box rule's input, `mktemp -d /tmp/sweep-XXXXXX`, 17 bytes, and stated as such.
+# THE SOCKET IS ONE SHAPE (the widening, 2026-09-21 19:15Z): every shape the harness mints under a root has its
+# own ceiling, so the same scan also follows every mkdtemp/TemporaryDirectory in the tree (the nesting through
+# dir=, a suffix, a parameter's call sites) to the longest DIRECTORY path under xdist nesting, held against
+# PC_PATH_MAX, and the longest single COMPONENT (the tree's prefixes + tail, the harness's own names, the
+# kernel's socket names), held against PC_NAME_MAX. Every figure here is the longest the harness can produce
+# UNDER XDIST NESTING, measured on a worker-shaped root: an alone run verifies none of them.
 Lab = collections.namedtuple("Lab", "bytes file line prefix comps note")
 Harness = collections.namedtuple("Harness", "bytes levels controller worker system")
 SWEEP_TMPDIR_TEMPLATE = "/tmp/sweep-XXXXXX"           # the box rule: a full sweep's TMPDIR is `mktemp -d` of this, 17 bytes
@@ -1073,14 +1111,7 @@ def hosts_on_labs(sources, tail):
         if "session-hosts" not in text:
             continue
         tree = ast.parse(text)
-        module_wide, owner, locals_of = _assignments(tree), _owners(tree), {}
-
-        def scope_of(node):
-            func = owner.get(node)
-            if func is not None and func not in locals_of:
-                locals_of[func] = _assignments(tree, func)
-            return _Scope(locals_of.get(func, {}), module_wide)
-        for node, hits, value, assigned in _session_hosts_writes(tree, scope_of):
+        for node, hits, value, assigned in _session_hosts_writes(tree, _scoper(tree)):
             word = _written_word(value, assigned)
             if word == "off":
                 continue
@@ -1115,6 +1146,104 @@ def longest_prefix(sources):
     return best
 
 
+Dir = collections.namedtuple("Dir", "bytes file line chain")
+
+
+def _literal_str(expr, assigned, seen=()):
+    """The LONGEST string `expr` can be, read statically: a literal; `a + b` of two readable parts; a name or attribute
+    through every binding it has (a parameter through its call sites), the longest of them. None when any part cannot
+    be read (a call, a formatted string, a name never bound to a literal)."""
+    if isinstance(expr, ast.Constant):
+        return expr.value if isinstance(expr.value, str) else None
+    if isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Add):
+        left, right = _literal_str(expr.left, assigned, seen), _literal_str(expr.right, assigned, seen)
+        return None if left is None or right is None else left + right
+    if isinstance(expr, (ast.Name, ast.Attribute)):
+        key = ast.unparse(expr)
+        if key in seen:
+            return None
+        values = [_literal_str(v, assigned, seen + (key,)) for v in assigned.get(key, ())]
+        if not values or None in values:
+            return None
+        return max(values, key=lambda v: len(os.fsencode(v)))
+    return None
+
+
+def _name_part(call, part, assigned):
+    """The `prefix` or `suffix` a mkdtemp/TemporaryDirectory call names (keyword or positional: suffix, prefix, dir),
+    followed through a name's bindings to the longest string it can be; the default ("tmp" for the prefix, "" for the
+    suffix) when it names none or None; None when it cannot be read."""
+    pos = {"suffix": 0, "prefix": 1}[part]
+    expr = next((k.value for k in call.keywords if k.arg == part), None)
+    if expr is None and len(call.args) > pos and not any(isinstance(a, ast.Starred) for a in call.args):
+        expr = call.args[pos]
+    if expr is None or (isinstance(expr, ast.Constant) and expr.value is None):
+        return "tmp" if part == "prefix" else ""
+    return _literal_str(expr, assigned)
+
+
+def _dir_bytes(expr, assigned, tail, depth=4):
+    """[(bytes below the process temp root, chain)] for every directory `expr` can name, NESTING INCLUDED: a
+    mkdtemp/TemporaryDirectory with no `dir=` sits directly under the root (`/` + prefix + tail + suffix); one with
+    `dir=<expr>` sits under each directory <expr> names, its bytes added (a dir the reader cannot follow — the recorded
+    system dir, a helper's answer — is taken as the root itself, the deeper reading for anything under the system dir);
+    os.path.join, Path, `/` and str(...) add their literal components; a name is followed through its bindings. A prefix
+    or suffix that cannot be read gives bytes None with the call's text as the chain: the caller lists it."""
+    if isinstance(expr, ast.Call):
+        name = _call_name(expr)
+        if name in ("mkdtemp", "TemporaryDirectory"):
+            prefix, suffix = _name_part(expr, "prefix", assigned), _name_part(expr, "suffix", assigned)
+            if prefix is None or suffix is None:
+                return [(None, ast.unparse(expr))]
+            own = 1 + len(os.fsencode(prefix)) + tail + len(os.fsencode(suffix))
+            chain = "/" + prefix + "X" * tail + suffix
+            d = _dir_argument(expr)
+            parents = [] if d is None or (isinstance(d, ast.Constant) and d.value is None) else _dir_bytes(d, assigned, tail, depth)
+            if not parents:
+                return [(own, chain)]
+            return [(None, c) if b is None else (b + own, c + chain) for b, c in parents]
+        if name in ("Path", "join", "str", "realpath", "abspath", "fspath") and expr.args:
+            rest = expr.args[1:]
+            if all(isinstance(a, ast.Constant) and isinstance(a.value, str) for a in rest):
+                add, comps = sum(1 + len(os.fsencode(a.value)) for a in rest), "".join("/" + a.value for a in rest)
+                return [(None, c) if b is None else (b + add, c + comps) for b, c in _dir_bytes(expr.args[0], assigned, tail, depth)]
+        return []
+    if (isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Div) and isinstance(expr.right, ast.Constant)
+            and isinstance(expr.right.value, str)):
+        add = 1 + len(os.fsencode(expr.right.value))
+        return [(None, c) if b is None else (b + add, c + "/" + expr.right.value) for b, c in _dir_bytes(expr.left, assigned, tail, depth)]
+    if isinstance(expr, ast.Attribute) and expr.attr == "name":          # TemporaryDirectory().name
+        return _dir_bytes(expr.value, assigned, tail, depth)
+    if isinstance(expr, (ast.Name, ast.Attribute)) and depth:
+        out = []
+        for v in assigned.get(ast.unparse(expr), ()):
+            out += _dir_bytes(v, assigned, tail, depth - 1)
+        return out
+    return []
+
+
+def harness_dirs(sources, tail):
+    """(dirs, unreadable): every directory the tests' own tempfile.mkdtemp and TemporaryDirectory calls can make, one
+    Dir per shape (bytes below the process temp root with the nesting through `dir=` followed, the module, the line, the
+    chain of names with mkdtemp's tail as X's); `unreadable` lists the calls whose prefix or suffix the reader cannot
+    read, a hole in the bound for the caller to refuse by name. The mints of romp itself under a state root (sdk/,
+    hosts/<sid>/, sessions/) are the product's shapes, not the harness's, and are outside this scan."""
+    dirs, unreadable = [], []
+    for label, text in sources:
+        if "mkdtemp" not in text and "TemporaryDirectory" not in text:
+            continue
+        tree = ast.parse(text)
+        scope_of = _scoper(tree)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and _call_name(node) in ("mkdtemp", "TemporaryDirectory"):
+                for b, chain in dict.fromkeys(_dir_bytes(node, scope_of(node), tail)):
+                    if b is None:
+                        unreadable.append("%s:%d: %s" % (label, node.lineno, chain))
+                    else:
+                        dirs.append(Dir(b, label, node.lineno, chain))
+    return dirs, unreadable
+
+
 def tree_sources():
     """(label, text) for every tests/*.py: the same glob the literal-pin rule reads."""
     return [(os.path.relpath(path, ROOT), open(path, encoding="utf-8").read())
@@ -1139,14 +1268,53 @@ def assert_socket_fits(case, what, tmpdir_bytes, harness, lab, sock_bytes, budge
     shape = "`%s` + mkdtemp tail%s" % (lab.prefix, "".join("/" + c for c in lab.comps) and " + `%s`" % "".join("/" + c for c in lab.comps))
     case.assertGreaterEqual(
         margin, min_margin,
-        "%s: the deepest hosts-on socket path the harness can produce is %d bytes = %d (TMPDIR) + %d (%d romp-tests-* root "
-        "level(s), measured on roots the harness minted) + %d (the lab: %s, %s:%d%s) + %d (`/hosts/<sid8>.sock`, the "
-        "kernel's host_sock and sock_names); SOCK_PATH_MAX is %d, so the margin is %d and at least %d is required. Every "
-        "process must mint its root directly under the recorded system temp dir (beside its parent, never inside), and "
-        "the run's TMPDIR may be at most %d bytes."
+        "%s: the longest hosts-on socket path the harness can produce UNDER XDIST NESTING (a worker's root beside the "
+        "controller's, measured on roots minted that way; running the lab's test alone verifies nothing about this figure) "
+        "is %d bytes = %d (TMPDIR) + %d (%d romp-tests-* root level(s), measured on roots the harness minted) + %d (the lab: "
+        "%s, %s:%d%s) + %d (`/hosts/<sid8>.sock`, the kernel's host_sock and sock_names); held against SOCK_PATH_MAX = %d "
+        "(sun_path less its NUL, kernel/session_host.py), so the margin is %d and at least %d is required. Every process "
+        "must mint its root directly under the recorded system temp dir (beside its parent, never inside), and the run's "
+        "TMPDIR may be at most %d bytes."
         % (what, total, tmpdir_bytes, harness.bytes, harness.levels, lab.bytes, shape, lab.file, lab.line,
            "; " + lab.note if lab.note else "", sock_bytes, budget, margin, min_margin, budget - (total - tmpdir_bytes)))
     return total, margin
+
+
+def _pathconf(path, name, default):
+    """os.pathconf(path, name), or `default` where the name or the call is unavailable."""
+    try:
+        value = os.pathconf(path, name)
+        return value if value and value > 0 else default
+    except (OSError, ValueError, AttributeError):
+        return default
+
+
+def assert_path_fits(case, what, tmpdir_bytes, harness, deepest, ceiling):
+    """The directory arm: `deepest` is a Dir measured below the process root; PC_PATH_MAX counts the terminating NUL, so
+    the usable length is one less. Returns (total, slack)."""
+    total = tmpdir_bytes + harness.bytes + deepest.bytes
+    slack = ceiling - 1 - total
+    case.assertGreaterEqual(
+        slack, 0,
+        "%s: the longest directory path the harness can produce UNDER XDIST NESTING (a worker's root beside the controller's, "
+        "measured on roots minted that way; an alone run verifies nothing about this figure) is %d bytes = %d (TMPDIR) + %d "
+        "(%d romp-tests-* root level(s), measured on roots the harness minted) + %d (%s, %s:%d, the nesting through dir= "
+        "followed); held against PC_PATH_MAX = %d (the NUL included, so %d usable), slack %d."
+        % (what, total, tmpdir_bytes, harness.bytes, harness.levels, deepest.bytes, deepest.chain, deepest.file, deepest.line,
+           ceiling, ceiling - 1, slack))
+    return total, slack
+
+
+def assert_name_fits(case, what, name, source, ceiling):
+    """The component arm: one path component against PC_NAME_MAX (no NUL in the count). Returns (bytes, slack)."""
+    n = len(os.fsencode(name))
+    slack = ceiling - n
+    case.assertGreaterEqual(
+        slack, 0,
+        "%s: the longest single component of any path the harness can produce UNDER XDIST NESTING is %d bytes (%r, from %s; "
+        "a name is the same length alone and nested, but the figure is the tree's, not one run's); held against "
+        "PC_NAME_MAX = %d, slack %d." % (what, n, name, source, ceiling, slack))
+    return n, slack
 
 
 class HarnessSocketBudget(unittest.TestCase):
@@ -1383,6 +1551,109 @@ class HarnessSocketBudget(unittest.TestCase):
             widest = Lab(1 + n + tail + sum(1 + len(os.fsencode(c)) for c in lab.comps), label, line, prefix, lab.comps, None)
             assert_socket_fits(self, "under the box rule's %d-byte TMPDIR with the tree's longest mkdtemp prefix" % canonical,
                                canonical, harness, widest, sock, budget)
+
+    def test_the_longest_directory_path_and_component_the_harness_can_produce_fit_the_filesystems_limits(self):
+        """The widening (romp-manager, 2026-09-21 19:15Z): the socket is one shape with one ceiling, and every shape the
+        harness mints under a test root has its own. From the same AST scan — every tempfile.mkdtemp and
+        TemporaryDirectory in tests/*.py with the nesting through `dir=` followed, and the hosts-on labs' state suffixes —
+        and the same root level measured on minted roots: the longest DIRECTORY path under xdist nesting at the box rule's
+        TMPDIR (and at this run's), held against PC_PATH_MAX; and the longest single COMPONENT — the tree's longest
+        prefix + tail, the harness's own names (a root, the state dir, the children file, the marker) and the kernel's two
+        socket names — held against PC_NAME_MAX. Figures and slack printed. Both ceilings sit far above today's tree;
+        the arm exists so that a shape that reaches one is red by name, not a mystery in a sweep log."""
+        ht, sh = self._kernel()
+        tail = _tmp_name_tail_bytes()
+        synthetic = tempfile.mkdtemp(prefix="harness-")
+        ctl, c, wrk, w = self._mint_pair(synthetic)
+        harness = Harness(*harness_bytes(w["root"], synthetic), c["root"], w["root"], synthetic)
+        root_name = os.path.basename(w["root"])
+        self._release(wrk)
+        self._release(ctl)
+        self.assertEqual(harness.levels, 1, "one romp-tests-* level for a worker under xdist nesting: %r" % (harness,))
+        sources = tree_sources()
+        dirs, unreadable = harness_dirs(sources, tail)
+        self.assertEqual(unreadable, [], "a mkdtemp whose prefix or suffix the reader cannot read is a hole in the directory "
+                         "and component bounds: name it with a literal (a unique marker comes from the minted basename, not "
+                         "into the prefix), or extend _literal_str")
+        self.assertTrue(dirs, "no mkdtemp in the tree? the reader found no directory")
+        labs, _, _ = hosts_on_labs(sources, tail)
+        state_roots = [Dir(lab.bytes, lab.file, lab.line, "/" + lab.prefix + "X" * tail + "".join("/" + comp for comp in lab.comps))
+                       for lab in labs]
+        deepest = max(dirs + state_roots, key=lambda d: d.bytes)
+        canonical = len(os.fsencode(SWEEP_TMPDIR_TEMPLATE))
+        system = os.path.abspath(os.environ["ROMP_TESTS_SYSTEM_TMPDIR"])
+        path_max, name_max = _pathconf("/", "PC_PATH_MAX", 4096), _pathconf(system, "PC_NAME_MAX", 255)
+        pkg = sys.modules["tests"]
+        published, temp = sh.sock_names(str(uuid.uuid4()))
+        names = {root_name: "a romp-tests-* root, measured on a minted one", os.path.basename(pkg.STATE_DIR): "the package's state dir",
+                 pkg.TEST_ROOT_CHILDREN: "the children file", pkg.TEST_ROOT_OWNER_MARKER: "the owner marker",
+                 published: "the published socket name (sock_names)", temp: "the socket's temp name (sock_names)"}
+        for d in dirs + state_roots:
+            for comp in d.chain.split("/"):
+                if comp:
+                    names.setdefault(comp, "%s:%d" % (d.file, d.line))
+        longest_name = max(names, key=lambda n: len(os.fsencode(n)))
+        total = canonical + harness.bytes + deepest.bytes
+        print("\nHarnessSocketBudget (directory and component): %d mkdtemp/TemporaryDirectory shapes in %d modules; deepest below "
+              "a root %d bytes (%s, %s:%d); under xdist nesting at the %d-byte TMPDIR %d = %d + %d + %d, PC_PATH_MAX %d (%d "
+              "usable), slack %d; longest component %d bytes (%r, %s), PC_NAME_MAX %d, slack %d"
+              % (len(dirs), len({d.file for d in dirs}), deepest.bytes, deepest.chain, deepest.file, deepest.line, canonical, total,
+                 canonical, harness.bytes, deepest.bytes, path_max, path_max - 1, path_max - 1 - total, len(os.fsencode(longest_name)),
+                 longest_name, names[longest_name], name_max, name_max - len(os.fsencode(longest_name))), file=sys.stderr)
+        with self.subTest(arm="the longest directory path under the box rule's %d-byte TMPDIR, against PC_PATH_MAX" % canonical):
+            assert_path_fits(self, "under the box rule's %d-byte TMPDIR" % canonical, canonical, harness, deepest, path_max)
+        with self.subTest(arm="the longest directory path under this run's TMPDIR, against PC_PATH_MAX"):
+            assert_path_fits(self, "under this run's TMPDIR %s (%d bytes)" % (system, len(os.fsencode(system))),
+                             len(os.fsencode(system)), harness, deepest, path_max)
+        with self.subTest(arm="the longest single component, against PC_NAME_MAX"):
+            assert_name_fits(self, "in the tree and the harness's own names", longest_name, names[longest_name], name_max)
+
+    def test_the_directory_and_component_arms_red_on_planted_overruns(self):
+        """The two new arms against planted inputs: the reader follows nesting through dir=, a suffix, a parameter's call
+        sites and a `/` join, sums the chain, lists a prefix it cannot read, and the assertions fail past their ceilings
+        with the chain, the figures and the ceiling in the message."""
+        tail = _tmp_name_tail_bytes()
+        system = tempfile.mkdtemp(prefix="planted-")
+        root = tempfile.mkdtemp(prefix="romp-tests-", dir=system)
+        flat = Harness(*harness_bytes(root, system), root, root, system)
+        planted = textwrap.dedent('''\
+            import os, tempfile
+            from pathlib import Path
+            def helper(prefix):
+                return tempfile.mkdtemp(prefix=prefix)
+            class T:
+                def setUp(self):
+                    self.a = tempfile.mkdtemp(prefix="aa-", suffix="-s")
+                    self.b = tempfile.mkdtemp(prefix="bb-", dir=self.a)
+                    self.c = tempfile.mkdtemp(prefix="cc-", dir=os.path.join(self.b, "x", "yy"))
+                    self.d = tempfile.TemporaryDirectory(prefix="dd-", dir=Path(self.c) / "z")
+                    helper("long-one-")
+                    helper("s-")
+                    tempfile.mkdtemp(prefix=make_prefix())
+        ''')
+        dirs, unreadable = harness_dirs([("t.py", planted)], tail)
+        self.assertEqual(unreadable, ["t.py:13: tempfile.mkdtemp(prefix=make_prefix())"])
+        by_line = {d.line: d for d in dirs}
+        self.assertEqual(by_line[7].bytes, 1 + 3 + tail + 2)
+        self.assertEqual(by_line[8].bytes, by_line[7].bytes + 1 + 3 + tail)
+        self.assertEqual(by_line[9].bytes, by_line[8].bytes + 2 + 3 + 1 + 3 + tail, by_line[9])
+        self.assertEqual(by_line[10].bytes, by_line[9].bytes + 2 + 1 + 3 + tail, by_line[10])
+        self.assertEqual(by_line[10].chain, "/aa-%s-s/bb-%s/x/yy/cc-%s/z/dd-%s" % ((("X" * tail),) * 4))
+        self.assertEqual(by_line[4].bytes, 1 + len("long-one-") + tail, "a parameter: the longest literal any call site passes")
+        deepest = max(dirs, key=lambda d: d.bytes)
+        total, slack = assert_path_fits(self, "planted control", 17, flat, deepest, 4096)
+        self.assertEqual(total, 17 + flat.bytes + by_line[10].bytes)
+        with self.assertRaises(AssertionError) as cm:
+            assert_path_fits(self, "planted ceiling", 17, flat, deepest, total)        # one byte short of fitting (the NUL)
+        self.assertIn(by_line[10].chain, str(cm.exception))
+        self.assertIn("PC_PATH_MAX = %d" % total, str(cm.exception))
+        self.assertIn("UNDER XDIST NESTING", str(cm.exception))
+        assert_path_fits(self, "planted fit", 17, flat, deepest, total + 1)
+        with self.assertRaises(AssertionError) as cm:
+            assert_name_fits(self, "planted name", "n" * 256, "t.py:1", 255)
+        self.assertIn("256 bytes", str(cm.exception))
+        self.assertIn("PC_NAME_MAX = 255", str(cm.exception))
+        assert_name_fits(self, "planted name", "n" * 255, "t.py:1", 255)
 
     def test_the_derivation_reds_on_a_planted_extra_level_or_a_longer_prefix(self):
         """The pin against planted inputs, not the tree: a nested worker root (the shape before 2026-09-21) measured
