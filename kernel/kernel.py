@@ -1026,7 +1026,10 @@ class _PerfStats:
                                    (per key input that moved: rows, names, notes, registry);
                                    subagentTree (the subagents directory tree memo the builds read,
                                    _subagent_tree_memo_report) -> hit / miss (trees vouched for by
-                                   their directories' stats vs walked), evict (roots dropped as
+                                   their directories' stats vs walked: the validations and walks
+                                   paid) / served (reads a cycle scope answered from its held pair
+                                   with no stat: the reads the scope absorbed; a read of a standing
+                                   root lands in exactly one of the three), evict (roots dropped as
                                    unowned), dirStats (the directory stats both validators paid:
                                    the tree validation's lstats and the agent-file lookup's stamp
                                    re-check; the lstat half alone before 2026-09-19, when a tree's
@@ -35243,9 +35246,14 @@ SUBAGENT_STEPS_CAP = 200        # tool calls shipped on the Agent head (agentSte
 # more for a root that itself left the memo in the cycle, at its next lookup): the thread's cycle scope (_subagent_scope_open,
 # below _subagent_tree_charge) holds the validated pair for the cycle.
 _SUBAGENT_TREES = {}
-_SUBAGENT_TREE_STATS = {"hit": 0, "miss": 0, "evict": 0, "dirStats": 0, "walkMs": 0.0, "validateMs": 0.0}   # /perf memos.subagentTree;
+_SUBAGENT_TREE_STATS = {"hit": 0, "miss": 0, "served": 0, "evict": 0, "dirStats": 0, "walkMs": 0.0, "validateMs": 0.0}   # /perf memos.subagentTree;
 #                          advisory tallies, incremented without a lock as the neighbouring memos' are (a lost count under a race
-#                          is tolerated; the memo's own writes are single dict stores of immutable tuples). dirStats counts the
+#                          is tolerated; the memo's own writes are single dict stores of immutable tuples). Every _subagent_tree
+#                          read of a root that is a directory lands in exactly one of hit (validated: one lstat per known
+#                          directory), miss (walked) and served (answered from the cycle scope's held pair, no stat; the scope's
+#                          early return alone moves it, not _dir_stamp's served stamps, a distinct population left uncounted;
+#                          round 2 of #882, before which the scope's reads moved no counter), so hit + miss is the validations
+#                          and walks the process paid and served is the reads the scope absorbed. dirStats counts the
 #                          directory stats BOTH validators pay (2026-09-19): _subagent_tree's lstat per known directory below
 #                          the root and _dir_stamp's os.stat per directory an agent-file lookup re-checks; before that day it counted the
 #                          lstat half alone, so the figure across that deploy is not one series
@@ -35453,7 +35461,8 @@ def _subagent_tree(d):
         held = sc["trees"].get(d)
         if held is not None:
             if _subagent_vouched(d, held[1]):            # validated or walked earlier this cycle on this thread, and the root
-                return held[0]                            #  has not left the memo since: no stat
+                _SUBAGENT_TREE_STATS["served"] += 1       #  has not left the memo since: no stat; the one site that moves served
+                return held[0]
             del sc["trees"][d]                            # it left (an eviction on this thread or another): the hold is stale
     g0 = _SUBAGENT_TREES_GEN[0]                           # read BEFORE the disk read: an eviction that races the read outdates the hold
     try:
@@ -35545,7 +35554,10 @@ def _subagent_trees_forget(alive):
 
 
 def _subagent_tree_memo_report():
-    """/perf memos.subagentTree: hit and miss (trees served by validation against trees walked), evict (roots dropped as
+    """/perf memos.subagentTree: hit and miss (trees served by validation against trees walked: how many validations and
+    walks the process paid), served (reads a cycle scope answered from the pair it held, no stat: how many reads the scope
+    absorbed; _subagent_tree's early return alone, so a read of a standing root lands in exactly one of the three; round 2
+    of #882, before which those reads moved no counter), evict (roots dropped as
     unowned), dirStats (the directory stats both validators paid: the tree validation's lstat per known directory below the
     root and the agent-file lookup's os.stat per directory it re-checks, _dir_stamp; the lstat half alone before 2026-09-19), walkMs and
     validateMs (the time in each, every thread), and the gauges roots (entries) and dirs (directories held). A validation

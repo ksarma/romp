@@ -3698,7 +3698,13 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   R x D and R x A once scoped, the figure with no eviction); a
   thread outside a cycle, a WS or HTTP handler's build or the act-now nudge
   pass, reads per call as before), with `hit` and `miss`
-  (trees vouched for by one stat per known directory against trees walked),
+  (trees vouched for by one stat per known directory against trees walked:
+  how many validations and walks the process paid), `served` (reads a cycle
+  scope answered from the pair it held with no stat: how many reads the
+  scope absorbed; a read of a root that is there lands in exactly one of the
+  three, so `hit` plus `miss` plus `served` is the reads; since round 2 of
+  #882, before which the scope's reads moved no counter, so the figure has no
+  earlier series),
   `evict` (roots dropped because no alive session's transcript names them,
   on every jobs pass and, as a belt, after each feed build and from the
   tracking-off frame), `dirStats` (the directory stats both validators

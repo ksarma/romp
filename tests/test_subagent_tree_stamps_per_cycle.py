@@ -23,9 +23,12 @@ any hold it was folded once per owner lookup, A x (A - 1) times per read where t
 
 Pinned here, through the REAL cycle functions so the clearing point tested is the wired one: (1) the bound: one pusher
 cycle and one jobs pass with three _session_awaiting calls each cost D os.lstat on the tree's directories (the one
-validation), 0 os.stat on them, dirStats plus D - 1, one hit and A agent-file stats (one fold per agent), where before
-the scope each call paid A x D os.stat, D lstats and A file stats; with an agent row whose file is nowhere the miss walk
-runs once per cycle and its dependency notes to the chat build cost no stat on the tree's directories (round 2 of #882:
+validation), 0 os.stat on them, dirStats plus D - 1, one hit, served moved by the asks the scope answered (the premise
+that every read reached the memo is asserted per read and by shape, the first ask validated and every later one served,
+never by a count of asks per read; round 2 of #882) and A agent-file stats (one fold per agent), where before the scope
+each call paid A x D os.stat, D lstats and A file stats, and the scope's reads moved no counter; with an agent row whose
+file is nowhere the miss walk runs once per cycle and its dependency notes to the chat build cost no stat on the tree's
+directories (round 2 of #882:
 the own tree's note was a fresh stat, one per walk); the scope is closed after the cycle; and a read
 outside any cycle (a handler thread's) still pays per call, with dirStats now counting the stats of both validators;
 (2) per cycle, not sticky: a directory and a fourth agent landing between two cycles are seen by the second cycle's
@@ -108,7 +111,7 @@ SID = "11111111-2222-3333-4444-7c7c7c7c7c7c"   # a PRIVATE placeholder sid (the 
 OTHER_SID = "11111111-2222-3333-4444-7c7c7c7c7c7d"   # a second private placeholder: the session whose tree vanishes mid-cycle (Guards)
 NOW = 1781100000
 AGED_NS = 10_000_000_000                       # ten seconds: past the racy window, as tests/test_subagent_tree_memo.py ages
-STAT_KEYS = ("hit", "miss", "evict", "dirStats")
+STAT_KEYS = ("hit", "miss", "served", "evict", "dirStats")   # served: the reads the scope answered from a held pair (round 2 of #882)
 
 # The kernel names this module replaces for a test and puts back at cleanup: the liveness and awaiting sources (stubbed
 # as tests/test_awaiting_rows.py stubs them), the tick jobs a test stands in for, and the two jobs that read the tree
@@ -336,16 +339,21 @@ class _World(unittest.TestCase):
 
     @staticmethod
     def _delta(before):
-        return {k: km._SUBAGENT_TREE_STATS[k] - before[k] for k in STAT_KEYS}
+        # .get: on a kernel without a counter the delta reads 0 and the pin on it fails with its own message, not a KeyError here
+        return {k: km._SUBAGENT_TREE_STATS.get(k, 0) - before.get(k, 0) for k in STAT_KEYS}
 
     def _awaiting_job(self, rec, spy=None, probe=False):
         """A tick job's stand-in (the pusher's _turn_notify_tick, the pass's _auto_nudge_tick): CALLS _session_awaiting
         reads of the session, as the chat, feed and timeline builds make in one cycle. Records into `rec` rather than
         asserting: the cycle runs each job under a try that writes a raise to stderr and goes on. `spy` given, the
         spy's totals after each call; `probe`, the listing and the sidecar map as read inside the cycle. `asked` records,
-        per _subagent_tree call on the session's root made by those reads, whether the scope already held the pair and
-        answered with it ("served") or the call validated or walked ("validated"): the premise the bound rests on, that
-        every read reached the memo, is asserted, so a read that never asked cannot satisfy the bound for nothing."""
+        one list per _session_awaiting read, per _subagent_tree call on the session's root that read made, whether the
+        scope already held the pair and answered with it ("served") or the call validated or walked ("validated"): the
+        premise the bound rests on, that every read reached the memo, is asserted per read, so a read that never asked
+        cannot satisfy the bound for nothing; the lists are per read so the assertion can key on the shape (the first ask
+        validated, every later one served) and not on how many asks one read makes (round 2 of #882's extra8-1: the flat
+        exact list also fixed that number, so a new in-call reader turned the bound cases red over a bound it had not
+        touched, with a message that blamed a re-validation)."""
         def job(now, live_map, **kw):
             rec["scope"] = _scope()
             rec["counts"], rec["per_call"], rec["asked"] = [], [], []
@@ -356,10 +364,11 @@ class _World(unittest.TestCase):
                 held = (sc["trees"].get(str(d)) if sc is not None else None)   # (the (dirs, stats) pair, the gen it was held under)
                 out = real(d)
                 if str(d) == root:
-                    rec["asked"].append("served" if held is not None and out is held[0] else "validated")
+                    rec["asked"][-1].append("served" if held is not None and out is held[0] else "validated")
                 return out
             with mock.patch.object(km, "_subagent_tree", asking):   # what _subagent_dirs, _subagent_meta_map and the file walk look up
                 for _ in range(CALLS):
+                    rec["asked"].append([])
                     aw = km._session_awaiting(SID, self.path, True)
                     rec["counts"].append((aw or {}).get("count"))
                     if spy is not None:
@@ -369,14 +378,31 @@ class _World(unittest.TestCase):
                 rec["meta"] = set(km._subagent_meta_map(self.path))
         return job
 
+    def _assert_asks(self, what, asks, d, reads):
+        """The premise the bound rests on, keyed on the property and not on a count of asks per read (round 2 of #882's
+        extra8-1): `asks` is one list per driven read; every one of the `reads` reads asked the tree memo at least once, and
+        flattened, the first ask validated and every later one was served the held pair, however many asks a read makes (a
+        new in-call reader adds served asks and leaves this green; a later read that validated again, or one that never
+        asked, reds it). Then the counter: memos.subagentTree served moved by exactly the asks the scope answered."""
+        flat = [a for bucket in asks for a in bucket]
+        self.assertEqual(len(asks), reads, "one list of asks per driven read in one %s: %r" % (what, asks))
+        self.assertTrue(all(asks), "every read in one %s reached the tree memo at least once (a bound met because a read never asked is "
+                                   "no bound): %r" % (what, asks))
+        self.assertEqual(flat, ["validated"] + ["served"] * (len(flat) - 1),
+                         "the asks on the root over one %s, flattened: %r; keyed on the shape, the first ask validating and every later "
+                         "one served the held pair, not on their number (a later ask that validated again is the per-reader cost the "
+                         "scope removes)" % (what, asks))
+        self.assertEqual(d["served"], flat.count("served"),
+                         "memos.subagentTree served over one %s: %d; keyed on the asks the scope answered from its held pair, %d "
+                         "(_subagent_tree's early return alone moves it, so hit + miss + served is the reads of the root; before round 2 "
+                         "of #882 those reads moved no counter)" % (what, d["served"], flat.count("served")))
+        return flat
+
     def _assert_bound(self, what, t, d, rec):
         """The per-cycle bound, derived from D and A: the counts one pusher cycle or one jobs pass pays on the tree. The
         counts first, so a red names the cost, then the scope's presence inside the cycle and its absence after."""
         self.assertEqual(rec.get("counts"), [A] * CALLS, "the stubbed job made its %d reads and each saw the A agents: %r" % (CALLS, rec))
-        self.assertEqual(rec.get("asked"), ["validated"] + ["served"] * (CALLS - 1),
-                         "each of the %d reads in one %s reached the tree memo, the first validating and every later one served the held "
-                         "pair: %r (a bound met because a later read never asked is no bound; a later read that validated again is the "
-                         "per-reader cost the scope removes)" % (CALLS, what, rec.get("asked")))
+        self._assert_asks(what, rec.get("asked") or [], d, CALLS)
         self.assertEqual(t["dir_stat"], 0,
                          "os.stat on the tree's %d directories over one %s: %d; the bound is 0, every agent-file hit's stamp re-check "
                          "(_dir_stamps) served from the scope _subagent_tree filled at the cycle's one validation; before the scope "
@@ -431,7 +457,8 @@ class BoundPerCycleAndPerPass(_World):
         note was a fresh _chat_stat_key stat, 1 per walk). The walk's other costs, derived: W lstats of the own root, its two
         symlink checks (os.path.islink, and os.path.realpath's lstat per component), counted by running those two calls; one
         os.stat per candidate file, the flat place and one per served directory (D + 1); the project directory's one stamp
-        stat, in dirStats and outside the tree. The asks on the root carry one served read more than the calls: the walk's."""
+        stat, in dirStats and outside the tree. The walk's own ask on the root is among the first read's and is served, not
+        a second validation: the asks are asserted by shape, and served by the asks the scope answered (_assert_asks)."""
         ghost = "a%016x" % 0x7cf1
         self.live_aids.append(ghost)                          # in the live row; no sidecar and no file anywhere
         own = str(self.sub)
@@ -445,11 +472,9 @@ class BoundPerCycleAndPerPass(_World):
             km._pusher_cycle()
         t, d = sp.total(), self._delta(b)
         self.assertEqual(rec.get("counts"), [A + 1] * CALLS, "each of the %d reads saw the A agents and the row nobody owns: %r" % (CALLS, rec))
-        asked = rec.get("asked") or []
-        self.assertEqual((asked[:1], asked[1:]), (["validated"], ["served"] * CALLS),
-                         "the asks on the root: %r; keyed on the first read validating and every later ask served, one ask more than the "
-                         "%d reads, the miss walk's own read of the tree (a walk that validated again would show a second 'validated')"
-                         % (asked, CALLS))
+        flat = self._assert_asks("pusher cycle with the miss walk", rec.get("asked") or [], d, CALLS)
+        self.assertGreater(len(flat), CALLS, "the asks on the root: %r; the miss walk asked the tree too, beyond the %d reads' own asks "
+                                             "(and was served: the shape above)" % (rec.get("asked"), CALLS))
         self.assertEqual(t["dir_stat"], 0,
                          "os.stat on the tree's %d directories over one pusher cycle with the miss walk: %d; keyed on 0, the walk's notes "
                          "to the chat build taken from the served pair and the stamp re-checks served as in the bound (round 2 of #882: "
@@ -482,6 +507,9 @@ class BoundPerCycleAndPerPass(_World):
         self.assertEqual(t["dir_lstat"], D, "the tree's one validation for this call")
         self.assertEqual(t["file_stat"], A, "one launch fold per agent")
         self.assertEqual((d["hit"], d["miss"]), (1, 0))
+        self.assertEqual(d["served"], 0, "memos.subagentTree served over a read outside any cycle: %d; keyed on 0, no scope held a pair "
+                                         "to answer from (the counter moves on _subagent_tree's scope early return alone, never on a "
+                                         "validated hit)" % d["served"])
         self.assertEqual(d["dirStats"], (D - 1) + A * D,
                          "dirStats %d; expected (D - 1) + A x D = %d: the validation's lstats AND the stamp re-checks' stats, both "
                          "counted since 2026-09-19 (_dir_stamp counts each os.stat it takes); the lstat half alone, D - 1 = %d, "
