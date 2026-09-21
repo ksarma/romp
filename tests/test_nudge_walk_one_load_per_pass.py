@@ -746,7 +746,8 @@ case's two; the states of the seven fixes before the axis pin were each taken at
 39 cases there, so a state's failed and passed figures sum to the count of that head; the axis pin, the eighth, adds a case, and its
 states, the bypass plants, the alias control and the clean line at the end of this paragraph were taken at this head, the head of
 the round-8 fixes, over its 40 cases (the round adds one, the axis pin); the ninth, the boundary wrappers, adds no case, and its
-states were taken at the tree of its own commit, the module over its 40 cases there, so its figures sum to the count of that head;
+states, with the close's states after it (this pass), were taken at the tree of their own commit, the module over its 40 cases
+there, so their figures sum to the count of that head;
 each plant landed on kernel/kernel.py, kernel/judge.py or this module and reverted, the three files hashed before the plant and
 after the revert and found equal, the module run
 single-process on 3.12 through the clean runner; where a plant left the module green on the tree before its fix the paragraph says
@@ -822,7 +823,11 @@ from the constant reds the birth pin at its kernel-doors line, where the case st
 load_goals_or_fault calling its door without _or_fault reds setUp's one-line guard on every harness case and on the two
 agreement-span pins that drive a throwaway setUp, and the birth pin at its hand-offs line, the derived pair missing on the judge's
 side (22 failed, 18 passed); a wrapper spelled outside the constant handing load_goals to _or_fault reds the birth pin alone at its
-hand-offs line, naming the pair the constant lacks (1 failed, 39 passed).
+hand-offs line, naming the pair the constant lacks (1 failed, 39 passed). The suffix rule itself was spelled twice after that fix, in
+setUp and in the birth pin (this pass): setUp's copy narrowed to drop load_goals_or_fault left the module green, since no harness case
+drives the writer door through that wrapper; the pairs are one module-level tuple, _BOUNDARY_HANDOFFS, read by both, and the tuple's
+derivation narrowed the same way reds the birth pin at its hand-offs line, naming the pair the judge has and the tuple lacks (1
+failed, 39 passed).
 The bypass plants and the alias control, re-taken at this head: the kernel opening
 and parsing the store file itself and the kernel calling jd._read_store_json, per session in the pass loop, leave every case green
 with no file changed across a run (40 passed each); a second judge module loaded under another name reds the birth pin alone, naming
@@ -1291,6 +1296,11 @@ _DICT_READS = ("get", "pop", "setdefault", "__getitem__")   # a namespace dict r
 # literal decoded (bytes in another codec are not undone), surrounding whitespace stripped (a strip of other characters is not),
 # str.lower (casefold or any other fold is not).
 _DOOR_SPELLINGS = ("load_goals", "load_goals_or_fault", "load_goals_shared", "load_goals_shared_or_fault")
+# The judge's boundary wrappers as (wrapper, door) pairs, the one spelling of the suffix rule: a door spelled <door>_or_fault hands <door>
+# to _or_fault. setUp builds the recorder's boundary from these pairs and the birth pin holds them against the judge's AST both ways;
+# until this pass the rule was spelled in each place, and setUp's copy narrowed left the module green, since no harness case drives the
+# writer door through load_goals_or_fault, so only a derivation the birth pin reads too can notice a wrapper missing from the boundary.
+_BOUNDARY_HANDOFFS = tuple(sorted((s, s[:-len("_or_fault")]) for s in _DOOR_SPELLINGS if s.endswith("_or_fault")))
 
 
 def _door_text(node):
@@ -2181,15 +2191,14 @@ class _WalkHarness(unittest.TestCase):
         # replaces a door. Not at import: the judge module is shared by every kernel a worker loads and re-executed into the same
         # module object by each load (romp_load), so a code object captured when this module was imported is a previous
         # execution's once a sibling module imports its kernel (the first run beside six siblings failed on exactly that). The
-        # wrappers are _or_fault and the doors _DOOR_SPELLINGS spells with the _or_fault suffix, each handing its door to _or_fault;
-        # the birth pin holds the same derivation against the judge's AST both ways (until the round-8 fixes the wrappers were
-        # spelled by hand here and again in the birth pin's expected hand-offs, copies pinned to each other by nothing, so a wrapper
-        # dropped from this tuple left the module green).
-        wrappers = tuple(s for s in _DOOR_SPELLINGS if s.endswith("_or_fault"))
-        self.assertTrue(wrappers, "_DOOR_SPELLINGS spells at least one door with the _or_fault suffix, the wrappers the recorder steps over at "
-                                  "their hand-off lines (a derived expectation fails on empty)")
+        # wrappers are _or_fault and the wrappers of _BOUNDARY_HANDOFFS, each handing its door to _or_fault; the birth pin holds that
+        # tuple against the judge's AST both ways (until the round-8 fixes the wrappers were spelled by hand here and again in the
+        # birth pin's expected hand-offs, copies pinned to each other by nothing, so a wrapper dropped from this tuple left the module
+        # green; until this pass the suffix rule was spelled here and again in the birth pin, and this copy narrowed left it green too).
+        self.assertTrue(_BOUNDARY_HANDOFFS, "_DOOR_SPELLINGS spells at least one door with the _or_fault suffix, the wrappers the recorder steps "
+                                            "over at their hand-off lines (a derived expectation fails on empty)")
         boundary = []
-        for fn, callee in ((jd._or_fault, "loader"),) + tuple((getattr(jd, w), "_or_fault") for w in wrappers):
+        for fn, callee in ((jd._or_fault, "loader"),) + tuple((getattr(jd, w), "_or_fault") for w, _door in _BOUNDARY_HANDOFFS):
             lines, calls = _pass_through_lines(fn, callee)
             self.assertEqual(len(lines), 1, "%s's hand-off calls sit on one line, the granularity the recorder steps over at: the "
                                             "wrapper's frame is stepped over only while it sits at that line" % fn.__name__)
@@ -3610,9 +3619,9 @@ class TheCountersOneSite(unittest.TestCase):
         judge, copies pinned to each other by nothing, so a fifth spelling added to the constant left the module green; the defs line
         reads the constant and the stub judge is built from it since). Bounds: the kernel's call sites per spelling, 27, 9, 7 and 15,
         a tripwire on the population read whose keys spell the doors with the kernel's base and whose key set the kernel-side line
-        holds against the constant, so an upstream fold that moves one reds here by design; and the hand-offs derived from
-        _DOOR_SPELLINGS by the _or_fault suffix, held against the judge's AST both ways, the derivation setUp builds the recorder's
-        boundary from."""
+        holds against the constant, so an upstream fold that moves one reds here by design; and the hand-offs, _BOUNDARY_HANDOFFS,
+        derived from _DOOR_SPELLINGS by the _or_fault suffix, held against the judge's AST both ways, the tuple setUp builds the
+        recorder's boundary from."""
         born, called, defs, handoffs = _loader_births(Path(os.path.realpath(km.__file__)), judge=False)
         self.assertEqual(born, [], "%s: a loader bound to another name, or reached through a string, is a body the census cannot read; every "
                                    "reference to a loader in the kernel is the callee of a call spelled jd.<door>(...), so no other name is born, "
@@ -3646,15 +3655,15 @@ class TheCountersOneSite(unittest.TestCase):
                          "a name the value rule refuses for no door). Defined %r; spelled in the constant and not defined %r; defined and not "
                          "spelled %r" % (JUDGE_FILE, defs, sorted(set(_DOOR_SPELLINGS) - set(defs)), sorted(set(defs) - set(_DOOR_SPELLINGS))))
         self.assertEqual(set(called), set(defs), "%s: the judge calls its four doors and no other loader spelling: %r" % (JUDGE_FILE, sorted(called)))
-        expected = sorted((s, s[:-len("_or_fault")]) for s in _DOOR_SPELLINGS if s.endswith("_or_fault"))
+        expected = list(_BOUNDARY_HANDOFFS)
         self.assertTrue(expected, "_DOOR_SPELLINGS spells at least one door with the _or_fault suffix, a boundary wrapper (a derived expectation "
                                   "fails on empty)")
         self.assertEqual(handoffs, expected,
-                         "%s: the boundary wrappers hand their loader to _or_fault and no other function does. The pairs are derived from "
-                         "_DOOR_SPELLINGS by the _or_fault suffix, a wrapper spelled <door>_or_fault handing off <door>, and held against the "
-                         "judge's AST both ways: a suffixed spelling whose def hands off nothing, or another loader, is a pair the judge lacks; "
-                         "a def that hands a loader to _or_fault under a name the constant does not spell with the suffix is a pair the "
-                         "constant lacks. setUp builds the recorder's boundary from the same derivation, so the recorder steps over exactly "
+                         "%s: the boundary wrappers hand their loader to _or_fault and no other function does. The pairs are _BOUNDARY_HANDOFFS, "
+                         "derived from _DOOR_SPELLINGS by the _or_fault suffix, a wrapper spelled <door>_or_fault handing off <door>, and held "
+                         "against the judge's AST both ways: a suffixed spelling whose def hands off nothing, or another loader, is a pair the "
+                         "judge lacks; a def that hands a loader to _or_fault under a name the constant does not spell with the suffix is a "
+                         "pair the constant lacks. setUp builds the recorder's boundary from the same tuple, so the recorder steps over exactly "
                          "these wrappers' frames at their hand-off lines and a wrapper spelled otherwise is a caller it names for itself. "
                          "Derived and not in the judge %r; in the judge and not derived %r; the judge's hand-offs %r"
                          % (JUDGE_FILE, sorted(set(expected) - set(handoffs)), sorted(set(handoffs) - set(expected)), handoffs))
