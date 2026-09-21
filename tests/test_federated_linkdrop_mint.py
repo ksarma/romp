@@ -59,8 +59,10 @@ earlier disclosure, which called this class "built text", let it pass; the dunde
 name handed to getattr over any imported name since pass 10, and since its fixer pass over ANY value, with a reflective
 primitive read bare, a second binding of `subprocess`, a spawn or a callable at import time refused too), and an attribute
 chain rooted at a foreign import binding is RESOLVED step by step through the modules' own import tables, read by path
-(_reach): a module ALLOWED_IMPORTS does not name, reached through an allowed module's own import (`mock.pkgutil`,
-`mock.builtins`, `mock.partial` from functools, `subprocess.builtins`, `http.server.socketserver`), and a member of a module
+(_reach): a module ALLOWED_IMPORTS does not name, reached through an allowed module's own import (`mock.builtins`,
+`mock.partial` from functools, `subprocess.builtins`, `http.server.socketserver`; `mock.pkgutil` on a Python whose mock imports
+pkgutil, 3.11 and later, since the tables are THIS interpreter's standard library and a plant that rides one Python's imports
+is a sample of the matrix: pass 11, after the two pkgutil plants redded Python 3.10 alone), and a member of a module
 whose source the census cannot read that the censused set does not read today (UNREAD_MEMBERS: `sys._getframe`,
 `sys.meta_path`, `mock.sys.modules`), are refused. What remains is a call of an allowed module's OWN function whose body
 resolves a name from the string it is handed (`mock.patch("sub" + "process.run")` resolves its target by import inside
@@ -1194,11 +1196,12 @@ class OldHubMintIsPrivate(unittest.TestCase):
                  ('b"subprocess".decode()\n', '"subprocess"'),
                  ('x.__getattr__("ru" + "n")\n', ".__getattr__"),
                  # the reach through an allowed module's own imports, resolved by the modules' import tables (pass 10's fixer
-                 # pass, plants-10), and a member of a source-less module the censused set does not read
-                 ('from unittest import mock\nmock.pkgutil.resolve_name(NAME)\n', "unittest.mock.pkgutil reaches pkgutil, a module ALLOWED_IMPORTS does not name, through unittest.mock's own import"),
+                 # pass, plants-10), and a member of a source-less module the censused set does not read; the roads through THIS
+                 # interpreter's standard library are the ones every Python of the matrix holds (pass 11: two plants through
+                 # unittest.mock's pkgutil import expected a refusal Python 3.10's mock, which imports no pkgutil, rightly did not
+                 # give; the reach rule itself is pinned below over a synthetic standard library, a road that exists by construction)
                  ('from unittest import mock\nmock.builtins.__import__(NAME)\n', "unittest.mock.builtins reaches builtins"),
                  ('from unittest import mock\nmock.partial(f, x)\n', "unittest.mock.partial reaches functools"),
-                 ('import unittest.mock as mk\nmk.pkgutil\n', "unittest.mock.pkgutil reaches pkgutil"),
                  ('import subprocess\nsubprocess.builtins\n', "subprocess.builtins reaches builtins"),
                  ('import http.server\nclass F(http.server.socketserver.ForkingMixIn):\n    pass\n', "http.server.socketserver reaches socketserver"),
                  ('import sys\nsys._getframe(0)\n', "sys._getframe a member of sys, a module whose source the census cannot read"),
@@ -1216,6 +1219,24 @@ class OldHubMintIsPrivate(unittest.TestCase):
             with self.subTest(form=form, src=src):
                 hits = _commands_around_the_recorder(src, siblings=("test_federated_dial_terms_served",))
                 self.assertTrue(any(form in h[1] for h in hits), "the detector refuses %r as %r: %r" % (src, form, hits))
+        # the reach rule over a synthetic standard library, a road that exists BY CONSTRUCTION on every Python (pass 11): an allowed
+        # module (uuid, spelled as the synthetic library's own) whose source imports a module ALLOWED_IMPORTS does not name, reached
+        # as an attribute, through an alias and as a from-import binding; the same module's import of an allowed module is no road
+        top = tempfile.mkdtemp(prefix="linkdrop-reach-")
+        self.addCleanup(shutil.rmtree, top, True)
+        for name, src in (("uuid", "import notallowed\nimport os\n"), ("notallowed", "x = 1\n"), ("os", "path = 1\n")):
+            with open(os.path.join(top, name + ".py"), "w", encoding="utf-8") as f:
+                f.write(src)
+        built = (('import uuid\nuuid.notallowed.x\n', "uuid.notallowed reaches notallowed, a module ALLOWED_IMPORTS does not name, through uuid's own import"),
+                 ('import uuid as u\nu.notallowed\n', "uuid.notallowed reaches notallowed"),
+                 ('from uuid import notallowed\n', "from uuid import notallowed: uuid.notallowed reaches notallowed"),
+                 ('from uuid import notallowed as _n\n', "from uuid import notallowed: uuid.notallowed reaches notallowed"))
+        for src, form in built:
+            with self.subTest(form=form, src=src, stdlib="synthetic"):
+                hits = _commands_around_the_recorder(src, siblings=("lab_dist",), stdlib=top)
+                self.assertTrue(any(form in h[1] for h in hits), "the detector refuses %r as %r over the synthetic standard library: %r" % (src, form, hits))
+        self.assertEqual(_commands_around_the_recorder('import uuid\nuuid.os.path\n', siblings=("lab_dist",), stdlib=top), [],
+                         "an allowed module reached through the synthetic module's own import is no road")
         allowed = ('import os\nimport subprocess\nimport sys\nimport lab_dist\nfrom . import lab_dist_stub\nfrom tests import fs_clock\n'
                    'HERE = os.path.dirname(os.path.realpath(__file__))\nsys.path.insert(0, HERE)\n'
                    'def f():\n    import select\n    subprocess.run(["true"], stdout=subprocess.PIPE)\n    p = subprocess.Popen(["true"])\n    return select.select([], [], [], 0)\n'
