@@ -17,8 +17,9 @@
 #   - a roster line whose source names Firefox or WebKit outside a comment: the gating job installs Chromium only;
 #   - a roster line whose bundle is not under out-tests/: the Test step's npm test builds it (node esbuild.js --tests).
 # After node --test it reads the run's TAP record: a test skipped under the switch is red too, with the skipped tests
-# named as node names them and the rostered sources that hold each name, since a skip here is coverage the step claims
-# and does not have; and a failed test whose error names the switch (inBrowser could not launch) is printed beside its
+# named as node names them, the switch's state in the run and the rostered sources that hold each name, since a skip
+# here is coverage the step claims and does not have (with the switch unset, as a local run may have it, the remedy is
+# to run with it set); and a failed test whose error names the switch (inBrowser could not launch) is printed beside its
 # leg, read from the record's location line, with the remedy: the runner lost its browser, check the Chromium install
 # step. The census rule is the one tools/ci-browser-legs.test.mjs states; that test runs `--list-legs` here and holds
 # the two to the same set, and runs the checks above on synthetic trees. An empty roster prints "no legs in the roster"
@@ -30,6 +31,9 @@ ROOT=$(cd .. && pwd)
 ROSTER=ci-browser-legs.txt
 EXCLUDED=ci-browser-legs-excluded.txt
 SWITCH=ROMP_BROWSER_LEGS_REQUIRE
+# The switch's state in this run, printed by the messages after node --test: the step sets it to 1; a local run may not,
+# and a skip with it unset is inBrowser skipping as designed, so the remedy differs.
+if [ -n "${!SWITCH:-}" ]; then switch_state="$SWITCH=${!SWITCH}"; else switch_state="$SWITCH unset"; fi
 
 # A browser leg: a test module esbuild's test build bundles (a .test.ts directly in vscode-extension/src, ui or ui/webview)
 # that, on a line that is not a // comment, requires or imports the "playwright" package, or imports ./real-viewer-leg and
@@ -164,9 +168,13 @@ if [ -n "$skipped" ]; then
     for leg in "${legs[@]}"; do
       if grep -qF -- "$name" "$(source_of "$leg")"; then holders="${holders:+$holders, }$leg"; fi
     done
-    echo "ci-browser-legs: skipped under $SWITCH=1: ${s#"${s%%[![:space:]]*}"} (rostered sources holding that test name verbatim: ${holders:-none})" >&2
+    echo "ci-browser-legs: skipped with $switch_state: ${s#"${s%%[![:space:]]*}"} (rostered sources holding that test name verbatim: ${holders:-none})" >&2
   done <<<"$skipped"
-  echo "ci-browser-legs: a rostered leg skipped a test under $SWITCH=1, so the step claims coverage it did not run: the test skips for a reason of its own (only inBrowser in ui/webview/real-viewer-leg.ts turns a launch it cannot make into a failure here); until every test of the leg runs here, move it to $EXCLUDED with that reason" >&2
+  if [ -n "${!SWITCH:-}" ]; then
+    echo "ci-browser-legs: a rostered leg skipped a test with $switch_state, so the step claims coverage it did not run: the test skips for a reason of its own (only inBrowser in ui/webview/real-viewer-leg.ts turns a launch it cannot make into a failure here); until every test of the leg runs here, move it to $EXCLUDED with that reason" >&2
+  else
+    echo "ci-browser-legs: a rostered leg skipped a test with $switch_state, so this run claims coverage it did not run: the step sets $SWITCH=1, under which inBrowser in ui/webview/real-viewer-leg.ts fails a launch it cannot make instead of skipping; run with it set, and a test that still skips there skips for a reason of its own" >&2
+  fi
   [ "$status" -ne 0 ] || status=1
 fi
 
@@ -184,7 +192,7 @@ if [ -n "$lost" ]; then
     # the location as node quotes it: '<absolute bundle path>:<line>:<column>'; the leg is that path relative to here
     file=${loc#\'}; file=${file%\'}; file=${file%:*}; file=${file%:*}
     leg=${file#"$PWD/"}
-    echo "ci-browser-legs: $leg: '$name' failed under $SWITCH=1 because inBrowser could not launch ($err): the runner lost its browser: check the Chromium install step" >&2
+    echo "ci-browser-legs: $leg: '$name' failed under $switch_state because inBrowser could not launch ($err): the runner lost its browser: check the Chromium install step" >&2
   done <<<"$lost"
   [ "$status" -ne 0 ] || status=1
 fi

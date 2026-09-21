@@ -25,8 +25,9 @@
 //     malformed line (shown with its whitespace visible, the leg it names attributed to it), a leg that never calls
 //     inBrowser, a leg with a launch or a skip of its own beside inBrowser, and a leg naming Firefox, naming the line and the
 //     remedy; prints "no legs in the roster" on an empty roster without starting node; and after node --test turns a
-//     skipped test into a red naming the test and the rostered sources that hold its name, prints the lost-browser remedy
-//     beside a leg whose failure names the switch, and passes node's own failure status through.
+//     skipped test into a red naming the test, the switch's state in the run (set to 1 as the step has it, or unset as
+//     a local run may) and the rostered sources that hold its name, prints the lost-browser remedy beside a leg whose
+//     failure names the switch, and passes node's own failure status through.
 // THE CENSUS RULE (the script states the same one): a browser leg is a test module esbuild's test build bundles (a
 // .test.ts directly in vscode-extension/src, ui or ui/webview; esbuild.js testBuild reads those three directories) that,
 // on a line that is not a // comment, requires or imports the "playwright" package (`("playwright")` or `from
@@ -263,7 +264,9 @@ test('the script\'s census (--list-legs) is the same set of legs this module der
  *  calls inBrowser but keeps a launch of its own beside it, k calls inBrowser but keeps a skip of its own before it, f
  *  launches through inBrowser but names Firefox, each with a bundle; and a stub node on PATH that records its arguments,
  *  writes CBL_STUB_TAP (when set) to the tap reporter's destination and exits CBL_STUB_EXIT (0 unless set). Returns a
- *  runner over roster/exclusions text; `node` in its result is the argument list without the reporter flags. */
+ *  runner over roster/exclusions text that runs the script with the switch set to 1 as the step does (stub.switch names
+ *  another value; null runs it unset, as a local run may); `node` in its result is the argument list without the
+ *  reporter flags. */
 function syntheticTree(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cbl-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -300,6 +303,8 @@ function syntheticTree(t) {
     fs.rmSync(log, { force: true });
     const env = { ...process.env, PATH: path.join(root, 'bin') + path.delimiter + process.env.PATH };
     delete env.CBL_STUB_TAP; delete env.CBL_STUB_EXIT;
+    env[SWITCH] = '1';
+    if (stub.switch === null) delete env[SWITCH]; else if (stub.switch !== undefined) env[SWITCH] = stub.switch;
     if (stub.tap !== undefined) env.CBL_STUB_TAP = stub.tap;
     if (stub.exit !== undefined) env.CBL_STUB_EXIT = String(stub.exit);
     const r = bash([path.join(ext, 'scripts', 'ci-browser-legs.sh')], { cwd: root, env });
@@ -372,9 +377,16 @@ test('after node --test the script turns a skipped test into a red naming the te
   const skipped = run(A + '\n', excluded, { tap: tapSkip });
   assert.equal(skipped.status, 1, 'a skip under the switch is red; stderr: ' + skipped.err);
   assert.deepEqual(skipped.node, ['--test', A], 'the leg ran (the skip is read from the run, not refused before it)');
-  assert.ok(skipped.err.includes('skipped under ' + SWITCH + '=1: ok 1 - leg a opens the page # SKIP no playwright chromium on this box (rostered sources holding that test name verbatim: ' + A + ')'), skipped.err);
-  assert.ok(skipped.err.includes('a rostered leg skipped a test under ' + SWITCH + '=1, so the step claims coverage it did not run'), skipped.err);
+  assert.ok(skipped.err.includes('skipped with ' + SWITCH + '=1: ok 1 - leg a opens the page # SKIP no playwright chromium on this box (rostered sources holding that test name verbatim: ' + A + ')'), skipped.err);
+  assert.ok(skipped.err.includes('a rostered leg skipped a test with ' + SWITCH + '=1, so the step claims coverage it did not run'), skipped.err);
   assert.ok(skipped.err.includes('only inBrowser in ui/webview/real-viewer-leg.ts turns a launch it cannot make into a failure here') && skipped.err.includes('move it to ' + EXCLUDED + ' with that reason'), skipped.err);
+  // the same skip with the switch unset, as a local run may have it: still red, and the message says the switch is unset
+  // and that the step sets it, instead of claiming a state the run did not have
+  const unset = run(A + '\n', excluded, { tap: tapSkip, switch: null });
+  assert.equal(unset.status, 1, 'a skip with the switch unset is red too; stderr: ' + unset.err);
+  assert.ok(unset.err.includes('skipped with ' + SWITCH + ' unset: ok 1 - leg a opens the page # SKIP'), unset.err);
+  assert.ok(unset.err.includes('a rostered leg skipped a test with ' + SWITCH + ' unset, so this run claims coverage it did not run: the step sets ' + SWITCH + '=1'), unset.err);
+  assert.ok(!unset.err.includes(SWITCH + '=1:') && !unset.err.includes('with ' + SWITCH + '=1,'), 'no line claims the switch was set:\n' + unset.err);
   const unknown = run(A + '\n', excluded, { tap: 'TAP version 13\nok 1 - a name no source spells # SKIP why\n1..1\n' });
   assert.equal(unknown.status, 1);
   assert.ok(unknown.err.includes('(rostered sources holding that test name verbatim: none)'), 'a name found in no rostered source says so:\n' + unknown.err);
@@ -395,5 +407,5 @@ test('after node --test the script turns a skipped test into a red naming the te
   assert.ok(lost.err.includes('ci-browser-legs: ' + A + ': \'leg a opens the page\' failed under ' + SWITCH + '=1 because inBrowser could not launch ("' + LOST + '"): the runner lost its browser: check the Chromium install step'), lost.err);
   const both = run(A + '\n', excluded, { tap: 'TAP version 13\nok 1 - leg a opens the page # SKIP why\n1..1\n', exit: 7 });
   assert.equal(both.status, 123, 'with a failure and a skip node\'s status stands and the skip is still named');
-  assert.ok(both.err.includes('skipped under ' + SWITCH + '=1'), both.err);
+  assert.ok(both.err.includes('skipped with ' + SWITCH + '=1'), both.err);
 });
