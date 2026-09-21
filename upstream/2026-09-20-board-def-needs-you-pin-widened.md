@@ -4,7 +4,7 @@ status: candidate
 where: ui/webview/board-def.test.ts:64, tests/test_card_boards.py:156 and :170
 added: 2026-09-20
 pr:
-tier: fix
+tier: docs
 offered:
 closed:
 ---
