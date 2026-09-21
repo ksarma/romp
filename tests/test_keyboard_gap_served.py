@@ -327,7 +327,9 @@ class KeyboardGap(unittest.TestCase):
         both directions, and each side is driven here in a real engine under the same fake pan as the phone legs."""
         where = engine + ": "
         # a fine pointer at 800 px: inside the query by width alone. The body is fixed, at top 0: the non-coarse branch writes
-        # 0px (a pan is a soft-keyboard thing), the height is innerHeight, so this window lays out exactly as before the pan
+        # 0px (a pan is a soft-keyboard thing), the height is document.documentElement.clientHeight (innerHeight only where the
+        # document element has none, a node stub; round 9, 2026-09-20: these sites had named innerHeight as the source), so this
+        # window lays out exactly as before the pan. This leg does not discriminate the two sources: at 800 by 900 both are 900
         fine = self._drive(engine, {"device": None, "viewport": {"width": 800, "height": 900}}, "-fine800")
         up = fine["kbUp"]
         # the premise first (round 4, 2026-09-20): every geometric assertion below is satisfied identically by a page whose fake
@@ -339,11 +341,11 @@ class KeyboardGap(unittest.TestCase):
         self.assertEqual((up["innerWidth"], up["coarse"], up["mobile"]), (800, False, True), where + "the emulation held, a fine pointer inside the query: %r" % (up,))
         self.assertEqual(up["body"]["position"], "fixed", where + "the fixed body applies by width alone: %r" % (up,))
         self.assertEqual(_px(up["appTop"]), 0, where + "a fine pointer writes 0px whatever the visual viewport says: %r" % (up,))
-        self.assertEqual(_px(up["appH"]), 900, where + "the height is innerHeight when the pointer is not coarse: %r" % (up,))
+        self.assertEqual(_px(up["appH"]), 900, where + "the height is the layout viewport, read as clientHeight, when the pointer is not coarse (innerHeight agrees at this size, so this leg does not tell the two apart): %r" % (up,))
         self.assertAlmostEqual(up["body"]["top"], 0, delta=0.5, msg=where + "%r" % (up,))
         self.assertAlmostEqual(up["body"]["bottom"], 900, delta=0.5, msg=where + "%r" % (up,))
         self.assertEqual(up["bar"]["display"], "flex", where + "the phone layout, by width")
-        # round 6 (2026-09-20): the strip on this road. The band is 0 to innerHeight, the fixed bar's box is inside it, and the
+        # round 6 (2026-09-20): the strip on this road. The band is 0 to the layout viewport (clientHeight), the fixed bar's box is inside it, and the
         # strip is the bar's measured height, the same as at rest: upstream's pointer-ungated kbOpen read the short visual
         # viewport as a keyboard here and collapsed the strip over the composer
         self.assertGreater(_px(fine["rest"]["mtabsH"]), 0, where + "the bar's height is measured at rest: %r" % (fine["rest"],))

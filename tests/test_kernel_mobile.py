@@ -787,7 +787,8 @@ visualViewport.height = 844; visualViewport.offsetTop = 0; fire(VV, 'resize'); f
 // matches by width alone (at or under 820 px) takes the fixed body at top 0. From a panned state, the pointer turns fine
 // (the stub answers the coarse probe; the layout query object was captured at parse and is not re-read). The stub is a
 // module-scope global, restored before the next step. --mtabs-h IS read here (round 6, 2026-09-20): on the fine-pointer road
-// the published band is 0 to innerHeight whatever the visual viewport says, the bar's box (800..844) is wholly inside it, and
+// the published band is 0 to the layout viewport (clientHeight; round 9, 2026-09-20: it had said innerHeight, the fallback only)
+// whatever the visual viewport says, the bar's box (800..844) is wholly inside it, and
 // the strip is the bar's whole height, 44. That is a behaviour change from upstream's pointer-ungated kbOpen, which read
 // 844 - 460 > 120 as a keyboard and collapsed the strip, the bar over the composer, on a fine pointer whose visual viewport
 // was shorter than the layout viewport (a desktop zoom reported at scale 1).
@@ -1138,9 +1139,10 @@ class MobileFitExecutes(unittest.TestCase):
     def test_a_fine_pointer_writes_no_pan_whatever_the_visual_viewport_says(self):
         # round 2 (2026-09-19): the writer is gated on the pointer and the fixed body on the layout query, two populations. A
         # fine-pointer window at or under 820 px takes the fixed body and gets the 0px this branch writes (from a panned state,
-        # so a held or stale value would show), with the height read from innerHeight; the served populations leg drives the
+        # so a held or stale value would show), with the height read from the layout viewport (documentElement.clientHeight, innerHeight
+        # only where the document element has none; round 9, 2026-09-20); the served populations leg drives the
         # real query at 800 px. The base tree's only pin on this branch was its source text.
-        # round 6 (2026-09-20): the strip too. The band a fine pointer publishes is 0 to innerHeight, so the bar is wholly
+        # round 6 (2026-09-20): the strip too. The band a fine pointer publishes is 0 to the layout viewport, so the bar is wholly
         # inside it and the strip is its whole height; upstream's pointer-ungated kbOpen read the short visual viewport as a
         # keyboard and collapsed the strip over the composer (0px at the base tree), a behaviour change disclosed here
         self.assertEqual(self.out["finePointer"], {"appTop": "0px", "appH": "844px", "barH": "44px"})
@@ -1162,7 +1164,7 @@ class MobileFitExecutes(unittest.TestCase):
         self.assertEqual(self.out["coarseAgainZoomed"], {"appTop": "83px", "appH": "460px"}, "the hold stands across a flip with the keyboard's pan standing")
         self.assertEqual(self.out["coarseAgainBack"], {"appTop": "0px", "appH": "844px", "barH": "44px"})
         flips = self.out["flips"]
-        self.assertEqual({k: v["fine"] for k, v in flips.items()}, {k: {"appTop": "0px", "appH": "844px"} for k in flips}, "the fine pointer publishes 0px and innerHeight in every state")
+        self.assertEqual({k: v["fine"] for k, v in flips.items()}, {k: {"appTop": "0px", "appH": "844px"} for k in flips}, "the fine pointer publishes 0px and the layout viewport's height in every state")
         self.assertEqual({k: v["coarseAgainZoomed"] for k, v in flips.items()},
                          {"noVV": {"appTop": "0px", "appH": "460px"}, "atRest": {"appTop": "0px", "appH": "460px"}, "scaleUnderCut": {"appTop": "0px", "appH": "460px"},
                           "scaleOverCut": {"appTop": "83px", "appH": "460px"}, "scaleAtCut": {"appTop": "83px", "appH": "460px"},

@@ -710,7 +710,8 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         self.assertIn("else if(h&&(!pinched(vv,L)||(inside(vv,L)&&kbPx(vv,L)>0)))document.documentElement.style.setProperty('--app-top',(lastPan=kbPx(vv,L))+'px');\n"
                       "else if(h)document.documentElement.style.setProperty('--app-top',Math.min(lastPan,Math.max(0,L-h))+'px');", self.js)
         self.assertNotIn("pinched(vv,h)", served_css.js_code(self.js), "both roads take the cut at the layout viewport L, never at the coarse road's h (round 9, 2026-09-20)")
-        self.assertNotIn("innerHeight-h", self.js, "the clamp reads the layout viewport (clientHeight), not innerHeight, which WebKit shrinks under a pinch")
+        self.assertNotIn("innerHeight-h", self.js,
+                         "the clamp reads the layout viewport (clientHeight), not innerHeight, which the engine model in the fit() comment (the one home, with its evidence status) has WebKit shrink under a pinch")
         self.assertNotIn("lastPan=Math.min", self.js, "the clamp is at use: nothing writes its result back into the hold")
         # the write sits inside fit(), after the --app-h write and before the stray-scroll reset, so one frame publishes both
         self.assertLess(self.js.index("setProperty('--app-h',h+'px')"), self.js.index("setProperty('--app-top'"))
