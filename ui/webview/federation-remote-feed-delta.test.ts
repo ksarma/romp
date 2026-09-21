@@ -997,11 +997,21 @@ test("a composed frame whose gen matched but whose newGen genOf cannot read is r
   }
 });
 
-// A source file read as prose: a line break and the comment marker after it read as one space and whitespace collapsed, so a
-// comment's wrapping is not part of any claim over its words. The one joiner for the two source pins below, the pair statement's
-// and the premise's (the closing fixer pass after the maintainer's round 6, close-3: the premise pin's three statements had read
-// the raw copies beside a second joiner of its own, so they held by the wrap and not by the property).
-const asProse = (text: string) => text.replace(/\n\s*(?:\/\/\s*|\*\s*)?/g, " ").replace(/\s+/g, " ");
+// A source file read as prose: a single line break and the comment marker after it read as one space and whitespace collapsed, so
+// a comment's wrapping is not part of any claim over its words, while a paragraph break (a blank line, or in a TypeScript copy a
+// line holding the comment marker alone) stays a break of its own that no statement regex below crosses, so two fragments in
+// different comments or paragraphs do not read as one sentence (the fixer pass over the second closing lens after
+// the maintainer's round 6, F2-1: the joiner had read every break as a space, and a statement split by a blank line had still
+// matched). The second argument says whether the copy is TypeScript, where a leading `*` is a comment marker; in markdown it is a
+// bullet and stays as text. The one joiner for the two source pins below, the pair statement's and the premise's (the closing
+// fixer pass after the maintainer's round 6, close-3: the premise pin's three statements had read the raw copies beside a second
+// joiner of its own, so they held by the wrap and not by the property).
+const asProse = (text: string, ts: boolean) =>
+  text
+    .replace(ts ? /\n[ \t]*(?:\/\/|\*)?[ \t]*\n\s*/g : /\n[ \t]*\n\s*/g, "\n\n")
+    .split("\n\n")
+    .map((para) => para.replace(ts ? /\n\s*(?:\/\/\s*|\*\s*)?/g : /\n\s*(?:\/\/\s*)?/g, " ").replace(/[ \t]+/g, " "))
+    .join("\n\n");
 
 // The one statement of what the declared pair does today (the author's pass 3, 2026-09-20): federation.ts says it once, at
 // Conn.feedHeld, in the words the other sites point at, and no comment on either road claims in the present tense that
@@ -1010,7 +1020,7 @@ const asProse = (text: string) => text.replace(/\n\s*(?:\/\/\s*|\*\s*)?/g, " ").
 test("federation.ts states once what the pair does today (no kernel in this repo stamps a gen yet, so nothing declares one today) and no comment on either road says kernel.py reads the pair at the compose", () => {
   const UI = path.resolve(process.cwd(), "..", "ui", "webview");
   // the comments' wrapping is not part of the claim: each file read through asProse
-  const flat = (f: string) => asProse(fs.readFileSync(path.join(UI, f), "utf8"));
+  const flat = (f: string) => asProse(fs.readFileSync(path.join(UI, f), "utf8"), true);
   const fedSrc = flat("federation.ts"), vdSrc = flat("view-deltas.ts");
   const home = "no kernel in this repo stamps a gen yet, so nothing declares one today";
   assert.equal(fedSrc.split("What the pair does today, stated here once").length, 2, "the home statement, once, at Conn.feedHeld");
@@ -1254,9 +1264,15 @@ test("the local bound's stated reason is a choice, not a missing event: no copy 
   // close-3: the three statements had still read the raw copies, so the federation.ts statement held by its phrase sitting on
   // one line, and a reflow of that comment would have redded it for the wrong reason)
   const prose: Record<string, string> = {};
-  for (const [name, text] of Object.entries(copies)) prose[name] = asProse(text);
-  assert.match(asProse("// the earlier text: a dial this manager never\n  // sees it"), /a dial this manager never sees/, "the rig: the prose reader joins a wrapped comment");
-  assert.match(asProse("  // frame that\n  // reaches inbound()"), /frame that reaches inbound\(\)/, "the rig: and a statement wrapped mid-phrase");
+  for (const [name, text] of Object.entries(copies)) prose[name] = asProse(text, /\.ts$/.test(name));
+  assert.match(asProse("// the earlier text: a dial this manager never\n  // sees it", true), /a dial this manager never sees/, "the rig: the prose reader joins a wrapped comment");
+  assert.match(asProse("  // frame that\n  // reaches inbound()", true), /frame that reaches inbound\(\)/, "the rig: and a statement wrapped mid-phrase");
+  // a paragraph break is not a wrap: fragments in two comments or two paragraphs stay apart (F2-1 above)
+  assert.doesNotMatch(asProse("  // frame that\n\n  // reaches inbound()", true), /frame that reaches inbound\(\)/, "the rig: a blank line between two comments is a paragraph break, not a wrap");
+  assert.doesNotMatch(asProse(" * frame that\n *\n * reaches inbound()", true), /frame that reaches inbound\(\)/, "the rig: a line holding the comment marker alone is a paragraph break too");
+  assert.match(asProse("frame that\nreaches inbound()", false), /frame that reaches inbound\(\)/, "the rig: a wrapped markdown line joins");
+  assert.doesNotMatch(asProse("frame that\n\nreaches inbound()", false), /frame that reaches inbound\(\)/, "the rig: a markdown paragraph break does not");
+  assert.doesNotMatch(asProse("frame that\n* reaches inbound()", false), /frame that reaches inbound\(\)/, "the rig: a markdown bullet is text, not a comment marker");
   for (const [name, text] of Object.entries(prose)) {
     const hit = text.match(/(a dial (this|the) manager never sees|sees no dial|no dial event)/);
     assert.equal(hit === null ? null : hit[0], null, name + " states the premise the shim's own code refutes, on one line or across a line break");
