@@ -183,6 +183,7 @@ import asyncio
 import collections
 import concurrent.futures
 import datetime
+import hashlib
 import io
 import json
 import logging
@@ -196,6 +197,7 @@ import subprocess
 import sys
 import threading
 import traceback
+import types
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -459,6 +461,73 @@ class PoolTransportError(RuntimeError):
     builds the batch in its own process."""
 
 
+# ---- the construction recorder (round 8 of fork PR #781's review, 2026-09-21) ----
+# The reviewer's ruling on the blind-spot class's cost: a derived census is computed ONCE for the class and every pin
+# reads that one result, and the sharing is shown BY EXECUTION, not by the presence of a cache (a class-scoped store
+# that still recomputes per test looks shared and is not). So every Census construction in this process appends one
+# record here, from Census.__init__ before any phase runs (a construction that raises is counted: it was computed for).
+# A construction in a census-pool worker appends to the WORKER's list, and build_census ships the worker's new records
+# back inside its payload for the client to absorb (absorb_constructions), so the client holds every construction it
+# caused, its own and the pool's. A record names the construction's INPUT IDENTITY (input_identity: the files by
+# realpath, a digest of their bytes, a digest of the sources table), the class that built it, the pid and the road.
+# A census of a different input is a different computation: tests/test_session_env.py's blind-spot class builds about
+# 180 censuses over as many sabotaged copies of kernel/sdk_backend.py, each at its own path with its own content, and
+# the retention pins build byte-identical copies at foreign paths on purpose; each is counted under its own identity,
+# and the pin over the unchanged tree (EnvRowsCensusBlindSpots.tearDownClass) reads constructions_of() for the two
+# unchanged inputs alone, the three files and the pair, and reads_of() to say "exactly one where anything read it". A
+# subclass (the fixpoint pin's Sweeping, the cap pin's _Capped, the readers-index pin's Tracing) is a different
+# computation by design and is recorded under its own class name.
+CONSTRUCTIONS = []
+READS = collections.Counter()    # census() reads by door key, so the class-end pin asserts one construction per read input
+
+
+def _sources_digest(sources):
+    """A digest of a sources table by CONTENT (its dicts and sets ordered), so two equal tables share a key and a table
+    edited for a plant does not."""
+    def canon(v):
+        if isinstance(v, dict):
+            return sorted((repr(k), canon(x)) for k, x in v.items())
+        if isinstance(v, (set, frozenset)):
+            return sorted(repr(x) for x in v)
+        return repr(v)
+    return hashlib.sha256(repr(canon(sources)).encode("utf-8")).hexdigest()[:16]
+
+
+def input_identity(files, sources=None):
+    """(the files by realpath, a digest of their bytes, a digest of the sources): what makes two constructions the same
+    computation. The bytes are read here and not through the parse cache, so a foreign path is not parsed twice."""
+    files = tuple(os.path.realpath(f) for f in files)
+    h = hashlib.sha256()
+    for f in files:
+        h.update(pathlib.Path(f).read_bytes())
+        h.update(b"\0")
+    return (files, h.hexdigest()[:16], _sources_digest(DEFAULT_SOURCES if sources is None else sources))
+
+
+def record_construction(cls, files, sources):
+    files, content, sdigest = input_identity(files, sources)
+    rec = {"seq": len(CONSTRUCTIONS), "cls": cls.__name__, "files": files, "content": content, "sources": sdigest,
+           "pid": os.getpid(), "road": "here"}
+    CONSTRUCTIONS.append(rec)
+    return rec
+
+
+def absorb_constructions(records):
+    """A worker's records, shipped by build_census, held here as the pool road's. A record this process made itself
+    (build_census run in the test process, as one pool pin does) is held already and is not counted twice."""
+    for rec in records:
+        if rec["pid"] != os.getpid():
+            CONSTRUCTIONS.append(dict(rec, road="pool"))
+
+
+def constructions_of(files, sources=None, cls=None):
+    """Every record of a construction of exactly this input (files, content, sources) by the class `cls` (Census itself
+    by default; a subclass is a different computation), on any road, in construction order."""
+    files, content, sdigest = input_identity(files, sources)
+    name = (cls or Census).__name__
+    return [r for r in CONSTRUCTIONS if (r["files"], r["content"], r["sources"]) == (files, content, sdigest) and r["cls"] == name]
+
+
 def pool_probe():
     """The start probe of the blind-spot class's census pool: a worker that imported this module answers with its pid."""
     return os.getpid()
@@ -472,12 +541,15 @@ def build_census(files, sources):
     the construction raised (a CensusError for a second writer of the ring, or any other exception), ("raised", the
     exception) with the worker's traceback text on it, for the client to re-raise where the construction was asked for.
     A failure of the pickling itself is a PoolTransportError, which the client reads as the pool being unusable; so is
-    anything else that comes out of a worker as an exception."""
+    anything else that comes out of a worker as an exception. The payload's third element is the list of construction
+    records this call made in the worker (the recorder's block comment above), for the client's recorder to absorb."""
+    first_new = len(CONSTRUCTIONS)
     try:
         outcome = ("census", Census(files, sources))
     except Exception as e:
         e.worker_traceback = traceback.format_exc()
         outcome = ("raised", e)
+    outcome = outcome + (list(CONSTRUCTIONS[first_new:]),)
     try:
         return pickle.dumps(outcome, protocol=pickle.HIGHEST_PROTOCOL)
     except Exception as e:
@@ -488,6 +560,7 @@ class Census:
     def __init__(self, files, sources):
         self.files = [os.path.realpath(f) for f in files]
         self.sources = sources
+        self.construction = record_construction(type(self), self.files, sources)     # the recorder's block comment above
         self.mods = {}
         self.parents = {}
         self.fn_of = {}          # id(node) -> Fn for Call/Name/Attribute/Return nodes
@@ -3370,22 +3443,245 @@ class Census:
         return out
 
 
-# The Census cache of the `census()` door: (realpaths, id(sources)) -> Census, under the retention rule of ASTS above
-# (a Census holds its trees through its Mods, so a kept Census over a foreign path would keep that path's tree too).
+# ---- the frozen census the door hands out (round 8 of fork PR #781's review, 2026-09-21) ----
+# One census per input is shared by every reader in the process (EnvRowsPopulation's setUpClass, a dozen pins of
+# EnvRowsCensusBlindSpots, the retention pins, the worst-case table), so a reader that changed it would change what
+# every later reader sees, and the run would pass or fail by ORDER. The shape the Census type admits: a deep read-only
+# VIEW built in place, not a copy per read (a deepcopy of the three-file census measured 6.8 s on the development box
+# and a pickle round trip 3.4 s, against a 4.3 s construction, so a copy per read would cost more than the sharing
+# saves) and not a freeze of the syntax trees (the stdlib's ast nodes, about 70k per file, admit no read-only form and
+# are what the Census's own methods traverse with isinstance; a proxy over them would break those methods). So
+# freeze() converts, in place and recursively through the census's own structures: every list to a FrozenList (a
+# list whose mutators refuse; not a tuple, which is NOT EQUAL to a list, and the pins compare a census's failures,
+# violations, heads and formats against list literals and against an unfrozen census's lists, so a tuple would fail
+# them on type alone), every set to a frozenset (equal to a set of the same members), every dict (a defaultdict or
+# Counter included: a defaultdict INSERTS on a missed read, and a MappingProxyType over one forwards the miss to it,
+# so the proxy is over a plain copy) to a MappingProxyType (equal to a dict of the same items); every
+# record of the census's own classes (Fn, ScopeFn, Cls, Mod, DoorCall) has its slots converted the same way and its
+# class swapped to a subclass that refuses attribute writes; the Census itself becomes a FrozenCensus, which refuses
+# them too. The lazies a reader could otherwise fill on first use (Fn.all_params, assigned and loops, scope_chain's
+# _chain, _returns_dicts' memo) are filled for every function BEFORE the freeze, so the frozen census answers a
+# reader's question from a filled table and never by a write. Outside the freeze: the trees (above) and Mod.src, a str.
+# unfrozen_parts() is the audit of the rule: it walks the same structures and names anything still mutable, and the
+# immutability pin asserts it finds nothing. census_digest() is what a reader compares across time: a digest of what
+# the pins read (summary() and the tables outside it), taken by the door once the census is frozen (digest_at_birth,
+# the door's one write, before the census is handed to anyone) and again by the class-end pin, so a change by any pin,
+# in any order, is red at the end of the class even where every direct write was refused.
+
+
+def _refuse_write(self, *_args):
+    raise AttributeError("%s is read-only: the census() door hands out one frozen census per input, shared by every reader "
+                         "in this process; a test that needs a census it can change builds Census(files, sources) of its own"
+                         % type(self).__name__)
+
+
+class FrozenCensus(Census):
+    """A Census the census() door has frozen (freeze, the block comment above); every attribute write is refused."""
+    __setattr__ = _refuse_write
+    __delattr__ = _refuse_write
+
+
+def _refuse_mutation(self, *_args, **_kwargs):
+    raise TypeError("this list belongs to a frozen census and is read-only (env_ring_census.freeze); build a Census of your own to change one")
+
+
+class FrozenList(list):
+    """A list whose mutators refuse (the block comment above says why a list and not a tuple): equal to a list of the
+    same items, unhashable like one, iterated, indexed and sliced like one (a slice is a fresh plain list), and
+    read-only through every ordinary route. The base class's method called on the instance by name is a deliberate
+    act, not a reader's slip, and the class-end digest (census_digest) is what catches it."""
+    __slots__ = ()
+    append = extend = insert = remove = pop = clear = sort = reverse = _refuse_mutation
+    __setitem__ = __delitem__ = __iadd__ = __imul__ = _refuse_mutation
+
+
+class FrozenFn(Fn):
+    __slots__ = ()
+    __setattr__ = _refuse_write
+    __delattr__ = _refuse_write
+
+
+class FrozenScopeFn(ScopeFn):
+    __slots__ = ()
+    __setattr__ = _refuse_write
+    __delattr__ = _refuse_write
+
+
+class FrozenCls(Cls):
+    __slots__ = ()
+    __setattr__ = _refuse_write
+    __delattr__ = _refuse_write
+
+
+class FrozenMod(Mod):
+    __slots__ = ()
+    __setattr__ = _refuse_write
+    __delattr__ = _refuse_write
+
+
+class FrozenDoorCall(DoorCall):
+    __slots__ = ()
+    __setattr__ = _refuse_write
+    __delattr__ = _refuse_write
+
+
+_FROZEN_RECORDS = {Fn: FrozenFn, ScopeFn: FrozenScopeFn, Cls: FrozenCls, Mod: FrozenMod, DoorCall: FrozenDoorCall}
+_RECORD_TYPES = (Fn, ScopeFn, Cls, Mod, DoorCall)
+_ATOMS = (str, bytes, int, float, bool, type(None), ast.AST, types.MappingProxyType, type)
+_FROZEN_CONTAINERS = (FrozenList, tuple, frozenset, types.MappingProxyType)
+
+
+def _slots(cls):
+    return [s for k in cls.__mro__ for s in getattr(k, "__slots__", ())]
+
+
+def _fill_lazies(rec):
+    """The slots a Fn or ScopeFn fills on first use, filled now (the block comment above says why)."""
+    if rec._chain is None:
+        chain, f = [], rec
+        while f is not None:
+            chain.append(f)
+            f = f.parent
+        object.__setattr__(rec, "_chain", chain)
+    if isinstance(rec, Fn):
+        rec.all_params()
+        rec.assigned()
+        rec.loops()
+
+
+def _frozen(value, memo):
+    if isinstance(value, _ATOMS):
+        return value
+    if isinstance(value, _RECORD_TYPES):
+        if id(value) in memo or type(value) not in _FROZEN_RECORDS:      # frozen already, or mid-freeze through a cycle
+            return value
+        memo.add(id(value))
+        if isinstance(value, (Fn, ScopeFn)):
+            _fill_lazies(value)
+        for name in _slots(type(value)):
+            try:
+                held = getattr(value, name)
+            except AttributeError:          # a slot never set
+                continue
+            object.__setattr__(value, name, _frozen(held, memo))
+        value.__class__ = _FROZEN_RECORDS[type(value)]
+        return value
+    if isinstance(value, dict):
+        return types.MappingProxyType({_frozen(k, memo): _frozen(v, memo) for k, v in value.items()})
+    if isinstance(value, list):
+        return FrozenList(_frozen(v, memo) for v in value)
+    if isinstance(value, tuple):
+        return tuple(_frozen(v, memo) for v in value)
+    if isinstance(value, (set, frozenset)):
+        return frozenset(_frozen(v, memo) for v in value)
+    return value
+
+
+def freeze(c):
+    """The census `c` frozen in place (the block comment above): its lazies filled first, its tables read-only views,
+    its records read-only, its class FrozenCensus. Returns `c`; a census already frozen is returned as it is."""
+    if isinstance(c, FrozenCensus):
+        return c
+    for fn in c.all_fns:
+        c._returns_dicts(fn)            # the dict-returner memo, filled for every function before the table is frozen
+    memo = set()
+    for name, value in list(c.__dict__.items()):
+        c.__dict__[name] = _frozen(value, memo)
+    c.__class__ = FrozenCensus
+    return c
+
+
+def unfrozen_parts(c, limit=20):
+    """Anything still mutable that a reader can reach from the census's own structures, as (path, type name): a list
+    that is not a FrozenList, a set that is not a frozenset, a dict (a defaultdict or Counter included) that is not a
+    MappingProxyType, or a record whose class is not the frozen one; the trees (ast nodes) and strings are atoms. Empty
+    for a census freeze() has done whole; the first `limit` findings otherwise."""
+    out, seen = [], set()
+    if not isinstance(c, FrozenCensus):
+        out.append(("census", type(c).__name__))
+    stack = [("census.%s" % k, v) for k, v in c.__dict__.items()]
+    while stack and len(out) < limit:
+        path, v = stack.pop()
+        if isinstance(v, _ATOMS):
+            continue
+        if isinstance(v, _RECORD_TYPES):
+            if id(v) in seen:
+                continue
+            seen.add(id(v))
+            if type(v) not in _FROZEN_RECORDS.values():
+                out.append((path, type(v).__name__))
+            stack.extend(("%s.%s" % (path, s), getattr(v, s)) for s in _slots(type(v)) if hasattr(v, s))
+            continue
+        if isinstance(v, (list, set, dict)) and not isinstance(v, _FROZEN_CONTAINERS):
+            out.append((path, type(v).__name__))
+        if isinstance(v, (dict, types.MappingProxyType)):
+            for k, x in v.items():
+                stack.append(("%s[key]" % path, k))
+                stack.append(("%s[%s]" % (path, k if isinstance(k, (str, int)) else "..."), x))
+        elif isinstance(v, (list, tuple, set, frozenset)):
+            stack.extend(("%s[]" % path, x) for x in v)
+    return out
+
+
+def census_digest(c):
+    """A digest of what the pins read off a census: summary() and the tables outside it (the taint tables by attribute
+    and by function, the alias tables, the ring references, the source identifiers, the function roster, the
+    failures). Two reads of an unchanged census digest the same; the door takes it once the census is frozen
+    (digest_at_birth) and the class-end pin takes it again."""
+    by_fn = lambda table: {"%s@%d" % (fn.qual, fn.node.lineno): {str(k): sorted(v) for k, v in m.items()} for fn, m in table.items()}
+    views = {
+        "summary": c.summary(),
+        "attr_taint": {k: sorted(v) for k, v in c.attr_taint.items()},
+        "attr_whole": {k: sorted(v) for k, v in c.attr_whole.items()},
+        "ret_taint": by_fn(c.ret_taint),
+        "ret_whole": by_fn(c.ret_whole),
+        "class_alias_doors": repr(c.class_alias_doors),
+        "module_alias_doors": repr(c.module_alias_doors),
+        "alias_collisions": repr(c.alias_collisions),
+        "ring_refs": [(mod.base, node.lineno, fn.qual if fn else None) for mod, node, fn in c.ring_refs],
+        "source_idents": sorted(c._source_idents),
+        "fns": [(fn.qual, fn.node.lineno) for fn in c.all_fns],
+        "failures": list(c.failures),
+    }
+    return hashlib.sha256(json.dumps(views, sort_keys=True, default=repr).encode("utf-8")).hexdigest()
+
+
+# The Census cache of the `census()` door: (realpaths, sources digest) -> FrozenCensus, under the retention rule of ASTS
+# above (a Census holds its trees through its Mods, so a kept Census over a foreign path would keep that path's tree
+# too). ONE census per input per process, shared by every reader (round 8 of fork PR #781's review, 2026-09-21, the
+# reviewer's ruling: a derived census is computed once and every pin reads that one result; the sharing is verified by
+# execution through the recorder above, and the result is frozen so no reader can change what the next one sees). The
+# key held id(sources) until round 8: an explicit DEFAULT_SOURCES and the None default were two keys for one
+# computation, and an id is reused once its object dies, so a later table could have read a dead one's census; the key
+# is the sources' content now (_sources_digest).
 _CENSUS = {}
 
 
-def census(files=None, sources=None):
-    """The census over `files` (the three kernel modules by default), computed once per process per file set when
-    every file is a canonical input (retained_paths); a set with any other file is computed for the call."""
+def _door_key(files, sources):
     files = tuple(os.path.realpath(f) for f in (files or DEFAULT_FILES))
-    key = (files, id(sources) if sources is not None else 0)
+    return (files, _sources_digest(DEFAULT_SOURCES if sources is None else sources))
+
+
+def census(files=None, sources=None):
+    """The census over `files` (the three kernel modules by default) under `sources` (DEFAULT_SOURCES by default),
+    computed once per process per input when every file is a canonical input (retained_paths) and FROZEN (freeze)
+    before it is handed out; a set with any other file is computed for the call, frozen the same way, and not kept.
+    Every read is counted (READS, reads_of), so a pin can say "computed exactly once where anything read it". The
+    door's one write to the frozen census is digest_at_birth, taken before anyone else holds it."""
+    key = _door_key(files, sources)
+    READS[key] += 1
     hit = _CENSUS.get(key)
     if hit is None:
-        hit = Census(files, sources or DEFAULT_SOURCES)
-        if set(files) <= retained_paths():
+        hit = freeze(Census(key[0], DEFAULT_SOURCES if sources is None else sources))
+        object.__setattr__(hit, "digest_at_birth", census_digest(hit))
+        if set(key[0]) <= retained_paths():
             _CENSUS[key] = hit
     return hit
+
+
+def reads_of(files=None, sources=None):
+    """How many times census() was asked for this input in this process."""
+    return READS[_door_key(files, sources)]
 
 
 def main(argv):

@@ -1633,6 +1633,42 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         pool, cls._pool = cls._pool, None
         if pool is not None:
             pool.shutdown(wait=True)
+        cls._assert_each_unchanged_census_was_computed_once_and_reads_as_built()
+
+    @classmethod
+    def _assert_each_unchanged_census_was_computed_once_and_reads_as_built(cls):
+        """The shared-census rule, BY EXECUTION, once every test of the class has run (round 8 of the review on fork PR
+        #781, 2026-09-21, the reviewer's ruling: one census per class shared by the pins, the sharing verified by counting
+        computations and not by the presence of a cache, and the shared result immutable). Two facts, read off
+        env_ring_census's recorder (its block comment says what a record is): (1) for each unchanged-tree input this
+        module reads through the `census()` door (the three files, and the pair kernel/sdk_backend.py with
+        kernel/credentials.py), the constructions by Census itself, on any road, this process's own or a pool worker's,
+        number exactly ONE where anything in this process read the input and zero where nothing did; a subclass's
+        construction (Sweeping's over the real pair) is a different computation and is counted under its own class, and
+        every sabotaged copy and synthetic plant is a different input, counted under its own identity; (2) every census
+        the door holds digests as it did when the door froze and handed it out, so no pin changed it, in whatever order
+        the pins ran. Runs here, in tearDownClass, which unittest and pytest alike run after the class's last test in this
+        process: under pytest serial the whole class; under pytest-xdist (-n 3, the sweep's shape), where a class may
+        split across workers, once per worker for that worker's share, so the property there is at most one construction
+        per worker per input and exactly one where that worker read it, which is what `reads` makes the expectation say.
+        Red before the sharing, at the round-8 head with this pin bound in: the pair counted three constructions for two
+        door reads in the module's process (the door's one, and two more through the pool, the conduit-roster pin's and
+        the fixpoint pin's, each over the unchanged pair) against one construction for the three files; with the door's
+        store dropped, twelve constructions for twelve reads of the three files over the class alone."""
+        problems = []
+        for label, files in (("the three files", CENSUS_FILES), ("the pair", (SDK_BACKEND, CREDENTIALS_PY))):
+            recs, reads = erc.constructions_of(files), erc.reads_of(files)
+            expected = 1 if reads else 0
+            if len(recs) != expected:
+                problems.append("%s (%s): %d constructions of the unchanged input for %d door reads in this process, expected %d: %s"
+                                % (label, ", ".join(os.path.basename(f) for f in files), len(recs), reads, expected,
+                                   [(r["cls"], r["road"], r["pid"]) for r in recs]))
+        for key, c in erc._CENSUS.items():
+            if erc.census_digest(c) != c.digest_at_birth:
+                problems.append("the door's census over %s reads differently at the end of the class than when it was built: a pin changed it"
+                                % ", ".join(os.path.basename(f) for f in key[0]))
+        if problems:
+            raise AssertionError("the shared census rule (one construction per unchanged input per process, read unchanged): " + "; ".join(problems))
 
     def setUp(self):
         self._pool_reason_at_start = type(self)._pool_reason    # read back in tearDown: a loss during this test is its failure
@@ -1739,10 +1775,20 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
     # environment limitation the pool-road pins skip on instead, asserted as such, is the stdlib's refusal to build a
     # ProcessPoolExecutor at all (ENVIRONMENT_LIMITATION below), a start failure, recorded in setUpClass before any test
     # runs, which is why a start failure is theirs to report and never tearDown's.
-    # The two test-local Census subclasses below (Tracing, Sweeping) are not
-    # importable by a worker and build in this process, as does the `census(CENSUS_FILES)` door with its own cache.
-    # `roads` records the road each batch took and `built` counts constructions by road; the last two tests of the
-    # class pin that the pool road is taken and that the fallback reads the same.
+    # The three test-local Census subclasses below (Tracing, Sweeping, _Capped) are not importable by a worker and
+    # build in this process, each over an input of its own or, Sweeping's second construction, over the real pair by a
+    # different algorithm, which is the comparison that pin makes. The UNCHANGED tree is never constructed by a test of
+    # this class (round 8 of the review, 2026-09-21, the reviewer's ruling: one census per class, shared by the pins,
+    # the sharing verified by execution and the result immutable): every read of it, the three files (CENSUS_FILES) or
+    # the pair (kernel/sdk_backend.py with kernel/credentials.py), goes through env_ring_census's `census()` door, ONE
+    # frozen census per input per process (the door's block comment says what the freeze is and why a read-only view
+    # and not a copy per read; the recorder's block comment says how constructions are counted, the pool's shipped back
+    # in build_census's payload). Until round 8 two pins of this class, the conduit roster's and the fixpoint's, built
+    # the unchanged pair through the pool beside the door's census of it. tearDownClass asserts, off the recorder, that
+    # each unchanged input was constructed at most once in this process and exactly once where anything read it, and
+    # that each census the door holds still digests as it did when built; the immutability pin below holds the freeze.
+    # `roads` records the road each batch took and `built` counts constructions by road; the pool's own pins hold that
+    # the pool road is taken and that the fallback reads the same.
     POOL_WORKERS = min(os.cpu_count() or 1, 4)
     POOL_START_TIMEOUT = 120.0        # seconds the pool's first worker has to answer the start probe
     POOL_READ_TIMEOUT = 240.0         # seconds a batch result has to arrive once the test asks for it. Derived (the reviewer's
@@ -1900,7 +1946,8 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
 
     @staticmethod
     def _unpack(payload):
-        kind, value = payload
+        kind, value, records = payload
+        erc.absorb_constructions(records)       # the worker's constructions, held here under their inputs (erc's recorder comment)
         if kind == "raised":
             value.__cause__ = _WorkerTraceback(getattr(value, "worker_traceback", "(no traceback carried)"))
             return _Raised(value)
@@ -2648,10 +2695,9 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
             "a starred argument": ('"live work (%s): planted" % self.name, *rest', "site-unbound", "SdkSession._log_quietly at SdkSession._"),
         }
         calls = list(counted.values()) + [positional_ring] + list(routine) + [call for call, _kind, _head in refused.values()]
-        results = self._censuses([((SDK_BACKEND, CREDENTIALS_PY), DEFAULT_SOURCES)]
-                                 + [self._spec(self._copy(lambda s: s.replace(self.SESSION_ANCHOR, plant % call + self.SESSION_ANCHOR))) for call in calls])
-        c0 = self._take(results[0])
-        built = dict(zip(calls, results[1:]))
+        results = self._censuses([self._spec(self._copy(lambda s: s.replace(self.SESSION_ANCHOR, plant % call + self.SESSION_ANCHOR))) for call in calls])
+        c0 = census((SDK_BACKEND, CREDENTIALS_PY))    # the unchanged pair: the door's one shared census, not a construction of this test's own
+        built = dict(zip(calls, results))
         rows0, refused0 = c0.bound_site_args("SdkSession._log_quietly", constants=("problem",))
         base = _true_callers(rows0)
         self.assertEqual((len(base), refused0), (7, []), "the module's own roster at round 7's head: seven, none refused")
@@ -2996,7 +3042,8 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
     def test_the_readers_only_pass_reaches_the_module_wide_sweeps_fixpoint(self):
         """A census that restores the module-wide sweep (Census._global_growth_readers returning the module's every
         function, the enqueue before fork PR #781) reaches the same taint stores and the same rows as the readers-only
-        pass while visiting more, over the real pair and over the module-list plant, where the readers index is
+        pass while visiting more, over the real pair (the door's shared census of the unchanged pair, since round 8 of the
+        review not a construction of this test's own) and over the module-list plant, where the readers index is
         load-bearing. Over the real pair no function runs its inner loop out, so the two passes differ in the enqueue
         alone."""
         class Sweeping(Census):
@@ -3008,9 +3055,10 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         by_name = lambda d: {k: sorted(v) for k, v in d.items() if v}
         rows = lambda c: [(dc.base, dc.lineno, dc.kind, sorted(dc.taint), dc.heads, dc.ring_formats, dc.unreduced, sorted(dc.residual))
                           for dc in c.door_calls]
-        pairs = (("the real pair", (SDK_BACKEND, CREDENTIALS_PY)), ("the module-list plant", (self._module_list_plant(), CREDENTIALS_PY)))
-        fasts = self._censuses([(files, DEFAULT_SOURCES) for _label, files in pairs])
-        for (label, files), fast_result in zip(pairs, fasts):
+        plant = (self._module_list_plant(), CREDENTIALS_PY)
+        fast_plant = self._censuses([(plant, DEFAULT_SOURCES)])[0]
+        pairs = (("the real pair", (SDK_BACKEND, CREDENTIALS_PY), census((SDK_BACKEND, CREDENTIALS_PY))), ("the module-list plant", plant, fast_plant))
+        for label, files, fast_result in pairs:
             with self.subTest(over=label):
                 fast, slow = self._take(fast_result), Sweeping(files, DEFAULT_SOURCES)
                 self.assertTrue(fast.global_taint, "module names gain taint: the sweep had events to fire on")
@@ -3064,6 +3112,87 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         tenth = [f for f in c.all_fns if f.qual == "SdkBackend._tenth"][0]
         self.assertEqual(sorted(c.tainted_names[tenth].get("names", ())), ["env"], "the with-target carries the env")
         self.assertEqual(sorted(c.carried_names[tenth].get("names", ())), ["env"], "and carries it whole")
+
+    # ---- the shared census (round 8 of the review, 2026-09-21: one frozen census per input per process) ----
+
+    def test_the_shared_census_is_frozen_so_no_pin_can_change_what_the_next_reader_sees(self):
+        """The immutability half of the shared-census rule (round 8 of the review on fork PR #781, 2026-09-21): the census
+        the door hands out is ONE object per input per process, read by every pin of this class and by EnvRowsPopulation,
+        the retention pins and the worst-case table, so a pin that changed it would change what every later reader sees
+        and the run would pass or fail by order. The freeze (env_ring_census.freeze; the block comment above it says why a
+        read-only view in place and not a copy per read) is held here by execution: every write a pin could make is
+        REFUSED, at the census (an attribute rebound or deleted), at a table (an entry stored or removed, a nested table,
+        the sources), at a record (a Fn's attribute, a DoorCall's taint, a Mod's roster and tree, the writer's calls) and
+        at a set; a missed key inserts nothing (the defaultdicts were the one road a READ could write by); the audit of
+        the rule finds nothing mutable reachable from the census's own structures (the syntax trees are the stdlib's
+        nodes, outside the freeze and outside what any pin reads through the census); and after every attempt the door
+        still answers with the same object, digesting as it did when built, so the next reader sees what the first saw.
+        Red with the freeze removed (the door handing out the bare Census): every one of the thirteen writes succeeds
+        and its subTest reports that neither TypeError nor AttributeError was raised; the deleted counts attribute then
+        ends the test's own digest read, and the write into the sources reached DEFAULT_SOURCES itself, the module's
+        table a bare Census holds by reference, so every later door key moved with it."""
+        head = census(CENSUS_FILES)
+        pair = census((SDK_BACKEND, CREDENTIALS_PY))
+        self.assertIs(head, census(CENSUS_FILES), "one object per input per process")
+        before = erc.census_digest(head)
+        self.assertEqual(before, head.digest_at_birth, "the shared census reads as it did when the door froze it")
+        a_fn, a_row = head.all_fns[0], head.content_rows[0]
+
+        def store_an_entry():
+            head.counts["doors"] = 0
+
+        def store_a_nested_entry():
+            head.counts["conduit_sites"]["conduit:problem_row"] = 0
+
+        def remove_an_entry():
+            del head.by_kind["self"]
+
+        def store_a_source():
+            head.sources["func"][("plant.py", "planted")] = "env"
+
+        def rebind_an_attribute():
+            head.failures = ()
+
+        def delete_an_attribute():
+            del head.counts
+
+        def append_a_row():
+            head.content_rows.append(a_row)
+
+        def grow_a_set():
+            head.attr_taint["env_vars"].add("planted")
+
+        def rebind_a_records_attribute():
+            a_fn.qual = "planted"
+
+        def grow_a_records_list():
+            head.writer.calls.append(None)
+
+        def rebind_a_rows_taint():
+            a_row.taint = frozenset()
+
+        def grow_a_modules_roster():
+            head.mods["sdk_backend.py"].fns.append(a_fn)
+
+        def rebind_a_modules_tree():
+            head.mods["sdk_backend.py"].tree = None
+
+        writes = [store_an_entry, store_a_nested_entry, remove_an_entry, store_a_source, rebind_an_attribute, delete_an_attribute,
+                  append_a_row, grow_a_set, rebind_a_records_attribute, grow_a_records_list, rebind_a_rows_taint,
+                  grow_a_modules_roster, rebind_a_modules_tree]
+        for write in writes:
+            with self.subTest(write=write.__name__):
+                with self.assertRaises((TypeError, AttributeError)):
+                    write()
+        with self.subTest(write="a missed key inserts nothing"):
+            with self.assertRaises(KeyError):
+                head.attr_readers["planted"]
+            self.assertNotIn("planted", head.attr_readers)
+        self.assertEqual(erc.unfrozen_parts(head), [], "nothing mutable is reachable from the census's own structures")
+        self.assertEqual(erc.unfrozen_parts(pair), [])
+        self.assertEqual([type(c).__name__ for c in erc._CENSUS.values()], ["FrozenCensus"] * len(erc._CENSUS), "every census the door holds is frozen")
+        self.assertIs(census(CENSUS_FILES), head, "the door still answers with the same object")
+        self.assertEqual(erc.census_digest(head), before, "and it digests as before: the next reader sees what the first saw")
 
     # ---- the pool's own pins (the block comment above _censuses says why the pool exists) ----
 
