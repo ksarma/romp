@@ -2039,23 +2039,40 @@ def last_awaiting(state_dir: Path, sid: str) -> bool | None:
     return val
 
 
-def write_name(state_dir: Path, sid: str, name: str, cwd: str, bg: str = "", fg: str = "",
-               emoji: str | None = None) -> None:
+def write_name(state_dir: Path, sid: str, name: str | None = None, cwd: str | None = None,
+               bg: str | None = None, fg: str | None = None, emoji: str | None = None) -> None:
     """Write the shared identity/discovery file `names/<sid>` in the kernel's
     tab-delimited format (name\\tcwd\\tbg\\tfg[\\temoji]), so discover() finds the
     transcript and the UI gets the identity colour. The fifth field is the tab
     emoji the kernel stores (2026-09-06): None (the default) carries whatever the
     file already holds, so a rename, move or revive rewriting the first four
     never drops it; "" clears it explicitly. Written only while set, so a record
-    without one keeps the four-field shape."""
+    without one keeps the four-field shape.
+
+    Every field carries the same way since fork PR #813's round 6, sixteenth commit
+    (2026-09-21; the round's own verifiers' fifth pass): a None name, cwd, bg or fg is
+    read from the file at the write (a name from a file with none, or no file, is the
+    sid; the others ""), so a writer that owns one field (a move the cwd, a rename the
+    name) publishes the others as the file holds them at that moment, never as it read
+    them earlier, and "" is an explicit clear. The read and the publish are one span
+    only under a lock: SdkBackend._publish_name holds the backend's names lock (the
+    kernel's _NAMES_LOCK when the kernel built the backend) across this call, which is
+    how the backend's writers and the kernel's colour, emoji, palette and dead-tab name
+    writers stay out of each other's read-to-write windows. A bare call takes no lock
+    and is for a caller with no concurrent writer of the file (tests)."""
     p = Path(state_dir) / "names" / sid
     p.parent.mkdir(parents=True, exist_ok=True)
-    if emoji is None:
+    if None in (name, cwd, bg, fg, emoji):
         try:
             old = p.read_text().rstrip("\n").split("\t")
         except (OSError, UnicodeDecodeError):
             old = []
-        emoji = old[4] if len(old) > 4 else ""
+        old += [""] * (5 - len(old))
+        name = (old[0] or sid) if name is None else name
+        cwd = old[1] if cwd is None else cwd
+        bg = old[2] if bg is None else bg
+        fg = old[3] if fg is None else fg
+        emoji = old[4] if emoji is None else emoji
     tmp = p.with_suffix(".tmp")
     try:
         tmp.write_text("\t".join([name, cwd, bg, fg] + ([emoji] if emoji else [])) + "\n")
@@ -13584,7 +13601,8 @@ class SdkBackend:
     def __init__(self, state_dir, claude_bin: str, notify, poke=None, push=None,
                  push_session=None, push_live=None,
                  mcp_config: str | None = None, append_prompt_path: str | None = None,
-                 log=None, reconcile: bool = False, todo_lost=None, boot_at=None, code_version=None, boot_phase=None):
+                 log=None, reconcile: bool = False, todo_lost=None, boot_at=None, code_version=None, boot_phase=None,
+                 names_lock=None):
         self.state_dir = Path(state_dir)
         self.claude_bin = claude_bin
         self.code_version = str(code_version or "")   # the kernel's git sha, stamped on every lease this kernel
@@ -13634,7 +13652,16 @@ class SdkBackend:
         self._reg_lock = threading.Lock()         # serializes _update_reg read-modify-writes (queue mirror
         #                                           writes come from kernel AND loop threads); rename holds it from
         #                                           its record write through its names write and live set (fork PR
-        #                                           #813, round 6, fifteenth commit), so the three stores move as one
+        #                                           #813, round 6, fifteenth commit), so the three stores move as one;
+        #                                           promote_thread and _finish_move hold it the same way (the sixteenth)
+        # THE NAMES LOCK (fork PR #813, round 6 of the review, sixteenth commit, 2026-09-21): every write of names/<sid>
+        # this backend makes goes through _publish_name, which holds this across write_name's read of the fields it
+        # carries and its publish. The kernel hands its own _NAMES_LOCK here at construction, the lock its colour, emoji,
+        # palette and dead-tab name writers hold across their read-edit-publish of the same file, so no writer of either
+        # family lands inside the other's read-to-write window and no publication puts back a field another writer
+        # landed. Taken INSIDE _reg_lock and never the other way round (the kernel's holders of it call nothing of this
+        # backend), so the two locks cannot deadlock. A plain Lock by default: nothing here re-enters it.
+        self._names_lock = names_lock if names_lock is not None else threading.Lock()
         self._pending_ask: dict[str, bool] = {}   # sid -> has an ask awaiting answer
         self._live: dict[str, dict] = {}          # sid -> {key -> atom}: the in-memory LIVE TAIL (ahead of disk)
         self._live_rev: dict[str, int] = {}       # sid -> count of changes to its live tail (add/edit/drop/flag):
@@ -16836,7 +16863,7 @@ class SdkBackend:
         cwd = os.path.realpath(cwd) if os.path.exists(cwd) else cwd
         if not bg:                                   # give the session a stable identity colour like tmux sessions get
             bg, fg = pick_identity_color(sid, self.state_dir)
-        write_name(self.state_dir, sid, name, cwd, bg, fg)
+        self._publish_name(sid, name, cwd, bg, fg)
         # Seed model + effort from the REMEMBERED defaults (the user's last pick on any session), falling back
         # to the hardcoded ones (the user 2026-06-27). effort always has a value (the connect flag). A model is
         # recorded ONLY when a real choice was remembered: an unset / 'default' model stays the account default
@@ -17010,7 +17037,7 @@ class SdkBackend:
         # everything above must exist before any judge pass can see the session. A comment thread never
         # writes it: promote_thread() does, after the kernel seeds the judge stores.
         if not thread_of:
-            write_name(self.state_dir, sid, name, cwd, bg, fg)
+            self._publish_name(sid, name, cwd, bg, fg)
         append_state(self.state_dir, sid, "waiting")
         self._poke()
         return sid
@@ -17025,7 +17052,20 @@ class SdkBackend:
         breaks it out into its own session'). The caller (kernel _comment_promote) must have seeded the
         judge stores FIRST — the names/ write below is the discoverability trigger, same ordering
         contract as fork(). Clears threadOf (the reg becomes an ordinary session's) and registers the
-        identity; the running CLI, transcript and queue carry over untouched."""
+        identity; the running CLI, transcript and queue carry over untouched.
+
+        THE THREE STORES MOVE UNDER ONE HOLD OF _reg_lock (fork PR #813, round 6 of the review, sixteenth commit,
+        2026-09-21; the round's own verifiers' fifth pass): the record write, the names write (_publish_name, under the
+        names lock as well) and the live set, the shape rename has had since the fifteenth commit. Until this commit the
+        names write and the live set ran after the hold was released and published the name this call was given: a
+        rename landing in that window (its door read this promote's landed record, its compare-and-swap passed, it
+        wrote the record, the names file and the live name and answered True) was written over on the names file and
+        the live name by this promote's late writes, both callers told success, nothing logged, and the record (the
+        store a restart applies) disagreed with the roster every listing reads (the verifiers' drive). Under the hold a
+        rename whose door read this record waits, and lands after this promote has published on every store. The
+        colour is picked before the hold (a palette read, no store)."""
+        if not bg:
+            bg, fg = pick_identity_color(sid, self.state_dir)
         with self._reg_lock:                       # the threadOf pop is a listing-visibility flip
             reg = self._reg_for_flip(sid)
             if not reg or not reg.get("threadOf"):
@@ -17033,13 +17073,11 @@ class SdkBackend:
             reg.pop("threadOf", None)
             reg["name"] = name
             write_reg(self.state_dir, sid, reg)
-        if not bg:
-            bg, fg = pick_identity_color(sid, self.state_dir)
-        write_name(self.state_dir, sid, name, reg.get("cwd", ""), bg, fg)
-        s = self.sessions.get(sid)
-        if s:
-            s.name = name
-            s.thread_of = ""   # a promoted session bills ITSELF from this moment (T144's owner billing)
+            self._publish_name(sid, name, str(reg.get("cwd") or ""), bg, fg)
+            s = self.sessions.get(sid)
+            if s:
+                s.name = name
+                s.thread_of = ""   # a promoted session bills ITSELF from this moment (T144's owner billing)
         self._poke()
         return True
 
@@ -18521,16 +18559,16 @@ class SdkBackend:
         # The names/<sid> read is the door's FIRST read, before the record read (fork PR #813, round 6 of the review,
         # thirteenth commit, 2026-09-21; the round's own verifiers' third pass): `door_names` is the name the shared
         # identity file held at this rename's door (None when the file did not read), the compensation's
-        # distinguisher below; the rest of the line (cwd, colours) is what the names write below preserves. The
-        # twelfth commit read the file after the record read and before the record write, and a rename to the SAME
-        # name landing whole between those two reads left `door_names` already reading new_name, no evidence, so the
-        # compensation put the door-time name back over that landed rename with no log line. Read before anything
-        # else, the file reads new_name at the door only when it held that name before this rename began.
+        # distinguisher below; nothing else of the line is carried from here (the sixteenth commit: the names write
+        # takes the cwd from the record as read under the lock, and the colours and the emoji from the file at the
+        # write). The twelfth commit read the file after the record read and before the record write, and a rename to
+        # the SAME name landing whole between those two reads left `door_names` already reading new_name, no evidence,
+        # so the compensation put the door-time name back over that landed rename with no log line. Read before
+        # anything else, the file reads new_name at the door only when it held that name before this rename began.
         try:
-            parts = (Path(self.state_dir) / "names" / sid).read_text().rstrip("\n").split("\t")
-            door_names = parts[0]
+            door_names = (Path(self.state_dir) / "names" / sid).read_text().rstrip("\n").split("\t")[0]
         except (OSError, UnicodeDecodeError):
-            parts, door_names = None, None
+            door_names = None
         reg = read_reg(self.state_dir, sid)
         if not reg:
             return False
@@ -18548,9 +18586,6 @@ class SdkBackend:
         _has_history = bool(_tp) and _tp.exists() and _tp.stat().st_size > 0
         note = {"renameNote": new_name} if _has_history else {}
         fields = {"name": new_name, **note}          # the keys this write moves: what a failed publish puts back, per field
-        if parts is None:                                # no names file read at the door: the names write below creates one
-            parts = [new_name, reg.get("cwd", "")]
-        parts += ["", "", ""]
         # THE RECORD WRITE IS A COMPARE-AND-SWAP ON `name` (fork PR #813, round 6 of the review, fourteenth commit,
         # 2026-09-21; the round's own verifiers' fourth pass): the locked RMW lands only while the record still holds the
         # name the door read (`reg`), compared and written under _reg_lock in one hold (_update_reg_if_holds). A record
@@ -18583,12 +18618,19 @@ class SdkBackend:
         # record holds now), one whose door read predates this rename lands after it, and no caller is told a rename
         # applied that another caller's write then undid. The compensation runs inside the same hold for the same
         # reason: a rename landing between a failed names write and its put-back would read a record about to be put
-        # back as its door. Log lines are written after the hold is released. The names file's OTHER writers
-        # (_finish_move's rewrite, kernel.py's colour, emoji and palette rewrites) take no lock and stay outside the hold:
-        # residuals 4 and 5 in _revert_rename_record's docstring.
+        # back as its door. Log lines are written after the hold is released.
+        # THE NAMES WRITE CARRIES THE RECORD'S CWD AND THE FILE'S COLOURS (fork PR #813, round 6 of the review, sixteenth
+        # commit, 2026-09-21; the round's own verifiers' fifth pass): until this commit it wrote the cwd and the colours
+        # the door had read, so a move's names rewrite landing between the door read and this write had its cwd put back
+        # by a rename its caller was told applied (residual 5), and the names file's other writers (_finish_move,
+        # promote_thread, the kernel's colour, emoji, palette and dead-tab name writers) held no lock this write held.
+        # Now the cwd comes from the record as the compare-and-swap read it in this hold (`row`), the colours and the
+        # emoji from the file at the write, and the write runs under the names lock (_publish_name) that every one of
+        # those writers holds across its own read and publish; residuals 4 and 5 in _revert_rename_record's docstring
+        # are closed by that.
         refusal = failure = comp = None
         with self._reg_lock:
-            verdict, replaced = self._update_reg_if_holds(sid, {"name": reg.get("name")}, fields, held=True)
+            verdict, replaced, row = self._update_reg_if_holds(sid, {"name": reg.get("name")}, fields, held=True)
             if verdict != "written":
                 refusal = (verdict, replaced)
             else:
@@ -18614,14 +18656,13 @@ class SdkBackend:
                 # the SAME name from this rename's own, so the compensation also reads names/<sid> (the twelfth
                 # commit): this rename never wrote that file (write_name raised before its os.replace), so a names
                 # file that reads new_name now, and did not at the door (`door_names`, the door's first read since
-                # the thirteenth commit), was written by another caller: since the fifteenth commit that is a names
-                # writer outside the hold (a move's names rewrite that found no names file and carried this rename's
-                # record write, _finish_move's fallback, residual 4 in the helper's docstring), or a same-name rename
-                # that landed whole between the door's names read and its record read (this rename's compare then
-                # passed on the name it wanted); the compensation stands down and logs that, instead of putting the
-                # door-time name back over a landed rename under a false success.
+                # the thirteenth commit), was written by another caller: since the sixteenth commit (every names writer
+                # under the names lock, the move's rewrite reading the record under _reg_lock) that is a same-name
+                # rename that landed whole between the door's names read and its record read (this rename's compare
+                # then passed on the name it wanted); the compensation stands down and logs that, instead of putting
+                # the door-time name back over a landed rename under a false success.
                 try:
-                    write_name(self.state_dir, sid, new_name, parts[1], parts[2], parts[3])
+                    self._publish_name(sid, new_name, str(row.get("cwd") or ""))
                 except BaseException as exc:                         # noqa: BLE001 (re-raised below, outside the hold)
                     failure = exc
                     try:
@@ -18829,38 +18870,51 @@ class SdkBackend:
         """Everything romp records about a session's cwd follows the CLI's `ok` — the live object (the
         next reconnect's --resume must look where the transcript now is), the reg (cwd, a durable
         movedFrom; cwdPending spent), the names/ file (discovery re-scans on its mtime), and the
-        prior-episode transcripts the CLI did not move. Also the boot heal's finishing half."""
+        prior-episode transcripts the CLI did not move. Also the boot heal's finishing half.
+
+        THE RECORD WRITE AND THE NAMES WRITE ARE ONE HOLD OF _reg_lock (fork PR #813, round 6 of the review, sixteenth
+        commit, 2026-09-21; the round's own verifiers' fifth pass): the names file takes the name from the record as
+        that write read it and the new cwd, and leaves the colours and the emoji to the file (_publish_name, under the
+        names lock too). Until this commit the names rewrite ran after the record write's hold was released, read the
+        names file, and published the NAME it had read with the new cwd, under no lock: a rename landing between that
+        read and the write (record, names file, live name; its caller told True) had its name put back on the names
+        file, the roster every listing reads, with no log line, while the record and the live name held the rename's
+        (the verifiers' drive). Now a rename whose door read this record waits for the hold, and the names file reads
+        the record's name and the new cwd when the hold is released. A record that will not read at the write is
+        skipped and said (_update_reg_dropping's stderr line, the writers' one rule); the names file then carries its
+        own name with the new cwd, the fact the CLI's ok established, under the same locks."""
         if s is not None:
             s.cwd = new
-        self._update_reg_dropping(sid, ("cwdPending",), cwd=new,
-                                  movedFrom={"cwd": old, "t": int(time.time())})
-        reg = read_reg(self.state_dir, sid) or {}
-        try:
-            parts = (Path(self.state_dir) / "names" / sid).read_text().rstrip("\n").split("\t")
-        except OSError:
-            parts = [str(reg.get("name") or sid), old]
-        parts += ["", "", ""]
-        write_name(self.state_dir, sid, parts[0] or str(reg.get("name") or sid), new, parts[2], parts[3])
-        moved = relocate_transcripts(old, new, known_fsids(self.state_dir, sid, reg), log=self._log)
+        with self._reg_lock:
+            reg = self._update_reg_dropping(sid, ("cwdPending",), held=True, cwd=new,
+                                            movedFrom={"cwd": old, "t": int(time.time())})
+            self._publish_name(sid, str(reg.get("name") or sid) if reg is not None else None, new)
+        moved = relocate_transcripts(old, new, known_fsids(self.state_dir, sid, reg or {}), log=self._log)
         self._log("sdk %s: moved %r -> %r (%d prior transcript file(s) followed)"
                   % (sid[:8], old, new, len(moved)))
         self._poke()
 
-    def _update_reg_dropping(self, sid: str, drop=(), **fields) -> None:
+    def _update_reg_dropping(self, sid: str, drop=(), *, held: bool = False, **fields):
         """_update_reg that also REMOVES keys — a spent two-phase flag (cwdPending) must leave the reg,
-        not linger as a null every reader has to know about. Same lock, same unreadable-reg guard."""
-        with self._reg_lock:
+        not linger as a null every reader has to know about. Same lock, same unreadable-reg guard.
+        Returns the record as written, or None when the write was skipped (the record exists and would
+        not read). `held` (fork PR #813, round 6 of the review, sixteenth commit, 2026-09-21): the caller
+        already holds _reg_lock and this writes inside that hold, so a write that must publish beside it
+        (_finish_move's names write) lands under the same hold; the shape _update_reg_if_holds and
+        _revert_rename_record take."""
+        with (contextlib.nullcontext() if held else self._reg_lock):
             reg = read_reg(self.state_dir, sid)
             if reg is None:
                 if not _reg_absent_for_write(_reg_path(self.state_dir, sid)):   # the writers' one rule (2026-09-14)
                     sys.stderr.write("update_reg: %s unreadable — skipping a %s write rather than "
                                      "gutting the reg\n" % (sid[:8], "/".join(sorted(fields) + list(drop))))
-                    return
+                    return None
                 reg = {"sid": sid}
             for k in drop:
                 reg.pop(k, None)
             reg.update(fields)
             write_reg(self.state_dir, sid, reg)
+            return reg
 
     def _heal_cwd_pending(self, reg: dict, release=None) -> str:
         """Settle a reg the previous kernel left mid-move (cwdPending set: the request went out, the reg
@@ -19092,8 +19146,7 @@ class SdkBackend:
             # rename stands on every store; this one hears its raise
             self._log("sdk rename compensation for %s stood down: names/<sid> reads %s, which this rename "
                       "never wrote (its names write raised), so another caller landed the same name inside "
-                      "its window (or a move's names rewrite, finding no names file, carried this rename's "
-                      "record write); the record keeps the %s it holds"
+                      "its window; the record keeps the %s it holds"
                       % (sid, new_name, ", ".join("%s %r" % kv for kv in sorted(detail.items()))),
                       problem=False)
         elif verdict == "absent":
@@ -19167,31 +19220,25 @@ class SdkBackend:
         evidence, so the compare runs; until the hold a same-name rename landing whole inside the window was put back
         over with no log line, and none lands inside the window now. What remains is the disagreement itself: a rename
         to the name the file already reads, alone, puts the record back and leaves the file reading a name the record
-        does not (the F-B pin); the file's writers are outside this lock (residual 5).
-        (4) NARROWED, open. _finish_move's fallback: a move whose record write landed BEFORE this rename's hold and whose
-        names rewrite runs inside it, while names/<sid> does not read at the move's finish, writes the RECORD's name
-        into the file (a read outside the lock: this rename's own record write), so the file reads `new_name` with no
-        other caller having renamed; the stand-down fires and its log line names a move as the other cause, the record
-        keeps this rename's name and note, the caller was told failure, the live name stays, and the name applies at a
-        restart. Until the hold the move's record write could land inside the window too. The same-sid names writers
-        that rewrite the file with the name IT holds are kernel.py's _set_session_color, _set_session_emoji and
-        _set_palette (and _set_name, a dead tab's file only); _finish_move carries the file's name when the file reads
-        and the record's when it does not.
-        (5) NARROWED, open, outside this lock. The names write carries the door-time names line (`parts`: the cwd and the
-        colours read at rename's door), so a move whose names rewrite (_finish_move) lands between the door read and this
-        rename's names write has its cwd put back in names/<sid> by this rename's names write while the record's cwd is
-        the new one (the round's own verifiers' drive: a move's finish inside the window, the rename's names write
-        landing; the record's cwd new, the names file's cwd old, no log line). Not a record write and not this
-        compensation: the compare-and-swap is on the record's `name`, which a move does not touch, so it passes. The hold
-        narrows it: the move's record write (_update_reg_dropping, under this lock) can no longer land inside the window,
-        so the shape needs the move's record write between the door read and the compare-and-swap and its names rewrite,
-        which takes no lock, before this rename's names write (the fifteenth commit's drive, at both trees: the record's
-        cwd new, the names file's name the rename's and its cwd old, no log line). The names file's writers share no
-        lock (write_name is tmp + os.replace, last writer wins), so the record write's compare covers it not at all. A
-        repair is named and unruled: carry the cwd the record holds in the same locked read as the record write (the
-        pre-image _update_reg_if_holds returns) rather than the door-time parts[1], which closes the cwd half under the
-        hold (the move's record write is then either before the locked read, and carried, or after the hold); the
-        colours have no home but the file, so closing them needs the names file's writers under one lock.
+        does not (the F-B pin); the next names write from the record (a move's, a promote's) publishes the record's name.
+        (4) CLOSED (fork PR #813, round 6, sixteenth commit; the round's own verifiers' fifth pass). _finish_move's names
+        rewrite ran outside any lock after its record write and published the name it had read (the file's, or the
+        record's when the file did not read: this rename's unlanded record write, the fallback that made the file read
+        `new_name` with no other caller having renamed, so the stand-down fired and named a move as a cause). The
+        move's record write and its names write are one hold of _reg_lock now, the names write takes the record's name
+        as that write read it, and every names write runs under the names lock (_publish_name), so no move's rewrite
+        reads this rename's record inside its window or publishes a name across it; the stand-down's one cause is a
+        same-name rename between the door's two reads. The kernel's writers of the same file (_set_session_color,
+        _set_session_emoji, _set_palette, and _set_name for a dead tab) hold the same lock across their
+        read-edit-publish, since the kernel hands it to this backend at construction.
+        (5) CLOSED (the sixteenth commit). rename's names write carried the door-time names line (the cwd and the colours
+        read at its door), so a move's names rewrite landing between the door read and that write had its cwd put back
+        while the record's cwd was the new one (the verifiers' drive; the fifteenth commit narrowed the shape to a move
+        whose record write fell between the door read and the compare-and-swap). The names write now takes the cwd from
+        the record as the compare-and-swap read it in this hold (a move's record write is either before that read, and
+        carried, or after this hold), and the colours and the emoji from the file at the write, under the names lock
+        the kernel's colour, emoji and palette writers hold across their own edits, so no field another writer landed
+        is put back by this rename's publish.
         (6) OPEN, not a lost write (the round's own verifiers' fourth pass on the fourteenth commit). rename's history check (`_has_history`, the
         stat of the transcript under the door-time cwd) runs before the hold, so a move whose record write lands between
         the door read and the hold has relocated the transcript: the stat finds nothing, no `renameNote` is stamped, and
@@ -19211,13 +19258,14 @@ class SdkBackend:
         shared by the HTTP route and the WS op), which claims the target name across be.rename, refuses a concurrent
         claim of a held name, and answers a rename to the name names/<sid> already reads as a no-op with nothing
         written. The same-name concurrent shapes are therefore reachable today only by a direct caller of be.rename, a
-        public backend method with its own contract; the different-name shapes and a move inside the window (residuals
-        4, 5 and 6) are reachable through the doors. What reaches this compensation since the hold: a names write that
-        raised after a record write that landed over the name the door read, with no rename able to write between the
-        two. The compare then puts every key back (the control, nothing logged), stands down on the names file's
-        evidence (residual 4, or a same-name rename that landed whole between the door's names read and its record
-        read, so this rename's compare passed on the name it wanted), or finds a key another writer holds (a hand
-        outside the kernel: every writer in this process takes the lock this runs under) and says what stands.
+        public backend method with its own contract; the different-name shapes and a move inside the window (residual
+        6; residuals 4 and 5 are closed) are reachable through the doors. What reaches this compensation since the
+        hold: a names write that raised after a record write that landed over the name the door read, with no rename
+        able to write between the two. The compare then puts every key back (the control, nothing logged), stands down
+        on the names file's evidence (a same-name rename that landed whole between the door's names read and its record
+        read, so this rename's compare passed on the name it wanted; residual 4's move cause is closed), or finds a key
+        another writer holds (a hand outside the kernel: every writer in this process takes the lock this runs under)
+        and says what stands.
 
         Returns (verdict, stands). "landed": stood down, `stands` the keys with the values the record holds.
         "compared": the compare-and-swap ran, `stands` the keys another writer holds with their values ({} when every
@@ -19239,12 +19287,13 @@ class SdkBackend:
         sid_for_name, _finish_move's names rewrite, and the log and row texts of _boot_reconcile, _settled_now,
         _queue_behind_stand_down, move, read_picks, follow_default_auth, set_auth_guarded, ensure_scheduled and
         deliver_lost_wakeups; kernel.py reads the row for its listings. READER of `renameNote`: _deliver_rename_ping.
-        The names file (write_name: spawn, fork, promote_thread, rename, _finish_move, which carries the file's name
-        when the file reads and the record's when it does not; kernel.py's _set_session_color, _set_session_emoji and
-        _set_palette rewrite it with the name it holds, and its _set_name only for a dead tab no backend runs) and the
-        live `name` (SdkSession.__init__, promote_thread, rename) are the other two stores; rename writes them after the
-        record, inside the same hold of _reg_lock since the fifteenth commit, and a raise from write_name leaves both as
-        they were, so neither is a restore site. READERS of the names file's name: rename (the door read) and this compensation (the distinguisher);
+        The names file (write_name through _publish_name, under the names lock: spawn, fork, promote_thread, rename and
+        _finish_move, each with the record's name and cwd and the file's colours and emoji at the write; kernel.py's
+        _set_session_color, _set_session_emoji and _set_palette rewrite it with the name it holds under the same lock,
+        and its _set_name only for a dead tab no backend runs) and the live `name` (SdkSession.__init__, promote_thread,
+        rename) are the other two stores; rename and promote_thread write them after the record, inside the same hold of
+        _reg_lock (rename since the fifteenth commit, promote_thread and _finish_move's names write since the sixteenth),
+        and a raise from write_name leaves both as they were, so neither is a restore site. READERS of the names file's name: rename (the door read) and this compensation (the distinguisher);
         _finish_move and write_name (their rewrites carry the fields they read); kernel.py's _names_snapshot and
         _names_parts (the roster every listing reads), _sdk_transcript_path, _boundary_clear_notices,
         _name_color_by_name and _producer_sig (its mtime: a new name is re-pushed); bin/romp's restart audit row."""
@@ -22665,7 +22714,7 @@ class SdkBackend:
         # rename's caller was told True and its name stands; its ping alone was lost). A note that moved stands for a
         # later settle and the verdict is logged once; a record gone or unreadable here is left alone, as every writer
         # leaves one. The ping already went out either way, so this settle's delivery is reported as made.
-        verdict, detail = self._update_reg_if_holds(s.sid, {"renameNote": note}, {"renameNote": None})
+        verdict, detail, _row = self._update_reg_if_holds(s.sid, {"renameNote": note}, {"renameNote": None})
         if verdict == "moved":
             self._log("sdk rename ping for %s: the note %r was delivered, and the record now holds %r (a rename landed "
                       "meanwhile), which stands for a later settle" % (s.sid[:8], note, (detail or {}).get("renameNote")),
@@ -22740,22 +22789,25 @@ class SdkBackend:
         passes it, since its names write and live set follow this write under the same hold, so no record write lands
         between the compare and the stores that publish it. A caller passing `held` without the lock would be an
         unlocked write; the executed pin (tests/test_sdk_rename_ping.py, RenameRecordWriteIsACompareAndSwap) reads the
-        lock's state at the write."""
+        lock's state at the write. The THIRD element (the sixteenth commit) is the record as this hold leaves it: the
+        row as written for "written", the row read for "moved", None otherwise, so a caller publishing another store
+        beside its write takes the fields it does not own from the locked read (rename's names write takes the cwd),
+        never from its door-time read, which a writer of those fields may have moved."""
         with (contextlib.nullcontext() if held else self._reg_lock):
             reg = read_reg(self.state_dir, sid)
             if reg is None:
                 if _reg_absent_for_write(_reg_path(self.state_dir, sid)):
-                    return "absent", None
+                    return "absent", None, None
                 sys.stderr.write("update_reg: %s unreadable; skipping a %s write rather than gutting the reg\n"
                                  % (sid[:8], "/".join(sorted(fields))))
-                return "unreadable", None
+                return "unreadable", None, None
             holds = {k: reg.get(k) for k, v in expect.items() if reg.get(k) != v}
             if holds:
-                return "moved", holds
+                return "moved", holds, reg
             replaced = {k: reg[k] for k in fields if k in reg}
             reg.update(fields)
             write_reg(self.state_dir, sid, reg)
-            return "written", replaced
+            return "written", replaced, reg
 
     def _update_reg_derived(self, sid: str, derive) -> str:
         """The reg row's read-modify-write whose FIELDS ARE DERIVED FROM THE LOCKED READ (fork PR #813, round 6 of the
@@ -22813,6 +22865,26 @@ class SdkBackend:
         resume's alive=True undone = a live one blinked out of it)."""
         with self._reg_lock:
             write_reg(self.state_dir, sid, reg)
+
+    def _publish_name(self, sid: str, name: str | None = None, cwd: str | None = None,
+                      bg: str | None = None, fg: str | None = None) -> None:
+        """names/<sid> written under the names lock (fork PR #813, round 6 of the review, sixteenth commit, 2026-09-21; the
+        round's own verifiers' fifth pass): write_name's read of the fields the caller does not pass (None: the file's
+        value at the write) and its publish are one hold of _names_lock, the lock the kernel's four writers of the file
+        (_set_session_color, _set_session_emoji, _set_palette, _set_name) hold across their own read-edit-publish when the
+        kernel built this backend with its _NAMES_LOCK. The backend's five writers call this: spawn and fork with the new
+        row's name and cwd and the colour picked for it; promote_thread with the breakout's name and colour and the
+        record's cwd, inside the hold of _reg_lock its record write takes; rename with its name and the cwd the record
+        holds at its compare-and-swap, inside that hold; _finish_move with the record's name and the new cwd, inside its
+        record write's hold. None of them passes a field it does not own, so the file's colours and emoji (which have no
+        other home) are read here, under the lock, at the write. Until this commit promote_thread's and _finish_move's
+        names writes ran outside any lock and carried a name or cwd read earlier, so a rename landing in the window was
+        undone on the roster every listing reads while its caller was told True (the verifiers' drives: a promote's late
+        names write over a rename; a move's names rewrite over a rename), and the kernel's colour writers and the
+        backend's carried each other's fields across windows no lock covered. The lock order is _reg_lock, then this;
+        the kernel's holders of this lock take no lock of the backend's."""
+        with self._names_lock:
+            write_name(self.state_dir, sid, name, cwd, bg, fg)
 
     def _record_launch_error(self, sess: SdkSession, exc: BaseException) -> None:
         """A session's CLI refused to start — persist WHY onto the session so the user is told, loudly,

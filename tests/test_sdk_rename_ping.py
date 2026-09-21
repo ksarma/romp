@@ -889,5 +889,353 @@ class RecordGoneOrUnreadableAtCompensation(unittest.TestCase):
                          "the unreadable record is not reported as absent: %r" % (self.logs,))
 
 
+class NamesFilePublicationsUnderTheLocks(unittest.TestCase):
+    """Every write of names/<sid> the backend makes runs under the lock its record write holds and under the names lock
+    (fork PR #813, round 6 of the review, sixteenth commit, 2026-09-21; the round's own verifiers' fifth pass), and
+    publishes the record's name and cwd as read in that hold and the file's colours and emoji as read at the write.
+    THE DEFECT (the F-A class on two sibling roads of rename's three stores; pre-existing): promote_thread's names write
+    and live set ran after its record write's hold was released, and _finish_move's names rewrite ran outside any lock
+    and published the name it had read before; a rename landing in either window (record, names file, live name; its
+    caller told True) was written over on the names file, the roster every listing reads, by the late write, with no log
+    line: the verifiers' drives read the record alpha while the names file and the live name read the promote's name,
+    and the names file reading the move's stale name with the new cwd. THE FIX, fitted to the class, is the shape rename
+    has had since the fifteenth commit: the names write moves inside the same hold of _reg_lock as the record write, with
+    the record as the source of truth for the name and the cwd, so a rename whose door read the writer's record WAITS
+    and lands after it, and nobody loses; a compare-and-swap on the file's content would have needed a retry loop for
+    the writers whose fields are facts (a move's cwd, a promote's name), a separate condition on the live name, and a
+    loser to log, where one hold has none. THE NAMES LOCK closes the other family: the kernel's colour, emoji, palette
+    and dead-tab name writers hold _NAMES_LOCK across their read-edit-publish and the backend's writers took no lock of
+    theirs, so a rename inside a colour writer's span was put back by its publish and a colour inside a rename's was
+    carried stale; the kernel hands its lock to the backend at construction and every backend write of the file holds
+    it (_publish_name). Driven with real threads: the writer held inside write_name by thread identity, the rename
+    started on a third thread and given 0.3 s (a bound on a negative, not the pin: the pin is the ORDER of the writes,
+    which the hold decides), then released. Synthetic: placeholder sid, demo names, a one-line transcript."""
+
+    class _Live:
+        def __init__(self):
+            self.name = "web"
+            self.thread_of = "bbbbbbbb-1111-2222-3333-444444444444"
+
+    @staticmethod
+    def _names_locked(be):
+        """The names lock's state at a write, or None on a tree whose backend has no names lock, so a red-before run
+        on such a tree reaches the pins' assertions (the stores, the write order) instead of dying inside the writer."""
+        lock = getattr(be, "_names_lock", None)
+        return lock.locked() if lock is not None else None
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.root = Path(self.td.name)
+        (self.root / "session-hosts").write_text("off\n")
+        self.logs = []
+        self.be = sb.SdkBackend(self.td.name, "/bin/true", lambda *a, **k: None, log=self.logs.append)
+        self.cwd = str(self.root / "proj")
+        Path(self.cwd).mkdir()
+        self.new = str(self.root / "proj2")
+        Path(self.new).mkdir()
+        (self.root / "names").mkdir()
+        self.nf = self.root / "names" / SID
+        self.nf.write_text("web\t%s\t#112233\t#ffffff\n" % self.cwd)
+        sb.write_reg(self.root, SID, {"sid": SID, "name": "web", "cwd": self.cwd, "lastSid": SID})
+        tp = Path(sb.transcript_path(self.cwd, SID))          # prior turns: a rename stamps its note
+        tp.parent.mkdir(parents=True, exist_ok=True)
+        tp.write_text('{"type": "user", "uuid": "u1"}\n')
+        self.live = self._Live()
+        self.be.sessions[SID] = self.live
+
+    def tearDown(self):
+        self.td.cleanup()
+
+    def _names(self):
+        return self.nf.read_text().rstrip("\n").split("\t")
+
+    def _rename_arrives_while_a_writer_holds(self, writer):
+        """`writer` runs on a thread named "writer" and is held INSIDE its names write (write_name patched by thread
+        identity); a rename to alpha starts on a thread named "rename-b" while the writer is held and is given 0.3 s;
+        the writer resumes; both are joined. Every write_reg and write_name is recorded as (thread, name, _reg_lock held,
+        _names_lock held). Returns (the writer's outcome, the rename's outcome, whether the rename was still running when
+        the writer resumed, the record writes, the names writes, the four stores read while the writer was held)."""
+        real_wn, real_wr, be = sb.write_name, sb.write_reg, self.be
+        w_in, go, holder, reg_writes, names_writes = threading.Event(), threading.Event(), {}, [], []
+
+        def write_name(state_dir, sid, nm, *a, **k):
+            names_writes.append((threading.current_thread().name, nm, be._reg_lock.locked(), self._names_locked(be)))
+            if threading.current_thread() is holder.get("w"):
+                w_in.set()
+                go.wait(10)
+            return real_wn(state_dir, sid, nm, *a, **k)
+
+        def write_reg(state_dir, sid, reg):
+            reg_writes.append((threading.current_thread().name, reg.get("name"), be._reg_lock.locked(), self._names_locked(be)))
+            return real_wr(state_dir, sid, reg)
+
+        outcome = {}
+
+        def run(key, fn):
+            try:
+                outcome[key] = fn()
+            except BaseException as e:                            # noqa: BLE001 (the drive records whatever escapes)
+                outcome[key] = (type(e).__name__, str(e))
+
+        tw = holder["w"] = threading.Thread(target=run, args=("w", writer), name="writer")
+        tb = threading.Thread(target=run, args=("b", lambda: self.be.rename(SID, "alpha")), name="rename-b")
+        with mock.patch.object(sb, "write_name", write_name), mock.patch.object(sb, "write_reg", write_reg):
+            tw.start()
+            self.assertTrue(w_in.wait(10), "the writer reached its names write")
+            reg = sb.read_reg(self.root, SID)
+            at_hold = (reg.get("name"), self._names()[0], self._names()[1], self.live.name)
+            tb.start()
+            tb.join(0.3)
+            b_waiting = tb.is_alive()
+            go.set()
+            tw.join(10)
+            tb.join(10)
+        self.assertFalse(tw.is_alive() or tb.is_alive(), "both returned")
+        return outcome.get("w"), outcome.get("b"), b_waiting, reg_writes, names_writes, at_hold
+
+    def test_a_rename_arriving_while_a_promote_publishes_waits_and_lands_after_it(self):
+        # THE VERIFIERS' DRIVE (PROMOTE_NAMES_WRITE_OVER_RENAME). The record is a comment thread's; promote_thread has
+        # written its record (threadOf gone, name promoted) and is inside its names write; rename to alpha arrives. At the
+        # fifteenth commit the promote's names write ran with the lock free, so the rename's door read the landed record,
+        # its compare-and-swap passed on 'promoted', it wrote every store and answered True, and the promote's late names
+        # write and live set then put 'promoted' back on the names file and the live name: the record ('alpha', 'alpha'),
+        # the names file and the live name 'promoted', both callers told success, nothing logged. Now the rename waits on
+        # the promote's hold and lands after it: every store alpha, the promote's writes before the rename's, no log line.
+        sb.write_reg(self.root, SID, {"sid": SID, "name": "web", "cwd": self.cwd, "lastSid": SID,
+                                      "threadOf": self.live.thread_of})
+        w, b, b_waiting, reg_writes, names_writes, at_hold = self._rename_arrives_while_a_writer_holds(
+            lambda: self.be.promote_thread(SID, "promoted", "#112233", "#ffffff"))
+        self.assertEqual(at_hold, ("promoted", "web", self.cwd, "web"), "the promote's record write is on disk; its names write has not landed")
+        self.assertEqual((w, b), (True, True), "both told success, in turn: %r" % ((w, b),))
+        reg = sb.read_reg(self.root, SID)
+        self.assertEqual((reg.get("name"), reg.get("renameNote"), "threadOf" in reg, self._names()[0], self.live.name, self.live.thread_of),
+                         ("alpha", "alpha", False, "alpha", "alpha", ""),
+                         "the later rename stands on the record, the names file and the live name, and the promotion stands "
+                         "(red before: the names file and the live name read 'promoted' under the rename's True)")
+        self.assertTrue(b_waiting, "the rename had not returned while the promote held the lock (red before the sixteenth "
+                                   "commit: it landed whole inside the promote's window)")
+        self.assertEqual([(t, n) for t, n, _r, _n in reg_writes], [("writer", "promoted"), ("rename-b", "alpha")],
+                         "the promote's record write, then the rename's: %r" % (reg_writes,))
+        self.assertEqual([(t, n) for t, n, _r, _n in names_writes], [("writer", "promoted"), ("rename-b", "alpha")],
+                         "the promote's names write landed before the rename's began: %r" % (names_writes,))
+        self.assertEqual([(r, nl) for _t, _n, r, nl in names_writes], [(True, True), (True, True)],
+                         "each names write made with _reg_lock and the names lock held: %r" % (names_writes,))
+        self.assertEqual([m for m in self.logs if "rename" in m], [], "nothing lost, nothing to log: %r" % (self.logs,))
+
+    def test_a_rename_arriving_while_a_move_publishes_waits_and_both_facts_land(self):
+        # THE VERIFIERS' DRIVE (MOVE_NAMES_REWRITE_STALE_NAME). _finish_move has written its record (cwd new) and is
+        # inside its names write; rename to alpha arrives. At the fifteenth commit the move's names rewrite ran under no
+        # lock and carried the name it had read before the rename: the rename landed whole (record, names file with the
+        # OLD cwd it had read at its door, live name) and answered True, and the move's rewrite then published 'web' with
+        # the new cwd over it: the names file 'web', the record and the live name 'alpha', one log line (the move's own).
+        # Now the rename waits on the move's hold and lands after it, taking the cwd from the record under the lock: the
+        # names file reads alpha WITH the new cwd, the move's write before the rename's, and the move's line is the only one.
+        def move():
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.be._finish_move(None, SID, self.cwd, self.new)
+            return "finished"
+        w, b, b_waiting, reg_writes, names_writes, at_hold = self._rename_arrives_while_a_writer_holds(move)
+        self.assertEqual(at_hold, ("web", "web", self.cwd, "web"), "the move's record write is on disk; its names write has not landed")
+        self.assertEqual((w, b), ("finished", True), "the move finished and the rename was told applied: %r" % ((w, b),))
+        reg = sb.read_reg(self.root, SID)
+        self.assertEqual((reg.get("name"), reg.get("cwd"), self._names()[:2], self.live.name),
+                         ("alpha", self.new, ["alpha", self.new], "alpha"),
+                         "both facts stand on the names file: the rename's name and the move's cwd (red before: the names "
+                         "file read 'web' with the new cwd under the rename's True)")
+        self.assertTrue(b_waiting, "the rename had not returned while the move held the lock (red before the sixteenth "
+                                   "commit: it landed whole inside the move's window)")
+        self.assertEqual(self._names()[2:4], ["#112233", "#ffffff"], "the colours ride along, read at each write")
+        self.assertEqual([(t, n) for t, n, _r, _n in names_writes], [("writer", "web"), ("rename-b", "alpha")],
+                         "the move's names write landed before the rename's began: %r" % (names_writes,))
+        self.assertEqual([(r, nl) for _t, _n, r, nl in names_writes], [(True, True), (True, True)],
+                         "each names write made with _reg_lock and the names lock held: %r" % (names_writes,))
+        self.assertEqual(len([m for m in self.logs if "moved" in m]), 1, "the move's own line: %r" % (self.logs,))
+        self.assertEqual([m for m in self.logs if "rename" in m], [], "nothing lost, nothing to log: %r" % (self.logs,))
+
+    def test_the_promotes_three_stores_and_the_moves_two_move_under_one_hold_of_each_lock(self):
+        # the property by execution, the fifteenth commit's shape on the two sibling roads: with no other writer, each
+        # store moves in order with _reg_lock held at every write and the names lock held at the names write, and both
+        # locks are free when the road returns. Red before the sixteenth commit: the promote's names write and live set
+        # and the move's names write with _reg_lock free, and no names lock at all.
+        events, real_wr, real_wn, be = [], sb.write_reg, sb.write_name, self.be
+
+        def write_reg(state_dir, sid, reg):
+            events.append(("record", reg.get("name"), be._reg_lock.locked(), self._names_locked(be)))
+            return real_wr(state_dir, sid, reg)
+
+        def write_name(state_dir, sid, nm, *a, **k):
+            events.append(("names", nm, be._reg_lock.locked(), self._names_locked(be)))
+            return real_wn(state_dir, sid, nm, *a, **k)
+
+        class _LiveRecording:
+            def __init__(me):
+                me._name, me.thread_of = "web", "bbbbbbbb-1111-2222-3333-444444444444"
+
+            @property
+            def name(me):
+                return me._name
+
+            @name.setter
+            def name(me, v):
+                events.append(("live", v, be._reg_lock.locked(), self._names_locked(be)))
+                me._name = v
+        live = _LiveRecording()
+        self.be.sessions[SID] = live
+        sb.write_reg(self.root, SID, {"sid": SID, "name": "web", "cwd": self.cwd, "lastSid": SID, "threadOf": live.thread_of})
+        with mock.patch.object(sb, "write_reg", write_reg), mock.patch.object(sb, "write_name", write_name):
+            self.assertTrue(self.be.promote_thread(SID, "promoted", "#112233", "#ffffff"))
+        self.assertEqual(events, [("record", "promoted", True, False), ("names", "promoted", True, True), ("live", "promoted", True, False)],
+                         "the promote's three stores move in this order under the locks: %r" % (events,))
+        self.assertEqual((self.be._reg_lock.locked(), self._names_locked(self.be)), (False, False), "both locks released when the promote returns")
+        self.assertEqual((live.name, live.thread_of, self._names()[0]), ("promoted", "", "promoted"))
+        del events[:]
+        with mock.patch.object(sb, "write_reg", write_reg), mock.patch.object(sb, "write_name", write_name), \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.be._finish_move(None, SID, self.cwd, self.new)
+        self.assertEqual(events, [("record", "promoted", True, False), ("names", "promoted", True, True)],
+                         "the move's record write and names write under the locks, the names file carrying the record's name: %r" % (events,))
+        self.assertEqual((self.be._reg_lock.locked(), self._names_locked(self.be)), (False, False), "both locks released when the move returns")
+        self.assertEqual(self._names()[:2], ["promoted", self.new])
+
+    def test_a_names_publication_waits_for_a_writer_holding_the_names_lock_and_carries_what_it_landed(self):
+        # THE OTHER FAMILY, by execution. A writer in the kernel's shape (_set_session_color: read the line, edit the
+        # colour, publish tmp + os.replace, the whole span under the names lock) is held between its read and its publish;
+        # a rename arrives, has its record written, and must WAIT at its names write; released, the colour writer publishes
+        # web with the new colour, and the rename then publishes alpha carrying that colour, read from the file under the
+        # lock. Red before the sixteenth commit (the backend took no names lock, so the attribute below was unread): the
+        # rename landed inside the writer's span and the writer's publish put 'web' back over it while the record held
+        # alpha, the roster disagreeing with the record under the rename's True and the writer's True. The lock is set on
+        # the backend as an attribute here so that an older tree, which has no `names_lock` argument, still reaches the
+        # assertions rather than failing at construction; the constructor's wiring is the next test's.
+        lock = threading.Lock()
+        self.be._names_lock = lock
+        held, go, outcome = threading.Event(), threading.Event(), {}
+
+        def colour_writer():
+            with lock:                                             # the kernel's span: read, edit, publish, one hold
+                parts = self._names()
+                held.set()
+                go.wait(10)
+                parts[2], parts[3] = "#445566", "#000000"
+                tmp = self.nf.with_suffix(".tmp")
+                tmp.write_text("\t".join(parts) + "\n")
+                os.replace(tmp, self.nf)
+            return True
+
+        def run(key, fn):
+            outcome[key] = fn()
+        tw = threading.Thread(target=run, args=("w", colour_writer), name="colour")
+        tb = threading.Thread(target=run, args=("b", lambda: self.be.rename(SID, "alpha")), name="rename-b")
+        tw.start()
+        self.assertTrue(held.wait(10), "the colour writer holds the names lock after its read")
+        tb.start()
+        tb.join(0.3)
+        b_waiting = tb.is_alive()
+        record_while_held = (sb.read_reg(self.root, SID) or {}).get("name")
+        go.set()
+        tw.join(10)
+        tb.join(10)
+        self.assertFalse(tw.is_alive() or tb.is_alive(), "both returned")
+        self.assertEqual((outcome.get("w"), outcome.get("b")), (True, True))
+        self.assertEqual(self._names(), ["alpha", self.cwd, "#445566", "#000000"],
+                         "the rename's name AND the writer's colour stand on the file (red before: 'web' with the new colour)")
+        self.assertTrue(b_waiting, "the rename had not returned while the colour writer held the names lock")
+        self.assertEqual(record_while_held, "alpha", "the rename's record write had landed; its names write was what waited")
+        self.assertEqual(((sb.read_reg(self.root, SID) or {}).get("name"), self.live.name), ("alpha", "alpha"))
+        self.assertEqual([m for m in self.logs if "rename" in m], [], "nothing lost, nothing to log: %r" % (self.logs,))
+
+    def test_a_move_landing_between_a_renames_door_read_and_its_record_write_keeps_its_cwd_on_the_names_file(self):
+        # RESIDUAL 5, CLOSED (the fourteenth commit named it, the fifteenth narrowed it to this shape): rename A is held
+        # right after its door's record read (read_reg patched by thread identity, on A's first call); a move finishes
+        # whole (record cwd new, names file cwd new); A resumes, its compare-and-swap passes (the name never moved) and
+        # its names write publishes alpha. At the fifteenth commit that write carried the cwd A's door had read, so the
+        # names file went back to the OLD cwd while the record held the new one, under A's True and with no log line.
+        # Now the cwd comes from the record as the compare-and-swap read it, under the lock: the names file reads alpha
+        # with the new cwd, and the move's own line is the only one logged.
+        real_read = sb.read_reg
+        a_read_done, go, holder, a_reads, outcome = threading.Event(), threading.Event(), {}, [], {}
+
+        def read_reg(state_dir, sid):
+            reg = real_read(state_dir, sid)
+            if threading.current_thread() is holder.get("a"):
+                a_reads.append(sid)
+                if len(a_reads) == 1:                              # A's door read: hold here until the move has finished
+                    a_read_done.set()
+                    go.wait(10)
+            return reg
+
+        def first():
+            try:
+                outcome["a"] = self.be.rename(SID, "alpha")
+            except BaseException as e:                            # noqa: BLE001
+                outcome["a"] = (type(e).__name__, str(e))
+        t = holder["a"] = threading.Thread(target=first, name="rename-a")
+        with mock.patch.object(sb, "read_reg", read_reg):
+            t.start()
+            self.assertTrue(a_read_done.wait(10), "rename A returned from its door's record read")
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.be._finish_move(None, SID, self.cwd, self.new)
+            self.assertEqual(self._names()[:2], ["web", self.new], "the move landed whole while A was held")
+            go.set()
+            t.join(10)
+        self.assertFalse(t.is_alive(), "rename A returned")
+        self.assertEqual(outcome.get("a"), True, "A was told applied: %r" % (outcome.get("a"),))
+        reg = sb.read_reg(self.root, SID)
+        self.assertEqual((reg.get("name"), reg.get("cwd"), self._names()[:2], self.live.name),
+                         ("alpha", self.new, ["alpha", self.new], "alpha"),
+                         "the names file carries the record's cwd as read at A's record write (red before the sixteenth commit: "
+                         "the door-time OLD cwd, put back over the move's under A's True)")
+        self.assertEqual(self._names()[2:4], ["#112233", "#ffffff"], "the colours ride along")
+        self.assertEqual(len([m for m in self.logs if "moved" in m]), 1, "the move's own line: %r" % (self.logs,))
+        self.assertEqual([m for m in self.logs if "rename" in m], [], "nothing lost, nothing to log: %r" % (self.logs,))
+
+    def test_a_move_publishes_the_records_name_over_a_names_file_that_disagrees(self):
+        # THE SOURCE OF TRUTH FOR THE NAME, by execution (the mutation that carries a name read from the file before the
+        # hold stays green under the two drives above, since the file and the record agree there; this pin tells the two
+        # sources apart): the names file reads 'stale' while the record reads web (the F-B shape, a disagreement a faulted
+        # rename left behind), and a move finishes. Until the sixteenth commit the move carried the file's name, so the
+        # disagreement outlived it; now the names file reads the record's name with the new cwd, and the colours ride.
+        # Every SDK sid's rename goes through the record (the kernel routes a sid with a record to this backend, alive or
+        # dormant; its dead-tab _set_name is for sids no backend owns), so the record is what a restart applies and the
+        # file is the copy.
+        self.nf.write_text("stale\t%s\t#112233\t#ffffff\n" % self.cwd)
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.be._finish_move(None, SID, self.cwd, self.new)
+        self.assertEqual(self._names(), ["web", self.new, "#112233", "#ffffff"],
+                         "the record's name and the new cwd (red before the sixteenth commit: 'stale' carried from the file)")
+        self.assertEqual((sb.read_reg(self.root, SID) or {}).get("cwd"), self.new)
+
+    def test_the_constructor_wires_the_names_lock_the_kernel_hands_it(self):
+        # the wiring, by execution: a backend built with names_lock=<lock> holds THAT lock at its names write
+        lock, seen, real_wn = threading.Lock(), [], sb.write_name
+        be = sb.SdkBackend(self.td.name, "/bin/true", lambda *a, **k: None, log=self.logs.append, names_lock=lock)
+        be.sessions[SID] = self.live
+
+        def write_name(state_dir, sid, nm, *a, **k):
+            seen.append((nm, lock.locked()))
+            return real_wn(state_dir, sid, nm, *a, **k)
+        with mock.patch.object(sb, "write_name", write_name):
+            self.assertTrue(be.rename(SID, "alpha"))
+        self.assertEqual(seen, [("alpha", True)], "the names write ran with the handed lock held: %r" % (seen,))
+        self.assertFalse(lock.locked(), "and released it")
+
+    def test_write_name_carries_every_field_it_is_not_given_and_clears_on_an_empty_string(self):
+        # the carry contract every publication relies on: a None field is the file's value at the write (the name falls
+        # back to the sid when the file has none, the others to ""), "" clears; a writer passes only the fields it owns
+        d = Path(self.td.name) / "carry"
+        (d / "names").mkdir(parents=True)
+        (d / "names" / SID).write_text("web\t%s\t#112233\t#ffffff\tE\n" % self.cwd)
+        sb.write_name(d, SID, "api")
+        self.assertEqual((d / "names" / SID).read_text(), "api\t%s\t#112233\t#ffffff\tE\n" % self.cwd, "a rename carries cwd, colours, emoji")
+        sb.write_name(d, SID, None, self.new)
+        self.assertEqual((d / "names" / SID).read_text(), "api\t%s\t#112233\t#ffffff\tE\n" % self.new, "a move carries the name, colours, emoji")
+        sb.write_name(d, SID, bg="", fg="")
+        self.assertEqual((d / "names" / SID).read_text(), "api\t%s\t\t\tE\n" % self.new, "an empty string clears a colour; the emoji rides")
+        other = "cccccccc-1111-2222-3333-444444444444"
+        sb.write_name(d, other)
+        self.assertEqual((d / "names" / other).read_text(), other + "\t\t\t\n", "no file: the sid stands in for the name, the rest empty")
+        self.assertEqual(sorted(p.name for p in (d / "names").iterdir()), sorted([SID, other]), "no staging file leaks")
+
+
 if __name__ == "__main__":
     unittest.main()

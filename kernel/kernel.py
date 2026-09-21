@@ -4883,10 +4883,15 @@ _EFFORT_VALUES = {e["value"] for e in EFFORT_CHOICES}
 # publish the whole line, on independent threads (a WS handler, an HTTP handler for POST /emoji, the
 # pusher) — two overlapping spans lose whichever landed first, and the emoji is the first field an
 # AGENT writes (set_emoji), so a collision no longer needs two simultaneous human gestures. The spans
-# are a read, an edit and an atomic write; one module lock covers them. Out of its reach, and stated
-# as such: the SDK backend's write_name and the Codex backend's _write_name (their own module locks,
-# same process) and bin/romp's rename hook (another process) — each re-reads at write time, which
-# narrows but does not close the window.
+# are a read, an edit and an atomic write; one module lock covers them. The SDK backend's writers of the
+# same file (spawn, fork, promote_thread, rename, _finish_move, through its _publish_name) hold THIS lock
+# too since fork PR #813's round 6, sixteenth commit (2026-09-21): _sdk_locked hands it to the backend at
+# construction, so a rename or a move landing inside one of the four spans below is never put back by the
+# span's publish, and a colour or emoji landing inside the backend's read-to-write is carried, not
+# overwritten (the backend takes it inside its record lock and its holders here take no lock of the
+# backend's, so the order is fixed). Out of its reach, and stated as such: the Codex backend's _write_name
+# (its own class lock, same process; the same hand-off would bring it under this lock), which re-reads at
+# write time, which narrows but does not close that window.
 _NAMES_LOCK = threading.RLock()
 _NAMES_REREAD_S = 0.05   # the pause before the ONE re-read of a names record that read with no name (below)
 
@@ -22229,7 +22234,12 @@ def _sdk_locked():
                 # the old kernel's last state as current above the restart row. /version's `started` is the
                 # same start in whole seconds.
                 boot_at=_STARTED,
-                code_version=_kernel_sha())   # stamped on every session lease this kernel writes (T305)
+                code_version=_kernel_sha(),   # stamped on every session lease this kernel writes (T305)
+                # the names-registry lock the kernel's own four writers of names/<sid> hold (_set_name,
+                # _set_session_color, _set_session_emoji, _set_palette): the backend holds it across every write
+                # of the file it makes, so neither family's read-to-write span can be undone by the other's
+                # publish (fork PR #813, round 6, sixteenth commit)
+                names_lock=_NAMES_LOCK)
             # a limit-shaped judge error envelope pokes ONE exact usage poll (get_usage rides turn
             # ends, so an idle fleet's usage.json goes stale — measured ~15h — and the rate gate is
             # only as good as that file); the backend picks any live login session to ask

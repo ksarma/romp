@@ -552,6 +552,90 @@ class BackendWritersCarryTheField(unittest.TestCase):
         self.assertEqual(sorted(f.name for f in (tmp / "names").iterdir()), [SID], "no staging file leaks")
 
 
+class TheTwoFamiliesShareTheNamesLock(unittest.TestCase):
+    """The kernel's four writers of names/<sid> and the SDK backend's five hold ONE lock across their read-to-write
+    spans (fork PR #813, round 6 of the review, sixteenth commit, 2026-09-21; the round's own verifiers' fifth pass):
+    _sdk_locked hands _NAMES_LOCK to the backend, whose _publish_name holds it around write_name. Until then the kernel's
+    _NAMES_LOCK comment named the backend's writers as out of its reach: a rename landing inside a colour writer's span
+    was put back by the span's publish (the roster reading the old name under the rename's True and the recolour's
+    True), and a colour landing inside a rename's span was overwritten by the door-time colour the rename carried.
+    Driven here at the kernel's surface, with the real _set_session_color held between its read and its publish and a
+    real SdkBackend built the way the kernel builds it (the lock handed in). Synthetic: a private placeholder sid."""
+
+    SID3 = "3e3e3e3e-0e0e-4e4e-8e8e-e0e0e0e0e0e3"
+
+    def setUp(self):
+        import sys
+        self.sb = sys.modules.get("romp_sdk_backend") or load_source(
+            "romp_sdk_backend_emoji", os.path.join(BIN, "romp_sdk_backend.py"))
+        self.tmp = tempfile.mkdtemp()
+        self.names = Path(self.tmp) / "names"
+        self.names.mkdir()
+        Path(self.tmp, "session-hosts").write_text("off\n")   # a state root of this test's own: no session host
+        self._saved = (km.NAMES, km.jd.STATE)
+        km.NAMES = self.names
+        km.jd.STATE = Path(self.tmp) / "state"
+        km._pal_cache.update({"name": km.pal.DEFAULT, "mt": None})
+        self.logs = []
+        try:
+            self.be = self.sb.SdkBackend(self.tmp, "/bin/true", lambda *a, **k: None, log=self.logs.append,
+                                         names_lock=km._NAMES_LOCK)
+        except TypeError:          # a tree whose backend takes no names lock: built without one, so the pin below
+            self.be = self.sb.SdkBackend(self.tmp, "/bin/true", lambda *a, **k: None, log=self.logs.append)   # reaches
+            #   its assertions (the roster's line) instead of dying here; the wiring itself is
+            #   tests/test_kernel_headless_ops.py's test_the_backend_is_built_with_the_kernels_names_lock
+        self.cwd = "/proj/TESTHOST/app"
+        (self.names / self.SID3).write_text("web\t%s\t#1EA1EB\twhite\n" % self.cwd)
+        self.sb.write_reg(Path(self.tmp), self.SID3, {"sid": self.SID3, "name": "web", "cwd": self.cwd, "lastSid": self.SID3})
+
+    def tearDown(self):
+        km.NAMES, km.jd.STATE = self._saved
+        km._pal_cache.update({"name": km.pal.DEFAULT, "mt": None})
+
+    def test_a_rename_arriving_inside_a_recolours_span_waits_and_both_stand(self):
+        # _set_session_color is held right after its read (the real _names_fields_for_edit wrapped: it reads, then waits,
+        # with _NAMES_LOCK held by its caller); the backend's rename to alpha starts and is given 0.3 s: its record write
+        # lands and its names write waits on the same lock. Released, the recolour publishes web with the new colour and
+        # answers True; the rename then publishes alpha carrying that colour and answers True. Red before the sixteenth
+        # commit: the rename landed whole inside the span (the backend held no lock of the kernel's) and the recolour's
+        # publish put web back on the roster, the record holding alpha, both callers told success.
+        from unittest import mock
+        bg = km.pal.colors(km.pal.DEFAULT)[3]
+        real_fields, held, go, outcome = km._names_fields_for_edit, threading.Event(), threading.Event(), {}
+
+        def fields_then_hold(sid, what):
+            parts = real_fields(sid, what)
+            if sid == self.SID3 and what == "the color":
+                held.set()
+                go.wait(10)
+            return parts
+
+        def run(key, fn):
+            outcome[key] = fn()
+        tw = threading.Thread(target=run, args=("w", lambda: km._set_session_color(self.SID3, bg)), name="recolour")
+        tb = threading.Thread(target=run, args=("b", lambda: self.be.rename(self.SID3, "alpha")), name="rename-b")
+        with mock.patch.object(km, "_names_fields_for_edit", fields_then_hold):
+            tw.start()
+            self.assertTrue(held.wait(10), "the recolour holds _NAMES_LOCK after its read")
+            tb.start()
+            tb.join(0.3)
+            b_waiting = tb.is_alive()
+            record_while_held = (self.sb.read_reg(Path(self.tmp), self.SID3) or {}).get("name")
+            go.set()
+            tw.join(10)
+            tb.join(10)
+        self.assertFalse(tw.is_alive() or tb.is_alive(), "both returned")
+        self.assertEqual((outcome.get("w"), outcome.get("b")), (True, True), "both told success, in turn")
+        self.assertEqual((self.names / self.SID3).read_text().rstrip("\n").split("\t"), ["alpha", self.cwd, bg, km.pal.fg_for(bg)],
+                         "the rename's name and the recolour's colour both stand on the roster (red before: 'web' with the colour)")
+        self.assertTrue(b_waiting, "the rename had not returned while the recolour held the lock (red before the sixteenth "
+                                   "commit: it landed whole inside the recolour's span)")
+        self.assertEqual(record_while_held, "alpha", "the rename's record write had landed; its names write was what waited")
+        self.assertEqual((self.sb.read_reg(Path(self.tmp), self.SID3) or {}).get("name"), "alpha")
+        self.assertEqual([m for m in self.logs if "rename" in m], [], "nothing lost, nothing to log: %r" % (self.logs,))
+        self.assertIs(self.be._names_lock, km._NAMES_LOCK, "the one lock, handed in")
+
+
 class Frames(unittest.TestCase):
     """The emoji reaches every dashboard on the pushes the name and color already ride."""
 
