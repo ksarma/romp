@@ -69,6 +69,7 @@ one line, is unchanged by this change and still passes.
 """
 import ast
 import base64
+import collections
 import contextlib
 import errno
 import grp
@@ -96,6 +97,22 @@ from romp_load import load_source
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
 ROOT = os.path.dirname(HERE)
+
+_PARSED = {}   # realpath -> ((size, mtime_ns), source text, tree): each file is read and parsed ONCE per test process
+
+
+def source_and_tree(path):
+    """The text and the parsed tree of the file at `path` (a link is followed: bin/romp-kernel IS kernel/kernel.py),
+    parsed once per process while its size and mtime_ns hold. The AST pins below (Boot, TheBusSharesTheCheck, OneText)
+    start from it; a planted copy has its own text and is parsed on its own."""
+    real = os.path.realpath(path)
+    st = os.stat(real)
+    key = (st.st_size, st.st_mtime_ns)
+    hit = _PARSED.get(real)
+    if hit is None or hit[0] != key:
+        src = open(real, encoding="utf-8").read()
+        hit = _PARSED[real] = (key, src, ast.parse(src, filename=real))
+    return hit[1], hit[2]
 
 # tests/test_kernel_cors.py's load order: hermetic state BEFORE the loads (they resolve the root at import), the token
 # env so _load_token() never touches a real state dir, NO_OPEN so the import launches no browser. The XDG root here is
@@ -210,7 +227,7 @@ def _free_port():
 def inspect_getsource_module():
     """The kernel module's source text, read from its file (inspect.getsource on a load_source module is reliable, but
     reading the file keeps the AST test independent of import machinery)."""
-    return open(os.path.join(BIN, "romp-kernel"), encoding="utf-8").read()
+    return source_and_tree(os.path.join(BIN, "romp-kernel"))[0]
 
 
 # ── the discriminator: READ-BEFORE-REPAIR, WARN, REFUSE, UNKNOWN, the group judgment, the lookup bound ──────────────
@@ -848,8 +865,7 @@ class Boot(_KernelState):
         call statement sits above the TOKEN assignment and the _persist_repo_root() call in the module body, so no read
         of the root's contents precedes it. Read from the module's AST statements (not a text scan, whose match would
         land in the gate's own docstring, which quotes both)."""
-        import ast
-        tree = ast.parse(inspect_getsource_module())
+        _src, tree = source_and_tree(os.path.join(BIN, "romp-kernel"))
         pos = {}
         for node in tree.body:
             if isinstance(node, ast.Assign) and any(getattr(t, "id", None) == "_STATE_ROOT_IMPORT_CHECK" for t in node.targets):
@@ -2249,8 +2265,7 @@ class TheBusSharesTheCheck(unittest.TestCase):
                          "nothing in the state-root block is kept in sync by hand")
 
     def test_the_shared_module_imports_the_standard_library_alone(self):
-        import ast
-        tree = ast.parse(open(os.path.join(ROOT, "kernel", "state_root_mode.py"), encoding="utf-8").read())
+        _src, tree = source_and_tree(os.path.join(ROOT, "kernel", "state_root_mode.py"))
         names = set()
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
@@ -3170,39 +3185,76 @@ class TheFloorReachesEveryMintedRoot(unittest.TestCase):
     @staticmethod
     def _offences(src, rel="<src>"):
         tree = ast.parse(src)
-        enclosing = {}
+        # ONE traversal of the tree, in ast.walk's order, tracking each node's innermost enclosing def (None at module
+        # level). It keeps the candidates (a mkdir call; an assignment, whose target may be `<x>.jd.STATE`) with their
+        # scope, and files every Call under its innermost def, so a scope's calls are read once, not once per binding
+        # of the root in it (a module that bound jd.STATE in thirty places walked its whole tree thirty times before).
+        defs = (ast.FunctionDef, ast.AsyncFunctionDef)
+        cands = []                                       # (node, innermost def), in walk order
+        own_calls = collections.defaultdict(list)        # id(def), or id(None) -> the Calls whose innermost def it is
+        nested = collections.defaultdict(list)           # id(def) -> the defs directly inside it
+        todo = collections.deque([(tree, None)])
+        while todo:
+            node, cur = todo.popleft()
+            for field in node._fields:                   # the children in iter_child_nodes' order
+                value = getattr(node, field, None)
+                if isinstance(value, ast.AST):
+                    value = (value,)
+                elif not isinstance(value, list):
+                    continue
+                for child in value:
+                    if not isinstance(child, ast.AST):
+                        continue
+                    if isinstance(child, ast.Call):
+                        own_calls[id(cur)].append(child)
+                        if isinstance(child.func, ast.Attribute) and child.func.attr == "mkdir":
+                            cands.append((child, cur))
+                        todo.append((child, cur))
+                    elif isinstance(child, ast.Assign):
+                        cands.append((child, cur))
+                        todo.append((child, cur))
+                    elif isinstance(child, defs):
+                        nested[id(cur)].append(child)
+                        todo.append((child, child))
+                    else:
+                        todo.append((child, cur))
+        calls = {}
 
-        def visit(node, cur):
-            for child in ast.iter_child_nodes(node):
-                enclosing[id(child)] = cur
-                visit(child, child if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) else cur)
-        visit(tree, None)
-
-        def scope(fn):
-            return list(ast.walk(fn)) if fn is not None else [n for n in ast.walk(tree) if enclosing.get(id(n)) is None]
+        def scope_calls(fn):
+            """(Call, its func's text, its first argument's text) for every Call in the scope: a def's are all the Calls
+            inside it, nested defs included; the module's are the Calls inside no def."""
+            k = id(fn)
+            if k not in calls:
+                members = list(own_calls.get(k, ()))
+                if fn is not None:
+                    stack = list(nested.get(k, ()))
+                    while stack:
+                        d = stack.pop()
+                        members += own_calls.get(id(d), ())
+                        stack += nested.get(id(d), ())
+                calls[k] = [(m, ast.unparse(m.func), ast.unparse(m.args[0]) if m.args else "") for m in members]
+            return calls[k]
         out = []
-        for n in ast.walk(tree):
-            if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "mkdir" \
-                    and ast.unparse(n.func.value).endswith("jd.STATE"):
-                out.append("%s:%d bare mkdir of the bound root: %s" % (rel, n.lineno, ast.unparse(n)))
-            if isinstance(n, ast.Assign):
-                for tgt in n.targets:
-                    pairs = list(zip(tgt.elts, n.value.elts)) if isinstance(tgt, ast.Tuple) and isinstance(n.value, ast.Tuple) else [(tgt, n.value)]
-                    for t, v in pairs:
-                        if not (ast.unparse(t).endswith("jd.STATE") and isinstance(v, ast.Name)):
+        for n, cur in cands:
+            if isinstance(n, ast.Call):
+                if ast.unparse(n.func.value).endswith("jd.STATE"):
+                    out.append("%s:%d bare mkdir of the bound root: %s" % (rel, n.lineno, ast.unparse(n)))
+                continue
+            for tgt in n.targets:
+                pairs = list(zip(tgt.elts, n.value.elts)) if isinstance(tgt, ast.Tuple) and isinstance(n.value, ast.Tuple) else [(tgt, n.value)]
+                for t, v in pairs:
+                    if not (ast.unparse(t).endswith("jd.STATE") and isinstance(v, ast.Name)):
+                        continue
+                    made = chmoded = False
+                    for m, f, first in scope_calls(cur):
+                        if not getattr(m, "lineno", 0) < n.lineno:
                             continue
-                        made = chmoded = False
-                        for m in scope(enclosing.get(id(n))):
-                            if not (isinstance(m, ast.Call) and getattr(m, "lineno", 0) < n.lineno):
-                                continue
-                            f = ast.unparse(m.func)
-                            first = ast.unparse(m.args[0]) if m.args else ""
-                            if f == v.id + ".mkdir" or (f in ("os.makedirs", "os.mkdir") and first.startswith(v.id)):
-                                made = True
-                            if f in ("os.chmod", v.id + ".chmod") and (not m.args or first.startswith(v.id) or f.startswith(v.id)):
-                                chmoded = True
-                        if made and not chmoded:
-                            out.append("%s:%d a root this scope made is bound bare: %s" % (rel, n.lineno, ast.unparse(n)))
+                        if f == v.id + ".mkdir" or (f in ("os.makedirs", "os.mkdir") and first.startswith(v.id)):
+                            made = True
+                        if f in ("os.chmod", v.id + ".chmod") and (not m.args or first.startswith(v.id) or f.startswith(v.id)):
+                            chmoded = True
+                    if made and not chmoded:
+                        out.append("%s:%d a root this scope made is bound bare: %s" % (rel, n.lineno, ast.unparse(n)))
         return out
 
     def test_no_test_binds_a_root_it_made_bare(self):
@@ -3242,8 +3294,7 @@ class OneText(unittest.TestCase):
     WRITE_BIT_NAMES = {"stat.S_IWGRP", "stat.S_IWOTH", "S_IWGRP", "S_IWOTH"}
 
     def _tree(self, rel):
-        import ast
-        return ast.parse(open(os.path.join(ROOT, rel), encoding="utf-8").read(), filename=rel)
+        return source_and_tree(os.path.join(ROOT, rel))[1]
 
     def test_no_loader_defines_a_copy_of_the_shared_modules_functions(self):
         import ast
@@ -3254,7 +3305,7 @@ class OneText(unittest.TestCase):
         for rel in self.LOADERS:
             names = {n.name for n in ast.walk(self._tree(rel)) if isinstance(n, (ast.FunctionDef, ast.ClassDef))}
             self.assertEqual(names & exported, set(), "%s defines a copy of %r" % (rel, sorted(names & exported)))
-            src = open(os.path.join(ROOT, rel), encoding="utf-8").read()
+            src = source_and_tree(os.path.join(ROOT, rel))[0]
             self.assertIn('"romp_state_root_mode"', src, "%s loads the shared module under its fixed name" % rel)
             self.assertIn("state_root_mode.py", src)
             self.assertNotIn("_state_root_mode_check", src, "%s: round 2's reduced copy is gone" % rel)
@@ -3282,7 +3333,7 @@ class OneText(unittest.TestCase):
         for rel in self.LOADERS + ("kernel/kernel.py",):
             hits = self._write_bit_tests(self._tree(rel))
             self.assertEqual(hits, [], "%s tests a mode against a write bit: %r" % (rel, hits))
-        bus = open(os.path.join(ROOT, "postal", "postal_service.py"), encoding="utf-8").read()
+        bus = source_and_tree(os.path.join(ROOT, "postal", "postal_service.py"))[0]
         for copy in ("\n\ndef _root_is_loose(root):\n    return bool(stat.S_IMODE(os.stat(root).st_mode) & 0o022)\n",
                      "\n\ndef _loose(mode):\n    return mode & stat.S_IWOTH or mode & 0o020\n"):
             hits = self._write_bit_tests(ast.parse(bus + copy))
