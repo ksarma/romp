@@ -180,6 +180,40 @@ def _kernel_source():
         return f.read()
 
 
+@functools.lru_cache(maxsize=8)
+def _parse(src, path):
+    """(tree, lines) for a module's text, parsed and split once per text: rows_of, readers_of and _imports_parser had each read and
+    parsed the module they were handed on their own, four parses of every module of the population across the two census tests.
+    Keyed on the TEXT, so a module rewritten under the same path (the form-space tests' temp files) is parsed afresh; small, so the
+    population's trees are never all held at once (the derivations read one module at a time). `lines` is the text split as
+    ast.get_source_segment splits it, on \\r\\n, \\n and \\r alone (ast._splitlines_no_ff), for _segment."""
+    return ast.parse(src, path), re.findall(r"[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+\Z", src)
+
+
+def _parsed(path):
+    with open(path, encoding="utf-8") as f:
+        src = f.read()
+    return _parse(src, path)
+
+
+def _segment(lines, node):
+    """ast.get_source_segment(src, node) over `lines`, the module's text split once by _parse. The stdlib's splits the WHOLE text on
+    every call, on 3.10 and 3.11 a char-by-char Python loop (3.12 bounds a regex at the node's last line); the derivations call it
+    once per row and once per literal, and under 3.10 that loop was about a third of the two census tests' time (49 s of 156 s on one
+    box, 2026-09-21)."""
+    try:
+        if node.end_lineno is None or node.end_col_offset is None:
+            return None
+        lineno, end_lineno, col_offset, end_col_offset = node.lineno - 1, node.end_lineno - 1, node.col_offset, node.end_col_offset
+    except AttributeError:
+        return None
+    if end_lineno == lineno:
+        return lines[lineno].encode()[col_offset:end_col_offset].decode()
+    first = lines[lineno].encode()[col_offset:].decode()
+    last = lines[end_lineno].encode()[:end_col_offset].decode()
+    return "".join([first] + lines[lineno + 1:end_lineno] + [last])
+
+
 def page_getters():
     """The kernel's served-text getters, derived from its source by rule: the functions named `_landing`, `_<name>_page`,
     `_<name>_js` or `_<name>_css` that a call with no arguments renders (no parameter, or every parameter defaulted)."""
@@ -431,23 +465,25 @@ def rows_of(path, getters, constants, routes=None):
     test module; form is "in" for a membership, else the position method; readable is whether the row's form is one the textual
     census reads (the author's pass 8, 2026-09-20): the literal's source segment is a plain literal or a run of them (re.fullmatch over _LIT:
     no backslash, not triple-quoted, not a loop or comprehension variable) and the container is not a name bound to a slice."""
-    with open(path, encoding="utf-8") as f:
-        src = f.read()
-    tree = ast.parse(src, path)
-    plain = lambda node: isinstance(node, ast.Constant) and bool(re.fullmatch(_LIT, ast.get_source_segment(src, node) or ""))
+    tree, lines = _parsed(path)
+    plain = lambda node: isinstance(node, ast.Constant) and bool(re.fullmatch(_LIT, _segment(lines, node) or ""))
     out = []
     functions = (ast.FunctionDef, ast.AsyncFunctionDef)
     groups = [[n for n in cls.body if isinstance(n, functions)] for cls in ast.walk(tree) if isinstance(cls, ast.ClassDef)]
     groups.append([n for n in tree.body if isinstance(n, functions)])   # module-level test functions (the author's pass 6, 2026-09-20)
     modnames = _module_bindings(tree, getters, constants, routes)   # a served text bound at module level is read in every function (the fixer pass of the author's pass 9)
-    def bindings(fn):   # in walk order, so a with-item's `as` target is bound before the assignments in its body read it
-        for st in ast.walk(fn):
-            if isinstance(st, ast.Assign):
-                yield st.targets, st.value
-            elif isinstance(st, ast.With):
-                for item in st.items:
-                    if item.optional_vars is not None:
-                        yield [item.optional_vars], item.context_expr
+    binds = {}
+    def bindings(fn):   # in walk order, so a with-item's `as` target is bound before the assignments in its body read it; read once per function
+        if fn not in binds:
+            binds[fn] = []
+            for st in ast.walk(fn):
+                if isinstance(st, ast.Assign):
+                    binds[fn].append((st.targets, st.value))
+                elif isinstance(st, ast.With):
+                    for item in st.items:
+                        if item.optional_vars is not None:
+                            binds[fn].append(([item.optional_vars], item.context_expr))
+        return binds[fn]
     for fns in groups:
         attrs = {}
         for fn in fns:   # a setUp's self.<attr> binding is visible to every method
@@ -679,8 +715,7 @@ def _imports_parser(path):
     """Whether a test module IMPORTS served_css (`import served_css` or `from served_css import ...`, anywhere in it): the parser
     road's membership test (the fixer pass of the author's pass 9: the census had tested text containment, the string anywhere in the file, a
     comment included, while every surface stated the import; the two agree at this head, 15 modules)."""
-    with open(path, encoding="utf-8") as f:
-        tree = ast.parse(f.read(), path)
+    tree = _parsed(path)[0]
     return any(isinstance(n, ast.Import) and any(a.name == "served_css" for a in n.names) or isinstance(n, ast.ImportFrom) and n.module == "served_css"
                for n in ast.walk(tree))
 
@@ -721,27 +756,30 @@ def readers_of(path, getters, constants, routes=None):
     the text, not a whole-text compare; and for assertIn and assertNotIn the row is over the CONTAINER (the second argument or
     `container=`), the text read, a served text in the member position being compared whole (`assertIn("x" + km._SVG, page)` is an
     `assert` over the page). Before the close each of these was no row at all, or the assertRegex an `assert`."""
-    with open(path, encoding="utf-8") as f:
-        src = f.read()
-    tree = ast.parse(src, path)
-    seg = lambda node: (ast.get_source_segment(src, node) or "").replace("\n", " ")[:160]
-    patterns = {t.id for node in ast.walk(tree) if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
+    tree, lines = _parsed(path)
+    seg = lambda node: (_segment(lines, node) or "").replace("\n", " ")[:160]
+    nodes = list(ast.walk(tree))   # one walk of the module for the patterns and the classes below
+    patterns = {t.id for node in nodes if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
                 and isinstance(node.value.func, ast.Attribute) and isinstance(node.value.func.value, ast.Name) and node.value.func.value.id == "re"
                 and node.value.func.attr == "compile" for t in node.targets if isinstance(t, ast.Name)}
     parser_names = {alias.asname or alias.name for node in tree.body if isinstance(node, ast.ImportFrom) and node.module == "served_css" for alias in node.names}
     functions = (ast.FunctionDef, ast.AsyncFunctionDef)
     helpers = {n.name: n for n in tree.body if isinstance(n, functions) and not n.name.startswith("test")}
-    groups = [[n for n in cls.body if isinstance(n, functions)] for cls in ast.walk(tree) if isinstance(cls, ast.ClassDef)]
+    groups = [[n for n in cls.body if isinstance(n, functions)] for cls in nodes if isinstance(cls, ast.ClassDef)]
     groups.append([n for n in tree.body if isinstance(n, functions)])
 
-    def bindings(fn):
-        for st in ast.walk(fn):
-            if isinstance(st, ast.Assign):
-                yield st.targets, st.value
-            elif isinstance(st, ast.With):
-                for item in st.items:
-                    if item.optional_vars is not None:
-                        yield [item.optional_vars], item.context_expr
+    binds = {}
+    def bindings(fn):   # read once per function: the attrs pass and the walk both read it, and a followed helper once per caller
+        if fn not in binds:
+            binds[fn] = []
+            for st in ast.walk(fn):
+                if isinstance(st, ast.Assign):
+                    binds[fn].append((st.targets, st.value))
+                elif isinstance(st, ast.With):
+                    for item in st.items:
+                        if item.optional_vars is not None:
+                            binds[fn].append(([item.optional_vars], item.context_expr))
+        return binds[fn]
 
     def is_view(x):   # `served_css.<view>(X, ...)`, or the view imported by name
         f = x.func
@@ -817,7 +855,8 @@ def readers_of(path, getters, constants, routes=None):
         for targets, value in bindings(fn):
             _bind(targets, value, names, attrs, getters, constants, None, routes)
             derive(targets, value, names, attrs, derived)
-        for var, it, _ in _loops(fn):   # a for over served texts binds its variable (to the first text: one form per variable)
+        loops = _loops(fn)   # read once: the loop bindings here and the loop literals below
+        for var, it, _ in loops:   # a for over served texts binds its variable (to the first text: one form per variable)
             texts = [_text(e, getters, constants) for e in it.elts] if isinstance(it, (ast.Tuple, ast.List)) and it.elts else []
             if texts and all(texts):
                 names[var] = texts[0]
@@ -831,7 +870,7 @@ def readers_of(path, getters, constants, routes=None):
                 span_names |= {e.id for e in node.target.elts if isinstance(e, ast.Name)}
         text = lambda x: text_of(x, names, attrs, derived)
         basis = lambda x: basis_of(x, names, attrs, derived)
-        lits = {var for var, it, _ in _loops(fn) if _literals(it)}
+        lits = {var for var, it, _ in loops if _literals(it)}
         literal = lambda a: bool(_literals(a)) or (isinstance(a, ast.Name) and a.id in lits)
 
         def pin(form, x):   # a literal membership or position pin, by what it reads: the text (the pins census's row), a view, a copy
@@ -935,6 +974,24 @@ def _spans(kinds, text):
     return sorted({sp for k in kinds for sp in _SCANNER[k](text)})
 
 
+@functools.lru_cache(maxsize=None)
+def population_census():
+    """The census over the population, derived ONCE per process and read by both census tests: {module basename: (rows_of rows,
+    textual_census (sites, containers), _imports_parser, readers_of rows)} for every tests/test_*.py but this module, in sorted
+    order, each derivation over the kernel-derived getters, constants and routes. The population and the forms are the four
+    derivations' own; what this shares is the work: the two tests had each walked the population on their own and the reader
+    census had run rows_of a second time (CI's 3.10 cell, 2026-09-21: 144 s and 78 s, the job at 24 min 26 s against a 25-minute
+    cap), and with _parse every module is read and parsed once."""
+    getters, constants, routes = page_getters(), served_constants(), route_getters()
+    out = {}
+    for path in sorted(glob.glob(os.path.join(HERE, "test_*.py"))):
+        if os.path.realpath(path) == os.path.realpath(__file__):
+            continue
+        out[os.path.basename(path)] = (rows_of(path, getters, constants, routes), textual_census(path, getters, constants, routes),
+                                       _imports_parser(path), readers_of(path, getters, constants, routes))
+    return out
+
+
 class ServedPinsReadElements(unittest.TestCase):
     def test_no_assertion_over_a_served_text_is_satisfiable_by_a_comment(self):
         getters, constants, routes = page_getters(), served_constants(), route_getters()
@@ -974,12 +1031,8 @@ class ServedPinsReadElements(unittest.TestCase):
         # this module holds no pin over a served text (asserted, by the derivation, which reads the synthetic module below as
         # the string it is); the line-based textual census cannot tell that string from code, so the module is outside both
         self.assertEqual(rows_of(__file__, getters, constants, routes), [], "the census module itself pins nothing over a served text")
-        for path in sorted(glob.glob(os.path.join(HERE, "test_*.py"))):
-            fname = os.path.basename(path)
-            if os.path.realpath(path) == os.path.realpath(__file__):
-                continue
-            rows += [(fname, line, lit, name, form, readable) for line, lit, name, form, readable in rows_of(path, getters, constants, routes)]
-            found, containers = textual_census(path, getters, constants, routes)
+        for fname, (derived, (found, containers), _, _) in population_census().items():   # derived once per process, shared with the reader census
+            rows += [(fname, line, lit, name, form, readable) for line, lit, name, form, readable in derived]
             sites += [(fname, line, lit, name, form) for line, lit, name, form in found]
             pinned |= containers
         # the floor, derived: every site the textual census finds is a row the derivation found (so a module the derivation
@@ -1207,13 +1260,10 @@ def test_module_level():
         kinds = {g: frozenset([getter_kind(g)]) for g in getters}
         kinds.update(constants)
         rows, pins, road = [], set(), {}
-        for path in sorted(glob.glob(os.path.join(HERE, "test_*.py"))):
-            fname = os.path.basename(path)
-            if os.path.realpath(path) == os.path.realpath(__file__):
-                continue
-            road[fname] = _imports_parser(path)
-            rows += [(fname, line, form, text, source) for line, form, text, source in readers_of(path, getters, constants, routes)]
-            pins |= {(fname, line, text) for line, lit, text, form, readable in rows_of(path, getters, constants, routes) if form in _POSITION}
+        for fname, (derived, _, on_road, readers) in population_census().items():   # derived once per process, shared with the pins census
+            road[fname] = on_road
+            rows += [(fname, line, form, text, source) for line, form, text, source in readers]
+            pins |= {(fname, line, text) for line, lit, text, form, readable in derived if form in _POSITION}
         self.assertGreater(len(rows), 1000, "the population read: %d rows" % len(rows))
         self.assertEqual(sorted({r[2] for r in rows} - set(READER_FORMS)), [], "a form readers_of names that READER_FORMS does not")
         self.assertTrue(len({r[2] for r in rows}) >= 10, "the forms met across the suite: %r" % (sorted({r[2] for r in rows}),))
