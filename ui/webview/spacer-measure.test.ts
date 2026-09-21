@@ -404,12 +404,12 @@ test("an observer delivery with the view at width 0 (an ancestor hid it) forgets
   assert.equal(perTurnEstimate(rowsFor(rows, (r) => r.className, () => false, () => 0)), null, "the estimator hands out no 0");
 });
 
-test("a delivery on a view whose only child is the empty transcript's placeholder, or the deferred build's loading hint under a spacer, survives: the callback returns, measures nothing and files no unitchange row (the maintainer's round 3 ruling A: the unit-aware tail scan left tail at -1 and the pane's unitOf threw on children[-1] inside the observer's callback)", () => {
+test("a delivery on a view whose only child is the empty transcript's placeholder, or the deferred build's loading hint (the view's only child: render.ts appends it to an EMPTY view, never under a spacer), survives: the callback returns, measures nothing and files no unitchange row (the maintainer's round 3 ruling A: the unit-aware tail scan left tail at -1 and the pane's unitOf threw on children[-1] inside the observer's callback)", () => {
   // the two views the pane shows with no unit-carrying child: syncViewInner's tx-empty placeholder for a zero-event session (its swirl
   // removes itself on error, a height change), and showActive's tx-loading hint, the only child of a non-empty session's view for the frame
   // its heavy build is deferred to. The mutation observer hands every added element to this observer, so the first observation of either
   // is a baseline and a later height change an entry; the callback is the lifted one (the 13441 closure's dataset reach-in included)
-  for (const [label, kids] of [["the placeholder", [["tx-empty", 120]]], ["the loading hint under a spacer", [["tx-spacer tx-spacer-top", 10], ["tx-loading", 40]]]] as Array<[string, Array<[string, number]>]>) {
+  for (const [label, kids] of [["the placeholder", [["tx-empty", 120]]], ["the loading hint alone", [["tx-loading", 40]]]] as Array<[string, Array<[string, number]>]>) {
     const w = lift("A");
     const host = new FakeEl("div"); (host as any).clientWidth = 800;
     const rows = kids.map(([cls, h]) => host.appendChild(new FakeEl("div", cls, h, w.reads)));
@@ -479,6 +479,32 @@ test("a hover's rail band among the view's children is not a row: the rows' aver
 
 test("render.ts: the render task's spacer code holds no layout read; the unit observer records border-box heights and measures in both of its branches", () => {
   const code = codeOf;   // the code alone (the compiler's comment ranges): the comments name the reads that are gone
+  // the compiler's syntax tree of render.ts, for every count and census below (the maintainer's round 3 ruling E and its extra8-4 class: a raw
+  // text count read a doc comment naming a call as a call; here a call, an assignment or a string literal is a node and a comment is not, so
+  // the stripper stays for the text scans alone: the author's fixer pass over pass 4 moved the applyMeasure, forgetAverage and avgTurnH counts
+  // and the spacer-follow check onto the tree after a planted comment naming the two calls turned the raw counts red)
+  const sf = ts.createSourceFile("render.ts", RENDER, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const nameOf = (fn: ts.SignatureDeclaration): string | null => {
+    if ((ts.isFunctionDeclaration(fn) || ts.isMethodDeclaration(fn) || ts.isFunctionExpression(fn)) && fn.name) return fn.name.getText(sf);
+    const p = fn.parent;
+    if (p && ts.isVariableDeclaration(p) && ts.isIdentifier(p.name)) return p.name.text;
+    if (p && (ts.isPropertyAssignment(p) || ts.isPropertyDeclaration(p))) return p.name.getText(sf);
+    return null;
+  };
+  const ownerOf = (n: ts.Node): string => { for (let p: ts.Node | undefined = n.parent; p; p = p.parent) { if (ts.isFunctionLike(p)) { const nm = nameOf(p); if (nm) return nm; } } return "<module>"; };
+  const NAMES = new Set(["renderWindowItems", "syncView", "untakeMeasure"]);
+  const allCalls: ts.CallExpression[] = [], refs: ts.Identifier[] = [], strings = new Set<string>(), avgWrites: string[] = [];
+  const visit = (n: ts.Node): void => {
+    if (ts.isCallExpression(n) && ts.isIdentifier(n.expression)) allCalls.push(n);
+    if (ts.isIdentifier(n) && NAMES.has(n.text) && !(ts.isCallExpression(n.parent) && n.parent.expression === n) && !(ts.isFunctionDeclaration(n.parent) && n.parent.name === n)) refs.push(n);
+    if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) strings.add(n.text);
+    if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isPropertyAccessExpression(n.left) && n.left.name.text === "avgTurnH") avgWrites.push(ownerOf(n) + ": " + n.right.getText(sf));
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  const callsTo = (name: string): ts.CallExpression[] => allCalls.filter((c) => (c.expression as ts.Identifier).text === name);
+  const byOwner = (name: string): string[] => callsTo(name).map((c) => ownerOf(c) + "(" + c.arguments.map((a) => a.getText(sf)).join(", ") + ")").sort();
+  const censusCalls = allCalls.filter((c) => NAMES.has((c.expression as ts.Identifier).text));
   // the stripper's own pin (the author's fixer pass over pass 3): a `//` in a quoted URL leaves the alias after it standing for the census, a quoted glob opens
   // no block comment, a regular expression's slashes are not a comment, and the comments themselves go
   assert.equal(code('const u = "http://h"; const rwi = renderWindowItems; // c\nz("image/*"); y(); /* c */ q(/^file:\\/\\//, ""); // d\n'),
@@ -502,7 +528,7 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   const take = inFrame.slice(inFrame.indexOf("function takeMeasureAtBottom(v: View): void {"));
   assert.match(take, /if \(!content \|\| content\.clientHeight <= 0 \|\| !atBottom\(content\)\) return;\s*\n\s*scheduleAppendActive\(\);\s*\n\}/, "the take: a scroller with a box, at the bottom, then the paint asked for");
   assert.doesNotMatch(code(take), /writeScroll|sizeSpacers|redrawGapUnits|applyMeasure|style\./, "…and no write of its own");
-  assert.doesNotMatch(RENDER, /"spacer-follow"/, "the writer is gone with it (landing-settle.ts's census)");
+  assert.ok(!strings.has("spacer-follow"), "the writer is gone with it (landing-settle.ts's census): no string literal names it");
   assert.doesNotMatch(code(uo), /writeScroll|style\.height|sizeSpacers|redrawGapUnits/, "nothing in the unit observer's callback writes the DOM");
   // the parked figures reach the DOM under one rule (the maintainer's round 1 addendum): a figure is taken ONLY by a paint that anchors the reader, and EVERY
   // anchoring paint takes one. The takers: syncViewInner under the `anchored` flag (appendActive's follow or the anchor its restore holds,
@@ -524,13 +550,11 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   assert.match(land, /const saved = !pendingAnchor && pendingAnchorT == null && !\(seek && seek\.sid === activeId\) && v\.shown && !v\.stick && takeReloadScroll\(pendingReloadScroll, activeId\) == null;\s*\n\s*const held = !saved && v\.shown && !v\.stick \? captureScrollAnchor\(content, v, v\.scrollTop\) : null;[^\n]*\n\s*const figures = figuresBefore\(v\);[^\n]*\n\s*if \(!saved && applyMeasure\(v\)\) redrawGapUnits\(v\);\s*\n\s*sizeSpacers\(v\);/,
     "landActive takes on every road but the nothing-armed re-show, BEFORE its landing attempt (the gate reads what is armed), captures the row at the saved place and reads the figures first, and sizes the spacers after the take; the outcome decides what stands (the fallback below, executed in land-active-keep.test.ts)");
   assert.match(land, /else if \(!\(held && restoreScrollAnchor\(content, v, held\)\)\) \{ untakeMeasure\(v, figures\); writeScroll\(content, v\.scrollTop, "land-saved"\); \}/, "the saved-place fallback restores the captured row; where that restore finds no row to put back the take is given back and the raw write follows, exact in the layout it was saved in: nothing armed (nothing taken, nothing given back), no row at the saved place, or the captured row gone with the attempt's window build (land-active-keep.test.ts executes the three)");
-  assert.equal((land.match(/applyMeasure\(v\)/g) || []).length, 1, "one take in the land");
   const keep = RENDER.slice(RENDER.indexOf("function keepPlaceAcrossWindow("), RENDER.indexOf("\n}\n", RENDER.indexOf("function keepPlaceAcrossWindow(")));
   assert.match(keep, /const under = captureScrollAnchor\(content, v\);\s*\n\s*const figures = figuresBefore\(v\);[^\n]*\n\s*if \(applyMeasure\(v\)\) \{ redrawGapUnits\(v\); sizeSpacers\(v\); \}\s*\n\s*if \(restoreScrollAnchor\(content, v, keep\)\) return true;/,
     "keepPlaceAcrossWindow captures the row under the viewport top and reads the figures, then takes over its restore, spacers and gap units first (the take stays above the restores, which read the re-sized layout; land-active-keep.test.ts executes the roads and the double miss)");
   assert.match(keep, /if \(!landed && !\(under && restoreScrollAnchor\(content, v, under\)\)\) untakeMeasure\(v, figures\);/, "the double miss puts the captured row back over the take instead of writing nothing (the maintainer's round 2 ruling), and with that row gone too gives the take back (the maintainer's round 3 ruling B)");
-  const calls = (RENDER.match(/(?<![\w.])applyMeasure\(v\)/g) || []).length;
-  assert.equal(calls, 4, "four takers: syncViewInner, the window build, landActive and keepPlaceAcrossWindow (" + calls + "); the frame-end take asks for the first");
+  assert.deepEqual(byOwner("applyMeasure"), ["keepPlaceAcrossWindow(v)", "landActive(v)", "renderWindowItems(v)", "syncViewInner(v)"], "four takers, by owner from the syntax tree: syncViewInner, the window build, landActive (once) and keepPlaceAcrossWindow; the frame-end take asks for the first");
   // The censuses over the take rule's callers, each keyed on the PROPERTY it guards and read from the compiler's syntax tree, never from a
   // list of spellings (the maintainer's round 3 ruling E: the round-2 censuses read raw text, keyed a build's flag on membership in a
   // three-spelling set, attributed a call to the nearest preceding `function name(` by textual position, and stripped comments from one
@@ -553,15 +577,6 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   //    (the maintainer's round 3 ruling B), a multiset over the same owners; a site removed, or added to a reader not on the list, reds.
   // appendActive's sync line is pinned by text as well: the flag's spelling is what its harness models.
   assert.match(RENDER, /const anchor = !stick && v \? captureScrollAnchor\(content, v\) : null;\n\s*const figures = v \? figuresBefore\(v\) : null;[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*syncView\(activeId, stick, stick \|\| !!anchor\);/, "appendActive's sync is flagged by its follow or the anchor it captured, never by atBottom alone, and the figures are read before it for the raw road's untake (append-active-keep.test.ts executes the roads)");
-  const sf = ts.createSourceFile("render.ts", RENDER, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-  const nameOf = (fn: ts.SignatureDeclaration): string | null => {
-    if ((ts.isFunctionDeclaration(fn) || ts.isMethodDeclaration(fn) || ts.isFunctionExpression(fn)) && fn.name) return fn.name.getText(sf);
-    const p = fn.parent;
-    if (p && ts.isVariableDeclaration(p) && ts.isIdentifier(p.name)) return p.name.text;
-    if (p && (ts.isPropertyAssignment(p) || ts.isPropertyDeclaration(p))) return p.name.getText(sf);
-    return null;
-  };
-  const ownerOf = (n: ts.Node): string => { for (let p: ts.Node | undefined = n.parent; p; p = p.parent) { if (ts.isFunctionLike(p)) { const nm = nameOf(p); if (nm) return nm; } } return "<module>"; };
   const flagKind = (arg: ts.Expression | undefined): string => {
     if (!arg) return "absent";
     if (arg.kind === ts.SyntaxKind.TrueKeyword) return "true";
@@ -570,14 +585,6 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
     if (ts.isIdentifier(arg) && arg.text === "anchored") return "handed on";
     return "predicate";
   };
-  const NAMES = new Set(["renderWindowItems", "syncView", "untakeMeasure"]);
-  const censusCalls: ts.CallExpression[] = [], refs: ts.Identifier[] = [];
-  const visit = (n: ts.Node): void => {
-    if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && NAMES.has(n.expression.text)) censusCalls.push(n);
-    else if (ts.isIdentifier(n) && NAMES.has(n.text) && !(ts.isCallExpression(n.parent) && n.parent.expression === n) && !(ts.isFunctionDeclaration(n.parent) && n.parent.name === n)) refs.push(n);
-    ts.forEachChild(n, visit);
-  };
-  visit(sf);
   const pairs = (name: string, argAt: number): string[] => censusCalls.filter((c) => (c.expression as ts.Identifier).text === name).map((c) => ownerOf(c) + ": " + flagKind(c.arguments[argAt])).sort();
   assert.ok(censusCalls.length >= 24, "the censuses are not empty: " + censusCalls.length + " calls");
   assert.deepEqual(pairs("renderWindowItems", 6), [
@@ -602,10 +609,26 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   assert.deepEqual(censusCalls.filter((c) => (c.expression as ts.Identifier).text === "untakeMeasure").map((c) => ownerOf(c)).sort(),
     ["appendActive", "fillInPlace", "fillInPlace", "keepPlaceAcrossWindow", "landActive", "landNearestMoment", "scrollToAnchor", "scrollToAnchor", "toggleToolGroup", "virtualizeToViewport"].sort(),
     "the take is given back at every road that can end unanchored: appendActive's raw write, the fill's two raw roads, the keep's double miss, landActive's land-saved after a take, the moment's miss, scrollToAnchor's two misses, the toggle's raw write, the re-window's lost focus unit");
+  // 5. the raw writes by reader (the author's fixer pass over pass 4, its own finding): axis 4 pins the untake SITES and the harnesses drive the
+  //    roads they name, so a raw write added inside a listed reader after its take, with no untake, was caught by nothing (a planted
+  //    `writeScroll(content, 12345, "planted-raw")` road in landActive ran green through every leg). Every writeScroll call whose owner is on
+  //    the untake list, as (owner, writer), a closed multiset: a write added to one of these readers reds here and owes its road a harness case
+  //    (the six harnesses are the executed guard on the raw roads); keepPlaceAcrossWindow and landNearestMoment write through restoreScrollAnchor
+  //    and scrollToAnchor and own no write of their own; a write outside these readers is outside the take rule and outside this census.
+  const UNTAKERS = new Set(["appendActive", "fillInPlace", "keepPlaceAcrossWindow", "landActive", "landNearestMoment", "scrollToAnchor", "toggleToolGroup", "virtualizeToViewport"]);
+  const writerOf = (c: ts.CallExpression): string => { const a = c.arguments[2]; return !a ? "absent" : ts.isStringLiteral(a) ? a.text : a.getText(sf); };
+  assert.deepEqual(callsTo("writeScroll").filter((c) => UNTAKERS.has(ownerOf(c))).map((c) => ownerOf(c) + ": " + writerOf(c)).sort(), [
+    "appendActive: append-raw", "appendActive: append-stick",                                                        // the raw road (the untake before it) and the follow
+    "fillInPlace: gap-fill", "fillInPlace: gap-fill",                                                                // the two raw roads, each with its untake
+    "landActive: land-bottom", "landActive: land-saved", "landActive: reload-restore", "landActive: reload-restore",   // the bottom land; the saved place (the untake before it); the reload restore's two shapes (the take stands there, by measurement)
+    "scrollToAnchor: keep-offset",                                                                                   // the keep-offset re-land; the two misses write nothing after their untake
+    "toggleToolGroup: toolgroup-toggle",                                                                             // the raw road (the untake before it)
+    "virtualizeToViewport: rewindow", "virtualizeToViewport: rewindow",                                              // the bottom, and the focus unit's offset (the untake when the unit is gone)
+  ].sort(), "every scroll write inside a reader of the take state, by owner and writer: a raw write added to one of them reds here and owes a harness case for its road");
   // every reset that clears the average clears the parked figures with it (forgetAverage), and none clears the figure bare
   assert.match(RENDER, /function forgetAverage\(v: View\): void \{\s*\n\s*v\.avgTurnH = undefined; v\.measured = undefined;\s*\n\}/);
-  assert.equal((RENDER.match(/\bavgTurnH = undefined/g) || []).length, 1, "the one bare clear is the helper's");
-  assert.equal((RENDER.match(/(?<![\w.])forgetAverage\(v\);/g) || []).length, 4, "four resets: the compact toggle's rerender, the prebuild's and the switch's re-collapse, the older-history re-anchor");
+  assert.deepEqual(avgWrites.sort(), ["applyMeasure: m.avg", "forgetAverage: undefined", "untakeMeasure: before.avg"], "the average is written by the take, the untake and the one bare clear, the helper's (by owner from the syntax tree)");
+  assert.deepEqual(byOwner("forgetAverage"), ["chatHead(v)", "rerenderAll(v)", "runPrebuild(v)", "showActive(v)"], "four resets, by owner from the syntax tree: the older-history re-anchor, the compact toggle's rerender, the prebuild's and the switch's re-collapse");
   assert.match(RENDER, /import \{ rowsFor, meanRowHeight, perTurnEstimate \} from "\.\/turn-estimate";/);
   assert.match(RENDER, /interface View \{[^\n]*measured\?: \{ avg\?: number; per\?: number \};/, "the parked figures live on the view");
 });
