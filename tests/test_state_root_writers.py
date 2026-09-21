@@ -39,13 +39,29 @@ HOW TO RE-RUN IT BY HAND. `python3 tests/test_state_root_writers.py --list` prin
 kind, target, how it is owner-only) and exits 1 when an unaccounted creator exists. plans/state-root-mode.md records
 the method beside the readers'.
 
-WHAT IT DOES NOT SEE. What the readers census does not see (a path through a name the derivation cannot follow), and a
-creator called with a path outside the root (not the root's). A creation by a process that is not one of the eleven
-modules (bin/romp-manager's mkdirSync of the root, the CLI's mkdir -p) is a creation default the gates exempt.
+WHAT IT DOES NOT SEE, AND WHAT STANDS FOR IT THERE. What the readers census does not see (a path through a name the
+derivation cannot follow), and a creator called with a path outside the root (not the root's). Four shapes are named
+here because they exist in the tree (round 4f's review). (a) A creation by a RELATIVE NAME under a directory descriptor:
+kernel/host_transport.py makes hosts/<sid>/spawn.json and host.stderr through `os.open(name, ..., 0o600, dir_fd=dirs.dir)`
+with an fchmod on the descriptor, so this census lists that module at 0 creations; those roads are pinned by
+tests/test_hosts_path_census.py (PR 814's descriptor census). (b) A path derived from a process ARGUMENT: the session
+host's main() derives its root and its host.log from `Path(argv[0])`, a seed of the readers module, so its
+state-root-refused row is listed here (through open_private). (c) An entry a CHILD PROCESS makes under the root: the
+codex judge's -o reply (kernel/judge.py) is created by the vendor's CLI at the child's umask, which the site sets to 077
+(`subprocess.run(..., umask=0o077)`), and pip's runtime tree under codex-runtime/ keeps pip's modes (the plan's residual);
+no AST census sees a creation another program performs. (d) romp's processes OUTSIDE the eleven modules: the CLI
+(bin/romp: judge-engine, default-backend, debug-mode.json, the down-by-romp marker's temp, restart-audit.jsonl), the
+manager (bin/romp-manager: restart-audit.jsonl) and the shell the kernel runs on a far host over ssh (kernel/kernel.py's
+three command strings: restart-audit.jsonl, kernel.log and update.log on the far root) each write a few entries a kernel
+reads back through its guarded readers; no derivation runs over bash or JavaScript, so each site is held to set its mode
+by code where it writes (`umask 077` on the writing command or a subshell around it; appendFileSync's `mode: 0o600`) by
+test_the_writers_outside_the_eleven_modules_set_their_mode_at_the_site, a text pin with its own red checks. The root's
+own creation (mkdirSync, mkdir -p) is a creation default the gates exempt and tighten.
 """
 import ast
 import collections
 import os
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -67,6 +83,57 @@ COPY_FUNCS = {"shutil.copy", "shutil.copy2", "shutil.copyfile", "shutil.copytree
 TEMPFILE_FUNCS = {"tempfile.mkstemp", "tempfile.mkdtemp", "tempfile.NamedTemporaryFile", "tempfile.TemporaryDirectory",
                   "tempfile.TemporaryFile", "tempfile.SpooledTemporaryFile"}   # each born 0600 or 0700 by the library
 CREATE_FLAG = "O_CREAT"
+
+# THE WRITERS OUTSIDE THE ELEVEN MODULES (round 4f's review): romp's CLI, its manager and the shell the kernel runs on a far
+# host each create a few entries under a state root that a kernel reads back through its guarded readers. No derivation
+# runs over bash or JavaScript; the helpers below hold each site to set its mode by code where it writes.
+CLI_ROOT_BINDING = re.compile(r'^\s*(?:local\s+)?(_[A-Za-z_]+)="?(?:\$\(_romp_state_dir\)|\$\{ROMP_STATE_DIR:-\$\{XDG_STATE_HOME:-\$HOME/\.local/state\}/romp\})')
+REMOTE_APPEND = re.compile(r'>>?"\$LOGDIR/([^"]+)"')
+MANAGER_WRITE = re.compile(r"(?:appendFileSync|writeFileSync)\((?:[^;]|\n)*?\);")
+
+
+def cli_redirects(text):
+    """Every `>` or `>>` redirect in a bash text onto a path under a name the text binds to the state root (a name assigned
+    from `$(_romp_state_dir)` or the XDG expression, a directory or a file under it): (line number, name, the redirect's
+    command as one text: its line and the backslash-continued lines above it)."""
+    lines = text.splitlines()
+    names = {m.group(1) for m in (CLI_ROOT_BINDING.match(line) for line in lines) if m}
+    out = []
+    for i, line in enumerate(lines):
+        for name in sorted(names):
+            if re.search(r'>>?\s*"\$%s(?:/|")' % re.escape(name), line):
+                j = i
+                while j > 0 and lines[j - 1].rstrip().endswith("\\"):
+                    j -= 1
+                out.append((i + 1, name, "\n".join(lines[j:i + 1])))
+    return out
+
+
+def in_umask_group(text, i):
+    """Whether position `i` of a shell text lies inside a `( umask 077; ...)` subshell: scanning back over balanced
+    parentheses, the first unmatched `(` is followed by `umask 077;`."""
+    depth = 0
+    for j in range(i - 1, -1, -1):
+        c = text[j]
+        if c == ")":
+            depth += 1
+        elif c == "(":
+            if depth == 0:
+                return text[j + 1:].lstrip().startswith("umask 077;")
+            depth -= 1
+    return False
+
+
+def remote_appends_unguarded(text):
+    """The `>>"$LOGDIR/<name>"` writes of one ssh command string that are neither inside a `( umask 077; ...)` subshell nor
+    onto a file the string made empty that way earlier (`( umask 077; : >>"$LOGDIR/<name>" )`, the pre-creation a command
+    that must keep its own umask, the kernel's nohup, takes)."""
+    bad = []
+    for m in REMOTE_APPEND.finditer(text):
+        pre = '( umask 077; : >>"$LOGDIR/%s" )' % m.group(1)
+        if not (in_umask_group(text, m.start()) or pre in text[:m.start()]):
+            bad.append(m.group(0))
+    return bad
 
 # THE ALLOWLIST: (file, function, kind, target text) -> the one-line reason the site is owner-only without a creator: its
 # mode is set by code at that site. Every entry must match a creation the census finds (test_the_allowlist_carries_no_stale_entry).
@@ -298,11 +365,21 @@ class TheWritersCensus(unittest.TestCase):
              'def _planted_publish_ok(state_dir):\n    tmp = Path(state_dir) / "planted.tmp"\n    _srm.write_text(tmp, "x")\n'
              '    os.replace(tmp, Path(state_dir) / "planted")\n\n\n'
              'def _planted_temp_ok(state_dir):\n    return tempfile.mkstemp(dir=str(state_dir))\n\n\n'
-             'def _planted_touch_ok(state_dir):\n    _srm.touch(Path(state_dir) / "planted-marker")\n')
+             'def _planted_touch_ok(state_dir):\n    _srm.touch(Path(state_dir) / "planted-marker")\n\n\n'
+             # the comprehension shadow (round 4f's review): a generator that rebinds `p` over data rows does not hide the
+             # def's own root-derived `p` from the republish on a later line (kernel/kernel.py's _compact_notices shape)
+             'def _planted_shadow(state_dir, rows):\n    p = Path(state_dir) / "shadow.jsonl"\n'
+             '    tgt = next((p for p in rows if p.get("op") == "post"), None)\n    tmp = p.with_name(p.name + ".tmp")\n'
+             '    tmp.write_text("x")\n    os.replace(tmp, p)\n    return tgt\n\n\n'
+             'def _planted_shadow_ok(state_dir, rows):\n    p = Path(state_dir) / "shadow.jsonl"\n'
+             '    tgt = next((p for p in rows if p.get("op") == "post"), None)\n    tmp = p.with_name(p.name + ".tmp")\n'
+             '    _srm.write_text(tmp, "x")\n    os.replace(tmp, p)\n    return tgt\n')
     PLANTED_BARE = [("_planted_append", "open:a"), ("_planted_mkdir", "mkdir"), ("_planted_move", "shutil.move"),
-                    ("_planted_os_open", "os.open"), ("_planted_rename_in", "os.replace"), ("_planted_write", "write_text")]
+                    ("_planted_os_open", "os.open"), ("_planted_rename_in", "os.replace"), ("_planted_shadow", "write_text"),
+                    ("_planted_write", "write_text")]
     PLANTED_OK = [("_planted_append_ok", "open_private", "creator"), ("_planted_mkdir_ok", "make_dir", "creator"),
                   ("_planted_publish_ok", "os.replace", "inode"), ("_planted_publish_ok", "write_text", "creator"),
+                  ("_planted_shadow_ok", "os.replace", "inode"), ("_planted_shadow_ok", "write_text", "creator"),
                   ("_planted_temp_ok", "tempfile.mkstemp", "library"), ("_planted_touch_ok", "touch", "creator"),
                   ("_planted_write_ok", "write_text", "creator")]
     _planted = None
@@ -365,6 +442,44 @@ class TheWritersCensus(unittest.TestCase):
                          "the planted bare creators, and nothing else:\n" + "\n".join(render(bad)))
         ok = sorted((e["func"], e["kind"], e["how"]) for e in entries if e["func"].endswith("_ok"))
         self.assertEqual(ok, self.PLANTED_OK, "\n".join(render([e for e in entries if e["func"].endswith("_ok")])))
+
+    def test_the_writers_outside_the_eleven_modules_set_their_mode_at_the_site(self):
+        """THE CLI, THE MANAGER AND THE FAR SHELL (round 4f's review). bin/romp: every `>` or `>>` onto a path under a name
+        the script binds to the state root runs under `umask 077` on the writing command (a subshell around it, or the
+        function's own subshell), so judge-engine, default-backend, debug-mode.json, the down-by-romp marker's temp and
+        restart-audit.jsonl are born 0600 under any umask (cli_redirects derives the names and the redirects; at least the
+        six sites are found). bin/romp-manager: every appendFileSync and writeFileSync carries `mode: 0o600` (one writer,
+        appendAudit). kernel/kernel.py: every `>>"$LOGDIR/<name>"` in the three ssh command strings is inside a
+        `( umask 077; ...)` subshell or onto a file the string made empty that way first (remote_appends_unguarded). Each of
+        the three checks reds on a planted bare shape."""
+        text = open(os.path.join(ROOT, "bin", "romp"), encoding="utf-8").read()
+        found = cli_redirects(text)
+        self.assertGreaterEqual(len(found), 6, "the CLI's writers under the root are found: %r" % [(l, n) for l, n, _c in found])
+        for ln, name, cmd in found:
+            self.assertIn("umask 077", cmd, "bin/romp:%d writes under the root through $%s without umask 077 on its command:\n%s"
+                          % (ln, name, cmd))
+        planted = text + '\n_pl="$(_romp_state_dir)"\nprintf x > "$_pl/planted"\n'
+        self.assertEqual([c for _l, _n, c in cli_redirects(planted) if "umask 077" not in c], ['printf x > "$_pl/planted"'],
+                         "the CLI check reds on a planted bare redirect and on nothing else")
+        mtext = open(os.path.join(ROOT, "bin", "romp-manager"), encoding="utf-8").read()
+        sites = [m.group(0) for m in MANAGER_WRITE.finditer(mtext)]
+        self.assertTrue(sites, "the manager appends its audit rows")
+        for site in sites:
+            self.assertIn("0o600", site, "bin/romp-manager writes under the root without a mode: %s" % site)
+        self.assertEqual([s for s in MANAGER_WRITE.findall("x;\nfs.appendFileSync(path.join(root, 'planted.jsonl'), row + '\\n');\ny;")
+                          if "0o600" not in s], ["appendFileSync(path.join(root, 'planted.jsonl'), row + '\\n');"],
+                         "the manager check reds on a planted bare append")
+        _src, tree = R.source_and_tree(os.path.join(ROOT, "kernel", "kernel.py"), "kernel/kernel.py")
+        cmds = [n.value for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str) and '"$LOGDIR/' in n.value
+                and REMOTE_APPEND.search(n.value)]
+        self.assertEqual(len(cmds), 3, "the three ssh command strings that write on a far root (%d found)" % len(cmds))
+        self.assertGreaterEqual(sum(len(REMOTE_APPEND.findall(c)) for c in cmds), 10, "their appends are found")
+        for c in cmds:
+            self.assertEqual(remote_appends_unguarded(c), [], "a far-root write born at the login shell's umask in:\n%s" % c[:2500])
+        self.assertEqual(remote_appends_unguarded('X=1; echo x >>"$LOGDIR/planted.log"; '), ['>>"$LOGDIR/planted.log"'],
+                         "the far-shell check reds on a planted bare append")
+        self.assertEqual(remote_appends_unguarded('A="$(cmd)"; ( umask 077; echo x >>"$LOGDIR/planted.log" ); '), [])
+        self.assertEqual(remote_appends_unguarded('( umask 077; : >>"$LOGDIR/planted.log" ); nohup x >>"$LOGDIR/planted.log" & '), [])
 
     def test_the_census_reuses_the_readers_derivation(self):
         """One derivation per module per process: the facts the readers census cached (module_facts, _FACTS) are the ones

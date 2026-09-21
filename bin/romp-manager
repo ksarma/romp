@@ -259,13 +259,23 @@ const QUIET_MAX_DEFER_MS = Number(process.env.ROMP_QUIET_MAX_DEFER_MS) || 15 * 6
 //   cli-down     a stop while `romp down`'s marker (DOWN_MARKER) is on disk: the CLI asked for it
 //   stop         any other stop: a service stop by hand, Ctrl+C on the foreground manager, POST /stop
 // `reason` stays what the manager does next: `restart` (respawn) or `stop` (reap).
+// ONE WRITER for restart-audit.jsonl (round 4f of the state-root review, 2026-09-21): the row lands in a file BORN 0600 by
+// code, whatever the manager's umask (appendFileSync's mode applies to the file it creates), and a file an older manager
+// left at the umask's mode is tightened on the next row, the shape the kernel's own creators give its files. The kernel
+// reads this ledger through its guarded readers, which quarantine an entry of ours that a permissive umask left writable
+// by another local user and then attribute nothing from it. The root itself is made as before (a creation default the
+// kernel's gate reads next and tightens); an untightenable file is left for the kernel to judge.
+function appendAudit(root, row) {
+  fs.mkdirSync(root, { recursive: true });
+  const file = path.join(root, 'restart-audit.jsonl');
+  fs.appendFileSync(file, JSON.stringify(row) + '\n', { mode: 0o600 });
+  try { fs.chmodSync(file, 0o600); } catch (e) { /* the row is on disk */ }
+}
 function auditSigterm(spec, pid, reason, trigger) {
   const t = Math.floor(Date.now() / 1000);
   try {
-    const root = (spec && spec.stateDir) || STATE_ROOT;
-    fs.mkdirSync(root, { recursive: true });
-    fs.appendFileSync(path.join(root, 'restart-audit.jsonl'),
-      JSON.stringify({ t, action: 'manager-sigterm', kernel: spec.id, pid, reason, trigger: trigger || reason }) + '\n');
+    appendAudit((spec && spec.stateDir) || STATE_ROOT,
+      { t, action: 'manager-sigterm', kernel: spec.id, pid, reason, trigger: trigger || reason });
   } catch (e) { /* a lost note, not a lost restart */ }
   return t;
 }
@@ -296,8 +306,7 @@ function quietWindowRow(park, g, now) {
 function auditQuietWindow(park, g, now) {
   const row = quietWindowRow(park, g, now || Date.now());
   try {
-    fs.mkdirSync(STATE_ROOT, { recursive: true });
-    fs.appendFileSync(path.join(STATE_ROOT, 'restart-audit.jsonl'), JSON.stringify(row) + '\n');
+    appendAudit(STATE_ROOT, row);
   } catch (e) { /* a lost note, not a lost restart */ }
   return row;
 }
@@ -508,10 +517,8 @@ function auditNote(spec, action, extra) {
   // The manager's own note of a decision that sends no signal (a folded or trailing request): the same
   // ledger as auditSigterm, an action the kernel's audit walk skips (_NO_RESTART_ACTIONS in kernel.py).
   try {
-    const root = (spec && spec.stateDir) || STATE_ROOT;
-    fs.mkdirSync(root, { recursive: true });
-    fs.appendFileSync(path.join(root, 'restart-audit.jsonl'),
-      JSON.stringify(Object.assign({ t: Math.floor(Date.now() / 1000), action, kernel: spec.id }, extra || {})) + '\n');
+    appendAudit((spec && spec.stateDir) || STATE_ROOT,
+      Object.assign({ t: Math.floor(Date.now() / 1000), action, kernel: spec.id }, extra || {}));
   } catch (e) { /* a lost note, not a lost decision */ }
 }
 

@@ -2712,10 +2712,13 @@ def _judge_run_impl(model, sys_prompt, user, effort=None, judge=None, tier="tria
                     # would need maintaining as the CLI grows names. Strip the prefix; the harmless
                     # names go too, on purpose (PR #885 review, widened from the one key)
                     cenv = {k: v for k, v in env.items() if not k.startswith("ANTHROPIC_")}
+                    # umask 077 in the CHILD (round 4f's review): the -o reply is an entry under the root that the vendor's
+                    # process creates at ITS umask, which no creator of ours reaches; born 0600 this way, the guarded read of
+                    # it below admits it under any umask (a umask removes bits, so the CLI's own files elsewhere get no looser)
                     p = subprocess.run(_judge_cmd_codex(model, _codex_effort(effort, tier), outp),
                                        input=(sys_prompt or "") + "\n\n" + (user or ""),
                                        capture_output=True, text=True, cwd=JUDGE_SCRATCH, env=cenv,
-                                       timeout=CALL_ALARM_S + 5)
+                                       timeout=CALL_ALARM_S + 5, umask=0o077)
                 except Exception as e:
                     # the same three traces the claude branch leaves (2026-09-03): the stash the closer's
                     # sweep-cut keys on, the model-health latch, and the call shape for the grep — without

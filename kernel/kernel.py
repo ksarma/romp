@@ -26871,6 +26871,10 @@ def _start_remote_kernel(host):
            'if [ -z "$S" ]; then echo NOROMP; exit 0; fi; '
            'LOGDIR="${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}"; mkdir -p "$LOGDIR"; '
            'if [ -f "$LOGDIR/down-by-romp" ]; then echo DOWN; exit 0; fi; '
+           # the far root's kernel.log is born 0600 under any login-shell umask (round 4f's review): the append target is made
+           # empty in a subshell under umask 077 before the kernel appends to it, so the far kernel's guarded readers never
+           # quarantine an entry this script made; the kernel itself keeps the shell's umask (its own entries are born by code)
+           '( umask 077; : >>"$LOGDIR/kernel.log" ); '
            'nohup "$S" >>"$LOGDIR/kernel.log" 2>&1 </dev/null & echo "STARTED:$S"')
     try:
         r = subprocess.run([SSH_BIN] + _SSH_OPTS + ["--", host, cmd], capture_output=True, text=True, timeout=25)
@@ -29292,8 +29296,8 @@ def _compact_notices(now=None):
                         for r in arch:
                             f.write(json.dumps(dict(r, archivedAt=now)) + "\n")   # the pass's stamp: one block a pass, the restore's tail read stops at its edge
                     tmp = p.with_name(p.name + ".tmp.%d" % os.getpid())
-                    tmp.write_text("".join(json.dumps(r) + "\n" for r in keep))
-                    os.replace(tmp, p)
+                    jd.srm.write_text(tmp, "".join(json.dumps(r) + "\n" for r in keep))   # born 0600 (round 4f's review): the replace
+                    os.replace(tmp, p)                                                      # carries the inode's mode onto the live file
                     moved += len(arch)
                 except OSError as e:
                     sys.stderr.write("notice: the archive pass could not move %s's rows (%s)\n" % (sid[:8], e))
@@ -30450,8 +30454,11 @@ def _update_remote(host, head=None):
         # a refused hop, _MANAGER_REFUSED_ACTION) lands on the far host with the status the client named,
         # the client's own stderr line (which names the file it read and the way out) is in update.log,
         # and the apply exits 0 with the REFUSED tag so _verdict says what did not happen and why.
-        'arow() { python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'p2p-update\','
-        '\'reason\':\'from %s to %s\'}))" >>"$LOGDIR/restart-audit.jsonl" 2>/dev/null || true; }; '
+        # every append this script makes under the far root is born 0600 under any login-shell umask (round 4f's review):
+        # a writer runs in a subshell under umask 077, an append log is made empty the same way before the command that
+        # appends to it, so the far kernel's guarded readers never quarantine an entry this script made
+        'arow() { ( umask 077; python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'p2p-update\','
+        '\'reason\':\'from %s to %s\'}))" >>"$LOGDIR/restart-audit.jsonl" ) 2>/dev/null || true; }; '
         '[ -f "$LOGDIR/down-by-romp" ] || arow; '
         'OWNED=0; if command -v node >/dev/null 2>&1 && [ -x "$R/bin/romp-manager" ]; then '
         'OWNED="$("$R/bin/romp-manager" status 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); '
@@ -30459,19 +30466,19 @@ def _update_remote(host, head=None):
         'if [ "$OWNED" = 1 ]; then '
         # a manager owning the kernel beside a `romp down` marker (see above): its restart is attributed too
         '[ ! -f "$LOGDIR/down-by-romp" ] || arow; '
-        '"$R/bin/romp-manager" restart-all >>"$LOGDIR/update.log" 2>&1; MRC=$?; '
+        '( umask 077; : >>"$LOGDIR/update.log" ); "$R/bin/romp-manager" restart-all >>"$LOGDIR/update.log" 2>&1; MRC=$?; '
         'if [ "$MRC" = 0 ]; then echo "SYNCED:$NEW:MANAGED$K"; exit 0; fi; '
         # the status the client named ("answered HTTP <code>"), read back from the lines it just appended
         'if [ "$MRC" = 3 ]; then MCODE="$(tail -n 5 "$LOGDIR/update.log" | sed -n "s/.*answered HTTP \\([0-9][0-9][0-9]\\).*/\\1/p" | tail -n 1)"; '
-        'python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'manager-refused-restart-all\',\'door\':\'/restart-all\','
-        '\'status\':int(\'${MCODE:-0}\'),\'reason\':\'p2p-update from %s to %s\'}))" >>"$LOGDIR/restart-audit.jsonl" 2>/dev/null || true; '
+        '( umask 077; python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'manager-refused-restart-all\',\'door\':\'/restart-all\','
+        '\'status\':int(\'${MCODE:-0}\'),\'reason\':\'p2p-update from %s to %s\'}))" >>"$LOGDIR/restart-audit.jsonl" ) 2>/dev/null || true; '
         'echo "REFUSED:$NEW:${MCODE:-?}$K"; exit 0; fi; fi; '
         # stopped on purpose (see above): synced, nothing restarted
         'if [ -f "$LOGDIR/down-by-romp" ]; then echo "SYNCED:$NEW:DOWN$K"; exit 0; fi; '
         # LAST RESORT (no owning manager answering on this host): the immediate path below — audit row,
         # kill, then `ensure` upgrades the host to a supervised kernel.
-        'python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'p2p-update\','
-        '\'reason\':\'from %s to %s (immediate: no owning manager)\'}))" >>"$LOGDIR/restart-audit.jsonl" 2>/dev/null || true; '
+        '( umask 077; python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'p2p-update\','
+        '\'reason\':\'from %s to %s (immediate: no owning manager)\'}))" >>"$LOGDIR/restart-audit.jsonl" ) 2>/dev/null || true; '
         # SELF-MATCH GUARD. `pkill -f` matches its pattern against every process's FULL COMMAND LINE —
         # including this apply script's own, because the pattern text sits literally inside it. The plain
         # spelling therefore killed the apply shell AT THIS LINE, before it could restart the kernel or
@@ -30481,7 +30488,8 @@ def _update_remote(host, head=None):
         # `romp-kern[e]l` is a regex that still matches the real process (romp-kernel) while NOT matching
         # this script's own text (romp-kern[e]l), so pkill can no longer take itself down.
         'pkill -f "bin/romp-kern[e]l" 2>/dev/null; '
-        'if command -v node >/dev/null 2>&1 && [ -x "$R/bin/romp-manager" ]; then "$R/bin/romp-manager" ensure >>"$LOGDIR/update.log" 2>&1 || true; fi; '
+        'if command -v node >/dev/null 2>&1 && [ -x "$R/bin/romp-manager" ]; then ( umask 077; : >>"$LOGDIR/update.log" ); "$R/bin/romp-manager" ensure >>"$LOGDIR/update.log" 2>&1 || true; fi; '
+        '( umask 077; : >>"$LOGDIR/kernel.log" ); '
         'UP=0; for i in 1 2 3 4 5 6 7 8; do sleep 1; if bash -c "exec 3<>/dev/tcp/127.0.0.1/%d" 2>/dev/null; then UP=1; break; fi; done; '
         'if [ "$UP" = 0 ]; then nohup "$R/bin/romp-serve" >>"$LOGDIR/kernel.log" 2>&1 </dev/null &  sleep 1; fi; '
         'echo "SYNCED:$NEW:FALLBACK$K"'
@@ -30853,10 +30861,13 @@ def _restart_remote_kernel(host):
         # a host stopped by `romp down` stays stopped: no audit row, no kill, no boot
         'if [ -f "$LOGDIR/down-by-romp" ]; then echo DOWN; exit 0; fi; '
         # never an anonymous SIGTERM (T238): the far kernel's cut row names this explicit restart
-        'python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'remote-restart\','
-        '\'reason\':\'requested from %s\'}))" >>"$LOGDIR/restart-audit.jsonl" 2>/dev/null || true; '
+        # the row, the ensure log and the fallback kernel.log are born 0600 under any login-shell umask (round 4f's review;
+        # _update_remote's apply has the same shape): a subshell under umask 077 writes the row or makes the append target empty
+        '( umask 077; python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'remote-restart\','
+        '\'reason\':\'requested from %s\'}))" >>"$LOGDIR/restart-audit.jsonl" ) 2>/dev/null || true; '
         'pkill -f "bin/romp-kern[e]l" 2>/dev/null; '
-        'if command -v node >/dev/null 2>&1 && [ -x "$R/bin/romp-manager" ]; then "$R/bin/romp-manager" ensure >>"$LOGDIR/update.log" 2>&1 || true; fi; '
+        'if command -v node >/dev/null 2>&1 && [ -x "$R/bin/romp-manager" ]; then ( umask 077; : >>"$LOGDIR/update.log" ); "$R/bin/romp-manager" ensure >>"$LOGDIR/update.log" 2>&1 || true; fi; '
+        '( umask 077; : >>"$LOGDIR/kernel.log" ); '
         'UP=0; for i in 1 2 3 4 5 6 7 8; do sleep 1; if bash -c "exec 3<>/dev/tcp/127.0.0.1/%d" 2>/dev/null; then UP=1; break; fi; done; '
         'if [ "$UP" = 0 ]; then nohup "$R/bin/romp-serve" >>"$LOGDIR/kernel.log" 2>&1 </dev/null &  sleep 1; fi; '
         'echo "RESTARTED:$UP"'

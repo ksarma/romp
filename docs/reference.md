@@ -5622,10 +5622,17 @@ that is not under the root (a transcript under the Claude config
 directory) is not the root's to guard, and the plain read runs. Entries
 under the root are born owner-only by code, whatever the process umask
 (since 2026-09-21): every directory a romp process makes there is `0700`
-and every file `0600` before its first byte, so the readers never
-quarantine a process's own fresh entries under a permissive umask; the
-population of creators is derived and pinned the same way
-(`tests/test_state_root_writers.py --list`).
+and every file `0600` before its first byte (the kernel's, the judge's,
+the bus's and the session host's through the shared module's creators;
+the CLI's, the manager's and the remote update shell's few files by a
+`umask 077` or a mode at the site; the codex judge's reply file by the
+umask its child is given), so the readers never quarantine a process's
+own fresh entries under a permissive umask; the population of creators in
+the eleven modules is derived and pinned the same way
+(`tests/test_state_root_writers.py --list`), the sites outside them by a
+text pin in the same module. An entry made before that date at the
+umask's mode is tightened on its next use; an installed tree's inner
+files keep the installer's modes.
 
 What a guarded reader does when the guard fails is the quarantine
 contract: the first failing component under the root is renamed to

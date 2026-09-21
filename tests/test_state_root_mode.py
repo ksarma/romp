@@ -3204,6 +3204,19 @@ def _write_0600(path, text):
     os.chmod(path, 0o600)
 
 
+def _plant_notice_revisions(root, sid):
+    """Two revisions of one notice key in <root>/notices/<sid>.jsonl, post_notice's row shape, made owner-only by the harness
+    (the directory 0700, the file 0600): rev 1 is superseded, so the kernel's first retention pass archives it and
+    republishes the live file, the road the served arm drives."""
+    d = os.path.join(root, "notices")
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    os.chmod(d, 0o700)
+    rows = [{"op": "post", "t": 1, "at": 1, "key": "old", "rev": rev, "sid": sid, "producer": "pin", "title": "old rev %d" % rev,
+             "body": "", "attachment": None, "actions": [], "needsYou": False, "expiresAt": None, "dismissOnAction": False}
+            for rev in (1, 2)]
+    _write_0600(os.path.join(d, sid + ".jsonl"), "".join(json.dumps(r) + "\n" for r in rows))
+
+
 def _register_name(root, sid, name):
     """A session the kernel and the bus know by its names record (tests/test_kernel_headless_ops.py's shape), made
     owner-only by the harness itself so the harness's own entries never stand in for the process's."""
@@ -3228,6 +3241,10 @@ km._jobs_pass(int(time.time()), {})                              # a housekeepin
 km._park_op(sid, ("send", "parked in process under umask %04o" % u, None))   # a parked op saved: pending-ops.json
 row, err = km.post_notice(sid, "pin", "born owner-only", "", producer="pin")   # a notice filed: notices/<sid>.jsonl
 report["noticeErr"] = err
+row2, err2 = km.post_notice(sid, "pin", "born owner-only, rev 2", "", producer="pin")   # rev 2 of the key: rev 1 is now archivable
+report["noticeErr2"] = err2
+report["compactMoved"] = km._compact_notices(int(time.time()))   # the retention pass REPUBLISHES notices/<sid>.jsonl (a temp, os.replace)
+report["rowsAfterCompact"] = len(km._notice_rows(sid))         # the kernel's own next guarded read of the republished file
 p = os.path.join(lab, "transcript.jsonl")                        # a transcript OUTSIDE the root, folded with a checkpoint name
 with open(p, "w") as fh:
     for i in range(3):
@@ -3266,7 +3283,15 @@ class EntriesAreBornOwnerOnlyUnderAPermissiveUmask(unittest.TestCase):
     host (start, the lease, the journal, host.log, identity.json, the socket). For each it holds that NO <root>/quarantine
     directory exists, that no log carries a "quarantined" line and no refused-kind row was filed, that the roads' entries
     were made, that every entry under the root lstat's OWNER-ONLY (no group or other bit; a symlink counts as loose) and
-    that the process keeps serving after a second request. Owner-only, not merely "not writable by another": every entry
+    that the process keeps serving after a second request. The kernel arms drive the notice RETENTION PASS too
+    (_compact_notices, which archives a superseded revision and REPUBLISHES notices/<sid>.jsonl through a temp and
+    os.replace): the in-process arm posts two revisions of one key and runs the pass; the served arm's harness plants two
+    revisions of one key before boot, since the pass runs in the judges' producer loop on its own cadence (its first
+    pass after the boot's attaches settle), and waits for the pass's log line before its next request. That republish is
+    the road the review of round 4f found born at the umask's mode (a bare write_text the census missed behind a
+    generator's rebinding of `p`): the kernel's next guarded read quarantined its own live cards under 0000 and left them
+    0644 under 0022. Both arms hold the republished file present, read back and owner-only. Owner-only, not merely
+    "not writable by another": every entry
     these processes make is a directory of ours (0700), a regular file of ours (0600) or the host's socket (0600), none
     of which any other uid has a reason to read, so the stronger claim costs nothing and is the one make_dir and
     born_owner_only promise; a weaker one would let a 0644 file in under 0022, which is what the readers admit but not
@@ -3358,20 +3383,40 @@ class EntriesAreBornOwnerOnlyUnderAPermissiveUmask(unittest.TestCase):
         port, token = _free_port(), "srm4f-tok"
         env = _kernel_env(lab, dist, port, token)
         klog = os.path.join(lab, "kernel.log")
+        # two revisions of one key planted BEFORE boot, owner-only by the harness: the retention pass (_compact_notices, in
+        # the judges' producer loop, whose first pass runs once the boot's attaches settle) archives rev 1 and REPUBLISHES
+        # notices/<sid>.jsonl through a temp and os.replace, the road round 4f's review found born at the umask's mode (a
+        # bare write_text hidden from the census by a generator's rebinding of `p`)
+        _plant_notice_revisions(root, SID_A)
         proc = subprocess.Popen(_under_umask(umask, [os.path.join(BIN, "romp-kernel")]), stdout=open(klog, "w"),
                                 stderr=subprocess.STDOUT, env=env)
         self.procs.append((proc, False))
         what = "the kernel under umask %04o" % umask
         self._await(proc, lambda: self._get(port, "/healthz") == 200, klog, what)
-        # a request that WRITES under the root: a notice card (notices/<sid>.jsonl through _notice_append). A parked op
-        # needs a backend that owns the session (/send answers "no running backend owns" hermetically), so the park and
-        # the checkpoint are driven in process (_inproc_kernel), the same modules on the same roads
+        compacted = "compact: archived 1 notice row(s)"
+        for _ in range(240):                               # the producer's first pass: bounded by the boot hold, seconds here
+            if compacted in self._tail(klog, 200000) or proc.poll() is not None:
+                break
+            time.sleep(0.25)
+        self.assertIn(compacted, self._tail(klog, 200000), "%s: the retention pass ran and republished the notice file:\n%s"
+                      % (what, self._tail(klog)))
+        # the republished file AS THE PASS LEFT IT, before any request appends to it: the kernel's next append would tighten
+        # a loose one (born_owner_only's repair of an older file), which is not what this pin measures, so the card below is
+        # posted only after this read (the producer's first pass can run before the first request is answered)
+        self.assertEqual([e for e in _loose_entries(root) if e[0].startswith("notices/")], [],
+                         "%s: the republished notice file is owner-only as the retention pass left it" % what)
+        # a request that WRITES under the root: a notice card (notices/<sid>.jsonl through _notice_append), whose post first
+        # READS the live rows through the guarded reader (a republish born loose is quarantined HERE, and the log carries the
+        # line the pin refuses). A parked op needs a backend that owns the session (/send answers "no running backend owns"
+        # hermetically), so the park and the checkpoint are driven in process (_inproc_kernel), the same modules on the same roads
         st, res = self._post(port, "/notice", {"id": SID_A, "key": "pin", "title": "born owner-only"}, token)
         self.assertEqual((st, res.get("ok")), (200, True), "a notice card is filed: %r" % (res,))
-        time.sleep(2.5)                                    # several housekeeping passes (JOBS_PASS_S is 0.5 s), the root re-read each
+        time.sleep(1.5)                                    # housekeeping passes (JOBS_PASS_S is 0.5 s), the root re-read each
         self.assertEqual(self._get(port, "/healthz"), 200, "%s keeps serving after its writes" % what)
         proc.kill(); proc.wait(timeout=10)
-        self._assert_owner_only(root, self._tail(klog, 200000), ["notices/*", "repo-root"], what)
+        log_text = self._tail(klog, 200000)
+        self.assertIn(compacted, log_text, "%s: the retention pass ran and republished the notice file:\n%s" % (what, log_text[-1500:]))
+        self._assert_owner_only(root, log_text, ["notices/*.jsonl", "notices-archive/*.jsonl", "repo-root"], what)
 
     def test_a_served_kernel_under_umask_0022_makes_owner_only_entries_and_quarantines_nothing_of_its_own(self):
         self._served_kernel(0o022)
@@ -3397,10 +3442,15 @@ class EntriesAreBornOwnerOnlyUnderAPermissiveUmask(unittest.TestCase):
         self.assertEqual(report["umask"], "%04o" % umask, "the child ran under the umask")
         self.assertEqual(os.path.realpath(report["root"]), os.path.realpath(root))
         self.assertIsNone(report["noticeErr"])
+        self.assertIsNone(report["noticeErr2"])
+        self.assertEqual((report["compactMoved"], report["rowsAfterCompact"]), (1, 1),
+                         "%s: the retention pass archived rev 1 and the republished live file reads back with rev 2 (%r)"
+                         % (what, report))
         self.assertTrue(report["checkpoint"], "the checkpoint was written")
         self.assertEqual(report["refusedRows"], [], "%s filed no refused-kind row" % what)
         self.assertEqual(report["refused"], [], "%s's readers refused nothing" % what)
-        self._assert_owner_only(root, r.stderr, ["pending-ops.json", "notices/*", "checkpoints/*", "repo-root"], what)
+        self._assert_owner_only(root, r.stderr, ["pending-ops.json", "notices/*.jsonl", "notices-archive/*.jsonl", "checkpoints/*",
+                                                 "repo-root"], what)
 
     def test_the_kernel_in_process_under_umask_0022_writes_a_checkpoint_a_park_and_a_notice_owner_only(self):
         self._inproc_kernel(0o022)

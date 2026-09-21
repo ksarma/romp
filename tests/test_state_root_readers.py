@@ -17,8 +17,11 @@ parameter named `state_dir` or `state` and the `self.state` / `self.state_dir` a
 every expression that is a path under the root: a module-level name bound from a root name, a `/` or a join onto one,
 a function whose return is one, a parameter a caller hands one, a local bound from one (keyed on the nearest preceding
 binding, so a long dispatch that reuses `p` for a client's path and a root path in different branches is read branch
-by branch), a loop or comprehension target over a root listing, a scandir entry's `.path`, and the ENTRIES a guarded
-listing answers. Over those it lists every READ: read_text, read_bytes, open in a read mode, os.open read-only,
+by branch), a loop or comprehension target over a root listing (a comprehension's target is bound in the comprehension's
+own scope, as Python 3 binds it: it stands for the name inside the comprehension alone, and never for the def's binding
+of the same name on a later line; round 4f's review found the kernel's `p` rebound by a generator over the notice rows
+hiding the notice file's republish from both censuses), a scandir entry's `.path`, and the ENTRIES a guarded listing
+answers. Over those it lists every READ: read_text, read_bytes, open in a read mode, os.open read-only,
 gzip.open, glob, rglob, glob.glob, iterdir, listdir, scandir, is_dir and os.path.isdir, and sys.path.insert or append
 of one. The bytes a read answers are data, not a path (a names entry's cwd used as a browse path is not a root read),
 and writes (open in a write mode, _atomic_write, an O_EXCL temp) are not reads: tests/test_state_root_writers.py censuses the
@@ -39,7 +42,9 @@ records the method. The census reads source text alone and loads no romp module.
 
 WHAT IT DOES NOT SEE. A read through a name the derivation cannot follow (a path stored in a dict and read back, a path
 handed in from another module) is invisible to it; the seeds and the parameter seeds (PARAM_SEEDS) are where such a
-road is declared when found. The guard's own boundary is stated in kernel/state_root_mode.py: a descriptor a peer
+road is declared when found. A path derived from a process ARGUMENT is one such road: the session host's main() knows
+its root from its spec path alone (`Path(argv[0])`, hosts/<sid>/spawn.json three levels under the root), so that
+expression is a seed of the module and its `root` and `log_path` follow from it. The guard's own boundary is stated in kernel/state_root_mode.py: a descriptor a peer
 already holds inside the root survives the tightening, so remove-and-recreate is the boundary of what any check
 promises.
 """
@@ -74,7 +79,8 @@ SEEDS = {
     "kernel/event_model.py": {"STATE", "NAMES", "STATES_DIR", "MESSAGES_LOG", "_ckpt_dir()"},
     "postal/postal_service.py": {"STATE", "MAILROOT", "MAILPENDING", "MAILHELD", "WARNED", "LOG", "PIDFILE", "NAMES_DIR",
                                  "TLDIR", "SESSION_FLAGS", "USER_TODOS_SWITCH", "CODEX_REGISTRY", "STATE.parent"},
-    "kernel/session_host.py": {"self.state_dir", "self.dir", "self.spec_path", "self.log_path", "self.sock_path"},
+    "kernel/session_host.py": {"self.state_dir", "self.dir", "self.spec_path", "self.log_path", "self.sock_path",
+                               "Path(argv[0])"},   # main()'s spec path: hosts/<sid>/spawn.json, argv-derived (round 4f's review)
     "kernel/logins.py": set(), "kernel/palette.py": set(), "kernel/host_transport.py": set(), "kernel/codex_runtime.py": set(),
     "kernel/sdk_backend.py": {"self.state_dir"}, "kernel/codex_backend.py": {"self.state"},
 }
@@ -263,7 +269,14 @@ def _is_root(mf, node, fn):
         while f is not None:
             hist = list(mf.locals.get(id(f), {}).get(node.id) or [])
             if node.id in mf.root_params.get(getattr(f, "name", ""), ()):
-                hist.append((getattr(f, "lineno", 0), True))   # a parameter is bound at the def, before every local binding
+                hist.append((getattr(f, "lineno", 0), True, None))   # a parameter is bound at the def, before every local binding
+            # a comprehension's target is bound in the comprehension's OWN scope (Python 3): inside the comprehension's span
+            # it is the binding of the name (the def's binding of the same name is shadowed), outside the span it does not
+            # exist (the def's later lines read the def's own binding, as _compact_notices's `p` after a generator over rows)
+            inside = [r for (_ln, r, span) in hist if span is not None and _within(node, span)]
+            if inside:
+                return any(inside)
+            hist = [(ln, r) for (ln, r, span) in hist if span is None]
             if hist:
                 # flow-insensitive within a function, but keyed on the NEAREST PRECEDING binding of the name (a long
                 # dispatch reuses `p` for a client's path and a root path in different branches)
@@ -327,6 +340,22 @@ def _is_root(mf, node, fn):
     return False
 
 
+COMPREHENSIONS = (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)
+
+
+def _span(n):
+    """A node's (line, column, end line, end column): the text a comprehension's target is bound over."""
+    return (n.lineno, n.col_offset, n.end_lineno, n.end_col_offset)
+
+
+def _within(node, span):
+    return (node.lineno, node.col_offset) >= span[:2] and (node.end_lineno, node.end_col_offset) <= span[2:]
+
+
+def _hist_key(e):
+    return (e[0], e[1], e[2] or ())
+
+
 def _targets(t):
     """The names a target BINDS: a Name, the Names inside a Tuple, List or Starred. A Subscript or Attribute target
     (cache[str(p)] = ..., self.x = ...) mutates an object and binds no name (the names inside it are reads)."""
@@ -355,8 +384,9 @@ def _own_nodes(fn):
 
 def _seed_locals(mf, fn):
     """Fixpoint over the function's own nodes: every binding of a local (assignments, loop, with and comprehension
-    targets) recorded as (line, root-derived) in mf.locals[id(fn)][name], sorted by line. A nested def sees its parent's
-    bindings (closures read the parent's path variables)."""
+    targets) recorded as (line, root-derived, span) in mf.locals[id(fn)][name], sorted by line; the span is None for a
+    binding of the def's scope and the comprehension's text span for a comprehension target, which _is_root reads inside
+    that span alone. A nested def sees its parent's bindings (closures read the parent's path variables)."""
     parent = mf.enclosing.get(id(fn))
     hist = {k: list(v) for k, v in mf.locals.get(id(parent), {}).items()} if parent is not None else {}
     mf.locals[id(fn)] = hist
@@ -368,12 +398,12 @@ def _seed_locals(mf, fn):
         hist.setdefault(name, [])
     for _round in range(8):
         changed = False
-        for ln, names, value in bindings:
+        for ln, names, value, span in bindings:
             r = _is_root(mf, value, fn)
             for name in names:
                 cur = hist[name]
-                if (ln, r) not in cur:
-                    cur[:] = sorted([(l, x) for (l, x) in cur if l != ln] + [(ln, r)])
+                if (ln, r, span) not in cur:
+                    cur[:] = sorted([e for e in cur if (e[0], e[2]) != (ln, span)] + [(ln, r, span)], key=_hist_key)
                     changed = True
         if not changed:
             break
@@ -381,29 +411,31 @@ def _seed_locals(mf, fn):
 
 def _bindings(mf, fn):
     """The def's bindings, read from its own nodes once: (the names it binds, in first-seen order; the bindings whose
-    value says something about a path, as (lineno, [names], value node))."""
-    bindings = []          # (lineno, [names], value node or None for a target with no expression)
+    value says something about a path, as (lineno, [names], value node, span)). The span is None for a binding of the
+    def's own scope; for a comprehension's target it is the comprehension's text span, the scope Python 3 binds it in."""
+    bindings = []          # (lineno, [names], value node, span)
     for n in _own(mf, fn):
         if isinstance(n, ast.Assign):
-            bindings.append((n.lineno, [x for t in n.targets for x in _targets(t)], n.value))
+            bindings.append((n.lineno, [x for t in n.targets for x in _targets(t)], n.value, None))
         elif isinstance(n, (ast.AnnAssign, ast.AugAssign)) and n.value is not None:
-            bindings.append((n.lineno, _targets(n.target), n.value))
+            bindings.append((n.lineno, _targets(n.target), n.value, None))
         elif isinstance(n, ast.NamedExpr):
-            bindings.append((n.lineno, [n.target.id], n.value))
+            bindings.append((n.lineno, [n.target.id], n.value, None))
         elif isinstance(n, (ast.For, ast.AsyncFor)):
-            bindings.append((n.lineno, _targets(n.target), n.iter))
+            bindings.append((n.lineno, _targets(n.target), n.iter, None))
         elif isinstance(n, (ast.With, ast.AsyncWith)):
             for item in n.items:
                 if item.optional_vars is not None:
-                    bindings.append((n.lineno, _targets(item.optional_vars), item.context_expr))
-        elif isinstance(n, ast.comprehension):
-            bindings.append((n.iter.lineno, _targets(n.target), n.iter))
-    bound = list(dict.fromkeys(name for _ln, names, _v in bindings for name in names))
+                    bindings.append((n.lineno, _targets(item.optional_vars), item.context_expr, None))
+        elif isinstance(n, COMPREHENSIONS):
+            for g in n.generators:
+                bindings.append((g.iter.lineno, _targets(g.target), g.iter, _span(n)))
+    bound = list(dict.fromkeys(name for _ln, names, _v, _s in bindings for name in names))
     def _empty_literal(v):
         # a fallback binding to an empty literal (`boxes = []` in an except arm) says nothing about the name's path-ness
         return (isinstance(v, (ast.List, ast.Tuple, ast.Dict, ast.Set)) and not getattr(v, "elts", getattr(v, "keys", None))) \
             or (isinstance(v, ast.Constant) and v.value in (None, "", b""))
-    return bound, [(ln, names, value) for (ln, names, value) in bindings if not _empty_literal(value)]
+    return bound, [b for b in bindings if not _empty_literal(b[2])]
 
 
 def module_facts(root, rel, src=None):
@@ -605,9 +637,15 @@ class TheCensus(unittest.TestCase):
              'def _planted_path():\n    return jd.STATE / "b.json"\n\n\n'
              'def _planted_call_site():\n    return json.loads(_planted_path().read_text())\n\n\n'
              'def _planted_loop():\n    out = []\n    for f in _gr.iterdir(jd.STATE / "d"):\n        out.append(f.read_text())\n    return out\n\n\n'
-             'def _planted_rebound(msg):\n    p = jd.STATE / "c.json"\n    _gr.read_text(p)\n    p = str(msg["path"])\n    return open(p, "rb").read()\n')
-    PLANTED_BARE = [("_planted_call_site", "text"), ("_planted_helper", "text"), ("_planted_listing", "dir"),
-                    ("_planted_loop", "text"), ("_planted_reader", "text")]   # every unguarded read the plant carries
+             'def _planted_rebound(msg):\n    p = jd.STATE / "c.json"\n    _gr.read_text(p)\n    p = str(msg["path"])\n    return open(p, "rb").read()\n\n\n'
+             # the two comprehension scopes (round 4f's review): a generator that rebinds `p` over data rows does not hide the
+             # def's own `p` from a read on a later line; a comprehension's target over a root listing is a root entry inside it
+             'def _planted_comp_shadow(rows):\n    p = jd.STATE / "e.json"\n    tgt = next((p for p in rows if p.get("k")), None)\n'
+             '    return p.read_text()\n\n\n'
+             'def _planted_comp_entries():\n    return [f.read_text() for f in _gr.iterdir(jd.STATE / "d")]\n')
+    PLANTED_BARE = [("_planted_call_site", "text"), ("_planted_comp_entries", "text"), ("_planted_comp_shadow", "text"),
+                    ("_planted_helper", "text"), ("_planted_listing", "dir"), ("_planted_loop", "text"),
+                    ("_planted_reader", "text")]   # every unguarded read the plant carries
     _planted = None
 
     @classmethod

@@ -1765,7 +1765,9 @@ def main(argv=None) -> int:
         row = {"t": round(time.time(), 3), "kind": str(kind)}
         row.update({k: (v if isinstance(v, (str, int, float, bool)) else str(v)) for k, v in fields.items() if v is not None})
         try:
-            with open(log_path, "a", encoding="utf-8") as f:
+            # the shared module's creator, as SessionHost.log's: the one row this road writes (state-root-refused) is born
+            # 0600 under any umask (round 4f's review); the path is argv-derived, seeded in the census as Path(argv[0])
+            with _srm.open_private(log_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(row, separators=(",", ":")) + "\n")
         except Exception:
             pass

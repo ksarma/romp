@@ -228,7 +228,7 @@ _romp_down_release() {   # <state-dir> <kernel-port> <skip-cancel> <why>
 # refresh (the kernel's reader skips an unlabeled row). Best-effort: never blocks the restart or the
 # stop itself.
 _romp_restart_audit() {   # [action] [flag] [reason]   (flag --quiet: a PARKED restart; the row names it and the checkout sha)
-    {
+    (   # a subshell: the umask below is this function's alone
         local _ra_dir _ra_sid _ra_name="" _ra_sha=""
         _ra_dir="$(_romp_state_dir)"
         mkdir -p "$_ra_dir"
@@ -243,7 +243,10 @@ _romp_restart_audit() {   # [action] [flag] [reason]   (flag --quiet: a PARKED r
         # matched nothing and the converge pre-empted the window just the same (fold review, 2026-09-07)
         [[ "${2:-}" == "--quiet" ]] \
             && _ra_sha="$(git -C "$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")/.." && pwd -P)" rev-parse --short=8 HEAD 2>/dev/null || true)"
-        RA_ACTION="${1:-}" RA_WHEN="${2:-}" RA_REASON="${3:-}" RA_SHA="$_ra_sha" \
+        # the ledger is born 0600 under any umask (round 4f of the state-root review): the kernel reads this file through
+        # its guarded readers and quarantines an entry of ours left at a permissive umask's mode; a umask removes bits, so
+        # an existing file keeps what it has and a new one is owner-only from its first row
+        umask 077; RA_ACTION="${1:-}" RA_WHEN="${2:-}" RA_REASON="${3:-}" RA_SHA="$_ra_sha" \
         RA_PPID="$PPID" \
         RA_PARENT="$(ps -o command= -p "$PPID" 2>/dev/null | head -1)" \
         RA_TTY="$(tty 2>/dev/null || true)" \
@@ -265,7 +268,7 @@ if os.environ.get("RA_WHEN") == "--quiet":
         row["sha"] = os.environ["RA_SHA"]
 print(json.dumps(row))
 PYEOF
-    } 2>/dev/null || true
+    ) 2>/dev/null || true
 }
 
 # `romp url` — print the tokened dashboard URL, nothing else (scripting/piping; bare `romp` is the
@@ -2250,8 +2253,11 @@ if [[ "${1:-}" == "engine" ]]; then
     case "${1:-status}" in
         claude)
             mkdir -p "$_eng_state"
-            printf 'claude\n' > "$_eng_state/judge-engine"
-            printf 'sdk\n'    > "$_eng_state/default-backend"
+            # born 0600 under any umask, an older file tightened (round 4f of the state-root review): the kernel reads both
+            # names through its guarded readers, which quarantine an entry at a permissive umask's mode and fall back to the
+            # defaults, so the engine choice would be silently lost
+            ( umask 077; printf 'claude\n' > "$_eng_state/judge-engine" && chmod 600 "$_eng_state/judge-engine" )
+            ( umask 077; printf 'sdk\n'    > "$_eng_state/default-backend" && chmod 600 "$_eng_state/default-backend" )
             if ! command -v claude >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/claude" ]; then
                 echo "[romp] note: no claude binary found — install Claude Code and sign in, or judges + new sessions will fail loudly" >&2
             fi
@@ -2259,8 +2265,8 @@ if [[ "${1:-}" == "engine" ]]; then
             echo "[romp] running sessions are unaffected; judges pick this up on their next call" ;;
         codex)
             mkdir -p "$_eng_state"
-            printf 'codex\n' > "$_eng_state/judge-engine"
-            printf 'codex\n' > "$_eng_state/default-backend"
+            ( umask 077; printf 'codex\n' > "$_eng_state/judge-engine" && chmod 600 "$_eng_state/judge-engine" )
+            ( umask 077; printf 'codex\n' > "$_eng_state/default-backend" && chmod 600 "$_eng_state/default-backend" )
             _cx="$(command -v codex 2>/dev/null || true)"
             [ -z "$_cx" ] && [ -x "$HOME/.local/bin/codex" ] && _cx="$HOME/.local/bin/codex"
             # the bundled binary lives INSIDE codexvenv (no PATH entry point) — ccodex-setup links
@@ -2297,7 +2303,8 @@ if [[ "${1:-}" == "debug" ]]; then
     case "${1:-status}" in
         on)
             mkdir -p "$(dirname "$_dbg_conf")"
-            printf '{"on": true}\n' > "$_dbg_conf"
+            # born 0600 under any umask (round 4f of the state-root review): the judge reads it through the guarded reader
+            ( umask 077; printf '{"on": true}\n' > "$_dbg_conf" && chmod 600 "$_dbg_conf" )
             echo "[romp] debug mode ON — judge rejections carry input+reply; card modals show a Warnings section" ;;
         off)
             rm -f "$_dbg_conf"
@@ -2463,8 +2470,9 @@ PYEOF
         mkdir -p "$_dn_state"
         _dn_cmd="romp down${_dn_now:+ --now}"
         [[ -z "$_dn_now" && "$_dn_wait" != "5" ]] && _dn_cmd="$_dn_cmd --wait $_dn_wait"
-        DN_CMD="$_dn_cmd" python3 -c 'import json,os,time; print(json.dumps({"t": int(time.time()), "cmd": os.environ["DN_CMD"]}))' \
-            > "$_dn_state/down-by-romp.tmp" && mv -f "$_dn_state/down-by-romp.tmp" "$_dn_state/down-by-romp"
+        # the marker's temp is born 0600 under any umask and the mv carries the inode's mode (round 4f of the state-root review)
+        ( umask 077; DN_CMD="$_dn_cmd" python3 -c 'import json,os,time; print(json.dumps({"t": int(time.time()), "cmd": os.environ["DN_CMD"]}))' \
+            > "$_dn_state/down-by-romp.tmp" ) && mv -f "$_dn_state/down-by-romp.tmp" "$_dn_state/down-by-romp"
         _romp_restart_audit down
         # 3. stop through the supervisor. 3 = no login service installed, 4 = installed but not running:
         #    either way the manager, if one runs, is outside the service (a foreground `romp up`, a hand
