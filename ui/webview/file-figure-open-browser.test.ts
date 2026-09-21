@@ -283,7 +283,7 @@ test("in a browser, the Comments panel open on a fine pointer: the regions layer
     assert.equal(await base(page), "report.md", "the plain click offered a comment and opened nothing");
     // a Ctrl-click on the picture, on this fine pointer under the open panel: the overlay takes the press whatever the modifier
     // (file-comments-regions.ts reads none), so no tab opens and the offer stands; the /file tab is the closed panel's and the
-    // coarse pointer's (the leg below), and the guide's clause says so (the file review's landing round's second read, fresh-1)
+    // coarse pointer's (the leg below), and the guide's clause says so (the file review's round 8, fresh-1)
     await page.keyboard.down("Control"); await page.mouse.click(img.left + img.width * 0.3, img.top + img.height * 0.6); await page.keyboard.up("Control");   // mouse.click takes no modifiers option: the key is held around it
     await frames(page, 2);
     assert.deepEqual(await opened(page), [], "the Ctrl-click on the picture under the open panel on a fine pointer opens no tab");
@@ -376,7 +376,7 @@ const blockAtTop = (page: any): Promise<{ tag: string; top: number; bottom: numb
   return null;
 });
 
-test("in a browser: a top-level html-block figure wearing the production control (the control a top-level element of the Rendered box, the img's next sibling, 22px tall at the figure's top), the reader 300px into the figure: the Raw switch lands on the img's own row and Rendered puts the figure back at the edge (the structural read passes the control over; before the file review's landing round's second read, correctness-1, the control's box ended above the edge, the level's search took it for a block and read the paragraph after the figure, and the switch landed there; the node scene's control box in file-view-place-blocks.test.ts is a fixture, this is the layout it stands in for)", async (t) => {
+test("in a browser: a top-level html-block figure wearing the production control (the control a top-level element of the Rendered box, the img's next sibling, 22px tall at the figure's top), the reader 300px into the figure: the Raw switch lands on the img's own row and Rendered puts the figure back at the edge (the structural read passes the control over; before the file review's round 8, correctness-1, the control's box ended above the edge, the level's search took it for a block and read the paragraph after the figure, and the switch landed there; the node scene's control box in file-view-place-blocks.test.ts is a fixture, this is the layout it stands in for)", async (t) => {
   await inBrowser(t, async (browser) => {
     const { page, errors } = await openViewer(browser, "chat", 900, 600, {
       docs: TOP_DOCS,

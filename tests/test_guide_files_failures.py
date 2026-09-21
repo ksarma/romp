@@ -255,7 +255,7 @@ class TheViewerDoesIt(unittest.TestCase):
         # glyph-only and a labelled control): the place-blocks case and anchor-map's top-level case red under the predicate's
         # removal, the two labelled scenes red under their entry's removal, and md-config's glyph-only scenes holding the pairing
         # and the place while reding on neither, a text-free control contributing nothing to the text read whether listed or
-        # not (the file review's landing round's second read, correctness-1 with extra9-1)
+        # not (the file review's round 8, correctness-1 with extra9-1)
         self.assertRegex(_read("ui", "webview", "anchor-map.ts"), re.compile(r'^  "fv-figerr",', re.M))
         self.assertRegex(_read("ui", "webview", "reader-place.ts"), re.compile(r'^const CONTROL_CLASSES = \[.*"fv-figerr".*\];$', re.M))
         for sheet in ("styles.css", "feed.css"):

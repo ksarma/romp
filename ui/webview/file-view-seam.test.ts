@@ -1403,7 +1403,7 @@ test("the inertness premise, held where CI runs: MD_PURIFY is its six-key litera
 // type-only one, a namespace or default import, a side-effect import; an `export ... from`; an `import x = require()`; and a
 // dynamic `import()` or `require()` of a string literal), under any quote and across any line break, a specifier that is not a
 // string literal refused with its file and line, and a module the parser reports a diagnostic on refused with its line rather
-// than judged over the parser's recovery (the file review's landing round's second read, tests-1 with extra5-1, extra7-1 and extra7-2:
+// than judged over the parser's recovery (the file review's round 8, tests-1 with extra5-1, extra7-1 and extra7-2:
 // the regex resolver before it read a double-quoted specifier at a line's start alone, so a single-quoted import in any reached
 // module dropped that module and its whole closure from the judged set with nothing red, and its binding reader read
 // `import ... from` lines alone, so file-view.ts's require-bound gclock was outside the method-call guard), transitively, and
@@ -1519,15 +1519,15 @@ test("no re-parse after the adoption: mdBlock's post-adoption region and every m
   assert.deepEqual(called, ["keepVideoShape", "linkHref", "resolveDocRelative", "linkMarkdownAnchors", "addFigureControls", "linkifyFileText"], "the passes after the adoption call these and nothing else (a new call widens this list first)");
   // a pass written as a method call on an imported binding (`ns.pass(box)`, `hljs.highlight(...)`) is no bare call, so the list
   // above would not see it: every binding file-view.ts imports, under any form and from any source (the compiler's tree, so a
-  // require-bound one, gclock, and a clause wrapped over lines are in the set; the file review's landing round's second read, extra7-1), is
+  // require-bound one, gclock, and a clause wrapped over lines are in the set; the file review's round 8, extra7-1), is
   // asserted absent as the object of a method call in the region and in every reached local (the fork PR review's round-2
   // verification named this blind spot, 2026-09-20), the calls read off the compiler's tree under any access spelling (a property
-  // access, an optional chain, a bracket; the author's closing pass after the file review's landing round's second read: one regex
+  // access, an optional chain, a bracket; the author's closing pass after the file review's round 8: one regex
   // over `b.name(` had left `gclock?.learnAll(box)` and `gclock["learnAll"](box)` silent)
   /** The compiler's tree for `src`, REFUSED when the parser reports a diagnostic: a module the parser recovers over would be judged
    *  over its recovery (an unterminated block comment before an import drops the import silently, an unterminated specifier is
    *  followed as a wrong path), and a form this census cannot follow refuses with its line rather than passing over it (the author's
-   *  closing pass after the file review's landing round's second read). Every reader below parses through this. */
+   *  closing pass after the file review's round 8). Every reader below parses through this. */
   const parsed = (file: string, src: string): ts.SourceFile => {
     const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, file.endsWith(".js") ? ts.ScriptKind.JS : ts.ScriptKind.TS);
     const diags = (sf as unknown as { parseDiagnostics: ts.Diagnostic[] }).parseDiagnostics;
@@ -1591,7 +1591,7 @@ test("no re-parse after the adoption: mdBlock's post-adoption region and every m
     walk(sf);
     return [...found].sort();
   };
-  assert.deepEqual(methodCallsIn("gclock.learnAll(box); hljs.highlight(raw, { language: lang }); linkifyFileText(box);"), ["gclock", "hljs"], "the guard, driven: a method call on the require-bound binding and on the default import is seen, a bare call is not (the file review's landing round's second read, extra7-1: `gclock.learnAll(box)` planted after the adoption had left this test green, gclock being outside the binding set)");
+  assert.deepEqual(methodCallsIn("gclock.learnAll(box); hljs.highlight(raw, { language: lang }); linkifyFileText(box);"), ["gclock", "hljs"], "the guard, driven: a method call on the require-bound binding and on the default import is seen, a bare call is not (the file review's round 8, extra7-1: `gclock.learnAll(box)` planted after the adoption had left this test green, gclock being outside the binding set)");
   assert.deepEqual(methodCallsIn("gclock?.learnAll(box);"), ["gclock"], "an optional chain is a method call on the binding");
   assert.deepEqual(methodCallsIn('gclock["learnAll"](box);'), ["gclock"], "a bracket access is one too (both spellings had passed the one-spelling regex)");
   assert.deepEqual(methodCallsIn("(marked.parse)(s); hljs.highlight.call(null, raw); gclock!.learnAll(box);"), ["gclock", "hljs", "marked"], "parentheses around the callee, a call through .call and a non-null mark are seen through");
@@ -1617,7 +1617,7 @@ test("no re-parse after the adoption: mdBlock's post-adoption region and every m
    *  any quote and across any line break; each as a path relative to ui/webview (`x` to `x.ts`, a suffix kept as written), the
    *  npm packages apart. A specifier that is not a string literal (a template, with or without a substitution, a variable, an
    *  expression) REFUSES with the file, the form and the line, on the safe side: a module the walk cannot name is a module it
-   *  cannot judge (the file review's landing round's second read, tests-1, extra5-1, extra7-1, extra7-2); a module the parser
+   *  cannot judge (the file review's round 8, tests-1, extra5-1, extra7-1, extra7-2); a module the parser
    *  reports a diagnostic on refuses with its line too (`parsed`, above), never judged over the parser's recovery. */
   const importTargets = (src: string, from: string): { local: string[]; packages: string[] } => {
     const local = new Set<string>(), packages = new Set<string>();
@@ -1659,7 +1659,7 @@ test("no re-parse after the adoption: mdBlock's post-adoption region and every m
   }
   // and a module the parser reports a diagnostic on is refused with its line by every reader, never judged over the recovery: an
   // unterminated block comment before an import had dropped the import silently, an unterminated specifier was followed as a wrong
-  // path (the author's closing pass after the file review's landing round's second read)
+  // path (the author's closing pass after the file review's round 8)
   assert.throws(() => importTargets("/* open\nimport { zz } from './zz-plant';", "x.ts"), /^Error: x\.ts:2: the parser reports a diagnostic, so the module is refused rather than judged over the parser's recovery: '\*\/' expected/, "the resolver refuses an unterminated block comment before an import, naming the line the diagnostic points at (the file's end)");
   assert.throws(() => importTargets("import { zz } from './zz-plant;\n", "x.ts"), /^Error: x\.ts:1: the parser reports a diagnostic/, "and an unterminated specifier");
   assert.throws(() => bindingsOf("const x = ;\nconst y = require('./y');\n", "x.ts"), /^Error: x\.ts:1: the parser reports a diagnostic/, "the binding reader refuses the same way");

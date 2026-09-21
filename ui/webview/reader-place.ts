@@ -447,7 +447,7 @@ const stripWs = (s: string): string => s.replace(/\s+/g, "");
  *  are a block's element (a gated figure's placeholder, at the top level), or stand inside one (the fence's Copy button in
  *  its pre, a formula in its paragraph or its display block, a footnote's back link in its definition's item, the front
  *  matter's fold label among its details' rows), never beside one at a level the read walks, and stay in the read (the
- *  file review's landing round's second read, correctness-1: counted as a box of the
+ *  file review's round 8, correctness-1: counted as a box of the
  *  level, a top-level control's bottom above the edge sent the search past the figure to the paragraph after it). The
  *  control's entry here is inert while the control has no text node of its own (noteText reads nothing from a glyph,
  *  listed or not; its title and aria-label are attributes): md-config-figure-gate-place.test.ts's labelled scene is what

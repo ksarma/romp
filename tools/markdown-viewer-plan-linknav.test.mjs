@@ -29,7 +29,7 @@
 // the plan's Tests paragraph stating it once with the checkouts, as a rule over those checks whose count is derived (every
 // check this module keys on the delta runs through one door, `gated`, which records it, and the attribution module exports
 // the count of its own; the sentence's number word is held to the sum, and each check is named in it: the file review's
-// landing round's second read, extra6-1, the sentence had named two of three and its pin held the bytes, so a widened, truer sentence
+// round 8, extra6-1, the sentence had named two of three and its pin held the bytes, so a widened, truer sentence
 // was red), and this module holding the two CI jobs that run the tools and the UI tests to a
 // checkout with no fetch-depth: 0, so a change there names the plan's sentence; the gate itself is a pure function over git's
 // answers, gateOf, pinned in all four cells, this module's own path asserted to exist in the tree, and the running shape and
@@ -276,7 +276,7 @@ test('L3: the control\'s words are the viewer\'s literal, quoted by the section 
   assert.match(read('ui', 'webview', 'anchor-map.ts').replace(/\n \*  /g, ' '), /is not the note's\), and since the link-navigation follow-on the figure's Open the picture control \(`button\.fv-figopen`, a glyph with no text of its own\)\. \*\//, 'anchor-map.ts CONTROL_CLASSES header names the control, as reader-place.ts\'s twin does');
   assert.ok(read('ui', 'webview', 'anchor-map.ts').includes('const isFigureCompanion = (n: DNode): boolean => hasClass(n, "fv-figerr") || hasClass(n, "fv-figopen");'));
   // reader-place.ts's CONTROL_CLASSES is not copied here: a byte copy of the list pinned its contents and not whether a walk reads
-  // them (the file review's landing round's second read, correctness-1, dropped the two other copies; this third one went with
+  // them (the file review's round 8, correctness-1, dropped the two other copies; this third one went with
   // them). The entry's execution is md-config-figure-gate-place.test.ts's labelled scene, its count word file-figure-open.test.ts's
   // derived pin, and the structural exclusion file-view-place-blocks.test.ts's top-level figure.
   assert.ok(viewer.includes('const n = (figureControlAfter(anchor) || anchor).nextSibling;'), 'the label lookup steps past the control');
@@ -296,7 +296,7 @@ test('L3: the control\'s words are the viewer\'s literal, quoted by the section 
     assert.ok(css.includes('\n' + REVEAL + '\n'), name + ': the reveal under screen');
     assert.ok(css.includes('\n' + NOHOVER), name + ': no hover keeps it visible, under screen');
     // the closed set: outside `@media screen` exactly the rest, the hover background and the float twins, none a reveal, and every
-    // other rule line under screen (the file review's landing round's second read, fresh-4: the guard before it matched two opacity spellings,
+    // other rule line under screen (the file review's round 8, fresh-4: the guard before it matched two opacity spellings,
     // so a reveal spelled any other way outside screen passed it)
     assert.deepEqual(lines[name].filter((l) => !l.startsWith('@media screen')), [REST, HOVER_BG, LEFT, RIGHT], name + ': the rule lines outside `@media screen` are exactly the rest, the hover background and the float twins; any other line there is a reveal outside screen');
     assert.deepEqual(lines[name].filter((l) => l.startsWith('@media screen')), [REVEAL, NOHOVER], name + ': the rule lines under screen are the reveal and the no-hover rule');
@@ -483,7 +483,7 @@ test('the re-aimed sentence: its count is the number of pre-existing test module
   }, '; the re-aimed count is held to the sentence\'s own list alone here');
 });
 
-// ── the browser legs in the job that gates a landing (the file review's landing round's second read, extra8-2) ─────────────────────
+// ── the browser legs in the job that gates a landing (the file review's round 8, extra8-2) ─────────────────────
 
 /** The follow-on's browser legs, derived from the tree: the `*-browser.test.ts` modules under ui/webview whose own text names the
  *  follow-on (claimants, above). Two derivations must agree: the Tests paragraph's list of browser modules is the same set. */
@@ -493,7 +493,7 @@ const browserLegs = () => claimants(['ui', 'webview'], /-browser\.test\.ts$/);
  *  no node_modules, so the compiler's comment ranges (ui/test-code-only.ts) are out of reach here. A comment opened after code
  *  on its line stays: a `launch(` quoted there reds the launch check, the safe side and never a false green, and an import
  *  quoted there is not at a line's start, which the import check requires (the author's closing pass after the file review's
- *  landing round's second read: the checks had read the raw source with an unanchored import regex and one launch spelling, so a
+ *  round 8: the checks had read the raw source with an unanchored import regex and one launch spelling, so a
  *  leg with the import in a comment and a private `pw["chromium"]["launch"]()` was green). */
 const codeLines = (src) => {
   const out = []; let inBlock = false;
@@ -588,7 +588,7 @@ test('the follow-on\'s browser legs run in the job that gates a landing: the ste
   assert.ok(!/\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|\d+) browser legs\b/i.test(sentence), 'the sentence counts no legs (the roster is derived here, never typed there): ' + sentence);
   // the roster against the delta, behind L6's gate: a browser leg the branch adds or modifies whose text names no follow-on is in
   // the roster of no step and named in no record while the two text-keyed derivations above agree (the author's closing pass after
-  // the file review's landing round's second read: a committed quiet leg left this test green and only L6's count red)
+  // the file review's round 8: a committed quiet leg left this test green and only L6's count red)
   assert.deepEqual(legsOffRoster(['ui/webview/zz-quiet-browser.test.ts', 'ui/webview/file-trail-browser.test.ts', 'ui/webview/file-trail.test.ts', 'docs/guide.md'], ['file-trail-browser.test.ts']), ['zz-quiet-browser.test.ts'], 'the comparison, driven: a browser leg in the delta and not in the roster is named; a leg in both, a node module and a doc are not');
   gated(t, LEGS_CHECK, (d) => {
     const inTree = d.files.filter((f) => exists(...f.split('/')));
@@ -653,7 +653,7 @@ test('L6\'s gate (the file review\'s round 5, tests-7): a pure function over git
 
 // ── the stand-down sentence, held to the checks that stand down ────────────────────────────────────
 
-test('the plan\'s stand-down sentence is a rule over the checks keyed on the delta since the merge-base, and its count is derived: the number word equals the checks this module ran through `gated` plus the attribution module\'s exported count, each check is named in it, and it says they run in no checkout that gates landing and in none after the merge; deltaOf over this repository is called through `gated` alone, and every held-off diagnostic names its check (the file review\'s landing round\'s second read, extra6-1: the sentence had named two of three and its pin held the bytes, so the short enumeration could never go red)', () => {
+test('the plan\'s stand-down sentence is a rule over the checks keyed on the delta since the merge-base, and its count is derived: the number word equals the checks this module ran through `gated` plus the attribution module\'s exported count, each check is named in it, and it says they run in no checkout that gates landing and in none after the merge; deltaOf over this repository is called through `gated` alone, and every held-off diagnostic names its check (the file review\'s round 8, extra6-1: the sentence had named two of three and its pin held the bytes, so the short enumeration could never go red)', () => {
   // this module's own source, its `//` comment lines dropped (the tools job runs without the compiler, so ui/test-code-only.ts is
   // out of reach); a block comment or a comment after code quoting one of the two calls counts here and reds this test, a false
   // red and never a false green, which the message then explains

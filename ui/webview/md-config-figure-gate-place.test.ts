@@ -185,7 +185,7 @@ test("readPlace: an html block whose figure the gate wrapped reads as its block,
   assert.equal(doc.slice(q!.start, q!.end), PARA(2));
 });
 
-test("readPlace: a loaded figure's Open the picture control carrying a text node of its own, beside the img inside the block's <p>, still reads as the html block, the control's text skipped as the anchor map skips it: the executed case of reader-place.ts's fv-figopen entry (the file review's landing round's second read, extra9-1: without the entry the text read counts the label against a parse of the source reading nothing and refuses the pairing, so readPlace answers null; the glyph-only scenes above read the same with the entry and without it)", () => {
+test("readPlace: a loaded figure's Open the picture control carrying a text node of its own, beside the img inside the block's <p>, still reads as the html block, the control's text skipped as the anchor map skips it: the executed case of reader-place.ts's fv-figopen entry (the file review's round 8, extra9-1: without the entry the text read counts the label against a parse of the source reading nothing and refuses the pairing, so readPlace answers null; the glyph-only scenes above read the same with the entry and without it)", () => {
   const html = `<p><img src="${LOADED}" alt="fig"></p>`;
   const doc = docWith(html);
   const spans = sourceBlockSpans(doc);

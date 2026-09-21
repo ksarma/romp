@@ -1,7 +1,8 @@
 // The rounds the link-navigation follow-on's records name, held to the section's own convention (plans/markdown-viewer.md,
 // "Follow-on: Link navigation (2026-09-19)", the opening paragraph). The convention: the branch's adversarial review before
 // the PR ran two rounds, "the review's round 1 and round 2"; the maintainer's review of the PR is "the file review", with the
-// rounds it has ruled enumerated there; the author's own verification after each round's fixes is "the author's closing pass
+// rounds the maintainer has numbered enumerated there by number (the one home of the allowed set, which this module reads
+// off the paragraph's list and never types); the author's own verification after each round's fixes is "the author's closing pass
 // after that round", never a round, and its findings carry the ids the convention lists (behaviour-N, records-N, coverage-N,
 // guards-N, attribution-and-gates-N, reader-N and tree-N), which no fixlist of the file review holds. The file review's round 3 (tests-2) asked for a pin over the population of these attributions, and
 // its round 4 (rules-1) re-ruled the pin onto the STRUCTURAL rule: the pin built after the file review's round 3 matched one
@@ -167,21 +168,25 @@ const sectionLine = plan.slice(0, sectionStart).split("\n").length;
 const sectionUnits = (): Unit[] => proseUnits(sectionText).map((u) => ({ ...u, line: u.line + sectionLine - 1, endLine: u.endLine + sectionLine - 1, starts: u.starts.map((s) => ({ line: s.line + sectionLine - 1, at: s.at })) }));
 
 export type Reviews = { branch: Set<number>; file: Set<number>; ids: string[] };
-/** What the convention paragraph gives each review: the branch's review "round 1 and round 2", the file review "round 1 to
- *  round N", and the id family of the author's passes. Asserts the paragraph states all three and names the pass as never a
- *  round. */
+/** What the convention paragraph gives each review: the branch's review "round 1 and round 2", the file review the rounds
+ *  the paragraph lists by number ("rounds 1, 2 and 3 are the rounds the convention enumerates", the maintainer's numbering, the
+ *  one home of the allowed set), and the id family of the author's passes. Asserts the paragraph states all three and names
+ *  the pass as never a round. */
 export function conventionOf(paragraph: string): Reviews {
   const branch = /named below as the review's round 1 and round 2;/.exec(paragraph);
   assert.ok(branch, "the convention names the branch's review's two rounds");
-  const file = /are named the file review's round 1 to round (\d+), the rounds it has ruled/.exec(paragraph);
-  assert.ok(file, "the convention enumerates the file review's rounds (round 1 to round N)");
+  // the file review's rounds are the numbers the paragraph lists, read off that list and never a ceiling typed here: a paragraph
+  // without the list fails loudly, and so does a list that is not ascending from 1
+  const file = /the file review's rounds ((?:\d+, )*\d+ and \d+) are the rounds the convention enumerates/.exec(paragraph);
+  assert.ok(file, "the convention enumerates the file review's rounds by number, as \"the file review's rounds 1, 2 and 3 are the rounds the convention enumerates\"; the paragraph carries no such list, so the allowed set cannot be read");
+  const listed = file![1].split(/, | and /).map(Number);
+  assert.equal(listed[0], 1, "the enumeration starts at the first round: " + file![1]);
+  for (let i = 1; i < listed.length; i++) assert.ok(listed[i] > listed[i - 1], "the enumeration is ascending, each round once: " + file![1]);
   const ids = /is named the author's closing pass after that round, never a round of either review, and its findings carry the ids ((?:[a-z]+(?:-[a-z]+)*-N(?:, | and ))+)/.exec(paragraph);
   assert.ok(ids, "the convention names the author's passes as passes, never rounds, with their id family");
-  const n = Number(file![1]);
-  assert.ok(n >= 1 && n < 100, "a plausible count of file-review rounds: " + n);
   const family = Array.from(ids![1].matchAll(/([a-z]+(?:-[a-z]+)*)-N/g), (m) => m[1]);
   assert.ok(family.length >= 1, "the id family: " + JSON.stringify(family));
-  return { branch: new Set([1, 2]), file: new Set(Array.from({ length: n }, (_, i) => i + 1)), ids: family };
+  return { branch: new Set([1, 2]), file: new Set(listed), ids: family };
 }
 
 type Who = "file" | "branch" | "other" | "pass";
@@ -503,6 +508,17 @@ test("the convention: the branch's review has rounds 1 and 2, the file review's 
   assert.deepEqual([...r.branch], [1, 2]);
   assert.ok(r.file.size >= 4 && r.file.has(1) && r.file.has(r.file.size), "the file review's rounds 1 to " + r.file.size);
   assert.deepEqual(r.ids, ["behaviour", "records", "coverage", "guards", "attribution-and-gates", "reader", "tree"]);
+  // the allowed set is the paragraph's list, whatever its length, and a paragraph the reader cannot parse fails loudly (the
+  // probes' digits stand behind a call, since this module reads its own literals on road 1)
+  const d = (k: number): number => k;
+  const listOf = (ks: number[]): string => ks.slice(0, -1).join(", ") + " and " + ks[ks.length - 1];
+  const paragraphOf = (list: string): string => "named below as the review's round 1 and round 2; the file review's rounds " + list + " are the rounds the convention enumerates; is named the author's closing pass after that round, never a round of either review, and its findings carry the ids behaviour-N and records-N, which";
+  assert.deepEqual([...conventionOf(paragraphOf(listOf([d(1), d(2), d(3)]))).file], [1, 2, 3], "three rounds listed: three allowed");
+  assert.deepEqual([...conventionOf(paragraphOf(listOf([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map(d)))).file], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], "eleven listed: eleven allowed, no ceiling typed here");
+  assert.throws(() => conventionOf(paragraphOf(listOf([d(2), d(3)]))), /starts at the first round/, "a list that skips the first round is refused");
+  assert.throws(() => conventionOf(paragraphOf(listOf([d(1), d(3), d(2)]))), /is ascending, each round once/, "a list out of order is refused");
+  assert.throws(() => conventionOf(paragraphOf(listOf([d(1), d(2), d(2)]))), /is ascending, each round once/, "a repeated round is refused");
+  assert.throws(() => conventionOf(paragraphOf("one to nine")), /carries no such list/, "a paragraph without the numbered list fails loudly");
   const two: Reviews = { branch: new Set([1, 2]), file: new Set([1, 2, 3, 4]), ids: ["behaviour", "records", "coverage"] };
   // a phrase in the section is charged to the plan line that carries it: the section's last paragraph's last word stands at
   // the end of the plan line lineAt names (the starts follow the section's offset; the author's closing pass after the file
@@ -698,6 +714,7 @@ test("road 2's gate (the file review's round 5, tests-7): a pure function over g
   assert.deepEqual(gateOf("aaaa", "bbbb", ["other.ts"], M), { ran: false, held: "the diff does not add the module" });
   assert.deepEqual(gateOf("aaaa", "bbbb", ["other.ts", M], M), { ran: true, held: null });
   const reviews = convention();
+  const beyond = Math.max(...reviews.file) + 1;   // a round past the enumeration, whatever its last member: the plant's round
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "linknav-gate-"));
   try {
     const git = (...args: string[]): string => execFileSync("git", ["-C", repo, "-c", "user.email=t@example.test", "-c", "user.name=t", ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
@@ -708,7 +725,7 @@ test("road 2's gate (the file review's round 5, tests-7): a pure function over g
     const forkPoint = git("rev-parse", "HEAD");
     git("checkout", "-q", "-b", "feature");
     write(M, "// nothing named here\n");
-    write("tracked.md", "A paragraph.\n\nThe file review's round " + n(9) + " found it.\n");
+    write("tracked.md", "A paragraph.\n\nThe file review's round " + beyond + " found it.\n");
     git("add", "-A"); git("commit", "-q", "-m", "the branch");
     git("checkout", "-q", "main");
     write("other.md", "Main moved on.\n");
@@ -725,7 +742,7 @@ test("road 2's gate (the file review's round 5, tests-7): a pure function over g
     assert.deepEqual(ran.created, [M], "the diff adds the module");
     assert.deepEqual(ran.touched, ["tracked.md"], "and modifies the tracked file");
     assert.equal(ran.faults.length, 1, "the planted round on the added line is charged: " + JSON.stringify(ran.faults));
-    assert.match(ran.faults[0], new RegExp("^tracked\\.md:3 .*round " + n(9) + " is not one the convention enumerates"), "at its own line, with the reason (the digits behind the call: this module reads its own regex literals)");
+    assert.match(ran.faults[0], new RegExp("^tracked\\.md:3 .*round " + beyond + " is not one the convention enumerates"), "at its own line, with the reason (the digits behind a value: this module reads its own regex literals)");
     // an uncommitted edit is charged too (the working tree against the merge-base), and a valid line is not
     write("tracked.md", "A paragraph.\n\nThe file review's round " + n(2) + " found it.\n");
     assert.deepEqual(roadTwo(repo, reviews, M).faults, [], "the valid round on the uncommitted edit passes");
@@ -738,7 +755,7 @@ test("road 2's gate (the file review's round 5, tests-7): a pure function over g
     // a later branch cut from main after the follow-on landed, main moved past its fork point: the branch adds another file
     // and not the module, so the module part holds
     git("checkout", "-q", "-b", "later", mainTip);
-    write("later.md", "The file review's round " + n(9) + " found it.\n");
+    write("later.md", "The file review's round " + beyond + " found it.\n");
     git("add", "later.md"); git("commit", "-q", "-m", "later");
     git("checkout", "-q", "main");
     write("other.md", "Main moved on.\n\nAnd again.\n");
@@ -753,7 +770,7 @@ test("road 2's gate (the file review's round 5, tests-7): a pure function over g
   }
 });
 
-test("ROAD_TWO_GATED_CHECKS is derived from this module's own code, never typed alone: the count of calls of roadTwo over REPO in the code, its comment units blanked (source-units' comments, the compiler's ranges), equals the export, and the merge-base is read in roadTwo alone, so a second check keyed on the delta added here without the export following is red here and not only in the plan's sentence (the author's closing pass after the file review's landing round's second read: the export was a typed count held to the plan's word and to nothing in this module)", () => {
+test("ROAD_TWO_GATED_CHECKS is derived from this module's own code, never typed alone: the count of calls of roadTwo over REPO in the code, its comment units blanked (source-units' comments, the compiler's ranges), equals the export, and the merge-base is read in roadTwo alone, so a second check keyed on the delta added here without the export following is red here and not only in the plan's sentence (the author's closing pass after the file review's round 8: the export was a typed count held to the plan's word and to nothing in this module)", () => {
   const blank = (text: string): string => { let code = text; for (const c of comments(text, THIS_MODULE)) code = code.slice(0, c.pos) + code.slice(c.pos, c.end).replace(/[^\n]/g, " ") + code.slice(c.end); return code; };
   const src = read(THIS_MODULE);
   const code = blank(src);

@@ -2751,8 +2751,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // the kernel's /file URL in a tab, as a PDF's modified click does (openFileTab; a blocked popup falls through to the viewer),
   // and stops before the row, as a link's modified click does. A remote picture (an http source) opens in a tab and never in
   // the viewer: the control, and the plain click and the Cmd/Ctrl-click where the press reaches the picture, all hand its own
-  // address to openUrlTab (the file review's round 2, extra5-3: the record had named the first two gestures alone; its landing
-  // round's second read, fresh-1: the two clicks had stood with no condition while the open panel's overlay takes them on a fine pointer).
+  // address to openUrlTab (the file review's round 2, extra5-3: the record had named the first two gestures alone; its round 8,
+  // fresh-1: the two clicks had stood with no condition while the open panel's overlay takes them on a fine pointer).
   // A failed figure opens nothing on any gesture (figureTarget).
   // The control's click is the figure's own wherever it stands (and it never stands inside a link: decideFigureControl puts it
   // after a link holding the figure alone and adds none inside any link holding more, linkAbove). The figure's own click yields
