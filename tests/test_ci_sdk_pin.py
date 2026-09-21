@@ -1347,7 +1347,8 @@ class PopulationCheckReds(unittest.TestCase):
         self.assertEqual([i["namesakes"] for i in new], [[], []])
         # two unnamed steps are not namesakes: an unnamed step cannot be listed, and each is named at its own line
         unnamed, first = self._with_step_in_shell_job("      - run: python -m pytest tests/test_a.py -q\n      - run: python -m pytest tests/test_b.py -q\n")
-        self.assertEqual([verdict(i) for i in self._new(unnamed)], ["unlisted", "unlisted"])
+        self.assertEqual([verdict(i) for i in self._new(unnamed)], ["unlisted", "unlisted"],
+                         "keyed on the verdict: two unnamed steps share the placeholder, not a name, so neither is ambiguous")
 
     def test_every_invocation_under_a_listed_key_is_kept_for_the_premise_checks(self):
         # the served step with a second pytest line in its run block, unflagged: the grouping ListedInvocations reads
@@ -1357,7 +1358,8 @@ class PopulationCheckReds(unittest.TestCase):
         src = self.src.replace(served_line[0] + "\n", served_line[0] + "\n          python -m pytest tests/test_other_served.py -q\n", 1)
         by_key = invocations_by_key(pytest_invocations(src))
         self.assertEqual([verdict(i) for i in by_key[SERVED_STEP]], ["listed", "unlisted"], [_describe(i) for i in by_key[SERVED_STEP]])
-        self.assertEqual([i["args"].strip() for i in by_key[SERVED_STEP]][1], "tests/test_other_served.py -q")
+        self.assertEqual([i["args"].strip() for i in by_key[SERVED_STEP]][1], "tests/test_other_served.py -q",
+                         "keyed on the grouping keeping the second pytest line's own arguments under the listed key")
 
     def test_a_second_pytest_command_on_the_same_run_line_is_read_and_judged_on_its_own(self):
         # Until 2026-09-21 the command regex took the rest of the line as the first command's arguments, so a second
@@ -1424,7 +1426,8 @@ class PopulationCheckReds(unittest.TestCase):
                 ("a -k x#y ; b", ["a -k x#y", "b"]),
                 ("", [])):
             with self.subTest(line=line):
-                self.assertEqual(_shell_commands(line), segments)
+                self.assertEqual(_shell_commands(line), segments, "keyed on the split at &&, ||, ;, |, a lone &, a subshell's "
+                                 "parentheses and an unquoted comment, with quotes, $( ) and redirections kept whole")
 
     def test_a_pytest_mention_the_parser_does_not_read_as_a_command_is_unparsed_and_named(self):
         # the parser's limits fail loud: each form it does not read is red until it is read (or moved to a comment)
