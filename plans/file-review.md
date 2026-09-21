@@ -4654,6 +4654,31 @@ document stands on its own, each with the reasoning it was given.
     substitution in a printer's operand), `bash -c "$x" _ a b` (an expansion before further words), `${#-cp} a b` (a
     `-` form over a special parameter); `bash -c "$x"` alone stays the residual and `bash -c "${x:-..}"` the fifth
     commit's stated cost: two spellings, two rules, each stated.
+    ROUND 6, SEVENTH COMMIT (2026-09-21; the round's three verifiers on the sixth commit's head, an attack lens, a
+    residuals lens and the body auditor). A regression, an unsound reading and the round's pre-existing allows, the
+    mechanism fixed and the rest disclosed as rows. THE SPLICED PRINTER (printerOf, splicedPrinter, splicedOutput):
+    the sixth commit read printerOf on the raw words, so a command name that is an expansion was a head no printer,
+    a null the caller read as no printer, and `e=echo; $e 'cp a b' | bash` was allowed while every shell ran the
+    printed text, where the round-5 head had refused it by name; the head candidate is resolved and the segment
+    read again with each text spliced BEFORE printer-ness is decided (the order the writer, consumer and passthrough
+    heads already had), so a resolved echo or printf head is the printer and its printed text is read, a text no
+    candidate makes a printer staying null. THE UNSOUND UNICODE (shellEscapes): zsh renders a bare `\u` or `\U` (no
+    hex digit) as a NUL that command substitution drops, so the script the shell ran was the text before it while the
+    reader modelled the two characters; every `\u` and `\U`, bare or with hex, is now Undecodable for every reader.
+    THE SHADOWED BUILTIN and THE DEFINITION'S NAME: a function the command defines under a builtin's name (cd, pushd,
+    popd, chdir) runs through THE CALLED BODY, not the builtin, and the name of a `name()` definition moves nothing.
+    THE PARAMETER TABLES: zsh's `aliases`, `galiases` and `saliases` bind an alias as `alias`, `alias -g` and
+    `alias -s` do and `commands` a hashed path as `hash` does, keyed and whole-array forms. THE COMPOSED VALUE: a
+    value whose expansions are names the command gives values (`c=$1`, `c="$*"`, `c=$d`) stands for their
+    composition, so a positional laundered through a name and split by the shell is read, a top-level `set` seeded
+    into the candidates. THE POSITIONAL LIST'S SPELLINGS: `${@:N}`, `${@:N:M}`, zsh's `$argv` and `${@[N,M]}` read
+    as the list. THE EMPTY ALTERNATIVE among a call's operands is judged under bash's reading and zsh's. The head
+    splice reconstructs its siblings from a resolved word's text, not its raw spelling, so a `"$@"` already expanded
+    is not re-expanded. Every remaining allow-and-write the verifiers measured is a residual table row with its
+    writers: the positional operator forms, a file the command writes then runs through a substitution or a
+    process substitution, a decode, an inner shell's output, fakeroot and rbash, a producer outside the output
+    model (a `bash -c cat` in a pipe, zsh's `print`, a NULLCMD here-string, a cat of a process substitution), and
+    python's os.rename, os.replace, an exec'd write and an aliased open.
     THE RESIDUAL PROPERTY. The guard refuses a write only when it resolves the command to a writer it models (the
     writer cases of extract's switch, a write redirection, an interpreter's write call it scans) reached through a
     road it reads (the wrapper set, the shells' script roads, the readings of the resolver, the alias and hash roads),

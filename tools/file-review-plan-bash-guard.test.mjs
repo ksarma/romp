@@ -107,7 +107,7 @@ test('decision 47 states what passes, and the hook agrees: reads, opaque command
   assert.ok(hook.includes("const NUMERIC_EXPANSIONS = ['$$', '${$}'];"), 'the numeric set is the two spellings of the process id');
   assert.ok(!/NUMERIC_EXPANSIONS = \[[^\]]*(RANDOM|SECONDS|BASHPID)/.test(hook) && !/['"](RANDOM|SECONDS|BASHPID)['"]/.test(hook), 'no other name is in the set, and no code names one');
   assert.ok(!hook.includes('KEEPS_NUMERIC_SPECIALS') && !hook.includes('POSIX_SH_NUMERIC') && !hook.includes('numericSetFor'), 'the per-shell table is gone');
-  assert.ok(hook.includes('for (const t of scriptTexts(sh.script, `\\`${name} -c\\` script`)) recurse(t, name, undefined,') && hook.includes("recurse(body, name, undefined, '', [])") && hook.includes('lex(command, shell, ifsNamed ? { ifsNamed: true } : {})') && hook.includes("const ANSI_C_SHELLS = new Set(['bash', 'zsh']);"), 'a script handed to a shell is lexed as that shell reads `$\'...\'` (the lexer takes the IFS mark since round 6\'s fourth commit)');
+  assert.ok(hook.includes('for (const t of scriptTexts(sh.script, `\\`${name} -c\\` script`)) recurse(t, name, undefined,') && hook.includes("recurse(body, name, undefined, '', [])") && hook.includes('const lexOpts = ifsNamed ? { ifsNamed: true } : {};') && hook.includes('let lexed = lex(command, shell, lexOpts);') && hook.includes("const ANSI_C_SHELLS = new Set(['bash', 'zsh']);"), 'a script handed to a shell is lexed as that shell reads `$\'...\'` (the lexer takes the IFS mark since round 6\'s fourth commit)');
   assert.ok(d47.includes('`$\'...\'` is ANSI-C quoting in bash and zsh, a literal word') && hook.includes('function ansiC(body)') && hook.includes("if (e.kind === 'ansi') {"), 'ANSI-C quoting');
   // the target's own project, asked first for every target the hook can place (round 2 for a numeric one, round 3 for
   // every unreadable word and for a relative spelling), and the fold judged as the kernel opens the path
@@ -749,7 +749,7 @@ test("round 6, sixth commit: decision 47 and the hook header record the applied 
   }
   for (const fn of ['printerOf', 'shapeOnPrinter', 'closerOutput', 'paramAssigns', 'optionWord', 'readShell', 'bindPositionals', 'positionalWords', 'expandPositionals', 'setOperands', 'positionalsApply', 'functionLines', 'braceEmpty', 'shellOptionWord', 'UNKNOWN_POSITIONALS']) assert.ok(hook.includes(fn), `the hook has ${fn}`);
   assert.ok(hook.includes("if (k < args.length - 1) return done({ optionWord: args[k], at: k });"), "shellScript hands an expansion in option position back to the walk (pinned by execution in the sixth commit's rows test)");
-  assert.ok(hook.includes("if (fnName != null && !fnChain.has(fnName)) recurse(functionBodies.get(fnName), shell, false,"), 'the called body replays for every call (pinned by execution in the rows test)');
+  assert.ok(hook.includes("if (fnName != null && !fnChain.has(fnName)) for (const callArgs of callVariants) recurse(functionBodies.get(fnName), shell, false,"), 'the called body replays for every call (pinned by execution in the rows test)');
   const flat = hook.replace(/\/\//g, ' ').replace(/\s+/g, ' ').toLowerCase();
   assert.ok(flat.includes("a function's call of itself, which the replay does not follow again"), "the property's second class names the self-call");
   assert.ok(flat.includes('a positional parameter of a script handed to a fresh shell with arguments of its own'), "the property's third class names a fresh shell's positional parameters");

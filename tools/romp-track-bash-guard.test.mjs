@@ -7111,9 +7111,9 @@ test("round 6, the rows: the four readings round 5 found allowing a write the ba
       // (4) THE SPLIT OPERAND inside double quotes: every `@` form of every shell, zsh's splitting flags, and the single-field twins
       ['R6-S-at', 'nad', `set -- ../base/report.md report.md; cp "$@"`, A, 'name'],   // round 6's sixth commit (THE POSITIONAL VALUE): the `set --` binds them and `"$@"` stands for the operands, so the copy is refused by name (as split before)
       ['R6-S-brace-at', 'nad', `set -- ../base/report.md report.md; cp "\${@}"`, A, 'name'],
-      ['R6-S-at-offset', 'nad', `set -- x ../base/report.md report.md; cp "\${@:2}"`, BZ, ['text', SPLIT]],
-      ['R6-S-at-offset-len', 'nad', `set -- ../base/report.md report.md x; cp "\${@:1:2}"`, BZ, ['text', SPLIT]],
-      ['R6-S-at-strip', 'nad', `set -- x../base/report.md xreport.md; cp "\${@#x}"`, BZ, ['text', SPLIT]],
+      ['R6-S-at-offset', 'nad', `set -- x ../base/report.md report.md; cp "\${@:2}"`, BZ, 'name'],   // round 6's seventh commit reads the slice `${@:2}` as the list (THE POSITIONAL LIST'S SPELLINGS), so the copy is refused by name, not left as split
+      ['R6-S-at-offset-len', 'nad', `set -- ../base/report.md report.md x; cp "\${@:1:2}"`, BZ, 'name'],   // and `${@:1:2}` the same
+      ['R6-S-at-strip', 'nad', `set -- x../base/report.md xreport.md; cp "\${@#x}"`, BZ, ['text', SPLIT]],   // an operator form over `@` stays a split operand (no table row reads it)
       ['R6-S-at-subst', 'nad', `set -- ../base/report.md report.mX; cp "\${@/mX/md}"`, BZ, ['text', SPLIT]],
       ['R6-S-arr-at', 'nad', `arr=(../base/report.md report.md); cp "\${arr[@]}"`, BZ, ['text', SPLIT]],
       ['R6-S-arr-at-offset', 'nad', `arr=(x ../base/report.md report.md); cp "\${arr[@]:1}"`, BZ, ['text', SPLIT]],
@@ -7489,7 +7489,6 @@ const RESIDUAL_TABLE = [
   ['RT-glued-strip-head', 'a command name the resolver never reads', null, 'c=cp; $c${x#y} ../base/report.md report.md', ['bash', 'zsh', 'dash']],
   ['RT-glued-plus-head', 'a command name the resolver never reads', null, 'c=cp; ${x:+y}$c ../base/report.md report.md', ['bash', 'zsh', 'dash']],
   ['RT-getopts-optarg-eval', 'a script held in a variable', null, "getopts c: o -c 'cp ../base/report.md report.md'; eval \"$OPTARG\"", ['bash', 'zsh', 'dash']],
-  ['RT-declare-from-name', 'a script held in a variable', null, 'c=cp; declare d=$c; $d ../base/report.md report.md', ['bash', 'zsh']],
   ['RT-while-read-eval', 'a script held in a variable', null, "echo 'cp ../base/report.md report.md' | while read -r l; do eval \"$l\"; done", ['bash', 'zsh', 'dash']],
   ['RT-subshell-read-eval', 'a script held in a variable', null, "echo 'cp ../base/report.md report.md' | (read -r l; eval \"$l\")", ['bash', 'zsh', 'dash']],
   ['RT-subshell-read-head', 'a script held in a variable', null, "echo 'cp ../base/report.md report.md' | (read l; $l)", ['bash', 'dash']],
@@ -7528,6 +7527,40 @@ const RESIDUAL_TABLE = [
   ['RT-read-trap', 'a script held in a variable', null, "read -r t <<< 'cp ../base/report.md report.md'; trap \"$t\" EXIT", ['bash', 'zsh']],   // a `read` value as the trap action (dash has no here-string)
   ['RT-read-in-c-head', 'a script held in a variable', null, "echo 'cp ../base/report.md report.md' | bash -c 'read -r x; $x'", ['bash', 'zsh', 'dash']],   // a `read` inside the `-c` script, fed by the pipe: the name is read through a construct the resolver does not follow
   ['RT-read-in-c-eval', 'a script held in a variable', null, "echo 'cp ../base/report.md report.md' | bash -c 'read -r x; eval \"$x\"'", ['bash', 'zsh', 'dash']],
+  // round 6's seventh commit (2026-09-21; the round's three verifiers on the sixth commit's head): the members the seventh commit's rules do not
+  // read, each measured. The command-name operator forms over a POSITIONAL parameter mirror the name forms already in the table (RT-strip-prefix-head,
+  // RT-substring-head, RT-indirect-head, RT-zsh-eq-split-head, RT-array-index-head), a `${...}` operator form the resolver does not read; the head candidates
+  // and the positional value read `$N`, `${@:N}`, `$argv` and a name a positional fills, not these operator spellings of them
+  ['RT-positional-strip-head', 'a command name the resolver never reads', null, 'f() { ${1#x} ../base/report.md report.md; }; f xcp', ['bash', 'zsh', 'dash']],
+  ['RT-positional-substring-head', 'a command name the resolver never reads', null, 'f() { ${1:0:2} ../base/report.md report.md; }; f cpx', ['bash', 'zsh']],
+  ['RT-positional-eq-split-head', 'a command name the resolver never reads', null, "f() { ${=1}; }; f 'cp ../base/report.md report.md'", ['zsh']],
+  ['RT-positional-indirect-head', 'a command name the resolver never reads', null, 'f() { ${!1} ../base/report.md report.md; }; c=cp; f c', ['bash']],
+  ['RT-positional-argv-index-head', 'a command name the resolver never reads', null, 'f() { $argv[1] $argv[2] $argv[3]; }; f cp ../base/report.md report.md', ['zsh']],
+  // a script the shell reads from a text the command wrote or a substitution the resolver does not follow into: the outer shell runs a script the
+  // hook does not see (a file written then read through `$(cat)`, a `<(..)`, a here-string or `$(<..)`; a decode; an inner shell's output; a written
+  // file run as `bash FILE`), and a wrapper or a shell outside the set (fakeroot, rbash), each a reader outside the roads
+  ['RT-c-sub-written', 'a reader outside the roads', null, "printf '%s\\n' 'cp ../base/report.md report.md' > ../scratch/s; bash -c \"$(cat ../scratch/s)\"", ['bash', 'zsh', 'dash']],
+  ['RT-procsub-written', 'a reader outside the roads', null, "printf '%s\\n' 'cp ../base/report.md report.md' > ../scratch/s; bash <(cat ../scratch/s)", ['bash', 'zsh']],
+  ['RT-herestring-written', 'a reader outside the roads', null, "printf '%s\\n' 'cp ../base/report.md report.md' > ../scratch/s; bash <<< \"$(cat ../scratch/s)\"", ['bash', 'zsh']],
+  ['RT-source-procsub-written', 'a reader outside the roads', null, "printf '%s\\n' 'cp ../base/report.md report.md' > ../scratch/s; . <(cat ../scratch/s)", ['bash', 'zsh']],
+  ['RT-c-dollarlt-written', 'a reader outside the roads', null, "printf '%s\\n' 'cp ../base/report.md report.md' > ../scratch/s; bash -c \"$(< ../scratch/s)\"", ['bash', 'zsh']],
+  ['RT-c-base64', 'a reader outside the roads', 'base64', "bash -c \"$(base64 -d <<< Y3AgLi4vYmFzZS9yZXBvcnQubWQgcmVwb3J0Lm1k)\"", ['bash', 'zsh']],   // the decoded bytes are `cp ../base/report.md report.md`; dash has no here-string, so base64 reads nothing
+  ['RT-c-inner-bash', 'a reader outside the roads', null, "bash -c \"$(bash -c 'echo cp ../base/report.md report.md')\"", ['bash', 'zsh', 'dash']],
+  ['RT-run-written', 'a reader outside the roads', null, "printf '%s\\n' 'cp ../base/report.md report.md' > ../scratch/x.sh; bash ../scratch/x.sh", ['bash', 'zsh', 'dash']],
+  ['RT-fakeroot', 'a reader outside the roads', 'fakeroot', 'fakeroot cp ../base/report.md report.md', ['bash', 'zsh', 'dash']],
+  ['RT-rbash', 'a reader outside the roads', 'rbash', "rbash -c 'cp ../base/report.md report.md'", ['bash', 'zsh', 'dash']],
+  // a pipe into a shell from a producer that is no literal echo or printf, or a substitution running such a producer (a `bash -c cat` in the pipe,
+  // zsh's `print`, a NULLCMD here-string the substitution runs, a cat of a process substitution): a producer outside the output model
+  ['RT-pipe-c-cat', 'a producer outside the output model', null, "echo 'cp ../base/report.md report.md' | bash -c 'cat' | bash", ['bash', 'zsh', 'dash']],
+  ['RT-print-zsh', 'a producer outside the output model', null, "print 'cp ../base/report.md report.md' | zsh", ['zsh']],   // print is zsh's builtin; bash and dash have no print, so nothing is piped
+  ['RT-nullcmd-c', 'a producer outside the output model', null, "zsh -c \"$(<<<'cp ../base/report.md report.md')\"", ['zsh']],   // zsh runs a redirection-only command as NULLCMD (cat); bash and dash print nothing there
+  ['RT-procsub-cat-procsub', 'a producer outside the output model', null, "bash <(cat <(printf 'cp ../base/report.md report.md'))", ['bash', 'zsh']],
+  // python write forms the interpreter scanner does not read (it reads open(...,'w'), Path.write_*, shutil.copy*, os.truncate and os.open+os.write):
+  // os.rename, os.replace, a write inside an exec() string, and an aliased open, each a write form of a program the hook models
+  ['RT-python-rename', 'a writer outside the model', 'python3', 'python3 -c \'import os; os.rename("../base/report.md", "report.md")\'', ['bash', 'zsh', 'dash']],
+  ['RT-python-replace', 'a writer outside the model', 'python3', 'python3 -c \'import os; os.replace("../base/report.md", "report.md")\'', ['bash', 'zsh', 'dash']],
+  ['RT-python-exec-open', 'a writer outside the model', 'python3', 'python3 -c \'exec("open(\\"report.md\\", \\"w\\").write(\\"x\\")")\'', ['bash', 'zsh', 'dash']],
+  ['RT-python-aliased-open', 'a writer outside the model', 'python3', 'python3 -c \'x=open; x("report.md", "w").write("x")\'', ['bash', 'zsh', 'dash']],
 ];
 test("round 6, second commit, THE RESIDUAL TABLE: every shape the round could name that still reaches a tracked file, run through the hook (allowed) and the shells (the writers as measured), each under a class of THE RESIDUAL PROPERTY, and the property's paragraph on the hook header names every class", () => {
   const w = sixthPassWorld();
@@ -8503,5 +8536,124 @@ test("round 6, sixth commit, the rows: a printer with a redirection or followed 
     assert.deepEqual(targets(': ${e:=cp}; $e base/report.md docs/report.md'), [report], 'THE ASSIGNED DEFAULT is a candidate of the name');
     assert.deepEqual(targets("f() { c base/report.md docs/report.md; }\nalias c=cp\nf"), [], "an alias bound after the definition does not reach the body (the replay reads it as of the definition's line)");
     assert.deepEqual(targets('set -- cp; f() { $1 base/report.md docs/report.md; }; f cat'), [], "a body being defined has positional parameters of its own");
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+// Round 6's seventh commit (2026-09-21; the round's three verifiers on the sixth commit's head): a regression the sixth commit introduced (a
+// command name resolved to a printer before a pipe, ALLOWED while every shell ran the printed text, where the round-5 head REFUSED it by name), an
+// unsound reading (zsh renders a bare `\u`/`\U` as a NUL that command substitution drops, so the printed script was the text before it while the
+// escape reader modelled the two characters), and the round's pre-existing allows the sixth commit's rules did not read: a function under a builtin's
+// name, zsh's parameter-module tables, a positional laundered through a name and split, the positional list's slice and argv spellings, and a brace
+// list among a call's operands. Each fix pinned by execution; RED-BEFORE at 8b9f63872 (the round-5 head), where every row below was ALLOWED and the
+// shells wrote the tracked file (the splice rows refused by name at 8b9f63872 and allowed from the round's first commit d6f087cad; the rest allowed
+// at 8b9f63872 too). The zsh-only and zsh-table rows skip their shell legs on a runner without zsh; the escape decline is pinned in-process so the
+// CI runner (no zsh) catches the unsound reading anyway.
+test("round 6, seventh commit, the rows: a command name resolved to a printer is spliced before printer-ness (the regression), a bare `\\u`/`\\U` is declined by every escape reader, a function under a builtin's name runs the function, zsh's aliases/galiases/commands tables bind, a positional laundered through a name and split is read, the positional list's `${@:N}` and `$argv` spellings are read, and a brace list among a call's operands is judged under bash's reading; each with the shells that write and the twins that stay allowed", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const A = ['bash', 'zsh', 'dash'];
+    const BZ = ['bash', 'zsh'];
+    const BD = ['bash', 'dash'];
+    const B = ['bash'];
+    const Z = ['zsh'];
+    const N = [];
+    const CP = 'cp ../base/report.md report.md';
+    const COULD_NOT = 'could not establish that text';
+    // [id, cwd, command, the shells that write, the verdict: 'name', 'allow', or ['text', substring]]
+    const rows = [
+      // THE SPLICED PRINTER: the regression. A command name that is an expansion THE HEAD CANDIDATES resolve to echo or printf is the printer, so the
+      // piped or substituted text is read; refused by name where a tracked write stands in it, UNRESOLVABLE where a shape the resolver does not model
+      // (a redirection on the printer) stands on it
+      ['S7-splice-echo-pipe', 'nad', `e=echo; $e '${CP}' | bash`, A, 'name'],
+      ['S7-splice-printf-pipe', 'nad', `e=printf; $e '%s\\n' '${CP}' | bash`, A, 'name'],
+      ['S7-splice-quoted', 'nad', `e=echo; "$e" '${CP}' | bash`, A, 'name'],
+      ['S7-splice-abs', 'nad', `e=/bin/echo; $e '${CP}' | bash`, A, 'name'],
+      ['S7-splice-braced', 'nad', `e=echo; \${e} '${CP}' | bash`, A, 'name'],
+      ['S7-splice-glued', 'nad', `e=ech; \${e}o '${CP}' | bash`, A, 'name'],
+      ['S7-splice-c', 'nad', `e=echo; bash -c "$($e '${CP}')"`, A, 'name'],
+      ['S7-splice-herestring', 'nad', `e=echo; bash <<< "$($e '${CP}')"`, BZ, 'name'],
+      ['S7-splice-procsub', 'nad', `e=echo; bash <($e '${CP}')`, BZ, 'name'],
+      ['S7-splice-subshell', 'nad', `e=echo; ($e '${CP}') | bash`, A, 'name'],
+      ['S7-splice-group', 'nad', `e=echo; { $e '${CP}'; } | bash`, A, 'name'],
+      ['S7-splice-2devnull', 'nad', `e=echo; $e '${CP}' 2>/dev/null | bash`, A, ['text', COULD_NOT]],   // THE APPLIED RESOLVER on the spliced printer
+      // twins that stay as they were: a resolved writer, consumer and passthrough head still refuse; a head no candidate makes a printer is the residual
+      ['S7-twin-writer', 'nad', `e=cp; $e ${CP.slice(3)}`, A, 'name'],
+      ['S7-twin-consumer', 'nad', `e=bash; echo '${CP}' | $e`, A, 'name'],
+      ['S7-twin-cat-passthrough', 'nad', `e=cat; echo '${CP}' | $e | bash`, A, 'name'],
+      ['S7-twin-cat-file', 'nad', `e=cat; $e ../scratch/other.md | bash`, N, 'allow'],
+      // THE SHADOWED BUILTIN / THE DEFINITION'S NAME: a function under a builtin's name runs the function, not the builtin, and the definition's name moves nothing
+      ['S7-cd-fn', 'nad', `cd() { ${CP}; }; cd ..`, A, 'name'],
+      ['S7-cd-fn-dash', 'nad', `cd() { ${CP}; }; cd -`, A, 'name'],
+      ['S7-cd-fn-bare', 'nad', `cd() { ${CP}; }; cd`, A, 'name'],
+      ['S7-pushd-fn', 'nad', `pushd() { ${CP}; }; pushd ..`, A, 'name'],
+      ['S7-twin-cd-real', 'nad', `cd ../notes && cp ../base/report.md report.md`, A, 'name'],   // a real cd still moves: notes/ is tracked, the copy refuses there by name
+      ['S7-twin-function-cd', 'nad', `function cd { ${CP}; }; cd ..`, BZ, 'name'],   // dash has no `function` word (a control, refused before this commit too)
+      // THE PARAMETER TABLES: zsh's aliases/galiases/commands bind an alias or a hashed path
+      ['S7-aliases', 'nad', `zsh <<'HEOF'\naliases[c]=cp\nc ${CP.slice(3)}\nHEOF`, A, 'name'],
+      ['S7-galiases', 'nad', `zsh <<'HEOF'\ngaliases[R]=report.md\ncp ../base/report.md R\nHEOF`, A, ['text', 'global alias']],
+      ['S7-commands', 'nad', `zsh -c 'commands[c]=/usr/bin/cp; c ${CP.slice(3)}'`, A, 'name'],
+      // THE COMPOSED VALUE: a positional laundered through a name (in a called body or after a top-level `set`) and split by the shell
+      ['S7-nb-c1', 'nad', `f() { c=$1; $c ${CP.slice(3)}; }; f cp`, A, 'name'],
+      ['S7-nb-local', 'nad', `f() { local c=$1; $c ${CP.slice(3)}; }; f cp`, A, 'name'],
+      ['S7-nb-star', 'nad', `f() { c="$*"; $c; }; f ${CP}`, BD, 'name'],
+      ['S7-nb-shift', 'nad', `f() { c=$1; shift; $c "$@"; }; f ${CP}`, A, 'name'],   // THE POSITIONAL VALUE meeting THE HEAD SPLICE: the spliced operands are the shifted list, not a doubled `"$@"`
+      ['S7-set-reuse', 'nad', `set -- '${CP}'; c=$1; $c`, BD, 'name'],
+      ['S7-set-star', 'nad', `set -- ${CP}; c=$*; $c`, BD, 'name'],
+      ['S7-set-star-eval', 'nad', `set -- ${CP}; c="$*"; eval "$c"`, A, 'name'],
+      ['S7-declare-from-name', 'nad', `c=cp; declare d=$c; $d ${CP.slice(3)}`, BZ, 'name'],   // THE COMPOSED VALUE: `d=$c` composes c's value; was a residual table row until this commit read it
+      // THE POSITIONAL LIST'S SPELLINGS: the slice and argv forms read as the list; an offset of 0 is a slice the resolver does not compute
+      ['S7-pl-atN', 'nad', `f() { "\${@:1}"; }; f ${CP}`, BZ, 'name'],
+      ['S7-pl-at-offset', 'nad', `f() { "\${@:2}"; }; f x ${CP}`, BZ, 'name'],
+      ['S7-pl-argv', 'nad', `f() { "\${argv[@]}"; }; f ${CP}`, Z, 'name'],
+      ['S7-pl-argv-bare', 'nad', `f() { $argv; }; f ${CP}`, Z, 'name'],
+      ['S7-pl-atrange', 'nad', `f() { "\${@[1,-1]}"; }; f ${CP}`, Z, 'name'],
+      ['S7-pl-slice0', 'nad', `f() { "\${@:0}"; }; f ${CP}`, N, ['text', COULD_NOT]],   // a slice from 0 heads bash's list with the shell's own name: unresolvable (a false refusal on the safe side, no shell writes)
+      // THE EMPTY ALTERNATIVE among a call's operands: bash drops the empty word, so the body is judged under bash's reading too
+      ['S7-be-brace', 'nad', `f() { "$@"; }; f {cp,} ${CP.slice(3)}`, B, 'name'],
+      ['S7-be-brace2', 'nad', `f() { "$@"; }; f {,cp} ${CP.slice(3)}`, B, 'name'],
+      ['S7-be-bash', 'nad', `f() { bash "$@"; }; f {-c,} '${CP}'`, B, 'name'],
+      ['S7-twin-be-nonempty', 'nad', `f() { "$1" ${CP.slice(3)}; }; f {cp,}`, BZ, 'name'],   // a single positional, no splat: `{cp,}` is cp in every shell
+    ];
+    const judge = (id, cwd, raw, writers, expect) => {
+      const cmd = w.fill(raw);
+      const at = w.cwds[cwd];
+      w.build();
+      const h = w.hook(cmd, at);
+      assert.ok(!h.reason.includes('an error of my own'), `${id}: no internal error: ${h.reason.split('\n')[0]}`);
+      if (expect === 'allow') assert.equal(h.status, 0, `${id}: allowed: ${cmd}: ${h.reason}`);
+      else {
+        assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`);
+        assert.ok(!/\u2014/.test(h.reason) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash, no romp noun`);
+        if (expect === 'name') assert.match(h.reason, BY_NAME_RE, `${id}: by name: ${h.reason.split('\n')[0]}`);
+        else assert.ok(h.reason.includes(expect[1]), `${id}: refused, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
+      }
+      w.build();
+      assert.equal(w.hook(cmd, w.cwds.out).status, 0, `${id}: from a cwd in no project the relative write reaches no tracked file: ${cmd}`);
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+        const r = w.run(cmd, at, shell);
+        assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
+      }
+    };
+    let n = 0;
+    for (const [id, cwd, raw, writers, expect] of rows) { judge(id, cwd, raw, writers, expect); n++; }
+    assert.equal(n, 43);
+    // THE UNSOUND UNICODE, in-process (the CI runner has no zsh, so the end-to-end zsh witness cannot run there): every escape reader declines a bare
+    // `\u` and `\U` (no hex digit) by throwing Undecodable, as it declines the hex forms, so printfOutput/echoOutput make the word UNRESOLVABLE and no
+    // consumer reads a wrong text. zsh's witness, measured on this box: `zsh -f -c "printf 'report.md\\u'"` emits the bytes `report.md\0`, which a
+    // command substitution strips, so the real script under zsh is the text before the escape.
+    const declines = (reader) => { try { guard.shellEscapes('report.md\\u', reader); return false; } catch (e) { return e.constructor.name === 'Undecodable'; } };
+    for (const reader of Object.keys(guard.ESCAPE_READERS)) {
+      assert.ok(declines(reader), `${reader}: a bare \\u is declined (Undecodable)`);
+      assert.throws(() => guard.shellEscapes('report.md\\U', reader), (e) => e.constructor.name === 'Undecodable', `${reader}: a bare \\U is declined`);
+      assert.throws(() => guard.shellEscapes('report.md\\u0041', reader), (e) => e.constructor.name === 'Undecodable', `${reader}: \\u with hex is declined too (the control)`);
+    }
+    assert.deepEqual(guard.shellEscapes('a\\nb', 'format bash'), { text: 'a\nb', stopped: false }, 'an escape the reader knows is still read (a control: \\n)');
+    // the readings the fixes rest on, in-process over the scratch project
+    assert.deepEqual(targets("e=echo; $e 'cp base/report.md docs/report.md' | bash"), [report], 'THE SPLICED PRINTER: a resolved echo head before a pipe is the printer');
+    assert.deepEqual(targets('set -- cp base/report.md docs/report.md; c=$*; $c'), [report], 'THE COMPOSED VALUE: a top-level set laundered through a name');
+    assert.deepEqual(targets('f() { c=$1; shift; $c "$@"; }; f cp base/report.md docs/report.md'), [report], 'THE POSITIONAL VALUE meeting THE HEAD SPLICE: the shifted list is spliced once, not doubled');
+    assert.ok(lex("bash -c \"$(printf 'x\\u')\"").segments[0].words[2].unresolvableReading, 'a bare \\u makes the substitution word UNRESOLVABLE');
   } finally { process.env.HOME = savedHome; w.rm(); }
 });
