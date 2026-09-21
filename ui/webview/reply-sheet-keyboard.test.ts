@@ -8,11 +8,12 @@
 // than scrolled.
 //
 // The fix rides the picker's existing fold and touches no shared rule (.confirm-box and .picker-box serve seven
-// dialogs). Three CSS rules scoped to this dialog: the answer box never shrinks and holds three rows (min-height in
+// dialogs). Four CSS rules scoped to this dialog: the answer box never shrinks and holds three rows (min-height in
 // lh); the detail is the part that gives way, capped and scrolling within itself (overflow-y: auto makes it a scroll
-// container, whose automatic flex minimum is zero; min-height: 0 is belt and braces, redundant while the overflow
-// stands; #pinned-notes is the precedent); a short window pins the sheet to the top under the picker's
-// 12px frame. In each builder one closure, kbFit, toggles kb-tight on THIS window's own resize (the shell sizes the
+// container, whose automatic flex minimum is zero; #pinned-notes is the precedent) down to a floor of two of its lines
+// (the picker's list keeps one row under the fold for the same reason: a region that gives way never gives way to
+// nothing); a short window pins the sheet to the top under the picker's 12px frame; and the box scrolls at every
+// height, the backstop for a window the floors alone overflow. In each builder one closure, kbFit, toggles kb-tight on THIS window's own resize (the shell sizes the
 // pane iframe to the visible height, so the keyboard opening or closing IS a resize here; render.ts's picker keys on
 // the same event, at the same 480px), and close() removes the listener, which also removes itself when the overlay
 // was replaced by a second Reply; and a grow handler lets the box follow the answer, as the composer's growComposer
@@ -256,10 +257,11 @@ test("the answer box is a fixed flex item that holds three rows: it never absorb
   assert.match(rule(".ut-reply-input"), /padding: 7px 9px;/); assert.match(rule(".ut-reply-input"), /border: 1px solid/);
 });
 
-test("the detail is the part that gives way: it shrinks (a scroll container's flex minimum is zero), is capped, and scrolls within itself", () => {
+test("the detail is the part that gives way: it shrinks (a scroll container's flex minimum is zero) down to a floor of two lines, is capped, and scrolls within itself", () => {
   const r = rule("#ut-reply-prompt .ut-detail.open");
   assert.match(r, /flex: 1 1 auto;/);
-  assert.match(r, /min-height: 0;/, "belt and braces, not load-bearing: overflow-y: auto already zeroes a scroll container's automatic flex minimum (the detail shrinks without this in Chromium, Firefox and WebKit); kept so the shrink survives a change to the overflow declaration, as .bg-list and .cmt-msgs write it");
+  assert.match(r, /min-height: 32px; min-height: 2lh;/, "the FLOOR: two of the detail's own lines (2lh), the px value ahead of it so an engine without the lh unit falls to two lines at the default size, never to zero; without it the detail resolved to 0px at 390x508 with the answer grown (invisible, unscrollable), the dead end the picker's fold forbids its list with min-height: 52px (one row). The browser legs measure it: the detail's height is at least twice its computed line-height in every deficit state");
+  assert.doesNotMatch(r, /min-height: 0;/, "no zero floor beside the real one: the later declaration in a block wins, and the executed legs pin the floor, not this string");
   assert.match(r, /max-height: min\(12em, 35dvh\);/, "the cap: some lines of detail, never more than a third of the visible window (dvh, as the picker's fold)");
   assert.match(r, /overflow-y: auto;/, "the rest of the detail is a scroll away, never clipped (a collapsed region stays reachable)");
   assert.match(r, /overscroll-behavior: contain;/, "a swipe past its end does not scroll the box or the page under it (#pinned-notes's rule)");

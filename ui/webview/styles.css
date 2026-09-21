@@ -2964,8 +2964,13 @@ a.ut-link:hover { filter: brightness(1.12); text-decoration: none; }
    or .picker-box (seven dialogs share them): the answer box never shrinks and holds three rows (rows=3; resize:
    vertical stays), the detail is the part that gives way, capped and scrolling within itself (#pinned-notes above is
    the precedent; overflow-y: auto is what lets it shrink, the same rule that zeroes the textarea's minimum, since a
-   scroll container's automatic flex minimum is zero; min-height: 0 is belt and braces, redundant while the overflow
-   stands and kept so the shrink survives a change to it, as .bg-list and .cmt-msgs write it), and a short window (the
+   scroll container's automatic flex minimum is zero) down to a FLOOR of two of its own lines (2lh, with 32px ahead of it
+   for an engine without the lh unit: two lines at the default 13px, 0.86em at line-height 1.4): the picker's fold keeps
+   one row of its list for the same reason (.picker-overlay.kb-tight .picker-list below), a region that gives way must
+   never give way to NOTHING, invisible and unscrollable, with no sign anything was dropped; without the floor the detail
+   resolved to 0px at 390x508 once the answer had grown (the maintainer's round 1 ruling). One line would show a passage
+   as a single moving line; two is the smallest window in which a scroll visibly moves text and a link keeps a line of
+   context. The deficit past the floor goes to the box, which scrolls (the fourth rule below). And a short window (the
    keyboard up; both builders toggle kb-tight on this window's own resize, as the picker does) pins the sheet to the
    top under the picker's 12px frame so the buttons sit above the keyboard. The picker's kb-tight rules on
    .picker-overlay reach this overlay through the class it shares (the dvh cap, overflow-y auto on the box).
@@ -2977,7 +2982,7 @@ a.ut-link:hover { filter: brightness(1.12); text-decoration: none; }
    the grow handlers in both builders cap the answer at the room the box has left (read from the box, never from the
    window), so the scroll is the backstop for the state the floors alone overflow, never the everyday path. */
 #ut-reply-prompt .ut-reply-input { flex: 0 0 auto; min-height: calc(3lh + 16px); }
-#ut-reply-prompt .ut-detail.open { flex: 1 1 auto; min-height: 0; max-height: min(12em, 35dvh); overflow-y: auto; overscroll-behavior: contain; }
+#ut-reply-prompt .ut-detail.open { flex: 1 1 auto; min-height: 32px; min-height: 2lh; max-height: min(12em, 35dvh); overflow-y: auto; overscroll-behavior: contain; }
 #ut-reply-prompt.kb-tight { align-items: flex-start; padding: 12px 16px; }
 #ut-reply-prompt .picker-box { overflow-y: auto; }
 

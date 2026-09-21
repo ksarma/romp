@@ -101,10 +101,18 @@ type Rect = { top: number; bottom: number; left: number; right: number };
 type Sheet = {
   frameH: number; tight: boolean; alignItems: string; paddingTop: string;
   inputH: number; floorH: number; lineHeight: string; inputStyleH: string;
-  detailScrollH: number; detailClientH: number; detailOverflowY: string;
+  detailScrollH: number; detailClientH: number; detailOverflowY: string; detailLineH: number;
   actionsBottom: number; boxTop: number; boxBottom: number; boxScrollH: number; boxClientH: number; boxOverflowY: string;
   sendRect: Rect; cancelRect: Rect; hitAtSend: string; hitAtCancel: string; kinds: string[]; quoteChips: string[];
 };
+// a short window, where the box itself must scroll: the detail's height against its floor (two of its lines), whether it
+// scrolls within itself, whether the address on its first line is under a finger once the box is scrolled to it, and
+// whether Send is inside the clip and under a finger once the box is scrolled to its bottom
+type Short = {
+  frameH: number; tight: boolean; detailH: number; detailLineH: number; detailScrolls: boolean; linkHit: string;
+  boxScrollH: number; boxClientH: number; boxScrollTop: number; sendHitAtBottom: string; sendInBoxAtBottom: boolean;
+};
+const floorOf = (lineH: number) => 2 * lineH - 1;   // two lines, less a pixel of rounding
 const rectOf = (r: Rect) => `${r.top.toFixed(1)}..${r.bottom.toFixed(1)}`;
 const centre = (r: Rect) => ({ x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2 });
 
@@ -151,12 +159,38 @@ async function boot(browser: any) {
       frameH: window.innerHeight, tight: overlay.classList.contains("kb-tight"), alignItems: cs(overlay).alignItems, paddingTop: cs(overlay).paddingTop,
       inputH: input.clientHeight, floorH, lineHeight: cs(input).lineHeight, inputStyleH: input.style.height,
       detailScrollH: detail ? detail.scrollHeight : 0, detailClientH: detail ? detail.clientHeight : 0, detailOverflowY: detail ? cs(detail).overflowY : "",
+      detailLineH: detail ? parseFloat(cs(detail).lineHeight) : 0,
       actionsBottom: actions.getBoundingClientRect().bottom, boxTop: box.getBoundingClientRect().top, boxBottom: box.getBoundingClientRect().bottom,
       boxScrollH: box.scrollHeight, boxClientH: box.clientHeight, boxOverflowY: cs(box).overflowY,
       sendRect: rect(send), cancelRect: rect(cancel), hitAtSend: hit(send), hitAtCancel: hit(cancel),
       kinds: Array.from(box.children).map((c) => (["wt-file", "wt-link", "ut-file", "ut-link"].find((k) => c.classList.contains(k)) || (c.className || c.tagName).split(" ")[0])),
       quoteChips: Array.from(quote.querySelectorAll(".ut-file, .ut-link")).map((c) => (c.classList.contains("ut-file") ? "ut-file" : "ut-link")),
     };
+  });
+  const probeShort = (): Promise<Short> => page.evaluate(() => {
+    const overlay = document.getElementById("ut-reply-prompt")!;
+    const box = overlay.querySelector(".confirm-box") as HTMLElement;
+    const detail = overlay.querySelector(".ut-detail") as HTMLElement;
+    const send = overlay.querySelectorAll(".confirm-actions button")[1] as HTMLElement;
+    const hit = (e: HTMLElement) => {
+      const r = e.getBoundingClientRect(); const at = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2);
+      return at === e ? "target" : at === overlay ? "overlay" : at === box ? "box" : at ? ((at as HTMLElement).className || at.tagName).split(" ")[0] : "none";
+    };
+    const inBox = (e: Element) => { const r = e.getBoundingClientRect(), b = box.getBoundingClientRect(); return r.top >= b.top - 0.5 && r.bottom <= b.bottom + 0.5; };
+    box.scrollTop = 0; detail.scrollTop = 0;
+    detail.scrollIntoView({ block: "nearest" });   // the box scrolls the detail into view, as a finger would
+    const a = detail.querySelector("a") as HTMLElement | null;
+    // the address wraps at the phone's width, so the finger goes to the centre of its FIRST line fragment, not of the
+    // union rect (whose centre can fall between the fragments)
+    const first = a ? (a.getClientRects()[0] || a.getBoundingClientRect()) : null;
+    const atLink = first ? document.elementFromPoint((first.left + first.right) / 2, (first.top + first.bottom) / 2) : null;
+    const linkHit = !a ? "no-link" : atLink === a ? "target" : atLink ? ((atLink as HTMLElement).className || atLink.tagName).split(" ")[0] : "none";
+    detail.scrollTop = 30; const detailScrolls = detail.scrollTop > 0; detail.scrollTop = 0;
+    box.scrollTop = box.scrollHeight;   // to the bottom, where the buttons are
+    const out = { frameH: window.innerHeight, tight: overlay.classList.contains("kb-tight"), detailH: detail.clientHeight, detailLineH: parseFloat(getComputedStyle(detail).lineHeight),
+      detailScrolls, linkHit, boxScrollH: box.scrollHeight, boxClientH: box.clientHeight, boxScrollTop: box.scrollTop, sendHitAtBottom: hit(send), sendInBoxAtBottom: inBox(send) };
+    box.scrollTop = 0;
+    return out;
   });
   const openReply = async (t: Todo) => {
     await page.evaluate(([sid, todo]: [string, Todo]) => { (window as any).__posted = []; (window as any).__openReply(sid, todo.id, todo.text, todo.detail || "", todo.file || "", todo.link || ""); }, [SID, t] as [string, Todo]);
@@ -182,7 +216,18 @@ async function boot(browser: any) {
     }));
     return { before: m, tapAt: c, inFrame, ...after };
   };
-  return { page, setHeight, settle, measure, openReply, cancelReply, fill, tapSend, waitTight, errors };
+  return { page, setHeight, settle, measure, probeShort, openReply, cancelReply, fill, tapSend, waitTight, errors };
+}
+// a short window with the chip todo open: the box scrolls; the detail keeps its floor and scrolls within itself; its
+// first line's address and Send are each under a finger once the box is scrolled to them
+function assertShort(s: Short, what: string) {
+  const rec = JSON.stringify(s);
+  assert.equal(s.tight, true, `${what}: under the fold (${rec})`);
+  assert.ok(s.detailH >= floorOf(s.detailLineH), `${what}: the detail keeps its floor of two lines (${s.detailH}px against a ${s.detailLineH}px line); without the floor it resolved to 0px, invisible and unscrollable (${rec})`);
+  assert.ok(s.detailScrolls, `${what}: the detail scrolls within itself (${rec})`);
+  assert.equal(s.linkHit, "target", `${what}: the address on the detail's first line is under a finger once the box is scrolled to it (${rec})`);
+  assert.ok(s.boxScrollH > s.boxClientH + 1 && s.boxScrollTop > 0, `${what}: the box scrolls: the floors alone overflow this window, and the deficit past them is a scroll of the box, never a clip (${rec})`);
+  assert.ok(s.sendInBoxAtBottom && s.sendHitAtBottom === "target", `${what}: scrolled to the box's bottom, Send is inside the clip and under a finger (${rec})`);
 }
 
 const sendInsideBox = (m: Sheet) => m.sendRect.top >= m.boxTop - 0.5 && m.sendRect.bottom <= m.boxBottom + 0.5;
@@ -205,7 +250,7 @@ for (const name of ["chromium", "firefox", "webkit"]) {
     try { browser = await pw[name].launch(); }
     catch (e) { t.skip("no playwright " + name + " on this box — this leg needs it; the served leg tests/test_reply_sheet_served.py is the guard where this skips (CI's browser step runs it in chromium): " + String((e as Error).message).split("\n")[0]); return; }
     try {
-      const { setHeight, measure, openReply, cancelReply, fill, tapSend, waitTight, errors } = await boot(browser);
+      const { setHeight, measure, probeShort, openReply, cancelReply, fill, tapSend, waitTight, errors } = await boot(browser);
       await openReply(TODOS[0]);
       // ── 508px: the keyboard up on a phone, above the fold's threshold — the squeeze fix alone
       let m = (await measure())!;
@@ -238,6 +283,7 @@ for (const name of ["chromium", "firefox", "webkit"]) {
       m = (await measure())!;
       assert.ok(m.inputH > before + 20, `twelve lines grow the box (${before} → ${m.inputH}px)`);
       assertFits(m, "folded, the answer grown");
+      assert.ok(m.detailClientH >= floorOf(m.detailLineH), `folded, the answer grown: the detail keeps its floor of two lines (${m.detailClientH}px against a ${m.detailLineH}px line); the deficit state, which round 1 never measured`);
       await fill("");
       m = (await measure())!;
       assert.ok(Math.abs(m.inputH - before) <= 2, `cleared, the box is back at the floor (${m.inputH} vs ${before}px)`);
@@ -277,9 +323,19 @@ for (const name of ["chromium", "firefox", "webkit"]) {
       assert.deepEqual(m.quoteChips, ["ut-file", "ut-link"], "both chips trail the quoted line, the file's first");
       assert.equal(m.tight, false, "508px: no fold");
       assert.ok(m.inputH >= m.floorH - 1, `with the chips and the wrapped ask the answer box holds three rows (${m.inputH} against ${m.floorH}px)`);
+      // ── short windows with this sheet up, the floors alone past the box's cap: 300px (a short portrait phone under the
+      // keyboard) and 230px (a landscape phone). The detail keeps two lines, the box scrolls to the rest
+      await setHeight(300);
+      await waitTight(true);
+      assertShort(await probeShort(), "300px, the chip todo");
+      await setHeight(230);
+      assertShort(await probeShort(), "230px, the chip todo");
+      await setHeight(KEYBOARD_UP);
+      await waitTight(false);
       await fill(ANSWER(14));
       const tap = await tapSend();
-      const rec = JSON.stringify({ tapAt: tap.tapAt, inFrame: tap.inFrame, hitAtSend: tap.before.hitAtSend, sendRect: tap.before.sendRect, box: [tap.before.boxTop, tap.before.boxBottom, tap.before.boxClientH, tap.before.boxScrollH, tap.before.boxOverflowY], inputH: tap.before.inputH, detailH: tap.before.detailClientH, after: { overlayUp: tap.overlayUp, posted: tap.posted } });
+      const rec = JSON.stringify({ tapAt: tap.tapAt, inFrame: tap.inFrame, hitAtSend: tap.before.hitAtSend, sendRect: tap.before.sendRect, box: [tap.before.boxTop, tap.before.boxBottom, tap.before.boxClientH, tap.before.boxScrollH, tap.before.boxOverflowY], inputH: tap.before.inputH, detailH: tap.before.detailClientH, detailLineH: tap.before.detailLineH, after: { overlayUp: tap.overlayUp, posted: tap.posted } });
+      assert.ok(tap.before.detailClientH >= floorOf(tap.before.detailLineH), `composition: with the answer grown to the cap the detail keeps its floor of two lines (${tap.before.detailClientH}px against a ${tap.before.detailLineH}px line); on the round-1 tree it resolved to 0px here (${rec})`);
       assert.ok(boxInsideFrame(tap.before), `composition: the box is inside the viewport (${where(tap.before)})`);
       assert.ok(sendInsideBox(tap.before) && cancelInsideBox(tap.before), `composition: Cancel and Send are inside the box's clip (${where(tap.before)}); on the round-1 tree the answer box grown to 40% of the window laid them out below it`);
       assert.equal(tap.before.hitAtSend, "target", `composition: a finger at Send's painted centre reaches Send, not the backdrop (${rec})`);
