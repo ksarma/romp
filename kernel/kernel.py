@@ -25131,7 +25131,8 @@ _BUS_ENSURED = [False]                                            # this kernel 
 def _bus_port():
     """The port this machine's bus BOUND, for every loopback dial of it: the bus's own record STATE/postal/postal-port ({"port",
     "pid", "tok"}, written after its bind, removed on a clean exit; postal_service.py PORTFILE) ahead of the environment, which is
-    the fallback when the record is absent or unreadable, stale (its pid no longer runs), another bus's (its token mark is not this kernel's),
+    the fallback for any record this kernel cannot trust as its own bus's (absent or unreadable, no positive port or pid,
+    stale with its pid no longer running, another bus's token mark),
     or when this kernel ensured no bus of its own (_BUS_ENSURED: a client-only host, whose ensure only pings the tunnel, a
     lab kernel, an in-process test kernel, an ensure that found a tunnel or another environment's bus answering the port; the
     whole test suite showed a record one world left under the shared state root redirecting a later world's dial, and the
@@ -25149,8 +25150,11 @@ def _bus_port():
         rec = json.loads((jd.STATE / "postal" / "postal-port").read_text())
         rp, pid = int(rec.get("port") or 0), int(rec.get("pid") or 0)
         # trusted only when it is THIS kernel's bus: this kernel ENSURED a bus (a kernel that ensured none, client-only or a
-        # lab's, dials the environment's port and no record can redirect it), its pid runs, and its token mark is this
-        # kernel's own
+        # lab's, dials the environment's port and no record can redirect it) and the record names a port, a pid that runs and
+        # a mark equal to this kernel's own (postal_service._own_bus_record's three tests, in its words; keep the two in step).
+        # A record that parses with no positive port or pid takes the environment's road like the rest: not a torn write,
+        # which postal_service._atomic_json_put's temp file then os.replace never shows a reader, but a foreign producer's
+        # or a hand-edited record; the condition and that road are upstream's text (the fold 3 review, 2026-09-21)
         if _BUS_ENSURED[0] and rp > 0 and pid > 0 and _pid_alive(pid) and str(rec.get("tok") or "") == _bus_token_mark():
             port, source = rp, "record"
     except (OSError, ValueError, TypeError, AttributeError):
