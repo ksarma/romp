@@ -80,7 +80,7 @@ test("the incremental tail trim goes by data-unit, not by child count", () => {
   // nodes, so that count trimmed one real turn off the tail per divider in the kept range —
   // and the re-render started at `from`, so those turns were gone until a full rebuild.
   assert.doesNotMatch(RENDER, /while \(v\.el\.childNodes\.length > keep\)/, "count-based trim is gone");
-  // the walk is trimUnitsFrom's since PR E review round 2 (normal mode's own copy stopped at a foreign child): by data-unit, up from the
+  // the walk is trimUnitsFrom's since PR E, the maintainer's round 2 ruling (normal mode's own copy stopped at a foreign child): by data-unit, up from the
   // last child, a spacer ending it (chat-compact-tail.test.ts drives the walk; chat-exact-tail.test.ts pins the block byte for byte)
   assert.match(RENDER, /\n  trimUnitsFrom\(v\.el, from\);\n/, "normal mode's tail trims by unit through the shared walk");
   assert.doesNotMatch(RENDER, /while \(v\.el\.lastChild && unitOf\(v\.el\.lastChild\) >= from\)/, "the block's own copy of the walk is gone");

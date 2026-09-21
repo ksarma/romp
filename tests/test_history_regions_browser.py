@@ -271,7 +271,7 @@ const received = await page.evaluate(() => (window.__bootFrames || []).slice(-14
 const regionsNow = await page.evaluate(() => (typeof window.__rompRegions === "function" ? window.__rompRegions() : null));
 const writers = await page.evaluate(() => window.__sent.filter((m) => m.what === "scrollwrite" && m.data).map((m) => m.data.writer));   // every attributed scroll write of the session, in order
 // the engine is the LAUNCHED browser's own name (browserType().name()), never the requested variable echoed back, which could not disagree
-// with itself: the class asserts it against the request (review round 1b)
+// with itself: the class asserts it against the request (the maintainer's round 1 addendum)
 process.stdout.write("RESULT:" + JSON.stringify({ engine: browser.browserType().name(), before, frames, spacers, edges, received, regions: regionsNow, pageEvents: pageEvents.slice(-12), writers }) + "\n");
 await browser.close();
 """
@@ -309,7 +309,7 @@ class ServedCompactStream(WindowLab):
 
     def test_the_page_threw_nothing_through_the_stream(self):
         # the driver collects the page's own errors (pageerror, console errors) and ships the last twelve in RESULT; without this the lab's
-        # named assertions stayed green under a paint that threw on every streamed frame (review round 1). Its own test, so the three
+        # named assertions stayed green under a paint that threw on every streamed frame (the maintainer's round 1 ruling). Its own test, so the three
         # tests sharing the cached run are all covered whichever fills the cache; the driver ships pageEvents.slice(-12), so emptiness is
         # proven and a count is not
         r = self._result()
@@ -317,10 +317,10 @@ class ServedCompactStream(WindowLab):
 
     def test_the_result_names_the_engine_that_ran(self):
         # the engine the body's claims rest on is the one that launched: the RESULT's field is browserType().name(), and a run under
-        # ROMP_LAB_ENGINE=webkit whose driver launched Chromium regardless would say chromium here (review round 1b; the old field
+        # ROMP_LAB_ENGINE=webkit whose driver launched Chromium regardless would say chromium here (the maintainer's round 1 addendum; the old field
         # echoed the variable and could not disagree with it). The discriminating case needs the opt-in variable set, which nothing
         # checked in does; the default run pins that the launch is Chromium. The request is read as the driver head reads it (`||`):
-        # an EMPTY variable asks for Chromium, so it does not red the lab with a message naming no defect (review round 2)
+        # an EMPTY variable asks for Chromium, so it does not red the lab with a message naming no defect (the maintainer's round 2 ruling)
         r = self._result()
         self.assertEqual(r["engine"], os.environ.get("ROMP_LAB_ENGINE") or "chromium", "the launched engine is the requested one: %r" % r["engine"])
 
@@ -369,7 +369,7 @@ class ServedCompactStream(WindowLab):
         self.assertLessEqual(max(tops) / min(tops), 2.0, "the head spacer's height held within 2x through the stream: %r" % tops)
         self.assertGreaterEqual(len(r["spacers"]), 1, "the boot build filed its spacer row: %r" % (r["spacers"],))
         # the loop below asserts on re-sizes AFTER the boot build (a before of 0 is the boot's own row); its population must be non-empty,
-        # or the per-re-size bound is reported checked when nothing was checked (review round 0). The served page files at least one such
+        # or the per-re-size bound is reported checked when nothing was checked (the author's pass 0). The served page files at least one such
         # row: the rows' average measured off the boot build reaches the spacers in the first paint after it (the paint the frame-end take
         # asks for with the reader at the bottom, or the kernel's status-only tail's, whichever runs first)
         self.assertTrue(any(b > 0 for b, _ in r["spacers"]), "a re-size after the boot build filed a row with a non-zero before: %r" % (r["spacers"],))

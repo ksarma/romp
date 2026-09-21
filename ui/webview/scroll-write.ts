@@ -75,7 +75,7 @@ export function tailMutRow(sid: string, m: { removedTail: string[]; addedTail: s
  *  anchoring then moves the reader by the same amount with no pane write. `top`/`bot` = [before, after] heights.
  *  `sh`/`ch` are the scroller's heights read a frame later for the view shown in that frame; a row whose view was
  *  switched away before the frame has none (null, never another view's figures) and carries `view: "inactive"` (PR E
- *  review round 1b). A row with no marker and numbers is the shown view's. */
+ *  the maintainer's round 1 addendum). A row with no marker and numbers is the shown view's. */
 export function spacerRow(sid: string, topBefore: number, topAfter: number, botBefore: number, botAfter: number, sh: number | null = 0, ch: number | null = 0, view?: "inactive") {
   return { sid, top: [topBefore, topAfter], bot: [botBefore, botAfter], dTop: topAfter - topBefore, dBot: botAfter - botBefore, sh, ch, ...(view ? { view } : {}) };
 }

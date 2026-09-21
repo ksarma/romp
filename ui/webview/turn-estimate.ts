@@ -55,7 +55,7 @@ export function meanRowHeight(rows: readonly EstRow[]): number | null {
  *  dropped rather than counted short. Only turn rows count (spacers, gaps and dividers are not turn content, as before). A gap element
  *  inside the window ENDS the open turn without closing it and starts none: the rows after it are a turn whose prompt lies inside the
  *  gap (a run opening with no visible user row), so they are no turn until the next visible user row; under the old walk they joined
- *  the turn before the gap and a partial turn inflated a measured one by its whole height (review round 1b). A turn of NO height
+ *  the turn before the gap and a partial turn inflated a measured one by its whole height (the maintainer's round 1 addendum). A turn of NO height
  *  (every row reported at 0: the view has no box, an ancestor hid it) is listed as it is; perTurnEstimate refuses the figure. */
 export function completeTurnHeights(rows: readonly EstRow[]): number[] {
   const out: number[] = [];
@@ -79,8 +79,8 @@ export function completeTurnHeights(rows: readonly EstRow[]): number[] {
 /** The median of a non-empty list, null for an empty one: the middle value, and at an even count the LOWER of the two middle values, so
  *  the figure is a height some turn in the window has. The mean of the two middle values (the textbook median) is a per-turn figure no
  *  turn has: with two complete turns, a short one and a long agentic one, it drew the head gap at half the long turn per turn, a shape
- *  neither refusal (a non-positive figure, a boxless scroller) could see, and four turns reproduced it at the next even count (review
- *  round 1). The lower middle rather than the upper because the figure's failure modes are not symmetric: over-drawing shrank the
+ *  neither refusal (a non-positive figure, a boxless scroller) could see, and four turns reproduced it at the next even count (the
+ *  maintainer's round 1 ruling). The lower middle rather than the upper because the figure's failure modes are not symmetric: over-drawing shrank the
  *  scrollbar thumb to a few pixels and put the transcript's head out of a gesture's reach (the defect this change was filed against),
  *  where under-drawing leaves the gap to grow as history fills, under the fill's own anchor restore. */
 export function median(xs: readonly number[]): number | null {
@@ -95,7 +95,7 @@ export const MIN_COMPLETE_TURNS = 2;
 /** The head gap's per-turn estimate from a window's rows: the median over its complete turns when it holds at least MIN_COMPLETE_TURNS
  *  of them, else null (the caller keeps what it had). Whole pixels: rows lay out at fractions of a pixel, so two windows of the same
  *  turns can differ by a thirty-second of a pixel per turn, and a changed figure re-sizes the spacer above the reader (over a
- *  200-turn gap that thirty-second is 7 px of movement to compensate for nothing). Never 0 (review round 0, high): a figure must be
+ *  200-turn gap that thirty-second is 7 px of movement to compensate for nothing). Never 0 (the author's pass 0, high): a figure must be
  *  positive to stand, meanRowHeight's `h > 0` and the rule the old estimator kept (a 0 is never cached). A window whose rows all
  *  report 0 has no box (an ancestor hid it: Chromium delivers every unit at 0 with the view at width 0); read as three complete turns
  *  of 0 px its median was 0, a figure applyMeasure takes (neither null nor the old figure) and gapHeight draws every gap at 0 px with. */

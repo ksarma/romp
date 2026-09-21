@@ -1,4 +1,4 @@
-// The rail's raw previous-epoch chain, the same-minute rule's reference, at the compact tail's seam (PR E review round 0, medium).
+// The rail's raw previous-epoch chain, the same-minute rule's reference, at the compact tail's seam (PR E, the author's pass 0, medium).
 // A window build chains the reference unit by unit through appendItem (`adv`: a row's epoch when it has one; a collapsed tool run
 // leaves the chain on its FIRST member, an expanded one on its members in order; a notice run on its anchor; a hidden thinking block is
 // never seen). The seam re-renders from a unit in the middle of the window and seeded it with prevTimedEpoch(s.events, the unit's first
@@ -49,7 +49,7 @@ type Lifted = {
 function lift(open: Set<string>, rendered: Rendered[]): Lifted {
   const rail = liftBetween("function prevTimedEpoch(", "// The day the WALK is in at a row");
   const append = liftBetween("function appendItem(", "// Full (re)build of the window");
-  // itemFirstEvent is LIFTED, never hand-copied (review round 1b, the verifier's pass): railSeed reads a window's first unit through it,
+  // itemFirstEvent is LIFTED, never hand-copied (the author's verifier pass over pass 1b): railSeed reads a window's first unit through it,
   // and a gap's first event is its `before`, not an `index`; a copy without that case seeded a gap-headed window with null and stayed green
   const first = liftBetween("function itemFirstEvent(", "// The display-unit index");
   const prelude = `
@@ -137,7 +137,7 @@ test("the composition: the chain a window build hands to unit u0 equals railChai
   assert.equal(lift(new Set(), []).railSeed({ events }, items, 0), null);
   // a window that opens ON a gap (the history regions' shape since they landed): the gap's first event is the event it stands before, so
   // the seed is the most recent timed event before that one, and the chain carries it through the gap to the first marker after it
-  // (review round 1b, the verifier's pass: through production's itemFirstEvent, lifted; a copy without the gap case read undefined and
+  // (the author's verifier pass over pass 1b: through production's itemFirstEvent, lifted; a copy without the gap case read undefined and
   // seeded null)
   const gapped = [ev(0), gap(2, 6, 4), ev(4), ng(5, 6), ev(7), ev(8), ev(9)];
   const G = lift(new Set(), []);

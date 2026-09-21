@@ -88,11 +88,11 @@ test("follow mode and the chip read atBottom at every site", () => {
     /unitChangeRow\(id, c\.dh, c\.cls, c\.fromTail, view3\.stick, atBottom\(content\), content\.scrollHeight, content\.clientHeight\)/,   // the unit-change row's measured bottom (T262n)
     /unitChangeRow\(activeId \|\| "", dh, cls, BOX_FROM_TAIL, v\.stick, atBottom\(c\), c\.scrollHeight, c\.clientHeight\)/,   // the scroller's boxes outside the thread (T262n follow-up)
     /if \(c && v\) v\.stick = atBottom\(c\); \}/,                                                             // a deep-link landing ends follow mode unless it put the reader at the bottom (T386)
-    /if \(!content \|\| content\.clientHeight <= 0 \|\| !atBottom\(content\)\) return;\s*\n\s*scheduleAppendActive\(\);/,   // the frame-end take of the measured figures: a follow-mode reader AT the bottom (of a scroller with a box) has the paint asked for, which takes them and follows (PR E; review round 0)
-    /const stick = !!content && content\.scrollHeight > content\.clientHeight \+ 2 && atBottom\(content\);\s*\n\s*const anchor = content && v && !stick \? captureScrollAnchor\(content, v\) : null;/,   // the tool-run toggle's keep (review round 1): a bottom reader keeps the raw write, anyone else the anchor
+    /if \(!content \|\| content\.clientHeight <= 0 \|\| !atBottom\(content\)\) return;\s*\n\s*scheduleAppendActive\(\);/,   // the frame-end take of the measured figures: a follow-mode reader AT the bottom (of a scroller with a box) has the paint asked for, which takes them and follows (PR E; the author's pass 0)
+    /const stick = !!content && content\.scrollHeight > content\.clientHeight \+ 2 && atBottom\(content\);\s*\n\s*const anchor = content && v && !stick \? captureScrollAnchor\(content, v\) : null;/,   // the tool-run toggle's keep (the maintainer's round 1 ruling): a bottom reader keeps the raw write, anyone else the anchor
   ];
   for (const re of follow) assert.match(RENDER, re, String(re));
-  assert.equal((RENDER.match(/\batBottom\(/g) || []).length, 18, "seventeen call sites plus the definition (the re-show follow rule reads the same true bottom, T262 2026-09-09; the window ask's diagnostic row reads it too, T366; the landing's follow-mode end, T386; the measured figures' frame-end take, PR E; the tool-run toggle's stick check, PR E review round 1)");
+  assert.equal((RENDER.match(/\batBottom\(/g) || []).length, 18, "seventeen call sites plus the definition (the re-show follow rule reads the same true bottom, T262 2026-09-09; the window ask's diagnostic row reads it too, T366; the landing's follow-mode end, T386; the measured figures' frame-end take, PR E; the tool-run toggle's stick check, PR E the maintainer's round 1 ruling)");
 });
 
 test("only the user's own send reveal keeps the 80 px band", () => {

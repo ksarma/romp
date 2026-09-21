@@ -249,7 +249,7 @@ test("a hidden pane with a jump armed defers the whole land (nothing taken, noth
   assert.equal(takes(w), 0, "no take in a zero-height view"); assert.deepEqual(w.writes, []); assert.deepEqual(w.calls, []);
 });
 
-// ── keepPlaceAcrossWindow: the take over its restores, and the double miss (review round 2, tests-4 and correctness-3) ──────────────
+// ── keepPlaceAcrossWindow: the take over its restores, and the double miss (the maintainer's round 2 ruling, tests-4 and correctness-3) ──────────────
 
 type KeepArm = { land?: boolean; older?: boolean; rebuild?: (host: Host) => void };
 type KeepWorld = { content: Content; host: Host; spacer: Node; rows: Node[]; writes: Write[]; calls: any[]; keep: (k: { uuid: string; y: number }) => boolean; state: () => { pendingAnchor: string | null; pendingAnchorKeepY: number | null; relandAsk: boolean }; parked: () => boolean };

@@ -67,7 +67,7 @@ test("the tail unit's own change files the existing tailchange row and not this 
   assert.deepEqual(mixed.map((x) => [x.cls, x.dh, x.fromTail]), [["turn turn-assistant", 10, 1]]);
 });
 
-test("a hover's rail band as the thread's last child is not the tail when the unit index is given: the real tail unit still files nothing, a unit above it counts units to the real tail, and the rail's label names the real tail (PR E review round 2)", () => {
+test("a hover's rail band as the thread's last child is not the tail when the unit index is given: the real tail unit still files nothing, a unit above it counts units to the real tail, and the rail's label names the real tail (PR E, the maintainer's round 2 ruling)", () => {
   // drawRailBand appends the band to the thread with no data-unit; under the old spacer rule it became the tail, so the tail unit filed
   // unitchange rows it is meant to skip, fromTail fell back from units to child distance, and the tailchange row named the band
   const w = window();
@@ -167,7 +167,7 @@ test("render.ts wires one observer per view over every unit, through the mutatio
   // the active gate, so an inactive view's baselines stay current
   const uo = ev.split("v.uo = new ResizeObserver((entries) => {")[1].split("\n      });")[0];
   // the hide guard is the first statement after the width read, and a ZERO width is the hide (an ancestor's display:none: the view's own
-  // display is still "" and every unit arrives at 0; PR E review round 0, high): the baselines are forgotten and nothing is measured
+  // display is still "" and every unit arrives at 0; PR E, the author's pass 0, high): the baselines are forgotten and nothing is measured
   const code = uo.replace(/\/\/[^\n]*/g, "").trim();
   assert.match(code, /^const w = view3\.el\.clientWidth;\s*\n\s*if \(view3\.el\.style\.display === "none" \|\| w === 0\) \{ for \(const e of entries\) unitHeights\.delete\(e\.target\); return; \}/, "the hide guard (own display, or no width) is the first statement");
   // the heights recorded are border boxes (entryBoxHeight: the height offsetHeight reports, so the window's per-turn figure stands for rows as
@@ -181,7 +181,7 @@ test("render.ts wires one observer per view over every unit, through the mutatio
   assert.match(ev, /rec\.addedNodes\.forEach\(\(n\) => \{ if \(n instanceof Element\) view2\.uo\?\.observe\(n\); \}\);/, "units entering the window are observed");
   assert.match(ev, /rec\.removedNodes\.forEach\(\(n\) => \{ if \(n instanceof Element\) \{ view2\.uo\?\.unobserve\(n\); unitHeights\.delete\(n\); \} \}\);/, "units leaving are dropped");
   // the rail's own filing is untouched: the tail's change still files tailchange from the view observer, the tail read by the one unit
-  // predicate (unitOfNode, PR E review round 2: a hover's band is not the tail)
+  // predicate (unitOfNode, PR E, the maintainer's round 2 ruling: a hover's band is not the tail)
   assert.match(ev, /if \(content && lastH >= 0 && activeId === id && view\.shown && h !== lastH\)\s*\n\s*scrollDiagRow\("tailchange", tailChangeRow\(id, h - lastH, tailLabel\(view\.el\.children, \(c\) => unitOfNode\(c\) >= 0\)/);
   assert.equal((RENDER.match(/v\.uo\?\.disconnect\(\); v\.ro\?\.disconnect\(\); v\.mo\?\.disconnect\(\); v\.el\.remove\(\);/g) || []).length, 2, "both view-removal sites disconnect it");
   assert.equal((RENDER.match(/"unitchange"/g) || []).length, 3, "the kind in the router's union, the unit filing and the box filing");

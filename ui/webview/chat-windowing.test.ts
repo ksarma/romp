@@ -37,7 +37,7 @@ test("every rendered row is tagged data-unit, so the scroll↔unit map can locat
 });
 
 test("renderWindowItems renders [unitStart, unitEnd) with a TOP and a BOTTOM spacer", () => {
-  assert.match(RENDER, /function renderWindowItems\(v: View, s: Session, items: DisplayItem\[\], unitStart: number, unitEnd: number, working: boolean, anchored = false\): void/);   // anchored: the caller lands the reader over the result, so the build may take a parked figure (PR E review round 1b; spacer-measure.test.ts)
+  assert.match(RENDER, /function renderWindowItems\(v: View, s: Session, items: DisplayItem\[\], unitStart: number, unitEnd: number, working: boolean, anchored = false\): void/);   // anchored: the caller lands the reader over the result, so the build may take a parked figure (PR E, the maintainer's round 1 addendum; spacer-measure.test.ts)
   assert.match(RENDER, /if \(unitStart > 0\) v\.el\.appendChild\(el\("div", "tx-spacer tx-spacer-top"\)\);/);
   assert.match(RENDER, /if \(unitEnd < total\) v\.el\.appendChild\(el\("div", "tx-spacer tx-spacer-bot"\)\);/);
   assert.match(RENDER, /v\.winStart = unitStart; v\.winEnd = unitEnd;/);
@@ -119,7 +119,7 @@ test("syncView: a pure tab switch is a NO-OP render (reveal the cached DOM)", ()
 test("syncView: compact paints its tail by unit, else compact / an in-place change re-renders the CURRENT window; a browse append just grows the bottom spacer", () => {
   // compact mode's tail path by unit comes first (PR E, chat-compact-tail.test.ts): the plan, then an append by trim or a spacer growth
   assert.match(RENDER, /if \(settings\.compact\) \{\s*\n\s*const plan = compactTailPlan\(\{ prev: v\.units, items, from: v\.rendered,/);
-  assert.match(RENDER, /if \(plan\.kind === "append"\) \{[\s\S]*?trimUnitsFrom\(v\.el, u0\);[\s\S]*?&& evictCompactTop\(v, Math\.max\(0, total - span\)\)\) reseedWindowHead\(v, s, items\);/);   // …and an eviction re-seeds the promoted head unit (review round 1)
+  assert.match(RENDER, /if \(plan\.kind === "append"\) \{[\s\S]*?trimUnitsFrom\(v\.el, u0\);[\s\S]*?&& evictCompactTop\(v, Math\.max\(0, total - span\)\)\) reseedWindowHead\(v, s, items\);/);   // …and an eviction re-seeds the promoted head unit (the maintainer's round 1 ruling)
   // …and any stale (tool-group toggle, off-screen update) or a plan the trim cannot serve re-renders where the user is
   assert.match(RENDER, /if \(settings\.compact \|\| v\.stale\) \{[\s\S]*?renderWindowItems\(v, s, items, ws, we, working, anchored\);/);
   // browsing history away from the tail: appended events land below the window → grow the bottom spacer only
@@ -134,7 +134,7 @@ test("a new message while scrolled UP keeps the viewport put (no backwards jump)
   // instead of evicting the top — which (with the compact full-rebuild that resets scrollTop) was jumping
   // the view "backwards" when messages arrived (the user 2026-06-25).
   assert.match(RENDER, /const before = content\.scrollTop;/);
-  assert.match(RENDER, /syncView\(activeId, stick, stick \|\| !!anchor\);/);   // the flag: the follow, or the anchor the restore below holds (review round 1b)
+  assert.match(RENDER, /syncView\(activeId, stick, stick \|\| !!anchor\);/);   // the flag: the follow, or the anchor the restore below holds (the maintainer's round 1 addendum)
   assert.match(RENDER, /else if \(!\(v && restoreScrollAnchor\(content, v, anchor, before\)\)\) \{ if \(v && figures\) untakeMeasure\(v, figures\); writeScroll\(content, before, "append-raw", false, before\); \}/);   // the raw road gives the sync's take back first (the maintainer's round 3 ruling B; append-active-keep.test.ts executes it)
   // the compact branch keeps winStart on a scrolled-up append
   assert.match(RENDER, /const keepTop = wasAtTail && atBottom === false;/);
@@ -160,7 +160,7 @@ test("round two/three code fixes each carry a pin (T386 stage 2, low 1)", () => 
   assert.match(RENDER, /function onWireDown\(\): void \{[\s\S]*?if \(hostOf\(parseGapKey\(k\)\.sid\) === ""\) gapLoading\.delete\(k\);[\s\S]*?windowAsks\.clear\(\); loadingOlder\.clear\(\);[\s\S]*?hideLandingNotice\(\);/, "the wire's down edge (the socket's or the pane's) clears the page asks, every ask record, the older-ask set and the notice");
   // the measures do not average the gap element (medium 3, round one): since PR E both rules live in turn-estimate.ts and run in
   // turn-estimate.test.ts; render.ts hands the rows over with their class lists (measureUnits), and the module skips spacers and gaps
-  assert.match(RENDER, /const rows = rowsFor\(\(Array\.from\(v\.el\.children\) as HTMLElement\[\]\)\.filter\(\(c\) => unitOfNode\(c\) >= 0\), \(c\) => c\.className, \(c\) => c\.style\.display === "none", \(c\) => uh\.get\(c\)\);/, "the rows (the children that carry a unit, review round 1), their hidden state and their reported heights");
+  assert.match(RENDER, /const rows = rowsFor\(\(Array\.from\(v\.el\.children\) as HTMLElement\[\]\)\.filter\(\(c\) => unitOfNode\(c\) >= 0\), \(c\) => c\.className, \(c\) => c\.style\.display === "none", \(c\) => uh\.get\(c\)\);/, "the rows (the children that carry a unit, the maintainer's round 1 ruling), their hidden state and their reported heights");
   assert.match(ESTIMATE, /export const isSpacerRow = \(r: EstRow\): boolean => has\(r\.cls, "tx-spacer"\) \|\| has\(r\.cls, "tx-gap"\);/);
   assert.match(ESTIMATE, /export const isTurnRow = \(r: EstRow\): boolean => has\(r\.cls, "turn"\) && !isSpacerRow\(r\);/, "the px-per-turn measure counts turn rows only, never the gap element or a divider");
   assert.match(ESTIMATE, /if \(isSpacerRow\(r\)\) continue;\s*\/\/ the gap's own estimate must not feed the average/, "…and so does the per-unit measure");

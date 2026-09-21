@@ -3,7 +3,7 @@ stays on the server and the page's run is a tail, driven by Playwright through t
 state and frame hooks). The regions labs (test_history_regions_browser.py, test_landing_notice_browser.py)
 build on WindowLab; stage 2 retired the paused strip and the detached client (the tail run is always resident and live, so no
 window ever pauses live updates: plans/chat-history-regions.md Part B), so the one test here is the driver head's own: a misspelled
-ROMP_LAB_ENGINE fails the lab instead of skipping it (UnknownEngineFailsLoudly; PR E review round 1b).
+ROMP_LAB_ENGINE fails the lab instead of skipping it (UnknownEngineFailsLoudly; PR E, the maintainer's round 1 addendum).
 """
 import json
 import os
@@ -56,7 +56,7 @@ const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
 // the engine: Chromium unless ROMP_LAB_ENGINE names another Playwright engine (webkit: the phone's engine, which has no scroll
 // anchoring; the compact stream lab runs under both). An UNKNOWN name exits 1, a failure: exit 3 is the harness's "no playwright
 // browser on this box", a skip unless ROMP_SERVED_TESTS_REQUIRE=1, and a misspelled engine once turned the whole lab into that
-// silent skip (review round 1b); a launch that fails keeps 3 (the browser is missing, which is what 3 says)
+// silent skip (the maintainer's round 1 addendum); a launch that fails keeps 3 (the browser is missing, which is what 3 says)
 const engineName = process.env.ROMP_LAB_ENGINE || "chromium";
 const engine = playwright[engineName];
 if (!engine) { console.error("unknown ROMP_LAB_ENGINE: " + engineName); process.exit(1); }
@@ -254,7 +254,7 @@ class WindowLab(unittest.TestCase):
 
     def _drive(self, script, name, extra=None):
         # exit 3 below is the driver's "no browser" (the launch failed): a skip, or a failure under ROMP_SERVED_TESTS_REQUIRE=1. An unknown
-        # engine NAME is not that and exits 1, so it reaches the assertion below with its stderr (review round 1b)
+        # engine NAME is not that and exits 1, so it reaches the assertion below with its stderr (the maintainer's round 1 addendum)
         cfg = os.path.join(self.lab, name + ".json")
         with open(cfg, "w") as f:
             json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "sid": SID,
@@ -286,7 +286,7 @@ class WindowLab(unittest.TestCase):
 
 
 class UnknownEngineFailsLoudly(unittest.TestCase):
-    """PR E review round 1b (fresh-4): a misspelled ROMP_LAB_ENGINE must FAIL the served lab, never skip it. The driver head exits 3 for a
+    """PR E, the maintainer's round 1 addendum (fresh-4): a misspelled ROMP_LAB_ENGINE must FAIL the served lab, never skip it. The driver head exits 3 for a
     browser that will not launch, which _drive reads as "no playwright browser on this box" (a skip unless ROMP_SERVED_TESTS_REQUIRE=1);
     an unknown engine name once took the same exit, so `ROMP_LAB_ENGINE=Webkit` made every lab under it a silent skip and nothing checked
     in ever ran the WebKit leg the body's claims rest on. The head's engine lines run alone here (the head sliced before its launch), so

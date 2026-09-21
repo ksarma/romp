@@ -1,9 +1,9 @@
-// Compact mode's tail seam, EXECUTED (PR E review round 0): syncViewInner lifted from render.ts over stubs that record what the seam
+// Compact mode's tail seam, EXECUTED (PR E, the author's pass 0): syncViewInner lifted from render.ts over stubs that record what the seam
 // hands its collaborators, the way chat-exact-tail-exec.test.ts lifts chatTail. chat-compact-tail.test.ts drives the plan and the trim
 // and pins the seam's text; this file drives the seam's two arguments the text pins could not execute: the rail reference the first
 // re-rendered unit is seeded with (railChainBefore over the view's window start, never a scan of s.events: rail-chain.test.ts) and the
 // footer patch's `from` (the first CHANGED event when no unit reaches it, a hidden thinking block, else the first re-rendered event,
-// whichever is earlier). Review round 1b added the measured figure's rule over takers, executed: a figure is taken ONLY by a paint that
+// whichever is earlier). The author's pass 1b, applying the maintainer's round 1 addendum, added the measured figure's rule over takers, executed: a figure is taken ONLY by a paint that
 // anchors the reader (the `anchored` flag: atBottom passed, or true) and EVERY anchoring paint takes one; the stubs record the take and the
 // flag the build is handed, and renderWindowItems is lifted alone for its own gate. Synthetic events.
 import { test } from "node:test";
@@ -41,7 +41,7 @@ const SENTINEL = 424242;   // the reference railChainBefore hands back, so the s
 
 function liftSeam(sessions: Map<string, any>, views: Map<string, any>, itemsOf: (s: any) => DisplayItem[], calls: Call[], compact = true) {
   const js = liftBetween("function syncViewInner(", "function patchWorkedFooters(");
-  // itemFirstEvent is LIFTED with the seam, never hand-copied (review round 1b, the verifier's pass): a copy re-creates the drift the
+  // itemFirstEvent is LIFTED with the seam, never hand-copied (the author's verifier pass over pass 1b): a copy re-creates the drift the
   // next time production's first-event rule moves, and the seam's footer `from` (the first re-rendered unit's first event) would then be
   // modelled against a stale map while the harness stayed green. The seam's one call cannot see a gap (the plan rebuilds when a gap
   // stands at or past u0), so the lift is proven by a production mutation of the run case, which a hand copy would have hidden.
@@ -52,7 +52,7 @@ function liftSeam(sessions: Map<string, any>, views: Map<string, any>, itemsOf: 
     const subParts = () => null;
     const sessions = H.sessions, views = H.views;
     const ensureView = (id) => views.get(id);
-    const settings = { compact: H.compact !== false };   // compact mode unless the world says normal (the desktop's exact tail, review round 2)
+    const settings = { compact: H.compact !== false };   // compact mode unless the world says normal (the desktop's exact tail, the maintainer's round 2 ruling)
     const displayItems = (s) => H.itemsOf(s);
     const WINDOW_TAIL = 80;
     const lastCompactUnit = () => 0;
@@ -62,7 +62,7 @@ function liftSeam(sessions: Map<string, any>, views: Map<string, any>, itemsOf: 
     const patchWorkedFooters = (v, s, from, working, items) => { H.calls.push(["patchWorkedFooters", from, working, items ? items.length : null]); };
     const compactTailPlan = H.compactTailPlan;
     const trimUnitsFrom = (host, u0) => { H.calls.push(["trim", u0]); return 0; };
-    const clearRailRings = (host) => { H.calls.push(["clearRailRings", host === H.views.get("A").el]); };   // the band module's ring remover, host-scoped for the tail paint (the maintainer's round 2 ruling took the rings and the glow here; round 3's ruling D left the glow to applyGlow); records that it is the view's own host
+    const clearRailRings = (host) => { H.calls.push(["clearRailRings", host === H.views.get("A").el]); };   // the band module's ring remover, host-scoped for the tail paint (the maintainer's round 2 ruling took the rings and the glow here; the maintainer's round 3 ruling D left the glow to applyGlow); records that it is the view's own host
     const railChainBefore = (s, items, winStart, u0) => { H.calls.push(["railChainBefore", winStart, u0]); return H.SENTINEL; };
     const dayWalkBefore = () => new H.DayWalk();
     const turnOfEvents = () => null;
@@ -110,7 +110,7 @@ test("the seam seeds the first re-rendered unit with railChainBefore over the vi
   assert.deepEqual(w.calls.filter((c) => c[0] === "railChainBefore"), [["railChainBefore", 1, 2]], "the chain from the window's start to u0");
   assert.deepEqual(w.calls.filter((c) => c[0] === "appendItem"), [["appendItem", 2, SENTINEL]], "the reply's unit re-rendered from that reference");
   assert.deepEqual(w.calls.filter((c) => c[0] === "trim"), [["trim", 2]]);
-  assert.deepEqual(w.calls.filter((c) => c[0] === "clearRailRings"), [["clearRailRings", true]], "the band's rings come off the view's own host, through the band module's remover (the maintainer's round 2 ruling, narrowed by round 3's ruling D to the rings)");
+  assert.deepEqual(w.calls.filter((c) => c[0] === "clearRailRings"), [["clearRailRings", true]], "the band's rings come off the view's own host, through the band module's remover (the maintainer's round 2 ruling, narrowed by the maintainer's round 3 ruling D to the rings)");
   assert.ok(w.calls.findIndex((c) => c[0] === "clearRailRings") < w.calls.findIndex((c) => c[0] === "trim"), "…where the trim drops the band, before it");
   assert.equal(w.v.rendered, 4); assert.deepEqual(w.v.units, [ev(0), tg(1, 2), ev(3)]);
   // a run forming (a tool joins the lone tool at unit 1): the seam re-renders from unit 1, seeded with the chain before it
@@ -166,7 +166,7 @@ test("a scrolled-up reader's append (atBottom false) keeps the window's top (kee
   assert.equal(w.v.winEnd, 82);
 });
 
-test("a change below a browsed window patches the worked footers from the first changed event and grows the bottom spacer: no trim, no appendItem, no rebuild (review round 1b: the footer is the one render inside the window that reads later events)", () => {
+test("a change below a browsed window patches the worked footers from the first changed event and grows the bottom spacer: no trim, no appendItem, no rebuild (the maintainer's round 1 addendum: the footer is the one render inside the window that reads later events)", () => {
   // six units built, a reply landed as the seventh; the window browsed away from the tail (winEnd lowered to 4 by hand, as a landing leaves it).
   // The footer patch is told the first changed event (6, v.rendered before the bookkeeping moves it to len) with the unit list, as the append
   // branch's is; the rebuild this branch replaced re-rendered the window's footers whenever events landed below it, and the branch alone left
@@ -199,7 +199,7 @@ test("normal mode (the compact switch off), a change below a browsed window: the
   assert.equal(w.v.el.children.length, 6, "no unit node added or removed");
 });
 
-test("normal mode's exact tail trims through the shared walk (trimUnitsFrom from the first changed event), then re-renders from there and patches the footers with no unit list: no plan, no compact helper (review round 2: its own copy of the walk stopped at a hover's band and re-appended the tail on top of a stale copy)", () => {
+test("normal mode's exact tail trims through the shared walk (trimUnitsFrom from the first changed event), then re-renders from there and patches the footers with no unit list: no plan, no compact helper (the maintainer's round 2 ruling: its own copy of the walk stopped at a hover's band and re-appended the tail on top of a stale copy)", () => {
   // the desktop (compact off): the reply at event 1 edited (from = 1) in a two-event view; the walk is asked from event 1, the events from
   // it re-rendered in order, the footers patched from it with no unit list (a unit is an event in normal mode)
   const w = world(["user", "assistant"], [ev(0), ev(1)], [ev(0), ev(1)], 1, 0, true, false);
@@ -242,7 +242,7 @@ test("render.ts: one remover per hover class. The tail paint (both paths and the
   assert.match(glow, /document\.querySelectorAll\("\.ext-glow"\)\.forEach\(\(n\) => n\.classList\.remove\("ext-glow"\)\);/, "…applyGlow itself, at the start of every application");
 });
 
-test("a paint of the view ends a re-window's follow of its rebuilt rows: the mark armed by the stick re-window is cleared before any branch runs (review round 1b; the reader's own scroll is the other ending event, tail-shrink.test.ts)", () => {
+test("a paint of the view ends a re-window's follow of its rebuilt rows: the mark armed by the stick re-window is cleared before any branch runs (the maintainer's round 1 addendum; the reader's own scroll is the other ending event, tail-shrink.test.ts)", () => {
   const w = world(["user", "assistant"], [ev(0), ev(1)], [ev(0), ev(1)], 2, 0);
   w.v.followRebuilt = true;
   w.sync("A", true);
@@ -253,7 +253,7 @@ test("a paint of the view ends a re-window's follow of its rebuilt rows: the mar
   assert.equal(w2.v.followRebuilt, false, "…and a switch's or a landing's paint ends it too");
 });
 
-// ── the measured figure: taken only by a paint that anchors the reader, and by every one of them (review round 1b) ──────────────────
+// ── the measured figure: taken only by a paint that anchors the reader, and by every one of them (the maintainer's round 1 addendum) ──────────────────
 
 test("a sync with no flag (a switch's, a landing's, a hidden prebuild's) takes no measured figure and tells its build so: applyMeasure is never called and renderWindowItems is handed anchored false", () => {
   // a stale view, so the paint takes the rebuild road: the flag reaches the build

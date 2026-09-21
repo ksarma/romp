@@ -1,4 +1,4 @@
-// scrollToAnchor's roads behind its flagged window build, EXECUTED (PR E review round 2, G: a census keyed on the road, not the spelling).
+// scrollToAnchor's roads behind its flagged window build, EXECUTED (PR E, the maintainer's round 2 ruling, G: a census keyed on the road, not the spelling).
 // A deep-link land whose target is not resident renders a window around the anchor's unit through renderWindowItems with `anchored`
 // true, the build's take of the parked figures (spacer-measure.test.ts pins the flag's spelling), and then re-queries the target: the
 // spelling census stayed green with a `return false` planted right after that build, a take followed by no write. Here the function is

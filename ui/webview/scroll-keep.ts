@@ -124,7 +124,7 @@ export function followTailShrink(stick: boolean, dh: number): boolean {
  *  back; when it was growth nothing did, and the go-to-the-live-tail jump ended 40 to 67 px above the bottom (the landing lab, under the
  *  median per-turn estimate, whose spacer runs a little taller than the old one). `armed` is the re-window's mark; the events that END
  *  the re-window clear it (render.ts): the reader's own scroll and the view's next paint, never an observer delivery, which a rebuild
- *  that changed no height never makes (review round 1b). Growth at the tail is otherwise the append path's (append-stick), as
+ *  that changed no height never makes (the maintainer's round 1 addendum). Growth at the tail is otherwise the append path's (append-stick), as
  *  followTailShrink says. Pure. */
 export function followRebuiltTail(stick: boolean, armed: boolean, dh: number): boolean {
   return armed && stick && dh !== 0;

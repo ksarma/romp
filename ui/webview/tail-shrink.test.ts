@@ -51,7 +51,7 @@ test("render.ts observes every view's element and #live-ask, and writes the bott
   assert.match(m![1], /writeScroll\(content, content\.scrollHeight, "tail-shrink", true\);/);
   // the re-window's follow rides the same observer, armed by virtualizeToViewport's stick branch; the mark is ended by the events that end
   // the re-window (the reader's own scroll, the view's next paint), never by a delivery, which a rebuild that changed no height never makes:
-  // cleared there, the mark stayed armed for good and an unrelated later height change wrote the reader to the bottom (review round 1b)
+  // cleared there, the mark stayed armed for good and an unrelated later height change wrote the reader to the bottom (the maintainer's round 1 addendum)
   assert.match(m![1], /\} else if \(content && lastH >= 0 && activeId === id && view\.shown && content\.clientHeight > 0 && followRebuiltTail\(view\.stick, view\.followRebuilt === true, h - lastH\)\) \{\s*\n[^\n]*\n\s*writeScroll\(content, content\.scrollHeight, "rewindow", true\);/);
   assert.doesNotMatch(m![1], /followRebuilt = false/, "the observer's delivery does not clear the mark");
   assert.match(RENDER, /if \(gv && cls === "gesture"\) gv\.followRebuilt = false;/, "the reader's own scroll (a gesture, never a write's echo) ends it");
@@ -65,7 +65,7 @@ test("render.ts observes every view's element and #live-ask, and writes the bott
   assert.equal((RENDER.match(/"tail-shrink"/g) || []).length, 2, "two observers, one writer name");
 });
 
-// ── the re-window's mark, executed (review round 1b) ─────────────────────────────────────────────
+// ── the re-window's mark, executed (the maintainer's round 1 addendum) ─────────────────────────────────────────────
 
 /** The view observer's callback and the scroll listener, lifted from render.ts and run over one fake scroller: the observer's fake hands
  *  its callback back, the scroller's `addEventListener` hands the listener back; `classify` is what classifyScroll says of a scroll event. */
@@ -97,7 +97,7 @@ function liftFollow(classify: () => "gesture" | "write-echo" | "write") {
   return { view, content, writes, deliver: (h: number) => cb!([{ contentRect: { height: h } }]), scroll: (top: number) => { content.scrollTop = top; onScroll!(); } };
 }
 
-test("the re-window's mark is ended by the reader's own scroll, not by a delivery that may never come: armed with no settle delivery, a gesture clears it, and an unrelated later height change writes nothing (review round 1b)", () => {
+test("the re-window's mark is ended by the reader's own scroll, not by a delivery that may never come: armed with no settle delivery, a gesture clears it, and an unrelated later height change writes nothing (the maintainer's round 1 addendum)", () => {
   const f = liftFollow(() => "gesture");
   f.deliver(1000);                 // the baseline: observe fires once on attach
   f.view.followRebuilt = true;     // the stick re-window armed the follow after its build and its bottom write…

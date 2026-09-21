@@ -174,7 +174,7 @@ test("the trim drops every node from the unit onward off the end, dividers inclu
 
 test("a foreign child (a hover's rail band, appended as the thread's last child) neither ends the trim nor counts: the walk reaches the units behind it and drops the band; a spacer still ends it", () => {
   // drawRailBand appends the band to the thread (host.appendChild) on every rail, dot or feed hover, with a class and no data-unit; the
-  // walk stopped at it, trimmed nothing and re-appended the tail units on top of stale copies of themselves (review round 1, high)
+  // walk stopped at it, trimmed nothing and re-appended the tail units on top of stale copies of themselves (the maintainer's round 1 ruling, high)
   const { trimUnitsFrom } = liftTrim({ sized: [] });
   const host = window(100, 180);
   host.appendChild(new FakeEl("div", "rail-band rail-band-local"));
@@ -238,7 +238,7 @@ test("the eviction's re-seed: the window's first marker is repainted against the
   assert.equal(m.dataset.prev, ""); assert.deepEqual(painted.slice(-1), [[9000, null]]);
   // the head unit carries no marker (a gap element: no epoch, no row of its own): the first marker after it is the one re-seeded, against
   // the chain from the new start to ITS unit (the seed carried through the gap, railExit's identity there); re-seeding the head's own
-  // marker found none and left this one on the chain's reference (round 1's second pass)
+  // marker found none and left this one on the chain's reference (the author's second pass over round 1)
   const gapped = window(100, 181); const seeds2: Array<[number, number]> = [], painted2: Array<[number, number | null]> = [];
   const { evictCompactTop: evict2, reseedWindowHead: reseed2 } = liftTrim({ sized: [], seed: 5151, seeds: seeds2, painted: painted2 });
   const gapEl = gapped.children.find((c) => c.dataset.unit === "101")!; gapEl.className = "tx-gap";
@@ -304,13 +304,13 @@ test("syncViewInner asks the plan in compact mode between the fast path and the 
   assert.match(app, /const span = Math\.max\(WINDOW_TAIL, \(v\.winEnd \?\? total\) - \(v\.winStart \?\? 0\)\);/, "the span is read before the append");
   // the first re-rendered unit is seeded with the rail chain a window build reaches there (railChainBefore: the seed at winStart advanced
   // over the units before u0 by appendItem's rule; rail-chain.test.ts executes it) and the day walk's mark (dayWalkBefore), never a scan of
-  // s.events from the unit's first event, which sees hidden thinking rows and a collapsed run's last member (review round 0)
+  // s.events from the unit's first event, which sees hidden thinking rows and a collapsed run's last member (the author's pass 0)
   assert.match(app, /trimUnitsFrom\(v\.el, u0\);\s*\n(?:\s*\/\/[^\n]*\n)*\s*let prevEpoch = railChainBefore\(s, items, v\.winStart \?\? 0, u0\);\s*\n\s*const walk = dayWalkBefore\(s, items, u0\);/, "the trim, then the build's own chain and walk for the first re-rendered unit");
   assert.doesNotMatch(app, /prevTimedEpoch\(/, "the seam scans no events for its seed");
   assert.match(app, /const turns = s\.regions \? turnOfEvents\(s\) : null;\s*\n\s*for \(let u = u0; u < total; u\+\+\) prevEpoch = appendItem\(v, s, items, u, prevEpoch, walk, working, turns\);/, "the same appendItem loop as a window build");
   // the footer patch names the reply before the FIRST CHANGED EVENT (v.rendered, still pre-append here), as normal mode's `from` does: when no
   // unit reaches the change (u0 = total: a hidden thinking block) the first re-rendered event would be `len`, and the plan would name the
-  // thinking row, which has no node, and never re-evaluate the reply before it (review round 0, low; chat-exact-tail-exec.test.ts runs the shape)
+  // thinking row, which has no node, and never re-evaluate the reply before it (the author's pass 0, low; chat-exact-tail-exec.test.ts runs the shape)
   assert.match(app, /patchWorkedFooters\(v, s, Math\.min\(v\.rendered, u0 < total \? itemFirstEvent\(items\[u0\]\) : len\), working, items\);/, "the footer patch by unit, from the first changed event or the first re-rendered one, whichever is earlier");
   assert.ok(app.indexOf("patchWorkedFooters(v, s, Math.min(v.rendered,") < app.indexOf("v.rendered = len;"), "…read before the bookkeeping moves v.rendered to len");
   assert.match(app, /v\.winEnd = total; v\.spacerCount = v\.winStart \?\? 0; v\.spacerCountBot = 0; v\.unitTotal = total; v\.rendered = len; v\.units = items; v\.measureDue = true;/, "the bookkeeping records the units and asks for a measure");

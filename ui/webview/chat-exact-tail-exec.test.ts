@@ -191,7 +191,7 @@ type Patch = (v: any, s: any, from: number, working: boolean, items?: any[] | nu
 function liftPatch(): (hooks: FootHooks) => Patch {
   const js = liftBetween("function patchWorkedFooters(", "// prevEpoch for event i");
   // itemFirstEvent is LIFTED with the patch, never hand-copied: a copy without the gap case (a gap's first event is its `before`, not an
-  // `index`) mis-modelled the one unit kind whose first event is not `index`, and a window opening on a gap read NaN (review round 1b)
+  // `index`) mis-modelled the one unit kind whose first event is not `index`, and a window opening on a gap read NaN (the maintainer's round 1 addendum)
   const first = liftBetween("function itemFirstEvent(", "// The display-unit index");
   const prelude = `
     const H = HOOKS;
@@ -258,7 +258,7 @@ test("a day divider shares its turn's unit number and is never the footer's home
   assert.ok(nodes[2].querySelector(":scope > .turn-elapsed"), "the turn did");
 });
 
-test("a window that opens ON a gap: the patch reads the window's first event through production's itemFirstEvent (a gap's `before`), so the footer lands and comes off; the harness's hand copy read the gap's index as undefined, the plan was empty, and neither direction ran (review round 1b)", () => {
+test("a window that opens ON a gap: the patch reads the window's first event through production's itemFirstEvent (a gap's `before`), so the footer lands and comes off; the harness's hand copy read the gap's index as undefined, the plan was empty, and neither direction ran (the maintainer's round 1 addendum)", () => {
   const events = [user(100), tool(110), reply(160)];
   const items = [{ kind: "gap", lo: 0, hi: 5, before: 0 }, { kind: "event", index: 0 }, { kind: "event", index: 1 }, { kind: "event", index: 2 }];
   const { patch, v, s, nodes } = footWorld(events, 4, 3);   // unit 0 is the gap element, units 1..3 the three events
@@ -309,7 +309,7 @@ test("compact mode: the window start is a unit and the plan wants an event index
 });
 
 test("compact mode: a continuation with no user line (the first changed event is a hidden thinking block, working flips in the same frame) takes the footer off the reply before it when the patch is told the first CHANGED event; told `len`, it names the thinking row and leaves the footer", () => {
-  // the seam's from (review round 0, low): syncViewInner passes Math.min(v.rendered, first re-rendered event); with no unit reaching the
+  // the seam's from (the author's pass 0, low): syncViewInner passes Math.min(v.rendered, first re-rendered event); with no unit reaching the
   // change the second term is `len`, and the plan then scans down from len - 1 to the thinking event, which has no node in compact mode
   const thinking = (t: number) => ({ kind: "thinking", t });
   const idle = [user(100), tool(110), reply(160)];

@@ -13423,7 +13423,7 @@ function ensureView(id: string): View {
         // the tail's height change, named (T262f): which element grew or shrank under the reader — Chrome moves a
         // bottom reader for both without a pane write, so the scroll rows alone cannot say which element flapped
         if (content && lastH >= 0 && activeId === id && view.shown && h !== lastH)
-          scrollDiagRow("tailchange", tailChangeRow(id, h - lastH, tailLabel(view.el.children, (c) => unitOfNode(c) >= 0), view.stick, content.scrollHeight, content.clientHeight));   // the tail by the one unit predicate: a hover's band is not it (review round 2)
+          scrollDiagRow("tailchange", tailChangeRow(id, h - lastH, tailLabel(view.el.children, (c) => unitOfNode(c) >= 0), view.stick, content.scrollHeight, content.clientHeight));   // the tail by the one unit predicate: a hover's band is not it (the maintainer's round 2 ruling)
         if (content && lastH >= 0 && activeId === id && view.shown && content.clientHeight > 0 && followTailShrink(view.stick, h - lastH)) {
           writeScroll(content, content.scrollHeight, "tail-shrink", true);
           view.scrollTop = content.scrollTop;
@@ -13434,7 +13434,7 @@ function ensureView(id: string): View {
         }
         // the re-window's mark is NOT cleared here: a delivery may never come (a rebuild that changed no height), and a latch cleared by
         // something that may never happen outlives its condition. The events that end the re-window clear it: the reader's own scroll
-        // (the scroll listener, a gesture) and the view's next paint (syncViewInner) (review round 1b)
+        // (the scroll listener, a gesture) and the view's next paint (syncViewInner) (the maintainer's round 1 addendum)
         lastH = h;
       });
       v.ro.observe(elv);
@@ -13465,7 +13465,7 @@ function ensureView(id: string): View {
         // read off the view's width: the view's own display is still "" and Chromium delivers every unit at 0 with the
         // view at width 0 (WebKit runs no observer in a hidden frame). Read as a reflow, those zeros became the
         // baselines and the window's figures: a median of 0 per turn, taken at once by a bottom reader, drew every gap
-        // at 0 px and the 200-turn head in none (review round 0, high). No zero enters the heights map.
+        // at 0 px and the 200-turn head in none (the author's pass 0, high). No zero enters the heights map.
         const w = view3.el.clientWidth;
         if (view3.el.style.display === "none" || w === 0) { for (const e of entries) unitHeights.delete(e.target); return; }
         // …and a width change reflows every unit at once (a resize, a scrollbar appearing): the new heights become
@@ -13535,7 +13535,7 @@ function syncViewInner(id: string, atBottom?: boolean, anchored: boolean = atBot
   if (!s) return v;
   // a paint of the view ends a re-window's follow of its rebuilt rows (followRebuiltTail): the re-window arms AFTER its own build, so it is
   // not cleared by itself, and appendActive's next paint has a follow of its own (append-stick). The other ending event is the reader's own
-  // scroll (the scroll listener); an observer delivery never clears it, since a rebuild that changed no height makes none (review round 1b)
+  // scroll (the scroll listener); an observer delivery never clears it, since a rebuild that changed no height makes none (the maintainer's round 1 addendum)
   v.followRebuilt = false;
   // An empty transcript has nothing to build → a "No messages yet." placeholder, NEVER the deferred
   // "Loading transcript…" hint. The kernel re-sends the FULL events payload on every push, so a zero-event
@@ -13582,7 +13582,7 @@ function syncViewInner(id: string, atBottom?: boolean, anchored: boolean = atBot
   }
   // The figures the unit observer measured since the last paint reach the spacers and the gap units HERE, inside a paint
   // that anchors the reader (PR E): appendActive's, which reads the scroller after this sync and follows the tail or restores
-  // the reader's anchor over whatever moved, and the tool-run toggle's when its keep holds a row (review round 1). The one rule
+  // the reader's anchor over whatever moved, and the tool-run toggle's when its keep holds a row (the maintainer's round 1 ruling). The one rule
   // over every taker: a figure is taken ONLY by a paint that anchors the reader, and EVERY anchoring paint takes one. (A
   // follow-mode reader at the bottom has appendActive's paint asked for at frame end, so the figures reach them within a frame:
   // takeMeasureAtBottom.) A spacer written anywhere else moves the reader: a switch's or a landing's sync passes no flag, so
@@ -13619,7 +13619,7 @@ function syncViewInner(id: string, atBottom?: boolean, anchored: boolean = atBot
       // The one render inside the window that reads LATER events is the "worked …" footer on a turn's last reply (turnWorkedSecs reads the
       // events after it), so it is patched here from the first changed event (v.rendered, still the pre-append value), as the append branch
       // and normal mode's tail do; the rebuild this branch replaced re-rendered the browsed window's footers whenever events landed below it
-      // (review round 1b). The population is one item, derived from what appendItem and renderEvent read: the rail markers and the day
+      // (the maintainer's round 1 addendum). The population is one item, derived from what appendItem and renderEvent read: the rail markers and the day
       // dividers read EARLIER events (prevEpoch, the walk); a run's head reads its members, and a member joining below the window moves
       // firstDifferingUnit inside the window, which the plan rebuilds (inside-browsed); data-turn is the kernel's turn number and does not
       // move; the gap units are minted by the regions (chatHead's and fillInPlace's rebuilds), never by a tail frame (regionsAbsorbTail only
@@ -13646,7 +13646,7 @@ function syncViewInner(id: string, atBottom?: boolean, anchored: boolean = atBot
       for (let u = u0; u < total; u++) prevEpoch = appendItem(v, s, items, u, prevEpoch, walk, working, turns);
       // the footer patch names the last reply BEFORE the first changed event, as normal mode's does (patchWorkedFooters(v, s, from, …)):
       // the first changed event itself (v.rendered, still the pre-append value here) when no unit reaches it (u0 = total: the change is
-      // a hidden thinking block), else the first re-rendered unit's first event, whichever is earlier (review round 0, low)
+      // a hidden thinking block), else the first re-rendered unit's first event, whichever is earlier (the author's pass 0, low)
       patchWorkedFooters(v, s, Math.min(v.rendered, u0 < total ? itemFirstEvent(items[u0]) : len), working, items);
       v.winEnd = total; v.spacerCount = v.winStart ?? 0; v.spacerCountBot = 0; v.unitTotal = total; v.rendered = len; v.units = items; v.measureDue = true;
       // …and the unit the eviction promotes to the window's first is re-seeded as a build would seed it (reseedWindowHead)
@@ -13693,7 +13693,7 @@ function syncViewInner(id: string, atBottom?: boolean, anchored: boolean = atBot
   // extra dividers made it delete that many live turns off the tail, which then never came back.
   // Reading the unit off the node is exact however many nodes a unit owns; the top spacer carries no
   // data-unit, so it ends the walk, and a foreign child met on the way (a hover's rail band) is dropped:
-  // trimUnitsFrom, the one walk both tail paths share (review round 2; this mode's own copy stopped at
+  // trimUnitsFrom, the one walk both tail paths share (the maintainer's round 2 ruling; this mode's own copy stopped at
   // the band and re-appended the tail on top of a stale copy of itself, one stranded duplicate per hover). The
   // band's rings come off with it through the band module's own remover, host-scoped (clearRailRings); the glow on
   // the turns is applyGlow's and stays, as in the seam (the maintainer's round 3 ruling D).
@@ -13798,7 +13798,7 @@ function unitExit(s: Session, it: DisplayItem): number | null {
 // scan of s.events (prevTimedEpoch) from the unit's first event. The scan sees rows the window never shows, a hidden thinking block (the
 // kernel stamps them), and the LAST member of a collapsed run where the chain stands on its FIRST (children advance it only when the
 // fold is open), so a reply streaming after a collapsed run that spanned a minute boundary had its stamp suppressed against a time
-// the reader cannot see, and the next rebuild of the same rows showed it with no new information (review round 0, medium).
+// the reader cannot see, and the next rebuild of the same rows showed it with no new information (the author's pass 0, medium).
 /** The seed a window opening at unit `unitStart` chains from: the most recent timed event before the unit's first (the back-scan walks
  *  the whole s.events, so the first turn below the spacer is stamped against the real prior event); null at the transcript's start. */
 function railSeed(s: Session, items: DisplayItem[], unitStart: number): number | null {
@@ -13997,7 +13997,7 @@ function renderWindowItems(v: View, s: Session, items: DisplayItem[], unitStart:
   // a build takes the figures the observer measured since the last paint (PR E) only when its caller lands the reader over the result
   // (a deep link's or a moment's land, the re-window around the viewport, a gap fill with a row or a point to put back, appendActive's
   // and the toggle's kept place); a hidden prebuild's build and a fill that can only restore its raw top take nothing, so the figure waits
-  // for a paint that anchors (review round 1b: the same rule as syncViewInner's take). The spacers and gap units below read what was taken.
+  // for a paint that anchors (the maintainer's round 1 addendum: the same rule as syncViewInner's take). The spacers and gap units below read what was taken.
   if (anchored) applyMeasure(v);
   const total = items.length;
   unitStart = Math.max(0, Math.min(unitStart, total));
@@ -14025,7 +14025,7 @@ function gapUnitsOf(items: readonly DisplayItem[], perTurn: number | undefined):
   for (let u = 0; u < items.length; u++) { const it = items[u]; if (it.kind === "gap") gu.set(u, gapHeight(it, perTurn)); }
   return gu.size ? gu : undefined;
 }
-/** THE predicate for what a view's child is (PR E review round 1, high): a child WITH data-unit is a unit's node (a turn, a run's head or
+/** THE predicate for what a view's child is (PR E, the maintainer's round 1 ruling, high): a child WITH data-unit is a unit's node (a turn, a run's head or
  *  row, a day divider, a gap element: appendItem tags every node it appends), and this is its unit; -1 for a child that carries none. The
  *  trim, the eviction and the measure all key on it. Of the children with no unit, a spacer (tx-spacer, isSpacerNode) bounds the units
  *  and ends a walk over them; any other is FOREIGN to the transcript (a hover's rail band, drawn as the thread's last child on every rail,
@@ -14036,13 +14036,13 @@ function unitOfNode(n: ChildNode): number { return n instanceof HTMLElement && n
 function isSpacerNode(n: ChildNode): boolean { return n instanceof HTMLElement && n.classList.contains("tx-spacer"); }
 /** Drop every node from unit `u0` onward off the END of a view (a unit's nodes are contiguous and units are in order, so the walk up
  *  from the last child meets them all; a unit below u0, or a spacer, ends it). A foreign child met on the way (unitOfNode: a hover's rail
- *  band) is dropped, not counted, and the walk goes on to the units behind it. Until review round 1 the walk stopped at any child with
+ *  band) is dropped, not counted, and the walk goes on to the units behind it. Until the author's pass 1 (the maintainer's round 1 ruling) the walk stopped at any child with
  *  no unit, so after any hover the tail paint trimmed nothing and re-appended the tail units on top of stale copies of themselves,
  *  which the footer patch and the gap redraw then resolved to the stale copy (querySelector's first match). Dropped rather than skipped
  *  over so the invariant the eviction's walk and the footer patch's positional read rely on holds after every paint (the units
  *  contiguous, nothing foreign among them); the rebuild this path replaced removed the band on every frame too, and a hover redraws it
  *  on the next mouseenter. Returns the count of unit nodes removed. Both tail paths walk through here, compact mode's seam (PR E) and
- *  normal mode's exact tail (review round 2: normal mode kept its own copy of the walk, which stopped at a foreign child, until then). */
+ *  normal mode's exact tail (the maintainer's round 2 ruling: normal mode kept its own copy of the walk, which stopped at a foreign child, until then). */
 function trimUnitsFrom(host: HTMLElement, u0: number): number {
   let n = 0;
   for (let c: ChildNode | null = host.lastChild; c; ) {
@@ -14073,7 +14073,7 @@ function evictCompactTop(v: View, newWinStart: number): boolean {
 /** The unit an eviction promotes to the window's first was drawn mid-window, chained from the unit before it (appendItem's adv), where a
  *  build of the same window seeds it with railSeed, and the two references part (a collapsed run leaves the chain on its FIRST member
  *  where the seed's back-scan finds its LAST; a hidden thinking row is seen by the scan alone), so the row's stamp depended on which path
- *  last painted it: present incrementally, blank after any later rebuild, with no new information (review round 1: the fifth full-rebuild
+ *  last painted it: present incrementally, blank after any later rebuild, with no new information (the maintainer's round 1 ruling: the fifth full-rebuild
  *  case, which compactTailPlan cannot list because the plan is computed before the eviction). The rule is CONSISTENCY WITH THE REBUILD,
  *  in either direction (a notice run's anchor can make the chain suppress a stamp the seed shows): the window's FIRST marker is repainted
  *  against the reference a build hands its unit, data-prev with it (the minute tick's reference, refreshRelativeMarkers). That reference
@@ -14081,7 +14081,7 @@ function evictCompactTop(v: View, newWinStart: number): boolean {
  *  unit carries the marker, and the seed passed through a marker-less head otherwise (a gap, whose railExit is the identity; an untimed
  *  row likewise; a timed row with no marker advances the chain on both paths alike). Re-seeding the head unit's own marker alone found
  *  none on a gap and left the first marker after it on the chain's reference, where a rebuild of the same window seeded it through the
- *  gap from the event below it (round 1's second pass). The marker is the one node the seed reaches: the rows of an expanded run chain
+ *  gap from the event below it (the author's second pass over round 1). The marker is the one node the seed reaches: the rows of an expanded run chain
  *  from the run's own members, the same on both paths, and appendItem appends at the end only, so a re-render of the unit in place is
  *  not available. A window with no marker at all has nothing to re-seed. */
 function reseedWindowHead(v: View, s: Session, items: DisplayItem[]): void {
@@ -14133,7 +14133,7 @@ function queueSpacerRow(sid: string, topBefore: number, topAfter: number, botBef
     const rows = spacerRowsPending; spacerRowsPending = [];
     // the scroller's heights belong to the view active IN THIS FRAME: #content is the one scroller and a view switched away since its row
     // was queued has no geometry, so its row is filed with none and says so (view: "inactive") rather than with the other view's figures,
-    // which corrupted the journal this change's own defect was diagnosed from (review round 1b). One read, and only when a queued row is
+    // which corrupted the journal this change's own defect was diagnosed from (the maintainer's round 1 addendum). One read, and only when a queued row is
     // the active view's; a row of the active view under a scroller with no box carries the 0 the scroller reads, an honest figure.
     const content = document.getElementById("content");
     const live = activeId;
@@ -14143,7 +14143,7 @@ function queueSpacerRow(sid: string, topBefore: number, topAfter: number, botBef
   });
 }
 
-/** A follow-mode reader at the bottom gets the measured figures on the NEXT PAINT (PR E; review round 0, medium): the unit observer
+/** A follow-mode reader at the bottom gets the measured figures on the NEXT PAINT (PR E; the author's pass 0, medium): the unit observer
  *  parked them (measureUnits) and this asks for appendActive's paint, whose sync takes them (applyMeasure in syncViewInner) and whose
  *  follow writes the bottom after the spacers (followTail, "append-stick": a reader at the bottom before the sync is written back to it).
  *  Nothing is written HERE. This runs inside the unit observer's callback, and a spacer re-size there changes the view element's height,
@@ -14179,7 +14179,7 @@ function measureUnits(v: View): void {
   v.measureDue = false;
   const uh = v.uh;
   // the population is the children that carry a unit (unitOfNode, the one predicate): a hover's rail band is a child of the thread with a
-  // height in the map (the observer observes every added element) and counted as a row until review round 1; the spacers carry no unit
+  // height in the map (the observer observes every added element) and counted as a row until the author's pass 1 (the maintainer's round 1 ruling); the spacers carry no unit
   // either, and a gap element does but is not row content (isSpacerRow)
   const rows = rowsFor((Array.from(v.el.children) as HTMLElement[]).filter((c) => unitOfNode(c) >= 0), (c) => c.className, (c) => c.style.display === "none", (c) => uh.get(c));
   if (v.avgTurnH == null && v.measured?.avg == null) { const h = meanRowHeight(rows); if (h != null) v.measured = { ...v.measured, avg: h }; }
@@ -14189,8 +14189,8 @@ function measureUnits(v: View): void {
 /** A reset that wants a fresh average (the compact toggle's rerender, a re-collapse to the tail, the older-history re-anchor) clears
  *  the figure AND the figures parked since the last paint: the build that follows takes parked figures first (applyMeasure in
  *  renderWindowItems), so an average parked over the old rows and never taken (a reader off the bottom, an idle session) would have
- *  become the new rows' average for the view's life, and measureUnits, seeing one held, would never have measured the new rows (review
- *  round 0, low). One helper for every such reset, so none forgets the parked half. */
+ *  become the new rows' average for the view's life, and measureUnits, seeing one held, would never have measured the new rows (the
+ *  author's pass 0, low). One helper for every such reset, so none forgets the parked half. */
 function forgetAverage(v: View): void {
   v.avgTurnH = undefined; v.measured = undefined;
 }
@@ -14374,7 +14374,7 @@ function renderNoticeGroup(evs: ChatEvent[], anchor: ChatEvent, prevEpoch: numbe
 }
 
 // Toggle a collapsed tool run open/closed and repaint the active view in place, keeping the reader's place the way appendActive keeps
-// it (PR E review round 1, high). The repaint is a window build (syncView over a stale view: renderWindowItems), and a build takes the
+// it (PR E, the maintainer's round 1 ruling, high). The repaint is a window build (syncView over a stale view: renderWindowItems), and a build takes the
 // figures the unit observer parked since the last paint (applyMeasure), so the head spacer above the viewport can change height under
 // the reader by the re-measured per-turn figure times the head gap's turns; the raw restore of the pre-toggle scrollTop that stood here
 // moved a scrolled-up reader by that delta on every toggle. A reader at the bottom keeps the raw write: a collapse makes the transcript
@@ -14384,7 +14384,7 @@ function renderNoticeGroup(evs: ChatEvent[], anchor: ChatEvent, prevEpoch: numbe
 // bottom. Anyone else has the first visible row's offset captured before the build and restored after it (captureScrollAnchor /
 // restoreScrollAnchor, the anchor keep appendActive uses); when no row is capturable, or the anchor row was inside the run that
 // collapsed and is gone, the raw write stands as the fallback, `top` its origin. The build's sync is flagged by whether a row was
-// captured (review round 1b): a bottom reader's and a row-less reader's build takes no parked figure, because their raw write would
+// captured (the maintainer's round 1 addendum): a bottom reader's and a row-less reader's build takes no parked figure, because their raw write would
 // move them by it, and a figure parked while the reader was off the bottom has no paint asked for (takeMeasureAtBottom asks only at
 // the bottom, a scroll to the bottom paints nothing), so on an idle session the first paint at the bottom can be this toggle; the
 // figure waits for the next tail paint or re-window, both of which anchor. The one take followed by a raw write is the anchor row
@@ -15342,14 +15342,14 @@ function showActive(keep?: { uuid: string; y: number } | null) {
 let relandAsk = false;
 function keepPlaceAcrossWindow(content: HTMLElement, v: View, keep: { uuid: string; y: number }): boolean {
   // the reader's own row is put back over whatever moved, so this land takes the figures parked since the last paint (the spacers and
-  // gap units re-sized before the restore, which covers them); a same-task re-show has nothing parked yet and takes nothing (PR E, review
-  // round 1b: every anchoring paint takes, and the switch's land before this one left the figures for it when its own road was land-saved).
+  // gap units re-sized before the restore, which covers them); a same-task re-show has nothing parked yet and takes nothing (PR E, the
+  // maintainer's round 1 addendum: every anchoring paint takes, and the switch's land before this one left the figures for it when its own road was land-saved).
   // The take stays above the restores: restoreScrollAnchor needs the row's y in the re-sized layout. So the road where BOTH restores miss
   // (the reader's row gone from the rebuilt window, and the landing attempt landing nothing: a fetch armed, an anchor nowhere in the
   // transcript) took and wrote nothing, and the content under the viewport moved by the spacers' delta. The row under the viewport top is
   // captured here, before the take, and put back at its offset on that road (measured on its own rect, not by symmetry with the other two
   // roads); when the attempt rebuilt the window around the anchor's unit and its re-query missed, that row is gone too and nothing is
-  // written: the reader is where the rebuild left them, a residual the body names (review round 2)
+  // written: the reader is where the rebuild left them, a residual the body names (the maintainer's round 2 ruling)
   const under = captureScrollAnchor(content, v);
   const figures = figuresBefore(v);   // what the take below takes, given back when neither restore has a row to put back
   if (applyMeasure(v)) { redrawGapUnits(v); sizeSpacers(v); }
@@ -15415,9 +15415,9 @@ function landActive(content: HTMLElement | null, v: View): void {
   // a spacer); or the captured row is gone, because the attempt's window build around the anchor's unit (scrollToAnchor's
   // pointer-not-rendered and pointer-wrong-kind roads) replaced the rows before its re-query missed, which leaves the reader in that
   // window at the pre-resize scrollTop, the residual the body names beside keepPlaceAcrossWindow's double miss after a rebuild.
-  // land-active-keep.test.ts executes the roads (PR E, review round 1b: a figure is taken only by a paint that anchors, and every
-  // anchoring paint takes one; review round 2: the missed land took and wrote raw, moving the reader by the spacer's delta, while this
-  // comment said the road could not happen; review round 3: the comment then named two raw roads where there are three)
+  // land-active-keep.test.ts executes the roads (PR E, the maintainer's round 1 addendum: a figure is taken only by a paint that anchors, and every
+  // anchoring paint takes one; the maintainer's round 2 ruling: the missed land took and wrote raw, moving the reader by the spacer's delta, while this
+  // comment said the road could not happen; the author's own verifiers after pass 3: the comment then named two raw roads where there are three)
   const saved = !pendingAnchor && pendingAnchorT == null && !(seek && seek.sid === activeId) && v.shown && !v.stick && takeReloadScroll(pendingReloadScroll, activeId) == null;
   const held = !saved && v.shown && !v.stick ? captureScrollAnchor(content, v, v.scrollTop) : null;   // the row at the saved place, for a land that misses
   const figures = figuresBefore(v);   // what the take below takes, given back by the fallback when it has no row to put back
@@ -15902,7 +15902,7 @@ function updateReplyChips(): void {
     // the settle it is a sample, or the landing that was and stayed exact filed settled false
     lastScrollWriteAfter = null;   // one-shot: the first event after a write consumes its marker, echo or not (a gesture that lands within a pixel of an older write's target is a gesture)
     if (cls !== "write-echo") scrollDiagRow("scrollgesture", { sid: activeId || "", top: c.scrollTop, gesture: true, sh: c.scrollHeight, ch: c.clientHeight });
-    if (gv && cls === "gesture") gv.followRebuilt = false;   // the reader's own scroll ends a re-window's follow of the rebuilt rows (followRebuiltTail); a write's echo, the re-window's own bottom write included, does not (review round 1b)
+    if (gv && cls === "gesture") gv.followRebuilt = false;   // the reader's own scroll ends a re-window's follow of the rebuilt rows (followRebuiltTail); a write's echo, the re-window's own bottom write included, does not (the maintainer's round 1 addendum)
     lastKnownSh = c.scrollHeight;   // sh/ch: a clamp reads top == sh - ch after sh dropped (T262e)
   }, { passive: true });
 }
@@ -20026,7 +20026,7 @@ function fillInPlace(sid: string, v: View | undefined): void {
   // the build takes a parked figure only when the land below has a row or a point to put back (anchored); a fill that can only restore
   // its raw pre-fill top (no row on screen and no turn under the viewport top) takes nothing, so the figure waits for a paint that anchors.
   // The no-unit fallback (a row or a point in hand that names no unit) is the same paint one road over and passes the same predicate,
-  // written out rather than relied on through unitAtScroll's guarantee that u < 0 implies a row in hand (review round 2: a flagless
+  // written out rather than relied on through unitAtScroll's guarantee that u < 0 implies a row in hand (the maintainer's round 2 ruling: a flagless
   // sync there restored a row over spacers it had not re-sized, and the census could not see it).
   // Two roads take and then find only the raw top to write, decided only after the build: the anchor row gone from the rebuilt window with
   // no point to name, and a point whose turn maps to no y (yOfTurn null, here and in the re-window below). On both the take is undone

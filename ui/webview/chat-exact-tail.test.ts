@@ -112,7 +112,7 @@ const NORMAL_MODE_BLOCK = [
   "  // extra dividers made it delete that many live turns off the tail, which then never came back.",
   "  // Reading the unit off the node is exact however many nodes a unit owns; the top spacer carries no",
   "  // data-unit, so it ends the walk, and a foreign child met on the way (a hover's rail band) is dropped:",
-  "  // trimUnitsFrom, the one walk both tail paths share (review round 2; this mode's own copy stopped at",
+  "  // trimUnitsFrom, the one walk both tail paths share (the maintainer's round 2 ruling; this mode's own copy stopped at",
   "  // the band and re-appended the tail on top of a stale copy of itself, one stranded duplicate per hover). The",
   "  // band's rings come off with it through the band module's own remover, host-scoped (clearRailRings); the glow on",
   "  // the turns is applyGlow's and stays, as in the seam (the maintainer's round 3 ruling D).",
@@ -146,7 +146,7 @@ test("normal mode's tail block is byte-identical to the recorded text, sits afte
   assert.ok(sync.slice(at + NORMAL_MODE_BLOCK.length).trimStart().startsWith("//"), "the block closes syncViewInner: only the next function's comment follows it");
   const seamAt = sync.indexOf("if (settings.compact) {\n    const plan = compactTailPlan("), rebuildAt = sync.indexOf("if (settings.compact || v.stale) {");
   assert.ok(seamAt > 0 && seamAt < rebuildAt && rebuildAt < at, "the compact seam, then the rebuild, then normal mode");
-  // trimUnitsFrom is not in this list since review round 2: the trim is unitOfNode's walk, the one predicate for what a view's child is,
+  // trimUnitsFrom is not in this list since the author's pass 3 (the maintainer's round 2 ruling): the trim is unitOfNode's walk, the one predicate for what a view's child is,
   // and normal mode's own copy of it stopped at a foreign child (the block's one deliberate edit)
   assert.doesNotMatch(NORMAL_MODE_BLOCK, /compactTailPlan|evictCompactTop|reseedWindowHead|v\.units|measureDue|applyMeasure/, "no compact plan, eviction or measurement helper inside normal mode's block");
   assert.match(NORMAL_MODE_BLOCK, /\n  clearRailRings\(v\.el\);\n  trimUnitsFrom\(v\.el, from\);\n/, "normal mode takes the band's rings off through the band module's own remover, host-scoped, and trims through the shared walk, from the first changed event");

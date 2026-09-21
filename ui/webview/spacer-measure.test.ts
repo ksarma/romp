@@ -23,7 +23,7 @@ const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview"
 
 /** The source with its comments removed and nothing else: the comment ranges are the compiler's own (every token's leading and trailing
  *  trivia over the parsed file), so a `//` or a `/*` inside a string, a template or a regular expression is text, never a comment. The
- *  regex stripper this replaces (review round 3) cut a line at the `//` of a quoted URL, which hid an alias written after it on the same
+ *  regex stripper this replaces (the author's fixer pass over pass 3) cut a line at the `//` of a quoted URL, which hid an alias written after it on the same
  *  line from the bare-reference census below, opened a block comment at a quoted glob (`"image/*"`) and swallowed the code to the next
  *  `*\/`, and cut `u.replace(/^file:\/\//, "")` at the regular expression's slashes. The writer census (writer-census.ts) reads render.ts
  *  the same way for the same reason. */
@@ -246,7 +246,7 @@ test("sizeSpacers and the measure read no layout property: zero offsetHeight, sc
   assert.deepEqual(w.reads, { offsetHeight: 0, scrollHeight: 1, clientHeight: 1 }, "the scroller was read once, in the frame, for both rows");
   assert.deepEqual(w.diag.map((d) => [d.kind, d.data.sid, d.data.sh, d.data.ch]), [["spacer", "A", 9114, 902], ["spacer", "A", 9114, 902]]);
   // each row carries its own before/after, in that order (the tuple queueSpacerRow pushes and the frame drains): the T262j diagnosis reads
-  // which way the head spacer moved, so an inverted pair would read backwards (review round 0: the old assertion here compared a value with itself)
+  // which way the head spacer moved, so an inverted pair would read backwards (the author's pass 0: the old assertion here compared a value with itself)
   assert.deepEqual(w.diag[0].data.top, [0, topOne], "build one's row: from nothing to the first spacer");
   assert.deepEqual(w.diag[1].data.top, [topOne, topTwo], "the paint's row: from the first spacer to the measured one");
   assert.deepEqual(w.diag[0].data.bot, [0, 0], "no bottom spacer in this window");
@@ -254,7 +254,7 @@ test("sizeSpacers and the measure read no layout property: zero offsetHeight, sc
   assert.ok(topOne !== topTwo, "the second write moved the spacer again (the measured figures)");
 });
 
-test("a spacer row whose view was switched away before the frame carries no geometry and says so: the scroller is the active view's alone, and it is not read when no queued row is that view's (review round 1b)", () => {
+test("a spacer row whose view was switched away before the frame carries no geometry and says so: the scroller is the active view's alone, and it is not read when no queued row is that view's (the maintainer's round 1 addendum)", () => {
   const w = lift("A");
   const { v, items } = viewOver(w, 200, 301, 221, () => ["turn turn-assistant", 90]);
   w.views.set("A", v);
@@ -332,7 +332,7 @@ test("a follow-mode reader at the bottom is given the figures on the next paint:
   other.views.set("A", w4.v); w4.v.shown = true; w4.v.stick = true;
   buildOne(other, w4.v, w4.items); observe(other, w4.v, w4.rows); other.takeMeasureAtBottom(w4.v);
   assert.ok(w4.v.measured); assert.deepEqual(other.writes, []); assert.equal(other.paints, 0);
-  // a scroller with no box (the pane hidden: 0 - 0 - 0 reads as the bottom) is asked for nothing (review round 0, high)
+  // a scroller with no box (the pane hidden: 0 - 0 - 0 reads as the bottom) is asked for nothing (the author's pass 0, high)
   const hidden = lift("A", 0);
   const w5 = viewOver(hidden, 200, 1 + 100 + 6, 101, (u) => two[u - 101]);
   hidden.views.set("A", w5.v); w5.v.shown = true; w5.v.stick = true;
@@ -372,7 +372,7 @@ test("figuresBefore then untakeMeasure: a take undone parks the figures again an
   assert.deepEqual(w.reads, { offsetHeight: 0, scrollHeight: 0, clientHeight: 0 }, "no layout read in any of it");
 });
 
-// ── the unit observer's callback: a view with no width is the hidden case (review round 0, high) ─
+// ── the unit observer's callback: a view with no width is the hidden case (the author's pass 0, high) ─
 
 test("an observer delivery with the view at width 0 (an ancestor hid it) forgets the baselines and measures nothing: no 0 enters the heights map, nothing is parked, no paint is asked for; the re-show measures", () => {
   const two: Array<[string, number]> = [["turn turn-user", 30], ["turn turn-assistant", 70], ["turn turn-user", 30], ["turn turn-assistant", 90], ["turn turn-user", 30], ["turn turn-assistant", 500]];
@@ -425,7 +425,7 @@ test("a delivery on a view whose only child is the empty transcript's placeholde
   }
 });
 
-// ── the resets that clear the average (review round 0, low) ──────────────────────────────────────
+// ── the resets that clear the average (the author's pass 0, low) ──────────────────────────────────────
 
 test("forgetAverage drops a parked average with the figure, so a reset's build measures the new rows instead of taking the old rows' average", () => {
   const w = lift(null);
@@ -455,11 +455,11 @@ test("forgetAverage drops a parked average with the figure, so a reset's build m
   assert.equal(w.reads.offsetHeight, 0, "no layout read anywhere in this");
 });
 
-// ── the measure's population is the units (review round 1) ───────────────────────────────────────
+// ── the measure's population is the units (the maintainer's round 1 ruling) ───────────────────────────────────────
 
 test("a hover's rail band among the view's children is not a row: the rows' average is over the children that carry a unit alone", () => {
   // drawRailBand appends the band to the thread with a class and no data-unit; the unit observer observes every added element, so the
-  // band has a height in v.uh, and measureUnits' population was every child of the thread, band included (review round 1, with the trim)
+  // band has a height in v.uh, and measureUnits' population was every child of the thread, band included (the maintainer's round 1 ruling, with the trim)
   const w = lift(null);
   const heights = [40, 90, 90, 30, 90, 90];
   const { v, items, rows } = viewOver(w, 200, 1 + 100 + heights.length, 101, (u) => [u === 101 || u === 104 ? "turn turn-user" : "turn turn-assistant", heights[u - 101]]);
@@ -479,7 +479,7 @@ test("a hover's rail band among the view's children is not a row: the rows' aver
 
 test("render.ts: the render task's spacer code holds no layout read; the unit observer records border-box heights and measures in both of its branches", () => {
   const code = codeOf;   // the code alone (the compiler's comment ranges): the comments name the reads that are gone
-  // the stripper's own pin (review round 3): a `//` in a quoted URL leaves the alias after it standing for the census, a quoted glob opens
+  // the stripper's own pin (the author's fixer pass over pass 3): a `//` in a quoted URL leaves the alias after it standing for the census, a quoted glob opens
   // no block comment, a regular expression's slashes are not a comment, and the comments themselves go
   assert.equal(code('const u = "http://h"; const rwi = renderWindowItems; // c\nz("image/*"); y(); /* c */ q(/^file:\\/\\//, ""); // d\n'),
     'const u = "http://h"; const rwi = renderWindowItems; \nz("image/*"); y();  q(/^file:\\/\\//, ""); \n', "the stripper keeps string, template and regular-expression literals whole and drops comments alone");
@@ -488,7 +488,7 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   const paintSide = code(span.replace(inFrame, ""));
   assert.ok(paintSide.includes("function sizeSpacers(v") && paintSide.includes("function measureUnits(v") && paintSide.includes("function applyMeasure(v"), "the span holds the paint-side functions");
   assert.doesNotMatch(paintSide, /offsetHeight|scrollHeight|clientHeight|getBoundingClientRect|offsetTop/, "sizeSpacers, the trim, the eviction, the measure and the apply read no layout property");
-  // the frame's read is per row, not per batch (review round 1b): once, only when a queued row is the shown view's, and a row of a view switched
+  // the frame's read is per row, not per batch (the maintainer's round 1 addendum): once, only when a queued row is the shown view's, and a row of a view switched
   // away since it was queued is filed with no geometry and the inactive marker, never another view's figures
   assert.match(inFrame, /requestAnimationFrame\(\(\) => \{[\s\S]*?const live = activeId;\s*\n\s*let sh: number \| null = null, ch: number \| null = null;\s*\n\s*if \(live && content && rows\.some\(\(\[rsid\]\) => rsid === live\)\) \{ sh = content\.scrollHeight; ch = content\.clientHeight; \}/, "the diag row's scroller read rides a frame, once, for the active view's rows alone");
   assert.match(inFrame, /rsid === live \? spacerRow\(rsid, a, b, c, d, sh, ch\) : spacerRow\(rsid, a, b, c, d, null, null, "inactive"\)/, "a switched-away view's row: no geometry, marked");
@@ -504,12 +504,12 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   assert.doesNotMatch(code(take), /writeScroll|sizeSpacers|redrawGapUnits|applyMeasure|style\./, "…and no write of its own");
   assert.doesNotMatch(RENDER, /"spacer-follow"/, "the writer is gone with it (landing-settle.ts's census)");
   assert.doesNotMatch(code(uo), /writeScroll|style\.height|sizeSpacers|redrawGapUnits/, "nothing in the unit observer's callback writes the DOM");
-  // the parked figures reach the DOM under one rule (review round 1b): a figure is taken ONLY by a paint that anchors the reader, and EVERY
+  // the parked figures reach the DOM under one rule (the maintainer's round 1 addendum): a figure is taken ONLY by a paint that anchors the reader, and EVERY
   // anchoring paint takes one. The takers: syncViewInner under the `anchored` flag (appendActive's follow or the anchor its restore holds,
   // `stick || !!anchor`; the toggle's keep when it captured a row, `!!anchor`), a window build under the same flag from its caller (a deep
   // link's or a moment's land, the re-window, a fill with a row or a point to put back), landActive on every road but the nothing-armed
   // re-show (land-saved, the raw write; an ARMED land that misses takes and puts the saved place's row back, anchor-restore, and writes
-  // raw only when that restore finds no row to put back: review round 2, the third such road named in round 3, executed in
+  // raw only when that restore finds no row to put back: the maintainer's round 2 ruling, the third such road named by the author's own verifiers after pass 3, executed in
   // land-active-keep.test.ts), and keepPlaceAcrossWindow over its restore. A switch's, a landing's or a hidden prebuild's sync passes no flag and applies
   // nothing (a 55 px move of a bottom reader in the landing lab), a fill that can only restore its raw top passes false, and a paint whose
   // only restore is a raw scrollTop (appendActive with no capturable row, the toggle for a bottom or row-less reader) passes false too.

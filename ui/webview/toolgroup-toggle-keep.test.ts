@@ -1,4 +1,4 @@
-// A tool-run toggle keeps the reader's place (PR E review round 1, high). toggleToolGroup repaints the active view through a window build
+// A tool-run toggle keeps the reader's place (PR E, the maintainer's round 1 ruling, high). toggleToolGroup repaints the active view through a window build
 // (syncView over a stale view: renderWindowItems), and a build takes the figures the unit observer parked since the last paint
 // (applyMeasure), so the head spacer above the viewport can change height under the reader by the re-measured per-turn figure times the
 // head gap's turns; the toggle then restored the raw pre-toggle scrollTop, moving a scrolled-up reader by that delta. The keep is
@@ -100,7 +100,7 @@ test("a scrolled-up reader in a session with a head gap: the toggle's build re-s
   w.toggle("tg:k");
   assert.ok(w.open.has("tg:k"), "the fold opened");
   assert.equal(w.v.stale, true, "the view was marked stale for the build");
-  assert.deepEqual(w.syncs, [[undefined, true]], "the build's sync is told it anchors (no atBottom, the flag true: a row was captured): the keep below covers a figure taken there (review round 1b)");
+  assert.deepEqual(w.syncs, [[undefined, true]], "the build's sync is told it anchors (no atBottom, the flag true: a row was captured): the keep below covers a figure taken there (the maintainer's round 1 addendum)");
   assert.equal(w.spacer.h, 2000 + D, "the build took the parked figure");
   assert.deepEqual(w.writes, [{ writer: "anchor-restore", top: 2350 + D, stick: false, from: 2350 }], "one write: the anchor row (r3) put back at its offset, 300 px further down the document, from the pre-toggle top");
   assert.equal(w.content.scrollTop, 2350 + D);
@@ -117,7 +117,7 @@ test("a reader at the bottom keeps the raw write with the pre-toggle top as its 
   const w = world(2000, 10, 100, 600, 3000 - 600);   // at the bottom of an overflowing scroller
   w.onSync = () => { w.take(); w.host.removeChild(w.rows[9]); w.host.removeChild(w.rows[8]); };   // a collapse: two rows go, the transcript shorter
   w.toggle("tg:k");
-  assert.deepEqual(w.syncs, [[undefined, false]], "no row captured, so the sync is told it does not anchor (review round 1b: a figure parked while this reader was off the bottom is asked for by no paint, and the toggle's raw write must not take it)");
+  assert.deepEqual(w.syncs, [[undefined, false]], "no row captured, so the sync is told it does not anchor (the maintainer's round 1 addendum: a figure parked while this reader was off the bottom is asked for by no paint, and the toggle's raw write must not take it)");
   assert.equal(w.spacer.h, 2000, "the head spacer stands: nothing taken");
   assert.deepEqual(w.writes, [{ writer: "toolgroup-toggle", top: 2400, stick: false, from: 2400 }], "the raw write: target and origin the pre-toggle top (scroll-write.test.ts and the pending-bubble lab pin this shape)");
   // an expand at the bottom: rows come back, the write is the same raw one, the reader stays where they were rather than following to the bottom
@@ -156,7 +156,7 @@ test("render.ts: the toggle's keep is appendActive's: the stick check, the ancho
   const t = RENDER.slice(RENDER.indexOf("function toggleToolGroup("), RENDER.indexOf("// Re-render every view from scratch"));
   assert.match(t, /const stick = !!content && content\.scrollHeight > content\.clientHeight \+ 2 && atBottom\(content\);/, "the stick check (appendActive's)");
   assert.match(t, /const anchor = content && v && !stick \? captureScrollAnchor\(content, v\) : null;/, "the anchor captured before the sync, not for a bottom reader");
-  assert.ok(t.indexOf("captureScrollAnchor(") < t.indexOf("syncView(activeId, undefined, !!anchor)"), "…before the build, whose sync is flagged by whether a row was captured (review round 1b: the keep below puts the row back, so that paint may take a parked figure; a bottom or row-less reader's raw write anchors nothing and takes nothing)");
+  assert.ok(t.indexOf("captureScrollAnchor(") < t.indexOf("syncView(activeId, undefined, !!anchor)"), "…before the build, whose sync is flagged by whether a row was captured (the maintainer's round 1 addendum: the keep below puts the row back, so that paint may take a parked figure; a bottom or row-less reader's raw write anchors nothing and takes nothing)");
   assert.doesNotMatch(t, /syncView\(activeId, undefined, (?:true|!stick)\)/, "neither the flag true for every reader nor `!stick` (a row-less reader off the bottom would take and write raw)");
   assert.match(t, /const figures = v \? figuresBefore\(v\) : null;/, "the figures read before the build, for the untake");
   assert.ok(t.indexOf("captureScrollAnchor(") < t.indexOf("const figures = ") && t.indexOf("const figures = ") < t.indexOf("syncView(activeId, undefined, !!anchor)"), "…between the capture and the build");

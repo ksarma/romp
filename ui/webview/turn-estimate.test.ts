@@ -64,7 +64,7 @@ test("a hidden user row (a stripped record, the echo of a send) starts no turn: 
 });
 
 test("a window whose rows all report 0 (the view has no box: an ancestor hid it) yields no figure, never 0", () => {
-  // the ancestor-hide shape (review round 0, high): Chromium delivers every unit at 0 with the view at width 0; read as heights, three
+  // the ancestor-hide shape (the author's pass 0, high): Chromium delivers every unit at 0 with the view at width 0; read as heights, three
   // complete turns of 0 px gave a median of 0, a figure applyMeasure takes (0 is neither null nor the old figure) and gapHeight draws
   // every gap at 0 px with. The rule is meanRowHeight's `h > 0`, the one the old estimator kept: a positive figure or none
   const zeros = [asst(0), user(0), asst(0), tool(0), user(0), asst(0), user(0), asst(0), user(0), asst(0)];
@@ -95,7 +95,7 @@ test("spacers, gap elements and day dividers are not turn content: they neither 
   assert.equal(perTurnEstimate(rows), 100);
 });
 
-test("a gap element inside the window ends the open turn and starts none: the rows after it are no turn until the next visible user row (review round 1b, extra8-4)", () => {
+test("a gap element inside the window ends the open turn and starts none: the rows after it are no turn until the next visible user row (the maintainer's round 1 addendum, extra8-4)", () => {
   // two complete turns (100, 120), then a gap: the rows after it belong to a turn whose prompt lies inside the gap (a run opening with no
   // visible user row: a stripped record, an unplaced prefix). Under the old walk they joined the 120 px turn, which closed at the third
   // user row as 1120, so a partial turn inflated a measured one; the gap breaks the turn instead, and the streaming turn after it is
@@ -116,7 +116,7 @@ test("the median: the middle value, or at an even count the LOWER of the two mid
   assert.equal(median([100, 5000, 120]), 120, "one tall turn does not pull the figure the way a mean would");
   assert.equal(median([120, 100, 200, 110]), 110, "four values: the lower middle (their mean of two, 115, is a height none of them has)");
   assert.equal(median([3, 1, 2, 1000, 4]), 3);
-  // the shape review round 1 found: three visible user rows around one long agentic turn give two complete turns, a short one and a long
+  // the shape the maintainer's round 1 ruling found: three visible user rows around one long agentic turn give two complete turns, a short one and a long
   // one, and the mean of the two (6,905 px) drew a 200-turn head gap at the cap (480,000 px) as a figure no turn in the window had; the
   // lower middle is the short turn, and at four turns the same holds (the averaging closed at two would have returned at four)
   const two = [user(30), asst(70), user(30), asst(13680), user(30)];

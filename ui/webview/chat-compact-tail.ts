@@ -16,7 +16,7 @@
 // a gap at or past the first unit (its element and its spacer entry are keyed by unit), a bottom spacer under the window (the trim
 // walks up from the last child; a spacer carries no unit and would end it at once). A window the reader browsed away from the tail
 // grows its bottom spacer when the change lies below it (the shape normal mode has always had; the seam also patches the window's
-// worked footers there, the one render that reads later events, review round 1b) and rebuilds when the change lies
+// worked footers there, the one render that reads later events, the maintainer's round 1 addendum) and rebuilds when the change lies
 // inside it, as before. Pure: chat-compact-tail.test.ts executes every rule.
 import type { DisplayItem } from "./compact";
 

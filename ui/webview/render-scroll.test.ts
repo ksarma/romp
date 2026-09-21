@@ -91,7 +91,7 @@ test("a scrolled-up append restores by turn ANCHOR (data-uuid), raw scrollTop on
     "the anchor is captured BEFORE the rebuild, only when scrolled up");
   assert.match(fn, /else if \(!\(v && restoreScrollAnchor\(content, v, anchor, before\)\)\) \{ if \(v && figures\) untakeMeasure\(v, figures\); writeScroll\(content, before, "append-raw", false, before\); \}/,
     "anchor-relative restore first; the raw pixel offset only when the anchor was evicted, with the sync's take given back first so the offset lands in the layout it was read in (the maintainer's round 3 ruling B)");
-  assert.match(RENDER, /function captureScrollAnchor\(content: HTMLElement, v: View, at: number = content\.scrollTop\)/, "the capture reads at the scroller's own position unless the caller names one (landActive: the view's saved place, PR E review round 2)");
+  assert.match(RENDER, /function captureScrollAnchor\(content: HTMLElement, v: View, at: number = content\.scrollTop\)/, "the capture reads at the scroller's own position unless the caller names one (landActive: the view's saved place, PR E, the maintainer's round 2 ruling)");
   assert.match(RENDER, /r\.bottom > cTop \+ 1/, "the anchor is the first turn still visible at the viewport top");
   assert.match(RENDER, /querySelector\(`\[data-uuid="\$\{cssEscape\(a\.uuid\)\}"\]`\)/,
     "the anchor re-resolves by its stable uuid after the rebuild");

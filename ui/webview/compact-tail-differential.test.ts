@@ -1,4 +1,4 @@
-// Compact mode's incremental tail against a full rebuild of the same state: the DIFFERENTIAL (PR E review round 1, lens one). The seam
+// Compact mode's incremental tail against a full rebuild of the same state: the DIFFERENTIAL (PR E, the maintainer's round 1 ruling, lens one). The seam
 // (render.ts syncViewInner) re-renders the tail by unit where the rebuild (renderWindowItems) re-rendered the whole window, and the PR
 // rested that equivalence on a byte-for-byte source pin, which detects an edit and cannot detect a divergence. Here the real code is
 // lifted from render.ts, syncViewInner and patchWorkedFooters, appendItem and renderWindowItems, the rail chain (railSeed, railExit,
@@ -6,7 +6,7 @@
 // DOM whose rows record what a reader can see: the unit, the class list, the row's text, the rail marker's reference (data-prev) and the
 // stamp it yields (markerLabel), the walk's day (data-day) and the worked footer. Frames are driven through the incremental path one
 // at a time, and after each the same session and window are rebuilt from scratch and the two DOMs compared unit by unit. WHAT IS
-// DRIVEN is derived from two lists rather than claimed whole (review round 2): the seam's OUTCOMES (chat-compact-tail.ts TailPlan:
+// DRIVEN is derived from two lists rather than claimed whole (the maintainer's round 2 ruling): the seam's OUTCOMES (chat-compact-tail.ts TailPlan:
 // append, spacer, rebuild, and syncViewInner's status-only fast path) over the UNIT KINDS compactDisplay mints (compact.ts DisplayItem:
 // a lone event, a tool run, a notice run, a gap) and the states the stream delivers (working, compacting, ready).
 // - append, per unit kind and fold state: a prompt, a reply, a tool, a notice landing; an edit of the last block and of a tool inside
@@ -20,7 +20,7 @@
 //   eviction (the window's span kept, the promoted head unit's stamp; a gap promoted to the head, the stamp of the first marker after
 //   it).
 // - spacer, in both directions below a browsed window: the footer landing on the window's last reply when the completing prompt lands
-//   below it, and coming off when a later reply joins the turn below it (the one branch review round 1b changed).
+//   below it, and coming off when a later reply joins the turn below it (the one branch the maintainer's round 1 addendum changed).
 // - the fast path: a status-only tail while the turn is OPEN, over every state (idle puts the footer on the turn's last reply and on
 //   the last row of an open notice run by its position; work and compacting take it off).
 // - rebuild: the shrink (the tail truncated: the handler's stale mark). Its other whys (no-record, below-window, inside-browsed,
@@ -29,7 +29,7 @@
 //   projection cannot see (compact-seam-exec.test.ts drives it).
 // The plan's kind is asserted per frame, and after an append the units below the plan's u0 are the SAME nodes and the units from u0
 // are new, so a seam that silently fell back to the rebuild, with the plan asked or not, could not make the comparison vacuously green
-// (the plan assertion alone guarded the planner, not the executor: round 1's second pass); a spacer frame replaces no node. The rebuild
+// (the plan assertion alone guarded the planner, not the executor: the author's second pass over round 1); a spacer frame replaces no node. The rebuild
 // leg and the browse helper's window build read the working state the seam stored on the view (v.working), never a restatement of the
 // state test, and every read asserts the value present first (workingOf). The renderers are
 // stubs that record their inputs; the rail and day rules, the trim, the hover clear and the footer patch are the real functions.
@@ -122,7 +122,7 @@ const WINDOW_TAIL = 8;   // the harness's window: small, so an append evicts the
 
 /** The display units for a session: compactDisplay over the events' kinds, tool names and foldable notices (render.ts displayItems,
  *  whose notice predicate is compact.ts isFoldableNoticeShape: passed here as production passes it, never a hand copy of one of its six
- *  shapes, which could mint no run of the other five; review round 2); a session with `gapBefore` set holds a hidden-history gap (T386:
+ *  shapes, which could mint no run of the other five; the maintainer's round 2 ruling); a session with `gapBefore` set holds a hidden-history gap (T386:
  *  turns the page does not hold) as the unit before the one opening at that event, where the regions' itemization puts it. */
 const firstEventOf = (it: DisplayItem): number => (it.kind === "event" ? it.index : it.kind === "gap" ? it.before : it.indices[0]);
 const itemsFor = (s: { events: Ev[]; gapBefore?: number }, compact: boolean): DisplayItem[] => {
@@ -260,7 +260,7 @@ function world(events: Ev[], open: Set<string>, working = true, gapBefore?: numb
 /** The rebuild of the same state over the incremental view's own window, in a fresh view. The rebuild leg reads the working state
  *  production's own syncViewInner computed and stored on the view (render.ts `v.working = working`), never a restatement of the state
  *  test: a copy here dropped `compacting` and rendered the two legs from different inputs, so the instrument went red against correct
- *  production code (review round 2). The value is asserted present so a production change that stops storing it is a loud red here,
+ *  production code (the maintainer's round 2 ruling). The value is asserted present so a production change that stops storing it is a loud red here,
  *  not a rebuild over `undefined` that happens to match. */
 function rebuild(w: World): FakeEl {
   const v2: any = { el: new FakeEl("div"), rendered: 0, scrollTop: 0, stick: true, shown: true, stale: false, winStart: 0 };
@@ -270,7 +270,7 @@ function rebuild(w: World): FakeEl {
 }
 /** The working state the seam's last paint computed and stored on the view (render.ts `v.working = working`), asserted present BEFORE
  *  any use: the one reader for the rebuild leg and the browse helper, so a production change that stops storing it reds at the read
- *  that would have rendered over `undefined` (as idle), naming the leg, rather than one step later (review round 3: the browse helper
+ *  that would have rendered over `undefined` (as idle), naming the leg, rather than one step later (the author's fixer pass over pass 3: the browse helper
  *  handed the value on unasserted, so under that change the browsed window rendered idle first and the red came from the rebuild). */
 function workingOf(w: World, leg: string): boolean {
   assert.notEqual(w.v.working, undefined, leg + " reads the working state the seam's last paint stored on the view (syncViewInner stores v.working), and the view holds none");
@@ -352,7 +352,7 @@ function browse(w: World, ws: number, we: number): void {
   w.frames.push("browse [" + ws + ", " + we + ")");
   compare(w, "the browsed window");
 }
-/** One streamed frame whose change lies BELOW a browsed window: the seam's SPACER outcome (review round 2: the one branch the delta
+/** One streamed frame whose change lies BELOW a browsed window: the seam's SPACER outcome (the maintainer's round 2 ruling: the one branch the delta
  *  changed, the footer patch, and the outcome the frame() driver could not reach). The events after `mutate` (an append below the
  *  window), the first changed index lowering v.rendered, then the sync with the reader scrolled up. Exactly one plan is asked and it is
  *  `spacer`; no unit node is replaced (every unit node is the node that was there: the footer patch edits a row in place); the bottom
@@ -444,7 +444,7 @@ for (const [fold, open] of FOLDS) {
     frame(w, "working again", (ev) => ev, "fast", { working: true });
     assert.equal(footerOn(w, "a9"), null, "back at work: the footer comes off");
     // compacting is a state the stream delivers and the footer reads as work (syncViewInner: working || compacting): a status-only tail
-    // into it changes nothing, on both legs (review round 2: the rebuild leg restated the state test and dropped compacting)
+    // into it changes nothing, on both legs (the maintainer's round 2 ruling: the rebuild leg restated the state test and dropped compacting)
     frame(w, "compacting", (ev) => ev, "fast", { state: "compacting" });
     assert.equal(footerOn(w, "a9"), null, "compacting is work: no footer on the open turn's reply");
     // idle again, then a reply lands in the same turn: the footer comes off the reply before it (the seam's patch, its off branch) and the
@@ -486,7 +486,7 @@ for (const [fold, open] of FOLDS) {
     browse(w, 0, 5);
     assert.equal(footerOn(w, "a4"), null, "the open turn's reply carries no footer while the session works");
     // a human prompt lands below the window: the turn is complete, so its last reply, INSIDE the window, gets its footer (the seam's spacer
-    // branch patches from the first changed event; the rebuild this branch replaced re-rendered the window's footers; review round 1b)
+    // branch patches from the first changed event; the rebuild this branch replaced re-rendered the window's footers; the maintainer's round 1 addendum)
     spacerFrame(w, "a prompt completes the turn below the window", (ev) => ev.concat([user("u6", at(10, 6, 0), "third question")]), { working: true });
     assert.equal(footerOn(w, "a4"), String(at(10, 4, 20) - at(10, 0, 0)), "the completing prompt below the window put the footer on the window's last reply");
     // the other direction, its own world: the session is idle, so the open turn's last reply carries the footer; a later reply lands below
@@ -500,9 +500,9 @@ for (const [fold, open] of FOLDS) {
 
   test(`a notice run with one member from each branch of isFoldableNoticeShape, run ${fold}: a retried (a notice kind), then a user-shaped and an assistant-shaped foldable notice, each appended and compared against a rebuild`, () => {
     // the unit list is minted through production's own predicate, so the run forms here as it does in render.ts displayItems; a hand
-    // copy of one shape (`kind === "retried"`) could mint none of these (review round 2: hardening, no failing-before of its own). The
+    // copy of one shape (`kind === "retried"`) could mint none of these (the maintainer's round 2 ruling: hardening, no failing-before of its own). The
     // predicate has three branches (four notice kinds; a user row by interrupt marker, rompSystem note or peer source; an assistant
-    // row by interruptSettle): one member per branch, not one per shape (review round 3: the name said "the three shapes production
+    // row by interruptSettle): one member per branch, not one per shape (the author's fixer pass over pass 3: the name said "the three shapes production
     // folds", a count the predicate does not have)
     const w = world(base(), new Set(open));
     frame(w, "a retried notice lands", (ev) => ev.concat([notice("n5", at(10, 5, 0))]), "append");
@@ -554,7 +554,7 @@ for (const [fold, open] of FOLDS) {
     // first prompt, under a collapsed run across a minute boundary, and the window spans it; the appends evict the units above the gap
     // one by one, then the gap itself. The build's seed at the gap is the back-scan from the event below it (the run's LAST member),
     // where the chain the prompt below was drawn with left the collapsed run on its FIRST: re-seeding the head unit's own marker alone
-    // found none on the gap and left the prompt's stamp on the chain's reference until the next eviction repaired it (round 1's second pass).
+    // found none on the gap and left the prompt's stamp on the chain's reference until the next eviction repaired it (the author's second pass over round 1).
     const events: Ev[] = [
       user("u0", at(9, 50, 0), "first question"), reply("a1", at(9, 50, 30), "first answer"),
       user("u2", at(9, 52, 0), "second question"), tool("t1", at(9, 52, 10), "Read"), tool("t2", at(9, 55, 0), "Grep"),
