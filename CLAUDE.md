@@ -97,9 +97,15 @@ so there is no list to write. **gitleaks** covers them, in two places:
   is read too) and refuses the push on a hit. No gitleaks on the machine means a
   loud notice and no scan (requiring an install to push would break every clone
   that never asked for it); a gitleaks that fails to run refuses the push and
-  says so. `ROMP_NO_GITLEAKS=1` skips the scan, `ROMP_GITLEAKS` points at a
-  binary. This is the same hook as the identifier scan and both report before
-  it refuses, so one push tells you about both.
+  says so, and so does one that ran but cannot show what it scanned: an error
+  line in its own log, or a scanned-commit count that is not the hook's own
+  count of the commits with content to scan, or no count at all (the two
+  coverage conditions). A git configuration the hook cannot override
+  (`log.showRoot` set to false, with a root commit in the push) leaves gitleaks
+  short and refuses a clean push; `ROMP_NO_GITLEAKS=1` skips the scan for one
+  push, `ROMP_GITLEAKS` points at a binary. This is the same hook as the
+  identifier scan and both report before it refuses, so one push tells you
+  about both.
 - **CI's `Secret scan (gitleaks)` job** scans all of history, every branch and
   tag the checkout brings, on every PR and every push to `main`, from a
   pinned, checksummed binary. It needs `fetch-depth: 0`: a default checkout

@@ -102,16 +102,33 @@
 # "no finding reported", never as "scanned": the hook reads gitleaks' log, and
 # refuses the push as unscanned on any ERR line, and separately when the commit
 # count gitleaks reports is not the hook's own count of the commits with content
-# to scan, derived from the same `git log -p` stream by gitleaks' rule. Two
-# conditions, because either alone has a hole: a log that came up short writes
-# no ERR line, and a discarded scan can still report the whole count. Found by
-# execution (2026-09-21): a git that wrote one benign line to stderr, and one
-# that handed gitleaks a commit fewer, each let two live credentials through a
-# real push with nothing printed, on a clone with the denylist armed. Both
-# reads ask git for no colour: with color.ui or color.diff set to always, git
-# colours the patch it writes to a pipe, gitleaks finds no file header in it
-# and reports 0 commits with no ERR line, and a count read from the same
-# coloured stream agreed with it, so a credential passed (2026-09-21).
+# to scan. Two conditions, because either alone has a hole: a log that came up
+# short writes no ERR line, and a discarded scan can still report the whole
+# count. Found by execution (2026-09-21): a git that wrote one benign line to
+# stderr, and one that handed gitleaks a commit fewer, each let two live
+# credentials through a real push with nothing printed, on a clone with the
+# denylist armed. The hook's count is derived from the OBJECTS (rev-list,
+# diff-tree --raw, cat-file; scannable_commits), never from the patch stream
+# gitleaks reads: a count read from that same stream agreed with the scan under
+# every transform of the stream, since a transform empties both alike. Six were
+# found in two rounds (2026-09-21): colour (color.ui or color.diff set to
+# always), a textconv driver and a -diff attribute named in .gitattributes, each
+# of which published a credential with the hook reporting clean; and
+# format.pretty, log.date and log.showSignature, which refused clean pushes.
+# gitleaks' git is asked for a plain stream (the options in gitleaks_args, each
+# outranking the config key it neutralises) so a clean push agrees, and a
+# transform no option reaches (log.showRoot set to false hides a root commit's
+# diff) now refuses on the count rather than passing on it.
+#
+# Both scans read the objects at the pushed shas, on the premise that what they
+# read is what the push transfers. A replace ref (git replace) breaks it: every
+# read follows the substitute while the push transfers the original, and a real
+# push published a banned string and a credential at the pushed sha with both
+# scans reading clean (2026-09-21). So every git the hook runs, gitleaks' own
+# included, runs with replacement OFF (GIT_NO_REPLACE_OBJECTS), and a clone that
+# carries any replace ref at all is refused before either scan
+# (refuse_replace_refs): a scan under replacement cannot vouch for the bytes
+# pushed.
 #
 # Why pushed commits rather than a working-tree scan: the hook is symlinked into
 # the SHARED git hooks dir (by install.sh), so it fires from every worktree —
@@ -123,6 +140,9 @@
 # ROMP_NO_GITLEAKS=1 (skip the credential scan and its notice).
 # Bypass a false positive from either scan with `git push --no-verify`.
 set -euo pipefail
+# Replacement off for every git below, gitleaks' own included (the header's
+# premise): the scans read the objects the push transfers, never a substitute.
+export GIT_NO_REPLACE_OBJECTS=1
 
 # git feeds the ref list on stdin and both scans need it, so read it once.
 refs="$(cat)"
@@ -274,6 +294,23 @@ tag_unread() {   # <local_ref> <tag_sha> <FIELD> [<consequence>]
 # so the line names the object the ref pushes, not "the tag".
 type_unread() {   # <local_ref> <sha>
     unscanned "the TYPE of the object $1 pushes (${2:0:10}) could not be read, so whether it is an annotated tag is unknown"
+}
+# A clone that carries a replace ref is refused before either scan runs (the
+# header's premise): under a replacement, what a scan reads and what the push
+# transfers can differ, and the push is refused rather than scanned. Each ref is
+# named; GIT_REPLACE_REF_BASE moves the namespace git reads, so the same
+# variable says where to look. A listing that failed refuses too: whether the
+# reads and the push agree is then unknown.
+refuse_replace_refs() {
+    local rc=0 found ref
+    found=$(git for-each-ref --format='%(refname)' "${GIT_REPLACE_REF_BASE:-refs/replace/}") || rc=$?
+    [ "$rc" -eq 0 ] || unscanned "the REPLACE REFS of this clone could not be listed (git for-each-ref exited $rc), so whether the scans read what the push transfers is unknown"
+    [ -n "$found" ] || return 0
+    while IFS= read -r ref; do
+        echo "romp pre-push: this clone carries a replace ref ($ref): under it what a scan reads and what the push transfers can differ, so the push is refused rather than scanned" >&2
+    done <<< "$found"
+    echo "  Delete it (git replace -d <object>) and push again, or push from a clone that carries none." >&2
+    failed_scan=1
 }
 
 # ── identifiers ───────────────────────────────────────────────────────────
@@ -500,33 +537,83 @@ scan_identifiers() {
 # The commits gitleaks COUNTS over a range, derived the way it counts them, so
 # the count it reports can be checked (scan_credentials). gitleaks reads
 # `git log -p -U0` over the range and counts a commit once it has scanned one
-# hunk of one file that is neither a deletion nor binary: its "N commits
-# scanned" is the distinct commits among the fragments it scanned, and its own
-# debug note says the number can be smaller than expected "due to commits with
-# no additions". So an empty commit, a deletion, a binary add, a mode-only or a
-# rename-only change count for nothing, and `git rev-list --count` over-counts
-# every one of them. This reads the same stream, with the same first-parent view
-# of a merge, and applies the same rule; checked by execution against gitleaks
-# 8.28.0 and 8.30.1 over 22 commit shapes and a 4556-commit range (2026-09-21).
-# The cost is a second patch read, about what gitleaks' own read costs. The
-# `commit` header line is the format's own: no line of a patch begins with
-# `commit `. A git older than 2.31 rejects --diff-merges, for gitleaks' log and
-# for this one alike: refused, not skipped.
-# --no-color, here and on gitleaks' own log (scan_credentials): with color.ui
-# or color.diff set to always, git colours `log -p` written to a pipe, gitleaks
-# finds no file header in the coloured stream and reports 0 commits with no ERR
-# line, and a count read from the same coloured stream agreed with it, so a
-# credential passed both conditions (found by execution, 2026-09-21). Each read
-# asks git for a plain stream of its own; an option on the log outranks the
-# config in every scope.
+# hunk of one file that is not a deletion: its "N commits scanned" is the
+# distinct commits among the fragments it scanned, and its own debug note says
+# the number can be smaller than expected "due to commits with no additions".
+# So an empty commit, a deletion, a mode-only change and an empty new file count
+# for nothing, and `git rev-list --count` over-counts every one of them.
+#
+# Derived from the OBJECTS, not from a patch: a count read from the same
+# `git log -p` stream gitleaks reads shared every transform of that stream (the
+# header) and agreed with an emptied scan. Here rev-list names every commit in
+# the range with its first parent (the commits gitleaks' log walks), one
+# diff-tree --raw lists each commit's changed paths against that parent (a root
+# against the empty tree) with their blob shas, without rename detection, diff
+# drivers, attributes or colour, and one cat-file reads the sizes of the blobs
+# whose size decides. A commit has content when one entry that is not a
+# deletion gives the patch a hunk: a gitlink whose sha changed (a `Subproject
+# commit` line either way), a modified blob whose sha changed (a mode-only
+# change keeps the sha and prints no hunk; a file emptied prints one), or a new
+# or type-changed path whose blob is not empty (an empty new file or link prints
+# no hunk). gitleaks' git is given --text and --no-renames (gitleaks_args), so a
+# binary file is diffed as text and a pure rename as a deletion and an addition,
+# and both count here as their bytes say; checked by execution against gitleaks
+# 8.28.0 and 8.30.1 over the commit shapes in the round's log (2026-09-21).
+# --stdin: one diff-tree for the whole range; a merge fed with its first parent
+# alone is diffed against that parent. A blob cat-file cannot find fails the
+# count (missing), as does any of the three reads failing: refused (the caller),
+# never counted as 0. The cost is three git reads per pushed ref, whatever the
+# range's size.
 scannable_commits() {   # <rev-list argument list>
-    git log --no-color -p -U0 --format='commit %H' --diff-merges=first-parent "$@" | awk '
-        /^commit [0-9a-f]+$/       { c = $2; f = 0; next }
-        /^diff --git /             { f = 1; skip = 0; next }
-        f && /^deleted file mode / { skip = 1; next }
-        f && /^Binary files /      { skip = 1; next }
-        f && /^@@/ && !skip && !(c in seen) { seen[c] = 1; n++ }
-        END { print n + 0 }'
+    local raw sizes
+    raw=$(git rev-list --parents "$@" | awk '{ print ($2 == "" ? $1 : $1 " " $2) }' \
+          | git diff-tree --stdin -r --raw --no-renames --root) || return $?
+    sizes=$(printf '%s\n' "$raw" | awk '/^:/ && $2 != "160000" && ($5 == "A" || $5 == "T") { print $4 }' | sort -u \
+            | git cat-file --batch-check='%(objectname) %(objectsize)') || return $?
+    printf '%s\n%s\n' "$sizes" "$raw" | awk '
+        !/^:/ && NF == 2 && $2 == "missing" { print "fatal: blob " $1 " is missing" > "/dev/stderr"; bad = 1; exit 3 }
+        !/^:/ && NF == 2                     { size[$1] = $2; next }
+        !/^:/ && NF == 1                     { c = $1; next }
+        /^:/ && $5 != "D" && !(c in seen) {
+            if ($2 == "160000")              hit = ($3 != $4)
+            else if ($5 == "A" || $5 == "T") hit = (size[$4] > 0)
+            else                             hit = ($3 != $4)
+            if (hit) { seen[c] = 1; n++ }
+        }
+        END { if (!bad) print n + 0 }'
+}
+
+# gitleaks' argument list, built in ONE place: the invocation in scan_credentials
+# and tests/pre-push-hook.bats's scan_direct, which reads this function out of
+# this file, call the scanner with the same words by construction. The range
+# comes first in --log-opts and --diff-merges=first-parent next, the order
+# tests/install-sh.bats pins by substring.
+# -v prints the file, line and rule; without it gitleaks reports only a COUNT,
+# which says a push was refused but not what to fix. --redact keeps the secret
+# itself out of terminal scrollback: the location is what a fix needs, and the
+# value has to be rotated anyway. --exit-code 2 tells a finding apart from
+# gitleaks failing (exit 1: an unreadable config, say); both refuse the push,
+# with different advice. --diff-merges=first-parent: `gitleaks git` runs
+# `git log -p`, which shows NO diff for a merge commit by default, so a secret
+# introduced during a conflict resolution (in neither parent, only the merge
+# tree) would be scanned by nothing; the first-parent diff of each merge
+# surfaces exactly that content, and non-merges are unaffected. The rest ask
+# git for a plain stream, each outranking the config key it neutralises in
+# every scope (the header): --no-color (color.ui, color.diff: gitleaks finds no
+# file header in a coloured patch); --no-textconv (a diff.<driver>.textconv
+# named by a .gitattributes entry rewrites the text gitleaks scans);
+# --text (a -diff attribute, or core.bigFileThreshold, makes git call a file
+# binary and print no hunk for it); --no-renames (diff.renames: a pure rename
+# is a deletion and an addition, whatever the key says, as scannable_commits
+# counts it); --submodule=short and --ignore-submodules=none (diff.submodule,
+# diff.ignoreSubmodules: a gitlink change stays one hunk); --no-show-signature
+# (log.showSignature writes gpg's report into the stream); --pretty=medium and
+# --date=default (format.pretty, log.date: gitleaks parses the default header).
+gitleaks_args() {   # <root> <range> [<config option>...]: fills GL_ARGS
+    local root="$1" range="$2"
+    shift 2
+    GL_ARGS=(git "$root" --no-banner --redact -v --exit-code 2 "$@"
+        "--log-opts=$range --diff-merges=first-parent --no-color --no-textconv --text --no-renames --submodule=short --ignore-submodules=none --no-show-signature --pretty=medium --date=default")
 }
 
 scan_credentials() {
@@ -570,22 +657,10 @@ scan_credentials() {
         # shellcheck disable=SC2086  # the range is deliberately word-split
         rc=0; expected=$(scannable_commits $range) || { rc=$?; expected=""; }
         if [ "$rc" -ne 0 ]; then
-            unscanned "the COMMITS of $local_ref (${local_sha:0:10}) could not be counted for the credential scan (git log exited $rc)"
+            unscanned "the COMMITS of $local_ref (${local_sha:0:10}) could not be counted for the credential scan (a git read exited $rc)"
             failed_creds=1
         fi
-        # -v prints the file, line and rule; without it gitleaks reports only a
-        # COUNT, which says a push was refused but not what to fix. --redact
-        # keeps the secret itself out of terminal scrollback: the location is
-        # what a fix needs, and the value has to be rotated anyway.
-        # --exit-code 2 tells a finding apart from gitleaks failing (exit 1: an
-        # unreadable config, say). Both refuse the push, with different advice.
-        # --diff-merges=first-parent: `gitleaks git` runs `git log -p`, which
-        # shows NO diff for a merge commit by default, so a secret introduced
-        # during a conflict resolution (in neither parent, only the merge tree)
-        # would be scanned by nothing. The first-parent diff of each merge
-        # surfaces exactly that content; non-merges are unaffected.
-        # --no-color: the colour road (scannable_commits' comment): gitleaks'
-        # git, given a plain stream, scans what the hook's count counts.
+        # The argument list is gitleaks_args' (the options and why, there).
         # ${cfg[@]+...}: an empty array expands to nothing under set -u in
         # every bash, the 3.2 that macOS ships included.
         # gitleaks' stdout (the findings, under -v) goes to stderr as it is
@@ -594,9 +669,9 @@ scan_credentials() {
         # stderr at ERR and then reports the commits it did read as if the scan
         # were whole. The colour codes it writes even off a terminal are stripped
         # from the copy that is read, not from the copy shown.
+        gitleaks_args "$root" "$range" ${cfg[@]+"${cfg[@]}"}
         rc=0
-        log=$( { "$gl" git "$root" --no-banner --redact -v --exit-code 2 ${cfg[@]+"${cfg[@]}"} \
-            --log-opts="$range --diff-merges=first-parent --no-color" 2>&1 1>&3; } 3>&2 ) || rc=$?
+        log=$( { "$gl" "${GL_ARGS[@]}" 2>&1 1>&3; } 3>&2 ) || rc=$?
         [ -z "$log" ] || printf '%s\n' "$log" >&2
         case $rc in
             0) ;;
@@ -641,6 +716,7 @@ scan_credentials() {
     fi
 }
 
+refuse_replace_refs
 scan_identifiers
 scan_credentials
 
