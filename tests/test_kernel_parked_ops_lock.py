@@ -23,9 +23,11 @@ unchanged: a raise during a sid's pass drops that sid's queue once, logged.
 
 SYNTHETIC fixtures only: placeholder uuids, invented texts.
 """
+import errno
 import io
 import os
 import contextlib
+import stat
 import tempfile
 import threading
 import time
@@ -633,6 +635,106 @@ class TheMirrorIsWrittenPerWriter(_Drain):
         for s in srcs:
             self.assertEqual(os.path.dirname(s), str(km._PENDING_OPS_FILE.parent),
                              "published from the file's own directory (a same-filesystem rename)")
+
+
+
+class TheMirrorIsOwnerOnly(_Drain):
+    """A parked ("env", {...}) op carries the pick's VALUES, which can be credentials (the chip renders names
+    only for that reason), and the mirror keeps them on disk until the op is delivered, across a kernel death.
+    pending-ops.json is therefore published at 0600 like the reg (write_reg): _atomic_write sets the mode on the
+    per-writer temp's DESCRIPTOR before the first write (os.fchmod: exact under any umask, never a chmod on a
+    path after the write), and os.replace carries it onto the published path, so a mirror written before the
+    change (the live one sat at 0664 under the 0700 root) tightens on its next save. Only the kernel reads it.
+    Defence in depth behind the 0700 state root (extra5-2 of PR 776's review round, deferred to its own fix,
+    2026-09-18; the descriptor shape is review round 1 of PR 789): the values still live in a file."""
+
+    def setUp(self):
+        super().setUp()
+        prior = os.umask(0o022)                        # the common umask: a write_text temp would be 0644
+        self.addCleanup(os.umask, prior)
+        self.val = "synthetic-" + os.urandom(6).hex()  # assembled at run time: no credential-shaped literal
+
+    def _mode(self):
+        return stat.S_IMODE(os.stat(km._PENDING_OPS_FILE).st_mode)
+
+    def test_a_parked_env_pick_is_mirrored_owner_only(self):
+        with redirect_stderr(io.StringIO()):
+            km._park_op(SID, ("env", {"NOTES_API_TOKEN": self.val}))
+        self.assertEqual(self._mode(), 0o600)
+        self.assertIn(self.val, km._PENDING_OPS_FILE.read_text(), "the value IS in the mirror: the mode is what guards it")
+        self.assertEqual(km._load_pending_ops(), {SID: [("env", {"NOTES_API_TOKEN": self.val})]}, "the kernel reads it back")
+
+    def test_an_existing_loose_mirror_tightens_on_its_next_save(self):
+        km._pending_ops[SID] = [("model", "opus")]
+        km._save_pending_ops()
+        os.chmod(km._PENDING_OPS_FILE, 0o644)          # a mirror written before the change
+        km._pending_ops[SID] = [("env", {"NOTES_API_TOKEN": self.val})]
+        km._save_pending_ops()
+        self.assertEqual(self._mode(), 0o600, "os.replace carries the temp's mode onto the published path")
+
+    def test_the_mirrors_temp_is_never_observable_wider_than_0600(self):
+        seen, fchmods, chmods = [], [], []
+        real_replace, real_fchmod = os.replace, os.fchmod
+
+        def replace_probe(src, dst, *a, **k):
+            if str(dst) == str(km._PENDING_OPS_FILE):
+                seen.append(stat.S_IMODE(os.stat(src).st_mode))   # the temp's mode as the publish begins
+            return real_replace(src, dst, *a, **k)
+
+        def fchmod_probe(fd, mode):
+            fchmods.append((mode, os.fstat(fd).st_size))     # the size at that moment: 0 is before the first write
+            return real_fchmod(fd, mode)
+
+        def chmod_probe(path, mode, *a, **k):
+            chmods.append((str(path), mode))               # recorded, not performed: a chmod after the
+            #                                                 write is the very window this closes
+        km._pending_ops[SID] = [("env", {"NOTES_API_TOKEN": self.val})]
+        with mock.patch.object(km.os, "replace", replace_probe), mock.patch.object(km.os, "fchmod", fchmod_probe), \
+                mock.patch.object(km.os, "chmod", chmod_probe):
+            km._save_pending_ops()
+        self.assertEqual(seen, [0o600], "0600 at the replace: the publish carries the descriptor's mode")
+        self.assertEqual(fchmods, [(0o600, 0)], "one fchmod, on the descriptor, while the temp is still empty")
+        self.assertEqual(chmods, [], "no chmod on a path after the write: nothing tightens later")
+        self.assertEqual(self._mode(), 0o600)
+
+    def test_a_raising_fchmod_on_the_swallowed_save_road_leaks_no_descriptor_across_repeated_saves(self):
+        # Review round 2 of PR 789 (2026-09-19). _save_pending_ops swallows a failed save (the stderr line) and the mirror
+        # is re-saved on every park or delivery, so a descriptor left open by a raising fchmod in _atomic_write (round 1
+        # put the fchmod between os.open and os.fdopen with no close on that road) leaked once per mutation for as long
+        # as the failure lasted: unbounded, toward EMFILE. Five failed saves: five lines said, every descriptor os.open
+        # returned reaches os.close (a real close, recorded), the process holds no new descriptor, no temp is left.
+        km._pending_ops[SID] = [("env", {"NOTES_API_TOKEN": self.val})]
+        opened, closed = [], []
+        real_open, real_close = os.open, os.close
+
+        def open_probe(*a, **k):
+            fd = real_open(*a, **k)
+            opened.append(fd)
+            return fd
+
+        def fchmod_refused(fd, mode):
+            raise PermissionError(errno.EPERM, "fchmod refused (interposed)")
+
+        def close_probe(fd):
+            closed.append(fd)
+            return real_close(fd)
+
+        def fds():
+            return set(os.listdir("/proc/self/fd")) if os.path.isdir("/proc/self/fd") else None
+        err = io.StringIO()
+        with mock.patch.object(os, "open", open_probe), mock.patch.object(os, "fchmod", fchmod_refused), \
+                mock.patch.object(os, "close", close_probe):
+            before = fds()
+            with redirect_stderr(err):
+                for _ in range(5):
+                    km._save_pending_ops()             # swallows the error and says so; the next mutation retries
+            after = fds()
+        self.assertEqual(err.getvalue().count("pending-ops save:"), 5, "each failed save is said, none raises")
+        self.assertEqual(len(opened), 5, "one descriptor per save, the temp's")
+        self.assertEqual(closed, opened, "each closed on the failure road")
+        self.assertEqual(after, before, "five failed saves, no descriptor kept")
+        self.assertFalse(km._PENDING_OPS_FILE.exists(), "nothing published")
+        self.assertEqual(list(km._PENDING_OPS_FILE.parent.glob(km._PENDING_OPS_FILE.name + ".tmp.*")), [], "no temp left")
 
 
 

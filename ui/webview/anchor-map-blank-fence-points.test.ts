@@ -20,7 +20,7 @@
 // real session text.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { marked } from "marked";
+import { viewerHtml } from "./file-view";   // the viewer's parse (mdBlock's recipe: marked's lexer, the literal-tags rule of md-literal-tags.ts, the per-call walk, its parser), the stand-in's too
 import { applyMdConfig } from "./md-config";
 import { wrapLinesHtml } from "./code-block";
 import { paintChangesRendered, unpaintChanges, type ChangePaint } from "./anchor-map";
@@ -156,7 +156,7 @@ function dressCode(box: FakeElement): void {
 function buildRendered(text: string): FakeElement {
   const doc = new FakeDocument();
   const box = doc.createElement("div"); box.setAttribute("class", "fileview-md");
-  for (const n of parseHTML(doc, marked.parse(text) as string)) box.appendChild(n);
+  for (const n of parseHTML(doc, viewerHtml(text))) box.appendChild(n);
   standInFill(box);
   dressCode(box);
   return box;
@@ -165,7 +165,7 @@ function buildRendered(text: string): FakeElement {
 function undressed(text: string): FakeElement {
   const doc = new FakeDocument();
   const box = doc.createElement("div"); box.setAttribute("class", "fileview-md");
-  for (const n of parseHTML(doc, marked.parse(text) as string)) box.appendChild(n);
+  for (const n of parseHTML(doc, viewerHtml(text))) box.appendChild(n);
   return box;
 }
 const El = (n: FakeNode) => n as unknown as Element;

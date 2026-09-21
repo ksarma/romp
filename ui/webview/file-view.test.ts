@@ -438,8 +438,11 @@ test("Raw ⇄ Rendered exists for markdown ONLY, and nothing reaches innerHTML u
   assert.match(VIEW, /import \{ sanitizeMd, revealFragmentTarget \} from "\.\/md-sanitize";/);   // the sanitizer, and the shared reveal step scrollToFragment runs before its scroll
   assert.doesNotMatch(VIEW, /from "dompurify"/, "the viewer spells no profile of its own: every option comes through md-sanitize.ts");
   // the sanitized <body>'s children are adopted as they are (no re-parse of a serialized string); the heading ids are minted
-  // inside the call, as the caller's own pass, so they are read from the text as written, before the math fill (md-url-view.test.ts)
-  assert.match(VIEW, /box\.replaceChildren\(\.\.\.Array\.from\(sanitizeMd\(dirty, mintHeadingIds\)\.childNodes\)\);/);
+  // inside the call, as the caller's own pass, so they are read from the text as written, before the math fill (md-url-view.test.ts);
+  // these two are presence pins; where the figure chain sits relative to the adoption is file-view-seam.test.ts's to check, on
+  // comment-stripped code (the round-1 ruling of the fork PR's review: one order pin, the seam's, not an index compare per module)
+  assert.match(VIEW, /const clean = sanitizeMd\(dirty, mintHeadingIds\);/);
+  assert.match(VIEW, /box\.replaceChildren\(\.\.\.Array\.from\(clean\.childNodes\)\);/);
   // a note's links open a NEW tab rather than navigating the hosting pane's document away. A file on disk hands its
   // anchors to file-view-links.ts (linkMarkdownAnchors, fork PR #347: a web link stamped, a sibling file opened in
   // the viewer); a URL document, or a caller with no location, stamps every link element in mdBlock's own pass. Both
@@ -1319,8 +1322,12 @@ test("source: the PR review's round 1 of Slice 6 (plans/markdown-viewer.md): the
 test("source: mdBlock keeps no try, no catch and no fallback; both viewers' renderBody wrap the block's build and the swap in one try whose catch records the message, paints the RENDER_FELL line and then the Raw rows; mode() reads the record; the line's words are exported", () => {
   // mdBlock: the parse and the sanitize at the function's own level (a two-space indent, inside no try), no fallback write, no flag
   const mdFn = VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0];
-  assert.match(mdFn, /\n {2}const base = marked\.defaults\.walkTokens;\n {2}const dirty = marked\.parse\(text, \{ walkTokens: \(t\) => \{\n/, "the parse at the function's own level");
-  assert.match(mdFn, /\n {2}box\.replaceChildren\(\.\.\.Array\.from\(sanitizeMd\(dirty, mintHeadingIds\)\.childNodes\)\);\n/, "the sanitize and the adoption at the function's own level: a throw from either propagates");
+  assert.match(mdFn, /\n {2}const base = marked\.defaults\.walkTokens;\n(?: {2}\/\/[^\n]*\n)* {2}const dirty = viewerHtml\(text, \(t\) => \{\n/, "the parse at the function's own level: the exported recipe (marked's lexer, the literal-tags rule, this walk, marked's parser; md-literal-tags.test.ts pins its steps), the walk handed to it");
+  const recipe = VIEW.split("export function viewerHtml(text: string, walk?: (token: Token) => void): string {")[1].split("\n}\n")[0];
+  assert.match(recipe, /\n {2}return marked\.parser\(tokens, opts\);$/, "the parser at the recipe's own level");
+  assert.doesNotMatch(recipe, /try \{/, "inside no try: a throw from the lexer or the parser propagates to mdBlock and on to the caller");
+  assert.match(mdFn, /\n {2}const clean = sanitizeMd\(dirty, mintHeadingIds\);/, "the sanitize at the function's own level: a throw propagates");
+  assert.match(mdFn, /\n {2}box\.replaceChildren\(\.\.\.Array\.from\(clean\.childNodes\)\);\n/, "the adoption at the function's own level too: a throw from either propagates (a presence pin; its place after the figure chain is file-view-seam.test.ts's to pin)");
   assert.doesNotMatch(mdFn, /\n {2}try \{/, "no try at the function's own level (the fence highlight's and the URL parse's inner ones stand)");
   assert.doesNotMatch(mdFn, /box\.textContent = text;|let rendered|rendered = false|if \(rendered/, "no fallback write and no `rendered` flag: the caller keeps the content, and both link passes run on every render");
   assert.match(mdFn, /\n {4}linkMarkdownAnchors\(box, doc\.path\);\n/, "the anchors' pass, ungated");

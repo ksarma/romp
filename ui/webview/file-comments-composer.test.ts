@@ -15,8 +15,7 @@ import { inspect } from "node:util";
 import { hideEdges, staysEnumerable } from "../test-dom-shim";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { marked } from "marked";
-import type { FileViewActionCtx, TrackedEdit } from "./file-view";
+import { viewerHtml, type FileViewActionCtx, type TrackedEdit } from "./file-view";
 import type { LogEntry, Status, StoreComment } from "./file-comments-model";
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
@@ -584,7 +583,7 @@ test("the draft survives the poll's re-render and a refusal: the same node, its 
 
 test("a refused mapping offers no Save and no hint — Switch to Raw and Cancel — and the chord refuses in words, the text kept", async () => {
   const SRC_MD = "# Report\n\nIntro text here.\n";
-  const html = (marked.parse(SRC_MD) as string) + '<p><img src="figures/p95.png" alt="Latency chart"></p>';   // a picture the source holds no embed for
+  const html = viewerHtml(SRC_MD) + '<p><img src="figures/p95.png" alt="Latency chart"></p>';   // a picture the source holds no embed for
   const h = await harness({ src: SRC_MD, html });
   await h.open({ store: null, storeMtimeNs: null, unsent: { comments: [], replies: [], accepted: 0, rejected: 0, watermark: null } });
   const img = h.body.querySelector("img")!;

@@ -1,33 +1,39 @@
 // A table cell maps from the Rendered view (plans/markdown-viewer.md, Slice 8, items 1 and 3; decision 7: the anchor map
 // learns how marked lays out a table cell, so a selection made in the Rendered view inside one maps back to the note's
-// source offsets and the highlight lands on the right occurrence; a selection spanning two cells is refused with the reason
-// named). Until this slice a table was ONE hole over its raw: every cell's text went through putHole with a negative position,
-// a selection in a cell refused as "touches a table" with the Raw view offered on an indexOf of the selected text, a drag
-// across two cells refused with no preselect (the cells' text tab-joined in the selection, pipe-joined in the source), and a
-// change inside a cell painted by the fallback's ordinal. Now walkTable (anchor-map.ts) re-cuts each row of the table's raw
-// as marked's splitCells does, verifies each cell's text against marked's, and walks the cell's inline tokens over the cell's
-// own characters (the backslash of every `\|` skipped), the header's cells then each row's left to right, so the block's
-// chars are byte for byte what they were and the `<table>` pairs as before, with every character positioned; a cell the
-// reading cannot place is a hole of its own (an entity's cell: the walk's sentence), the cells beside it mapping; and the
-// selection map's one-cell rule refuses a range covering two cells of one table with the reason named and the Raw view
-// offered on the exact span, first covered character through last, where Save works. Driven over the synthetic fixture
-// anchor-map-fixtures/cells.md (the notes-api demo domain) rebuilt as the viewer renders it: marked's output under the one
-// configuration (md-config.ts) parsed into the DOM stand-in, which nests the nodes after an unclosed tag as a browser does,
-// KaTeX's fill stood in for; the idiom of anchor-map-obsidian.test.ts and anchor-map-wrappers.test.ts. The browser leg,
-// anchor-map-cells-browser.test.ts, runs the real viewer and the real panel. Every case that maps or names the one-cell rule
-// refuses "touches a table" over the tree before this slice. One case is the Slice 8 review's (round 1): an astral character in
-// a cell the per-cell fallback holds, whose hole was counted by code point and shifted every later cell of the table; it fails
-// over the build's head (c68f52212 since the branch's rebase onto main, cd3a06501 before it) with the later cells' offsets
-// shifted, and refuses whole over the base. A last case times the index, one map and forty marks over a 1,000-row table for the
-// build note (the brief's open question 13; diagnostics, not a bound). Synthetic values only: an invented note, no real session
-// text.
+// source offsets and the highlight lands on the right occurrence). Until that slice a table was ONE hole over its raw: every
+// cell's text went through putHole with a negative position, a selection in a cell refused as "touches a table" with the Raw
+// view offered on an indexOf of the selected text, a drag across two cells refused with no preselect (the cells' text
+// tab-joined in the selection, pipe-joined in the source), and a change inside a cell painted by the fallback's ordinal. Now
+// walkTable (anchor-map.ts) re-cuts each row of the table's raw as marked's splitCells does, verifies each cell's text against
+// marked's, and walks the cell's inline tokens over the cell's own characters (the backslash of every `\|` skipped), the
+// header's cells then each row's left to right, so the block's chars are byte for byte what they were and the `<table>` pairs
+// as before, with every character positioned; a cell the reading cannot place is a hole of its own (an entity's cell: the
+// walk's sentence), the cells beside it mapping. A selection across several cells of one table ANCHORS since decision 53 of
+// plans/file-review.md (the owner overturned Slice 8's one-cell ruling, 2026-09-18): it maps as any selection over more than
+// one block does, from its first positioned character to its last, widened by a formula it covered whole at either end, and
+// the quote is the source between, pipes, the delimiter row and line feeds included, the characters a Raw selection over the
+// same text mints; Slice 8 refused it with the one-cell sentence and the Raw view offered on the covered cells' span. Every
+// anchoring case here is held against the Raw path over the same characters (anchors, below). Driven over the synthetic
+// fixture anchor-map-fixtures/cells.md (the notes-api demo domain) rebuilt as the viewer renders it: marked's output as
+// mdBlock parses it (its lexer, the literal-tags rule of md-literal-tags.ts, its parser: viewerHtml) under the one
+// configuration (md-config.ts) parsed into the DOM stand-in, which nests the nodes after an unclosed tag in an html block as a
+// browser does (an unclosed inline tag reaches it as literal text, decision 52), KaTeX's fill stood in for; the idiom of
+// anchor-map-obsidian.test.ts and anchor-map-wrappers.test.ts. The browser leg,
+// anchor-map-cells-browser.test.ts, runs the real viewer and the real panel. Every case that maps a cell refuses "touches a
+// table" over the tree before Slice 8; the multi-cell cases refuse with the one-cell sentence over the tree before decision 53
+// (the FAILS BEFORE case names it). One case is the Slice 8 review's (round 1): an astral character in a cell the per-cell
+// fallback holds, whose hole was counted by code point and shifted every later cell of the table; it fails over the build's
+// head (c68f52212 since the branch's rebase onto main, cd3a06501 before it) with the later cells' offsets shifted, and refuses
+// whole over the base. A last case times the index, one map and forty marks over a 1,000-row table for the build note (the
+// brief's open question 13; diagnostics, not a bound). Synthetic values only: an invented note, no real session text.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { marked, Tokenizer, type Tokens } from "marked";
 import { applyMdConfig } from "./md-config";
-import { mapRenderedSelection, sourceBlockSpans, renderedBlockIndex, renderedBlockElements, paintRendered, paintChangesRendered, unpaintChanges, type SelLike, type MapResult, type ChangePaint } from "./anchor-map";
+import { viewerHtml } from "./file-view";   // the viewer's parse (mdBlock's recipe: marked's lexer, the literal-tags rule of md-literal-tags.ts, the per-call walk, its parser), the stand-in's too
+import { mapRenderedSelection, mapRawSelection, sourceBlockSpans, renderedBlockIndex, renderedBlockElements, paintRendered, paintChangesRendered, unpaintChanges, type SelLike, type MapResult, type ChangePaint } from "./anchor-map";
 import { hideEdges } from "../test-dom-shim";
 
 applyMdConfig();
@@ -145,7 +151,7 @@ function standInFill(root: FakeElement): void {
 function buildRendered(text: string): FakeElement {
   const doc = new FakeDocument();
   const box = doc.createElement("div"); box.setAttribute("class", "fileview-md");
-  for (const n of parseHTML(doc, marked.parse(text) as string)) box.appendChild(n);
+  for (const n of parseHTML(doc, viewerHtml(text))) box.appendChild(n);
   standInFill(box);
   return box;
 }
@@ -210,8 +216,44 @@ const cellOf = (n: FakeNode, tag: string): { el: FakeElement; index: number } =>
 const shape = (n: FakeNode): string[] => n.childNodes.map((c) => c.nodeType === 3 ? "#text(" + (c as FakeText).data + ")" : (c as FakeElement).tagName + "." + ((c as FakeElement).getAttribute("class") || "").split(" ")[0]);
 const marksOf = (box: FakeElement, src: string, range: { start: number; end: number }, cls = "fc-hl"): FakeElement[] => (paintRendered(El(box), src, range, cls, { act: "fcopen", id: "k1" }) as unknown as FakeElement[] | null) || [];
 const textMarks = (marks: FakeElement[]): FakeElement[] => marks.filter((m) => m.textContent.trim() !== "");
-const ONE_CELL = /^This selection spans more than one cell of a table; select within one cell, or comment on it from the Raw view\.$/;
 const A_TABLE = /^This selection touches a table; comment on it from the Raw view\.$/;
+const escapeHtml = (s: string): string => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+/** The Raw view's `code.hljs` over `text`: one `.fv-cl` row per line, its text in a `.fv-ct` (file-view.ts wrapNumberedHtml's shape,
+ *  no highlighting), the other path a selection over the same characters takes. */
+function buildRaw(text: string): FakeElement {
+  const doc = new FakeDocument();
+  const code = doc.createElement("code"); code.setAttribute("class", "hljs");
+  const rows = text.split(/\r\n|\r|\n/).map((ln) => `<span class="fv-cl"><span class="fv-ct">${escapeHtml(ln)}</span></span>`).join("");
+  for (const n of parseHTML(doc, rows)) code.appendChild(n);
+  return code;
+}
+/** A Raw selection from the start of `from` to the end of `to` (their k-th occurrences in the rows, the source's own order), mapped. */
+const mapRawSpan = (src: string, from: string, to: string, kf = 0, kt = 0): MapResult => { const code = buildRaw(src); return mapRawSelection(sel(point(code, from, false, kf), point(code, to, true, kt)), El(code), src); };
+/** `r` anchors to the source from the start of `from` to the end of `to` (decision 53): ok, the range those offsets, the quote that
+ *  slice of the source, and the Raw path over the same characters minting the same range and quote. Returns the quote. */
+function anchors(r: MapResult, src: string, from: string, to: string, label: string, kf = 0, kt = 0): string {
+  const a = ok(r, label);
+  const range = { start: at(src, from, kf), end: at(src, to, kt) + to.length };
+  assert.deepEqual(a.range, range, label + ": the range runs from the first selected character to the last");
+  assert.equal(a.quote, src.slice(range.start, range.end), label + ": the quote is the source between them");
+  const raw = ok(mapRawSpan(src, from, to, kf, kt), label + " (the Raw path)");
+  assert.deepEqual([raw.range, raw.quote], [a.range, a.quote], label + ": the Raw view mints the same anchor over the same characters");
+  return a.quote;
+}
+
+// ── the stand-in follows the viewer's recipe ──
+
+test("the stand-in renders as the viewer's mdBlock parses (its lexer, the literal-tags rule of md-literal-tags.ts, its parser): a cell holding `<b>open`, an inline start tag with no end tag in it, shows the tag's characters as text and opens no element (decision 52), the tag maps to its own offsets, and a drag from it into the next cell anchors with the pipe inside the quote, equal to the Raw path (decision 53); a paragraph holding `<i>lead` before the table the same (the review's consolidation pass, 2026-09-18: this file's stand-in parsed with marked.parse alone before it, which opened an element the viewer no longer opens; the fixture holds no such tag, so every other case here renders as it did)", () => {
+  const SRC = "Intro <i>lead here.\n\n| a | b |\n|---|---|\n| <b>open | z1 |\n\nAfter.\n";
+  const box = buildRendered(SRC);
+  assert.deepEqual(allOf(box, "TD").map(shape), [["#text(<b>open)"], ["#text(z1)"]], "the tag's characters are the cell's text, no element opened");
+  assert.equal(allOf(box, "B").length + allOf(box, "I").length, 0, "no b or i element in the tree");
+  assert.equal(allOf(box, "P")[0].textContent, "Intro <i>lead here.", "the paragraph shows its tag");
+  mapsWhole(box, SRC, "<b>open");
+  mapsWhole(box, SRC, "<i>lead");
+  mapsWhole(box, SRC, "After.");
+  anchors(mapRenderedSelection(sel(point(box, "<b>open"), point(box, "z1", true)), El(box), SRC), SRC, "<b>open", "z1", "the tag's cell into the next");
+});
 
 // ── the pairing: nothing about the block table changes ──
 
@@ -352,10 +394,9 @@ test("a table inside a list item, one inside a blockquote and one nested in a `<
   mapsWhole(box, FIX, "in a div");
   mapsWhole(box, FIX, "Wrapped");
   mapsWhole(box, FIX, "After the wrapper.");
-  // a row of the quoted table: two cells, the one-cell rule, the Raw offer the row's span inside the quote line
-  const r = bad(mapSpan(box, FIX, "qbody", "qtail"), "two cells of the quoted table");
-  assert.match(r.reason, ONE_CELL);
-  assert.equal(FIX.slice(r.rawRange!.start, r.rawRange!.end), "qbody | qtail");
+  // a row of the quoted table: two cells anchor to the row's span inside the quote line (decision 53; before: the one-cell
+  // rule, the Raw view offered on that span)
+  assert.equal(anchors(mapSpan(box, FIX, "qbody", "qtail"), FIX, "qbody", "qtail", "two cells of the quoted table"), "qbody | qtail");
   // the list item's prose into its table's first cell: one cell, so it maps, the table's opening pipe inside the quote
   const into = ok(mapSpan(box, FIX, "holding a table:", "Item"), "the item's prose into the table's first cell");
   assert.equal(into.quote, "holding a table:\n\n  | Item");
@@ -422,34 +463,38 @@ test("an astral character in a cell the per-cell fallback holds (an emoji beside
   }
 });
 
-// ── item 3: a selection spanning cells is refused with the reason named, the Raw view offered on the exact span ──
+// ── item 3, overturned by decision 53: a selection across several cells of one table anchors to its span ──
 
-test("two body cells refuse with the one-cell sentence, rawHasQuote true and rawRange the span `GET /notes | 120 ms` (before: `touches a table`, rawHasQuote false, the tab-joined selection found nowhere); the same across two rows; prose before the table into a body cell (the header's cells lie in the span) refuses the same with the span from the header's first cell; the whole table refuses with the span from the first header cell through the last body cell; and each offer's blockStartOffset is the span's start, so the panel's search begins there", () => {
+test("FAILS BEFORE decision 53: two body cells, `GET /notes` to `120 ms`, anchor to `GET /notes | 120 ms`, the pipe between the cells inside the quote, the range from the first cell's first character to the second's last, and the Raw path over the same characters minting the same (before: refused, `This selection spans more than one cell of a table; select within one cell, or comment on it from the Raw view.`, with the Raw view offered on that span)", () => {
   const box = buildRendered(FIX);
-  const cases: Array<[string, string, string, string]> = [
-    ["GET /notes", "120 ms", "GET /notes | 120 ms", "GET /notes"],
-    ["120 ms", "POST /notes", "120 ms |\n| POST /notes", "120 ms"],
-    ["for the review.", "GET /notes", "Route | p95 |\n|-------|-----|\n| GET /notes", "Route"],
-    ["Route", "180 ms", "Route | p95 |\n|-------|-----|\n| GET /notes | 120 ms |\n| POST /notes | 180 ms", "Route"],
-    ["p95", "GET /notes", "p95 |\n|-------|-----|\n| GET /notes", "p95"],
-  ];
-  for (const [from, to, span, first] of cases) {
-    const r = bad(mapSpan(box, FIX, from, to), from + " to " + to);
-    assert.match(r.reason, ONE_CELL, from + " to " + to + ": " + r.reason);
-    assert.equal(r.rawHasQuote, true, from + " to " + to + ": the Raw view is offered on the span");
-    assert.equal(FIX.slice(r.rawRange!.start, r.rawRange!.end), span, from + " to " + to + ": the exact span");
-    assert.equal(r.blockStartOffset, at(FIX, first), from + " to " + to + ": the search begins at the span's start");
-    assert.equal(r.blockStartLine, lineOf(FIX, first));
-  }
-  // the sentence keeps the shape the guide and the composer pin, and names the table
-  assert.match(bad(mapSpan(box, FIX, "GET /notes", "120 ms"), "two cells").reason, /a table/);
-  assert.match(bad(mapSpan(box, FIX, "GET /notes", "120 ms"), "two cells").reason, /^This selection .*; .*from the Raw view\.$/);
+  const r = mapSpan(box, FIX, "GET /notes", "120 ms");
+  assert.equal(r.ok, true, "two body cells anchor (before: " + ((r as { reason?: string }).reason || "no reason") + ")");
+  assert.equal(anchors(r, FIX, "GET /notes", "120 ms", "two body cells"), "GET /notes | 120 ms");
+  assert.equal((r as { reason?: string }).reason, undefined, "no refusal field on an anchor");
 });
 
-test("one cell and the prose after the table maps, the row's closing pipe and line feeds inside the quote as a Raw selection over the same characters mints; a selection ending in the whitespace after a cell is that cell's; a selection whose second cell is reached only through the whitespace between them is still two cells", () => {
+test("the shapes Slice 8 refused each anchor to the source from the first selected character to the last, equal to the Raw path: two body cells `GET /notes | 120 ms`; across two rows `120 ms |\\n| POST /notes`, the row's closing pipe and line feed inside; the prose before the table into a body cell, the header row and the delimiter row inside the quote; a header cell into a body cell `p95 |\\n|-------|-----|\\n| GET /notes`; the whole table from its first header cell through its last body cell; and one character into the next cell, `GET /notes | 1` (before: every one refused with the one-cell sentence, the Raw view offered on the covered cells' span)", () => {
   const box = buildRendered(FIX);
-  const out = ok(mapSpan(box, FIX, "180 ms", "returns JSON."), "the last cell into the paragraph after");
-  assert.equal(out.quote, "180 ms |\n\nEvery route above returns JSON.");
+  const cases: Array<[string, string, string]> = [
+    ["GET /notes", "120 ms", "GET /notes | 120 ms"],
+    ["120 ms", "POST /notes", "120 ms |\n| POST /notes"],
+    ["for the review.", "GET /notes", "for the review.\n\n| Route | p95 |\n|-------|-----|\n| GET /notes"],
+    ["p95", "GET /notes", "p95 |\n|-------|-----|\n| GET /notes"],
+    ["Route", "180 ms", "Route | p95 |\n|-------|-----|\n| GET /notes | 120 ms |\n| POST /notes | 180 ms"],
+  ];
+  for (const [from, to, quote] of cases) assert.equal(anchors(mapSpan(box, FIX, from, to), FIX, from, to, from + " to " + to), quote, from + " to " + to + ": the exact quote");
+  const next = find(box, "TD", "120 ms");
+  const intoNext = ok(mapRenderedSelection(sel(point(box, "GET /notes"), { node: next.childNodes[0], offset: 1 }), El(box), FIX), "one character into the next cell");
+  assert.equal(intoNext.quote, "GET /notes | 1", "the selected character of the next cell ends the quote");
+  assert.deepEqual(intoNext.range, { start: at(FIX, "GET /notes"), end: at(FIX, "120 ms") + 1 });
+  // the drag reversed, the anchor inside the second cell and the focus in the first: the same anchor
+  const reversed = ok(mapRenderedSelection(sel(point(box, "120 ms", true), point(box, "GET /notes")), El(box), FIX), "the drag reversed");
+  assert.equal(reversed.quote, "GET /notes | 120 ms");
+});
+
+test("one cell and the prose after the table maps, the row's closing pipe and line feeds inside the quote as a Raw selection over the same characters mints; a selection ending in the whitespace after a cell is that cell's; a selection whose second cell is reached only through the whitespace between them covers both cells and anchors to them (before: two cells, the one-cell sentence)", () => {
+  const box = buildRendered(FIX);
+  assert.equal(anchors(mapSpan(box, FIX, "180 ms", "returns JSON."), FIX, "180 ms", "returns JSON.", "the last cell into the paragraph after"), "180 ms |\n\nEvery route above returns JSON.");
   const td = find(box, "TD", "GET /notes");
   const tr = td.parentNode as FakeElement;
   const ws = tr.childNodes[tr.childNodes.indexOf(td) + 1];
@@ -458,71 +503,57 @@ test("one cell and the prose after the table maps, the row's closing pipe and li
   const endInWs = ok(mapRenderedSelection(sel(point(box, "GET /notes"), { node: ws, offset: 1 }), El(box), FIX), "ending in the whitespace after the cell");
   assert.equal(endInWs.quote, "GET /notes");
   const next = find(box, "TD", "120 ms");
-  const intoNext = bad(mapRenderedSelection(sel(point(box, "GET /notes"), { node: next.childNodes[0], offset: 1 }), El(box), FIX), "one character into the next cell");
-  assert.match(intoNext.reason, ONE_CELL);
-  assert.equal(FIX.slice(intoNext.rawRange!.start, intoNext.rawRange!.end), "GET /notes | 1");
+  const throughWs = ok(mapRenderedSelection(sel({ node: ws, offset: 0 }, { node: next.childNodes[0], offset: 3 }), El(box), FIX), "from the whitespace after the first cell three characters into the next");
+  assert.equal(throughWs.quote, "120", "the start snaps forward to the next cell's first character: one cell");
+  const both = ok(mapRenderedSelection(sel(point(box, "GET /notes"), { node: next.childNodes[0], offset: 3 }), El(box), FIX), "the first cell through the whitespace into the next");
+  assert.equal(both.quote, "GET /notes | 120", "both cells, the pipe between them inside the quote");
 });
 
-test("a drag from one table through the prose between into the next, two top-level tables or two in one list item, maps only from the first table's last cell into the next table's first header cell (the two mapping shapes joined: the quote carries the first table's closing pipe, the prose and the next table's opening pipe, as a Raw selection over the same characters mints); into any other cell of the next table (a later header cell, or a body cell, whose span holds the header's cells), or from any earlier cell of the first, the one-cell rule refuses on that table's span with the Raw view offered there and blockStartOffset the span's start; the prose between into the next table's first header cell and into its body cell are the controls (the review's round 4 pin of round 2's record, which had said a cell of the next table)", () => {
-  // the check, per shape: `from` to `to` maps with `quote`, or refuses with the one-cell sentence and the Raw view on `span`
-  const check = (box: FakeElement, src: string, from: string, to: string, quote: string | null, span: string | null): void => {
-    const r = mapSpan(box, src, from, to);
-    if (quote !== null) { assert.equal(ok(r, from + " to " + to).quote, quote, from + " to " + to + ": the two shapes joined"); return; }
-    const b = bad(r, from + " to " + to + " maps where the one-cell rule refuses");
-    assert.match(b.reason, ONE_CELL, from + " to " + to + ": " + b.reason);
-    assert.equal(b.rawHasQuote, true, from + " to " + to + ": the Raw view is offered on the span");
-    assert.equal(src.slice(b.rawRange!.start, b.rawRange!.end), span, from + " to " + to + ": the refusing table's span");
-    assert.equal(b.blockStartOffset, b.rawRange!.start, from + " to " + to + ": the search begins at the span's start");
+test("a drag from one table through the prose between into the next, two top-level tables or two in one list item, anchors whatever cell of either table it starts or ends in, the first table's closing pipe, the prose and the second table's opening pipes inside the quote as a Raw selection over the same characters mints (before: only from the first table's last cell into the next table's first header cell; into any other cell of the next table, or from any earlier cell of the first, the one-cell rule refused on that table's span); the prose between into the next table's first header cell and into its body cell anchor too", () => {
+  const check = (box: FakeElement, src: string, from: string, to: string, quote: string): void => {
+    assert.equal(anchors(mapSpan(box, src, from, to), src, from, to, from + " to " + to), quote, from + " to " + to + ": the exact quote");
   };
   // two top-level tables (the fixture's first and second), each its own block
   const box = buildRendered(FIX);
-  check(box, FIX, "180 ms", "Method", "180 ms |\n\nEvery route above returns JSON.\n\n| Method", null);
-  check(box, FIX, "180 ms", "Path", null, "Method | Path");
-  check(box, FIX, "180 ms", "/notes/{id}", null, "Method | Path | Budget |\n|:-------|:----:|-------:|\n| GET | /notes/{id}");
-  check(box, FIX, "180 ms", "90 ms", null, "Method | Path | Budget |\n|:-------|:----:|-------:|\n| GET | /notes/{id} | 90 ms");
-  check(box, FIX, "POST /notes", "Method", null, "POST /notes | 180 ms");
-  check(box, FIX, "120 ms", "Method", null, "120 ms |\n| POST /notes | 180 ms");
+  const between = " |\n\nEvery route above returns JSON.\n\n| Method";
+  check(box, FIX, "180 ms", "Method", "180 ms" + between);
+  check(box, FIX, "180 ms", "Path", "180 ms" + between + " | Path");
+  check(box, FIX, "180 ms", "/notes/{id}", "180 ms" + between + " | Path | Budget |\n|:-------|:----:|-------:|\n| GET | /notes/{id}");
+  check(box, FIX, "180 ms", "90 ms", "180 ms" + between + " | Path | Budget |\n|:-------|:----:|-------:|\n| GET | /notes/{id} | 90 ms");
+  check(box, FIX, "POST /notes", "Method", "POST /notes | 180 ms" + between);
+  check(box, FIX, "120 ms", "Method", "120 ms |\n| POST /notes | 180 ms" + between);
   // two tables in one list item: one block, two TableSpans (the round 2 finding's shape, synthetic)
   const item = "- Item:\n\n  | X1 | X2 |\n  |----|----|\n  | x-a | x-b |\n\n  between\n\n  | Y1 | Y2 |\n  |----|----|\n  | y-a | y-b |\n\nafter\n";
   const li = buildRendered(item);
   assert.equal(allOf(li, "TABLE").length, 2, "two tables in the item");
-  check(li, item, "x-b", "Y1", "x-b |\n\n  between\n\n  | Y1", null);
-  check(li, item, "x-b", "Y2", null, "Y1 | Y2");
-  check(li, item, "x-b", "y-a", null, "Y1 | Y2 |\n  |----|----|\n  | y-a");
-  check(li, item, "x-b", "y-b", null, "Y1 | Y2 |\n  |----|----|\n  | y-a | y-b");
-  check(li, item, "x-a", "Y1", null, "x-a | x-b");
-  check(li, item, "X2", "Y1", null, "X2 |\n  |----|----|\n  | x-a | x-b");
-  // the controls: the prose between into the next table's first header cell maps, into its body cell refuses on the same span
-  check(li, item, "between", "Y1", "between\n\n  | Y1", null);
-  check(li, item, "between", "y-a", null, "Y1 | Y2 |\n  |----|----|\n  | y-a");
+  check(li, item, "x-b", "Y1", "x-b |\n\n  between\n\n  | Y1");
+  check(li, item, "x-b", "Y2", "x-b |\n\n  between\n\n  | Y1 | Y2");
+  check(li, item, "x-b", "y-a", "x-b |\n\n  between\n\n  | Y1 | Y2 |\n  |----|----|\n  | y-a");
+  check(li, item, "x-b", "y-b", "x-b |\n\n  between\n\n  | Y1 | Y2 |\n  |----|----|\n  | y-a | y-b");
+  check(li, item, "x-a", "Y1", "x-a | x-b |\n\n  between\n\n  | Y1");
+  check(li, item, "X2", "Y1", "X2 |\n  |----|----|\n  | x-a | x-b |\n\n  between\n\n  | Y1");
+  check(li, item, "between", "Y1", "between\n\n  | Y1");
+  check(li, item, "between", "y-a", "between\n\n  | Y1 | Y2 |\n  |----|----|\n  | y-a");
 });
 
-test("the one-cell rule counts a cell holding a formula alone, and a formula that begins the next cell's text (the review's round 3): a selection from `a1` to the end of the next cell's `$x$` glyphs, or released on the <td> past them, refuses with the one-cell sentence and the Raw view offered on `a1 | $x$` (before: it mapped, the quote carrying the pipe the person did not select as text, since a formula emits no character, the cell holding one alone has no record and the count saw one cell); the mirror, from the glyphs of a first cell's `$yz$` into `b1`, or from the <td> before them, refuses on `$yz$ | b1`; from `a1` into the `$x$` that begins the next cell's text `$x$ here` refuses on `a1 | $x$`; within one cell the words and the formula still map (`count $xy$`), `a1` alone maps, a boundary at the glyphs' start covers none of the formula, a boundary strictly inside the glyphs names the formula, and a last cell holding a formula alone runs into the prose after the table as the last-cell-into-prose rule maps it", () => {
+test("a formula-only cell at either end of the selection travels inside the anchor with its delimiters (the existing widening by a formula covered whole at an end; before: the one-cell rule counted the cell and refused on `a1 | $x$`): from `a1` to the end of the next cell's `$x$` glyphs, or released on the <td> past them, anchors `a1 | $x$`; the mirror, from the glyphs of a first cell's `$yz$` into `b1`, or from the <td> before them, anchors `$yz$ | b1`; from `a1` into the `$x$` that begins the next cell's text `$x$ here` anchors `a1 | $x$`; within one cell the words and the formula map (`count $xy$`), `a1` alone maps, a boundary at the glyphs' start covers none of the formula, a boundary strictly inside the glyphs names the formula, and a last cell holding a formula alone runs into the prose after the table", () => {
   const SRC = "Intro paragraph.\n\n| A | B | C |\n|---|---|---|\n| count $xy$ here | a1 | $x$ |\n\nMiddle paragraph.\n\n| D | E |\n|---|---|\n| $yz$ | b1 |\n\n| F | G |\n|---|---|\n| e1 | $w$ |\n\nAfter.\n";
   const box = buildRendered(SRC);
   const tds = allOf(box, "TD");
   assert.deepEqual(tds.map((t) => t.textContent), ["count xy here", "a1", "x", "yz", "b1", "e1", "w"], "the three tables' body cells, the formulas' glyphs stood in for");
   const glyphsOf = (td: FakeElement, tex: string): FakeText => { const k = find(td, "SPAN", tex); assert.equal(k.getAttribute("class"), "katex", tex + ": the formula's root"); return k.childNodes[0] as FakeText; };
-  const expectOneCell = (r: MapResult, src: string, span: string, label: string): void => {
-    const b = bad(r, label);
-    assert.match(b.reason, ONE_CELL, label + ": " + b.reason);
-    assert.equal(b.rawHasQuote, true, label + ": the Raw view is offered on the span");
-    assert.equal(src.slice(b.rawRange!.start, b.rawRange!.end), span, label + ": the exact span, the formula with its delimiters");
-    assert.equal(b.blockStartOffset, b.rawRange!.start, label + ": the search begins at the span's start");
-    assert.equal(b.blockStartLine, src.slice(0, b.rawRange!.start).split("\n").length - 1, label);
-  };
   const gx = glyphsOf(tds[2], "x");
   assert.deepEqual(shape(tds[2]), ["SPAN.katex"], "the third cell holds the formula alone");
-  expectOneCell(mapRenderedSelection(sel(point(box, "a1"), { node: gx, offset: gx.data.length }), El(box), SRC), SRC, "a1 | $x$", "a1 to the end of the next cell's glyphs (before: mapped `a1 | $x$`)");
-  expectOneCell(mapRenderedSelection(sel(point(box, "a1"), { node: tds[2], offset: tds[2].childNodes.length }), El(box), SRC), SRC, "a1 | $x$", "a1 to the <td> past its glyphs");
+  assert.equal(anchors(mapRenderedSelection(sel(point(box, "a1"), { node: gx, offset: gx.data.length }), El(box), SRC), SRC, "a1", "$x$", "a1 to the end of the next cell's glyphs"), "a1 | $x$");
+  assert.equal(anchors(mapRenderedSelection(sel(point(box, "a1"), { node: tds[2], offset: tds[2].childNodes.length }), El(box), SRC), SRC, "a1", "$x$", "a1 to the <td> past its glyphs"), "a1 | $x$");
   const gyz = glyphsOf(tds[3], "yz");
-  expectOneCell(mapRenderedSelection(sel({ node: gyz, offset: 0 }, point(box, "b1", true)), El(box), SRC), SRC, "$yz$ | b1", "the first cell's glyphs into b1");
-  expectOneCell(mapRenderedSelection(sel({ node: tds[3], offset: 0 }, point(box, "b1", true)), El(box), SRC), SRC, "$yz$ | b1", "the <td> before the glyphs into b1");
+  assert.equal(anchors(mapRenderedSelection(sel({ node: gyz, offset: 0 }, point(box, "b1", true)), El(box), SRC), SRC, "$yz$", "b1", "the first cell's glyphs into b1"), "$yz$ | b1");
+  assert.equal(anchors(mapRenderedSelection(sel({ node: tds[3], offset: 0 }, point(box, "b1", true)), El(box), SRC), SRC, "$yz$", "b1", "the <td> before the glyphs into b1"), "$yz$ | b1");
   // the formula begins the next cell's text: the cell has a record, and the formula stands before its first positioned character
   const SRC2 = "| A | B |\n|---|---|\n| a1 | $x$ here |\n";
   const box2 = buildRendered(SRC2);
   const gx2 = glyphsOf(allOf(box2, "TD")[1], "x");
-  expectOneCell(mapRenderedSelection(sel(point(box2, "a1"), { node: gx2, offset: gx2.data.length }), El(box2), SRC2), SRC2, "a1 | $x$", "a1 through the formula that begins the next cell (before: mapped)");
+  assert.equal(anchors(mapRenderedSelection(sel(point(box2, "a1"), { node: gx2, offset: gx2.data.length }), El(box2), SRC2), SRC2, "a1", "$x$", "a1 through the formula that begins the next cell"), "a1 | $x$");
   assert.equal(ok(mapRenderedSelection(sel(point(box2, "here"), point(box2, "here", true)), El(box2), SRC2), "the word after the formula").quote, "here");
   // controls
   const gxy = glyphsOf(tds[0], "xy");
@@ -533,7 +564,30 @@ test("the one-cell rule counts a cell holding a formula alone, and a formula tha
   assert.equal(inF.reason, "This selection touches a formula; comment on it from the Raw view.");
   assert.equal(SRC.slice(inF.rawRange!.start, inF.rawRange!.end), "$yz$");
   const gw = glyphsOf(tds[6], "w");
-  assert.equal(ok(mapRenderedSelection(sel({ node: gw, offset: 0 }, point(box, "After.", true)), El(box), SRC), "a last cell's formula into the prose after the table").quote, "$w$ |\n\nAfter.", "the last-cell-into-prose rule: the row's closing pipe and line feeds inside the quote");
+  assert.equal(anchors(mapRenderedSelection(sel({ node: gw, offset: 0 }, point(box, "After.", true)), El(box), SRC), SRC, "$w$", "After.", "a last cell's formula into the prose after the table"), "$w$ |\n\nAfter.");
+});
+
+test("the anchor of a selection across cells paints in every cell it covers, one mark per cell's text and none over the pipes (paintRendered's exact path: the marks run from the first positioned character to the last through wrapBetween, the whitespace between the cells' boxes skipped), and a tracked change over the same span paints the same marks: two body cells, the prose before the table into a body cell (a mark in the paragraph, one per header cell, one in the body cell), a header cell into a body cell, and the whole table", () => {
+  const cellsOf = (marks: FakeElement[]): Array<[string, string]> => textMarks(marks).map((m) => { let p: FakeNode | null = m.parentNode; while (p && !(p instanceof FakeElement && (p.tagName === "TD" || p.tagName === "TH" || p.tagName === "P"))) p = p.parentNode; return [(p as FakeElement).tagName, m.textContent]; });
+  const cases: Array<[string, string, Array<[string, string]>]> = [
+    ["GET /notes", "120 ms", [["TD", "GET /notes"], ["TD", "120 ms"]]],
+    ["for the review.", "GET /notes", [["P", "for the review."], ["TH", "Route"], ["TH", "p95"], ["TD", "GET /notes"]]],
+    ["p95", "GET /notes", [["TH", "p95"], ["TD", "GET /notes"]]],
+    ["Route", "180 ms", [["TH", "Route"], ["TH", "p95"], ["TD", "GET /notes"], ["TD", "120 ms"], ["TD", "POST /notes"], ["TD", "180 ms"]]],
+  ];
+  for (const [from, to, want] of cases) {
+    const box = buildRendered(FIX);
+    const range = ok(mapSpan(box, FIX, from, to), from + " to " + to).range;
+    const marks = marksOf(box, FIX, range);
+    assert.deepEqual(cellsOf(marks), want, from + " to " + to + ": a mark in every covered cell, reading the cell's text");
+    assert.equal(marks.length, want.length, from + " to " + to + ": no mark over the whitespace between the cells");
+    for (const m of marks) { const p = m.parentNode as FakeElement; while (m.childNodes.length) p.insertBefore(m.childNodes[0], m); p.removeChild(m); }
+    const change = paintChangesRendered(El(box), FIX, [{ id: "c1", kind: "ins", curFrom: range.start, curTo: range.end, oldText: "", author: "web", newText: FIX.slice(range.start, range.end) }], () => ({}));
+    assert.deepEqual(change, { painted: ["c1"], unpainted: [] }, from + " to " + to + ": the change paints");
+    const ins = allOf(box, "MARK").filter((m) => (m.getAttribute("class") || "") === "fc-ins");
+    assert.deepEqual(cellsOf(ins), want, from + " to " + to + ": the change's marks stand in the same cells");
+    unpaintChanges(El(box));
+  }
 });
 
 // ── the paint and the change points inside a table go by position ──
@@ -590,8 +644,7 @@ test("shapes marked accepts map cell by cell: a table with no leading or trailin
   const crlf = "| a | b |\r\n|---|---|\r\n| c | d |\r\n";
   box = buildRendered(crlf);
   for (const t of ["a", "c", "d"]) mapsWhole(box, crlf, t);
-  const two = bad(mapSpan(box, crlf, "c", "d"), "two cells under CRLF");
-  assert.equal(crlf.slice(two.rawRange!.start, two.rawRange!.end), "c | d");
+  assert.equal(anchors(mapSpan(box, crlf, "c", "d"), crlf, "c", "d", "two cells under CRLF"), "c | d");
   const interrupt = "Intro\n| a | b |\n|---|---|\n| c | d |\n";
   box = buildRendered(interrupt);
   for (const t of ["Intro", "a", "c"]) mapsWhole(box, interrupt, t);

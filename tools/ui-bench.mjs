@@ -984,7 +984,7 @@ export async function launchBrowser({ tmpRoot } = {}) {
   }
 }
 
-async function replayOnce({ browser, app, frames, fast, gapMs = null, cpuThrottle, front, token, cpuProfile = false, hidden = false, log }) {
+async function replayOnce({ browser, app, frames, fast, gapMs = null, cpuThrottle, front, token, cpuProfile = false, hidden = false, pageInit = null, log }) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
   const consoleErrors = [], pageErrors = [];
@@ -995,6 +995,9 @@ async function replayOnce({ browser, app, frames, fast, gapMs = null, cpuThrottl
   page.on("response", (resp) => { if (resp.status() >= 400) failedResources.push(`${resp.status()} ${new URL(resp.url()).pathname}`); });
   if (hidden) await page.addInitScript(HIDDEN_SCRIPT);
   await page.addInitScript(INIT_SCRIPT);
+  // A caller's own init script runs after the instrument, so it can wrap what the instrument wrapped (a test's
+  // clock stub around each delivery, say); the instrument's records stay the ones the report reads.
+  if (pageInit) await page.addInitScript(pageInit);
   const cdp = await context.newCDPSession(page);
   await cdp.send("Performance.enable");
   if (cpuThrottle && cpuThrottle !== 1) await cdp.send("Emulation.setCPUThrottlingRate", { rate: cpuThrottle });
@@ -1311,7 +1314,9 @@ export function buildReport({ app, framesFile, cpuThrottle, fast, gapMs = null, 
   };
 }
 
-export async function replay({ app, framesFile, cpuThrottle = 1, iters = 1, fast = false, gapMs = null, hidden = false, dist, jsonOut, cpuProfile, log = console.error }) {
+/** Replay `framesFile` into `app` in headless Chromium and return the report. `pageInit` is an optional init
+ *  script for the page, installed after the bench's instrument (a test's forcing; the CLI has no flag for it). */
+export async function replay({ app, framesFile, cpuThrottle = 1, iters = 1, fast = false, gapMs = null, hidden = false, dist, jsonOut, cpuProfile, pageInit = null, log = console.error }) {
   if (!APP_CAPS[app]) throw new Error(`unknown app ${app}; one of ${APPS.join(", ")}`);
   if (gapMs != null && !(Number.isFinite(gapMs) && gapMs >= 0)) throw new Error(`--gap needs a number of milliseconds, not ${gapMs}`);
   const { frames } = loadFrames(framesFile);
@@ -1334,7 +1339,7 @@ export async function replay({ app, framesFile, cpuThrottle = 1, iters = 1, fast
     const runs = [];
     for (let i = 0; i < iters; i++) {
       log(`ui-bench: replaying ${frames.length} frames into app=${app} (${pacingLabel(fast, gapMs)}, cpu x${cpuThrottle}${hidden ? ", page hidden" : ""})${iters > 1 ? ` iteration ${i + 1}/${iters}` : ""}`);
-      runs.push(await replayOnce({ browser, app, frames, fast, gapMs, cpuThrottle, front, token: pageServer.token, cpuProfile: !!cpuProfile, hidden: !!hidden, log }));
+      runs.push(await replayOnce({ browser, app, frames, fast, gapMs, cpuThrottle, front, token: pageServer.token, cpuProfile: !!cpuProfile, hidden: !!hidden, pageInit, log }));
     }
     const cpuProfileFiles = cpuProfile ? writeProfiles(cpuProfile, runs) : [];
     const report = buildReport({ app, framesFile, cpuThrottle, fast, gapMs, iters, browser: browser.version(), runs, cpuProfileFiles, sourceMapDir: dist || path.join(EXT_DIR, "dist") });

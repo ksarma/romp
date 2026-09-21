@@ -18,10 +18,9 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
-import { marked } from "marked";   // the browser leg renders a synthetic task list through the real marked for mdBlock's task stamp
 import { inspect } from "node:util";
 import { assertHiddenEvent, hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
-import type { FileViewActionCtx } from "./file-view";
+import { viewerHtml, type FileViewActionCtx } from "./file-view";   // viewerHtml: the browser leg renders a synthetic task list through the viewer's own parse for mdBlock's task stamp
 import { scriptLiteral } from "./real-viewer-leg";
 import { setMdSanitizer } from "./md-sanitize";   // the sanitizer seam the node suites install a stand-in through (Slice 7 of plans/markdown-viewer.md)
 
@@ -955,7 +954,7 @@ function sanitizerJs(): string {
 }
 const STAMP_CODE = (() => { const at = VIEW.indexOf("box.querySelectorAll('li > input"); return at < 0 ? "" : VIEW.slice(at, VIEW.indexOf("\n  });", at) + 6); })();
 const STAMP_PAGE = (css: string) => sheet(css) + `<body class="fileview-open"><div id="romp-fileview"><div class="fileview" id="root"><div class="fileview-body" id="body"><div class="fileview-md" id="md"></div></div></div></div></body></html>`;
-const STAMP_PREP = `(() => { const box = document.getElementById("md"); box.replaceChildren(...Array.from(sanitizeMd(${JSON.stringify(marked.parse(STAMP_MD) as string)}).childNodes)); ${STAMP_CODE} })()`;
+const STAMP_PREP = `(() => { const box = document.getElementById("md"); box.replaceChildren(...Array.from(sanitizeMd(${JSON.stringify(viewerHtml(STAMP_MD))}).childNodes)); ${STAMP_CODE} })()`;
 const STAMP_MEASURE = `(() => Array.from(document.querySelectorAll("#md li")).map((li) => {
   const input = li.querySelector("input"), lr = li.getBoundingClientRect();
   return { text: (li.textContent || "").replace(/\\s+/g, " ").trim(), stamped: li.classList.contains("task-list-item"), bullet: getComputedStyle(li).listStyleType,
@@ -1158,7 +1157,8 @@ test("in a browser: the file browser's bar stays one line at 320, 360, 480 and 1
 
 test("in a browser: mdBlock's task stamp over marked's own output, sanitized as mdBlock sanitizes it, in both sheets: a disabled checkbox that opens its item (a tight list, a numbered one, a loose one's first paragraph, an author's raw box) makes a task item with no bullet and the box pulled into the gutter; an author's enabled box is made inert by the sanitizer and opens its item too; a box after the item's text leaves the item and its bullet as the file wrote them; an author's own class is kept", { skip }, () => {
   assert.ok(STAMP_CODE, "the stamp statement is lifted from the source");
-  assert.match(VIEW, /box\.replaceChildren\(\.\.\.Array\.from\(sanitizeMd\(dirty, mintHeadingIds\)\.childNodes\)\);/, "mdBlock adopts the shared sanitizer's body, as the page here does (the heading ids minted inside the call, before the math fill)");
+  assert.match(VIEW, /const clean = sanitizeMd\(dirty, mintHeadingIds\);/, "mdBlock sanitizes through the shared sanitizer, as the page here does (the heading ids minted inside the call, before the math fill)");
+  assert.match(VIEW, /box\.replaceChildren\(\.\.\.Array\.from\(clean\.childNodes\)\);/, "and adopts that body's children as they are (a presence pin: where the figure chain sits relative to this line is file-view-seam.test.ts's to check; the stamp here runs after the adoption, as the page's does)");
   type Row = { text: string; stamped: boolean; bullet: string; input: { disabled: boolean; checked: boolean; marginLeft: number; left: number; scheme: string } | null };
   for (const [name] of SHEETS) {
     const c = m!["stamp/" + name];

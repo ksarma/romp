@@ -27,12 +27,12 @@ const requireCjs = createRequire(path.join(EXT, "package.json"));
 const UI = path.resolve(EXT, "..", "ui", "webview");
 const FEED = fs.readFileSync(path.join(UI, "feed.css"), "utf8");
 
-/** The panel's registry entry and marked, with the viewer's grammar applied, bundled as the webview build bundles them. */
+/** The panel's registry entry and the viewer's parse (file-view.ts viewerHtml, marked with the viewer's grammar), bundled as the webview build bundles them. */
 function bundle(): string {
   const esbuild = requireCjs("esbuild");
   const r = esbuild.buildSync({
     stdin: {
-      contents: 'import { fileCommentsAction } from "./file-comments";\nimport { marked } from "marked";\nimport { applyMdConfig } from "./md-config";\napplyMdConfig();\n(window as any).__romp = { fileCommentsAction, marked };\n',
+      contents: 'import { fileCommentsAction } from "./file-comments";\nimport { viewerHtml } from "./file-view";\nimport { applyMdConfig } from "./md-config";\napplyMdConfig();\n(window as any).__romp = { fileCommentsAction, viewerHtml };\n',
       resolveDir: UI, loader: "ts", sourcefile: "goto-details-probe.ts",
     },
     bundle: true, write: false, format: "iife", platform: "browser", target: "es2020",
@@ -123,7 +123,7 @@ function mount(page: any): Promise<void> {
   return page.evaluate(async ([src, status, abs, sid]: [string, Record<string, unknown>, string, string]) => {
     const w = window as any;
     const body = document.getElementById("body")!, md = document.getElementById("md")!;
-    md.innerHTML = w.__romp.marked.parse(src);
+    md.innerHTML = w.__romp.viewerHtml(src);
     w.__initialOpen = Array.from(md.querySelectorAll("details")).map((d) => d.hasAttribute("open"));   // the folds as the note wrote them
     const posted: any[] = [];
     const rendered: Array<() => void> = [];

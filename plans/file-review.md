@@ -909,6 +909,13 @@ the marker, and any block that fails alignment refuse in Rendered view. A select
 aligned blocks is accepted, and its quote includes the blank line and block markers between them,
 which the composer shows before saving. A selection whose edge falls inside a mark the renderer
 consumed paints narrower in Rendered than in Raw, never wider.
+Two later changes narrow that list of refusals: Slice 8 of plans/markdown-viewer.md positions a
+table's cells and a code block's lines as prose, so a selection inside one maps, and decision 53
+(2026-09-18) lets a selection across several cells of one table anchor to its span, the pipes, the
+delimiter row and the line feeds between the cells inside the quote as a Raw selection over the same
+characters mints them; and decision 52 (2026-09-18) renders an inline start tag with no end tag in
+its block as its own characters on both sides, so the paragraph holding one maps where it used to
+open an element the pairing did not model and refuse every block after it.
 
 When the mapping refuses, the composer keeps the typed comment, states the reason in one line, and
 offers a switch to Raw that preselects the same passage when its text occurs in the source (code
@@ -976,6 +983,11 @@ rows, with no text matching. In Rendered view the located source range is conver
 same index map to a highlight over the rendered text; a comment inside a refused block falls back
 to a whitespace-tolerant match of its quote stripped of inline markup, and a comment that cannot
 be painted has a card whose Reveal switches to Raw and scrolls to the passage.
+A highlight or a change mark over an anchor that spans several cells of a table is one mark per cell
+over the cell's own text, none over the pipes between them (decision 53: the exact path's
+`wrapBetween` gathers the highlight units between the two ends and `wrapRuns` skips the
+whitespace-only text between the cells' boxes), and one over an inline tag rendered as
+literal text wraps the tag's characters (decision 52).
 
 Images and PDFs. A figure embedded in a markdown file is commented on through its embed line: in
 Rendered view a click on the rendered image offers Comment, the anchor is the embed's source
@@ -1011,9 +1023,13 @@ Acceptance criteria:
   a quote whose walk-mapped characters equal the selected rendered characters one to one, and
   painting the stored anchor in Rendered wraps exactly the originally selected text; the reply
   CLI reads the resulting comment unchanged.
-- Rendered: a selection touching code, a table, an HTML block, an entity-bearing paragraph, or
-  an escaped link label is refused, the comment survives, and the Raw offer opens with the passage
-  selected when its text occurs in the source, else scrolled to the block.
+- Rendered: a selection touching code, a table, an HTML block, an entity-bearing paragraph, or an
+  escaped link label is refused, the comment survives, and the Raw offer opens with the passage
+  selected when its text occurs in the source, else scrolled to the block. Since Slice 8 of
+  plans/markdown-viewer.md and decision 53 the code and the table are no longer refusals: a code
+  line, a cell and a selection across several cells of one table map (their own criteria stand in
+  that plan's Slice 8 note and in decision 53); the HTML block, the entity-bearing paragraph and the
+  escaped label refuse as stated.
 - Every text format: a comment from the Raw view of an HTML, SVG, CSS, CSV, and code fixture
   stores the exact source slice.
 - Both: with the author label held equal, the comment object written from either view
@@ -3157,6 +3173,53 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   `ui/webview/file-comments-changes-review2-busy-prose.test.ts` (the changes suite's explanation of its `busy` case
   held to the premise the fence module pins in the panel's source, the retracted sentence banned there too). The last
   two cite no decision, so the scan does not reach them; they are named here by hand.
+- The inline tag and the cells (2026-09-18, decisions 52 and 53): `ui/webview/md-literal-tags.test.ts` (the
+  literal-tags rule at the token level, the escape against marked's own, the source pins over both callers and over
+  md-config.ts and the chat's modules); `ui/webview/anchor-map-literal-tags.test.ts` (the map over a DOM stand-in of
+  the quirks-mode parse, two FAILS-BEFORE cases, the contract's shapes);
+  `ui/webview/anchor-map-literal-tags-browser.test.ts` (the real pane in Chromium);
+  `ui/webview/anchor-map-cells.test.ts`, `ui/webview/anchor-map-cells-formulas.test.ts` and
+  `ui/webview/anchor-map-cells-browser.test.ts` (a selection across cells anchors, its quote and range equal to the
+  Raw path's, the paint one mark per cell, a FAILS-BEFORE case on two body cells, the formula-only and picture-only
+  cell shapes, a real drag saved through the panel); `tests/test_guide_files_cells_and_code_lines.py` (the guide's
+  sentences and the retired one-cell machinery at the source). `tools/file-review-plan-inlinetag.test.mjs` pins
+  decisions 52 and 53 here against the module (`literalizeUnclosedTags`, `VOID_ELEMENTS`), both callers (mdBlock's
+  three steps, `placeTokens`' lex line, one void list), the retired one-cell machinery and the anchor line in
+  anchor-map.ts, the guide's sentences, plans/markdown-viewer.md's two pointer sentences, this bullet's modules
+  against the tree, and `tools/file-review-plan-about.test.mjs`'s DECISIONS_END;
+  `tools/file-review-plan-inlinetag-rawblock.test.mjs` runs marked over a document with an unclosed `<kbd>`,
+  `<pre>`, `<code>` or `<script>` and holds decision 52's scope sentence to the lexer (every later block unescaped
+  until an end tag of any of the four names or the document's end, `inLink` the same); its lexer legs skip where
+  marked is not installed, which is every run of CI's shell job, so
+  `ui/webview/file-review-plan-inlinetag-rawblock.test.ts` (the second round) holds the same scope through both
+  callers' lexes (mdBlock's marked.lexer over a copy of the defaults, `placeTokens`' `Lexer.lex`) under the one
+  configuration, built and run by the extension job's `npm test`, and the tools module holds that twin and its
+  runner to the tree. The first round's other three modules (2026-09-18), found unrecorded in the second round and
+  named here since:
+  `ui/webview/md-literal-tags-tag-syntax.test.ts` (the self-closing flag read as the HTML tokenizer reads a tag,
+  the `image` alias left HTML, the stacks per name against the one list as an oracle and their linear time);
+  `tests/test_guide_files_own_html_foreign_tag.py` (the guide's qualification for a child tag left open inside an
+  inline `svg` or `math`, each clause held to the code); `tools/markdown-viewer-plan-decision52-pointers.test.mjs`
+  (the four in-place pointers at decision 52 in the Slice 5 section of plans/markdown-viewer.md).
+  `tools/guide-own-html-block-tag.test.mjs` (the second round: where the guide says the rule stops, a tag first on
+  its line that markdown reads as an HTML block, each clause held to the installed marked's block html rule, to the
+  rule's walk, which reads inline runs alone, and to the map's refusal of an html block; since the review of the
+  slice's PR, round 1, the guide's sentence on the tags that take the rest of the file when they stay HTML, at the
+  lexer). `ui/webview/guide-own-html-block-tag.test.ts` (the same round: that module's lexer legs, the loss
+  sentence's included, through both callers' lexes under the viewer's configuration, run by the extension job's
+  `npm test` where the tools module's lexer legs skip).
+  `tools/file-review-plan-inlinetag-records.test.mjs` holds decision 52's account of the first round to the code
+  (the stacks per name, `IMG_ALIAS`, `isSelfClosingTag`, the `open` array and the self-closing spelling's wrapper,
+  the fragment target a converted tag loses, the math breakout class) and this bullet's inventory to the tree
+  both ways: every module it names is in the tree, and every test module under `tools/`, `ui/webview/` or `tests/`
+  that cites decision 52 or 53 is named here or in one of the two records, so a later round's module cannot land
+  unrecorded. Since the review of the slice's PR (round 1, 2026-09-19) mdBlock's three steps are one exported
+  function, `viewerHtml` in file-view.ts, which mdBlock calls with the walk it ran before, and
+  `tools/file-review-viewer-recipe.test.mjs` holds that function to the source (its five statements in order,
+  mdBlock's call and walk) and holds every test module under `ui/webview/` that stands a Rendered body in for the
+  viewer's to it by grep: none calls marked's parser itself, none fills a node stand-in from `marked.parse` alone
+  but the one contrast `ui/webview/anchor-map-cells-formulas.test.ts` draws with the tree the viewer built before
+  the rule, and every module that calls `viewerHtml` imports it from file-view.ts.
 
 ## Docs
 
@@ -3201,6 +3264,22 @@ copy with no tag while the old card keeps its tag until you resolve it (the revi
 sentence, which had promised a confirmation of the same comment that no verb performs;
 `tests/test_guide_files_comments_anchors.py` holds the first two to the panel and the ADR,
 `tests/test_guide_files_comments_confirm.py` the last to the panel and the real host).
+With decisions 52 and 53 (2026-09-18), that a table cell, a selection across several cells of a table and a line of a
+code block can be commented from the Rendered view like any passage, that a comment across cells quotes the pipes
+between them as the file holds them, and that a formula is what cannot be mapped from the Rendered view
+(`tests/test_guide_files_cells_and_code_lines.py` holds the sentences to the map's source), and, in the paragraph on a
+file's own HTML, that a tag opened in a line of prose and not closed in the same block is shown as the characters
+typed rather than read as HTML, a tag closed in the same block, a void tag and a tag written with a slash before its
+`>` (`<x/>`) staying HTML, a chat message not read this way (`tools/file-review-plan-inlinetag.test.mjs` holds the
+sentence to the guide and the module), that a tag first on its line, which markdown reads as an HTML block, is HTML
+as before, the same placeholder included, and that a `<title>`, `<script>`, `<style>` or `<iframe>` that stays HTML,
+written with the slash mid-sentence or first on its line, takes everything after it out of the Rendered view up to
+an end tag of its name or the end of the file, a `<textarea>` so placed showing that stretch as unformatted
+characters, the file's own text after the tag first on its line and the HTML the viewer built from the rest after the
+tag written with the slash, its tags among the characters (`tools/guide-own-html-block-tag.test.mjs` holds those
+clauses to the guide, the installed marked's lexer and the map, `ui/webview/guide-own-html-block-tag.test.ts` the
+lexer legs under the viewer's configuration in CI, and `tests/test_guide_files_own_html_foreign_tag.py` the
+paragraph's sentences in their order and the rule's two exclusions at the source).
 `docs/reference.md`, under install-time switches, notes the
 User todos switch as a prerequisite for the todo path and the node requirement on the owning
 kernel; `docs/install.md` names the tooling the installer links into `~/.claude/`. With Slice 4,
@@ -3818,6 +3897,332 @@ document stands on its own, each with the reasoning it was given.
     `ui/webview/file-comments-tiebreak-touch.test.ts` (the words on a coarse pointer) and
     `tools/file-review-plan-tiebreak-review-4.test.mjs`, which holds this record's account of the third round to
     the code.
+52. **An inline start tag with no end tag in its block renders as literal text, and the anchor map places it**
+    (2026-09-18). The user reported that comments from the Rendered view were refused over most of one of their
+    notes. The assessment of 2026-09-18 traced every refusal to one inline tag: a placeholder written mid-paragraph
+    as a `<table>` start tag followed by a file name (the tests write it `(<table>__widths.csv)`). marked lexes such
+    a tag as an inline `html` token and passes it through; DOMPurify parses the viewer's HTML without a doctype, and
+    in that quirks-mode document a `<table>` start tag closes no open `<p>`, so the table opened inside the
+    paragraph's element and the next heading, paragraph and table were parsed into it. The anchor map predicted no
+    text for an inline html token and pairs blocks with top-level elements one for one, so the paragraph was refused
+    as not matching the file and every later block met the element three places on: 150 of the note's 189 blocks
+    refused, identically on every main head since the map's first release (the fork's PR 277), so a long-standing
+    gap and not a regression. The same shape lost content silently: after an inline `<title>`, `<script>`,
+    `<style>`, `<xmp>`, `<iframe>` or `<plaintext>` start tag in prose, the parser took the rest of the note as the
+    element's text and the sanitizer dropped it; after a `<template>` the parser put the rest into the template's
+    content, which the browser renders nowhere (the sanitizer keeps the element); after a `<textarea>` the rest
+    showed as unformatted characters, the element dropped and its text kept (each shape run over the base tree in
+    the review of the slice's PR, round 1). The user took the assessment's first
+    option on its recommendation: such a tag renders as its own characters, and the map predicts them.
+    The rule: an inline `html` token that is a START tag of a non-void element, with no matching end tag later in
+    the SAME block's inline tokens, becomes a `text` token in place, its raw kept and its text the raw escaped as
+    marked's inline text tokenizer escapes text, so marked's text renderer writes `&lt;table&gt;`, the reader sees
+    `<table>`, and the map's `text` case places the characters at the raw's position, with no new branch on either
+    side (the installed marked 12's `Renderer.text` writes a text token's text as is, and its `Tokens.Text` has no
+    `escaped` field, so the text is escaped up front: `<`, `>`, `"` and `'` always, `&` unless it begins a character
+    reference). Matching is by element name, ASCII case-insensitive, innermost first: a stack per name of the open
+    start tags over the block's inline tokens flattened in document order (a tag inside emphasis, a link's label or a
+    highlight counts), an end tag popping the latest open tag of its name and no other, so `<b>x<b>y</b>` keeps the
+    inner pair as HTML and makes the first `<b>` text, `<B>x</b>` is closed and `<b>x *y</b>*` is closed through the
+    emphasis. The stacks date from the review's first round (2026-09-18): the first build kept one list of every
+    open start tag and scanned it from its end on each end tag, quadratic when thousands of stray end tags followed
+    thousands of open start tags of another name, seconds of blocking work twice per open (the viewer's parse and
+    the map's lex); the stacks are linear in the run's tags and convert the same tokens, held against that list as
+    an oracle over a fixed sample and a seeded random one. The block is
+    the token that owns the inline run, each on its own: a paragraph, a heading, a tight list item's text, a
+    footnote definition, a table cell; a list, a quote and a callout are walked into for the blocks they hold.
+    Everything else is left as lexed: a start tag closed within its block (`<b>x</b>`, `<span class="a">y</span>`,
+    `<kbd>Ctrl</kbd>`), a void element, the `image` start tag (below), the self-closing syntax `<x/>`, an end tag (a
+    stray one keeps `blockEnds`' reading), a comment, a processing instruction, a declaration and a CDATA section;
+    block-level `html` tokens are not read (the tag scan, `topTags`, models what the parser makes of an html block).
+    The void list is HTML's fourteen, `VOID_ELEMENTS` in the module: `area`, `base`, `br`, `col`, `embed`, `hr`,
+    `img`, `input`, `link`, `meta`, `param`, `source`, `track`, `wbr`; anchor-map.ts's `VOID_TAGS`, which its tag
+    scans read, is that same set, so the rule and the scans share one list. One start tag outside that list is left
+    HTML too (the review's first round, 2026-09-18): `image`, the obsolete alias the HTML parser's in-body insertion
+    mode rewrites to `img` as it inserts it, so `<image src="a.png">` in prose opens nothing and the browser draws
+    the picture, as it did before the rule; `IMG_ALIAS` in the module, a constant of its own and not a fifteenth
+    void element, because inside an inline `<svg>` an `<image>` is an element with an end tag of its own and the
+    map's tag scans, which read `VOID_TAGS`, read it so. The other start tags the parser inserts and pops at once
+    beyond the void set (`keygen`, `basefont`, `bgsound`) fall to the rule and render as text: the sanitizer drops
+    those elements with nothing shown, and this record prefers the characters shown. The self-closing flag is read
+    as the HTML tokenizer reads a tag (`isSelfClosingTag`, the same round), attribute by attribute: a quoted value
+    runs to its closing quote, an unquoted value to the next blank or `>`, and the flag is a `/` right before the
+    `>` outside them all. So `<a href=http://a.test/>` is an open start tag, the `/` the unquoted value's own last
+    character, and with no end tag in its block it is text; the first build's suffix test on the raw (`/>` at its
+    end) read that tag as self-closing and left it HTML, and the browser opened the `a` and wrapped every later
+    block in it, the shape the rule exists to stop.
+    One rule in one code path is the design point that keeps the risk low: one module,
+    `ui/webview/md-literal-tags.ts`, exports `literalizeUnclosedTags(tokens)`, and two callers run it on their own
+    token trees of the same source under the one configuration (md-config.ts), so both convert the same tokens and
+    no wrong anchor can result. The
+    viewer's `mdBlock` (file-view.ts) calls marked.parse's three steps apart: marked's lexer, the rule, the
+    walkTokens it ran inside marked.parse (the fence collection, `viewerWalkTokens` for the file kind, the defaults'
+    walk, unchanged and in the same order) and marked's parser, over a copy of the singleton's defaults as
+    marked.parse copies them, on THIS parse's tokens alone. Nothing is registered on the singleton (no marked.use,
+    no renderer hook; the module imports marked's types alone), so the chat's `md()` (render.ts, still marked.parse)
+    and md-config.ts are untouched and the feed renders as before. The map's `placeTokens` (anchor-map.ts) runs the rule
+    on the lex line, after `Lexer.lex` and before anything reads the tree, so the text walk, `tagOf`, `topTags`,
+    `blockEnds` and the pairing never meet the converted token as html; the `open` array `blockEnds` collected (the
+    formatting tags a paragraph left open, whose wrapper element the pairing did not model, recorded under Slice 5
+    of plans/markdown-viewer.md with the `Block.leaves` fix shape and routed to Slice 8, which did not build it) can
+    therefore hold nothing but an unclosed `image` start tag, the one start tag the rule leaves HTML that the scan's
+    void set lacks, which opens no element in HTML content (the parser rewrites it to the void `img`; inside an inline
+    `<svg>` the `image` element is closed by `</svg>` and every block still maps), or a start tag written inside an
+    html comment (`<!-- an aside <b> -->`: the scan's `TAG_RE` reads the comment's raw, the rule's scan does not), which
+    the parser reads as part of the comment; neither opens an element around the later blocks. The SELF-CLOSING
+    spelling of such a tag still does: the rule leaves it HTML (`isSelfClosingTag`) and the scan reads it as a leaf,
+    but the parser ignores the flag on an HTML element and opens it, so `<b/>` in prose is a wrapper around every
+    later block (the tag's paragraph maps and every later block is refused with the mismatch sentence), `<div/>` a div
+    holding them, `<table/>` one paragraph holding them, and `<title/>` takes the rest of the note as its text, which
+    the sanitizer drops (`ui/webview/anchor-map-literal-tags-browser.test.ts` records each in the real pane, the same
+    shapes and verdicts over the base tree; `ui/webview/anchor-map-literal-tags.test.ts` records `<div/>`, `<table/>`
+    and `<title/>` over its stand-in, which does not model the `<b/>` wrapper); the pairing does not model that
+    wrapper, so the fix shape recorded for it, `Block.leaves`, is NOT moot: before this decision the bare `<b>` with no
+    closer made the same wrapper, and the rule removed it for that spelling alone (the review of the slice's PR, round
+    1, 2026-09-19). The map passes the scan a fresh array and reads it nowhere.
+    Deliberately left, recorded here: `<hr>` inline is void, stays HTML and still splits its paragraph in the
+    parser; a start tag whose end tag stands in a LATER block renders as text now, and the later block's end tag is
+    a stray, where the parser used to wrap the blocks between in its element; a block-level element closed within
+    its block mid-line (`<div>x</div>`) still splits the paragraph in the parser, a known gap; marked's inline lexer
+    state is not rewound between blocks: one Lexer lexes every block's inline run in turn, so a flag one block sets
+    stays set for the rest of the document. After an unclosed `<kbd>`, `<pre>`, `<code>` or `<script>` it lexes the
+    remaining text of that block and of every later block unescaped (`inRawBlock`), until an end tag of any of those
+    four names (a stray `</code>` closes an open `<kbd>`) or the document's end. Under the flag marked's inline tag rule
+    still reads a tag-shaped run (`<c>`, `<c a="b">`, `<y z>`, `<y then d>`) as an `html` token, so the rule and the
+    parser treat it as in any block: with no end tag in its block it is converted and its characters show and map;
+    closed (`<c>x</c>`) it stays HTML. A `<` before a letter that the tag rule does not read as a tag (`<b=c>`, `<b/x>`,
+    `<y z t2.` with no `>` after it in its block) is unescaped text, and the browser's parser reads a tag from that `<`
+    to the next `>`, the block's own end tag when the block's text has none: those characters are gone from the rendered
+    view and the block is refused with the mismatch sentence. What else the parser makes of it depends on the name it
+    read: `<b=c>` and `<y/x>` leave no element on the page and the next block maps; `<b/x>` (read as `<b x="">`) and
+    `<div/x>` open an element that holds every later block, the wrapper the self-closing spelling opens above, and those
+    blocks are refused when two or more stand in it (one alone inside a formatting element still maps, as it does after
+    `<b/>`; after `<div/x>` it is refused); a heading whose own end tag was read as the `>` stays open, and the next
+    block is parsed into it and refused too. After an unclosed `<a` it autolinks no bare URL in that block
+    or any later one (`inLink`), until an `</a>`. Both as before: the rule runs after the lex and changes no lexer
+    state, and main's path lexes the same. Left too, found in the review's consolidation pass (2026-09-18): a heading
+    holding such a tag (`## Results <b>`) takes its id from its rendered text, the tag's characters included
+    (`mintHeadingIds` in file-view.ts slugs the sanitized heading's textContent, and a converted token is a text token
+    like any other, so nothing there tells the tag's characters from typed text): `md-results-b`, where GitHub's slug
+    of that heading, which reads the tag as HTML, is `results`, so the note's own `[..](#results)` link and an open at
+    `#results` miss it (the open reports no section of that name; the Outline, which lists the rendered headings
+    themselves, still lands). Before the rule the same heading was slugged `results` and its open `<b>` bolded the
+    rest of the note. A fix would slug the heading's inline tokens with the converted ones skipped, a second slug path
+    for a heading that holds an unclosed tag and is a link's target at once; the user decides whether it is worth one
+    (`ui/webview/md-literal-tags.test.ts` holds the shape and the slug). Left too, found in the review of the slice's
+    PR (round 1, 2026-09-19): a converted tag's own id or name is no longer a fragment target, since the tag is text
+    and no element. An unclosed `<a name="spot">` or `<span id="sid">` written mid-prose reached the DOM before as an
+    element under the sanitizer's `user-content-` prefix, so the note's own `[jump](#spot)` landed on it (the link's
+    title `Go to spot`); it is characters now, so that link is dead, with the title `No heading or anchor named
+    “spot” in this document` (`linkMarkdownAnchors` in file-view-links.ts finds no target), where the open `<a>` before
+    also stayed open past its paragraph: the browser's parser reopened the `a` after it and kept it open until the block
+    holding the note's next `<a>` or `</a>` tag, or to the end of the note when none followed, and the map, which pairs
+    blocks with top-level elements one for one (above), lost the count unless the reopened `a` held exactly one block (a
+    paragraph, a heading, a list, a table, a fenced code block or a blockquote between the tag's paragraph and the link:
+    every block mapped). With no later `<a>` it wrapped every later block, a heading, a list and a table included, and a
+    selection in any of them was refused with the mismatch sentence; with the `[jump](#spot)` link in the next paragraph
+    the link's own `<a>` closed it holding nothing but a line feed, an extra top-level element, so a selection in that
+    paragraph or in any after it was refused, in the last with `The selection could not be matched to the file text.`:
+    the shape the rule exists to stop. Untouched, landing before and after: a closed tag (`<a name="x"></a>`, the README
+    idiom, mid-prose or on its own line) and a tag alone on its line (`<a name="line">`), which is an HTML block the
+    rule does not read. A fix would give the converted token's id or name an element to land on, a second reading of a
+    tag
+    the rule made text; the user decides whether it is worth one, as for the slug
+    (`tools/file-review-plan-inlinetag-records.test.mjs` holds this clause, and runs the rule over both spellings
+    where marked is installed). Two consequences the build found and kept: inside an inline `<svg>` or
+    `<math>` the rule applies by name, so a child written without its own end tag (`<svg><title>icon</svg>`,
+    `<svg><foreignObject><b>x</svg>`,
+    `<math><annotation-xml encoding="text/html"><b>x</math>`) is text too and the root's own end tag closes the root
+    (in the DOM those characters are svg text, present in the textContent the map and the reader match and drawn
+    nowhere, or go with a dropped `<math>`; the alternative, `</svg>` and `</math>` closing every tag opened after
+    their root as the HTML parser does, would have kept `<svg><title>icon</svg>` an element, and was not taken); and
+    a class of shapes moved into the breakout class anchor-map-html-text-browser.test.ts already recorded, widened
+    from the one shape first recorded there (`ma6 <math><annotation-xml encoding="text/html"><b>x</b></math> y6`) by
+    the review of the slice's PR (round 1, 2026-09-19) and bounded again by its closing check (2026-09-19): an
+    integration point of an INLINE `<math>` left open (`<mtext>`, `<mi>`, `<mo>`, `<mn>` or `<ms>`, or an
+    `<annotation-xml>` with the html or the xhtml encoding) is literal text now, so an HTML element after it whose
+    start tag is on the parser's foreign-content breakout list (the 44 names the HTML standard lists there, and `font`
+    when it carries `color`, `face` or `size`) stands in the math's foreign content with no integration point around
+    it: the parser breaks out of the math at it, whether the tag is closed, self-closed or void, and shows its text,
+    and the reader drops the math whole. In Chromium `ma7 <math><mtext><b>x</b></math> y7` shows `ma7 x y7` where the
+    reader reads `ma7 y7`, the same for `<mi>`, `<mo>`, `<mn>`, `<ms>` and the xhtml encoding in place of the
+    `<mtext>` and for a closed `<div>` or `<p>` in place of the `<b>`, and `ma5 <math><mtext><p>a<p>b</p></math> y5`
+    shows `ma5 b y5` against `ma5 y5`, no paint mark on either; before this decision both sides read `ma7 y7` and `ma5
+    y5`. The `font` bound the same way: `<font color="red">x</font>` after the `<mtext>` breaks out (`P[FONT]`, `x`
+    shown) and `<font>x</font>` goes with the math. What the class changes for the map, executed in Chromium at this
+    head and at the base tree c25a2b319 over a note of the tag's paragraph, a heading and two paragraphs (a paragraph
+    holding an inline `<math>` with text inside it was refused with the mismatch sentence on both trees in every shape
+    run, `Lead <math><mi>x</mi></math> tail t1.` among them, and one holding `<math></math>` mapped): the void
+    members break out with no closing, `<br>` and `<img>` inside
+    `<math><mtext>` landing in the paragraph as a line break and a picture (the top-level elements `P[BR] H2 P P` and
+    `P[IMG] H2 P P` against the base tree's `P H2 P P`, the text the same on both sides), the tag's paragraph refused
+    with the mismatch sentence where the base tree mapped it and every later block mapping; `<hr>` closes the
+    paragraph as well (`P HR P H2 P P`), so the paragraph's tail stands in an extra top-level element and every later
+    block is refused with `The selection could not be matched to the file text.`, where the base tree mapped every
+    block, the same after `<mi>` or the xhtml `<annotation-xml>` in place of the `<mtext>`; the self-closed `<b/>`
+    breaks out and opens, a wrapper around every later block (`P[B] B[H2,P,P]`, every passage refused with the
+    mismatch sentence), where the base tree showed `Lead` alone with the rest of the note gone (the `b` the flag does
+    not close stayed open inside the `<mtext>`, the round-7 shape that keeps `</math>` ignored). A closed block-level
+    member splits the paragraph the same way in either root: `<div>x</div>` or `<p>x</p>` after the `<mtext>` (`P DIV
+    P H2 P P`, `P P P H2 P P`, the `ma5` shape's) and inside an inline `<svg>` after a `<title>`, `<desc>` or
+    `<foreignObject>` left open (`P[svg] DIV P H2 P P`, `P[svg] P P H2 P P`; `<hr>` after the `<title>` the same),
+    every later block refused with the could-not-be-matched sentence, where at the base tree the element sat inside
+    the integration point, a scope boundary the parser closes no `<p>` across, and every later block mapped. Inside
+    the `<svg>` the TEXT agrees on both sides for a member, since the sanitizer keeps svg text: `sv1
+    <svg><title><b>x</b></svg> y1` reads `sv1 <title>x y1` on both sides, the `b` broken out into the paragraph
+    (`P[svg,B]`) and every block mapping; the map is what differs for a block-level member, and the browser suite
+    compares text, so the splits are RECORDED there by the DOM's top-level tags and each passage's verdict, not by
+    text alone. The `<title>` half of the svg split stands as prose, executed and not pinned:
+    `tools/markdown-viewer-plan-decision52-pointers.test.mjs` refuses a `<textarea>`, `<plaintext>`, `<title>` or
+    `<noscript>` written without the self-closing syntax in a RECORDED source, since such a tag left open is literal
+    text under this decision and cannot itself be a recorded divergence, and the svg-title shape's divergence is the
+    div's breakout, which the guard cannot tell from a title left open, so the split is pinned through
+    `<foreignObject>` and `<desc>`. Not in the class: a closed element whose start tag is not on that list (`<kbd>`,
+    `<a>`) stays in the
+    foreign content and goes with the dropped math on both sides (`ma7 y7`); inside an inline `<svg>` it stays in the
+    drawing, where the sanitizer keeps an svg name (`<a>`, its text shown and every block mapping) and removes any
+    other with its text, which the reader keeps as the drawing's, so `Lead <svg><foreignObject><kbd>x</kbd></svg> tail
+    t1.` reads `Lead <foreignObject> tail t1.` in the DOM against the reader's `Lead <foreignObject>x tail t1.` (the
+    same after a `<title>`), a text divergence new with this decision, RECORDED in the same suite; and a `<math>`
+    inside an html block, whose tags the rule does not read. The reader does not model the parser's breakout from
+    foreign content (the Slice 5 build note of plans/markdown-viewer.md records it as not modelled and pre-existing),
+    so the class is RECORDED in that suite, the text representatives `ma5` and `ma7` and the closing check's entries
+    for the void members, the self-closed `<b/>`, the `font` member, the block-level splits in both roots and the svg
+    out-of-class drop, and not modelled; `ui/webview/anchor-map-html-rules.test.ts` pins the reader's side of `ma5`.
+    Two divergences the
+    Slice 5 build note of
+    plans/markdown-viewer.md recorded (item 4) are agreements now: an inline `<textarea>` left open, and an
+    `<annotation-xml>` whose encoding value carries a blank with a `<b>` left open inside it; the `/>` forms keep
+    the divergence, since the self-closing syntax stays HTML. The assessment counted other placeholder tags in the
+    note, start tags with no end tag that the sanitizer dropped with nothing shown; they render as visible text
+    now. mdBlock calls marked's lexer and parser directly, so a throw from them no longer carries the report-this
+    sentence marked.parse appends to its message (`fellMessage`'s cut is a no-op for the viewer's own parse and
+    stands). docs/guide.md says so in its paragraph on a file's own HTML; CONTEXT.md is unchanged, since no
+    term was coined.
+    Tests: `ui/webview/md-literal-tags.test.ts` (the rule at the token level over marked's lexer, the escape held
+    equal to marked's own text token for the same characters, idempotence, and the source pins: both callers import
+    and call the function, mdBlock's three steps in order, the map's call on the lex line, one void list,
+    md-config.ts and the chat's modules untouched, the module importing marked's types alone);
+    `ui/webview/anchor-map-literal-tags.test.ts` (the map over a DOM stand-in that models the quirks-mode table
+    nesting, foster parenting, the RCDATA elements and the sanitizer's drops; two FAILS-BEFORE cases, red with the rule
+    absent (literalizeUnclosedTags a no-op, or its call removed from viewerHtml) at the mismatch sentence for four
+    passages and at the blocks lost after an unclosed `<title>`; the closed, void, self-closing, matching, heading, list
+    item, cell, offsets and untouched-shape cases; the RECORDED self-closing spelling of a known name, `<div/>`,
+    `<table/>` and `<title/>` over the stand-in, the bare spelling of each mapping; and the RECORDED `<hr>` inline, the
+    one void tag whose start tag closes an open `<p>`, with `<br>` as the control);
+    `ui/webview/anchor-map-literal-tags-browser.test.ts` (the real pane and panel in Chromium: one top-level element per
+    block, every passage mapped through a real Selection, a comment on the literal `<table>` painted through the panel
+    and a change through the painter, the Raw view's range equal; and the RECORDED self-closing spelling in the real
+    pane, `<b/>`, `<div/>`, `<table/>`, `<title/>` and `<textarea/>` with `<x/>` as the control, each shape and verdict
+    the same over the base tree). The suites whose pins the rule changed
+    follow it: `ui/webview/anchor-map-html-rules.test.ts`, `ui/webview/anchor-map-html-text.test.ts` and
+    `ui/webview/anchor-map-html-text-browser.test.ts` (the foreign-content shapes above, the breakout class RECORDED
+    with its two text representatives and the closing check's entries by top-level tags and verdicts),
+    `ui/webview/anchor-map-fallback-markup.test.ts` and `ui/webview/md-config-merged-paragraph.test.ts` (their
+    mdBlock replicas render through the rule), and the source pins over mdBlock's parse in
+    `ui/webview/file-view.test.ts`, `ui/webview/file-view-links.test.ts`, `ui/webview/render-sanitize.test.ts` and
+    `ui/webview/anchor-map.test.ts`. `tools/file-review-plan-inlinetag.test.mjs` holds this record and decision 53
+    to the module, both callers, the guide and the tree; `tools/file-review-plan-inlinetag-rawblock.test.mjs` runs
+    marked over a document with an unclosed `<kbd>`, `<pre>`, `<code>` or `<script>` and holds the scope sentence
+    above to the lexer: every later block unescaped, an end tag of any of the four names clearing it, `inLink` the
+    same, where marked is installed (CI's shell job installs nothing, so those legs skipped there);
+    `ui/webview/file-review-plan-inlinetag-rawblock.test.ts` (the second round) runs the same documents through both
+    callers' lexes under the one configuration inside the extension job's `npm test`, so the scope sentence has an
+    arbiter in CI, and the tools module holds that twin and its runner to the tree. The first round added three
+    modules more, named here since the second round found them recorded nowhere:
+    `ui/webview/md-literal-tags-tag-syntax.test.ts` (the self-closing flag read as the tokenizer reads it, with the
+    FAILS-BEFORE case on `<a href=http://a.test/>`; the `image` alias left HTML, a FAILS-BEFORE case too; the stacks
+    per name held against the one list as an oracle, and their linear time under forty thousand stray end tags);
+    `tests/test_guide_files_own_html_foreign_tag.py` (the guide's qualification for a child tag left open inside an
+    inline `svg` or `math`, each clause held to this record, the module's by-name match, the sanitizer's profile and
+    the DOM tests); `tools/markdown-viewer-plan-decision52-pointers.test.mjs` (the Slice 5 build note's four in-place
+    pointers at this decision, held to the sentence above and to the browser suite's shapes).
+    `tools/guide-own-html-block-tag.test.mjs` (the second round) holds the guide's account of where the rule stops, a
+    tag first on its line that markdown lexes as a block `html` token, to the installed marked, to the rule's walk
+    and to the map's refusal of an html block; since the review of the slice's PR (round 1, 2026-09-19) it holds the
+    guide's sentence on the tags that take the rest of the file when they stay HTML too, `<title>`, `<script>`,
+    `<style>` and `<iframe>` first on their line (block `html` tokens) or written with the slash mid-sentence (inline
+    `html` tokens the rule leaves), `<textarea>` beside them. Its lexer legs skip where marked is not installed, which
+    is every run of CI's shell job, so `ui/webview/guide-own-html-block-tag.test.ts` (the same round) runs them
+    through both callers' lexes under the viewer's configuration inside the extension job's `npm test`, and
+    `tests/test_guide_files_own_html_foreign_tag.py` holds that sentence in its place in the paragraph and the rule's
+    two exclusions at the source. `tools/file-review-plan-inlinetag-records.test.mjs` (the second
+    round) holds this record's account of the first round to the code: the stacks per name, `IMG_ALIAS` outside the
+    void set, `isSelfClosingTag` and the two tags named above run through the installed marked and the rule, the
+    `open` array's occupants and the self-closing spelling that still opens a wrapper, the fragment target a converted
+    tag loses, the math breakout class and the loss before the rule after each raw-text name (the PR review's round
+    1); and holds the Tests bullet's inventory both ways, every test module under
+    `tools/`, `ui/webview/` or `tests/` that cites decision 52 or 53 named in the bullet or in one of the two
+    records, so a later round's module cannot land unrecorded again.
+53. **A selection across several cells of one table anchors to its span** (2026-09-18). Slice 8 of
+    plans/markdown-viewer.md (item 3, the brief's open question 3) refused a Rendered selection whose source span
+    covered two or more cells of one table with the sentence "This selection spans more than one cell of a table;
+    select within one cell, or comment on it from the Raw view." and the Raw view offered on the covered cells'
+    span, where Save worked, on the ruling that a quote across cells would carry the pipes between them and the
+    rows' line feeds, raw delimiters the person did not select as text (the Slice 5 ruling that declined raw HTML in
+    a quote for the wrappers). The assessment of 2026-09-18 listed anchoring such a selection as a low-risk change
+    whose span the refusal already computed for its Raw offer, and the user overturned the ruling: the selection
+    anchors instead of refusing, the raw delimiters inside the quote accepted.
+    The rule: `mapRenderedSelection` maps such a selection as it maps any selection over more than one block. The
+    anchor runs from the selection's first positioned character to its last, both from the pass as before, widened
+    by a formula the selection covered whole at either end (the existing `widened`, over the formulas
+    `formulaBeside` and the InControl boundaries found), so every cell the span covers lies inside it, a
+    formula-only or picture-only cell the span runs through among them, and the quote is the source between, the
+    pipes, the delimiter row and the line feeds included, the characters a Raw selection over the same text mints
+    (each anchor in the suites is held equal to `mapRawSelection`'s over the same offsets). Nothing was added to the
+    algorithm: the anchor is the line that already followed the refusal, `widened` over the first and last
+    positioned characters and `source.slice(start, end)`. The one-cell machinery is gone from the map: the constant
+    `ONE_CELL`, `cellsRule` (the count of a table's cells by source span and its refusal), `coveredCells` (the same
+    over a covered formula's table), `coveredOnly` (the covered formulas' span handed to that count), the pass's
+    per-table check and the final covered-cells check before the ok return. The Cell records `walkRow` keeps stay,
+    read by `renderedSpot` to place a change's point inside one cell's own characters. The Raw offer stands for the
+    refusals that remain: the pass still names a refused visible block and a hole's characters in document order and
+    `formulaEnd` after them, so a selection that leaves a table into an html block, a code block the reading could
+    not place, a callout's title or a formula keeps those refusals, the cells it crosses no obstacle now (the
+    re-aimed pins name the next obstacle in the span). Two edges are the build's reading of the contract, which said
+    to keep whatever the formula rules still need, and not a ruling: a selection whose characters are covered
+    formulas alone, two formula-only cells with nothing positioned between (the shape `coveredOnly` served), is the
+    formula's (`FORMULA_TOUCHED`, the Raw view offered on the formula the drag began on, as a paragraph's selection
+    of formulas alone is), not an anchor to `$x$ | $y$`; and a picture alone in a cell is no formula, so a drag
+    released on the cell pad past a picture-only cell anchors the positioned cells alone (`covered` is filled by the
+    formula detections, and no picture-beside detection was built), while a picture-only cell the span runs THROUGH
+    lies inside the quote. The user's word on either is open (Open questions).
+    The paint rule: the rendered paint of a multi-cell anchor needs no new rule. `paintRendered`'s exact path finds
+    the first and last positioned characters whose source offsets lie in the range across blocks, `wrapBetween`
+    reads the highlight units under both ends' block nodes and the covered formulas, and `wrapRuns` wraps one mark
+    per run of adjacent siblings, skipping the whitespace-only text nodes between block boxes (TD, TH, TR and P are
+    BLOCK_BOXES), so every covered cell gets a mark over its own text and the pipes get none; a tracked-change mark
+    over the same span paints the same cells. Verified in node by extracted strings and in Chromium: the saved row
+    comment's marks read `cell one` in the first cell and `cell two` in the second, none over the pipe, and the Raw
+    view paints `cell one | cell two` on the row; a comment saved over a paragraph and an all-formula header row
+    paints in the paragraph and in both header cells, each cell's mark holding its KaTeX formula. The composer folds
+    a quote's whitespace to blanks (`.fc-quote`), so a quote across rows shows as one line, `Intro para. | $h$ |
+    $k$` for the stored `Intro para.\n\n| $h$ | $k$`, while the stored quote keeps its line feeds (verified from the
+    posted write in Chromium): fine for a one-row quote; a multi-row quote reads with blanks where the file has line
+    breaks.
+    Records: docs/guide.md's Comments paragraph says a table cell, a selection across several cells of a table and a
+    line of a code block can be commented from the Rendered view like any passage, that a comment across cells
+    quotes the pipes between them as the file holds them, and names a formula as what cannot be mapped (the
+    refusal's tail clause the other pins read is byte for byte as it was); anchor-map.ts's header, the Cell
+    docstring, `walkRow`'s, `widened`'s, `orFormula`'s note, the obstacle-order note and the anchor site state the
+    rule and keep the one-cell rule as history; plans/markdown-viewer.md's Slice 8 record keeps its account of the
+    one-cell rule as the slice built it, with one sentence at item 3 pointing here. Tests:
+    `ui/webview/anchor-map-cells.test.ts` (the shapes Slice 8 refused: two body cells, across two rows, a header
+    cell into a body cell, prose before into a cell, a cell into prose after, the whole table, one character into
+    the next cell, two tables through the prose between, each held to an exact quote and range and equal to the Raw
+    path over the same characters; a FAILS-BEFORE case on two body cells, `ONE_CELL` before, the anchor with the
+    pipe inside the quote after; the paint across cells and a change over the same span);
+    `ui/webview/anchor-map-cells-formulas.test.ts` (the Slice 8 review's round 4 and 5 shapes, anchors now: a
+    formula-only cell at the start, at the end or run through inside the quote, a picture-only cell run through, the
+    pad past a picture, two formula-only cells alone the formula's); `ui/webview/anchor-map-cells-browser.test.ts`
+    (a real drag across two cells saved through the panel, one mark in each cell and none over the pipe, the Raw
+    view's mark across the row; the all-formula header row saved with marks in the paragraph and both header cells;
+    the edge cells' composer quoting the cells and the prose after); the pins re-aimed at the next obstacle in
+    `ui/webview/anchor-map-obsidian.test.ts`, `ui/webview/anchor-map-code-lines.test.ts` and
+    `ui/webview/anchor-map-wrappers.test.ts`; `tests/test_guide_files_cells_and_code_lines.py` (the guide's
+    sentences flattened and, at the source, the header's sentence, the absence of `ONE_CELL`, `cellsRule`,
+    `coveredCells` and `coveredOnly` and of the one-cell sentence, and the anchor and return lines);
+    `tools/file-review-plan-inlinetag.test.mjs` holds this record to the source and the guide.
 
 ## Open questions for the user
 
@@ -3841,6 +4246,11 @@ focused card rather than at the top (as first built the group was moved above th
 reaches it; the follow-on's review put every card at or below the start, and the verification review, 2026-09-09, lays
 the cards a spilled card had pushed again without it, so the first passage's card takes the start a spilled whole-file
 card gave up).
+Two edges of decision 53 (2026-09-18) are the build's reading of its contract, not a ruling: a selection
+whose characters are two formula-only cells of a table with nothing positioned between is refused as a
+formula, with the Raw view on the formula the drag began on, rather than anchored to the cells' span; and
+a drag released on the cell pad past a picture-only cell anchors the positioned cells alone, since a
+picture is never covered as a formula is. Both stand until the user says otherwise.
 
 ## Upstream
 
