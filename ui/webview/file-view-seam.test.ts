@@ -1393,10 +1393,10 @@ test("the inertness premise, held where CI runs: MD_PURIFY is its six-key litera
 // identifiers called in the region (every bare call there, no method call on an imported binding), each resolved through
 // file-view.ts's named imports to its module or to a local function; the local functions reached from those, transitively over
 // bare calls (REACHED_LOCALS), and every IMPORTED function a reached local calls, resolved the same way to its module
-// (IMPORTED_CALLEES: the figure controls' pass, the first local callee to call imported functions, reads figure-gate.ts,
-// file-comments-model.ts and file-comments.ts through parseSrcset, figurePath and pictureDest; before the file review's landing
-// round the walk followed a reached local's LOCAL calls alone, so those three modules sat outside the judged set while this
-// header already promised the transitive reach, and a live re-parse write planted in any of them left this test green); then
+// (IMPORTED_CALLEES, each to its module, the one-line record the plan's paragraph is filled from; before the file review's
+// landing round the walk followed a reached local's LOCAL calls alone, so the modules those functions live in sat outside the
+// judged set while this header already promised the transitive reach, and a live re-parse write planted in any of them left
+// this test green); then
 // every module those modules name in an import the compiler parses (an import declaration under any clause: a named import, a
 // type-only one, a namespace or default import, a side-effect import; an `export ... from`; an `import x = require()`; and a
 // dynamic `import()` or `require()` of a string literal), under any quote and across any line break, a specifier that is not a
@@ -1450,9 +1450,10 @@ const RE_PARSE = /\b(?:innerHTML|outerHTML)\b|insertAdjacentHTML|createContextua
 /** The local functions of file-view.ts a post-adoption pass reaches, transitively over bare calls (derived below; a new one
  *  widens this list first and is judged against RE_PARSE with the rest). */
 const REACHED_LOCALS = ["keepVideoShape", "addFigureControls", "pxDimension", "decideFigureControl", "figureAnchor", "figureControlAfter", "figureWantsControl", "removeFigureControl", "el", "figureControlGlyph", "oneImg", "linkAround", "figureState", "figureHasPicture", "figureTooSmall", "figureTarget", "linkAbove", "ringOf", "figureBox", "chosenSource", "absUrl"];
-/** The imported functions a reached local calls, each to the module file-view.ts imports it from (derived below; the figure
- *  controls' pass reads these three; a new one widens the module set first). */
-const IMPORTED_CALLEES: Record<string, string> = { figurePath: "file-comments-model.ts", parseSrcset: "figure-gate.ts", pictureDest: "file-comments.ts" };
+/** The imported functions a reached local calls, each to the module file-view.ts imports it from (derived below; a new one
+ *  widens the module set first). One line with quoted keys: tools/markdown-viewer-plan-gate-adopt.test.mjs reads it as JSON
+ *  and fills the plan's re-parse paragraph from it, so the names and their modules' count have this one home. */
+const IMPORTED_CALLEES: Record<string, string> = { "figurePath": "file-comments-model.ts", "parseSrcset": "figure-gate.ts", "pictureDest": "file-comments.ts" };
 /** The bare calls in a reached local that are neither a local function, an import nor a name the body binds itself: the
  *  language's globals (derived below; a new one is judged here first; neither parses markup, and DOMParser is RE_PARSE's). */
 const GLOBAL_CALLS = ["Number", "URL"];
@@ -1501,7 +1502,7 @@ test("no re-parse after the adoption: mdBlock's post-adoption region and every m
   // the whole file: the count below is the figure's one home (the plan's re-parse paragraph and tools/markdown-viewer-plan-gate-adopt.test.mjs
   // read it from this assertion's literal); the highlight's is the one site inside mdBlock, the others the viewer's own constant
   // markup outside it (the tray's icon constants, the loading glyph, codeBlock's numbered rows, and two judged at the merge of
-  // the trail and figure-control branch, 2026-09-20: the bar's two trail arrows, written at the bar's build outside the box like
+  // the trail and figure-control branch, 2026-09-20: the bar's Back and Forward arrows, written at the bar's build outside the box like
   // the other icon buttons, and the figure control's glyph, parsed once onto a holder that enters no document and cloned into
   // each control, since the control itself stands under the box during the render and a live write there is what the node
   // scene refuses; the control had written its glyph through innerHTML, two live re-parses under the box in that scene, red at
