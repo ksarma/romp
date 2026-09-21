@@ -1151,11 +1151,15 @@ yes. The gear reports a machine that is missing node or the comment tools.
   changed, not whether it was read. With one counted row in the file, the line
   ends `; 1 row overridden by model-prices.json`, whichever table it names. A
   row the kernel cannot read (not an object, or a rate that is not a finite
-  number) voids that row and every row after it, and a file it cannot read or
-  parse as a JSON object is ignored whole; the kernel says so once per kernel
-  life on its stderr, and the `priceFeed` block carries the class as
-  `overrideFault` (`row` or `file`, else null), never the file's text or its
-  path.
+  number) is skipped and every other row applies, wherever in the file the bad
+  row sits; a file it cannot read or parse as a JSON object is ignored whole.
+  The kernel says so once per kernel life on its stderr, for the file and for
+  each skipped row, naming the row's key there and nowhere else. The
+  `priceFeed` block carries the class as `overrideFault` (`row` or `file`, else
+  null) and the number of skipped rows as `overrideRowsRejected`, never the
+  file's text or its path, and with one skipped row the line under the
+  footnote ends
+  `; 1 row of model-prices.json could not be read and was skipped (the rest of the file applies)`.
 
 ### Fast mode for the judges
 

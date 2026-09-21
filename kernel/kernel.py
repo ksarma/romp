@@ -52414,13 +52414,17 @@ _price_cache = {"t": 0, "remote": {}}   # remote feed prices, refreshed on a TTL
 # counts overrides from under the same lock, so a read between two of the worker's writes, or a landing between two
 # of the reader's, cannot happen (review round 2: such reads rendered `live feed for 0 of 6 models` and `the feed's
 # rows for 6 known models could not be read`). The say-once latches (`offSaid` for the off line, `unrecognisedSaid`
-# for a switch value that is not off, `overrideSaid` for an override file the kernel could not read) take the lock
-# too: each is a read-modify-write (test, then set), which the torn-read argument for a lone store does not cover,
-# and two cost-view builds arriving together both wrote the off line (the review of PR 878). _price_feed_first is
-# the one test-and-set, and the line is written OUTSIDE the lock (_price_feed_line re-enters it through
-# _price_feed_status). There is no cache FILE: this is process memory and dies with the kernel.
+# for a switch value that is not off, `overrideFileSaid` for an override file the kernel could not read as a JSON
+# object, and `overrideRowsSaid`, the keys of the override rows it has already named) take the lock too: each is a
+# read-modify-write (test, then set), which the torn-read argument for a lone store does not cover, and two cost-view
+# builds arriving together both wrote the off line (the review of PR 878). The override file's two fault classes
+# have one latch EACH: a single latch across both let the first fault of either class silence the other class's
+# first for the rest of the kernel's life (the review's re-ruling, 2026-09-21), and the row class latches per ROW
+# KEY, a frozenset replaced under the lock, so every bad row is named once and a row that goes bad later is named
+# too. _price_feed_first is the one test-and-set, and the line is written OUTSIDE the lock (_price_feed_line
+# re-enters it through _price_feed_status). There is no cache FILE: this is process memory and dies with the kernel.
 _price_feed = {"fetchedAt": None, "attemptedAt": None, "lastError": None, "rows": 0, "matched": 0, "inflight": False,
-               "offSaid": False, "unrecognisedSaid": False, "overrideSaid": False}
+               "offSaid": False, "unrecognisedSaid": False, "overrideFileSaid": False, "overrideRowsSaid": frozenset()}
 _price_feed_lock = threading.Lock()
 # OpenSSL 3.0's verify-error table: the strings X509_verify_cert_error_string returns for verify codes 1 to 94, copied
 # from OpenSSL 3.0.13 on the build box (a ctypes probe over libcrypto, in scratch, never here: the ssl module exposes no
@@ -52505,16 +52509,30 @@ def _price_feed_unrecognised():
     return bool(v) and v.lower() != "off"
 
 
-def _price_feed_first(key):
-    """The test-and-set of a say-once latch in _price_feed (`offSaid`, `unrecognisedSaid`, `overrideSaid`), under
-    _price_feed_lock: True for the ONE caller that flipped it, which then writes its line OUTSIDE the lock
-    (_price_feed_line re-enters the lock through _price_feed_status, so a line written inside it deadlocks). The
-    check-then-set these latches used to do with no lock let two cost-view builds arriving together both write the
-    off line: a lone store needs no lock, a read followed by a write does (the review of PR 878)."""
+def _price_feed_first(key, member=None):
+    """The test-and-set of a say-once latch in _price_feed (`offSaid`, `unrecognisedSaid`, `overrideFileSaid`; with
+    `member`, the set latch `overrideRowsSaid`), under _price_feed_lock: True for the ONE caller that flipped it, or
+    that added `member`, which then writes its line OUTSIDE the lock (_price_feed_line re-enters the lock through
+    _price_feed_status, so a line written inside it deadlocks). A set latch is a frozenset REPLACED under the lock,
+    never a set mutated in place, so a reset that assigns a fresh empty value (the tests') shares no object with the
+    live latch. The check-then-set these latches used to do with no lock let two cost-view builds arriving together
+    both write the off line: a lone store needs no lock, a read followed by a write does (the review of PR 878)."""
     with _price_feed_lock:
-        first = not _price_feed[key]
-        _price_feed[key] = True
+        if member is None:
+            first = not _price_feed[key]
+            _price_feed[key] = True
+        else:
+            said = _price_feed[key]
+            first = member not in said
+            _price_feed[key] = said | {member}
     return first
+
+
+def _price_feed_clip(text):
+    """A value quoted into a price feed stderr line, clipped to 40 characters (37 and an ellipsis): the switch's value
+    by repr in the unrecognised line, an override row's key by repr in the rejected-row line. The kernel's own log is
+    the one surface that carries either text; the status block carries the fact alone."""
+    return text if len(text) <= 40 else text[:37] + "..."
 
 
 def _price_feed_error_class(e):
@@ -52613,10 +52631,14 @@ def _price_feed_status(now=None, prices=None):
     so, never the value itself (an environment value is arbitrary text and /version is auth-exempt). `overrideFault`
     is the class of what the merge could not read in the user's PRICE_CONFIG, None when the file is absent or read
     whole, "file" when it exists and could not be read or parsed as a JSON object (ignored whole), "row" when a row
-    was rejected (not an object, or a rate that is not a finite number: that row and every row after it are
-    ignored); the class travels with the merged table (_PriceTable), so it is the fault of the very merge the
-    overrides are counted from, and a class, never the file's text or its path (the review of PR 878: a bad row
-    voided itself and every later row while the block counted the rows before it and stderr said nothing)."""
+    was rejected (not an object, or a rate that is not a finite number: that row alone is skipped and every other
+    row applies, wherever in the file it sits), and `overrideRowsRejected` counts the rows so skipped, 0 when none:
+    a count and never the keys, since the block rides the auth-exempt /version and the file's keys are the user's
+    own text (the kernel's log names each once, _model_prices). Both travel with the merged table (_PriceTable), so
+    they are the facts of the very merge the overrides are counted from, and a class and a count, never the file's
+    text or its path (the review of PR 878: a bad row voided itself and every later row while the block counted the
+    rows before it and stderr said nothing; its re-ruling of 2026-09-21: the void made a file's fate depend on the
+    bad row's position, so the row is skipped alone and the block counts what was skipped)."""
     if now is None:
         now = int(time.time())
     off = _price_feed_off()
@@ -52641,7 +52663,8 @@ def _price_feed_status(now=None, prices=None):
     return {"off": off, "unrecognised": unrecognised, "source": source, "reason": reason, "fetchedAt": fetched,
             "ageS": (int(now) - int(fetched)) if fetched is not None else None,
             "attemptedAt": attempted, "lastError": err, "rows": len(remote),
-            "matched": matched, "known": known, "overrides": overrides, "overrideFault": merged.fault}
+            "matched": matched, "known": known, "overrides": overrides, "overrideFault": merged.fault,
+            "overrideRowsRejected": merged.rejected}
 
 
 def _price_feed_line(now, head):
@@ -52725,7 +52748,7 @@ def _refresh_remote_prices(now):
         if _price_feed_first("unrecognisedSaid"):
             value = repr(os.environ.get("ROMP_PRICE_FEED") or "")
             _price_feed_line(now, "price feed: ROMP_PRICE_FEED is set to %s, which is not off, so the feed stays on"
-                             % (value if len(value) <= 40 else value[:37] + "..."))
+                             % _price_feed_clip(value))
     if now - _price_cache["t"] < PRICE_TTL:
         return
     _price_cache["t"] = now                          # stamp first so a slow/failing fetch isn't hammered
@@ -52793,19 +52816,23 @@ def _refresh_remote_prices(now):
 
 
 class _PriceTable(dict):
-    """The merged $/token map _model_prices returns: a plain dict to every reader, carrying beside its rows the one
-    fact about the user's override file the rows cannot carry, `fault`: None when PRICE_CONFIG is absent or was read
+    """The merged $/token map _model_prices returns: a plain dict to every reader, carrying beside its rows the two
+    facts about the user's override file the rows cannot carry. `fault`: None when PRICE_CONFIG is absent or was read
     whole, "file" when it exists and could not be read or parsed as a JSON object (the file is ignored whole), "row"
-    when a row was rejected (a row that is not an object, or a rate that is not a finite number: that row and every
-    row after it are ignored, since one try wraps the loop). It travels with the table it describes, the way the
-    priceFeed block travels with the payload it priced, so _price_feed_status reports the fault of the very merge it
-    counts overrides from and never a class read at another moment."""
+    when a row was rejected (a row that is not an object, or a rate that is not a finite number: that row alone is
+    skipped and every other row applies, since one try wraps each ROW and not the loop). `rejected`: how many rows
+    were so skipped, 0 when none. Both travel with the table they describe, the way the priceFeed block travels with
+    the payload it priced, so _price_feed_status reports the fault and the count of the very merge it counts
+    overrides from and never a class or a count read at another moment."""
     fault = None
+    rejected = 0
 
 
-_PRICE_OVERRIDE_FAULT_LINES = {   # the head of the one stderr line per kernel life for each class, the consequence stated
-    "row": "price feed: a row in model-prices.json could not be read (not an object, or a rate that is not a finite "
-           "number), so that row and every row after it are ignored",
+_PRICE_OVERRIDE_FAULT_LINES = {   # the head of the stderr line for each fault class, the consequence stated: the file's
+    #                               once per kernel life, a row's once per kernel life PER ROW, the row's key by repr
+    #                               through _price_feed_clip in the %s (the kernel's own log; the block carries a count)
+    "row": "price feed: the row %s in model-prices.json could not be read (not an object, or a rate that is not a "
+           "finite number), so that row is skipped and the rest of the file applies",
     "file": "price feed: model-prices.json could not be read as a JSON object, so the file is ignored whole",
 }
 
@@ -52814,15 +52841,21 @@ def _model_prices(now=None, refresh=True):
     """The merged $/token price map: baked-in DEFAULT < best-effort remote feed < user config override. `refresh`
     (the default) lets a stale feed cache kick its background fetch; the spend guard passes False, since it runs on
     the pusher's path in every kernel (a hermetic test kernel included) and must never start a network fetch: it
-    merges whatever the cost view's last refresh left in the cache (T350). The override file is read whole under one
-    try: a row the kernel cannot read (not an object, or a rate that is not a finite number: JSON NaN and Infinity
-    parse) is rejected together with every row after it, and a file that cannot be read or parsed as a JSON object
-    is ignored whole. Neither is silent (the review of PR 878: the reference sends a feed-off box to this file, and
-    a bad row dropped itself and every later row with nothing said): the returned table carries the fault class
-    (_PriceTable.fault), which _price_feed_status puts in the block as `overrideFault`, and the cost view's road
-    (refresh=True, the one caller that holds no lock: _price_feed_status calls this under _price_feed_lock and
-    _price_feed_line would re-enter it) says it once per kernel life on stderr with the consequence, the latch a
-    test-and-set under the lock (_price_feed_first) and the line written outside it. A rate the row omits keeps
+    merges whatever the cost view's last refresh left in the cache (T350). The override file's rows are read under
+    one try EACH: a row the kernel cannot read (not an object, or a rate that is not a finite number: JSON NaN and
+    Infinity parse) is skipped alone and every other row applies, so the same bad row placed first, in the middle or
+    last yields the same table, the same count and the same line (the review of PR 878's re-ruling, 2026-09-21:
+    the base skipped a non-object row without a word, and the round's one try around the whole loop voided every
+    row after the bad one, a blast radius that depended on the row's position; neither is a rule); a file that
+    cannot be read or parsed as a JSON object is ignored whole. Neither is silent: the returned table carries the
+    fault class and the count of skipped rows (_PriceTable.fault and .rejected), which _price_feed_status puts in
+    the block as `overrideFault` and `overrideRowsRejected`, and the cost view's road (refresh=True, the one caller
+    that holds no lock: _price_feed_status calls this under _price_feed_lock and _price_feed_line would re-enter it)
+    says it on stderr with the consequence: the file fault once per kernel life (`overrideFileSaid`), each skipped
+    row once per kernel life by its key (`overrideRowsSaid`, the keys named so far; the key by repr, clipped, the
+    shape the unrecognised line gives the switch's value, and the kernel's own log the one surface that carries
+    it), one latch per class so the first fault of either class never silences the other's, every latch a
+    test-and-set under the lock (_price_feed_first) and every line written outside it. A rate the row omits keeps
     the table's for an id the table names (`base` is that id's row), and is zero for any other id: the merge
     resolves `base` by the exact id, never through _price_for's signature or family fallback."""
     if now is None:
@@ -52840,19 +52873,28 @@ def _model_prices(now=None, refresh=True):
     else:
         if not isinstance(cfg, dict):
             cfg, prices.fault = None, "file"             # parses, but not as a table of rows: ignored whole
-    try:
-        for k, v in (cfg.items() if cfg else []):
-            if not isinstance(v, dict):
-                raise ValueError("a row that is not an object")
+    rejected = []
+    for k, v in (cfg.items() if cfg else []):
+        try:                                             # one try per ROW: a row the kernel cannot read is skipped alone
+            if not isinstance(v, dict):                  # and the loop goes on, so the table, the count and the line are
+                raise ValueError("a row that is not an object")   # the same wherever in the file the bad row sits
             base = prices.get(k, {})
             row = {kk: float(v.get(kk, base.get(kk, 0)) or 0) for kk in ("in", "out", "cache_w", "cache_r")}
             if not all(math.isfinite(x) for x in row.values()):
                 raise ValueError("a rate that is not a finite number")
-            prices[k] = row
-    except Exception:
-        prices.fault = "row"                             # that row and every row after it are ignored: one try wraps the loop
-    if refresh and prices.fault is not None and _price_feed_first("overrideSaid"):
-        _price_feed_line(now, _PRICE_OVERRIDE_FAULT_LINES[prices.fault])   # the cost view's road, outside every lock
+        except Exception:
+            rejected.append(k)
+            continue
+        prices[k] = row
+    if rejected:
+        prices.fault = "row"
+        prices.rejected = len(rejected)
+    if refresh:                                          # the cost view's road, outside every lock: one latch per class
+        if prices.fault == "file" and _price_feed_first("overrideFileSaid"):
+            _price_feed_line(now, _PRICE_OVERRIDE_FAULT_LINES["file"])
+        for k in rejected:                               # each skipped row named once per kernel life, by its key
+            if _price_feed_first("overrideRowsSaid", k):
+                _price_feed_line(now, _PRICE_OVERRIDE_FAULT_LINES["row"] % _price_feed_clip(repr(k)))
     return prices
 
 

@@ -12,7 +12,11 @@
 //   the whole table live; a block without `known` (an older kernel) is the plain line;
 // - a ROMP_PRICE_FEED value that is neither off nor unset leaves the feed on (only off turns it off), and the line
 //   says so on either source from the kernel's boolean `unrecognised`, naming the variable and never the value (the
-//   review of PR 878: such a value read the same as an unset variable on every surface, and the fetch went out).
+//   review of PR 878: such a value read the same as an unset variable on every surface, and the fetch went out);
+// - rows of model-prices.json the kernel could not read are skipped alone and the rest of the file applies (that
+//   review's re-ruling, 2026-09-21: the round's shape voided every row after a bad one, a reach that depended on the
+//   row's position), and the line says how many from the kernel's count `overrideRowsRejected`, last, after the
+//   override count, and never a key (the block rides the auth-exempt /version; the kernel's log names each row once).
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 
@@ -147,4 +151,43 @@ test("the switch's other readings word nothing new: `unrecognised` false or abse
   assert.equal(withValue, "prices: live feed, fetched 4 minutes ago; " + UNREC);
   assert.ok(!withValue.includes("disabled"), "the value is on no line");
   assert.equal(UNREC.indexOf(";"), -1, "the clause holds no semicolon of its own: the line's tails are semicolon-joined, and one clause reads as one");
+});
+
+// Rows the kernel could not read (the re-ruling of the review of PR 878, 2026-09-21): the kernel skips the bad row alone,
+// counts it in the block as `overrideRowsRejected`, and names it in its own log; the line carries the count as one
+// clause, last, after the override count that says what the file changed, so the reader sees that the rest of the file
+// applies and how much of it did not read. A count only: the keys are the user's own text and the block rides /version.
+const SKIPPED_1 = "1 row of model-prices.json could not be read and was skipped (the rest of the file applies)";
+const SKIPPED_2 = "2 rows of model-prices.json could not be read and were skipped (the rest of the file applies)";
+
+test("rows of model-prices.json the kernel could not read: the count is said last on either source, singular and plural", () => {
+  assert.equal(note({ off: true, source: "defaults", reason: "off", overrides: 2, overrideRowsRejected: 1 }),
+    "prices: built-in defaults; live feed off (ROMP_PRICE_FEED=off); 2 rows overridden by model-prices.json; " + SKIPPED_1,
+    "the feed-off box the reference sends to the file: the rows in effect, then the row that was not read");
+  assert.equal(note({ off: true, source: "defaults", reason: "off", overrides: 0, overrideRowsRejected: 2 }),
+    "prices: built-in defaults; live feed off (ROMP_PRICE_FEED=off); " + SKIPPED_2,
+    "no row in effect and two skipped: nothing about a count of rows in effect, the skipped clause alone, plural");
+  assert.equal(note({ source: "feed", ageS: 240, overrides: 1, overrideRowsRejected: 1 }),
+    "prices: live feed, fetched 4 minutes ago; 1 row overridden by model-prices.json; " + SKIPPED_1, "the feed line: the same order");
+  assert.equal(note({ off: true, unrecognised: false, source: "feed", ageS: 600, rows: 1, matched: 2, known: 6, overrides: 1, overrideRowsRejected: 1 }),
+    "prices: live feed for 1 of 6 models, fetched 10 minutes ago; built-in defaults for the rest; the feed's rows for 1 known model could not be read; refresh off (ROMP_PRICE_FEED=off); 1 row overridden by model-prices.json; " + SKIPPED_1,
+    "every tail keeps its order: the share, the unread feed rows, the refresh's state, the override count, then the skipped rows");
+  assert.equal(note({ unrecognised: true, source: "defaults", reason: "failed", lastError: "HTTPError: HTTP 500", overrides: 2, overrideRowsRejected: 1 }),
+    "prices: built-in defaults; the feed could not be fetched (HTTPError: HTTP 500); " + UNREC + "; 2 rows overridden by model-prices.json; " + SKIPPED_1,
+    "after the switch clause and the override count");
+  assert.equal(SKIPPED_1.indexOf(";"), -1, "the clause holds no semicolon of its own: the line's tails are semicolon-joined, and one clause reads as one");
+});
+
+test("a count of zero, no count, or a count that is not a number says nothing about skipped rows, and no key of the file is echoed", () => {
+  assert.equal(note({ off: true, source: "defaults", reason: "off", overrides: 1, overrideRowsRejected: 0 }),
+    "prices: built-in defaults; live feed off (ROMP_PRICE_FEED=off); 1 row overridden by model-prices.json", "every row read: nothing to say");
+  for (const pf of [{ source: "feed", ageS: 240 }, { source: "defaults", reason: "off", overrides: 1 }, { source: "defaults", reason: "unfetched" }])
+    assert.equal(note(pf), note({ ...pf, overrideRowsRejected: 0 }), "an older kernel's block, with no such key, and a current kernel's zero read the same: " + JSON.stringify(pf));
+  assert.equal(note({ source: "defaults", reason: "off", overrideRowsRejected: "1" }), "prices: built-in defaults; live feed off (ROMP_PRICE_FEED=off)",
+    "the kernel's count is a number; a string is not read as one");
+  assert.equal(note({ source: "defaults", reason: "off", overrideRowsRejected: true }), "prices: built-in defaults; live feed off (ROMP_PRICE_FEED=off)", "nor is a boolean");
+  // no kernel puts a row's key in the block; a block that did would not be echoed, since the clause is fixed text keyed on the count
+  const withKey = note({ source: "defaults", reason: "off", overrideRowsRejected: 1, rejectedKeys: ["claude-opus-4-8"] });
+  assert.equal(withKey, "prices: built-in defaults; live feed off (ROMP_PRICE_FEED=off); " + SKIPPED_1);
+  assert.ok(!withKey.includes("opus"), "no key of the file is on the line");
 });

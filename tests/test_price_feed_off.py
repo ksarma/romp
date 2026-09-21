@@ -16,7 +16,10 @@ SAID, once per kernel life on stderr naming the value, and as the boolean `unrec
 every say-once latch is a test-and-set under _price_feed_lock with the line written outside it (SayOnceLatches); a
 feed row or an override row whose rate is not a finite number is rejected at the parse (LiveFeed); an override file
 the kernel cannot read is classed in the block (`overrideFault`) and said once (TheOverrideFileIsSaid); and what a
-row that omits a rate inherits is pinned (APartialOverrideRow).
+row that omits a rate inherits is pinned (APartialOverrideRow). The review's re-ruling (2026-09-21) changed two of
+those: a row the kernel cannot read is skipped ALONE, wherever it sits, counted in the block (`overrideRowsRejected`)
+and named once per kernel life on stderr by its key, and the override file's two fault classes latch separately
+(TheOverrideFileIsSaid, SayOnceLatches).
 
 Hermetic: urllib.request.urlopen is replaced by a recorder (the worker imports urllib inside `work`, so the
 module attribute is what it calls) that answers the feed's url alone and refuses any other request with a canned
@@ -67,10 +70,14 @@ FEED = {
 OFF_LINE = "price feed: off (ROMP_PRICE_FEED=off)"
 FAIL_LINE = "price feed: fetch failed ("
 FEED_RESET = {"fetchedAt": None, "attemptedAt": None, "lastError": None, "rows": 0, "matched": 0, "inflight": False,
-              "offSaid": False, "unrecognisedSaid": False, "overrideSaid": False}
+              "offSaid": False, "unrecognisedSaid": False, "overrideFileSaid": False, "overrideRowsSaid": frozenset()}
 UNRECOGNISED_LINE = "price feed: ROMP_PRICE_FEED is set to "   # the head of the said-but-on line, up to the value's repr
 SERVED_DEFAULTS = "the cost view prices tokens from the built-in defaults"   # the lines' tail with nothing cached and no override
 FOREIGN_REFUSED = "the price feed harness refuses requests that are not the feed: "   # the recorder's URLError reason, then the url
+# the override file's two fault lines: the row's takes the row's key by repr (the kernel clips it to 40 characters)
+ROW_LINE = ("price feed: the row %s in model-prices.json could not be read (not an object, or a rate that is not a finite "
+            "number), so that row is skipped and the rest of the file applies")
+FILE_LINE = "price feed: model-prices.json could not be read as a JSON object, so the file is ignored whole"
 
 
 class _Resp:
@@ -107,7 +114,12 @@ class PriceFeedCase(unittest.TestCase):
     is recorded and answered as before, and any other request is not recorded and is refused with a URLError whose
     reason is FOREIGN_REFUSED and the url, a failed dial the dialer backs off from. Nothing of the real urlopen is
     kept for delegation, so a foreign caller inside a test never reaches the network and never sees the feed's bytes,
-    and `self.calls` is the feed's count and nothing else's. The pin is TheRecorderCountsTheFeedAlone.
+    and `self.calls` is the feed's count and nothing else's. The pin is TheRecorderCountsTheFeedAlone. km.PRICE_FEED_URL
+    there is the product's own constant read at call time, not a copy of its text: _refresh_remote_prices's worker passes
+    that same name to urlopen as a plain str (no Request object, no composition of a host and a path anywhere in the
+    product), so the recorder compares against exactly what the product sends, and a change to the constant moves the
+    recorder with it. A literal here would, after such a change, refuse every feed request as foreign and record
+    nothing while every count assertion still read 0 or 1 as if the feed were the subject; keep the constant.
 
     THE RULE FOR READING A LANDING OR A FAILURE (the review of PR 878, whose round found three cases breaking it): any
     assertion about a landing or a failure reads it after the join, from km._price_feed_status(now) or from a second
@@ -360,8 +372,9 @@ class OffSwitch(PriceFeedCase):
 
 
 class SayOnceLatches(PriceFeedCase):
-    """Each say-once latch (`offSaid`; the unrecognised value's `unrecognisedSaid`) is a test-and-set under
-    _price_feed_lock, and the line is written outside the lock. Before the review of PR 878 the off latch was a check
+    """Each say-once latch (`offSaid`; the unrecognised value's `unrecognisedSaid`; the override file's `overrideFileSaid`
+    and, per row key, `overrideRowsSaid`) is a test-and-set under _price_feed_lock, and the line is written outside the
+    lock. Before the review of PR 878 the off latch was a check
     then a set with no lock (the comment said a lone fact needs none: true of a store, not of a read followed by a
     write), and two cost-view builds arriving together, request-handler threads, both wrote the line. Staged
     deterministically with a one-shot capture-then-park gate rather than a barrier (a barrier that times out raises
@@ -370,7 +383,9 @@ class SayOnceLatches(PriceFeedCase):
     it. Without the lock both capture False and both write; with it the first holds the lock while parked, the second
     reads True after it, and one line is written."""
 
-    def _race(self, key, value, marker):
+    def _race(self, key, value, marker, target=None):
+        """Two threads run `target` (km._refresh_remote_prices by default) at NOW under ROMP_PRICE_FEED=`value`, the read
+        of `_price_feed[key]` gated as the class docstring says; returns (the count of `marker` in stderr, the log)."""
         first_read, second_read = threading.Event(), threading.Event()
         prefix = "price-feed-latch-"
 
@@ -388,7 +403,8 @@ class SayOnceLatches(PriceFeedCase):
         km._price_feed = Parked(real)
         self.addCleanup(setattr, km, "_price_feed", real)          # the harness then resets the real dict's values
         os.environ["ROMP_PRICE_FEED"] = value
-        threads = [threading.Thread(target=km._refresh_remote_prices, args=(NOW,), name=prefix + str(i)) for i in (1, 2)]
+        threads = [threading.Thread(target=target or km._refresh_remote_prices, args=(NOW,), name=prefix + str(i))
+                   for i in (1, 2)]
         err = io.StringIO()
         with redirect_stderr(err):
             for t in threads:
@@ -413,6 +429,17 @@ class SayOnceLatches(PriceFeedCase):
         count, log = self._race("unrecognisedSaid", "maybe", UNRECOGNISED_LINE)
         self.assertEqual(count, 1, "one line per kernel life for a value that is not off:\n" + log)
         self.assertIn("'maybe'", log)
+
+    def test_two_builds_meeting_a_skipped_row_together_name_it_once(self):
+        """The row latch (`overrideRowsSaid`, a frozenset of the row keys named, replaced under the lock) has the same
+        shape on the cost view's road: two merges arriving together (km._model_prices at NOW, refresh on, the switch off
+        so no fetch starts) name the row once. At the 5cbf9e397 archive the latch was one boolean, `overrideSaid`, and
+        this key is never read: the gate assertion fails first. The lock's proof is the mutation run (the test-and-set
+        moved outside the lock in a scratch copy reads 2 here)."""
+        km.PRICE_CONFIG.write_text(json.dumps({"note": "my rates"}))
+        count, log = self._race("overrideRowsSaid", "off", ROW_LINE % "'note'", target=km._model_prices)
+        self.assertEqual(count, 1, "one line per kernel life per row, whatever arrives together:\n" + log)
+        self.assertEqual(km._price_feed["overrideRowsSaid"], frozenset({"note"}), "the latch holds the row's key")
 
 
 class GuardRoad(PriceFeedCase):
@@ -836,75 +863,207 @@ class LiveFeed(PriceFeedCase):
 
 
 class TheOverrideFileIsSaid(PriceFeedCase):
-    """The reference sends a feed-off box to ~/.config/romp/model-prices.json, and one try wraps the file's read and
-    the loop over its rows, so a row the kernel cannot read voids itself and every row after it, and a file that
-    cannot be read or parsed is ignored whole. Until the review of PR 878 both were silent: the block counted the rows
-    before the bad one and stderr said nothing. The merge classes what it could not read (`overrideFault`: None,
-    "row", "file"), carried on the table it returns so the block reports the fault of the very merge it counts
-    overrides from; the block and /version carry the class, never the file's text or its path; and the cost view's
-    road says it once per kernel life with the consequence, outside every lock (the status holds _price_feed_lock
-    across its own merge, so the line can never be written from there). Red at the reviewed head at the class
-    assertions (`.get` reads None there) and the line counts."""
+    """The reference sends a feed-off box to ~/.config/romp/model-prices.json. Until the review of PR 878 a row the kernel
+    could not read was silent: a non-object row was skipped without a word and a rate that was no number raised out of
+    the loop, so the block counted the rows before it and stderr said nothing. The review's first round wrapped the
+    whole loop in one try, which voided the bad row and every row after it; the re-ruling (2026-09-21) rejected that
+    too, because the blast radius depended on POSITION (the same bad row first voided the whole file and last voided
+    nothing), and ruled the shape the unrecognised switch value has: reject the malformed ROW alone, keep every other
+    row, and say so loudly, the stderr line naming the row (its key by repr, clipped as that line clips the value) and
+    saying the rest of the file applies, the block carrying the FACT and never a key (`overrideFault` "row" and the
+    count `overrideRowsRejected`; the block rides the auth-exempt /version), and the modal's line a clause from the
+    count (ui/webview/analytics-price-source-states.test.ts). A file that cannot be read or parsed as a JSON object is
+    still ignored whole and classed "file". The re-ruling's second delta split the say-once latch by fault class
+    (`overrideFileSaid`; `overrideRowsSaid`, keyed by row): one latch across both classes let the first fault of either
+    silence the other class's first for the kernel's life. Both facts travel on the merged table (_PriceTable), so the
+    block reports the merge it counts overrides from; the lines are written on the cost view's road outside every lock.
+    Each case names its red over a git archive of 5cbf9e397 (the head before the re-ruling), where it has one."""
 
-    def test_a_row_the_kernel_cannot_read_voids_the_rows_after_it_and_is_classed_and_said_once(self):
-        km.PRICE_CONFIG.write_text(json.dumps({
-            "claude-fable-5-1": {"in": 12e-6, "out": 60e-6, "cache_w": 15e-6, "cache_r": 1.2e-6},   # applies
-            "claude-opus-4-8": {"in": "twelve dollars", "out": 30e-6},                             # a rate that is no number
-            "claude-sonnet-5": {"in": 4e-6, "out": 20e-6}}))                                        # after it: ignored
+    GOOD_1 = ("claude-fable-5-1", {"in": 12e-6, "out": 60e-6, "cache_w": 15e-6, "cache_r": 1.2e-6})
+    GOOD_2 = ("claude-sonnet-5", {"in": 4e-6, "out": 20e-6})
+    BAD = ("claude-opus-4-8", {"in": "twelve dollars", "out": 30e-6})   # a rate that is no number
+
+    def _rows(self, position):
+        """Two good rows and the bad one at `position` (0 first, 1 middle, 2 last); json.dumps keeps the order."""
+        rows = [self.GOOD_1, self.GOOD_2]
+        rows.insert(position, self.BAD)
+        return json.dumps(dict(rows))
+
+    def _assert_skipped_alone(self, pf, log):
+        """The ruling's shape, asserted in the order that names the red: the table first (both good rows apply, the bad one
+        alone is the default), then the block's count and class, then the line naming the key with the rest-applies
+        consequence and the tail every price feed line carries. Returns the merged table."""
+        prices = km._model_prices(NOW, refresh=False)
+        self.assertEqual(prices["claude-fable-5-1"]["in"], 12e-6, "a good row applies")
+        self.assertEqual(prices["claude-sonnet-5"]["in"], 4e-6, "and so does the other good row, wherever the bad row sits")
+        self.assertEqual(prices["claude-opus-4-8"], km.DEFAULT_MODEL_PRICES["claude-opus-4-8"], "the bad row alone is skipped")
+        self.assertEqual(pf.get("overrideRowsRejected"), 1, "the block counts the skipped row")
+        self.assertEqual((pf.get("overrideFault"), pf["overrides"]), ("row", 2), "the class, and the count of rows in effect")
+        self.assertEqual(log.count(ROW_LINE % "'claude-opus-4-8'"), 1, "the line names the row's key and says the rest applies:\n" + log)
+        self.assertIn(ROW_LINE % "'claude-opus-4-8'" + "; the cost view prices tokens from the built-in defaults, 2 rows overridden "
+                      "by model-prices.json\n", log, "the consequence, then the tail every price feed line carries")
+        return prices
+
+    def test_a_bad_row_first_is_skipped_alone_and_both_rows_after_it_apply(self):
+        """The red-before subject: over the 5cbf9e397 archive one try wrapped the loop, so a bad row FIRST voided both good
+        rows, and the first table assertion reads the default 10e-6 for claude-fable-5-1 where 12e-6 is expected. The table
+        is asserted before the count so the red is for the void and not for the key the archive lacks."""
+        km.PRICE_CONFIG.write_text(self._rows(0))
         os.environ["ROMP_PRICE_FEED"] = "off"
         resp, log = self._analytics()
         pf = resp["priceFeed"]
-        self.assertEqual(pf.get("overrideFault"), "row", "the block classes the file's state: a row could not be read")
-        prices = km._model_prices(NOW, refresh=False)
-        self.assertEqual(prices["claude-fable-5-1"]["in"], 12e-6, "the row before the bad one applies")
-        self.assertEqual(prices["claude-opus-4-8"], km.DEFAULT_MODEL_PRICES["claude-opus-4-8"], "the bad row is ignored")
-        self.assertEqual(prices["claude-sonnet-5"], km.DEFAULT_MODEL_PRICES["claude-sonnet-5"], "and so is every row after it")
-        self.assertEqual(pf["overrides"], 1, "the count is of the rows in effect")
-        self.assertEqual(log.count("price feed: a row in model-prices.json could not be read"), 1, log)
-        self.assertIn("so that row and every row after it are ignored; the cost view prices tokens from the built-in defaults, "
-                      "1 row overridden by model-prices.json\n", log, "the consequence, then the tail every price feed line carries")
-        self.assertEqual(km._version_info()["priceFeed"].get("overrideFault"), "row", "/version carries the class")
-        self.assertNotIn(str(km.PRICE_CONFIG.parent), log + json.dumps(pf), "a class, never the path")
-        self.assertNotIn("twelve dollars", log + json.dumps(pf), "never the file's text")
+        self._assert_skipped_alone(pf, log)
+        self.assertEqual(km._version_info()["priceFeed"]["overrideRowsRejected"], 1, "/version carries the count")
+        self.assertEqual(km._version_info()["priceFeed"]["overrideFault"], "row", "and the class")
+        self.assertNotIn(str(km.PRICE_CONFIG.parent), log + json.dumps(pf), "a class and a count, never the path")
+        self.assertNotIn("twelve dollars", log + json.dumps(pf), "never the file's values")
+        self.assertNotIn("claude-opus-4-8", json.dumps(pf), "the key is in the kernel's own log and not in the block")
         km._ANALYTICS_MEMO.clear()
         resp2, log2 = self._analytics(now=NOW + 1)
-        self.assertEqual(resp2["priceFeed"].get("overrideFault"), "row", "the block says it on every build")
-        self.assertEqual(log2, "", "said once per kernel life, not per build")
+        self.assertEqual((resp2["priceFeed"]["overrideFault"], resp2["priceFeed"]["overrideRowsRejected"]), ("row", 1),
+                         "the block says it on every build")
+        self.assertEqual(log2, "", "the row is named once per kernel life, not per build")
 
-    def test_a_row_that_is_not_an_object_is_rejected_too(self):
-        """A row that is not an object (a comment string, a null) was skipped silently and the rows after it kept; it
-        is now a rejected row like any other, said with the same consequence, so the documented rule has one shape."""
+    def test_the_same_bad_row_last_or_in_the_middle_yields_the_table_count_and_line_the_first_position_does(self):
+        """Position independence, the property the ruling named: the same malformed row last, in the middle or first yields
+        the same table (every other row applied), the same count and the same line. The row latch is reset between
+        placements so each placement writes its line. Over the 5cbf9e397 archive the LAST placement, run first here, is
+        green at the table by accident (the good rows precede the bad one, and the void after it voids nothing) and red at
+        the count (the block there has no overrideRowsRejected key: None != 1); the first-position case above carries the
+        red for the table. This case is the property pin."""
+        os.environ["ROMP_PRICE_FEED"] = "off"
+        seen = []
+        for position, where in ((2, "last"), (1, "middle"), (0, "first")):
+            km.PRICE_CONFIG.write_text(self._rows(position))
+            km._ANALYTICS_MEMO.clear()
+            km._price_feed["overrideRowsSaid"] = frozenset()      # the say-once latch, reset so this placement's line is written
+            resp, log = self._analytics()
+            with self.subTest(where):
+                prices = self._assert_skipped_alone(resp["priceFeed"], log)
+                seen.append((json.dumps(prices, sort_keys=True), resp["priceFeed"]["overrideRowsRejected"], resp["priceFeed"]["overrides"]))
+        self.assertEqual(len(seen), 3, "three placements ran")
+        self.assertEqual(len(set(seen)), 1, "three placements, one table and one count: %r" % (seen,))
+
+    def test_two_bad_rows_are_each_named_once_and_counted_as_two_and_a_row_that_goes_bad_later_is_named_too(self):
+        """The row latch is per ROW KEY, not one boolean for the class: two bad rows in one file are two lines, each named
+        once, and a count of 2; a second build says nothing new; a row that goes bad in a later edit (a new key) is named
+        when first seen, while the rows already named are not named again, and the count follows the file. Over the
+        5cbf9e397 archive the first bad row voids the good row after it: red at the table's first assertion."""
+        os.environ["ROMP_PRICE_FEED"] = "off"
+        km.PRICE_CONFIG.write_text(json.dumps({"note": "my rates", "claude-fable-5-1": {"in": 12e-6}, "claude-sonnet-5": None}))
+        resp, log = self._analytics()
+        prices = km._model_prices(NOW, refresh=False)
+        self.assertEqual(prices["claude-fable-5-1"]["in"], 12e-6, "the good row between two bad ones applies")
+        self.assertEqual(prices["claude-sonnet-5"], km.DEFAULT_MODEL_PRICES["claude-sonnet-5"], "a null row is skipped")
+        self.assertNotIn("note", prices)
+        self.assertEqual((resp["priceFeed"]["overrideFault"], resp["priceFeed"]["overrideRowsRejected"], resp["priceFeed"]["overrides"]),
+                         ("row", 2, 1))
+        tail = "; the cost view prices tokens from the built-in defaults, 1 row overridden by model-prices.json\n"
+        self.assertEqual((log.count(ROW_LINE % "'note'" + tail), log.count(ROW_LINE % "'claude-sonnet-5'" + tail)), (1, 1),
+                         "one line per row, each with the tail that counts the one row in effect:\n" + log)
+        self.assertEqual(log.count("2 rows overridden"), 0, "the tail counts the rows in effect, never the rows in the file")
+        km._ANALYTICS_MEMO.clear()
+        _, log2 = self._analytics(now=NOW + 1)
+        self.assertEqual(log2, "", "nothing new to say")
+        km.PRICE_CONFIG.write_text(json.dumps({"note": "my rates", "claude-fable-5-1": {"in": 12e-6}, "claude-sonnet-5": None,
+                                               "claude-haiku-4-5-20251001": "cheap"}))
+        km._ANALYTICS_MEMO.clear()
+        resp3, log3 = self._analytics(now=NOW + 2)
+        self.assertEqual(resp3["priceFeed"]["overrideRowsRejected"], 3, "the count follows the file")
+        self.assertEqual(log3.count("in model-prices.json could not be read"), 1, "one new row, one new line:\n" + log3)
+        self.assertEqual(log3.count(ROW_LINE % "'claude-haiku-4-5-20251001'"), 1)
+        self.assertEqual(km._price_feed["overrideRowsSaid"], frozenset({"note", "claude-sonnet-5", "claude-haiku-4-5-20251001"}))
+
+    def test_a_long_row_key_is_clipped_in_the_line_as_the_switch_value_is(self):
+        """The key by repr through the same 40-character clip the unrecognised line gives the switch's value (37 characters
+        and an ellipsis), so a pasted paragraph as a key is one bounded line in the kernel's log."""
+        key = "claude-" + "x" * 60
+        km.PRICE_CONFIG.write_text(json.dumps({key: "not a row"}))
+        os.environ["ROMP_PRICE_FEED"] = "off"
+        _, log = self._analytics()
+        clipped = repr(key)[:37] + "..."
+        self.assertEqual(len(clipped), 40)
+        self.assertEqual(log.count(ROW_LINE % clipped), 1, log)
+        self.assertNotIn(repr(key), log, "never the whole key")
+
+    def test_each_fault_class_is_said_once_the_file_fault_then_a_row_fault(self):
+        """The re-ruling's second delta: one latch per fault class. A file the kernel cannot parse is said; the file is then
+        rewritten with one bad row, and that row is said too: two lines, one per class, each build's block carrying its
+        own merge's class and count (the block is the fact of the very merge it describes, so it reads "file" with 0 and
+        then "row" with 1, never both at once). Over the 5cbf9e397 archive one latch spanned both classes, so the row
+        line is never written: red at its count (0 != 1). The file line's text is the same at both heads, so the red is
+        the second class's."""
+        os.environ["ROMP_PRICE_FEED"] = "off"
+        km.PRICE_CONFIG.write_text("{not json")
+        resp, log = self._analytics()
+        self.assertEqual(resp["priceFeed"]["overrideFault"], "file")
+        self.assertEqual(log.count(FILE_LINE), 1, log)
+        km.PRICE_CONFIG.write_text(json.dumps({"note": "my rates", "claude-fable-5-1": {"in": 12e-6}}))
+        km._ANALYTICS_MEMO.clear()
+        resp2, log2 = self._analytics(now=NOW + 1)
+        self.assertEqual(log2.count(ROW_LINE % "'note'"), 1, "the second class's first fault is said, on its own latch:\n" + log2)
+        self.assertEqual(log2.count(FILE_LINE), 0, "the file line is not said again")
+        self.assertEqual((resp["priceFeed"]["overrideRowsRejected"], resp2["priceFeed"]["overrideFault"], resp2["priceFeed"]["overrideRowsRejected"]),
+                         (0, "row", 1), "each block carries its own merge's class and count")
+        self.assertEqual(km._model_prices(NOW, refresh=False)["claude-fable-5-1"]["in"], 12e-6, "the good row applies")
+        self.assertEqual((km._price_feed["overrideFileSaid"], km._price_feed["overrideRowsSaid"]), (True, frozenset({"note"})),
+                         "the two latches, one per class, the row's keyed by row")
+        km._ANALYTICS_MEMO.clear()
+        _, log3 = self._analytics(now=NOW + 2)
+        self.assertEqual(log3, "", "both said once")
+
+    def test_each_fault_class_is_said_once_a_row_fault_then_the_file_fault(self):
+        """The other order: a bad row is said, then the file is rewritten as a JSON list, and the file class is said too.
+        The first check counts a phrase both heads' row lines carry, so over the 5cbf9e397 archive the red is at the
+        second class's line count (0 != 1), the file fault silenced by the row fault's latch."""
+        os.environ["ROMP_PRICE_FEED"] = "off"
+        km.PRICE_CONFIG.write_text(json.dumps({"note": "my rates", "claude-fable-5-1": {"in": 12e-6}}))
+        resp, log = self._analytics()
+        self.assertEqual(resp["priceFeed"]["overrideFault"], "row")
+        self.assertEqual(log.count("in model-prices.json could not be read"), 1, log)
+        km.PRICE_CONFIG.write_text("[1, 2]")
+        km._ANALYTICS_MEMO.clear()
+        resp2, log2 = self._analytics(now=NOW + 1)
+        self.assertEqual(log2.count(FILE_LINE), 1, "the file class's first fault is said, on its own latch:\n" + log2)
+        self.assertEqual(log2.count("in model-prices.json could not be read"), 0, "the row line is not said again")
+        self.assertEqual((resp2["priceFeed"]["overrideFault"], resp2["priceFeed"]["overrideRowsRejected"]), ("file", 0))
+        self.assertEqual(log2.count(ROW_LINE % "'note'"), 0)
+
+    def test_a_row_that_is_not_an_object_is_skipped_too(self):
+        """A row that is not an object (a comment string, a null): the base skipped it silently with the rows after it
+        kept, the round rejected it with every row after it, and now it is skipped alone and said like any other bad row,
+        so the documented rule has one shape. Over the 5cbf9e397 archive the row after it is voided: red at the table."""
         km.PRICE_CONFIG.write_text(json.dumps({"claude-fable-5-1": {"in": 12e-6, "out": 60e-6, "cache_w": 15e-6, "cache_r": 1.2e-6},
                                                "note": "my rates", "claude-sonnet-5": {"in": 4e-6, "out": 20e-6}}))
         os.environ["ROMP_PRICE_FEED"] = "off"
         resp, log = self._analytics()
-        self.assertEqual(resp["priceFeed"].get("overrideFault"), "row")
         prices = km._model_prices(NOW, refresh=False)
-        self.assertEqual((prices["claude-fable-5-1"]["in"], prices["claude-sonnet-5"]), (12e-6, km.DEFAULT_MODEL_PRICES["claude-sonnet-5"]))
+        self.assertEqual((prices["claude-fable-5-1"]["in"], prices["claude-sonnet-5"]["in"]), (12e-6, 4e-6), "both object rows apply")
         self.assertNotIn("note", prices)
-        self.assertEqual(log.count("price feed: a row in model-prices.json could not be read"), 1, log)
-        self.assertNotIn("my rates", log + json.dumps(resp["priceFeed"]), "never the file's text")
+        self.assertEqual((resp["priceFeed"].get("overrideFault"), resp["priceFeed"].get("overrideRowsRejected")), ("row", 1))
+        self.assertEqual(log.count(ROW_LINE % "'note'"), 1, log)
+        self.assertNotIn("my rates", log + json.dumps(resp["priceFeed"]), "never the file's values")
 
-    def test_an_override_row_with_a_rate_that_is_not_finite_is_rejected_and_classed(self):
-        """The class rule's other parse: JSON NaN in the user's own file (a rate that is not a finite number) is a row
-        the kernel cannot read, not a row that prices a session at NaN; the block says which."""
+    def test_an_override_row_with_a_rate_that_is_not_finite_is_skipped_and_classed(self):
+        """The class rule's other parse: JSON NaN in the user's own file (a rate that is not a finite number) is a row the
+        kernel cannot read, not a row that prices a session at NaN; the block says which and counts it."""
         km.PRICE_CONFIG.write_text('{"claude-fable-5-1": {"in": NaN, "out": 55e-6, "cache_w": 1e-6, "cache_r": 1e-6}}')
         os.environ["ROMP_PRICE_FEED"] = "off"
         resp, log = self._analytics()
         pf = resp["priceFeed"]
         self.assertEqual(pf.get("overrideFault"), "row", "a rate that is not a finite number is a row the kernel cannot read")
-        self.assertEqual(km._model_prices(NOW, refresh=False)["claude-fable-5-1"]["in"], 10e-6, "the row is ignored: the table's rate stands")
-        self.assertEqual(pf["overrides"], 0)
-        self.assertEqual(log.count("price feed: a row in model-prices.json could not be read"), 1, log)
+        self.assertEqual(km._model_prices(NOW, refresh=False)["claude-fable-5-1"]["in"], 10e-6, "the row is skipped: the table's rate stands")
+        self.assertEqual((pf["overrides"], pf.get("overrideRowsRejected")), (0, 1))
+        self.assertEqual(log.count(ROW_LINE % "'claude-fable-5-1'"), 1, log)
 
     def test_a_file_that_is_not_a_json_object_is_ignored_whole_and_classed_file(self):
         km.PRICE_CONFIG.write_text("{not json")
         os.environ["ROMP_PRICE_FEED"] = "off"
         resp, log = self._analytics()
         self.assertEqual(resp["priceFeed"].get("overrideFault"), "file", "exists and cannot be parsed: the file's class")
+        self.assertEqual(resp["priceFeed"].get("overrideRowsRejected"), 0, "no row was read, so none was skipped: the count is 0")
         self.assertEqual(km._model_prices(NOW, refresh=False)["claude-fable-5-1"]["in"], 10e-6, "ignored whole")
-        self.assertEqual(log.count("price feed: model-prices.json could not be read as a JSON object, so the file is ignored whole; "),
-                         1, log)
+        self.assertEqual(log.count(FILE_LINE + "; "), 1, log)
         self.assertEqual(km._version_info()["priceFeed"].get("overrideFault"), "file")
         km.PRICE_CONFIG.write_text("[1, 2]")                       # parses, but is not a table of rows: the same class
         km._ANALYTICS_MEMO.clear()
@@ -913,17 +1072,20 @@ class TheOverrideFileIsSaid(PriceFeedCase):
         self.assertEqual(log2, "", "said once per kernel life")
 
     def test_no_file_is_no_fault_and_no_line(self):
-        """No file is no fault and nothing is said, and the key is present on every build. At the reviewed head the key did
-        not exist, so the red over that archive is the key's absence at the first assertion: the subject is the new key, a
-        pin on the new API and named as such; the no-fault and no-line assertions after it are guards that hold at either
-        head."""
+        """No file is no fault, no skipped row and nothing said, and both keys are present on every build. At the head before
+        the fault class the class key did not exist, and at 5cbf9e397 the count key did not: the red over either archive is
+        a key's absence at its presence assertion, the subject being the new API and named as such; the no-fault, zero-count
+        and no-line assertions after it are guards that hold at either head."""
         os.environ["ROMP_PRICE_FEED"] = "off"
         resp, log = self._analytics()
         self.assertIn("overrideFault", resp["priceFeed"], "the key is always present")
+        self.assertIn("overrideRowsRejected", resp["priceFeed"], "so is the count")
         self.assertIsNone(resp["priceFeed"]["overrideFault"], "no file: nothing to class")
+        self.assertEqual(resp["priceFeed"]["overrideRowsRejected"], 0, "no file: nothing skipped")
         self.assertNotIn("model-prices.json could not", log)
-        self.assertEqual(log.count("a row in model-prices.json"), 0)
+        self.assertEqual(log.count("in model-prices.json"), 0)
         self.assertIsNone(km._version_info()["priceFeed"]["overrideFault"])
+        self.assertEqual(km._version_info()["priceFeed"]["overrideRowsRejected"], 0)
 
 
 class APartialOverrideRow(PriceFeedCase):

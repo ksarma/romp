@@ -2241,9 +2241,12 @@ function initGear(post, opts) {
 // ROMP_PRICE_FEED value that is neither off nor unset (the review of PR 878: only off turns the feed off, so such a
 // value leaves it on, and until this key it read the same as an unset variable on every surface): the line says
 // so, as one clause last before the override count, naming the variable so the reader knows what to fix and never
-// the value, since the block rides the auth-exempt /version and carries no environment text. A block without a
-// newer key (an older kernel) is worded as the older shape. tests/test_price_feed_vocabulary.py holds these words
-// and the kernel's to one set.
+// the value, since the block rides the auth-exempt /version and carries no environment text. On either source too,
+// `overrideRowsRejected` counts the rows of model-prices.json the kernel could not read (the re-ruling of that review,
+// 2026-09-21: such a row is skipped alone and every other row applies, where the round's shape voided every row after
+// it): the line says so last, after the override count, as a count and never the keys (the block rides /version; the
+// kernel's own log names each row once). A block without a newer key (an older kernel) is worded as the older shape.
+// tests/test_price_feed_vocabulary.py holds these words and the kernel's to one set.
 function raPriceNote(pf) {
   if (!pf || typeof pf !== 'object') return '';
   // rows from the user's model-prices.json price their models whichever table the line names, so the count is said
@@ -2255,6 +2258,12 @@ function raPriceNote(pf) {
   // the rule so the reader knows what to change, never the value (a block without the key, an older kernel, says nothing)
   var unrec = pf.unrecognised === true
     ? 'ROMP_PRICE_FEED is set to a value that is not off, so the feed stays on (only off turns it off)' : '';
+  // rows of the file the kernel could not read and skipped (the kernel's `overrideRowsRejected`, a number above zero):
+  // said after the override count, which says what the file changed, so the reader knows the rest of the file still
+  // applies and how much of it did not read; a count only, never a key (a block without the key, an older kernel, says nothing)
+  var rej = typeof pf.overrideRowsRejected === 'number' && pf.overrideRowsRejected > 0
+    ? pf.overrideRowsRejected + (pf.overrideRowsRejected === 1 ? ' row' : ' rows') + ' of model-prices.json could not be read and '
+      + (pf.overrideRowsRejected === 1 ? 'was' : 'were') + ' skipped (the rest of the file applies)' : '';
   if (pf.source === 'feed') {
     // fewer matched than the table knows: the rest are priced from the built-in defaults, and the line says so instead
     // of calling the whole table live (a block without `known`, an older kernel, is the plain line)
@@ -2272,6 +2281,7 @@ function raPriceNote(pf) {
     else if (pf.lastError) tails.push('the last refresh failed (' + pf.lastError + ')');
     if (unrec) tails.push(unrec);
     if (ovr) tails.push(ovr);
+    if (rej) tails.push(rej);
     return line + (tails.length ? '; ' + tails.join('; ') : '');
   }
   if (pf.source !== 'defaults') return '';
@@ -2285,7 +2295,8 @@ function raPriceNote(pf) {
     : pf.reason === 'inflight' ? 'fetching the feed now'
     : pf.reason === 'unfetched' ? 'nothing fetched from the feed yet'
     : '';
-  return 'prices: built-in defaults' + (why ? '; ' + why : '') + (unrec ? '; ' + unrec : '') + (ovr ? '; ' + ovr : '');
+  return 'prices: built-in defaults' + (why ? '; ' + why : '') + (unrec ? '; ' + unrec : '') + (ovr ? '; ' + ovr : '')
+    + (rej ? '; ' + rej : '');
 }
 function raAgo(s) {   // an age in seconds as plain words: 'just now' under a minute, then whole minutes, then whole hours
   s = Math.max(0, Math.floor(Number(s) || 0));
