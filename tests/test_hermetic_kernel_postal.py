@@ -15,9 +15,60 @@ revive path runs `ensure` from inside the test process, with the test's environm
 afternoon: tests/test_federation_missing_served.py (a lab kernel started as a process, its environment built by hand),
 tests/test_kernel_tunnels.py (an in-process kernel, an attach whose bus call was refused) and tests/test_kernel.py's
 PostalPeerTunnels.test_notify_bus_peer_is_guarded (an in-process kernel, a peer notify forced to fail). So the rule
-here scans every process spawn whose argv names the kernel (Popen, run, check_output, check_call, call; the argument
-span read across lines, whatever spells the path, a path held in a name included), and the in-process shape is met in
-the bus itself: `romp-postal-service serve` and `ensure` refuse the fixed port under a test (PYTEST_CURRENT_TEST set, or the
+here reads every process spawn (Popen, run, check_output, check_call, call, on the subprocess module under whatever
+name the module imports it, or imported from it by name) whose argv HOLDS the kernel's path as an element: a string
+that is the path, a path joined onto it (os.path.join, Path, /, +, an f-string, a % or .format template), a
+path-preserving wrapper of one (str, os.fspath, .resolve(), joinpath), or a name or self.X target bound to any of
+those in the scope the call reads, the name resolved to its declaration by tests/ast_bindings.py (the function the
+call is in, its enclosing functions, then the module; a class body encloses no method; self.X through the class and
+the bases it defines in the module; any other dotted target by the target's spelling, the one spelling-keyed road,
+which ast_bindings.Bindings.resolve_target says). The CLI counts only with the kernel verb as the next element. A
+name bound twice in the scope the call reads, once to the path and once to something else, is refused loudly
+(UnreadableSpawn, naming the call's line and both declarations), never read either way; a declaration with no
+readable value beside one bound to the path leaves the path standing. A string that MENTIONS the path without
+being it (a -c program that load_sources the kernel, a comment, a docstring) is not a kernel process: that is the
+in-process shape in a child, met by the bus belt below like the in-process shape itself (the ruling point below).
+The scan replaced a regex pair on 2026-09-21 (the ninth review round of PR #850, on the ruling of its eighth): the
+old KERNEL_NAME pattern took any name bound on ONE line that spelled romp-kernel as a name bound to the kernel's
+path and looked for it as a whole WORD in every subprocess call span, so a local `p` bound to TEXT that spelled the
+path collided with the "-p" of a nested pytest argv (a false offender on that PR's eighth-round head, the loud
+half), while a path bound across two lines, through a constant holding the script's name, to a tuple target or
+to self.kernel never entered the pattern and a spawn through it passed this rule vacuously (the silent half); at
+that head the pattern bound 680 such names in 555 test modules, 515 of them the `km` of an in-process load, a
+module object and no path (the round's prep measured it; PR #850's body carries the table). PLANT_TABLE below
+runs both halves: 43 rows, each labelled with what the scan must do.
+
+Roads and residual, derived by one command (`python tests/test_hermetic_kernel_postal.py --roads [directory]`, one
+line per module the trio test reads, then the unresolved names, then a summary line with every count): a module's
+kernel spawn is found by the argv road (an element that is the path as written), the binding road (a name or target
+resolved to a declaration bound to it), or neither, and a module the scan can read neither way is labelled refused.
+On 2026-09-21, over the 948 .py files beside this one: argv 85, binding 0, neither 863, refused 0, 87 spawn sites
+(every one an os.path.join onto the kernel's name as an argv element), 0 offenders; the regex pair counted 86
+modules, the one difference tests/test_chat_pages.py, whose only match was a -c child (below). The guard test holds
+the two lab modules on the argv road and no module refused, and reports the counts at whatever size the tree has.
+The residual, a stated limit: a name or target in an argv that resolves to a declaration with no readable value (a
+parameter, an import, a loop or with target, an unpacking the scan cannot split) or to none at all (an attribute of
+an imported module, sys.executable most of all) is read as no path, so a launch handed through one is missed here,
+as it was by the regex; the arm lists each under `# unresolved:` with its kind. On 2026-09-21: 135 such names in 115
+of the tree's subprocess calls across 67 modules (attribute of an import 55, sys.executable in 49 of them; parameter
+44; attribute of a with target 18, every one f.name; loop 5; unpack 5; attribute of a call's value 3; attribute of an
+assigned name 3; attribute of an attribute 1; with 1), none of them in a call whose argv holds the path by another
+element.
+
+Ruling point, the maintainers' to decide (2026-09-21): a child interpreter that load_sources the kernel
+(`[sys.executable, "-c", <program>]`) is read here as NOT a kernel process. It is the in-process shape one process
+down, and the belt below covers it exactly as it covers the parent, provided the child inherits the parent's
+environment (PYTEST_CURRENT_TEST under pytest) or runs under a temporary state root. Derived for the six such sites
+on that day (`grep -n '"-c"' tests/*.py`, each program read): tests/test_assembly_road_counters.py:935, env
+dict(os.environ) plus one key, the state root the parent's temporary floor; tests/test_kernel_serve_token_mode.py:608,
+env dict(os.environ), ROMP_STATE_DIR a mkdtemp; tests/test_manager_write_token.py:402, env filtered from os.environ
+(ROMP_STATE_DIR and ROMP_MANAGER_PID dropped, PYTEST_CURRENT_TEST kept), XDG_STATE_HOME the class's mkdtemp;
+tests/test_perf_stats.py:2605, env dict(os.environ, TMPDIR=...), the state root the parent's floor;
+tests/test_perf_stats.py:4099, env dict(os.environ), ROMP_STATE_DIR a mkdtemp; tests/test_chat_pages.py:1151, env
+dict(os.environ, ...) carrying the trio, the program setting its own mkdtemp as XDG_STATE_HOME. Every one meets both
+conditions. Were such a child a kernel process (the path mentioned anywhere in the argv's strings), the first four
+modules would be offenders, a separate change to make hermetic; nothing here decides that. The in-process shape is
+met in the bus itself: `romp-postal-service serve` and `ensure` refuse the fixed port under a test (PYTEST_CURRENT_TEST set, or the
 state root under a temporary directory) unless ROMP_POSTAL_PORT names the port as the run's own (ROMP_POSTAL_HERMETIC beside
 it, as the runner, the shell suite's setup and kernel_env set; an inherited name does not count), pinned by
 tests/test_postal_fixed_port_belt.py.
@@ -57,36 +108,338 @@ import unittest
 HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 import test_ship_reship_served as _lab   # noqa: E402  the lab kernel's environment (the module, not its classes)
+import ast_bindings   # noqa: E402  names resolved to their declarations by scope (tests/ast_bindings.py)
 
-CALL = re.compile(r"(?:subprocess\.(?:Popen|run|check_output|check_call|call)|(?<![\w.])Popen)\s*\(")
-# the kernel's path as an argv spells it: the script's name, the bare CLI (not the other bin/romp-* scripts), a path
-# joined from BIN with "romp"
-KERNEL_ARGV = re.compile(r"""romp-kernel|bin/romp(?![\w-])|\bBIN\b[^\]\n]*?["']romp["']""")
-KERNEL_NAME = re.compile(r"^[ \t]*([A-Za-z_]\w*)\s*=\s*[^\n]*romp-kernel", re.M)   # a name bound to the kernel's path
 TRIO = ("ROMP_POSTAL_PORT", "ROMP_POSTAL_PEERS", "ROMP_POSTAL_CLIENT_ONLY")
 
+# -- the spawn scan: a subprocess call whose argv holds the kernel's path, read from the module's ast with every name
+# -- resolved to its binding (ast_bindings, 2026-09-21; a regex pair before) -------------------------------------------
+SPAWN = ("Popen", "run", "check_output", "check_call", "call")
+# a string constant that IS the kernel's path: the script by name or under a directory (an argv element, or the first
+# word of a shell command string)
+KERNEL_PATH = re.compile(r"(?:^|/)romp-kernel$")
+# the CLI's path: the kernel only with the kernel verb as the next argv element (`romp kernel --serve`), never with
+# another verb (`romp --help`, tests/test_headless_verbs_help.py)
+CLI_PATH = re.compile(r"(?:^|/)bin/romp$")
+KERNEL_VERBS = {"kernel"}
+PLACEHOLDER = re.compile(r"^%[sr]$|^\{\}$|^\{0\}$")   # a template that is nothing but its argument: "%s" % KERNEL
+# callables whose value is the path built from, or preserved from, their LAST positional argument
+PATH_FUNCTIONS = {"os.path.join", "posixpath.join", "ntpath.join", "os.path.realpath", "os.path.abspath", "os.path.normpath",
+                  "os.path.expanduser", "os.fspath", "os.fsdecode", "str", "Path", "pathlib.Path", "PurePath", "PurePosixPath",
+                  "PosixPath", "pathlib.PurePath", "shlex.quote", "realpath", "abspath", "normpath", "expanduser", "fspath"}
+# methods whose value is the receiver's path, preserved (joined onto, for joinpath)
+PATH_METHODS = {"resolve", "absolute", "expanduser", "as_posix", "strip", "rstrip", "lstrip", "decode", "encode", "joinpath"}
+BIN_NAME = re.compile(r"(?i)^(?:.*_)?bin(?:_?dir)?$")   # BIN, bin_dir, LAB_BIN: the directory the CLI is joined from
 
-def _call_spans(src):
-    """The argument span of every subprocess call in `src`, read across lines to the matching parenthesis."""
-    for m in CALL.finditer(src):
-        i = m.end(); depth = 1; j = i
-        while j < len(src) and depth:   # loop-ok: a bounded scan of one call's argument span
-            c = src[j]
-            if c == "(":
-                depth += 1
-            elif c == ")":
-                depth -= 1
-            j += 1
-        yield src[i:j]
+
+class UnreadableSpawn(AssertionError):
+    """A spawn whose argv the scan can read neither way: a name, or a target of the form self.X, with two declarations
+    in the scope the call reads, one bound to the kernel's path and one bound to something else, so the census cannot
+    say which the call runs. Raised naming the module, the call's line and both declarations, never a verdict either
+    way (2026-09-21: a silent match on the wrong binding was the regex census's failure). Two declarations that agree
+    are read as one; a declaration with no readable value (a parameter, an import, a loop or with target, a None
+    placeholder) beside one bound to the path leaves the path standing, the side that requires the trio."""
 
 
-def _spawns_kernel(src):
-    names = [re.compile(r"\b%s\b" % re.escape(n)) for n in KERNEL_NAME.findall(src)]
-    return any(KERNEL_ARGV.search(span) or any(n.search(span) for n in names) for span in _call_spans(src))
+class _SpawnScan:
+    """One module's spawn calls and the reading of each argv. A spawn is a call of Popen, run, check_output, check_call
+    or call on the subprocess module under whatever name the module imports it, or of a bare Popen, run and the rest
+    imported from it, the library resolved to its import by binding (an unbound `subprocess` or `Popen`, a snippet's,
+    is the library by its spelling). Its argv (the first positional or `args=`) holds the kernel's path when an
+    ELEMENT evaluates to it: a string constant whose tail is romp-kernel; a path joined onto it (os.path.join, Path,
+    /, +, an f-string, a % or .format template); a path-preserving wrapper (str, os.fspath, .resolve(), joinpath); or
+    a name or a self.X target bound to one of those, resolved by ast_bindings in the scope the call reads. A splat
+    element, an argv held in a name and one built by + are followed. The CLI's path counts only with the kernel verb
+    as the next element. A constant that MENTIONS the path without being it (a -c program, a comment) is not the
+    path; a value derived by a consumer (open(...).read(), load_source(...), Popen(...), a helper's return) is not the
+    path. A name or target the scan reads no value for (`unresolved`: a parameter, an import, a loop target, an
+    attribute of an imported module) is no path, and the site is listed under that residual."""
+
+    def __init__(self, tree, filename="<src>"):
+        self.filename = filename
+        self.bindings = ast_bindings.Bindings.of(tree)
+        self.calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and self._is_spawn(n)]
+        self.unresolved = []          # (line, text, kind) for every unread name or target met while reading an argv
+        self._unresolved_keys = set()
+        self._bound_paths = 0         # resolutions that yielded the path while reading one argv (the road label)
+        self._line = 0
+
+    def _is_spawn(self, call):
+        f, scope = call.func, self.bindings.scope_of(call)
+        if isinstance(f, ast.Attribute) and f.attr in SPAWN and isinstance(f.value, ast.Name):
+            decls, _ = scope.resolve(f.value.id)
+            if not decls:
+                return f.value.id == "subprocess"
+            return any(d.kind == "import" and d.origin == "subprocess" for d in decls)
+        if isinstance(f, ast.Name):
+            decls, _ = scope.resolve(f.id)
+            if not decls:
+                return f.id == "Popen"
+            return any(d.kind == "import" and d.origin in {"subprocess.%s" % s for s in SPAWN} for d in decls)
+        return False
+
+    def sites(self):
+        """(line, argv text, road) for every spawn whose argv holds the kernel's path: road "argv" when an element is
+        the path with no name resolved on the way, "binding" when a name or target had to be resolved to a declaration
+        bound to it. Loud (UnreadableSpawn) for an argv the scan can read neither way."""
+        found = []
+        for call in self.calls:
+            argv = _spawn_argv(call)
+            if argv is None:
+                continue
+            self._bound_paths, self._line = 0, call.lineno
+            if self.holds_kernel_path(argv, self.bindings.scope_of(call)):
+                found.append((call.lineno, ast.unparse(argv), "binding" if self._bound_paths else "argv"))
+        return found
+
+    def _decide(self, decls, node, key, seen, evaluate):
+        """The verdict on a name or target from its declarations: each with a value is read in the scope its value is
+        read in; one with none (a parameter, an import, a loop, with or except target, an unpacking the scan cannot
+        split, a del) or bound to None says nothing. Path and not-path together: loud. Any path: the path (and the
+        binding road). Nothing said at all: no path, listed as unresolved."""
+        said = []
+        for d in decls:
+            if d.value is None or (isinstance(d.value, ast.Constant) and d.value.value is None):
+                continue
+            said.append((d, evaluate(d.value, self.bindings.scope_of(d.value), seen | {key})))
+        paths = [d for d, v in said if v]
+        others = [d for d, v in said if not v]
+        if paths and others:
+            raise UnreadableSpawn("%s line %d: %s is bound twice in the scope the call reads, once to the kernel's path (line %d: "
+                                  "%s) and once to something else (line %d: %s), so the census cannot say which the call runs: "
+                                  "bind it once, or under two names" % (self.filename, self._line, ast.unparse(node), paths[0].lineno,
+                                                                        ast.unparse(paths[0].node), others[0].lineno,
+                                                                        ast.unparse(others[0].node)))
+        if paths:
+            self._bound_paths += 1
+            return True
+        if not said:
+            self._note_unresolved(node, "+".join(sorted({d.kind for d in decls})) if decls else self._receiver_kind(node, None))
+        return False
+
+    def _note_unresolved(self, node, kind):
+        key = (self._line, ast.unparse(node))
+        if key not in self._unresolved_keys:
+            self._unresolved_keys.add(key)
+            self.unresolved.append((self._line, ast.unparse(node), kind))
+
+    def _receiver_kind(self, node, scope):
+        """The label of a name or target the scan reads no value for: a bare name with no declaration is "unbound"; an
+        attribute is "attribute of" its receiver, a name by the kinds of its declarations (an import, a parameter, a
+        with target) or "the instance" when the receiver is a method's own and no method of the class writes the
+        attribute, else the receiver's shape (a call's value, an attribute, a subscript)."""
+        if isinstance(node, ast.Name):
+            return "unbound"
+        if scope is not None and self.bindings.instance_class(node, scope) is not None:
+            return "attribute of the instance, written by no method of its class"
+        receiver = node.value
+        if isinstance(receiver, ast.Name):
+            decls, _ = scope.resolve(receiver.id) if scope is not None else ([], None)
+            return "attribute of " + ("+".join(sorted({d.kind for d in decls})) if decls else "an unbound name")
+        return "attribute of " + {ast.Call: "a call's value", ast.Attribute: "an attribute", ast.Subscript: "a subscript",
+                                  ast.Constant: "a constant"}.get(type(receiver), type(receiver).__name__)
+
+    def _resolve(self, node, scope, seen, evaluate):
+        """A Name or a dotted target, read through its declarations; False (and a `seen` key, against a cycle) when the
+        same name is already being read."""
+        if isinstance(node, ast.Name):
+            decls, where = scope.resolve(node.id)
+            key = (id(where), node.id)
+            return key not in seen and self._decide(decls, node, key, seen, evaluate)
+        decls, road = scope.resolve_target(node)
+        key = ("target", ast.unparse(node), id(self.bindings.instance_class(node, scope)) if road == "instance" else 0)
+        if key in seen:
+            return False
+        if not decls:
+            if isinstance(node, ast.Attribute):   # a subscript with no binding is read through its container instead
+                self._note_unresolved(node, self._receiver_kind(node, scope))
+            return False
+        return self._decide(decls, node, key, seen, evaluate)
+
+    def is_kernel_path(self, node, scope, seen=frozenset(), cli=False):
+        """Does `node`, read in `scope`, evaluate to the kernel script's path (with `cli`, to the CLI's)?"""
+        pattern = CLI_PATH if cli else KERNEL_PATH
+        if isinstance(node, ast.Constant):
+            return isinstance(node.value, str) and bool(pattern.search(node.value) or (node.value.split() and pattern.search(node.value.split()[0])))
+        if isinstance(node, ast.Name):
+            return self._resolve(node, scope, seen, lambda v, s, seen: self.is_kernel_path(v, s, seen, cli))
+        if isinstance(node, (ast.Attribute, ast.Subscript)):   # km.X is not km: read through the target's own binding
+            if self._resolve(node, scope, seen, lambda v, s, seen: self.is_kernel_path(v, s, seen, cli)):
+                return True
+            return isinstance(node, ast.Subscript) and self.holds_kernel_path(node.value, scope, seen | {("container", id(node))})
+        if isinstance(node, ast.Starred):
+            return self.holds_kernel_path(node.value, scope, seen)
+        if isinstance(node, ast.JoinedStr):   # f"{BIN}/romp-kernel", f"{KERNEL}": the tail
+            last = node.values[-1] if node.values else None
+            if isinstance(last, ast.FormattedValue):
+                return self.is_kernel_path(last.value, scope, seen, cli)
+            return last is not None and self.is_kernel_path(last, scope, seen, cli)
+        if isinstance(node, ast.BinOp):
+            if isinstance(node.op, ast.Mod):   # "%s/romp-kernel" % BIN, "%s" % KERNEL: the template decides
+                if isinstance(node.left, ast.Constant) and isinstance(node.left.value, str):
+                    if pattern.search(node.left.value):
+                        return True
+                    return bool(PLACEHOLDER.match(node.left.value)) and self.is_kernel_path(node.right, scope, seen, cli)
+                return False
+            return self.is_kernel_path(node.right, scope, seen, cli)   # BIN / "romp-kernel", BIN + "/romp-kernel": the tail
+        if isinstance(node, ast.IfExp):
+            return self.is_kernel_path(node.body, scope, seen, cli) or self.is_kernel_path(node.orelse, scope, seen, cli)
+        if isinstance(node, ast.Call):
+            return self._call_is_kernel_path(node, scope, seen, cli)
+        return False
+
+    def _call_is_kernel_path(self, call, scope, seen, cli):
+        f = call.func
+        pattern = CLI_PATH if cli else KERNEL_PATH
+        if ast.unparse(f) in PATH_FUNCTIONS:
+            if not call.args:
+                return False
+            if self.is_kernel_path(call.args[-1], scope, seen, cli):
+                return True
+            last = call.args[-1]   # the CLI joined from the bin directory: os.path.join(BIN, "romp"), Path(BIN, "romp")
+            return (cli and len(call.args) > 1 and isinstance(last, ast.Constant) and last.value == "romp"
+                    and any(self._is_bin_dir(a) for a in call.args[:-1]))
+        if isinstance(f, ast.Attribute):   # a method on a value: template.format(...), path.resolve(), base.joinpath(...)
+            if f.attr == "format":
+                return isinstance(f.value, ast.Constant) and isinstance(f.value.value, str) and (
+                    bool(pattern.search(f.value.value))
+                    or (bool(PLACEHOLDER.match(f.value.value)) and bool(call.args) and self.is_kernel_path(call.args[-1], scope, seen, cli)))
+            if f.attr == "joinpath":
+                return bool(call.args) and self.is_kernel_path(call.args[-1], scope, seen, cli)
+            if f.attr in PATH_METHODS:
+                return self.is_kernel_path(f.value, scope, seen, cli)
+        return False   # a consumer (open, load_source, read_text, Popen, repr, a helper): its value is not the path
+
+    @staticmethod
+    def _is_bin_dir(node):
+        if isinstance(node, ast.Name):
+            return bool(BIN_NAME.match(node.id))
+        return isinstance(node, ast.Constant) and isinstance(node.value, str) and (node.value == "bin" or node.value.endswith("/bin"))
+
+    def holds_kernel_path(self, node, scope, seen=frozenset()):
+        """Does `node`, an argv expression (or a container a subscript reads), hold the kernel's path as an element, or
+        as the whole (a command string, a path handed as the program)?"""
+        if isinstance(node, (ast.Name, ast.Attribute, ast.Subscript)):
+            return self._resolve(node, scope, seen, self.holds_kernel_path)
+        if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+            elts = node.elts
+            for i, e in enumerate(elts):
+                if isinstance(e, ast.Starred):
+                    if self.holds_kernel_path(e.value, scope, seen):
+                        return True
+                elif self.is_kernel_path(e, scope, seen):
+                    return True
+                elif (self.is_kernel_path(e, scope, seen, cli=True) and i + 1 < len(elts)
+                      and isinstance(elts[i + 1], ast.Constant) and elts[i + 1].value in KERNEL_VERBS):
+                    return True   # `romp kernel ...`: the CLI with the kernel verb next
+            return False
+        if isinstance(node, ast.Dict):
+            return any(v is not None and self.is_kernel_path(v, scope, seen) for v in node.values)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            return self.holds_kernel_path(node.left, scope, seen) or self.holds_kernel_path(node.right, scope, seen)
+        if isinstance(node, ast.IfExp):
+            return self.holds_kernel_path(node.body, scope, seen) or self.holds_kernel_path(node.orelse, scope, seen)
+        if isinstance(node, (ast.Constant, ast.JoinedStr)) or (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod)):
+            return self.is_kernel_path(node, scope, seen)   # the program as a string, or a command string (shell=True)
+        if isinstance(node, ast.Call):   # the path itself; list(cmd), tuple(cmd), shlex.split(s), a helper handed the argv
+            return self.is_kernel_path(node, scope, seen) or any(
+                self.holds_kernel_path(a, scope, seen) or self.is_kernel_path(a, scope, seen) for a in _call_args(node))
+        return False
+
+
+def _call_args(call):
+    for a in call.args:
+        yield a.value if isinstance(a, ast.Starred) else a
+    for kw in call.keywords:
+        yield kw.value
+
+
+def _spawn_argv(call):
+    if call.args:
+        return call.args[0]
+    for kw in call.keywords:
+        if kw.arg == "args":
+            return kw.value
+    return None
+
+
+def _kernel_spawn_sites(src, filename="<src>"):
+    """(line, argv text, road) of every subprocess call in `src` whose argv holds the kernel's path (_SpawnScan.sites)."""
+    return _SpawnScan(ast.parse(src, filename=filename), filename).sites()
+
+
+def _spawns_kernel(src, filename="<src>"):
+    return bool(_kernel_spawn_sites(src, filename))
 
 
 def _hermetic(src):
     return "kernel_env(" in src or all(k in src for k in TRIO)
+
+
+def _census_modules(directory, skip=()):
+    """The (name, source) of the test modules a census reads: the .py files of `directory` by name, `skip` left out."""
+    for name in sorted(os.listdir(directory)):
+        if name.endswith(".py") and name not in skip:
+            with open(os.path.join(directory, name), encoding="utf-8", errors="replace") as f:
+                yield name, f.read()
+
+
+def _kernel_spawn_offenders(directory, skip=()):
+    """The test modules in `directory` that start a kernel process without the postal trio: (file name, line, argv text)
+    for every such spawn. Loud (UnreadableSpawn, naming the module) for a module whose argv the scan can read neither
+    way; never a silent verdict on it."""
+    offenders = []
+    for name, src in _census_modules(directory, skip):
+        sites = _kernel_spawn_sites(src, name)
+        if sites and not _hermetic(src):
+            offenders.extend((name, line, argv) for line, argv, _ in sites)
+    return offenders
+
+
+def spawn_roads(directory, skip=()):
+    """Per module of `directory`: (road, sites, unresolved). The road is "neither" for a module with no kernel spawn,
+    "binding" when any of its spawn sites needed a name or target resolved to a declaration bound to the path, else
+    "argv" (every site an element that is the path as written). `sites` is _SpawnScan.sites; `unresolved` the names
+    and targets met in ANY subprocess argv of the module that the scan reads no value for, (line, text, kind). A module
+    the scan can read neither way is reported with the road "refused" and the message as its one site."""
+    roads = {}
+    for name, src in _census_modules(directory, skip):
+        scan = _SpawnScan(ast.parse(src, filename=name), name)
+        try:
+            sites = scan.sites()
+        except UnreadableSpawn as e:
+            roads[name] = ("refused", [(0, str(e), "refused")], scan.unresolved)
+            continue
+        road = "neither" if not sites else "binding" if any(r == "binding" for _, _, r in sites) else "argv"
+        roads[name] = (road, sites, scan.unresolved)
+    return roads
+
+
+def _print_roads(directory, skip=()):
+    """The --roads arm: one line per module (`<module> <road> [<line>:<road>:<argv> ...]`), the unresolved names and
+    targets under `# unresolved:`, and a summary line with every count, so the census's population is derived by one
+    command rather than stated."""
+    roads = spawn_roads(directory, skip)
+    for name, (road, sites, _) in roads.items():
+        print("%s %s%s" % (name, road, "".join(" %d:%s:%s" % (line, r, argv.replace("\n", " ")) for line, argv, r in sites)))
+    print("# unresolved: names and targets met in a subprocess argv that the scan reads no value for (line, text, kind)")
+    kinds, calls, modules = {}, set(), set()
+    for name, (_, _, unresolved) in roads.items():
+        for line, text, kind in unresolved:
+            print("%s:%d %s (%s)" % (name, line, text, kind))
+            kinds[kind] = kinds.get(kind, 0) + 1
+            calls.add((name, line))
+            modules.add(name)
+    count = {r: sum(1 for road, _, _ in roads.values() if road == r) for r in ("argv", "binding", "neither", "refused")}
+    sites = [(r, name) for name, (_, s, _) in roads.items() for _, _, r in s]
+    offenders = [(name, line, argv) for name, (road, s, _) in roads.items() if road in ("argv", "binding") and
+                 not _hermetic(open(os.path.join(directory, name), encoding="utf-8", errors="replace").read()) for line, argv, _ in s]
+    print("# summary: modules %d; argv %d; binding %d; neither %d; refused %d; spawn sites %d (argv %d, binding %d); offenders %d; "
+          "unresolved names %d in %d calls of %d modules by kind %s; sys.executable %d of them"
+          % (len(roads), count["argv"], count["binding"], count["neither"], count["refused"], len(sites),
+             sum(1 for r, _ in sites if r == "argv"), sum(1 for r, _ in sites if r == "binding"), len(offenders),
+             sum(kinds.values()), len(calls), len(modules), dict(sorted(kinds.items())),
+             sum(1 for _, (_, _, u) in roads.items() for _, text, _ in u if text == "sys.executable")))
 
 
 class UnreadableEnvWrite(AssertionError):
@@ -450,6 +803,105 @@ def _method_chain(cls, name, classes):
     return chain
 
 
+# The plant table the guard test runs (test_the_guard_itself_sees_the_spawn_sites): one synthetic module per row, each
+# labelled with what the scan must do with it. caught-by-argv: one site, at the planted call's line, an argv element
+# that is the path as written; caught-by-binding: one site, at the planted call's line, read through a name or a self.X
+# target resolved to a declaration bound to the path; no-spawn: no site (the word-collision class of the regex census,
+# a -c child that loads the kernel, the CLI with another verb, the other bin/ scripts, an in-process load, a parameter);
+# refused-loud: UnreadableSpawn naming the call's line and both declarations, (call line, path line, other line). Every
+# row is synthetic (TESTHOST paths). The row labelled B1 is the case the ruling of 2026-09-21 required: a kernel path
+# bound across two lines, missed by the regex census because its KERNEL_NAME pattern read one line.
+PLANT_TABLE = (
+    ("B1 two-line binding (the ruling's required case)", 'caught-by-binding', 3,
+     'KERNEL = os.path.join(\n    BIN, "romp-kernel")\nsubprocess.Popen([KERNEL])'),
+    ("B2 a constant holding the script's name", 'caught-by-binding', 3,
+     'NAME = "romp-kernel"\nK = os.path.join(BIN, NAME)\nsubprocess.run([K])'),
+    ('B3 composed by +', 'caught-by-binding', 2,
+     'K = BIN + "/romp-kernel"\nsubprocess.run([K])'),
+    ('B4 composed by %', 'caught-by-binding', 2,
+     'K = "%s/romp-kernel" % BIN\nsubprocess.run([K])'),
+    ('B5 a resolved Path through str', 'caught-by-binding', 2,
+     'KP = Path(BIN, "romp-kernel").resolve()\nsubprocess.run([str(KP)])'),
+    ('B6 an instance attribute set in setUp', 'caught-by-binding', 5,
+     'class T:\n    def setUp(self):\n        self.kernel = os.path.join(BIN, "romp-kernel")\n    def test_a(self):\n        subprocess.Popen([self.kernel])'),
+    ('B7 a class attribute read through self', 'caught-by-binding', 4,
+     'class T:\n    KERNEL = os.path.join(BIN, "romp-kernel")\n    def test_a(self):\n        subprocess.Popen([self.KERNEL])'),
+    ('B8 a dict entry by subscript', 'caught-by-binding', 2,
+     'PATHS = {"kernel": os.path.join(BIN, "romp-kernel")}\nsubprocess.run([PATHS["kernel"]])'),
+    ('B9 a tuple target', 'caught-by-binding', 2,
+     'KERNEL, JUDGE = os.path.join(BIN, "romp-kernel"), os.path.join(BIN, "romp-judge")\nsubprocess.run([KERNEL])'),
+    ('B10 an annotated assignment', 'caught-by-binding', 2,
+     'K: str = os.path.join(BIN, "romp-kernel")\nsubprocess.run([K])'),
+    ('B11 a walrus', 'caught-by-binding', 2,
+     'if (K := os.path.join(BIN, "romp-kernel")):\n    subprocess.run([K])'),
+    ('B12 the argv held in a name', 'caught-by-binding', 2,
+     'cmd = [sys.executable, os.path.join(BIN, "romp-kernel")]\nsubprocess.run(cmd)'),
+    ('B13 a splat of a named argv', 'caught-by-binding', 2,
+     'KARGV = [os.path.join(BIN, "romp-kernel")]\nsubprocess.run([sys.executable, *KARGV])'),
+    ('B14 a local of the spawning function', 'caught-by-binding', 3,
+     'def start():\n    k = os.path.join(BIN, "romp-kernel")\n    return subprocess.Popen([sys.executable, k])'),
+    ('B15 a None placeholder rebound through global', 'caught-by-binding', 6,
+     'KERNEL = None\ndef setUpModule():\n    global KERNEL\n    KERNEL = os.path.join(BIN, "romp-kernel")\ndef test_a():\n    subprocess.Popen([KERNEL])'),
+    ("B16 a base class's setUp sets the attribute", 'caught-by-binding', 6,
+     'class Base:\n    def setUp(self):\n        self.kernel = os.path.join(BIN, "romp-kernel")\nclass T(Base):\n    def test_a(self):\n        subprocess.Popen([self.kernel])'),
+    ('A1 the library under an alias', 'caught-by-argv', 2,
+     'import subprocess as sp\nsp.Popen([os.path.join(BIN, "romp-kernel")])'),
+    ('A2 a from-import of run', 'caught-by-argv', 2,
+     'from subprocess import run\nrun([os.path.join(BIN, "romp-kernel")])'),
+    ('A3 the CLI with the kernel verb', 'caught-by-argv', 1,
+     'subprocess.check_output([os.path.join(BIN, "romp"), "kernel", "--serve"])'),
+    ('A4 a list built by + onto an unread head', 'caught-by-argv', 1,
+     'subprocess.run(HEAD + [os.path.join(BIN, "romp-kernel")])'),
+    ('A5 an f-string', 'caught-by-argv', 1,
+     'subprocess.Popen([f"{BIN}/romp-kernel"])'),
+    ('A6 a call split across lines with Path division', 'caught-by-argv', 1,
+     'subprocess.run(\n    [sys.executable, str(BIN / "romp-kernel")],\n    capture_output=True)'),
+    ('N1 a same-named local in another function', 'no-spawn', None,
+     'def a():\n    k = os.path.join(BIN, "romp-kernel")\ndef b():\n    k = [sys.executable, "-m", "pytest"]\n    subprocess.run(k)'),
+    ('N2 p beside -p', 'no-spawn', None,
+     'p = os.path.join(BIN, "romp-kernel")\nopen(p).read()\nsubprocess.run([sys.executable, "-m", "pytest", "-p", "no:cacheprovider"])'),
+    ('N3 k beside -k', 'no-spawn', None,
+     'k = os.path.join(BIN, "romp-kernel")\nopen(k).read()\nsubprocess.run([sys.executable, "-m", "pytest", "-k", "boot"])'),
+    ('N4 src beside src/main.ts', 'no-spawn', None,
+     'src = open(os.path.join(BIN, "romp-kernel")).read()\nsubprocess.run(["node", "src/main.ts"])'),
+    ('N5 km beside import km', 'no-spawn', None,
+     'km = load_source("romp_kernel_x", os.path.join(BIN, "romp-kernel"))\nsubprocess.run([sys.executable, "-c", "import km"])'),
+    ('N6 kernel beside grep kernel', 'no-spawn', None,
+     'kernel = os.path.join(BIN, "romp-kernel")\nsubprocess.run(["grep", "kernel", "docs"])'),
+    ('N7 lines beside -k lines', 'no-spawn', None,
+     'lines = open(os.path.join(BIN, "romp-kernel")).read().splitlines()\nsubprocess.run([sys.executable, "-m", "pytest", "-k", "lines"])'),
+    ("N8 the round-8 head's own shape (text spelling the path, -p)", 'no-spawn', None,
+     'p = "os.path.join(BIN, \'romp-kernel\')"\nsubprocess.run([sys.executable, "-m", "pytest", "-p", "tests.conftest"])'),
+    ('N9 a -c child that loads the kernel, inline', 'no-spawn', None,
+     'subprocess.run([sys.executable, "-c", "load_source(\'k\', os.path.join(%r, \'romp-kernel\'))" % BIN])'),
+    ('N10 a -c child that loads the kernel, the program held in a name', 'no-spawn', None,
+     'CODE = "km = load_source(\'k\', os.path.join(BIN, \'romp-kernel\'))\\n"\nsubprocess.run([sys.executable, "-c", CODE])'),
+    ('N11 a comment spelling a launch', 'no-spawn', None,
+     'x = 1  # subprocess.Popen([os.path.join(BIN, "romp-kernel")])\nsubprocess.run(["true"])'),
+    ('N12 a docstring spelling a launch', 'no-spawn', None,
+     '"""subprocess.Popen([os.path.join(BIN, "romp-kernel")])"""\nsubprocess.run(["true"])'),
+    ('N13 the CLI with another verb', 'no-spawn', None,
+     'ROMP = os.path.join(BIN, "romp")\nsubprocess.run(["bash", ROMP, "--help"])'),
+    ('N14 an in-process load', 'no-spawn', None,
+     'load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))'),
+    ('N15 the judge script', 'no-spawn', None,
+     'subprocess.run([os.path.join(BIN, "romp-judge"), "--once"])'),
+    ('N16 a parameter (the stated residual)', 'no-spawn', None,
+     'def start(argv):\n    return subprocess.Popen(argv)'),
+    ('N17 a Popen handle named beside -k', 'no-spawn', None,
+     'proc = subprocess.Popen([os.path.join(BIN, "romp-judge")])\nsubprocess.run([sys.executable, "-m", "pytest", "-k", "proc"])'),
+    ('N18 a module constant shadowed by a local argv', 'no-spawn', None,
+     'KERNEL = os.path.join(BIN, "romp-kernel")\ndef b():\n    KERNEL = [sys.executable, "-m", "pytest"]\n    subprocess.run(KERNEL)'),
+    ('N19 a build and the postal service', 'no-spawn', None,
+     'subprocess.run(["node", "esbuild.js"], cwd=EXT)\nsubprocess.run(["bin/romp-postal-service", "ensure"])'),
+    ('R1 a rebinding in one function', 'refused-loud', (4, 2, 3),
+     'def t():\n    k = os.path.join(BIN, "romp-kernel")\n    k = [sys.executable, "-m", "pytest", "-k", "boot"]\n    subprocess.run(k)'),
+    ('R2 two module-level bindings that disagree', 'refused-loud', (3, 1, 2),
+     'K = os.path.join(BIN, "romp-kernel")\nK = os.path.join(BIN, "romp-judge")\nsubprocess.run([K])'),
+)
+
+
+
 class HermeticKernelPostal(unittest.TestCase):
     def test_kernel_env_gives_every_lab_kernel_its_own_never_started_bus(self):
         env = _lab.kernel_env("/tmp/lab", "/tmp/lab/claude", "/tmp/lab/dist", 1, "tok")
@@ -468,33 +920,109 @@ class HermeticKernelPostal(unittest.TestCase):
         self.assertLess(src.index('os.environ.pop("ROMP_POSTAL_PORT", None)') - floor, 600, "…right beside it")
 
     def test_every_test_that_starts_a_kernel_process_carries_the_trio(self):
-        offenders = []
-        for name in sorted(os.listdir(HERE)):
-            if not name.endswith(".py") or name == os.path.basename(__file__):
-                continue
-            src = open(os.path.join(HERE, name), encoding="utf-8", errors="replace").read()
-            if _spawns_kernel(src) and not _hermetic(src):
-                offenders.append(name)
+        """Keyed on the spawn's argv read from each module's ast, every name resolved to its binding (_SpawnScan over
+        ast_bindings), and on the trio's presence in the module's text (_hermetic); a module the scan can read neither
+        way is loud here (UnreadableSpawn), never passed over. The offender is named with the file, the line and the
+        argv."""
+        offenders = _kernel_spawn_offenders(HERE, skip=(os.path.basename(__file__),))
         self.assertEqual(offenders, [], "these tests start a kernel process without the postal trio (use kernel_env, or set "
-                                        "ROMP_POSTAL_PORT to a free port, ROMP_POSTAL_PEERS=0 and ROMP_POSTAL_CLIENT_ONLY=1): %r" % offenders)
+                                        "ROMP_POSTAL_PORT to a free port, ROMP_POSTAL_PEERS=0 and ROMP_POSTAL_CLIENT_ONLY=1), "
+                                        "(file, line, argv): %r" % offenders)
 
     def test_the_guard_itself_sees_the_spawn_sites(self):
-        """the scan must match the spawn idioms the labs use, else the rule above would pass vacuously"""
-        hits = [n for n in os.listdir(HERE) if n.endswith(".py") and _spawns_kernel(open(os.path.join(HERE, n), encoding="utf-8", errors="replace").read())]
-        self.assertIn("test_federation_missing_served.py", hits)
-        self.assertIn("test_notification_tap_resume_browser.py", hits)
-        # the shapes the scan must read: a list literal, a path joined or divided, a call split across lines, run as well as Popen
+        """The scan must read the spawn idioms the labs use, else the trio rule above would pass vacuously; and it must
+        refuse the shapes the regex census read wrongly (2026-09-21), else the rule reds on a module that starts no
+        kernel. Three reads. (1) The tree: the roads table over every module the trio test reads (spawn_roads; the
+        `--roads` arm prints it) holds the two lab modules on the argv road and no module refused, and the message
+        REPORTS the three counts at whatever size the tree has, so a change of population is visible here and fails
+        nothing by itself. (2) The head's five positives and four negatives, snippets with no import of subprocess,
+        so the library is read by its spelling as an unbound name (the stated fallback). (3) PLANT_TABLE: every row
+        run and held to its label, the site's LINE held to the planted call's, the road held to the label's, the
+        refusal's message held to name the call's line and both declarations."""
+        roads = spawn_roads(HERE, skip=(os.path.basename(__file__),))
+        counts = {r: sum(1 for road, _, _ in roads.values() if road == r) for r in ("argv", "binding", "neither", "refused")}
+        report = ("the roads table over %d modules under tests/ (python tests/test_hermetic_kernel_postal.py --roads): argv %d, "
+                  "binding %d, neither %d, refused %d" % (len(roads), counts["argv"], counts["binding"], counts["neither"], counts["refused"]))
+        for lab in ("test_federation_missing_served.py", "test_notification_tap_resume_browser.py"):
+            self.assertEqual(roads.get(lab, ("absent from the table",))[0], "argv",
+                             "%s starts a lab kernel by an argv element that is the path as written; %s" % (lab, report))
+        self.assertEqual([n for n, (road, _, _) in roads.items() if road == "refused"], [],
+                         "a module under tests/ binds an argv name both to the kernel's path and to something else; %s" % report)
+        # the head's shapes: a list literal, a path joined or divided, a call split across lines, run as well as Popen
         for src in ('subprocess.Popen([os.path.join(BIN, "romp-kernel")], env=env)',
                     'subprocess.run(\n    [sys.executable, str(BIN / "romp-kernel")],\n    capture_output=True)',
                     'Popen(["python3", "bin/romp-kernel"])',
                     'subprocess.check_output([os.path.join(BIN, "romp"), "kernel", "--serve"])',
                     'KERNEL = os.path.join(BIN, "romp-kernel")\nproc = subprocess.Popen([sys.executable, KERNEL], env=env)'):
-            self.assertTrue(_spawns_kernel(src), src)
+            self.assertTrue(_spawns_kernel(src), "a kernel spawn the labs write, the library by its spelling (unbound): " + src)
         for src in ('subprocess.run(["node", "esbuild.js"], cwd=EXT)',
                     'subprocess.run(["bin/romp-postal-service", "ensure"])',
                     'subprocess.run([os.path.join(BIN, "romp-judge"), "--once"])',
                     'load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))'):
             self.assertFalse(_spawns_kernel(src), "not a kernel spawn (a build, the other scripts, an in-process load): " + src)
+        # the labelled table
+        roads_by_label = {"caught-by-argv": "argv", "caught-by-binding": "binding"}
+        for label, kind, site, src in PLANT_TABLE:
+            if kind == "refused-loud":
+                call, path, other = site
+                with self.assertRaises(UnreadableSpawn, msg="%s: two declarations that disagree are refused loudly, never read either way" % label) as loud:
+                    _kernel_spawn_sites(src, "planted.py")
+                for needle in ("planted.py line %d:" % call, "(line %d:" % path, "(line %d:" % other):
+                    self.assertIn(needle, str(loud.exception), "%s: the refusal names the call's line and both declarations: %s" % (label, loud.exception))
+            elif kind == "no-spawn":
+                self.assertEqual(_kernel_spawn_sites(src, "planted.py"), [], "%s: no kernel spawn (keyed on the argv's elements resolved "
+                                 "to their bindings, never on a word of the argv's text)" % label)
+            else:
+                sites = _kernel_spawn_sites(src, "planted.py")
+                self.assertEqual([(line, road) for line, _, road in sites], [(site, roads_by_label[kind])],
+                                 "%s: one site, at the planted call's line %d, by the %s road: %r" % (label, site, roads_by_label[kind], sites))
+        self.assertEqual(sorted({kind for _, kind, _, _ in PLANT_TABLE}), ["caught-by-argv", "caught-by-binding", "no-spawn", "refused-loud"],
+                         "the table carries every label at least once")
+
+    def test_the_offender_census_names_a_planted_launch_by_its_line_and_not_a_planted_word_collision(self):
+        """The composition the trio test runs (_kernel_spawn_offenders: the spawn scan and the trio read together, over a
+        directory of modules) and the roads table (spawn_roads), over planted modules: the module that launches the
+        kernel through a path bound across two lines with no trio is the one offender, named with its file, the line of
+        the call and the argv; the same launch under kernel_env is none; eight modules whose only tie to the kernel is a
+        local bound to its path, or to text spelling it, beside a nested pytest argv carrying the local's name as a flag
+        or a word are none (the regex census named every one of them and missed the launch, the red-before of
+        2026-09-21); the roads label the two launches binding and the eight neither. A separate directory holds a
+        module that binds one name to the path and to a pytest argv in one function: the census is loud on it, naming
+        the module and both lines, and the roads table labels it refused."""
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        head = 'import os, subprocess, sys, unittest\nBIN = "/tmp/TESTHOST/bin"\n\nclass T(unittest.TestCase):\n    def test_a(self):\n'
+        launch = '        KERNEL = os.path.join(\n            BIN, "romp-kernel")\n        subprocess.Popen([KERNEL], env=%s)\n'
+        pytest_argv = '        subprocess.run([sys.executable, "-m", "pytest", %s"tests/test_other.py"])\n'
+        planted = {"test_launch_no_trio.py": head + launch % "{}",
+                   "test_launch_kernel_env.py": head + launch % "kernel_env(d, c, x, 1, t)"}
+        for local, flag in (("p", '"-p", "no:cacheprovider", '), ("x", '"-x", '), ("k", '"-k", "boot", '), ("path", '"path/of/tests", '),
+                            ("kernel", '"kernel", '), ("src", '"src/main.ts", '), ("lines", '"-k", "lines", ')):
+            planted["test_collide_%s.py" % local] = (head + '        %s = os.path.join(BIN, "romp-kernel")\n        open(%s).read()\n' % (local, local)
+                                                    + pytest_argv % flag)
+        planted["test_collide_text.py"] = head + '        p = "os.path.join(BIN, \'romp-kernel\')"\n' + pytest_argv % '"-p", "tests.conftest", '
+        for name, text in planted.items():
+            with open(os.path.join(d, name), "w", encoding="utf-8") as f:
+                f.write(text)
+        text = planted["test_launch_no_trio.py"]
+        planted_line = text[:text.index("subprocess.Popen")].count("\n") + 1
+        self.assertEqual(_kernel_spawn_offenders(d), [("test_launch_no_trio.py", planted_line, "[KERNEL]")],
+                         "the one offender, named with the line of the planted call (the two-line binding read through KERNEL)")
+        self.assertEqual(_kernel_spawn_offenders(d, skip=("test_launch_no_trio.py",)), [], "the launch under kernel_env and the eight collisions are none")
+        roads = {name: road for name, (road, _, _) in spawn_roads(d).items()}
+        self.assertEqual(roads, dict({n: "neither" for n in planted}, **{"test_launch_no_trio.py": "binding", "test_launch_kernel_env.py": "binding"}),
+                         "the roads table over the planted directory: the two launches by the binding road, the eight collisions neither")
+        loud_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, loud_dir, True)
+        rebinding = (head + '        k = os.path.join(BIN, "romp-kernel")\n        k = [sys.executable, "-m", "pytest", "-k", "boot"]\n'
+                     + '        subprocess.run(k)\n')
+        with open(os.path.join(loud_dir, "test_rebinding.py"), "w", encoding="utf-8") as f:
+            f.write(rebinding)
+        with self.assertRaises(UnreadableSpawn, msg="a name bound to the path and to a pytest argv in one function is refused loudly by the census") as loud:
+            _kernel_spawn_offenders(loud_dir)
+        for needle in ("test_rebinding.py line 8:", "(line 6:", "(line 7:"):
+            self.assertIn(needle, str(loud.exception), "the refusal names the module, the call's line and both declarations: %s" % loud.exception)
+        self.assertEqual([road for road, _, _ in spawn_roads(loud_dir).values()], ["refused"], "the roads table labels the module refused")
 
     def test_the_module_that_loads_the_kernel_in_process_and_attaches_places_each_leg_of_the_trio_where_it_is_read(self):
         """Read by position from the module's ast, not by text (_placement_faults): the port is assigned at module level
@@ -643,4 +1171,9 @@ class HermeticKernelPostal(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    if sys.argv[1:2] == ["--roads"]:
+        # `python tests/test_hermetic_kernel_postal.py --roads [directory]`: the per-module roads table, the unresolved
+        # names and the summary counts (the census's population, derived by this one command)
+        _print_roads(sys.argv[2] if len(sys.argv) > 2 else HERE, skip=(os.path.basename(__file__),))
+    else:
+        unittest.main()
