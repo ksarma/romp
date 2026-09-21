@@ -3,8 +3,10 @@ RECONNECTING the session (resume) — which otherwise leaves nothing in the chat
 switching-dots and the chat shows a transient "Reloading session…" element while the reconnect is pending,
 both driven by an `effortPending` flag that mirrors `modelPending` end-to-end and clears when the new client
 connects. Source pins on build_session + the SDK backend."""
+import ast
 import inspect
 import os
+import sys
 import unittest
 from romp_load import load_source
 import tempfile
@@ -265,14 +267,126 @@ class EffortReconnect(unittest.TestCase):
         # value reverted at the next respawn when __init__ re-read the reg (the user 2026-08-14,
         # whose ultracode sessions seemed to downgrade at random). The whole setter family goes
         # through _update_reg now.
+        # WHAT A SOURCE-TEXT PIN GUARANTEES: that the setter still reaches _update_reg by this one spelling, and
+        # nothing more. Expected text copied from the artifact it guards is a restatement of that text, so it reds
+        # on the next appended argument with the property intact: set_auth's dormant-road pin did exactly that when
+        # round 6 of the reviewer's review (fork PR #813) appended the step carrier (token=token) to a call that
+        # still rode the locked RMW. That pin is gone from this list; the two tests below read the auth write by its
+        # property, from the syntax tree (the callee and the keywords present) and by execution (every record write
+        # during the setter made inside _update_reg with _reg_lock held). The six spellings left here stay as they
+        # are this commit. Executed behaviour behind them: set_model's snapshot-and-write in one lock hold is
+        # tests/test_sdk_backend.py's test_a_defaults_or_reg_read_taken_outside_the_store_lock_never_feeds_the_revert.
         for pin in ('self._update_reg(sid, effort=value, effortPending=True)',
-                    'self._update_reg(sid, auth=side, authLogin=login_id, authPending=True, apiKeyAuth=None)',
                     'self._update_reg(sid, mode=mode)',
                     'self._update_reg(sid, fast=(value == "on"), liveFast=value)',
                     'self._update_reg(sid, name=new_name,',   # + the rename ping rides the same locked RMW when owed (2026-08-24/25)
                     'self._update_reg(sid, model=value, modelPending=pending)',   # the live model write
                     'self._update_reg(sid, model=value, liveModel=_alias_label(value), modelPending=False)'):
             self.assertIn(pin, BACKEND_SRC)
+
+    def test_set_auth_record_writes_are_the_locked_rmw_by_structure(self):
+        """set_auth's record writes read from the syntax tree of the backend, not from one spelling of a call (round 6
+        of the reviewer's review, fork PR #813: a spelling pin reds on an appended argument; this keys on the property).
+        The dormant road (a registered session with a record and no live object) writes its record itself: every direct
+        self._update_reg call in set_auth carries auth, authLogin, authPending and apiKeyAuth among its keyword
+        arguments, present whatever else the list holds and in whatever order (neither the list's length nor its order
+        nor its completeness is pinned). The live roads write through SdkBackend._mirror_pick, whose one record write
+        is a call into its session's _mirror_auth; SdkSession._mirror_auth and _mirror_auth_pending each hold exactly
+        one call to self.backend._update_reg and no write_reg or _write_reg_locked call, and neither does set_auth or
+        _mirror_pick.
+        Covers those five bodies, nested functions and every branch included: a bare write anywhere in them, the
+        dormant road's keywords, and the chain from the live roads to the RMW. Does not cover a record write through
+        a helper under another name that takes no auth keyword (a dict handed positionally), the mirrors' other
+        callers (the landing, the walk's steps, the guard's retry; _mirror_pick's docstring lists them), or what
+        happens at run time, which test_set_auth_dormant_road_writes_the_record_inside_the_locked_rmw executes."""
+        mod = ast.parse(BACKEND_SRC)
+        classes = {n.name: n for n in mod.body if isinstance(n, ast.ClassDef)}
+        backend, session = classes["SdkBackend"], classes["SdkSession"]
+
+        def method(cls, name):
+            hits = [n for n in cls.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == name]
+            self.assertEqual(len(hits), 1, "%s.%s: one definition expected" % (cls.name, name))
+            return hits[0]
+
+        def calls(node):
+            return [c for c in ast.walk(node) if isinstance(c, ast.Call)]
+
+        def callee(call):
+            return ast.unparse(call.func)
+
+        def keywords(call):
+            return {k.arg for k in call.keywords if k.arg is not None}
+
+        def bare_writes(fn):
+            # a write_reg (the record's writer) or _write_reg_locked (a whole record under the lock, read outside it)
+            # call anywhere in the body; line and text, for the message
+            return ["L%d %s" % (c.lineno, ast.unparse(c)) for c in calls(fn)
+                    if callee(c).rsplit(".", 1)[-1] in ("write_reg", "_write_reg_locked")]
+
+        set_auth = method(backend, "set_auth")
+        self.assertEqual(bare_writes(set_auth), [], "set_auth writes a record bare")
+        dormant = [c for c in calls(set_auth) if callee(c) == "self._update_reg"]
+        self.assertTrue(dormant, "set_auth's dormant road calls self._update_reg (a check over no call proves nothing)")
+        for c in dormant:
+            self.assertTrue({"auth", "authLogin", "authPending", "apiKeyAuth"} <= keywords(c),
+                            "L%d: the dormant road's RMW names the pick's fields; it names %s" % (c.lineno, sorted(keywords(c))))
+        # the live roads: set_auth -> self._mirror_pick -> <session>._mirror_auth -> self.backend._update_reg
+        self.assertTrue([c for c in calls(set_auth) if callee(c) == "self._mirror_pick"],
+                        "set_auth's live roads call self._mirror_pick")
+        mirror_pick = method(backend, "_mirror_pick")
+        self.assertEqual(bare_writes(mirror_pick), [], "_mirror_pick writes a record bare")
+        sess = mirror_pick.args.args[1].arg   # (self, <session>, token, **fields)
+        self.assertEqual(len([c for c in calls(mirror_pick) if callee(c) == "%s._mirror_auth" % sess]), 1,
+                         "_mirror_pick makes one call into its session's _mirror_auth")
+        for name in ("_mirror_auth", "_mirror_auth_pending"):
+            fn = method(session, name)
+            rmw = [c for c in calls(fn) if callee(c) == "self.backend._update_reg"]
+            self.assertEqual(len(rmw), 1, "SdkSession.%s holds one call to self.backend._update_reg" % name)
+            self.assertEqual(bare_writes(fn), [], "SdkSession.%s writes a record bare" % name)
+
+    def test_set_auth_dormant_road_writes_the_record_inside_the_locked_rmw(self):
+        """The property by execution (round 6 of the reviewer's review, fork PR #813): set_auth on the dormant road (a
+        registered session with a record and no live object) makes every record write from inside _update_reg with
+        _reg_lock held, and the record it leaves carries the pick. write_reg, the writer _update_reg calls under the
+        lock, is wrapped in the backend module to record, at call time, the calling frame's name and whether the lock
+        is held; a bare write_reg on the road (outside _update_reg, lock free) fails this however it is spelled."""
+        sb = load_source("romp_sdk_backend_efr_rmw", os.path.join(BIN, "romp_sdk_backend.py"))
+        d = tempfile.mkdtemp()
+        open(os.path.join(d, "session-hosts"), "w").write("off")   # a state root minted here writes `off` itself (the repo's rule)
+        cfg = tempfile.mkdtemp()                                     # the box's own Claude settings stay out of this
+        before = os.environ.get("CLAUDE_CONFIG_DIR")
+        os.environ["CLAUDE_CONFIG_DIR"] = cfg
+        self.addCleanup(lambda: os.environ.update({"CLAUDE_CONFIG_DIR": before}) if before is not None
+                        else os.environ.pop("CLAUDE_CONFIG_DIR", None))
+        managed_before = sb._cred.managed_settings_path                # never the box's managed file
+        sb._cred.managed_settings_path = lambda: os.path.join(cfg, "no-managed-settings.json")
+        self.addCleanup(setattr, sb._cred, "managed_settings_path", managed_before)
+        fetch_before = sb._fetch_key_fast_org                          # a real HTTPS GET, never from a test
+        sb._fetch_key_fast_org = lambda key: None
+        self.addCleanup(setattr, sb, "_fetch_key_fast_org", fetch_before)
+        be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None)
+        be.login_ok = lambda: True            # a login the box can bill, so the pick is available by construction
+        sid = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"   # a private synthetic sid: this test mints a record, never a goal
+        sb.write_reg(d, sid, {"sid": sid, "name": "web", "cwd": d, "alive": False})
+        self.assertIsNone(be.sessions.get(sid), "dormant: registered, no live object")
+        real_write, writes = sb.write_reg, []
+
+        def recording_write(state_dir, sid_, reg):
+            frame = sys._getframe(1)          # the frame that called write_reg
+            writes.append({"caller": frame.f_code.co_name, "locked": be._reg_lock.locked(), "record": dict(reg)})
+            return real_write(state_dir, sid_, reg)
+
+        sb.write_reg = recording_write        # the name _update_reg resolves at the call, in the module it runs in
+        self.addCleanup(setattr, sb, "write_reg", real_write)
+        self.assertTrue(be.set_auth(sid, "login"), "the dormant road accepts the pick")
+        self.assertTrue(writes, "the pick wrote its record (a check over no write proves nothing)")
+        outside = [w for w in writes if w["caller"] != "_update_reg" or not w["locked"]]
+        self.assertEqual(outside, [], "every record write during set_auth is _update_reg's, made with _reg_lock held")
+        picked = {"auth": "login", "authLogin": "", "authPending": True, "apiKeyAuth": None}
+        carried = [w for w in writes if all(k in w["record"] and w["record"][k] == v for k, v in picked.items())]
+        self.assertTrue(carried, "a write carried the pick's fields; the writes named %s" % [sorted(w["record"]) for w in writes])
+        reg = sb.read_reg(d, sid)
+        self.assertEqual({k: reg.get(k) for k in picked if k in reg}, picked, "the record on disk carries the pick")
 
     def test_backend_clears_the_pending_flag_when_the_reconnect_lands(self):
         # cleared the instant the new client connects (reconnect loop) — event-based, mirrors _model_pending
