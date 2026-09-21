@@ -159,8 +159,10 @@ const fieldOnParam = (e: ts.Node, param: string): string | null => {
  *  through a parenthesis or an assertion on the receiver. The derivation of the take state (the ordering pin) reads the take's and the
  *  untake's writes through this and the parked figures' reads through fieldsReadOn, so it keys on the PROPERTY, the field of the view written
  *  or read, not on the spelling `v.<field>` (until the author's fixer pass over the pass after the maintainer's round 4 ruling, VT14, the
- *  derivation read bare `v.<name>` assignments and reads alone while its message said a field the take grows into is added). A computed key
- *  or a non-literal source is outside it, as it is outside writesOf. */
+ *  derivation read bare `v.<name>` assignments and reads alone while its message said a field the take grows into is added). Outside it: a
+ *  computed key of any expression but a string literal and a non-literal source or map, as they are outside writesOf, and a write through an
+ *  alias of the parameter (`const w = v as any; w.spare = 1`), because the tree resolves no binding (the closing fixer over the author's
+ *  fixer pass over pass 5, CL-3, named the alias; until then it was outside without being named). */
 function fieldsWrittenOn(param: string, root: ts.Node): Set<string> {
   const out = new Set<string>();
   for (const s of writeSites(root)) for (const t of s.targets) {
@@ -169,11 +171,21 @@ function fieldsWrittenOn(param: string, root: ts.Node): Set<string> {
   }
   return out;
 }
-/** The fields of the parameter `param` read under `root`: every property or string-keyed element access whose receiver (bare) is the parameter. */
+/** The fields of the parameter `param` read under `root`: every property or string-keyed element access whose receiver (bare) is the parameter,
+ *  and every field a binding pattern or an assignment pattern takes from it (`const { measured } = v`, `({ avg: a } = v)`, `let m; ({ m } = v)`:
+ *  the property's name, or the shorthand's, under an identifier, a string or a computed name whose expression is a string literal; a rest
+ *  element names no field). Outside it, because the tree resolves no binding: a read through an alias of the parameter (`const w = v;
+ *  w.measured`), as a write through an alias (`const w = v as any; w.spare = 1`) is outside fieldsWrittenOn and the census's alias forms are
+ *  outside writesOf. Until the closing fixer over the author's fixer pass over pass 5 (CL-3) the pattern forms were outside it too, and
+ *  the alias of the parameter was outside both derivations without being named. */
 function fieldsReadOn(param: string, root: ts.Node): Set<string> {
   const out = new Set<string>();
+  const isParam = (e: ts.Node): boolean => { const b = bare(e); return ts.isIdentifier(b) && b.text === param; };
+  const keyOf = (n: ts.PropertyName | ts.BindingName): string | null => ts.isIdentifier(n) || ts.isStringLiteralLike(n) ? n.text : ts.isComputedPropertyName(n) && ts.isStringLiteralLike(n.expression) ? n.expression.text : null;
   const go = (n: ts.Node): void => {
-    if (ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n)) { const f = fieldOnParam(n, param); const recv = bare(n.expression); if (f && ts.isIdentifier(recv) && recv.text === param) out.add(f); }
+    if (ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n)) { const f = fieldOnParam(n, param); if (f && isParam(n.expression)) out.add(f); }
+    if (ts.isVariableDeclaration(n) && ts.isObjectBindingPattern(n.name) && n.initializer && isParam(n.initializer)) for (const el of n.name.elements) { if (el.dotDotDotToken) continue; const k = keyOf(el.propertyName ?? el.name); if (k) out.add(k); }
+    if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isObjectLiteralExpression(n.left) && isParam(n.right)) for (const p of n.left.properties) { const nm = p.name; if (ts.isSpreadAssignment(p) || !nm) continue; const k = keyOf(nm); if (k) out.add(k); }
     ts.forEachChild(n, go);
   };
   go(root);
@@ -851,7 +863,7 @@ test("the reload restore's raw write of the persisted rs.top, on the tree: from 
     return [...(written ? fieldsWrittenOn(param, fn!.body!) : fieldsReadOn(param, fn!.body!))];
   };
   assert.deepEqual([...new Set([...viewFields("applyMeasure", true), ...viewFields("untakeMeasure", true), ...viewFields("figuresBefore", false)])].sort(), [...TAKE_STATE].sort(),
-    "the take state derived from render.ts (the fields of the view the take and the untake write, in every form the census names, and the parked figures are read from, through a cast or a parenthesis too) is the set stated once at module level; a field the take grows into, in any of those forms, is added there and traced in land-active-keep.test.ts's world (a computed key or a non-literal source is outside this derivation as it is outside the census)");
+    "the take state derived from render.ts (the fields of the view the take and the untake write, in every form the census names, and the parked figures are read from, through a cast or a parenthesis, or through a binding or an assignment pattern, too) is the set stated once at module level; a field the take grows into, in any of those forms, is added there and traced in land-active-keep.test.ts's world (outside this derivation, as they are outside the census: a computed key of any expression but a string literal, a non-literal source or map, and a read or a write through an alias of the parameter)");
   // the takers: DERIVED, every function that writes a take-state field in any form the tree can name (writesOf), by owner; LISTED, the two
   // spacer redraws, each checked to name a function declaration (a misspelled seed would be a dead seed and an open window); then the closure
   // over render.ts's named functions of everything that calls a taker, to a fixpoint
