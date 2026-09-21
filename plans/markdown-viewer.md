@@ -8162,7 +8162,11 @@ round's fixes, by a verifier of the author's, is named the author's closing pass
 review, and its findings carry the ids behaviour-N, records-N, coverage-N, guards-N, attribution-and-gates-N, reader-N and
 tree-N, which no fixlist of the file review holds. The maintainer's read of the whole PR at one head before landing is named
 the file review's landing round, with no number, and the findings its fixlist carries keep that fixlist's own ids (fresh-N,
-rules-N, regression-N, tests-N and extra-N with a digit before the hyphen), none of the author's family. A record naming a
+rules-N, regression-N, tests-N and extra-N with a digit before the hyphen), none of the author's family. The author's
+own verification after the landing round's fixes is named the author's closing pass after the file review's landing
+round; its findings' ids (census-N, and records-N of the family above) stand in its commits and in the notes outside the
+repo, and the records here name the pass alone, since the attribution module reads a pass's name to the digits of the
+round it followed and the landing round has none. A record naming a
 round names the review it belongs to first (ui/webview/linknav-records-attribution.test.ts holds this, in every checkout,
 over every unit of the files the branch created and over every unit in the tree that names the file review, names the
 author's closing pass, or carries an id of the author's family, a phrase outside the created files judged where the review
@@ -8569,9 +8573,11 @@ bypassed: no request reaches a host the gate still holds. The build's record her
 the contract said the same; the claim was false, and the follow-on is a privacy surface, landing on the owner's word
 (open point 11). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui/webview, docs, plans, tools,
-upstream or tests alone (42 files, the ledger entry's where line; run 2026-09-20 at the head after the merge of the fork's
-main for the file review's round 5, where the merge-base is the fork's main itself and the listing is the branch's whole
-delta over it; the two earlier runs, at the commit that built the one reader for the file review's round 4 and at the head
+upstream or tests alone (42 files, the ledger entry's where line; run 2026-09-21 at the head that carries the file
+review's landing round's fixes, where the merge-base is the fork's main the branch last merged and the listing is the
+branch's whole delta over it; the run at the head after that merge, for the file review's round 5, listed 40, before the
+landing round's executed test re-aimed two more standing suites; the two earlier runs, at the commit that built the one
+reader for the file review's round 4 and at the head
 that closed the author's closing pass after the file review's round 4, listed 38 from the older merge-base they shared,
 before the merge made main's tools/markdown-viewer-plan-gate-adopt.test.mjs a file the branch edits;
 tools/markdown-viewer-plan-linknav.test.mjs runs both behind the two-part gate the Tests paragraph names, the merge-base
