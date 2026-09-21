@@ -373,6 +373,27 @@ test("an observer delivery with the view at width 0 (an ancestor hid it) forgets
   assert.equal(perTurnEstimate(rowsFor(rows, (r) => r.className, () => false, () => 0)), null, "the estimator hands out no 0");
 });
 
+test("a delivery on a view whose only child is the empty transcript's placeholder, or the deferred build's loading hint under a spacer, survives: the callback returns, measures nothing and files no unitchange row (the maintainer's round 3 ruling A: the unit-aware tail scan left tail at -1 and the pane's unitOf threw on children[-1] inside the observer's callback)", () => {
+  // the two views the pane shows with no unit-carrying child: syncViewInner's tx-empty placeholder for a zero-event session (its swirl
+  // removes itself on error, a height change), and showActive's tx-loading hint, the only child of a non-empty session's view for the frame
+  // its heavy build is deferred to. The mutation observer hands every added element to this observer, so the first observation of either
+  // is a baseline and a later height change an entry; the callback is the lifted one (the 13441 closure's dataset reach-in included)
+  for (const [label, kids] of [["the placeholder", [["tx-empty", 120]]], ["the loading hint under a spacer", [["tx-spacer tx-spacer-top", 10], ["tx-loading", 40]]]] as Array<[string, Array<[string, number]>]>) {
+    const w = lift("A");
+    const host = new FakeEl("div"); (host as any).clientWidth = 800;
+    const rows = kids.map(([cls, h]) => host.appendChild(new FakeEl("div", cls, h, w.reads)));
+    const v: any = { el: host, uh: new WeakMap<object, number>(), stick: true, shown: true, winStart: 0, winEnd: 0, unitTotal: 0 };
+    w.views.set("A", v);
+    const { deliver, heights } = liftObserver(w, v, "A");
+    deliver(rows, (r) => r.realH);   // the first observation: the baselines
+    const last = rows[rows.length - 1];
+    assert.doesNotThrow(() => deliver([last], () => last.realH - 24), label + ": the callback survives a height change of the unit-less child (at the head: TypeError, reading dataset of undefined)");
+    assert.equal(heights.get(last), last.realH - 24, label + ": the baseline moved on");
+    assert.deepEqual(w.diag.filter((d) => d.kind === "unitchange"), [], label + ": no unitchange row (the parent's behaviour: the view's own change is the rail's tailchange row, which names it, tail-change-row.test.ts)");
+    assert.equal(v.measured, undefined, label + ": nothing measured, there being no unit rows"); assert.equal(w.paints, 0, label + ": no paint asked for");
+  }
+});
+
 // ── the resets that clear the average (review round 0, low) ──────────────────────────────────────
 
 test("forgetAverage drops a parked average with the figure, so a reset's build measures the new rows instead of taking the old rows' average", () => {

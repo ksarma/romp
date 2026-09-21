@@ -84,6 +84,37 @@ test("a hover's rail band as the thread's last child is not the tail when the un
   assert.deepEqual(byChild.map((x) => [x.cls, x.dh, x.fromTail]), [["turn turn-tool", 30, 1]], "no unit index: the spacer rule, the band the tail (kept for callers that pass none)");
 });
 
+test("a view with no unit-carrying child files nothing when the unit index is given, as the spacer rule did: the empty transcript's placeholder alone, and the deferred build's loading hint under a spacer (the maintainer's round 3 ruling A: the unit-aware scan left tail at -1 and the pane's unitOf threw on children[-1])", () => {
+  // the pane's unitOf reaches into dataset (render.ts ensureView: `(n as HTMLElement).dataset?.unit`, the `?.` guarding dataset and not n), so
+  // an undefined child THROWS rather than answering undefined: the predicate here has the same shape on purpose, and says so, so a scan that
+  // reads children[tail] with tail at -1 is a red here and not a quiet undefined
+  type N = { className: string; dataset: { unit?: string } };
+  const paneUnitOf = (n: N) => { const u = n.dataset?.unit; return u != null && u !== "" ? Number(u) : undefined; };
+  assert.throws(() => paneUnitOf(undefined as unknown as N), TypeError, "the predicate is production-shaped: an undefined child throws");
+  const placeholder: N = { className: "tx-empty", dataset: {} };   // syncViewInner's placeholder for a zero-event session; its swirl removes itself on error, a height change
+  const h1 = new Map<N, number>([[placeholder, 120]]);
+  assert.deepEqual(unitChanges([{ target: placeholder, height: 96 }], [placeholder], h1, paneUnitOf), [], "the placeholder shrinking: no unit-carrying child, so no tail unit and nothing filed (the rail's row names the change)");
+  assert.equal(h1.get(placeholder), 96, "…and its baseline moved on, as for every observed child");
+  const top: N = { className: "tx-spacer tx-spacer-top", dataset: {} }, loader: N = { className: "tx-loading", dataset: {} };   // showActive's loading hint, the only child of a non-empty session's view for the frame its heavy build is deferred
+  const h2 = new Map<N, number>([[top, 10], [loader, 40]]);
+  assert.deepEqual(unitChanges([{ target: loader, height: 64 }], [top, loader], h2, paneUnitOf), [], "the loading hint growing under a spacer: no tail unit, nothing filed");
+  assert.deepEqual(unitChanges([{ target: loader, height: 80 }], [top, loader], h2), [], "…and with no predicate the loader is the tail under the spacer rule, whose own change is the rail's: nothing filed either way");
+});
+
+test("a foreign child below the tail as the ENTRY (a hover's band re-sized by the rail's repaint): no row and never a negative fromTail, where the spacer rule skipped it and the unit-aware scan filed it at tail minus index (the maintainer's round 3 ruling A, the second face)", () => {
+  const w = window();
+  const band: U = { className: "rail-band rail-band-local" };
+  const children = [w.top, w.a, w.b, w.c, band, w.bot];
+  w.heights.set(band, 4);
+  assert.deepEqual(unitChanges([{ target: band, height: 8 }], children, w.heights, unitOf), [], "the band is neither a unit nor the tail: no row (at the head the row carried fromTail -1, the value BOX_FROM_TAIL reserves for a box outside the thread)");
+  assert.equal(w.heights.get(band), 8, "its baseline moves on");
+  // the sign, over the units: a unit above the tail counts units (positive), the tail's own divider 0 (the case above), and no thread child is
+  // ever below 0, since the units are in order and the tail is the last of them
+  const rows = unitChanges([{ target: w.a, height: 90 }, { target: w.b, height: 210 }, { target: band, height: 12 }], children, w.heights, unitOf);
+  assert.deepEqual(rows.map((x) => [x.cls, x.fromTail]), [["turn turn-user", 2], ["turn turn-assistant", 1]], "the units file, the band does not");
+  assert.ok(rows.every((x) => x.fromTail >= 0), "fromTail is how many units above the tail a unit sits: never negative");
+});
+
 test("spacers, units that left the window and a window with no tail file nothing", () => {
   const w = window();
   assert.deepEqual(unitChanges([{ target: w.top, height: 4483 }], w.children, w.heights), [], "a spacer re-estimate has its own spacer row");

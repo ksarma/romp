@@ -34,7 +34,14 @@ test("with a unit predicate the tail is the last child that carries a unit: a ho
   assert.equal(tailLabel(children, isUnit), "turn turn-assistant", "the band is passed over: the tail is the last unit");
   assert.equal(tailLabel(children), "rail-band rail-band-local", "the spacer rule alone would name the band (the old reading, kept for callers with no predicate)");
   assert.equal(tailLabel(children.concat([{ className: "tx-spacer tx-spacer-bot" }]), isUnit), "turn turn-assistant", "a bottom spacer is passed over too");
-  assert.equal(tailLabel([{ className: "tx-spacer tx-spacer-top" }, { className: "rail-band" }], isUnit), "", "no unit, no tail");
+  // a view with NO unit-carrying child: the spacer rule stands in for the whole scan (a second pass after the unit pass, never a per-child
+  // OR, which would name a band beside units and undo the case above), so the row names the placeholder or the loader as it did before the
+  // predicate (the maintainer's round 3 ruling C: with the predicate alone the label was "" exactly where a transcript-less view can report);
+  // a band as the only non-spacer child of a unit-less view is then the answer too, re-ruled from the round-2 pin that read "" for it
+  assert.equal(tailLabel([{ className: "tx-empty" }], isUnit), "tx-empty", "the empty transcript's placeholder (its swirl removing itself on error is a height change)");
+  assert.equal(tailLabel([{ className: "tx-spacer tx-spacer-top" }, { className: "tx-loading" }], isUnit), "tx-loading", "the deferred build's loading hint, the only child of a non-empty session's view for one frame");
+  assert.equal(tailLabel([{ className: "tx-spacer tx-spacer-top" }, { className: "rail-band" }], isUnit), "rail-band", "no unit anywhere: the last child that is not a spacer, whatever it is");
+  assert.equal(tailLabel([{ className: "tx-spacer tx-spacer-top" }], isUnit), "", "spacers alone: no tail under either rule");
 });
 
 test("render.ts files the row from both tail observers, beside the tail-shrink rule, through the capped diag path", () => {
