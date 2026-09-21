@@ -72,8 +72,9 @@ names); which call of the censused set hands which string to one of them is not 
 On the recorder's side the residual is FIVE roads, and the rule over them: the recorder sees a call only through the lab
 module's own `subprocess` attribute, and only while it is installed, and it records the argv the lab module hands that
 attribute and nothing of what the program then does; the census reads only the censused set's own Python sources; so a
-spawning call whose source is outside both, whose time is before the recorder, or whose spawner is the RECORDED PROGRAM
-itself is unseen, however far out the import that reaches it. (1) A program a censused module's own function starts through that module's own subprocess
+spawning call whose source is outside both, whose time is outside the recorder's window (before it is installed, or
+deferred past its removal), or whose spawner is the RECORDED PROGRAM itself is unseen, however far out the import that
+reaches it. (1) A program a censused module's own function starts through that module's own subprocess
 binding when the lab module calls the function (the recorder patches the lab module's attribute alone, and the census reads
 that call as the module's own). (2) A program a function of an IMPORTED module starts through that module's own binding,
 the same road one import further out, which pass 8 named and pass 9 narrowed away. (3) A program a foreign module the
@@ -81,13 +82,19 @@ import allow-list permits starts inside its own source, reached by a whole-node 
 `uuid.getnode()` runs a program on an interpreter without the `_uuid` extension, `http.server`'s CGI handler forks and
 execs, `os.popen` is a Python body that calls `subprocess.Popen`, `subprocess` itself reaches `_posixsubprocess` and
 `os.posix_spawn`, and `unittest.mock` imports asyncio, a spawner family's module, which the scan's own rule counts as a
-road. (4) A program started at IMPORT time, before any recorder is installed, by code the census cannot resolve as running
-then: the module-level statements of the censused set run at import, a spawning call and a callable handed to a call there
-are refused, and what a module-level call does inside its callee is the callee's own source, road (2) or (3) at import time;
-the package's own `__init__.py` and the sibling modules only it imports run before the lab module under both entry points
-and are outside the censused set (`_lab_modules` walks the lab module's imports, not the package's), so they are derived and
-printed as an UNWALKED item (`_package_init_unwalked`) beside the unread modules, never counted as read (the maintainer's
-round 6, extra6-4: the import-time docstring called its list everything that could start a program before a recorder).
+road. (4) A program started OUTSIDE the recorder's window, in either direction, by code the census cannot resolve as
+running then. BEFORE the recorder is installed, at IMPORT time: the module-level statements of the censused set run at
+import, a spawning call and a callable handed to a call there are refused, and what a module-level call does inside its
+callee is the callee's own source, road (2) or (3) at import time; the package's own `__init__.py` and the sibling modules
+only it imports run before the lab module under both entry points and are outside the censused set (`_lab_modules` walks
+the lab module's imports, not the package's), so they are derived and printed as an UNWALKED item
+(`_package_init_unwalked`) beside the unread modules, never counted as read (the maintainer's round 6, extra6-4: the
+import-time docstring called its list everything that could start a program before a recorder). AFTER the recorder is
+lifted: a callable deferred past it from inside a function body (a threading.Timer, a thread, an atexit hook, a finalizer)
+is not refused, since the census refuses a callable handed to a call outside every function body alone and reads nothing
+of when a callable inside one runs, so a program it starts runs under no recorder and is in no derived list (pass 11's
+fixer pass planted a timer-deferred spawn after the checkout: the census and the recorder were both silent, and the plant
+cell pins the shape as not refused, the disclosed class's witness).
 (5) A program a RECORDED program starts: the record is the argv of the lab module's own call, and a static census over
 Python source reads nothing of what git, node or a kernel then runs, so a program started by one of them is in no derived
 list by construction. The tree's own live instance is the mint: its clone starts git-upload-pack against the source (a
@@ -299,7 +306,9 @@ def _commands_around_the_recorder(src, siblings=(), stdlib=None):
     reads, the same two refusals the attribute chains get (a member of a module whose source the census cannot read, outside
     UNREAD_MEMBERS; a module ALLOWED_IMPORTS does not name, reached through an allowed module's own import), keyed on the
     BINDING and not on the attribute spelling (the maintainer's round 6, extra6-1: `from sys import _getframe` escaped where
-    `sys._getframe` was refused). A chain rooted at anything but an import binding (a class attribute holding a module, a
+    `sys._getframe` was refused); and a star import from ANY module (`from sys import *`), since it binds names the census
+    cannot resolve without importing the module (pass 11's fixer pass: the os arm refused `from os import *` alone, and
+    `from sys import *` followed by a read of the star-bound `modules` was silent). A chain rooted at anything but an import binding (a class attribute holding a module, a
     default argument, a container, an assignment `_s = sys`) is not resolved: the rule over what stays unread, since the census
     resolves import bindings and nothing else. `stdlib` is the standard library the modules' own sources are read from (a
     synthetic one in the cells). A comment or a docstring is no node of these kinds, so the words in one do not
@@ -367,6 +376,8 @@ def _commands_around_the_recorder(src, siblings=(), stdlib=None):
                 found.append((n.lineno, "from %s import %s" % (n.module, ", ".join(names))))
             if any((a.asname or a.name) == "subprocess" for a in n.names):
                 found.append((n.lineno, "from %s import ... as subprocess (a second binding of the name)" % (n.module,)))
+            if "*" in names:
+                found.append((n.lineno, "from %s import * (a star import binds names the census cannot resolve)" % (n.module or ".",)))
             if n.level == 0 and top not in ALLOWED_IMPORTS and top not in siblings and top != PACKAGE:
                 found.append((n.lineno, "from %s import ... (a module ALLOWED_IMPORTS does not name)" % (n.module,)))
             for a in n.names:   # the binding resolved: a member of a source-less module outside UNREAD_MEMBERS, or a module reached through the import table
@@ -538,10 +549,14 @@ def _foreign_spawn_roads(mods, stdlib=None):
     (`import os as _os; _os.execv(...)`, the spelling tempfile.py and threading.py use; any import at any depth, a
     function-local one included, since the module-level table alone missed those: the union the maintainer's round 6,
     extra6-2, asked for), a spawner imported from one of them by name (`from os import system`) and a bare call of a name so
-    imported (`system("true")`), or an import of one of FOREIGN_SPAWN_MODULES (never `import os` itself: os is every module's
-    import, and the road is the spawner named on it). What stays unread, the rule: a module held on an instance
-    (`self._os.execv`), in a container, or bound by an assignment (`_o = os`) is no import binding and is not resolved, and a
-    local alias is read module-wide (the table is name-keyed, not scope-keyed: the safe side, a false road over a true miss).
+    imported (`system("true")`), a star import from one of the os-family roots (`from os import *`: it binds every name of
+    the module, a spawner among them, and the scan cannot say which name the module then calls; pass 11's fixer pass, where it
+    bound `system` unseen), or an import of one of FOREIGN_SPAWN_MODULES (never `import os` itself: os is every module's
+    import, and the road is the spawner named on it). What stays unread, the rule over what the scan RESOLVES: a spawner is
+    read on an attribute whose value is a NAME the module's imports bind to an os-family module, and on nothing else, so a
+    module held on an instance (`self._os.execv`), in a container, bound by an assignment (`_o = os`) or reached as another
+    module's attribute (`os.path.os.system`, an attribute whose value is an attribute) is not resolved; and a local alias is
+    read module-wide (the table is name-keyed, not scope-keyed: the safe side, a false road over a true miss).
     Read at the depth of the direct sites: a module these modules import is a further road, stated in the docstring, not
     followed here. A module with no Python source is reported as unread with the reason (built in; an extension module under
     lib-dynload) rather than dropped, and a name with no source anywhere is unread for a reason the caller must refuse."""
@@ -586,6 +601,8 @@ def _foreign_spawn_roads(mods, stdlib=None):
                 hits.append((n.lineno, "from %s import %s" % (n.module, ", ".join(a.name for a in n.names))))
             elif isinstance(n, ast.ImportFrom) and n.module and n.module.split(".")[0] in FOREIGN_SPAWN_ROOTS and any(a.name in spawners for a in n.names):
                 hits.append((n.lineno, "from %s import %s" % (n.module, ", ".join(a.name for a in n.names if a.name in spawners))))
+            elif isinstance(n, ast.ImportFrom) and n.module and n.module.split(".")[0] in FOREIGN_SPAWN_ROOTS and any(a.name == "*" for a in n.names):
+                hits.append((n.lineno, "from %s import * (every name of the module, a spawner among them)" % (n.module,)))
         if hits:
             roads[name] = sorted(hits)
     return roads, unread
@@ -1214,7 +1231,11 @@ class OldHubMintIsPrivate(unittest.TestCase):
                  ('from sys import modules\ndef f():\n    return modules["subpro" + "cess"]\n', "from sys import modules: sys.modules a member of sys"),
                  ('from unittest.mock import builtins\n', "from unittest.mock import builtins: unittest.mock.builtins reaches builtins, a module ALLOWED_IMPORTS does not name, through unittest.mock's own import"),
                  ('from unittest.mock import builtins as _b\n', "from unittest.mock import builtins: unittest.mock.builtins reaches builtins"),
-                 ('from unittest.mock import partial as _p\n', "unittest.mock.partial reaches functools"))
+                 ('from unittest.mock import partial as _p\n', "unittest.mock.partial reaches functools"),
+                 # pass 11's fixer pass: a star import from any module binds names the census cannot resolve (the os arm above refused
+                 # `from os import *` alone, and `from sys import *` then a read of the star-bound `modules` was silent on both interpreters)
+                 ('from sys import *\ndef f():\n    return modules["subpro" + "cess"].run(["true"])\n', "from sys import * (a star import binds names the census cannot resolve)"),
+                 ('from unittest.mock import *\n', "from unittest.mock import * (a star import binds names the census cannot resolve)"))
         for src, form in forms:
             with self.subTest(form=form, src=src):
                 hits = _commands_around_the_recorder(src, siblings=("test_federated_dial_terms_served",))
@@ -1243,11 +1264,14 @@ class OldHubMintIsPrivate(unittest.TestCase):
                    'def g(cb=None):\n    return cb\ndef h():\n    return g(lambda: 1)\nos.path.join("a", "b")\n'
                    'getattr(cls, "procs", [])\ngetattr(type(self), "result", None)\ngetattr(lab_dist, "build", None)\nhasattr(x, "y")\n"""os.system in a docstring; exec and eval too"""\n'
                    'import time\nimport http.server\nimport urllib.request\nfrom unittest import mock\nfrom pathlib import Path\nfrom unittest.mock import patch as _patch\nfrom sys import path as _syspath\n'
-                   'def k():\n    time.monotonic()\n    time.sleep(1)\n    mock.patch.object(a, "b", c)\n    http.server.ThreadingHTTPServer\n    urllib.request.urlopen(u)\n    subprocess.PIPE\n    subprocess.os.path\n    Path.home()\n')
+                   'def k():\n    time.monotonic()\n    time.sleep(1)\n    mock.patch.object(a, "b", c)\n    http.server.ThreadingHTTPServer\n    urllib.request.urlopen(u)\n    subprocess.PIPE\n    subprocess.os.path\n    Path.home()\n'
+                   # the residual's road (4) after the recorder is lifted, stated and NOT refused: a callable deferred past it from inside a function body
+                   'import threading\ndef w():\n    threading.Timer(0.2, lambda: subprocess.run(["true"])).start()\n')
         self.assertEqual(_commands_around_the_recorder(allowed, siblings=("lab_dist", "fs_clock")), [], "the allowed spellings (a spawner CALLED inside a function body, a nested import of another module, a "
                                                                                                           "module-level call with no callable argument, a lambda handed to a call inside a function, a constant name to getattr or hasattr, a module's own "
                                                                                                           "definition or an allowed module reached through a binding, a source-less module's member the set reads, as an attribute or as a from-import "
-                                                                                                          "binding; `patch` from unittest.mock is mock's own definition and stays the disclosed class), and the words in a docstring, are not refused")
+                                                                                                          "binding; `patch` from unittest.mock is mock's own definition and stays the disclosed class; a callable deferred by a timer inside a "
+                                                                                                          "function body, the residual's road (4) after the recorder is lifted), and the words in a docstring, are not refused")
         mods = _lab_modules()
         self.assertTrue({LAB_MODULE, "lab_dist"} <= set(mods), "the derivation reaches the lab module and lab_dist: %r" % sorted(mods))
         found = {name: hits for name, src in sorted(mods.items()) for hits in [_commands_around_the_recorder(src, siblings=set(mods))] if hits}
@@ -1340,13 +1364,21 @@ class OldHubMintIsPrivate(unittest.TestCase):
             f.write("import os\nclass C:\n    def __init__(self):\n        self._os = os\n    def go(self):\n        return self._os.execv('/bin/true', ['true'])\n")
         with open(os.path.join(top, "assigned.py"), "w", encoding="utf-8") as f:
             f.write("import os\n_o = os\ndef go():\n    return _o.popen('true')\n")
-        synthetic = {"root": "import spawner\nimport importer\nimport cleanpkg.sub\nimport nosource\nfrom pkg import sub\nimport runner\nimport aliased\nimport fnlocal\nimport fromos\nimport objheld\nimport assigned\n"}
+        # pass 11's fixer pass: a star import from an os-family module is a road (it binds every name, a spawner among them); a spawner
+        # reached as another module's attribute is not resolved (the stated residual: the scan reads a NAME the imports bind, and nothing else)
+        with open(os.path.join(top, "starimport.py"), "w", encoding="utf-8") as f:
+            f.write("from os import *\ndef go():\n    return system('true')\n")
+        with open(os.path.join(top, "chained.py"), "w", encoding="utf-8") as f:
+            f.write("import os\ndef go():\n    return os.path.os.system('true')\n")
+        synthetic = {"root": "import spawner\nimport importer\nimport cleanpkg.sub\nimport nosource\nfrom pkg import sub\nimport runner\nimport aliased\nimport fnlocal\nimport fromos\nimport objheld\nimport assigned\nimport starimport\nimport chained\n"}
         roads, unread = _foreign_spawn_roads(synthetic, stdlib=top)
         self.assertEqual(roads, {"importer": [(1, "import pty")], "pkg.sub": [(1, "import pty")], "spawner": [(1, "import subprocess"), (3, "subprocess.run")],
-                                 "aliased": [(3, "os.execv")], "fnlocal": [(3, "os.system")], "fromos": [(1, "from os import system"), (3, "os.system()")]},
+                                 "aliased": [(3, "os.execv")], "fnlocal": [(3, "os.system")], "fromos": [(1, "from os import system"), (3, "os.system()")],
+                                 "starimport": [(1, "from os import * (every name of the module, a spawner among them)")]},
                          "a module whose source imports a spawner family or calls a spawner is a road, by line and form, a submodule imported by `from pkg import sub` as itself, "
-                         "an alias of os (module-level or function-local) resolved to os and a spawner imported by name read at its import and its call; a clean package, a "
-                         "reflective module, a module held on an instance and one bound by an assignment are not (the last two are the stated residual)")
+                         "an alias of os (module-level or function-local) resolved to os, a spawner imported by name read at its import and its call, and a star import from an "
+                         "os-family module read at the import; a clean package, a reflective module, a module held on an instance, one bound by an assignment and a spawner "
+                         "reached as another module's attribute are not (the last three are the stated residual: the scan resolves a name the imports bind, and nothing else)")
         self.assertEqual(unread, {"cleanpkg.sub": "no source found under the standard library", "nosource": "no source found under the standard library"},
                          "a module with no source is unread with its reason, never dropped")
         self.assertEqual(_foreign_reflective_roads(synthetic, stdlib=top), {"runner": [(2, "exec(")]}, "a module whose own source runs exec is a reflective road, by line and form; the spawner roads are not")
