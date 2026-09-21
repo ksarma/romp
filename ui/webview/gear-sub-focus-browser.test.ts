@@ -621,7 +621,7 @@ const hoverOn = async (page: any, sel: string) => {
  *  synthetic doubled row's two), derived from the rendered panes (h.subs is the census's count of the host's `.rs-sub`), so it
  *  names no host and no count. The one-tooltip pins compare what the panel shows to this, host and count together (the
  *  maintainer's round 6, tests-1: the pass after the maintainer's round 5 had compared host SETS, so a host owning two and
- *  showing one read green everywhere; the literal list of doubled hosts that round dropped stays gone). */
+ *  showing one read green everywhere; the literal list of doubled hosts the panel-3 ruling dropped stays gone). */
 const ownShown = (h: any) => Array(h.subs).fill(h.host);
 /** The hosts with something shown, each once: the house-menu leg's pins over the count of HOSTS shown (at most one, exactly
  *  one), where the host with a menu open is not a census host and ownShown has nothing to compare to. */
@@ -696,11 +696,11 @@ async function settleAfterClick(page: any, id: string): Promise<void> {
   await page.mouse.move(5, 5);
 }
 
-/** The one-tooltip matrix over the census `hosts` of the open pane, the INVARIANT over derived populations (the maintainer's
- *  round 5 on panel-3, and its C: correctness-4, tests-2, regression-3, ui-1, extra6-2, extra9-2): a keyboard focus in each host
- *  shows that host's description alone; the pointer on every OTHER host shows that host's alone (the pointer wins), the BOX's
- *  within a row whichever road rests on it; the pointer on nothing shows the focused one; a hovered mark on another row shows
- *  none. Every pin compares what the panel shows to ownShown(host), every description the host owns as the census counted it in
+/** The one-tooltip matrix over the census `hosts` of the open pane, the INVARIANT over derived populations (panel-3 of the
+ *  maintainer's round 5, and its C: correctness-4, tests-2, regression-3, ui-1, extra6-2, extra9-2): a keyboard focus in each
+ *  host shows that host's description alone; the pointer on every OTHER host shows that host's alone (the pointer wins), the
+ *  BOX's within a row whichever road rests on it; the pointer on nothing shows the focused one; a hovered mark on another row
+ *  shows none. Every pin compares what the panel shows to ownShown(host), every description the host owns as the census counted it in
  *  the rendered pane, so a host owning two (the Account row; a synthetic doubled row) is shown whole, a host owning two and
  *  showing one reds (the maintainer's round 6, tests-1: the set form the pass after the maintainer's round 5 had landed lost that
  *  property), and a second doubled host anywhere reds nothing here, since no pin names a host or a count. The literal list of
