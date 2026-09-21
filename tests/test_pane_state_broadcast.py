@@ -1857,8 +1857,10 @@ console.log(JSON.stringify(out));
 # the src whatever the answer, so that body stood on the desktop's screen with no failed state and no retry for the page's life: pass 3's
 # high moved to the desktop. The bound now drops a document the kernel sent from the frame (src removed, the url under data-lazy-src) and keeps
 # the browser's own error page (`none`) as before; both record DEAD, and the flip back parks the pane with the failed state (the DEAD branch
-# ahead of the unloaded parking: a defensive order, since the bound's park leaves no data-src for that parking to take at this head; the flip
-# back's behaviour is the executed assertion in the desktop-bound case below, pass 7). The dropped document's url waits under
+# ahead of the unloaded parking: a defensive order; of the three roads that record DEAD, the hold and this none bound keep their src and
+# their data-src, and the other bound strips data-src with its park, so no recorded pane can reach the unloaded parking, which needs
+# data-src and no src (pass 8, the author's label, taking the reviewer's round-6 finding ui-1); each road's flip back reads src and data-src:
+# the desktop-bound case below for the two bounds, the hold-rotation case for the hold). The dropped document's url waits under
 # data-lazy-src, not data-src (the author's pass-5 verify): the controller's reconcile copies data-src to src on every gear save (the romp:settings
 # storage event), so parked there the bound pane was re-fetched with no token and no backstop and the bound promotion's stale listener
 # judged and dropped it again, one re-fetch and one row per save; under data-lazy-src a gear save moves nothing.
@@ -1932,6 +1934,7 @@ out.held = { fleet: snapR('fleet'), timeline: snapR('timeline') };
 otherDoc('timeline'); (LOADS.timeline || []).forEach((f) => f());   // the Sessions band's fetch lands late as the kernel's 403 line: the episode's second failure, the bound, the document dropped
 out.lateOther = snapR('timeline');
 MATCHES = true; MQL.forEach((f) => f({}));   // the rotation back before the Outline's fetch lands: the recorded hold parks it with the failed state
+out.back = snapR('fleet');   // read BEFORE the tap: what the flip back left (pass 8: the hold road's src and data-src at the flip)
 window.__rompMobileTab('fleet');   // the shown tab: the failed state painted... and the tap that showed it promotes it again
 out.backTap = snapR('fleet');
 shimUp('fleet'); (LOADS.fleet || []).forEach((f) => f());   // the load recovers it
@@ -2552,7 +2555,8 @@ class LazyPanes(unittest.TestCase):
         self.assertEqual(o["afterBackstops"], {"fleet": ob_now, "timeline": nb}, "every backstop: the verdicts are in, nothing moves")
         bk = o["back"]
         self.assertEqual((bk["fleet"]["mobile"], bk["fleet"]["src"], bk["fleet"]["lazy"], bk["fleet"]["dataSrc"], bk["fleet"]["div"], bk["fleet"]["sets"]), (True, None, "/fleet", None, ["failed"], 2), "the flip back parks the src-less recorded pane under data-lazy-src WITH the failed state (the executed pin for the bound's flip back; the DEAD branch's place ahead of the unloaded parking is defensive: the bound's park left no data-src for that parking to take)")
-        self.assertEqual((bk["timeline"]["src"], bk["timeline"]["lazy"], bk["timeline"]["div"]), (None, "/timeline", ["failed"]), "…and the kept-src pane the same way, as before")
+        self.assertEqual((bk["timeline"]["src"], bk["timeline"]["lazy"], bk["timeline"]["dataSrc"], bk["timeline"]["div"]), (None, "/timeline", None, ["failed"]),
+                         "the none bound kept its src AND its data-src at the bound; the flip back's DEAD branch parks it the same way: src dropped, the url under data-lazy-src, data-src gone, the failed state (the road the unloaded parking could never take: it had a src)")
         self.assertFalse(bk["fleet"]["bodyFailed"], "the chat is the shown tab: nothing painted over it")
         tt = o["tabTap"]
         self.assertEqual((tt["tab"], tt["src"], tt["lazy"], tt["div"], tt["sets"], tt["bodyLoading"], tt["bodyFailed"]), ("fleet", "/fleet", None, ["loading"], 3, True, False), "the tab tap promotes it again")
@@ -2595,6 +2599,9 @@ class LazyPanes(unittest.TestCase):
         self.assertEqual((h["timeline"]["src"], h["timeline"]["sets"], h["timeline"]["rows"]), ("/timeline", 1, [{"pane": "timeline", "via": "backstop", "n": 1}]), "the second held pane the same")
         lo = o["lateOther"]
         self.assertEqual((lo["src"], lo["lazy"], lo["dataSrc"], lo["div"], lo["sets"], lo["rows"][-1]), (None, "/timeline", None, [], 1, {"pane": "timeline", "via": "load", "n": 2}), "the held fetch lands as the kernel's denial: the episode's second failure is the bound, the document dropped from the frame and its url under data-lazy-src, no re-promotion")
+        bk = o["back"]
+        self.assertEqual((bk["mobile"], bk["src"], bk["lazy"], bk["dataSrc"], bk["div"], bk["sets"]), (True, None, "/fleet", None, ["failed"], 1),
+                         "the HELD pane kept its src AND its data-src at the hold; the flip back's DEAD branch parks it: src dropped, the url under data-lazy-src, data-src gone, the failed state, no new promotion (the road the unloaded parking could never take: it had a src)")
         bt = o["backTap"]
         self.assertEqual((bt["mobile"], bt["tab"], bt["src"], bt["lazy"], bt["dataSrc"], bt["div"], bt["sets"], bt["bodyLoading"], bt["bodyFailed"]), (True, "fleet", "/fleet", None, None, ["loading"], 2, True, False), "the rotation back parked the held pane under data-lazy-src (its src dropped), and the tab tap promoted it again with the loader painted")
         rc = o["recovered"]
