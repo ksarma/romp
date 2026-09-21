@@ -66,7 +66,9 @@ const fieldOf = (e: ts.Node | undefined, fields: ReadonlySet<string>): string | 
   }
   return null;
 };
-type FieldWrite = { node: ts.Node; owner: string; field: string; describe: string };
+/** `node` is the write's form (the statement or expression the census describes); `at` is WHERE the write happens, the node itself for
+ *  every form but a for-of or for-in, whose target is assigned on each iteration while the statement's own span runs to the end of its body. */
+type FieldWrite = { node: ts.Node; at: ts.Node; owner: string; field: string; describe: string };
 /** Every WRITE to a field of `fields` under `root`, keyed on the PROPERTY (the field written) and not on the assignment's form (the
  *  maintainer's round 4 ruling, plants-1: a set that counted a simple or compound assignment or a delete whose left side was syntactically
  *  the member let a writer of another form escape with the module green): an assignment of any operator (the compiler's FirstAssignment to
@@ -76,12 +78,15 @@ type FieldWrite = { node: ts.Node; owner: string; field: string; describe: strin
  *  field or whose literal source or key does (`Object.assign(v, { measured: x })`, `Reflect.set(v, "measured", x)`). The tree cannot read a
  *  non-literal source's keys or a computed key, so `Object.assign(v, src)` and `v[k] = x` are outside this census by construction:
  *  land-active-keep.test.ts's accessors on the world's view, which every such write reaches at run time, are the guard on those. Each
- *  write is named by its owner (ownerOf) and described in the census's words (the right side of a plain assignment, else the whole form).
+ *  write is named by its owner (ownerOf) and described in the census's words (the right side of a plain assignment, else the whole form),
+ *  and placed (`at`) where it happens: the node itself, or a for-of or for-in's TARGET, because the statement's span runs to the end of its
+ *  body, so a window check that read the statement's span missed a loop whose block enclosed the write it was checking and reddened on the
+ *  closed set alone, the site unnamed (the author's fixer pass over the pass after the maintainer's round 4 ruling, VT7b).
  *  Provenance of the forms: the closing pass over the author's fixer pass (`v.avgTurnH ??= 5` planted in showActive escaped a count of `=`
  *  alone) and the second closing lens (the pattern's `=` has an object literal on its left and the count read the left alone). */
 function writesOf(fields: ReadonlySet<string>, root: ts.Node): FieldWrite[] {
   const out: FieldWrite[] = [];
-  const add = (node: ts.Node, field: string | null, describe: string): void => { if (field) out.push({ node, owner: ownerOf(node), field, describe }); };
+  const add = (node: ts.Node, field: string | null, describe: string, at: ts.Node = node): void => { if (field) out.push({ node, at, owner: ownerOf(node), field, describe }); };
   const isAssign = (n: ts.Node): n is ts.BinaryExpression => ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && n.operatorToken.kind <= ts.SyntaxKind.LastAssignment;
   const calleeOf = (n: ts.CallExpression): string | null => ts.isPropertyAccessExpression(n.expression) && ts.isIdentifier(n.expression.expression) ? n.expression.expression.text + "." + n.expression.name.text : null;
   const literalKey = (p: ts.ObjectLiteralElementLike): string | null => (ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p)) && (ts.isIdentifier(p.name) || ts.isStringLiteralLike(p.name)) ? p.name.text : null;
@@ -90,7 +95,7 @@ function writesOf(fields: ReadonlySet<string>, root: ts.Node): FieldWrite[] {
       if (ts.isObjectLiteralExpression(n.left) || ts.isArrayLiteralExpression(n.left)) { for (const t of targetsOf(n.left)) add(n, fieldOf(t, fields), n.getText(SF)); }
       else { const f = fieldOf(n.left, fields); add(n, f, f && namesField(n.left, fields) === f ? (n.operatorToken.kind === ts.SyntaxKind.EqualsToken ? "" : n.operatorToken.getText(SF) + " ") + n.right.getText(SF) : n.getText(SF)); }
     }
-    if ((ts.isForOfStatement(n) || ts.isForInStatement(n)) && !ts.isVariableDeclarationList(n.initializer)) for (const t of targetsOf(n.initializer)) add(n, fieldOf(t, fields), "for (" + n.initializer.getText(SF) + (ts.isForOfStatement(n) ? " of " : " in ") + n.expression.getText(SF) + ")");
+    if ((ts.isForOfStatement(n) || ts.isForInStatement(n)) && !ts.isVariableDeclarationList(n.initializer)) for (const t of targetsOf(n.initializer)) add(n, fieldOf(t, fields), "for (" + n.initializer.getText(SF) + (ts.isForOfStatement(n) ? " of " : " in ") + n.expression.getText(SF) + ")", t);
     if ((ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) && (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken)) add(n, fieldOf(n.operand, fields), n.getText(SF));
     if (ts.isDeleteExpression(n)) add(n, fieldOf(n.expression, fields), n.getText(SF));
     if (ts.isCallExpression(n)) {
@@ -821,7 +826,7 @@ test("the reload restore's raw write of the persisted rs.top, on the tree: from 
   assert.ok(within(read) && read.getEnd() <= write.getEnd(), "the site's read of rs.top (line " + line(read) + ") lies in the window, no later than the write");
   const between = [
     ...calls.filter((c) => c !== write && within(c) && takers.has((c.expression as ts.Identifier).text)).map((c) => c.getText(sf) + " at line " + line(c) + " (a taker: it writes the take state or re-draws the spacers, or calls something that does)"),
-    ...stateWrites.filter((w) => within(w.node)).map((w) => w.node.getText(sf) + " at line " + line(w.node) + " (a write of the take state: " + w.field + ")"),
+    ...stateWrites.filter((w) => within(w.at)).map((w) => w.node.getText(sf) + " at line " + line(w.at) + " (a write of the take state: " + w.field + ")"),   // placed at the write (a for-of's target), not the form's span
   ];
   assert.deepEqual(between, [], "the reload restore's raw write: the window from the record's binding (line " + line(sB) + ") to the write (line " + line(write) + ") holds a take, so the persisted top, measured in the layout the take before it re-derives, would land in a layout it was not measured in; the site needs no take-back only while this window stays closed");
   // the derivation the window check rests on, pinned after it so a plant in the window is named by the window's message
