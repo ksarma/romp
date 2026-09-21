@@ -5,10 +5,13 @@ variables are staged straight into os.environ: nothing of romp's claims them but
 boot check (credentials.check_boot_environment, run by kernel.main() before a backend exists and pinned in
 tests/test_credentials.py, BootCheck and KernelSide) never runs here, so a backend built directly sees
 what is staged; no retired provider name is staged anywhere in this module."""
+import ast
+import inspect
 import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -518,3 +521,360 @@ class RuleStatementCount(unittest.TestCase):
         self.assertEqual(sorted(p.split(":")[0] for p in code), ["docs/reference.md", "kernel/credentials.py"],
                          "the suffix tuple and the lister's own test are code, not statements: %r" % (code,))
         self.assertEqual(len(single) + len(split), 14)
+
+
+# ── fork PR #781: the four readers of the credential-name population, held to ONE derived name set ────────────────
+BIN = ROOT / "bin"
+
+
+def _kernel_module():
+    """The kernel under its standard module name, loaded once (the pattern of tests/test_session_env.py's
+    ValidatorLockstep): its dependencies by the exact names it imports, a copy already in sys.modules reused rather
+    than re-executed. The kernel's per-session env door (_env_error) lives there and cannot import sdk_backend at the
+    door, so it is the reader most able to drift."""
+    if "romp_kernel" in sys.modules:
+        return sys.modules["romp_kernel"]
+    os.environ.setdefault("ROMP_KERNEL_NO_OPEN", "1")
+    for name, fn in (("romp_event_model", "romp-event-model"), ("romp_judge", "romp-judge")):
+        if name not in sys.modules:
+            load_source(name, str(BIN / fn))
+    return load_source("romp_kernel", str(BIN / "romp-kernel"))
+
+
+def _casings(name):
+    """Five spellings of one name: as given, upper, lower, Title_Case and alternating. The rule folds case on both of
+    its halves, so every spelling of a shaped name is shaped and every spelling of an unshaped one is not."""
+    alternating = "".join(c.upper() if i % 2 else c.lower() for i, c in enumerate(name))
+    return {name, name.upper(), name.lower(), name.title(), alternating}
+
+
+def _fixture_name_census():
+    """Every quoted identifier in tests/*.py that carries TOKEN or API_KEY, or begins OP_, in any letter case: the
+    names the suite's fixtures use, shaped and near miss alike, read at run time so a fixture written later joins the
+    population by itself. Names only; no value beside them is read."""
+    out = set()
+    for p in sorted((ROOT / "tests").glob("*.py")):
+        text = p.read_text(encoding="utf-8", errors="replace")
+        for m in re.finditer(r"""["']([A-Za-z_][A-Za-z0-9_]*)["']""", text):
+            n = m.group(1)
+            u = n.upper()
+            if "TOKEN" in u or "API_KEY" in u or u.startswith("OP_"):
+                out.add(n)
+    return out
+
+
+def _population(cred):
+    """ONE name population, derived from the GRAMMAR of the rule (kernel/credentials.py: CREDENTIAL_ENV_SUFFIXES,
+    OP_ENV_NAMES, OP_ENV_PREFIX and CONTROL_TOKEN_VAR, read from the module and never retyped here): every suffix the
+    rule names on a variety of stems, with the near misses of each (the suffix continued into a longer word, the
+    suffix as an infix, the suffix bare, the suffix's word without its underscore, the word joined by a dash); every
+    1Password spelling the rule names, continued, truncated and as the tail of another name; the session prefix with
+    accounts, bare, without its underscore, as an infix, and a name that only begins like it; the control token; the
+    three Claude credential names (AUTH_ENV_NAMES) and the two reserved identity names; names outside the shell
+    alphabet (the empty name, a leading digit, a dash); all of it in every casing; and the fixture census. Every entry
+    is a NAME: the values beside them are assembled at run time by the test."""
+    suffixes = tuple(cred.CREDENTIAL_ENV_SUFFIXES)
+    names = set()
+    for stem in ("NOTES", "HF", "MY_SECRET", "SVC_00", "X9", "OPENROUTER", "ROMP_SERVE", "OP", "OP_SESSION", "A_B_C",
+                 "ZZ_0000", "_"):
+        for suf in suffixes:
+            word = suf[1:]
+            for n in (stem + suf, stem + suf + "IZER", stem + suf + "_BUDGET", word + "_" + stem, stem + word,
+                      stem + "-" + word):
+                names.update(_casings(n))
+    for suf in suffixes:
+        names.update(_casings(suf))
+        names.update(_casings(suf[1:]))
+        names.update(_casings(suf + "S"))
+    for n in cred.OP_ENV_NAMES:
+        names.update(_casings(n))
+        names.update(_casings(n + "_2"))
+        names.update(_casings(n[:-1]))
+        names.update(_casings("X_" + n))
+    prefix = cred.OP_ENV_PREFIX
+    for account in ("TESTACCT", "notes", "a9"):
+        names.update(_casings(prefix + account))
+    names.update(_casings(prefix))
+    names.update(_casings(prefix[:-1]))
+    names.update(_casings("X_" + prefix + "acct"))
+    names.update(_casings("OPTIONS_FOR_X"))
+    names.update(_casings(cred.CONTROL_TOKEN_VAR))
+    names.update(sb.AUTH_ENV_NAMES)
+    names.update(sb.ENV_RESERVED_NAMES)
+    names.update({"", "9LEADS" + suffixes[0], "MY-" + suffixes[0][1:], "X-Y" + suffixes[-1], "WITH-DASH", "DIGITS_123",
+                  "PATH", "FEATURE_FLAG"})
+    names.update(_fixture_name_census())
+    return sorted(n for n in names if "=" not in n and "\0" not in n)
+
+
+class FourReaders(unittest.TestCase):
+    """The reviewer's ask on fork PR #781 (2026-09-21): the comment above CONTROL_TOKEN_VAR in kernel/credentials.py
+    says the doors, the writer and the reference's lister agree on what a credential-shaped name is and only the boot
+    line differs, and that is a four-reader agreement asserted in prose. This test reads all four over ONE population
+    derived from the rule's grammar (_population) and asserts their agreement name by name, from the rule's verdict:
+
+      the RULE         kernel/credentials.py is_credential_env_name and credential_env_names;
+      the DOORS        kernel/kernel.py _env_error (POST /new, which `romp new --env` rides: the CLI has no shape test
+                       of its own) and kernel/sdk_backend.py env_request_error (spawn, set_env), each driven directly
+                       over a one-name pick; that the routes reach these functions is pinned by source, the weaker
+                       guarantee, said in each message;
+      the WRITER       kernel/sdk_backend.py split_spawn_secrets composed with kernel/host_transport.py
+                       write_spawn_spec as _host_transport_for composes them, over a spec whose overlay carries the
+                       whole population, the file read back;
+      the LISTER       docs/reference.md: the fenced python3 -c listing, run as fenced over a flag-settings file
+                       carrying the population (its predicate is a spelling of its own, since a copied command cannot
+                       import credentials.py, so its literal tuples are also parsed and held to the rule's constants),
+                       and the prose that spells the shape (the boot line's sentence, the `--env` passage, the
+                       spawn.json sentence) and the 1Password spellings the boot check's paragraph lists, each parsed
+                       into the suffixes and spellings it names and held to the rule's;
+      the BOOT NOTICE  kernel/sdk_backend.py env_credential_names and _note_env_credential_names, the wrapper driven
+                       over the population and the method over a staged environment, the line parsed back.
+
+    The one permitted difference is the boot line leaving the control token unnamed, asserted positively: the rule
+    shapes it, both doors refuse it, the writer moves it, the lister lists it, the notice drops it, its other spellings
+    are named, and the exclusion is written down at both ends (the constant's comment and the wrapper's code). A door
+    refuses a name outside the shell alphabet, or a reserved identity name, before the shape is consulted; those names
+    are expected to hear that refusal, and every other reader still classifies them by the shape. Every value is
+    assembled at run time (os.urandom), no message carries one, and a failure names the reader that drifted and the
+    name it drifted on."""
+
+    SID = "11111111-2222-3333-4444-555555555577"
+    RULE = "the rule (kernel/credentials.py is_credential_env_name)"
+    DOOR_KM = "the kernel door (kernel/kernel.py _env_error)"
+    DOOR_SB = "the backend door (kernel/sdk_backend.py env_request_error)"
+    WRITER = "the spawn.json writer (kernel/sdk_backend.py split_spawn_secrets + kernel/host_transport.py write_spawn_spec)"
+    LISTER = "the reference lister (docs/reference.md)"
+    NOTICE = "the boot notice (kernel/sdk_backend.py env_credential_names)"
+    BEFORE_SHAPE_ALPHABET = "refused before the shape (outside the shell alphabet)"
+    BEFORE_SHAPE_IDENTITY = "refused before the shape (a reserved identity name)"
+
+    def setUp(self):
+        patch.object(sb, "_ENV_CRED_NAMES_SAID", False).start()
+        self.addCleanup(patch.stopall)
+        self.root = tempfile.mkdtemp(prefix="romp-fourreaders-")
+        self.addCleanup(shutil.rmtree, self.root, True)
+        Path(self.root, "session-hosts").write_text("off\n")     # a state root minted here: hosts off, the suite's rule
+
+    # ── one driver per reader ──
+    def _door_verdict(self, door, name, value, cred):
+        err = door({name: value})
+        if not sb.ENV_NAME_RE.match(name):
+            return self.BEFORE_SHAPE_ALPHABET if err.startswith("env: bad name") else "unexpected: " + err
+        if name in sb.ENV_RESERVED_NAMES:
+            return (self.BEFORE_SHAPE_IDENTITY if "is reserved" in err and "identity env" in err
+                    else "unexpected: " + err)
+        if name in sb.AUTH_ENV_NAMES:
+            return (True if "is reserved: a session's credential is Claude Code's own" in err
+                    else "unexpected: " + err)
+        if err == "":
+            return False
+        if err == "env: " + cred.credential_env_refusal([name]):
+            return True
+        return "unexpected: " + err
+
+    def _door_expected(self, name, shaped):
+        if not sb.ENV_NAME_RE.match(name):
+            return self.BEFORE_SHAPE_ALPHABET
+        if name in sb.ENV_RESERVED_NAMES:
+            return self.BEFORE_SHAPE_IDENTITY
+        return shaped
+
+    def _writer_verdicts(self, values):
+        ht = sb._ht()
+        spec = {"sid": self.SID, "name": "web", "cwd": self.root, "env": dict(values)}
+        moved = sb.split_spawn_secrets(spec)
+        path = ht.write_spawn_spec(self.root, self.SID, spec)
+        text = path.read_text(encoding="utf-8")
+        kept = json.loads(text).get("env") or {}
+        out = {}
+        for n, v in values.items():
+            in_file, in_moved, value_in_text = (kept.get(n) == v), (moved.get(n) == v), (v in text)
+            if in_moved and not in_file and not value_in_text:
+                out[n] = True
+            elif in_file and not in_moved and value_in_text:
+                out[n] = False
+            else:
+                out[n] = ("inconsistent (kept in the file: %s, moved out: %s, value in the file's text: %s)"
+                          % (in_file, in_moved, value_in_text))
+        return out
+
+    def _lister_verdicts(self, values):
+        snippet = ReferenceLister._snippet()
+        d = os.path.join(self.root, "sdk-flag-settings")
+        os.makedirs(d)
+        p = os.path.join(d, self.SID + ".json")
+        Path(p).write_text(json.dumps({"env": values}) + "\n", encoding="utf-8")
+        env = {"PATH": os.path.dirname(sys.executable) + os.pathsep + os.environ.get("PATH", ""),
+               "ROMP_STATE_DIR": self.root, "HOME": self.root}
+        r = subprocess.run(["/bin/sh", "-c", snippet], env=env, capture_output=True, text=True, timeout=120)
+        self.assertEqual(r.returncode, 0, "%s runs as fenced (exit %d)" % (self.LISTER, r.returncode))
+        listed = set()
+        for ln in r.stdout.splitlines():
+            self.assertTrue(ln.startswith(p + " "), "%s prints the file, then the name" % self.LISTER)
+            listed.add(ln[len(p) + 1:])
+        return {n: (n in listed) for n in values}
+
+    def _notice_verdicts(self, values, cred):
+        named = set(sb.env_credential_names(values))                 # the wrapper over the population as an environ
+        # the method reads os.environ: the population is staged on top of it for the call, the empty name left out
+        # (putenv refuses it) and any name the process already carries left out too, so no live variable is touched
+        stageable = {n: v for n, v in values.items() if n and n not in os.environ}
+        be = sb.SdkBackend.__new__(sb.SdkBackend)
+        rows = []
+        be._log = lambda m, problem=None, **kw: rows.append((m, problem))
+        with patch.dict(os.environ, stageable, clear=False):
+            expect_line = set(sb.env_credential_names(os.environ))    # the wrapper over the very environment the method read
+            be._note_env_credential_names()
+        self.assertEqual(len(rows), 1, "%s: one line at boot" % self.NOTICE)
+        line, problem = rows[0]
+        self.assertIs(problem, False, "%s: information, never a problem row" % self.NOTICE)
+        m = re.search(r"environment\): (.*)\. Values are never logged", line)
+        self.assertTrue(m, "%s: the line lists its names between the shape clause and the values sentence" % self.NOTICE)
+        on_line = set(m.group(1).split(", "))
+        self.assertEqual(on_line, expect_line, "%s: the line names exactly what the wrapper names over the environment it read" % self.NOTICE)
+        self.assertEqual(on_line & set(stageable), {n for n in named if n in stageable},
+                         "%s: over the staged population the line is the wrapper's verdict, name for name" % self.NOTICE)
+        self.assertGreater(len(on_line & set(stageable)), 100, "%s: the staged population reached the line" % self.NOTICE)
+        clause = re.search(r"\(([^()]*1Password[^()]*)\)", line)
+        self.assertTrue(clause, "%s: the line carries a shape clause naming the 1Password half" % self.NOTICE)
+        self.assertEqual(set(re.findall(r"_[A-Z][A-Z_]*", clause.group(1))), set(cred.CREDENTIAL_ENV_SUFFIXES),
+                         "%s: the suffixes its clause names are the rule's" % self.NOTICE)
+        for v in values.values():
+            self.assertNotIn(v, line, "%s: names only, never a value" % self.NOTICE)
+        return {n: (n in named) for n in values}
+
+    # ── the spellings in the reference, and the routes, by source ──
+    def _shape_clause(self, clause, cred, where):
+        tokens = re.findall(r"`([^`]+)`", clause)
+        self.assertEqual({t for t in tokens if t.startswith("_")}, set(cred.CREDENTIAL_ENV_SUFFIXES),
+                         "%s, %s: the suffixes it lists are the rule's" % (self.LISTER, where))
+        for g in (t for t in tokens if t.endswith("*")):
+            for n in cred.OP_ENV_NAMES + (cred.OP_ENV_PREFIX,):
+                self.assertTrue(n.startswith(g[:-1]), "%s, %s: %s covers every 1Password spelling the rule names (%s)"
+                                % (self.LISTER, where, g, n))
+        self.assertIn("1Password", clause, "%s, %s: names the 1Password half" % (self.LISTER, where))
+        self.assertIn("in any letter case", clause, "%s, %s: says the fold" % (self.LISTER, where))
+
+    def _pin_lister_spellings(self, cred):
+        snippet = ReferenceLister._snippet()
+        ends = re.search(r"u\.endswith\(\((.*?)\)\)", snippet)
+        starts = re.search(r'u\.startswith\("([^"]*)"\)', snippet)
+        exact = re.search(r"u in \((.*?)\)", snippet)
+        self.assertTrue(ends and starts and exact,
+                        "%s: the fenced listing spells a suffix tuple, a prefix and a tuple of exact names" % self.LISTER)
+        self.assertEqual(set(ast.literal_eval("(" + ends.group(1) + ",)")), set(cred.CREDENTIAL_ENV_SUFFIXES),
+                         "%s: the suffix tuple the fenced listing spells is the rule's" % self.LISTER)
+        self.assertEqual(starts.group(1), cred.OP_ENV_PREFIX,
+                         "%s: the prefix the fenced listing spells is the rule's" % self.LISTER)
+        self.assertEqual(set(ast.literal_eval("(" + exact.group(1) + ",)")), set(cred.OP_ENV_NAMES),
+                         "%s: the 1Password names the fenced listing spells are the rule's" % self.LISTER)
+        flat = " ".join((ROOT / "docs" / "reference.md").read_text(encoding="utf-8").split())
+        for where, pattern in (("the boot line's sentence", r"shaped like credentials \(([^)]*)\)"),
+                               ("the --env passage", r"credential-shaped variable with a non-empty value \((.*?);"),
+                               ("the spawn.json sentence", r"carrying a value that ends (.*?) is left out of the file")):
+            m = re.search(pattern, flat)
+            self.assertTrue(m, "%s: %s is where this test reads the shape" % (self.LISTER, where))
+            self._shape_clause(m.group(1), cred, where)
+        op = re.search(r"1Password CLI's names \(([^:]*):", flat)
+        self.assertTrue(op, "%s: the boot check's paragraph lists the 1Password spellings" % self.LISTER)
+        self.assertEqual(set(re.findall(r"`([^`]+)`", op.group(1))), set(cred.OP_ENV_NAMES) | {cred.OP_ENV_PREFIX + "*"},
+                         "%s: the 1Password spellings the reference lists are the rule's" % self.LISTER)
+        self.assertIn("romp's own `%s` is refused like any other" % cred.CONTROL_TOKEN_VAR, flat,
+                      "%s: the --env passage says the doors refuse the control token" % self.LISTER)
+
+    def _pin_routes_by_source(self, km, cred):
+        """The weaker guarantee, said as such: each route still reaches the function the executed checks drive."""
+        ksrc = (ROOT / "kernel" / "kernel.py").read_text(encoding="utf-8")
+        self.assertIn("eerr = _env_error(env_req", ksrc,
+                      "POST /new reaches %s (a source pin; the executed check is on _env_error itself)" % self.DOOR_KM)
+        self.assertIn("credential_env_names(env)", inspect.getsource(km._env_error),
+                      "%s judges by the rule (a source pin; the executed check is the verdict table)" % self.DOOR_KM)
+        for route in (sb.SdkBackend.spawn, sb.SdkBackend.set_env):
+            self.assertIn("env_request_error(env", inspect.getsource(route),
+                          "%s reaches %s (a source pin; the executed check is on env_request_error itself)"
+                          % (route.__name__, self.DOOR_SB))
+        self.assertIn("spawn_env_secret_names(env)", inspect.getsource(sb.env_request_error),
+                      "%s judges by the writer's shape (a source pin; the executed check is the verdict table)" % self.DOOR_SB)
+        self.assertIn("credential_env_names(", inspect.getsource(sb.spawn_env_secret_names),
+                      "%s judges by the rule (a source pin; the executed check is the file read back)" % self.WRITER)
+        launch = inspect.getsource(sb.SdkBackend._host_transport_for)
+        self.assertLess(launch.index("split_spawn_secrets(spec)"), launch.index("write_spawn_spec(self.state_dir, sess.sid, spec)"),
+                        "%s: the launch splits the overlay before it writes the file, as this test composes them (a source pin)"
+                        % self.WRITER)
+        romp = (ROOT / "bin" / "romp").read_text(encoding="utf-8")
+        branch = re.search(r"--env\)\s+shift(.*?)--no-env\)", romp, re.S)
+        self.assertTrue(branch, "romp new's --env branch is where this test reads the CLI")
+        for probe in cred.CREDENTIAL_ENV_SUFFIXES + ("credential_env", "is_credential"):
+            self.assertNotIn(probe, branch.group(1),
+                             "romp new --env has no shape test of its own (%r): the pick rides POST /new and %s answers, "
+                             "so a copy here would be a fifth reader" % (probe, self.DOOR_KM))
+
+    # ── the one permitted difference, asserted positively ──
+    def _pin_the_one_difference(self, cred, verdicts, values):
+        ctl = cred.CONTROL_TOKEN_VAR
+        self.assertTrue(cred.is_credential_env_name(ctl), "%s shapes the control token" % self.RULE)
+        self.assertEqual(cred.credential_env_names({ctl: values[ctl]}), [ctl], "%s names it over an environ" % self.RULE)
+        self.assertEqual(sb.env_credential_names({ctl: values[ctl]}), [], "%s leaves it unnamed" % self.NOTICE)
+        for reader in (self.DOOR_KM, self.DOOR_SB, self.WRITER, self.LISTER):
+            self.assertIs(verdicts[reader][ctl], True, "%s treats the control token as a credential, like any other" % reader)
+        self.assertIs(verdicts[self.NOTICE][ctl], False, "%s: the one permitted difference" % self.NOTICE)
+        for other in _casings(ctl) - {ctl}:
+            self.assertIs(verdicts[self.NOTICE][other], True,
+                          "%s: the exclusion is the exact name romp reads; %r is named" % (self.NOTICE, other))
+        wsrc = inspect.getsource(sb.env_credential_names)
+        self.assertIn("CONTROL_TOKEN_VAR", wsrc.rsplit('"""', 1)[1],
+                      "%s: the exclusion is the wrapper's code, keyed on the constant" % self.NOTICE)
+        self.assertIn(ctl, wsrc, "%s: its docstring names the token it leaves unnamed" % self.NOTICE)
+        csrc = (ROOT / "kernel" / "credentials.py").read_text(encoding="utf-8")
+        above = csrc[:csrc.index("\nCONTROL_TOKEN_VAR = ")].splitlines()[-6:]
+        comment = " ".join(ln.lstrip("# ") for ln in above if ln.startswith("#"))
+        self.assertIn("BOOT NOTICE", comment, "the constant's comment states the deliberate boot-line exclusion")
+        self.assertIn("env_credential_names", comment, "and names the wrapper that carries it")
+
+    def test_four_readers_agree_with_the_rule_on_one_derived_population_and_the_boot_line_alone_drops_the_control_token(self):
+        cred = sb._cred
+        km = _kernel_module()
+        population = _population(cred)
+        values = {n: "synthetic-" + os.urandom(8).hex() for n in population}
+        rule = {n: cred.is_credential_env_name(n) for n in population}
+        shaped = {n for n in population if rule[n]}
+        # the population is what it claims: large, two-sided, and carrying its witnesses (a derived set must fail on empty)
+        self.assertGreater(len(population), 500, "the derived population")
+        self.assertGreater(len(shaped), 150, "shaped names in it")
+        self.assertGreater(len(population) - len(shaped), 150, "unshaped names in it")
+        for witness in (cred.CONTROL_TOKEN_VAR,) + tuple(sb.AUTH_ENV_NAMES) + tuple(cred.OP_ENV_NAMES) + tuple(sb.ENV_RESERVED_NAMES):
+            self.assertIn(witness, population, witness)
+        outside = [n for n in population if not sb.ENV_NAME_RE.match(n)]
+        self.assertGreaterEqual(len(outside), 4, "names outside the shell alphabet: %r" % (outside,))
+        self.assertTrue(any(rule[n] for n in outside) and any(not rule[n] for n in outside),
+                        "the alphabet's outsiders are shaped and unshaped alike: %r" % (outside,))
+        self.assertEqual(cred.credential_env_names(values), sorted(shaped), "%s over the population as an environ" % self.RULE)
+        # the reference's spellings and the routes first: a suffix added to the rule, or dropped from the document, reds here
+        self._pin_lister_spellings(cred)
+        self._pin_routes_by_source(km, cred)
+        # every reader over every name, then one comparison against the rule
+        verdicts = {
+            self.DOOR_KM: {n: self._door_verdict(km._env_error, n, values[n], cred) for n in population},
+            self.DOOR_SB: {n: self._door_verdict(sb.env_request_error, n, values[n], cred) for n in population},
+            self.WRITER: self._writer_verdicts(values),
+            self.LISTER: self._lister_verdicts(values),
+            self.NOTICE: self._notice_verdicts(values, cred),
+        }
+        expected = {
+            self.DOOR_KM: {n: self._door_expected(n, rule[n]) for n in population},
+            self.DOOR_SB: {n: self._door_expected(n, rule[n]) for n in population},
+            self.WRITER: dict(rule),
+            self.LISTER: dict(rule),
+            self.NOTICE: {n: rule[n] and n != cred.CONTROL_TOKEN_VAR for n in population},
+        }
+        report = []
+        for reader in verdicts:
+            bad = [(n, verdicts[reader][n], expected[reader][n]) for n in population if verdicts[reader][n] != expected[reader][n]]
+            if bad:
+                report.append("%s drifted on %d of %d names, the first %d: %s"
+                              % (reader, len(bad), len(population), min(len(bad), 8),
+                                 "; ".join("%r is %r where the rule expects %r" % b for b in bad[:8])))
+        if report:
+            self.fail("readers drifting from the rule (every drifting reader named, with the names it drifted on):\n"
+                      + "\n".join(report))
+        self._pin_the_one_difference(cred, verdicts, values)
