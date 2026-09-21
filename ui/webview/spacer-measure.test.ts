@@ -84,25 +84,78 @@ type FieldWrite = { node: ts.Node; at: ts.Node; owner: string; field: string; de
  *  closed set alone, the site unnamed (the author's fixer pass over the pass after the maintainer's round 4 ruling, VT7b).
  *  Provenance of the forms: the closing pass over the author's fixer pass (`v.avgTurnH ??= 5` planted in showActive escaped a count of `=`
  *  alone) and the second closing lens (the pattern's `=` has an object literal on its left and the count read the left alone). */
-function writesOf(fields: ReadonlySet<string>, root: ts.Node): FieldWrite[] {
-  const out: FieldWrite[] = [];
-  const add = (node: ts.Node, field: string | null, describe: string, at: ts.Node = node): void => { if (field) out.push({ node, at, owner: ownerOf(node), field, describe }); };
+/** One write under `root` in one of the forms the census names, before any field is matched: `targets`, the expressions written (a plain
+ *  assignment's left side; every target of a destructuring pattern or of a for-of's or for-in's initializer; an increment's operand; a
+ *  delete's expression; the receiver of an Object.assign, Object.defineProperty or Reflect call), `keys`, the literal keys the call's source
+ *  or key argument names, `at`, where the write happens, `plain`, the assignment when the form is one (its right side is the census's word for
+ *  it), and `describe`, the census's word for a form that is not the node's own text (a for-of's or for-in's head). The two consumers: writesOf,
+ *  which matches a set of fields; fieldsWrittenOn, which derives the fields a function writes on its parameter (the take state). */
+type WriteSite = { node: ts.Node; at: ts.Node; targets: ts.Node[]; keys: string[]; plain: ts.BinaryExpression | null; describe: string | null };
+function writeSites(root: ts.Node): WriteSite[] {
+  const out: WriteSite[] = [];
+  const site = (node: ts.Node, targets: Array<ts.Node | undefined>, keys: string[] = [], at: ts.Node = node, plain: ts.BinaryExpression | null = null, describe: string | null = null): void => { out.push({ node, at, targets: targets.filter((t): t is ts.Node => !!t), keys, plain, describe }); };
   const isAssign = (n: ts.Node): n is ts.BinaryExpression => ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && n.operatorToken.kind <= ts.SyntaxKind.LastAssignment;
   const calleeOf = (n: ts.CallExpression): string | null => ts.isPropertyAccessExpression(n.expression) && ts.isIdentifier(n.expression.expression) ? n.expression.expression.text + "." + n.expression.name.text : null;
-  const literalKey = (p: ts.ObjectLiteralElementLike): string | null => (ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p)) && (ts.isIdentifier(p.name) || ts.isStringLiteralLike(p.name)) ? p.name.text : null;
+  const literalKeys = (a: ts.Node): string[] => ts.isObjectLiteralExpression(a) ? a.properties.flatMap((p) => (ts.isPropertyAssignment(p) || ts.isShorthandPropertyAssignment(p)) && (ts.isIdentifier(p.name) || ts.isStringLiteralLike(p.name)) ? [p.name.text] : []) : [];
   const go = (n: ts.Node): void => {
     if (isAssign(n)) {
-      if (ts.isObjectLiteralExpression(n.left) || ts.isArrayLiteralExpression(n.left)) { for (const t of targetsOf(n.left)) add(n, fieldOf(t, fields), n.getText(SF)); }
-      else { const f = fieldOf(n.left, fields); add(n, f, f && namesField(n.left, fields) === f ? (n.operatorToken.kind === ts.SyntaxKind.EqualsToken ? "" : n.operatorToken.getText(SF) + " ") + n.right.getText(SF) : n.getText(SF)); }
+      if (ts.isObjectLiteralExpression(n.left) || ts.isArrayLiteralExpression(n.left)) site(n, targetsOf(n.left));
+      else site(n, [n.left], [], n, n);
     }
-    if ((ts.isForOfStatement(n) || ts.isForInStatement(n)) && !ts.isVariableDeclarationList(n.initializer)) for (const t of targetsOf(n.initializer)) add(n, fieldOf(t, fields), "for (" + n.initializer.getText(SF) + (ts.isForOfStatement(n) ? " of " : " in ") + n.expression.getText(SF) + ")", t);
-    if ((ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) && (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken)) add(n, fieldOf(n.operand, fields), n.getText(SF));
-    if (ts.isDeleteExpression(n)) add(n, fieldOf(n.expression, fields), n.getText(SF));
+    if ((ts.isForOfStatement(n) || ts.isForInStatement(n)) && !ts.isVariableDeclarationList(n.initializer)) for (const t of targetsOf(n.initializer)) site(n, [t], [], t, null, "for (" + n.initializer.getText(SF) + (ts.isForOfStatement(n) ? " of " : " in ") + n.expression.getText(SF) + ")");
+    if ((ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) && (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken)) site(n, [n.operand]);
+    if (ts.isDeleteExpression(n)) site(n, [n.expression]);
     if (ts.isCallExpression(n)) {
       const callee = calleeOf(n);
-      if (callee === "Object.assign") { add(n, fieldOf(n.arguments[0], fields), n.getText(SF)); for (const a of n.arguments.slice(1)) if (ts.isObjectLiteralExpression(a)) for (const p of a.properties) { const k = literalKey(p); if (k && fields.has(k)) add(n, k, n.getText(SF)); } }
-      else if (callee === "Object.defineProperty" || callee === "Reflect.set" || callee === "Reflect.defineProperty" || callee === "Reflect.deleteProperty") { add(n, fieldOf(n.arguments[0], fields), n.getText(SF)); const k = n.arguments[1]; if (k && ts.isStringLiteralLike(k) && fields.has(k.text)) add(n, k.text, n.getText(SF)); }
+      if (callee === "Object.assign") site(n, [n.arguments[0]], n.arguments.slice(1).flatMap(literalKeys));
+      else if (callee === "Object.defineProperty" || callee === "Reflect.set" || callee === "Reflect.defineProperty" || callee === "Reflect.deleteProperty") { const k = n.arguments[1]; site(n, [n.arguments[0]], k && ts.isStringLiteralLike(k) ? [k.text] : []); }
     }
+    ts.forEachChild(n, go);
+  };
+  go(root);
+  return out;
+}
+function writesOf(fields: ReadonlySet<string>, root: ts.Node): FieldWrite[] {
+  const out: FieldWrite[] = [];
+  const add = (s: WriteSite, field: string | null, describe: string): void => { if (field) out.push({ node: s.node, at: s.at, owner: ownerOf(s.node), field, describe }); };
+  for (const s of writeSites(root)) {
+    for (const t of s.targets) { const f = fieldOf(t, fields); add(s, f, s.plain && f && namesField(s.plain.left, fields) === f ? (s.plain.operatorToken.kind === ts.SyntaxKind.EqualsToken ? "" : s.plain.operatorToken.getText(SF) + " ") + s.plain.right.getText(SF) : s.describe ?? s.node.getText(SF)); }
+    for (const k of s.keys) if (fields.has(k)) add(s, k, s.describe ?? s.node.getText(SF));
+  }
+  return out;
+}
+/** The expression under any parentheses, non-null assertions and type assertions. */
+const bare = (e: ts.Node): ts.Node => { let x = e; while (ts.isParenthesizedExpression(x) || ts.isNonNullExpression(x) || ts.isAsExpression(x) || ts.isTypeAssertionExpression(x)) x = x.expression; return x; };
+/** The field of the parameter `param` an expression names: at the access whose receiver (bare) is the parameter itself, anywhere down the
+ *  chain (`v.measured.avg`, `(v as any).measured` and `v["measured"]` each name `measured`); null when the chain does not bottom at the
+ *  parameter or the key is computed. */
+const fieldOnParam = (e: ts.Node, param: string): string | null => {
+  for (let x = bare(e); ts.isPropertyAccessExpression(x) || ts.isElementAccessExpression(x); x = bare(x.expression)) {
+    const recv = bare(x.expression);
+    if (ts.isIdentifier(recv) && recv.text === param) return ts.isPropertyAccessExpression(x) ? x.name.text : ts.isStringLiteralLike(x.argumentExpression) ? x.argumentExpression.text : null;
+  }
+  return null;
+};
+/** The fields of the parameter `param` written under `root`, in every form writeSites names (a plain or compound assignment, a destructuring
+ *  pattern, a for-of or for-in, an increment, a delete, an Object.assign or a defineProperty or Reflect call with a literal key or source),
+ *  through a parenthesis or an assertion on the receiver. The derivation of the take state (the ordering pin) reads the take's and the
+ *  untake's writes through this and the parked figures' reads through fieldsReadOn, so it keys on the PROPERTY, the field of the view written
+ *  or read, not on the spelling `v.<field>` (until the author's fixer pass over the pass after the maintainer's round 4 ruling, VT14, the
+ *  derivation read bare `v.<name>` assignments and reads alone while its message said a field the take grows into is added). A computed key
+ *  or a non-literal source is outside it, as it is outside writesOf. */
+function fieldsWrittenOn(param: string, root: ts.Node): Set<string> {
+  const out = new Set<string>();
+  for (const s of writeSites(root)) for (const t of s.targets) {
+    const f = fieldOnParam(t, param); if (f) out.add(f);
+    else { const b = bare(t); if (ts.isIdentifier(b) && b.text === param) for (const k of s.keys) out.add(k); }
+  }
+  return out;
+}
+/** The fields of the parameter `param` read under `root`: every property or string-keyed element access whose receiver (bare) is the parameter. */
+function fieldsReadOn(param: string, root: ts.Node): Set<string> {
+  const out = new Set<string>();
+  const go = (n: ts.Node): void => {
+    if (ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n)) { const f = fieldOnParam(n, param); const recv = bare(n.expression); if (f && ts.isIdentifier(recv) && recv.text === param) out.add(f); }
     ts.forEachChild(n, go);
   };
   go(root);
@@ -768,21 +821,19 @@ test("the reload restore's raw write of the persisted rs.top, on the tree: from 
   const sf = SF;
   const line = (n: ts.Node): number => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
   const fnNamed = (name: string): ts.FunctionDeclaration | undefined => sf.statements.find((st): st is ts.FunctionDeclaration => ts.isFunctionDeclaration(st) && st.name?.text === name);
-  // the take state, derived from render.ts: every field of `v` the take (applyMeasure) and the untake (untakeMeasure) assign, and every field
-  // of `v` the parked figures are read from (figuresBefore); asserted equal to the set stated once at module level (TAKE_STATE), so a field
-  // the take grows into reds here and is added there, and to land-active-keep.test.ts's world, which traces a write of each
+  // the take state, derived from render.ts: every field of the view parameter the take (applyMeasure) and the untake (untakeMeasure) write,
+  // in every form the census names (fieldsWrittenOn), and every field of it the parked figures are read from (figuresBefore, fieldsReadOn);
+  // asserted equal to the set stated once at module level (TAKE_STATE), so a field the take grows into, through a cast, a delete, a pattern or
+  // an Object.assign as much as by a bare assignment, reds here and is added there, and to land-active-keep.test.ts's world, which traces a
+  // write of each. The parameter is read from each declaration, not assumed to be spelled `v`.
   const viewFields = (name: string, written: boolean): string[] => {
     const fn = fnNamed(name); assert.ok(fn && fn.body, name + " is a function declaration at module level");
-    const out = new Set<string>();
-    const go = (n: ts.Node): void => {
-      if (written && ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && n.operatorToken.kind <= ts.SyntaxKind.LastAssignment) { for (const t of targetsOf(n.left)) if (ts.isPropertyAccessExpression(t) && ts.isIdentifier(t.expression) && t.expression.text === "v") out.add(t.name.text); }
-      if (!written && ts.isPropertyAccessExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "v") out.add(n.name.text);
-      ts.forEachChild(n, go);
-    };
-    go(fn!.body!); return [...out];
+    const p = fn!.parameters[0]; assert.ok(p && ts.isIdentifier(p.name), name + " takes the view as its first parameter");
+    const param = (p!.name as ts.Identifier).text;
+    return [...(written ? fieldsWrittenOn(param, fn!.body!) : fieldsReadOn(param, fn!.body!))];
   };
   assert.deepEqual([...new Set([...viewFields("applyMeasure", true), ...viewFields("untakeMeasure", true), ...viewFields("figuresBefore", false)])].sort(), [...TAKE_STATE].sort(),
-    "the take state derived from render.ts (the fields of the view the take and the untake assign and the parked figures are read from) is the set stated once at module level; a field the take grows into is added there and traced in land-active-keep.test.ts's world");
+    "the take state derived from render.ts (the fields of the view the take and the untake write, in every form the census names, and the parked figures are read from, through a cast or a parenthesis too) is the set stated once at module level; a field the take grows into, in any of those forms, is added there and traced in land-active-keep.test.ts's world (a computed key or a non-literal source is outside this derivation as it is outside the census)");
   // the takers: DERIVED, every function that writes a take-state field in any form the tree can name (writesOf), by owner; LISTED, the two
   // spacer redraws, each checked to name a function declaration (a misspelled seed would be a dead seed and an open window); then the closure
   // over render.ts's named functions of everything that calls a taker, to a fixpoint
