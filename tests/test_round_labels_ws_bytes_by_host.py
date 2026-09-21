@@ -59,7 +59,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 SELF = "tests/test_round_labels_ws_bytes_by_host.py"
 
-BASE = "5b8df8f5c207f180d786b789abffd38b4a57376b"   # the branch's merge base with main at the push after the maintainer's round 5 (2026-09-21); raised with every merge of main
+BASE = "ff436587f4e826e2450517517efdf0b3208c9359"   # the branch's merge base with main, raised 2026-09-21 with the merge of main before the next review round (from the base at the push after the maintainer's round 5); raised with every merge of main
 
 # the maintainer's rounds on this PR, derived from the rulings filed on it (1 with its addendum, 3, 4, 5, 6; no second)
 REVIEWER_ROUNDS = frozenset({1, 3, 4, 5, 6})
