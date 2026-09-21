@@ -927,7 +927,7 @@ interface Conn {
   readyAcked?: boolean; // the remote answered this page's `ready` with a `caps` frame at least once (the shim's readyAcked): the redial gate's latch that the remote served this page whole and holds its sessions
   dialedReconnect?: boolean; // the CURRENT socket was dialed with reconnect=1, so its open must post NO `ready`: the redial's dial term IS the handshake, and a `ready` would make the remote's ready reset pop `reconnect` and serve the whole board (the shim posts no ready on a redial for the same reason)
   deferred?: boolean; // a dial connect() put off because the pane's LOCAL socket is down (window.__rompLocalUp false): set with the one dial-deferred row per down spell, cleared by the dial that finally runs
-  saidDelta?: Set<string>; // the delta breadcrumbs this conn has filed (delta-unkeyed-base, delta-unknown-slot, and since round 4 of the wsBytesByHost review the feed road's feedDelta-stale), keyed on the EVENT and not the conn's life (sayDeltaOnce, 2026-09-19): the same event again, however many patches, reposts or redials produce it, files nothing (a row per frame would be a row a minute per host); a different reason, or the same reason from a remote that redialed on another build, is news and files. Bounded, and not by the peer: the refused-base row's key is the row itself (ev and why: the slot, one of the EIGHT refusals this side's table can produce (VIEW_DELTA_KINDS, view-deltas.ts split: a list where a kind says dictlist or not, a non-list where it says a list, a dictlist lane whose name carries the separator), and the remote's build as the /tunnels row last named it, peerSha); the unknown-slot row's key holds ONE marker for every slot this bundle does not decode (UNKNOWN_SLOT_KEY), the peer's slot name riding in the row and never in the key. So at most twenty keys per distinct kernelSha the row has named on this conn: those nine, the feed road's stale row's key, the row itself again (ev and the why word: one of the NINE words applyRemoteFeedDelta's ladder mints, plus the build), the ask beside that row unlatched as the bars road's needSlot is, and the feed road's apply-throw row's two (feedDelta-apply, asked or stopped, plus the build: refuseRemoteApply, whose ask is bounded by Conn.feedApply and not by this set); and a remote that names a new slot in every frame spends one row, one console line and one key per build. The conn's, so a detach ends it. The two rows' conditions differ in what they are a property of: the unknown slot is this bundle's (it lasts the page, whatever the remote sends); the refused seed is the remote's frames' (it holds only while that kernel keeps sending a shape this table cannot key, and it is checked per FRAME: one refused whole frame drops a base an earlier frame seeded, and the next whole frame that keys seeds again), which is why the key is the row and not the conn's life
+  saidDelta?: Set<string>; // the delta breadcrumbs this conn has filed (delta-unkeyed-base, delta-unknown-slot, and since the author's pass 4 of the wsBytesByHost review the feed road's feedDelta-stale), keyed on the EVENT and not the conn's life (sayDeltaOnce, 2026-09-19): the same event again, however many patches, reposts or redials produce it, files nothing (a row per frame would be a row a minute per host); a different reason, or the same reason from a remote that redialed on another build, is news and files. Bounded, and not by the peer: the refused-base row's key is the row itself (ev and why: the slot, one of the EIGHT refusals this side's table can produce (VIEW_DELTA_KINDS, view-deltas.ts split: a list where a kind says dictlist or not, a non-list where it says a list, a dictlist lane whose name carries the separator), and the remote's build as the /tunnels row last named it, peerSha); the unknown-slot row's key holds ONE marker for every slot this bundle does not decode (UNKNOWN_SLOT_KEY), the peer's slot name riding in the row and never in the key. So at most twenty keys per distinct kernelSha the row has named on this conn: those nine, the feed road's stale row's key, the row itself again (ev and the why word: one of the NINE words applyRemoteFeedDelta's ladder mints, plus the build), the ask beside that row unlatched as the bars road's needSlot is, and the feed road's apply-throw row's two (feedDelta-apply, asked or stopped, plus the build: refuseRemoteApply, whose ask is bounded by Conn.feedApply and not by this set); and a remote that names a new slot in every frame spends one row, one console line and one key per build. The conn's, so a detach ends it. The two rows' conditions differ in what they are a property of: the unknown slot is this bundle's (it lasts the page, whatever the remote sends); the refused seed is the remote's frames' (it holds only while that kernel keeps sending a shape this table cannot key, and it is checked per FRAME: one refused whole frame drops a base an earlier frame seeded, and the next whole frame that keys seeds again), which is why the key is the row and not the conn's life
   peerSha?: string; // the remote kernel's build as the hub's /tunnels row last named it (kernelSha: the sha it booted from, "-dirty" included), read by poll() every 4 s; "" when the row names none (an older remote, or before the hub's supervisor has read the peer's /version; a rig without the poll). The delta breadcrumbs carry it in their why and key their latch on it, so a redial across the remote's deploy says its row again (2026-09-19)
   // KERNEL_SETTING messages (newest per type) and the pane's own BOOKKEEPING (newest per key, see
   // BOOKKEEPING) that arrived while this host's socket was down — flushed on the socket's open event
@@ -983,7 +983,7 @@ interface Conn {
   // ask is a second full from the kernel, the flood the bound exists to stop); answered: a full landed after the ask (the feed
   // arm); stopped: a delta threw again after that full, so the full the kernel sent back did not repair the stream, no further
   // ask goes and the shell is told once (refuseRemoteApply). Cleared by a delta that applies (progress is the reset); a FULL is
-  // not progress (the author's fixer pass after round 5, refusal-4): it moves asked to answered and clears nothing, so a throw
+  // not progress (the author's fixer pass after the maintainer's round 5, refusal-4): it moves asked to answered and clears nothing, so a throw
   // after an answering full with no applying delta between, however long the quiet interval, is read as the same stall and
   // files stopped with no ask (clearing on the full would re-open the poisoned-full loop the answered state exists to stop;
   // whether a throw under a later build should ask again is the maintainer's call). Reset with
@@ -1039,7 +1039,7 @@ export class FederationManager {
   // conn, so its bound is the manager's, per document, the page's life): the same three states, moved by the local feedDelta arm
   // (a throw: asked, then stopped after the answering full; an apply: cleared) and the feed arm (a local full after the ask:
   // answered). Its reset is the page's life alone, by choice and not because the local socket's life is the page's (the author's
-  // fixer pass after round 5, refusal-3): the shim redials the local socket in-page after a drop (kernel.py's connect(), the
+  // fixer pass after the maintainer's round 5, refusal-3): the shim redials the local socket in-page after a drop (kernel.py's connect(), the
   // reconnect=1 term), a dial this manager never sees, so unlike Conn.feedApply, which connect() resets per socket, nothing but
   // an applying delta moves this latch off stopped; a redialed socket's full still lands and refreshes the cards (the feed arm
   // stores and emits every full whatever the latch), so a stopped stall costs one ask per page life, never a pane frozen past the
@@ -1553,14 +1553,14 @@ export class FederationManager {
     }
     const gen = genOf(d.gen);
     const held = c.feedHeld;
-    // Unparseable is not absent (round 4, 2026-09-20). A frame enters the gate when it carries a gen genOf reads, or when it
+    // Unparseable is not absent (the author's pass 4, 2026-09-20). A frame enters the gate when it carries a gen genOf reads, or when it
     // carries a gen KEY at all onto a base holding a pair: a present value genOf cannot read (a number, an empty string, a
     // separator, one over GEN_MAX) is no match for the held gen and is refused below with the gen field's word, never read
     // as no stamp (GEN_MAX had made a 65-character gen read as absent, and a foreign-generation delta applied onto a base
     // holding a gen through the length door, the hole the gate exists to close). The gate reads newGen the same way: a
     // composed frame whose gen matched but whose newGen genOf cannot read is refused here, before the apply, with that
     // field's word, never applied with the pair advanced under the old gen (a pair that generation's stream never held).
-    // The scope is the base holding a pair (the minimal of the two options the round offered, applied to this road and the
+    // The scope is the base holding a pair (the minimal of the two options the maintainer's round 3 offered, applied to this road and the
     // bars receiver alike): onto a base holding no gen a frame carrying an unreadable gen applies as a gen-less one, as
     // the form test pins for that base, since no pair is held there for a refusal to protect.
     if (gen !== undefined || (d.gen !== undefined && held !== undefined)) {
@@ -1572,13 +1572,13 @@ export class FederationManager {
                      && Number.isSafeInteger(d.rev) && d.rev === d.through;
       if (!inGate) {
         // The stale row carries host, buildId and this word and nothing else, so the word is the whole signal a reader
-        // of the row has. One rule over the vocabulary (review round 3; applied to every test of the gate in round 4,
-        // 2026-09-20, when three relations were found riding a field's word): a word per FIELD for that field's own
+        // of the row has. One rule over the vocabulary (the maintainer's fifth-word ruling during the author's pass 3; applied to every test of the gate in the author's pass 4,
+        // 2026-09-20, when the maintainer's round 3 found three relations riding a field's word): a word per FIELD for that field's own
         // failures, and a word per RELATION between fields that are each valid, since a relation failure is no failure of
         // either field and a field's word would hide it from a reader who has the word alone. In the gate's test order:
         //   the pair:    "unpaired"  no pair is held for a stamped stream (the base came from a full carrying no gen)
-        //   gen:         "gen"       the frame's gen is not the held pair's (a value genOf cannot read included: round 4)
-        //   newGen:      "newGen"    the frame carries a newGen genOf cannot read (round 4)
+        //   gen:         "gen"       the frame's gen is not the held pair's (a value genOf cannot read included: the author's pass 4)
+        //   newGen:      "newGen"    the frame carries a newGen genOf cannot read (the author's pass 4)
         //   base:        "base"      not a safe integer
         //                "ahead"     above the held rev (the frame composes from a rev this side never reached)
         //   through:     "through"   not carried (every stamped delta carries it) or not a safe integer
@@ -1598,7 +1598,7 @@ export class FederationManager {
         // drives each word through it, and a 65-character word through the cut, and holds its list to this ladder. The row
         // is latched on the event it describes (sayDeltaOnce, keyed on the word and the remote's build: Conn.saidDelta says
         // the bound), as the view-delta road's two breadcrumbs are: the same refusal again from the same build files no
-        // second row, a different word or a redial that finds the remote on another build files its own (round 4,
+        // second row, a different word or a redial that finds the remote on another build files its own (the maintainer's round 3, extra8-2,
         // 2026-09-20; a row per refused frame was a row a cycle against a kernel that keeps mis-stamping). The ASK beside
         // it is not latched, as the bars road's needSlot is not: every refused frame still asks for the full it needs.
         const why = !held ? "unpaired" : gen !== held.gen ? "gen" : d.newGen !== undefined && genOf(d.newGen) === undefined ? "newGen"
@@ -1621,7 +1621,7 @@ export class FederationManager {
       // the one rev the frame states, the rev the applier holds once it applies, as the bars road's base does
       // (view-deltas.ts), and neither road can declare a reach the stream never reached. A carried newGen is readable by
       // the gate above, so an undefined one means the frame carries none (a per-cycle delta): never a fallback to gen for
-      // a value genOf could not read (round 4)
+      // a value genOf could not read (the author's pass 4)
       const newGen = genOf(d.newGen);
       c.feedHeld = { gen: newGen !== undefined ? newGen : gen, rev: d.rev };
     }
@@ -1641,7 +1641,7 @@ export class FederationManager {
    *  stops the asking and tells the shell once, since the full the kernel sent back did not repair the stream. A full is not
    *  progress: after the answering full the latch stays answered until a delta applies, so a throw after a quiet interval with no
    *  applying delta between is read as the same stall and stops the asking (the edge the design accepts, the author's fixer pass
-   *  after round 5, refusal-4: clearing on the full re-opens the poisoned-full loop). The row is
+   *  after the maintainer's round 5, refusal-4: clearing on the full re-opens the poisoned-full loop). The row is
    *  latched per word and per remote build (sayDeltaOnce), the ask is bounded by the latch itself. Before this a throw escaped
    *  the socket's message handler: the pane stayed on its last frame with nothing said and nothing asked. */
   private refuseRemoteApply(c: Conn, host: string, d: any, error: unknown): void {

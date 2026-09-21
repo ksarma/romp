@@ -1266,7 +1266,7 @@ test("share ON on a page without the APIs: nav and res are null, marks empty, ws
   assert.deepEqual(d.vis, { hiddenN: 0, visibleN: 0, hiddenMs: 0 }); assert.deepEqual(d.rafGap, { n: 0, worst: 0 });
   // a throwing reader reads the same as an absent one: every reader throws here, the two federation readers included (the
   // harness's defaults return null, an ABSENT reader, which the assertion on wsBytesByHost below did not exercise until
-  // review round 1 of the field, 2026-09-20; the safe() guards at the collector's two federation reads are what this pins)
+  // the maintainer's round 1 of the field, tests-1, 2026-09-20; the safe() guards at the collector's two federation reads are what this pins)
   const g = harness({ switches: () => ({ share: true, mute: false }), raf: null, entries: () => { throw new Error("no"); }, marks: () => { throw new Error("no"); }, env: () => { throw new Error("no"); },
                       fedBytes: () => { throw new Error("no"); }, fedAttached: () => { throw new Error("no"); } });
   const q = createPerfTelemetry("shell", g.deps);
@@ -1304,10 +1304,10 @@ test("bytesByHost: the minute's characters per remote host position from federat
   assert.deepEqual(bytesByHost({ h1: 1, h5: 9 }, { h5: 9 }, ["h1"]), { h1: 1 }, "a fifth position detached and silent has no key, like any other");
   // an ordinal past 2**53 (no manager mints one; the window slot is unvalidated) passes the pattern and cannot round-trip through
   // Number: a key rebuilt from the parsed ordinal missed its own entry and landed as NaN, which JSON writes as null, the one
-  // value the field never carries (review round 1, 2026-09-20). The key is carried as matched, so the entry keeps its number.
+  // value the field never carries (the maintainer's round 1, regression-6, 2026-09-20). The key is carried as matched, so the entry keeps its number.
   assert.deepEqual(bytesByHost({ h9007199254740993: 5 }, {}, null), { h9007199254740993: 5 }, "an ordinal past 2**53 keeps the key it was matched under: never rebuilt as a lossy number, never null");
   // the sibling road on the same unvalidated slot: two finite totals whose difference overflows to Infinity, which passes the
-  // clamp and JSON writes as null; the position is left off the row, as a non-finite total is (review round 1, 2026-09-20)
+  // clamp and JSON writes as null; the position is left off the row, as a non-finite total is (the author's pass-1 verify, 2026-09-20)
   const MAX = 1.7976931348623157e308;
   assert.equal(bytesByHost({ h1: MAX }, { h1: -MAX }, ["h1"]), null, "an overflowing difference leaves the position off, and the map with no other position is null, never {h1: Infinity}");
   assert.deepEqual(bytesByHost({ h1: MAX, h2: 5 }, { h1: -MAX }, ["h1", "h2"]), { h2: 5 }, "…and the other positions keep their keys");

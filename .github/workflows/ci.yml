@@ -364,7 +364,7 @@ jobs:
         # browser, still skipping these. --durations=20 names the slowest labs in the log: this step is
         # the job's long phase (12 min 44 s on main, 2026-09-14, against the job's cap above), and every
         # served lab added grows it, so the next growth should be visible by name. Two additions on 2026-09-20
-        # (the wsBytesByHost review, round 1), both pinned by tests/test_served_labs_under_ci.py: the pytest line
+        # (the maintainer's round 1 of the wsBytesByHost review), both pinned by tests/test_served_labs_under_ci.py: the pytest line
         # names tests/test_relay_dial_declares_held_pair.py by file, a raw-socket kernel leg that needs the built
         # dist this job has and no browser, so no glob names it and it ran in no job (its filename is plain on
         # purpose, so the conftest's REQUIRE rule does not read it; the module itself turns its precondition

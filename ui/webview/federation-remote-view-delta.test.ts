@@ -1108,7 +1108,7 @@ test("a bars full refused as unkeyable (judging a flat list, the pre-T278c shape
 
 // The gen's form on the bars road, the mirror of the feed file's leg: genOf is the one reader for both slots, so a value
 // off the kernel's form (a number, an empty string, a string carrying '.' or ',') seeds a base holding no gen here too.
-test("the gen's form on the bars road: a bars full carrying a number, an empty string, a string carrying either separator or one over GEN_MAX characters seeds a base holding no gen, and onto that gen-less base a per-cycle patch carrying the same value applies on the base-plus-one test alone and the redial declares nothing (onto a base holding a gen it recovers: the round-4 test below)", async () => {
+test("the gen's form on the bars road: a bars full carrying a number, an empty string, a string carrying either separator or one over GEN_MAX characters seeds a base holding no gen, and onto that gen-less base a per-cycle patch carrying the same value applies on the base-plus-one test alone and the redial declares nothing (onto a base holding a gen it recovers: the author's pass-4 test below)", async () => {
   const overCap = GEN_STAMP + "-" + "9".repeat(GEN_MAX - GEN_STAMP.length);   // GEN_MAX + 1 characters, all in the kernel's alphabet
   assert.equal(overCap.length, GEN_MAX + 1);
   for (const bad of [7, 0, "", GEN_STAMP + ".7", GEN_STAMP + ",7", null, true, overCap]) {
@@ -1162,7 +1162,7 @@ test("a per-cycle stamped patch carrying through equal to its rev applies with n
 // The base advances to the frame's rev, and a stamped frame's rev IS its through (the design: through equal to rev on a
 // per-cycle patch, R on a composed frame); a frame whose two disagree recovers (needSlot, the base dropped) in either
 // direction, as the feed road refuses it, because adopting either number would declare a reach the stream never reached:
-// a probe on the round-2 head adopted rev 7 from a patch whose stated reach was 1.
+// a probe on the author's pass-1 head adopted rev 7 from a patch whose stated reach was 1.
 test("a stamped patch whose rev and through disagree recovers as a base-rev mismatch does, in either direction and for a composed frame: needSlot on the conn, nothing emitted, the base dropped, and the whole slot the ask earns re-seeds the pair", async () => {
   await withManager("timeline", ({ fm, emitted }) => {
     seedLocalTimeline(fm);
@@ -1188,7 +1188,7 @@ test("a stamped patch whose rev and through disagree recovers as a base-rev mism
 
 // The gen gate on the bars road, the mirror of the feed file's: a stamped patch whose gen is not the base's is another
 // stream's and recovers (needSlot, the base dropped), never applied and never adopted as the base's gen; a composed
-// frame's gen is gated the same way. Before round 3 the patch applied and its gen overwrote the base's, so the next redial
+// frame's gen is gated the same way. Before the author's pass 3 the patch applied and its gen overwrote the base's, so the next redial
 // declared a pair the page never held. Where the roads differ: a stamped patch onto a base seeded WITHOUT a gen applies on
 // the rev test alone and seeds no gen (the feed road refuses that frame), so held() stays null and the redial declares nothing.
 test("a stamped bars patch whose gen is not the base's recovers as a base-rev mismatch does (needSlot, nothing emitted, the base dropped), for a per-cycle patch and a composed frame alike, and the base's gen is never overwritten; a stamped patch onto a gen-less base applies and seeds no gen", async () => {
@@ -1236,7 +1236,7 @@ test("a stamped bars patch whose gen is not the base's recovers as a base-rev mi
   });
 });
 
-// A frame carrying newGen and through but NO gen never ran the gate, so its newGen is not adopted (round 3, the fixer's
+// A frame carrying newGen and through but NO gen never ran the gate, so its newGen is not adopted (the author's pass-3 fixer
 // pass, 2026-09-20): before it the base's gen was overwritten by a gen the gate never matched, and the next redial declared
 // that pair while the feed road, applying the same frame, moved no pair. Now both roads read the shape alike: the frame
 // applies on the rev test, the base keeps its gen and rev advances to the frame's, and the redial declares the base's gen.
@@ -1261,7 +1261,7 @@ test("a bars frame carrying newGen and through but no gen applies and keeps the 
   });
 });
 
-// Unparseable is not absent, on the bars road (round 4, 2026-09-20), the mirror of the feed file's two tests. A patch carrying
+// Unparseable is not absent, on the bars road (the author's pass 4, 2026-09-20), the mirror of the feed file's two tests. A patch carrying
 // a gen genOf cannot read (one over GEN_MAX, a separator, a number, an empty string) onto a base holding a gen used to skip
 // the gen gate (g undefined, the test never ran) and apply as a gen-less patch, keeping the base's gen; now such a value is
 // a gen that is not the base's, and the patch recovers as a foreign gen does (needSlot, the base dropped, nothing emitted).
@@ -1292,7 +1292,7 @@ test("a bars patch carrying a gen genOf cannot read onto a base holding a gen re
   }
 });
 
-// The same rule one field over (round 4): a composed frame whose gen the gate matched but whose newGen genOf cannot read used
+// The same rule one field over (the author's pass 4): a composed frame whose gen the gate matched but whose newGen genOf cannot read used
 // to fall back to the base's OLD gen and advance the base to the frame's rev under it (the pair the redial then declared was
 // one that generation's stream never held). Now the receiver reads newGen where it reads gen: a present value it cannot read
 // recovers (needSlot, the base dropped) before anything is set, and the redial declares nothing until the whole slot re-seeds.
@@ -1320,7 +1320,7 @@ test("a composed bars frame whose gen matched but whose newGen genOf cannot read
   }
 });
 
-// The length bound on the bars road (round 3, 2026-09-20), the mirror of the feed file's: genOf is the one reader for both
+// The length bound on the bars road (the author's pass 3, 2026-09-20), the mirror of the feed file's: genOf is the one reader for both
 // slots, so a gen at GEN_MAX is a stamp here too (the pair holds and the redial declares it) and one over reads as none
 // (the form test's list).
 test("a gen of exactly GEN_MAX characters is a stamp on the bars road: the pair holds and the redial declares it", async () => {

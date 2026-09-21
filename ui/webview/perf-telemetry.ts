@@ -373,7 +373,7 @@ export function bytesByHost(now: Record<string, unknown> | null, base: Record<st
   if (!now || typeof now !== "object") return null;
   const up = new Set(attached || []);
   const ords: [number, string][] = [];   // the ordinal for the order and the key AS MATCHED for the reads: a key rebuilt from
-  for (const k of Object.keys(now)) {    // the parsed ordinal missed its own entry past 2**53 and landed as null (round 1, 2026-09-20)
+  for (const k of Object.keys(now)) {    // the parsed ordinal missed its own entry past 2**53 and landed as null (the maintainer's round 1, regression-6, 2026-09-20)
     const m = /^h([1-9][0-9]*)$/.exec(k);
     const v = now[k];
     if (m && typeof v === "number" && isFinite(v)) ords.push([Number(m[1]), k]);
@@ -382,7 +382,7 @@ export function bytesByHost(now: Record<string, unknown> | null, base: Record<st
   const out: Record<string, number> = {};
   for (const [, k] of ords) {
     const d = Math.max(0, Math.round((now[k] as number) - (base[k] || 0)));
-    if (!isFinite(d)) continue;           // two finite totals whose difference overflows: off the row like a non-finite total, never null (round 1)
+    if (!isFinite(d)) continue;           // two finite totals whose difference overflows: off the row like a non-finite total, never null (the author's pass-1 verify)
     if (d <= 0 && !up.has(k)) continue;   // detached at the flush and silent in the minute: no key
     out[k] = d;
   }

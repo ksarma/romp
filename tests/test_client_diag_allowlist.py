@@ -4,7 +4,7 @@ extension). The file used to take whatever a page posted, of any shape and size.
 allowlist (CLIENT_DIAG_KEYS) is dropped and said once on stderr per surface and key; a data that is not an object is
 stored as null; every string value is cut at CLIENT_DIAG_STR_MAX characters at any depth, and a row a value of which was cut,
 or nulled past CLIENT_DIAG_DEPTH_MAX, carries CLIENT_DIAG_CUT_KEY naming the admitted keys it happened under, said once per
-surface and key (review round 3 of wsBytesByHost, 2026-09-20: the one silent loss on this road); a row whose JSON runs past
+surface and key (the maintainer's round 3 of wsBytesByHost, 2026-09-20: the one silent loss on this road); a row whose JSON runs past
 CLIENT_DIAG_ROW_MAX bytes keeps its surface, what and app and carries {"capped": true, "bytes": N, "app": ...} as its
 data, except a perf minute row, which sheds CLIENT_DIAG_MINUTE_SHED's keys in order (the uncapped wsBytesByHost map first
 and whole, then its per-minute figures) until it fits and names them under `capped`, so the once-per-page nav, res, marks
@@ -61,9 +61,9 @@ SHARED = {"nav": {"type": "reload", "responseEnd": 210, "domContentLoaded": 656,
           # the same unit per REMOTE host by its position in the pane document, h1 the first remote host it attached; positions, never names
           "wsBytesByHost": {"h1": 40123, "h2": 991}}
 
-# The content census (review round 1 of the wsBytesByHost change, 2026-09-20; re-derived by producers in round 4). Every admitted
+# The content census (the maintainer's round 1 of the wsBytesByHost change, 2026-09-20; re-derived by producers in the author's pass 4). Every admitted
 # key of every surface, classified by what its VALUE can carry as the first-party posters and the kernel's own writers build it.
-# THE RULE (round 4, after a row was found classified from a sibling field): a field is a carrier if ANY producer chain can put a
+# THE RULE (the author's pass 4, after a row was found classified from a sibling field): a field is a carrier if ANY producer chain can put a
 # host name in it, however rare that road; classify by the producer's RANGE, never by the field's typical content, and follow the
 # value to its WRITERS and their minters, never to the shape of the row it appears in (a sibling field is not evidence about a
 # value). Each carrier's reason names its range, every row of the kind or the one road, and the disclosure copies read the
@@ -75,7 +75,7 @@ SHARED = {"nav": {"type": "reload", "responseEnd": 210, "domContentLoaded": 656,
 # test_one_fixture_row_per_poster_call_site_passes_whole_and_the_table_names_nothing_else and, for the perf, pane-shim and
 # reload-core surfaces, test_todays_rows_pass_whole_and_quietly: one row per call site with the values the writers post, and
 # every value posted under a shorthand row asserted to the row's shape (assert_shorthand_shapes: a number, a boolean, a
-# string), so a fixture value of another shape reds (round 4's fixer pass: the pass-whole loop compares the stored row to the
+# string), so a fixture value of another shape reds (the author's pass-4 fixer pass: the pass-whole loop compares the stored row to the
 # posted one and reads no shape, and three chat values had contradicted their rows green). A census keyed on the NAME `host`
 # had missed the chat surface, whose sid, id, ids and active are the tab ids
 # the page holds, which federation.ts prefixes for every remote session (prefixInbound on SCALAR_ID and ARRAY_ID, the tab records
@@ -245,7 +245,7 @@ CENSUS = {
     },
 }
 
-# The kernel-written marker keys (round 4, 2026-09-20), classified as the admitted keys are: written AFTER the admit by the
+# The kernel-written marker keys (the author's pass 4, 2026-09-20), classified as the admitted keys are: written AFTER the admit by the
 # kernel alone and admitted from no poster (test_the_constants_and_the_table pins that for every surface), so a page cannot
 # forge either; neither can carry a host name, since both hold positions of keys in the row and a byte count.
 MARKERS = {
@@ -269,13 +269,13 @@ def host_carrying_keys():
 def federation_host_row_kinds():
     """The federation row kinds that carry the conn's host, derived from federation.ts: every `this.diag("<what>", ...)` call
     whose data literal names `host` on the call's line (the literal's first key at every site today). The disclosure copies
-    name each kind (round 1, 2026-09-20: the copies said "hostconn rows" where the census reason said every hostconn,
+    name each kind (the author's pass-1 verify, 2026-09-20: the copies said "hostconn rows" where the census reason said every hostconn,
     feedDelta and send row); a new host-carrying row kind fails the pin until the copies name it."""
     src = open(os.path.join(os.path.dirname(HERE), "ui", "webview", "federation.ts"), encoding="utf-8").read()
     return set(re.findall(r'this\.diag\("([\w-]+)",[^\n{]*\{[^\n}]*\bhost\b', src))
 
 
-STALE_WHY_WORDS = ("unpaired", "gen", "newGen", "base", "ahead", "through", "behind", "rev", "disagree")   # the feedDelta-stale row's why vocabulary in the ladder's test order (round 4, 2026-09-20): a word per field failure and a word per relation, held to the ladder by test_the_stale_rows_vocabulary_is_the_ladders
+STALE_WHY_WORDS = ("unpaired", "gen", "newGen", "base", "ahead", "through", "behind", "rev", "disagree")   # the feedDelta-stale row's why vocabulary in the ladder's test order (the author's pass 4, 2026-09-20): a word per field failure and a word per relation, held to the ladder by test_the_stale_rows_vocabulary_is_the_ladders
 
 
 def stale_why_expr():
@@ -444,7 +444,7 @@ def ladder_words(expr):
         elif len(run) == 1:
             form = ("an " if run[0][0][0] in "aeiou" else "a ") + run[0][0]
         elif run[0][1] == "(":
-            form = "a parenthesized expression"   # a nested ternary in parentheses among them: refused, and named for what it is, not as a call (the author's fixer pass after round 4, refusals-5)
+            form = "a parenthesized expression"   # a nested ternary in parentheses among them: refused, and named for what it is, not as a call (the author's fixer pass after the maintainer's round 4, refusals-5)
         elif any(t[0] == "identifier" for t in run) and any(t[1] == "(" for t in run):
             form = "a call"
         elif any(t[1] == "+" for t in run):
@@ -487,7 +487,7 @@ def disclosure_copies():
 def federation_grain_texts():
     """Every federation.ts text that states the positions' grain, flattened, keyed by site: the two-maps comment
     (maps_comment), the wsBytesByHost() and attachedHostOrdinals() docstrings, and the __rompFed publication comment in
-    start() (round 4, 2026-09-20: the grain pass left "over this page's life" at two of them and "attached to this page"
+    start() (the maintainer's round 3, regression-1, 2026-09-20: the grain pass left "over this page's life" at two of them and "attached to this page"
     at the third, against the maps declaration 800 lines above). A site whose anchors are gone reads None, so the phrase
     loop fails on it rather than passing on nothing."""
     root = os.path.dirname(HERE)
@@ -506,7 +506,7 @@ def maps_comment():
     """The federation manager's two-maps comment in federation.ts (from the field's header line to the first map's
     declaration), flattened to one line, or None when its anchors are gone. Not a disclosure copy (it states the maps, not
     the rule), but the copy a reader of the code meets first, so its reload sentence carries the docs' three conditions
-    (round 3; the revision 14 read found it carrying one)."""
+    (the author's pass 3; the revision 14 read found it carrying one)."""
     root = os.path.dirname(HERE)
     fsrc = open(os.path.join(root, "ui", "webview", "federation.ts"), encoding="utf-8").read()
     m = re.search(r"// wsBytesByHost \(2026-09-19;(.*?)\n\s*private hostOrdinal = ", fsrc, re.S)
@@ -515,7 +515,7 @@ def maps_comment():
 
 def federation_fixture_rows(host):
     """One synthetic row per federation.ts diag() call site (hostconn's events, then the others), the shapes the WRITERS post:
-    re-minted from the source in the author's pass after round 4 (the maintainer's round 4, extra7-1 and extra9-1: the hold
+    re-minted from the source in the author's pass after the maintainer's round 4 (its extra7-1 and extra9-1: the hold
     row carried a KERNEL_SETTING type where a hold can carry only a BOOKKEEPING one, and the senddrop row posted a `why` no
     writer sends, "closed", on a type the why-carrying arm never drops). test_the_federation_fixture_rows_are_shapes_the_writers_post
     holds these rows to the writers' literals and tables."""
@@ -611,14 +611,14 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         self.assertTrue(set(km.CLIENT_DIAG_MINUTE_SHED) <= km.CLIENT_DIAG_KEYS["perf"])
         self.assertEqual(km.CLIENT_DIAG_SAID_MAX, 512)
         self.assertEqual(km.CLIENT_DIAG_ROW_SAY_MAX, 8, "the foreign keys of one row said by name; the rest are counted in one line")
-        self.assertEqual(km.CLIENT_DIAG_CUT_KEY, "cut", "the value-loss marker's key (round 4)")
+        self.assertEqual(km.CLIENT_DIAG_CUT_KEY, "cut", "the value-loss marker's key (the author's pass 4)")
         for marker in (km.CLIENT_DIAG_CUT_KEY, "capped"):
             for surface, keys in km.CLIENT_DIAG_KEYS.items():
                 self.assertNotIn(marker, keys, "%s: a kernel-written marker is admitted from no poster, or a page could forge one" % surface)
 
     def assert_shorthand_shapes(self, surface, what, data):
         """Every value a fixture posts under a census row whose reason is a shorthand (_INT, _BOOL, _ENUM) has that shape
-        (round 4's fixer pass, 2026-09-20): the header's claim that the fixture rows check the shorthand reasons had been
+        (the author's pass-4 fixer pass, 2026-09-20): the header's claim that the fixture rows check the shorthand reasons had been
         satisfied by no assertion (the pass-whole loop compares the stored row to the posted one and reads no shape), and
         three chat values contradicted their rows green. A bool is an int in Python, so a number must not be one."""
         for key, value in data.items():
@@ -731,7 +731,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         self.assertEqual(len(self.rows()), 4)
 
     def test_strings_are_cut_at_the_cap_at_any_depth_and_the_row_carries_the_cut_marker_said_once(self):
-        # the cut is the standing rule; since round 4 (2026-09-20) it is never silent: the row carries CLIENT_DIAG_CUT_KEY
+        # the cut is the standing rule; since the author's pass 4 (2026-09-20) it is never silent: the row carries CLIENT_DIAG_CUT_KEY
         # naming the admitted keys a value was cut under, and the kernel says so once per surface and key, as it says a
         # dropped key, so a stored value can be told from a whole one (a cut string looked like a whole one to every reader)
         long = "x" * 200
@@ -788,7 +788,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
             depth += 1
         self.assertIsNone(v)
         self.assertEqual(depth, km.CLIENT_DIAG_DEPTH_MAX, "lists at depths 0 to the cap less one, then null")
-        self.assertEqual(d[km.CLIENT_DIAG_CUT_KEY], ["frames"], "a nulled nesting is a value loss too: the marker names the key (round 4)")
+        self.assertEqual(d[km.CLIENT_DIAG_CUT_KEY], ["frames"], "a nulled nesting is a value loss too: the marker names the key (the maintainer's round 3, extra7-1)")
         self.assertEqual(len(err.splitlines()), 1, err)
         self.assertIn("a value nested past depth 8 is stored as null", err)
         # a value of no JSON type is the third loss the scrub records; unreachable on the posted road (its data is json.loads
@@ -867,7 +867,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
             self.assertEqual(d[k], data[k], "%s stays: the shed stops once the line fits" % k)
         self.assertLessEqual(len(json.dumps(row)), km.CLIENT_DIAG_ROW_MAX)
         self.assertEqual(len(err.splitlines()), 1, err)
-        self.assertIn("stored without some of its keys (its capped key names them)", err, "worded for the ladder as a whole: the map alone may be what went (round 4)")
+        self.assertIn("stored without some of its keys (its capped key names them)", err, "worded for the ladder as a whole: the map alone may be what went (the maintainer's round 3, kernel-1)")
         self.assertNotIn("per-minute figures", err)
         self.assertEqual(self.post("perf", "minute", data), "", "said once per surface and what")
         # a minute whose long-frame report is big too: frames goes first, then loaf; free, slow and the shared fields stay
@@ -1062,7 +1062,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         # keys are spelled in their longest form, fed:delta: plus the 32-character identifier, 42 characters: federation.ts
         # times a frame as fed: plus classifyFrame(msg), which reads delta: plus the identifier for a delta frame. This test
         # first spelled them fed: plus the identifier, 36 characters, and the row it proved whole was 198 B under the row
-        # the collector can build (review find, round 2, 2026-09-18). The one key with no cap, wsBytesByHost, is built at
+        # the collector can build (a review find of the earlier cut's review, 2026-09-18). The one key with no cap, wsBytesByHost, is built at
         # the eight positions the derivation states; the ladder test below takes it past the bound.
         minute, shared, env, c = self._worst_case_row()
         max_types, HOSTS, by_host = c["max_types"], c["hosts"], shared["wsBytesByHost"]
@@ -1086,7 +1086,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         self.assertEqual(len(share_on), 2, "the derivation and CLIENT_DIAG_ROW_MAX's own comment each state the share-on figure once")
         self.assertEqual(set(share_on), {"%.1f" % (on / 1000)}, "both share-on figures are this row's size in KB (%d bytes)" % on)
         # docs/reference.md states the same two figures for the same derivation, in its own phrasing: a third copy, which this
-        # change moved in kernel.py and the body and left at the old figure in the docs (review round 1, 2026-09-20). Its own
+        # change moved in kernel.py and the body and left at the old figure in the docs (the maintainer's round 1, regression-3, 2026-09-20). Its own
         # pattern, whitespace-flattened (the doc wraps), and a not-None guard before the comparison, so a rephrased doc fails
         # here rather than passing on nothing; the assumed host count is read back too, since "every cap reached at once" is
         # not a bound on the one key that has no cap
@@ -1107,7 +1107,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
 
     def test_a_wide_wsBytesByHost_map_is_shed_whole_as_the_ladders_first_step_and_the_rest_of_the_row_is_stored_as_posted(self):
         # wsBytesByHost is the one key of the minute row the collector does not cap (one position per attached host, the owner's
-        # decision), so it is the one key that can take a row the collector builds past CLIENT_DIAG_ROW_MAX. Before round 1 of
+        # decision), so it is the one key that can take a row the collector builds past CLIENT_DIAG_ROW_MAX. Before the maintainer's round 1 of
         # its review (2026-09-20) the ladder shed the frame histograms first and kept the map that caused the overflow, and past
         # a second crossing the whole row: a wide map lost exactly what the shed protects. Now the map is the ladder's first
         # step, shed WHOLE and named under capped (never truncated to the positions that fit, so a stored map is never read as a
@@ -1161,7 +1161,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         margin = re.search(r"leaves (\d+) bytes under the bound", ksrc)
         self.assertIsNotNone(margin, "kernel.py's derivation no longer states the margin: re-aim this read")
         self.assertEqual(int(margin.group(1)), km.CLIENT_DIAG_ROW_MAX - size(c["hosts"]), "the stated margin is the bound less the stated worst case")
-        # docs/reference.md carries a copy of the same derived figures (round 4, regression-2: a fourth, unpinned copy): its own
+        # docs/reference.md carries a copy of the same derived figures (the maintainer's round 3, regression-2: a fourth, unpinned copy): its own
         # patterns, whitespace-flattened, each guarded, read back against the same row: the per-position range against the derived
         # tuple's least and most, the crossing against the derived crossing, the shed order against CLIENT_DIAG_MINUTE_SHED. Neither
         # copy states the crossing on "today's rows" any more: that figure was pinned by nothing in either and is dropped from both.
@@ -1203,7 +1203,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         self.assertEqual(carrying, {"chat": {"active": PREFIXED, "anchor": SUFFIX, "id": PREFIXED, "ids": PREFIXED, "sid": PREFIXED},
                                     "feed": {"appeared": SUFFIX, "gone": SUFFIX, "id": SUFFIX},
                                     "federation": {"counts": KEYED, "host": BARE}, "kernel": {"host": BARE}, "shell": {"host": BARE, "sid8": PREFIXED}},
-                         "the host-carrying keys and their forms, as derived (round 4 gained shell.sid8, feed's three and chat.anchor by following the values to their "
+                         "the host-carrying keys and their forms, as derived (the author's pass 4 gained shell.sid8, feed's three and chat.anchor by following the values to their "
                          "producers); a change here is a change to the disclosure copies")
         # the prefixed form lands as posted: the head of a string survives the cut, host and all (a 64-character cut of
         # <host>:<uuid> keeps the whole id for a host name of up to 27 characters and the host for any longer one)
@@ -1236,11 +1236,11 @@ class ClientDiagAllowlistTest(unittest.TestCase):
     def test_the_disclosure_copies_state_the_content_rule_and_name_every_host_carrying_surface(self):
         # The disclosure is stated three times in the tree (the wsBytesByHost entry's comment in kernel.py, the minute-row entry
         # in docs/reference.md, the ledger entry) and once in the PR body outside it. Its first version enumerated the surfaces
-        # that name a `host` KEY and missed the chat surface, whose values carry a host inside a session id (round 1, 2026-09-20).
+        # that name a `host` KEY and missed the chat surface, whose values carry a host inside a session id (the maintainer's round 1, correctness-1, 2026-09-20).
         # Each copy must now state the rule (a value can carry a host name bare under a host key, as a host-prefixed session id
         # when the row concerns a remote session, or as a host-keyed map), name the chat road's condition and its independence
         # from the share switch, and name every host-carrying surface the census derives; a copy that drops a clause fails here.
-        # The tokens are the rule's terms and the clauses the round asked for (the chat road's age, its frequency and its use, the
+        # The tokens are the rule's terms and the clauses the author's pass-1 verify asked for (the chat road's age, its frequency and its use, the
         # map clause, the registries' stamp); a copy's other sentences are not read here.
         copies = disclosure_copies()
         self.assertEqual(sorted(copies), ["docs", "kernel", "ledger"])
@@ -1248,24 +1248,24 @@ class ClientDiagAllowlistTest(unittest.TestCase):
             self.assertIsNotNone(text, "%s: the disclosure copy was not found: re-aim disclosure_copies()" % name)
             self.assertGreater(len(text), 200, name)
             for token in (r"host-prefixed session id", r"host-keyed map", r"remote session", r"share switch", r"`?host`? key", r"positions and no host name",
-                          r"several positions for one machine",   # the per-document grain's consequence (round 3, fresh-2)
+                          r"several positions for one machine",   # the per-document grain's consequence (the maintainer's round 1 addendum, fresh-2)
                           r"GET /tunnels", r"in (its|their) own right",
                           r"remotes\.json", r"remotes-known\.json", r"lastAttachedAt", r"exact for", r"order inference",
-                          r"no page-life correlation", r"attached-host order",   # the fourth road's whole statement (round 3, extra8-1)
+                          r"no page-life correlation", r"attached-host order",   # the fourth road's whole statement (the maintainer's round 1 addendum, extra8-1)
                           r"older than", r"most frequent", r"routine use", r"not from chat or feed rows alone",
-                          r"four forms", r"tail of a postal message id", r"postal host", r"sid8", r"first 8 characters", r"message connector",   # round 4: the suffix form, the shell's rows, the anchor's road
+                          r"four forms", r"tail of a postal message id", r"postal host", r"sid8", r"first 8 characters", r"message connector",   # the author's pass 4: the suffix form, the shell's rows, the anchor's road
                           r"single-kernel page", r"every row of (the|both) kind", r"one road",   # each carrier's RANGE (the ruling's rule: classify by the producer's range)
                           r"\bmints\b", r"does not inspect the map's keys", r"nested key",
-                          r"a value of which was cut carries",   # the cut marker: a stored value can be told from a whole one (round 4)
-                          r"regular-expression test in the page bundle", r"the kernel has none"):   # the enforcement named (round 3, extra8-3)
+                          r"a value of which was cut carries",   # the cut marker: a stored value can be told from a whole one (the author's pass 4)
+                          r"regular-expression test in the page bundle", r"the kernel has none"):   # the enforcement named (the maintainer's round 1 addendum, extra8-3)
                 self.assertIsNotNone(re.search(token, text, re.I), "%s: the disclosure no longer states %r" % (name, token))
-            # one grain per copy (round 3, the fixer's pass): the copies state the per-document grain and its consequence, so no
+            # one grain per copy (the author's pass-3 fixer pass): the copies state the per-document grain and its consequence, so no
             # sentence of theirs may keep the page grain the first cut wrote (h1 "the first remote host the page saw", a position
             # "on the page"), which on a page with several panes is false and contradicts the sentence beside it
             for phrase in (r"position on the page", r"the page saw", r"this page attached", r"page-lifetime", r"the page attaches", r"appeared to the page"):
                 self.assertIsNone(re.search(phrase, text, re.I), "%s: the disclosure states the page grain again: %r" % (name, phrase))
         # the bare-name example is derived, not hand-kept: every federation row kind that carries the conn's host, read from
-        # federation.ts's diag call sites, is named by every copy (round 1, 2026-09-20: the copies named hostconn alone)
+        # federation.ts's diag call sites, is named by every copy (the author's pass-1 verify, 2026-09-20: the copies named hostconn alone)
         kinds = federation_host_row_kinds()
         self.assertEqual(kinds, {"hostconn", "feedDelta-nobase", "feedDelta-stale", "feedDelta-apply", "sendqueue", "senddrop"},
                          "the federation row kinds carrying a host, as derived (feedDelta-apply since the maintainer's round 5, refusals-2); a change here is a change to the disclosure copies")
@@ -1274,16 +1274,16 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                 self.assertIsNotNone(re.search(r"\b%s\b" % re.escape(kind), text), "%s: the disclosure does not name federation's %s rows" % (name, kind))
         # the stability caveat lives where the position rule is stated for readers, the docs and the ledger (and the PR body outside
         # the tree): a reload re-derives the assignment from the same /tunnels order, so the caveat must carry its condition, never
-        # read as a de-linking property (round 1, correctness-2; the ledger's copy since the round's own read)
+        # read as a de-linking property (the maintainer's round 1, correctness-2; the ledger's copy since the author's pass-1 verify)
         for name in ("docs", "ledger"):
             for token in (r"names the same one again", r"dialable rows", r"first poll", r"attach and detach history", r"rotation"):
                 self.assertIsNotNone(re.search(token, copies[name], re.I), "%s: the reload sentence no longer states %r" % (name, token))
-        # federation.ts's two-maps comment carries the same three conditions (it carried one until round 3)
+        # federation.ts's two-maps comment carries the same three conditions (it carried one until the author's pass 3)
         maps = maps_comment()
         self.assertIsNotNone(maps, "federation.ts: the two-maps comment's anchors are gone: re-aim maps_comment()")
         for token in (r"names the same one again", r"dialable rows", r"first poll", r"attach and detach history"):
             self.assertIsNotNone(re.search(token, maps, re.I), "maps: the reload sentence no longer states %r" % token)
-        # and no federation.ts site that states the grain keeps the page grain (round 4, regression-1: the grain pass left
+        # and no federation.ts site that states the grain keeps the page grain (the maintainer's round 3, regression-1: the grain pass left
         # "over this page's life" at the wsBytesByHost() docstring and the publication comment and "attached to this page" at
         # attachedHostOrdinals(), against the maps declaration). The phrases are federation.ts's alone: kernel.py says "for the
         # page's life" of the once-per-page fields, another grain, and is not read here.
@@ -1296,7 +1296,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                 self.assertIsNone(re.search(phrase, text, re.I), "federation.ts %s: the page grain again: %r" % (site, phrase))
             self.assertIsNotNone(re.search(r"manager|pane document", text), "federation.ts %s: the grain is stated (the manager, the pane document)" % site)
         named = {"chat": r"\bchat\b", "federation": r"\bfederation\b", "shell": r"\bshell\b", "kernel": r"\bwsopen\b",
-                 "feed": r"feed surface's `?id`?, `?appeared`? and `?gone`?"}   # the fourth form's surface (round 4), named with its three keys
+                 "feed": r"feed surface's `?id`?, `?appeared`? and `?gone`?"}   # the fourth form's surface (the author's pass 4), named with its three keys
         carrying = host_carrying_keys()
         self.assertTrue(carrying)
         for surface in sorted(carrying):
@@ -1307,7 +1307,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
     def test_one_fixture_row_per_poster_call_site_passes_whole_and_the_table_names_nothing_else(self):
         """The table against the posters: one synthetic row per clientDiag call site in the bundles (render.ts and
         scroll-write.ts, federation.ts, feed.ts, fleet.ts, waiting.ts, strip.ts) and the shell scripts in kernel.py, with the
-        keys each posts and, since round 4 (2026-09-20), values of the shapes the writers post (the rows had been written
+        keys each posts and, since the author's pass 4 (2026-09-20), values of the shapes the writers post (the rows had been written
         from the key names: eleven shell values across five call sites, and counts, strings and booleans where the writers
         post lists, ints and objects, matched no producer, so the census's shorthand reasons were checked by nothing). Every
         row passes whole with no stderr line, and per surface the fixtures' keys are exactly the table's, so a poster that
@@ -1410,7 +1410,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         why_reason, msg_reason = CENSUS["federation"]["why"][1], CENSUS["federation"]["msgType"][1]
         for lit in ("quiet", "connecting", "local-down", "no-conn", "asked", "stopped"):
             self.assertIn(lit, why_reason, "the why reason names the writer literal %r" % lit)
-        # the apply-throw row's road word (round 5, refusals-2): two fixed words at two writers, derived from federation.ts and named by the reason
+        # the apply-throw row's road word (the maintainer's round 5, refusals-2): two fixed words at two writers, derived from federation.ts and named by the reason
         roads = sorted(set(re.findall(r'this\.diag\("feedDelta-apply", \{[^}]*\broad: "(\w+)"', fed_src())))
         self.assertEqual(roads, ["local", "wire"], "the two writers of feedDelta-apply post the two road words")
         road_reason = CENSUS["federation"]["road"][1]
@@ -1426,13 +1426,13 @@ class ClientDiagAllowlistTest(unittest.TestCase):
             self.assertIn(phrase, msg_reason, "the msgType reason names the class: %s" % phrase)
 
     def test_the_stale_rows_why_words_pass_whole_and_a_foreign_key_on_the_row_is_dropped(self):
-        """Round 3 (2026-09-20), the fifth word; round 4, the rule applied to every test of the gate (nine words: a word per
+        """The author's pass 3 (2026-09-20), the fifth word; the author's pass 4, the rule applied to every test of the gate (the maintainer's round 3, extra6-1; nine words: a word per
         field failure, a word per relation). The feedDelta-stale row carries host, buildId and why and nothing else, so
         its word is the whole signal a reader of the file has. Every word of STALE_WHY_WORDS is driven through the real
         dispatch, the road the fixture test posts through, and stored whole: the admit filters a row's top-level KEYS against
         the surface's table and tests no value for admission (an admitted key's value is stored through _client_diag_scrub,
         a string cut at CLIENT_DIAG_STR_MAX, 64 characters, which no word approaches: the 65-character word below is stored
-        cut to 64, the row marked and the cut said once (round 4), so the value is read and never gated), so a new WORD under the admitted `why` key needs
+        cut to 64, the row marked and the cut said once (the author's pass 4), so the value is read and never gated), so a new WORD under the admitted `why` key needs
         no table change where a new KEY does (PR 861: a pane-side marker under a key the table did not name was dropped).
         Green at the head before the word existed in federation.ts, by that mechanism; the failing-before is the control: the
         same row carrying `rev` and `through`, keys the minter does not send and the table does not admit, is stored without
@@ -1447,7 +1447,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         err = self.post("federation", "feedDelta-stale", {"host": "TESTHOST", "buildId": "b8", "why": long_word})
         self.assertEqual(self.rows()[-1]["data"], {"host": "TESTHOST", "buildId": "b8", "why": long_word[:km.CLIENT_DIAG_STR_MAX], km.CLIENT_DIAG_CUT_KEY: ["why"]},
                          "an over-long word under the admitted key is admitted (the admit gates on no value) and stored cut at CLIENT_DIAG_STR_MAX, "
-                         "the row carrying the cut marker naming the key (round 4: a cut must not look like a whole value), so the ladder's words are whole because they are short")
+                         "the row carrying the cut marker naming the key (the maintainer's round 3, kernel-2: a cut must not look like a whole value), so the ladder's words are whole because they are short")
         lines = [l for l in err.splitlines() if l]
         self.assertEqual(len(lines), 1, err)
         self.assertIn("key 'why', cut", lines[0]); self.assertIn("'federation'", lines[0]); self.assertIn("stored as its first 64", lines[0])
@@ -1464,8 +1464,8 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         """The words the drive above posts are the words federation.ts mints, in the ladder's order (gen, base, through and
         rev for a failure of that field; disagree for the relation between a rev and a through that are each valid): a word
         added to the ladder fails here until STALE_WHY_WORDS carries it, so it is driven too. Red at the head before the
-        fifth word (the ladder minted four, the relation failure riding rev's), and again at the round-3 head before the
-        round-4 words (three relations riding a field's word: unpaired under gen, ahead under base, behind under through)."""
+        fifth word (the ladder minted four, the relation failure riding rev's), and again at the author's pass-3 head before the
+        pass-4 words (three relations riding a field's word: unpaired under gen, ahead under base, behind under through)."""
         words = stale_why_words()   # raises, naming the form, on a value the reader cannot read: never a shorter list
         self.assertIsNotNone(words, "federation.ts: the ladder's anchors are gone (the `const why` expression, or the minter's literal {host, buildId, why}): re-aim stale_why_words()")
         self.assertEqual(tuple(words), STALE_WHY_WORDS, "the ladder's words, in test order, are the driven vocabulary")
@@ -1490,7 +1490,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         plant = lambda lit: expr[:expr.rstrip().rfind(': "disagree"')] + ": d.rev < 0 ? " + lit + ' : "disagree"'
         readable = [("double", '"negative"', "negative"), ("single", "'negative'", "negative"), ("template", "`negative`", "negative"),
                     ("double-with-dot", '"rev.negative"', "rev.negative"), ("unicode-escape", '"neg\\u0061tive"', "negative"),
-                    ("unicode-brace-escape", '"neg\\u{61}tive"', "negative"), ("unicode-brace-leading-zeros", '"neg\\u{0000061}tive"', "negative"),   # seven digits: the language bounds the value, not the count (round 5, correctness-6)
+                    ("unicode-brace-escape", '"neg\\u{61}tive"', "negative"), ("unicode-brace-leading-zeros", '"neg\\u{0000061}tive"', "negative"),   # seven digits: the language bounds the value, not the count (the maintainer's round 5, correctness-6)
                     ("hex-escape", '"neg\\x61tive"', "negative"),
                     ("quote-escape", "'neg\\'ative'", "neg'ative"), ("double-quote-escape", '"neg\\"ative"', 'neg"ative'),
                     ("line-continuation", '"nega\\\ntive"', "negative"), ("template-newline", "`nega\ntive`", "nega\ntive"),
@@ -1504,7 +1504,7 @@ class ClientDiagAllowlistTest(unittest.TestCase):
                       ("member", "d.why", "an expression"), ("concatenation", '"neg" + "ative"', "a concatenation"),
                       ("call", 'word("negative")', "a call"), ("number", "42", "a number"), ("empty", "", "an empty value"),
                       ("unterminated", '"negative', "unterminated"), ("newline-in-string", '"nega\ntive"', "unterminated"),
-                      ("bad-hex-escape", '"neg\\xZZtive"', "malformed"), ("unicode-brace-out-of-range", '"neg\\u{110000}ative"', "malformed"),   # above 0x10FFFF: the promised AssertionError, never chr()'s ValueError (round 5, correctness-6)
+                      ("bad-hex-escape", '"neg\\xZZtive"', "malformed"), ("unicode-brace-out-of-range", '"neg\\u{110000}ative"', "malformed"),   # above 0x10FFFF: the promised AssertionError, never chr()'s ValueError (the maintainer's round 5, correctness-6)
                       ("parenthesized-nested-ternary", '(d.x ? "a" : "b")', "a parenthesized expression")]
         for name, lit, named in unreadable:
             with self.assertRaises(AssertionError, msg=name) as cm:

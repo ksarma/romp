@@ -225,7 +225,7 @@ test("start() publishes the getter as window.__rompFed.wsBytesByHost beside host
   }
 });
 
-// The grain, by execution (round 3, 2026-09-20; the probe's cases): a position is minted per FederationManager instance, one
+// The grain, by execution (the maintainer's round 1 addendum, fresh-2, 2026-09-20; the probe's cases): a position is minted per FederationManager instance, one
 // per pane DOCUMENT, so two managers on one page can hold one host under different positions, two panes of the same app
 // included, and nothing on either published map names the document. The disclosure copies state the grain and its
 // consequence: a page with several panes mints several positions for one machine.

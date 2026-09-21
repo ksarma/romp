@@ -250,9 +250,9 @@ assert f["loaf"] == {"per_min": 0.0, "blocking_ms_per_min": 0.0, "worst_ms": 0, 
     # plus the pane's app when the row had one. The reader used to fold a marker as a pane with one zero-ms minute,
     # and a marker without app landed under a pane named "?"; a shed row read as an empty minute with nothing said.
     # Now the markers are skipped and both kinds are counted, in the header and in --json, so the loss is visible.
-    # The header counts the shed rows by WHAT they dropped (capped.dropped; shed_keys in --json): since the round-1
-    # ladder sheds the map first, a row can lose wsBytesByHost alone with its frames intact and folded, and the old
-    # wording, "shed frames", called that row's frames lost when they were not (review round 1, 2026-09-20). The
+    # The header counts the shed rows by WHAT they dropped (capped.dropped; shed_keys in --json): since the author's pass 1
+    # (the maintainer's round 1, regression-4) the ladder sheds the map first, a row can lose wsBytesByHost alone with its frames intact and folded, and the old
+    # wording, "shed frames", called that row's frames lost when they were not (the author's pass-1 verify, 2026-09-20). The
     # third loss shape (the maintainer's round 4, kernel-1): a row a VALUE of which the kernel stored short (a string
     # cut at 64 characters, nesting nulled past 8 levels) is kept whole otherwise and carries `cut`, the admitted keys
     # it happened under; the reader counts those rows and names the keys (cut_rows, cut_keys), beside the shed count
@@ -406,7 +406,7 @@ import json, sys
 d = json.load(sys.stdin)
 assert d["shed_minute_rows"] == 1 and d["shed_keys"] == {"loaf": 1, "wsBytesByHost": 1} and d["capped_rows"] == 1 and d["cut_rows"] == 0 and d["cut_keys"] == {}, d
 '
-    # the fallback covered (round 5, kernel-1): a row whose cut list names no string key (an empty list) counts as a cut row and the
+    # the fallback covered (the maintainer's round 5, kernel-1): a row whose cut list names no string key (an empty list) counts as a cut row and the
     # parenthetical says so, since the count is above zero and the key map is empty
     python3 - "$DIAG" <<'PY'
 import json, sys, time

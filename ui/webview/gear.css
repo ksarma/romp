@@ -79,7 +79,7 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
    pointer road: the degradation the sheet had before the keyboard road existed (a description the keyboard cannot reach, never
    one nobody can). Every other :has() rule in this sheet is its own rule or a stand-down (display: none), so its loss on that
    engine costs an extra tooltip or the keyboard road, and never a ROW's pointer road; the one exception is the Fast mode
-   BOX's own pointer road (the author's fixer pass after round 5, exclusions-2): the box's show rule needs :has() (the row
+   BOX's own pointer road (the author's fixer pass after the maintainer's round 5, exclusions-2): the box's show rule needs :has() (the row
    selected by its child's hover, the pair below), while the plain stand-down that hides the box's description under a
    hovered row survives, so on such an engine a hover on the box shows the ROW's description in the box's place and the box's
    own text (what fast mode is and costs, why a greyed box is greyed, a refusal) is reachable by no road there, the pointer's
@@ -92,7 +92,7 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
    such an engine the whole rule goes and the grip loses its hover style with it (a hover colour and wash, no description and no
    road). Upstream's rule from before this branch, left as it is here (splitting it is a two-line change on an upstream line,
    the maintainer's call); the parsed-sheet pin names it as the one classified exception, so a second such list reds (the
-   author's fixer pass after round 5, exclusions-6). */
+   author's fixer pass after the maintainer's round 5, exclusions-6). */
 #rsettings .rs-row:hover .rs-sub, #rsettings .rs-widget:hover .rs-sub { display: block; position: absolute; left: 0; right: 0; top: 100%; z-index: 10;
   margin-top: 2px; color: var(--text-soft, #cdd3da); font-size: 0.92em; line-height: 1.35; background: var(--input-bg, #1b1b1c); border: 1px solid var(--hairline, #3a3a3a);
   border-radius: 6px; padding: 6px 9px; box-shadow: 0 4px 14px #000000aa; pointer-events: none; }
@@ -125,7 +125,7 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
    read off the class rs-picking on its row (gear.js setListOpen, the one writer of a list's hidden,
    toggles it at every site that moves a list: the maintainer's round 5, correctness-1), never off a
    list's id, so the panel-wide stand-down below reads the same word and a new picker joins by
-   calling that writer. WHAT THIS RULE DOES NOT REACH (the author's fixer pass after round 5, exclusions-1 and -4): the
+   calling that writer. WHAT THIS RULE DOES NOT REACH (the author's fixer pass after the maintainer's round 5, exclusions-1 and -4): the
    two list pickers (colormap, palette) are the only ones that call it; the HOUSE dropdowns (gear.js housePick: the judge
    rows' model and effort pickers, the widget options' pickers, twelve in the panel today) write their menu's hidden
    themselves and their rows never wear the class, so while one is open under the pointer the row's own description
@@ -161,7 +161,7 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
    the row-hover stand-down's (1,4,0), the head's behaviour kept. So within a row the box wins whenever either road rests on the
    box, one description either way; across rows the pointer wins. The box pair's rules select EVERY box in the row (`.rs-fastin
    .rs-sub` under the row), so the in-row rule is exact for one box per row, which is every judge row today; a row carrying two
-   boxes would show both boxes' descriptions on either road (the author's round 5 prep, road D). The census leg pins both by
+   boxes would show both boxes' descriptions on either road (the author's prep for the maintainer's round 5, road D). The census leg pins both by
    name and reads the bound (at most one box per row). */
 #rsettings .rs-card:has(.rs-row:hover:not(.rs-picking) .rs-sub, .rs-widget:hover .rs-sub, .rs-mixed:hover) .rs-row:not(:hover) .rs-sub,
 #rsettings .rs-card:has(.rs-row:hover:not(.rs-picking) .rs-sub, .rs-widget:hover .rs-sub, .rs-mixed:hover) .rs-widget:not(:hover) .rs-sub { display: none; }

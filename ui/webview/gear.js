@@ -2070,8 +2070,8 @@ function initGear(post, opts) {
   // the row (relatedTarget inside the host, so no exit fires for the row), and the row's class, decided for the ROW's popover,
   // stayed behind: with nothing shown once the focus left the box (measured: a row wearing rs-up), and while the box's popover
   // showed, placing it above by the row's up rule on a measurement of a different popover.
-  // And the row holding the KEYBOARD FOCUS, when the event's row is another (the author's fixer pass after the maintainer's
-  // round 4, panel-1): the panel-wide stand-down (gear.css) hides the focused row's description while the pointer rests on
+  // And the row holding the KEYBOARD FOCUS, when the event's row is another (the author's fixer pass after the
+  // maintainer's round 4, panel-1): the panel-wide stand-down (gear.css) hides the focused row's description while the pointer rests on
   // another row with one, so a focus that ARRIVES there (a Tab while the mouse still rests where the gear was clicked) measures
   // a hidden popover, zero height, and is left unplaced; when the pointer then left that row, its exit re-placed the pointer's
   // row alone, and the focused row's description appeared below it unplaced, past the card's bottom with room above (measured:

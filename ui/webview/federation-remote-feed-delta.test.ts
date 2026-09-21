@@ -704,13 +704,13 @@ test("a stamped delta whose gen differs, or whose base is above the held rev, or
     ws.frame({ type: "feedDelta", gen: G, base: 0, rev: 1.5, through: 0, now: 524, buildId: 34, asks: [card(SID_A, 9)] });   // below the held rev AND a rev that is no safe integer
     assert.equal(ws.sent.length, 5, "a frame below the held rev with a bad rev: asked again");
     // the base field's own failure, a base that is no safe integer, on a frame whose base is NOT above the held rev and whose
-    // other fields pass (round 4, tests-2): a non-integer base above the held rev would read "base" on the relation's arm
+    // other fields pass (the maintainer's round 3, tests-2): a non-integer base above the held rev would read "base" on the relation's arm
     // too under a ladder that lost the integer test (JS coercion makes 1.5 > 1 true), so that frame cannot pin the test;
     // this one can, since without it the frame falls through to "disagree"
     ws.frame({ type: "feedDelta", gen: G, base: 0.5, rev: 1, through: 1, now: 525, buildId: 35, asks: [card(SID_A, 9)] });
     assert.equal(ws.sent.length, 6, "a base that is no safe integer: asked again");
     assert.deepEqual(diagRows(sent, "feedDelta-stale"), [{ host: HOST, buildId: 30, why: "gen" }, { host: HOST, buildId: 31, why: "ahead" }, { host: HOST, buildId: 32, why: "behind" }, { host: HOST, buildId: 33, why: "through" }, { host: HOST, buildId: 35, why: "base" }],
-                     "a field's word for a field's own failure (gen; through not carried; a base that is no safe integer) and a relation's word for a relation's (ahead: the base above the held rev; behind: the through below it), the gate's tests in order: a frame below the held rev reads behind whatever its rev (round 4: base and through each carried a relation under their field's word); the row is latched on its word, so the second behind (buildId 34) files no row while its ask was sent");
+                     "a field's word for a field's own failure (gen; through not carried; a base that is no safe integer) and a relation's word for a relation's (ahead: the base above the held rev; behind: the through below it), the gate's tests in order: a frame below the held rev reads behind whatever its rev (the maintainer's round 3, extra6-1: base and through each carried a relation under their field's word); the row is latched on its word, so the second behind (buildId 34) files no row while its ask was sent");
     assert.equal(feeds(emitted).length, before, "nothing applied, nothing emitted");
     assert.equal(fm.conns.get(HOST).feedRaw, raw, "the base stands");
     assert.deepEqual(heldOf(fm), { gen: G, rev: 1 }, "…and the pair with it");
@@ -747,7 +747,7 @@ test("the vintage guard: a delta carrying no gen applies onto a base holding non
     ws2.frame(remoteFull());   // a full carrying no gen after a gen-holding pair: a kernel rolled back to one before the stamp
     assert.equal(heldOf(fm), undefined, "the pair is cleared by the gen-less full");
     assert.ok(fm.conns.get(HOST).feedRaw, "the base is the new full");
-    // the ladder's first arm and the pair-less ask (round 4, tests-1): a stamped delta onto a base holding no pair is refused
+    // the ladder's first arm and the pair-less ask (the maintainer's round 3, tests-1): a stamped delta onto a base holding no pair is refused
     // with the pair's word, and the ask carries no gen and no rev, since none is held to declare
     const before2 = feeds(emitted).length, raw2 = fm.conns.get(HOST).feedRaw, asked = ws2.sent.length;
     ws2.frame(cycle(G, 0, 4));
@@ -764,7 +764,7 @@ test("the vintage guard: a delta carrying no gen applies onto a base holding non
   }, { terms: pageTerms });
 });
 
-// The feed road's reading of the same shape the bars test pins (round 3, the fixer's pass, 2026-09-20): a delta carrying
+// The feed road's reading of the same shape the bars test pins (the author's pass-3 fixer pass, 2026-09-20): a delta carrying
 // newGen and through but no gen is a gen-less delta, applied on the base's presence alone, and moves no pair, so the two
 // roads agree that a newGen rides only a frame whose gen the gate matched.
 test("a feedDelta carrying newGen and through but no gen applies as a gen-less delta and moves no pair: the held pair stands and the redial declares it, never the newGen", async () => {
@@ -858,8 +858,8 @@ test("a per-cycle stamped delta carrying through equal to its rev applies under 
 // The pair advances to the frame's rev, and a stamped delta's rev IS its through (the design: through equal to rev on a
 // per-cycle delta, R on a composed frame); a frame whose two disagree is refused into needFullFeed carrying the held pair,
 // in either direction, because advancing to either number would declare a reach the stream never reached: (gen, 7) from a
-// delta that applied rev 2 (the round-3 find: the gate read through against the held rev alone), or (gen, 2) from one whose
-// stated reach was 7. The row's why is "disagree", the relation word (round 3's fifth word): both revs are good safe
+// delta that applied rev 2 (the fresh-1 find of the maintainer's round 1 addendum: the gate read through against the held rev alone), or (gen, 2) from one whose
+// stated reach was 7. The row's why is "disagree", the relation word (the fifth word of the author's pass 3): both revs are good safe
 // integers and no field failed, and the row carries the word alone, so a field's word ("rev") would hide the cause from
 // its reader; "rev" is a rev that is no safe integer, and it is read before the relation, so a non-integer rev that also
 // disagrees reads "rev".
@@ -884,7 +884,7 @@ test("a stamped delta whose rev and through disagree is refused with why disagre
     assert.ok(ws.sent.filter((x: any) => x.type === "needFullFeed").every((x: any) => x.gen === G && x.rev === 1), "every ask carries the pair that applied");
     assert.deepEqual(diagRows(sent, "feedDelta-stale"),
                      [{ host: HOST, buildId: 50, why: "disagree" }, { host: HOST, buildId: 53, why: "rev" }],
-                     "the relation word for two good revs that disagree (not one rev to advance to), the field word for a rev that is no safe integer, whatever its through; the row is latched on its word and the remote's build (round 4, sayDeltaOnce), so the same word again on this conn files no second row");
+                     "the relation word for two good revs that disagree (not one rev to advance to), the field word for a rev that is no safe integer, whatever its through; the row is latched on its word and the remote's build (the maintainer's round 3, extra8-2; sayDeltaOnce), so the same word again on this conn files no second row");
     // the latch's key carries the remote's build: the same word from the remote on another build is news and files again
     fm.conns.get(HOST).peerSha = "a1b2c3d4e";
     ws.frame({ type: "feedDelta", gen: G, base: 1, rev: 2, through: 7, now: 525, buildId: 55, asks: [card(SID_A, 9)] });
@@ -905,7 +905,7 @@ test("a stamped delta whose rev and through disagree is refused with why disagre
   });
 });
 
-test("the gen's form: a non-empty string holding neither '.' nor ',' (the kernel's token and counter joined by '-'), at most GEN_MAX characters; a full carrying a value of any other form (a number, an empty string, a string carrying either separator or one over the cap) leaves no pair, and onto that gen-less base a delta carrying the same value applies as a gen-less one and the redial declares nothing (onto a base holding a pair it is refused: the round-4 test below)", async () => {
+test("the gen's form: a non-empty string holding neither '.' nor ',' (the kernel's token and counter joined by '-'), at most GEN_MAX characters; a full carrying a value of any other form (a number, an empty string, a string carrying either separator or one over the cap) leaves no pair, and onto that gen-less base a delta carrying the same value applies as a gen-less one and the redial declares nothing (onto a base holding a pair it is refused: the author's pass-4 test below)", async () => {
   const overCap = GEN_STAMP + "-" + "9".repeat(GEN_MAX - GEN_STAMP.length);   // GEN_MAX + 1 characters, all in the kernel's alphabet
   assert.equal(overCap.length, GEN_MAX + 1);
   for (const bad of [7, 0, "", GEN_STAMP + ".7", GEN_STAMP + ",7", null, true, overCap]) {
@@ -930,12 +930,12 @@ test("the gen's form: a non-empty string holding neither '.' nor ',' (the kernel
   }
 });
 
-// Unparseable is not absent (round 4, 2026-09-20). GEN_MAX made a 65-character gen read as no stamp, so a foreign-generation
+// Unparseable is not absent (the author's pass 4, 2026-09-20). GEN_MAX made a 65-character gen read as no stamp, so a foreign-generation
 // delta carrying one bypassed the gate and applied onto a base holding a gen (the length door); the same held for every
 // other form genOf cannot read (a number, an empty string, a separator) at both heads. Now a frame carrying a gen of ANY
 // form onto a base holding a pair enters the gate, and a value genOf cannot read is no match for the held gen: refused
 // with the field word, the ask carrying the held pair, nothing applied, the pair standing. The scope is the base holding a
-// pair (the minimal of the two options the round offered, applied to the feed and bars roads alike): onto a base holding no
+// pair (the minimal of the two options the maintainer's round 3 offered, applied to the feed and bars roads alike): onto a base holding no
 // gen such a frame applies as a gen-less one, as the form test above pins, since no pair is held there for a refusal to
 // protect.
 test("a delta carrying a gen genOf cannot read (one over GEN_MAX, a separator, a number, an empty string, null) onto a base holding a pair is refused with why gen and the held pair on the ask, never applied as a gen-less one: nothing emitted, the base and the pair stand", async () => {
@@ -966,7 +966,7 @@ test("a delta carrying a gen genOf cannot read (one over GEN_MAX, a separator, a
   }
 });
 
-// The same rule one field over (round 4): a composed frame whose gen the gate matched but whose newGen genOf cannot read
+// The same rule one field over (the author's pass 4): a composed frame whose gen the gate matched but whose newGen genOf cannot read
 // used to fall back to the OLD gen and advance the pair to the frame's rev under it, so the redial declared a pair that
 // generation's stream never held. The gate now reads newGen where it reads gen: a present value genOf cannot read is a
 // refusal (why newGen, the field's own word), inside the gate and before the apply, so nothing applies and the pair stands.
@@ -997,7 +997,7 @@ test("a composed frame whose gen matched but whose newGen genOf cannot read is r
   }
 });
 
-// The one statement of what the declared pair does today (round 3, 2026-09-20): federation.ts says it once, at
+// The one statement of what the declared pair does today (the author's pass 3, 2026-09-20): federation.ts says it once, at
 // Conn.feedHeld, in the words the other sites point at, and no comment on either road claims in the present tense that
 // kernel.py reads the pair at the compose (no kernel in this repo reads a held member or an ask's pair). A source pin, the
 // way perf-beacon-settings.test.ts pins the gear copy.
@@ -1009,7 +1009,7 @@ test("federation.ts states once what the pair does today (no kernel in this repo
   const home = "no kernel in this repo stamps a gen yet, so nothing declares one today";
   assert.equal(fedSrc.split("What the pair does today, stated here once").length, 2, "the home statement, once, at Conn.feedHeld");
   assert.ok(fedSrc.includes(home) && vdSrc.includes(home), "both files carry the statement's words");
-  // the forbidden CLASS, not the wordings the round removed (the fixer's pass: a comment of the class in other words passed
+  // the forbidden CLASS, not the wordings the author's pass 3 removed (its fixer pass: a comment of the class in other words passed
   // the two exact regexes): kernel.py, or "the kernel" unqualified, said in the present tense to read a pair, member, gen,
   // rev or "it" at the compose. "A kernel that stamps its frames reads the member at the compose" is the qualified
   // statement the sites make and passes; "reads no pair" is the negation and passes.
@@ -1027,7 +1027,7 @@ test("federation.ts states once what the pair does today (no kernel in this repo
   }
 });
 
-// The length bound (round 3, 2026-09-20): the form bounds the alphabet and not the digits, so genOf caps a stamp at GEN_MAX
+// The length bound (the author's pass 3, 2026-09-20): the form bounds the alphabet and not the digits, so genOf caps a stamp at GEN_MAX
 // characters (the form test's list holds the one-over case); a gen at the cap is a stamp, the pair holds and the redial
 // declares it, so the cap is exactly where it is stated.
 test("a gen of exactly GEN_MAX characters is a stamp: the pair holds and the redial declares it", async () => {
@@ -1050,10 +1050,10 @@ test("a gen of exactly GEN_MAX characters is a stamp: the pair holds and the red
 
 // ── the apply-throw refusal, BOTH roads (the maintainer's round 5, refusals-2, and the 19:31Z ruling: the local road guarded
 // too, with its own recovery, road word and bound) ──────────────────────────────────────────────────────────────────────────
-// applyFeedDelta guards the two list shapes it upserts into and, since the fixer pass after round 5 (refusal-5), the shape of `top`
+// applyFeedDelta guards the two list shapes it upserts into and, since the author's fixer pass after the maintainer's round 5 (refusal-5), the shape of `top`
 // (an object or absent: a string top spread its characters into the frame as keys and applied), so a malformed delta throws out of
-// upsertById or the top guard; until round 5's
-// pass the throw escaped ws.onmessage (a TypeError out of the handler, no ask, no row, the pane on its last frame) and, on the
+// upsertById or the top guard; until the author's pass after
+// the maintainer's round 5 the throw escaped ws.onmessage (a TypeError out of the handler, no ask, no row, the pane on its last frame) and, on the
 // local road, inbound into the shim's FIFO drain. Now feed-delta.ts's tryApplyFeedDelta catches it for both callers and each road
 // refuses it: nothing written (the base and the pair stand), one BARE needFullFeed per stall (the base's own content is a
 // suspect: a full carrying a null ask lands, and every well-formed delta after it throws in upsertById's walk of the base), a
@@ -1200,7 +1200,7 @@ test("the LOCAL bound: after the local full landed a second throw stops the aski
     assert.equal(told.length, 1, "the shell told once");
     assert.equal(told[0].kind, "error");
     assert.match(told[0].text, /^The cards are frozen at their last update\./);
-    assert.match(told[0].text, /They refresh when the connection reconnects, or when you reload the page\.$/, "the local road's two ways out: the shim redials the local socket in-page after a drop and the feed arm shows the full it earns whatever the latch, or the page is reloaded (the author's fixer pass after round 5, refusal-3: the message had named the reload alone, on the premise that the local socket's life is the page's, which the shim's reconnect=1 redial refutes)");
+    assert.match(told[0].text, /They refresh when the connection reconnects, or when you reload the page\.$/, "the local road's two ways out: the shim redials the local socket in-page after a drop and the feed arm shows the full it earns whatever the latch, or the page is reloaded (the author's fixer pass after the maintainer's round 5, refusal-3: the message had named the reload alone, on the premise that the local socket's life is the page's, which the shim's reconnect=1 redial refutes)");
     assert.equal(feeds(emitted).length, before);
     fm.inbound("", { type: "feedDelta", now: 451, buildId: 13, asks: { not: "a list" } });
     assert.equal(sent.filter((x) => x && x.type === "needFullFeed").length, 1); assert.equal(applyRows(sent).length, 2); assert.equal(notifies(notified).length, 1);
@@ -1219,7 +1219,7 @@ test("the LOCAL bound: after the local full landed a second throw stops the aski
   });
 });
 
-test("a remote feedDelta whose `top` is a string onto a held pair is refused like any apply throw (the fixer pass after round 5, refusal-5): the pair stands at (G, 1), the raw base is unchanged and carries no index keys, one bare ask, the row asked on the wire road; before the guard it applied and moved the pair to (G, 2) with '0', '1', '2' as the frame's keys", async () => {
+test("a remote feedDelta whose `top` is a string onto a held pair is refused like any apply throw (the author's fixer pass after the maintainer's round 5, refusal-5): the pair stands at (G, 1), the raw base is unchanged and carries no index keys, one bare ask, the row asked on the wire road; before the guard it applied and moved the pair to (G, 2) with '0', '1', '2' as the frame's keys", async () => {
   await withManager(({ fm, emitted, sent }) => {
     const ws = attached(fm);
     ws.frame(stamped({ buildId: 12 }));

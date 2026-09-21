@@ -4,16 +4,16 @@
 // so a keyboard or a screen reader never saw it). The focus road is keyed on `:focus-visible` (the maintainer's round 4, ui-2:
 // keyed on `:focus-within` it opened on a mouse click too, and since nothing blurs a clicked checkbox the description outlived
 // the pointer and covered the next row after every click), in the descendant form `:has(:focus-visible)` since the focused
-// element is the control, never the row. ONE tooltip across the PANEL (round 4, correctness-1): a keyboard focus in one row and
+// element is the control, never the row. ONE tooltip across the PANEL (the maintainer's round 4, correctness-1): a keyboard focus in one row and
 // a pointer in another showed two descriptions, the second drawn inside the first on adjacent rows, so a panel-wide stand-down
 // hides every description outside the hovered row while a row with a description, or any mixed mark, is hovered: THE POINTER
 // WINS, the rule the sheet's other one-tooltip rules follow. And the placement class `rs-up` is re-placed for every host of the
-// row on every road's enter and exit (round 4, correctness-2): each exit stripped it unconditionally, so a pointer leaving a row
+// row on every road's enter and exit (the maintainer's round 4, correctness-2): each exit stripped it unconditionally, so a pointer leaving a row
 // whose checkbox held a keyboard focus dropped the placement of a description still shown, and it ran past the card's bottom;
 // and a road moving from a row's picker button into its box never left the row, so the row's class stayed behind.
 //
 // And the row holding the keyboard focus is re-placed on the pointer road's enter and exit too (the author's fixer pass after
-// round 4, panel-1): a focus that arrived while the pointer rested on another row with a description measured a popover the
+// the maintainer's round 4, panel-1): a focus that arrived while the pointer rested on another row with a description measured a popover the
 // panel-wide stand-down hid, and the pointer's exit re-placed its own row alone, so the focused row's description appeared
 // below it unplaced and past the card's bottom, the T408 clip on a new road.
 //
@@ -27,7 +27,7 @@
 // A developer's machine with playwright's Chromium runs both in one `npm test`. The surface the browser legs exclude: Firefox
 // and WebKit (the three-engine readings in the review record came from a scratch matrix, not this file), and every engine
 // generation that lacks :has(), which the degradation leg below MODELS rather than installs. And the STATES the legs do not
-// enter (the author's fixer pass after round 5, exclusions-1, -4 and -5; the ruler's lesson: name what a surface excludes):
+// enter (the author's fixer pass after the maintainer's round 5, exclusions-1, -4 and -5; the ruler's lesson: name what a surface excludes):
 // task tracking OFF (gear.js dressTracking greys seven judge rows and two Debug rows with rs-off, disables their controls, which
 // the census skips, and puts the "Enable task tracking" title on the row, so a hover there shows a native title AND the row's
 // description); a greyed Fast mode box (disabled, so no focus reaches it: its "why greyed" text is the pointer's alone); the
@@ -125,12 +125,12 @@ test("the sheet shows a description while its row holds a KEYBOARD focus: the sh
     "no rule keys on :focus-within any more: a mouse click satisfies it, and the description then outlives the pointer (the maintainer's round 4, ui-2)");
   assert.equal(GEAR_RULES.map((r) => r.selector).join("\n").match(/:focus-visible/g)!.length, 9,
     "nine :focus-visible tokens over the rules' selectors: the keyboard show rule's two, the up twin's two, the box's up twin, the box's stand-down twin, the pair's two twins, and the grip's own rule from before this road");
-  // the rule walk (round 5, ui-3): a selector list is unforgiving, so no rule may mix a :has() arm with a :has()-free arm, or an
+  // the rule walk (the maintainer's round 5, ui-3): a selector list is unforgiving, so no rule may mix a :has() arm with a :has()-free arm, or an
   // engine without :has() drops the plain arms with the rule (the show rule did, and nothing showed on any road there); the
   // failure text names the rule
   const mixed = GEAR_RULES.filter((r) => { const n = r.arms.filter((a) => /:has\(/.test(a)).length; return n > 0 && n < r.arms.length; });
   assert.deepEqual(mixed.map((r) => r.selector), [], "no rule's selector list mixes a :has() arm with a :has()-free arm (an engine without :has() drops the whole rule, the plain arms with it)");
-  // the same walk over the OTHER modern pseudo-classes an older engine drops a list for (the author's fixer pass after round 5,
+  // the same walk over the OTHER modern pseudo-classes an older engine drops a list for (the author's fixer pass after the maintainer's round 5,
   // exclusions-6): :focus-visible (Chromium before 86, Firefox before 85, Safari before 15.4), :is(), :where(), :focus-within;
   // the one classified exception is the grip's hover/focus-visible rule, upstream's from before this branch, whose loss the sheet
   // states (the grip's hover style goes with it, no description and no road); a second mixed list reds until classified
@@ -191,13 +191,13 @@ test("placeSub runs on focusin as on mouseover, on the pointer road's host (the 
   assert.match(GEAR, /pcard\.addEventListener\('mouseover', function \(e\) \{ var host = hostOf\(e\.target\); if \(host\) placeRowHosts\(host\); \}\);/,
     "the pointer's enter re-places the row's hosts the same way");
   assert.match(GEAR, /pcard\.addEventListener\('focusout', function \(e\) \{ var host = hostOf\(e\.target\); if \(host && !\(e\.relatedTarget && host\.contains\(e\.relatedTarget\)\)\) placeRowHosts\(host\); \}\);/,
-    "the focus road's exit re-places the row's hosts: a focus leaving a HOVERED row keeps the placement of the description the pointer still shows (round 4, correctness-2)");
+    "the focus road's exit re-places the row's hosts: a focus leaving a HOVERED row keeps the placement of the description the pointer still shows (the maintainer's round 4, correctness-2)");
   assert.match(GEAR, /pcard\.addEventListener\('mouseout', function \(e\) \{ var host = hostOf\(e\.target\); if \(host && !\(e\.relatedTarget && host\.contains\(e\.relatedTarget\)\)\) placeRowHosts\(host\); \}\);/,
     "the pointer road's exit re-places the row's hosts: a pointer leaving a row whose checkbox holds a keyboard focus keeps the placement of the description the focus still shows");
   assert.match(GEAR, /function placeRow\(row\) \{\s*\n\s*placeSub\(row\);\s*\n\s*var boxes = row\.querySelectorAll\('\.rs-fastin'\);\s*\n\s*for \(var i = 0; i < boxes\.length; i\+\+\) placeSub\(boxes\[i\]\);/,
     "the whole row and its Fast mode boxes: a focus moving from the row's picker button into its box never leaves the row, so the row's class stayed behind when the box's exit cleared the box's alone");
   assert.match(GEAR, /function placeRowHosts\(host\) \{\s*\n\s*var row = hostRow\(host\);\s*\n\s*placeRow\(row\);\s*\n\s*var focused = hostOf\(document\.activeElement\);\s*\n\s*if \(focused && hostRow\(focused\) !== row\) placeRow\(hostRow\(focused\)\);/,
-    "and the row holding the keyboard focus, when it is another row: the panel-wide stand-down hides the focused row's description while the pointer rests on a row with one, so a focus that arrives there is left unplaced, and the pointer's exit must place it (the author's fixer pass after round 4, panel-1)");
+    "and the row holding the keyboard focus, when it is another row: the panel-wide stand-down hides the focused row's description while the pointer rests on a row with one, so a focus that arrives there is left unplaced, and the pointer's exit must place it (the author's fixer pass after the maintainer's round 4, panel-1)");
   assert.doesNotMatch(GEAR, /host\.classList\.remove\('rs-up'\); \}\);/,
     "no exit handler strips the class unconditionally any more: placeSub drops it and re-adds it only while the host's own popover is shown and does not fit below");
   assert.doesNotMatch(GEAR, /focusHostOf/,
@@ -474,7 +474,7 @@ test("the degradation on an engine without :has(), modelled: with every :has() r
   }, 320, {}, noHas);
   // the mechanism behind the reading: the pointer half is a rule of its own and holds no :has(), so the model keeps it
   assert.ok(kept.some((r) => r.selector === "#rsettings .rs-row:hover .rs-sub, #rsettings .rs-widget:hover .rs-sub"), "the show rule's pointer half stands in the model (it holds no :has())");
-  // the one road a ROW does not lose but the BOX does (the author's fixer pass after round 5, exclusions-2): the box's show
+  // the one road a ROW does not lose but the BOX does (the author's fixer pass after the maintainer's round 5, exclusions-2): the box's show
   // rule needs :has() and is gone with it, while the plain stand-down that hides the box's description under a hovered row
   // survives, so a hover on the box shows the ROW's description where the box's stood, and the box's own text is reachable by no
   // road there (a Tab shows nothing, as on every host); the sheet states this beside the split
@@ -618,13 +618,13 @@ const hoverOn = async (page: any, sel: string) => {
 };
 
 /** The hosts with something shown, each once: the panel's one-tooltip rule is over HOSTS, whatever number of descriptions a host
- *  owns (the Account row owns two, a synthetic doubled row two), so the pins compare host sets and never counts (the maintainer's
- *  round 5 on panel-3: the count pin named the doubled host by id and its count, and a second doubled row anywhere would have
+ *  owns (the Account row owns two, a synthetic doubled row two), so the pins compare host sets and never counts (the
+ *  maintainer's round 5 on panel-3: the count pin named the doubled host by id and its count, and a second doubled row anywhere would have
  *  red it; the invariant holds over however many hosts a row carries and however many descriptions a host owns). */
 const hostsShown = (r: { shown: string[] }) => Array.from(new Set(r.shown));
 
 /** A second host owning TWO descriptions, the Account row's shape (a row whose `.rs-sub` count is two), inserted after the open
- *  pane's first direct-child row: the construction the ruling said the round would make. The census reads it like any row (its
+ *  pane's first direct-child row: the construction the maintainer's panel-3 ruling said the author's next pass would make. The census reads it like any row (its
  *  host id is its checkbox's), so the count pin this replaced reds on it and the invariant must not. Synthetic text only. */
 async function injectDoubledRow(page: any): Promise<void> {
   await page.evaluate(() => {
@@ -903,7 +903,7 @@ test("the picker-open state, the one the panel leg did not enter (the maintainer
 });
 
 test("a HOUSE dropdown open under the pointer (gear.js housePick: the judge rows' model and effort pickers and the widget options' pickers), the state the picker-open leg does not enter: those rows never wear rs-picking, so the pointer-wins rule alone governs it; exactly one description is shown with a keyboard focus in another row (never zero, never two), the open menu is counted by its computed position, and which host shows is recorded", { timeout: 180000 }, async (t) => {
-  // the exclusion the sheet states beside its one-tooltip rule (the author's fixer pass after round 5, exclusions-1): housePick
+  // the exclusion the sheet states beside its one-tooltip rule (the author's fixer pass after the maintainer's round 5, exclusions-1): housePick
   // writes its menu's hidden itself and never calls setListOpen, so the class the two list pickers wear never reaches these rows
   // and the hovered row's own description shows beside its open menu; whether that row should join the class is the
   // maintainer's call (upstream's picker from before this branch), so the pins here are the invariants that hold either way,
@@ -1050,7 +1050,7 @@ test("the placement when the focus ARRIVES under the stand-down: the pointer res
   // panel-wide stand-down hides the focused row's description (the pointer wins), so placeSub measures zero height and sets
   // nothing; before the fix the pointer's exit re-placed the pointer's row alone, and the focused row's description appeared
   // below it unplaced, 35 px past the card's bottom with room above (the T408 clip; measured at the head of the author's pass
-  // after round 4)
+  // after the maintainer's round 4)
   await withGear(t, "debug", async (page, errors) => {
     const read = (id: string) => page.evaluate((cid: string) => {
       const HOSTS = "#rsettings .rs-fastin, #rsettings .rs-row, #rsettings .rs-widget";

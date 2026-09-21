@@ -168,7 +168,7 @@ class ServedLabsUnderCI(unittest.TestCase):
     def test_the_handler_parse_leg_is_named_on_the_served_step_by_file(self):
         """tests/test_relay_dial_declares_held_pair.py drives one hermetic kernel over a raw socket and needs the extension's
         built dist (lab_dist), which the Python matrix runners never have, so there it skips; no browser drives it, so the
-        census above leaves it out and no glob names it, and it ran in no CI job (review round 1 of the wsBytesByHost
+        census above leaves it out and no glob names it, and it ran in no CI job (the maintainer's round 1 of the wsBytesByHost
         change, 2026-09-20). The served step names it by file: the one job with the deps runs its executed part (the first
         dials and their wsopen rows). The conftest's REQUIRE rule reads file names and this module carries no served suffix
         on purpose (the precedent is tests/test_session_host_restart.py, whose docstring records the same decision), so the
@@ -186,12 +186,12 @@ class ServedLabsUnderCI(unittest.TestCase):
         """TwoHostsBytesByHost (tests/test_federated_capability_corners_served.py) is the one end-to-end lab of the
         wsBytesByHost field, gated by ROMP_CORNER_TWO_HOSTS with an `optional:` skip so a contributor clone and the Python
         matrix runners leave it alone. The served step, which has the three kernels' deps and the browser, sets the knob
-        (review round 1, 2026-09-20), so the lab runs there and a miss is a failure under REQUIRE, as its other skips are."""
+        (the maintainer's round 1, regression-2, 2026-09-20), so the lab runs there and a miss is a failure under REQUIRE, as its other skips are."""
         step = ci_served_step()
         self.assertIsNotNone(step, "ci.yml has no served step: re-aim ci_served_step()")
         self.assertEqual(step["env"].get("ROMP_SERVED_TESTS_REQUIRE"), "1")
         # the knob is derived from the lab's own gate, so a renamed knob fails here instead of leaving the workflow's env stale
-        # while the lab skips as optional: in CI (round 1 of the same review)
+        # while the lab skips as optional: in CI (the maintainer's round 1 of the same review)
         knob = two_host_lab_knob()
         self.assertIsNotNone(knob, "the corners module's TwoHostsBytesByHost gate was not found: re-aim two_host_lab_knob()")
         self.assertTrue((step["env"].get(knob) or "").strip(),

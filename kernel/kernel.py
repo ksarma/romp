@@ -3488,7 +3488,7 @@ def _client_diag_append(fp, line):
 # characters, at any depth, and a value nested past CLIENT_DIAG_DEPTH_MAX is stored as null; a row any value of which
 # was cut or nulled so carries CLIENT_DIAG_CUT_KEY, the admitted keys under which it happened (a kernel-written marker
 # beside `capped`, admitted by no surface, so a poster cannot forge one), and the kernel says so once per surface and key
-# on stderr, as it says a dropped key (review round 3 of the wsBytesByHost field, 2026-09-20: a value-level loss was the
+# on stderr, as it says a dropped key (the maintainer's round 3 of the wsBytesByHost field, 2026-09-20: a value-level loss was the
 # one silent loss on this road, and a cut string looked like a whole one to every reader). A row whose JSON runs past
 # CLIENT_DIAG_ROW_MAX bytes keeps its surface, what and app and
 # carries {"capped": true, "bytes": N} as its data (said once per surface and what), except a perf minute row, which
@@ -3526,9 +3526,9 @@ CLIENT_DIAG_SAID_MAX = 512     # (surface, key) pairs the stderr latch holds; at
 CLIENT_DIAG_ROW_SAY_MAX = 8    # foreign keys of ONE row said by name; the rest are one counting line, so a row spends at most this many latch entries and one
 CLIENT_DIAG_CUT_KEY = "cut"    # the marker a row carries when a value under an admitted key was cut or nulled by _client_diag_scrub: the list of those keys,
                                # written by the kernel after the admit and admitted by no surface (a poster's key of this name is dropped as foreign),
-                               # so a reader can tell a stored value from a whole one (review round 3 of wsBytesByHost, 2026-09-20)
+                               # so a reader can tell a stored value from a whole one (the maintainer's round 3 of wsBytesByHost, 2026-09-20)
 # a perf minute row over CLIENT_DIAG_ROW_MAX sheds these, in this order, until its line fits, and `capped` names what was
-# shed. wsBytesByHost goes first (review round 1, 2026-09-20): it is the one key the collector does not cap (one position
+# shed. wsBytesByHost goes first (the maintainer's round 1, regression-4, 2026-09-20): it is the one key the collector does not cap (one position
 # per attached host), so a row the collector builds is over the bound only through it, and shedding it whole returns the
 # row to the derived worst case, which fits; it is never cut to the positions that fit, so a stored map is never read as
 # a host count. The rest is the backstop for a row no collector builds: the frame histograms, then the long-frame report,
@@ -3656,7 +3656,7 @@ def _client_diag_scrub(v, losses=None, depth=0):
     """A value as the file keeps it: strings cut at CLIENT_DIAG_STR_MAX, numbers, booleans and null as they are,
     objects and lists walked to CLIENT_DIAG_DEPTH_MAX (deeper reads null), anything else null. `losses`, when the caller
     passes a list, gets a word from _CLIENT_DIAG_LOSS appended for every value this did not keep whole, at any depth, so
-    the caller can say the loss and mark the row (_client_diag_admit; review round 3 of wsBytesByHost, 2026-09-20: a value
+    the caller can say the loss and mark the row (_client_diag_admit; the maintainer's round 3 of wsBytesByHost, 2026-09-20: a value
     cut here looked like a whole one to every reader). The "type" arm is unreachable on the posted road, whose data is
     json.loads output (every value is of a JSON type), and stands for a direct caller."""
     if isinstance(v, str):
@@ -3688,7 +3688,7 @@ def _client_diag_admit(surface, data):
     value of no JSON type stored as null, at any depth under the key) is said once per surface and key too, and the row
     carries CLIENT_DIAG_CUT_KEY naming the admitted keys it happened under, in the row's key order (attributed to the
     top-level key: the scrub sees no key), so a stored value can be told from a whole one, which no reader could before
-    (review round 3 of wsBytesByHost, 2026-09-20). The marker is written after the admit and admitted by no surface, so a
+    (the maintainer's round 3 of wsBytesByHost, 2026-09-20). The marker is written after the admit and admitted by no surface, so a
     poster's own key of that name is dropped as foreign and never lands as a forged marker."""
     if not isinstance(data, dict):
         if data is not None:

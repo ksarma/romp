@@ -23,7 +23,7 @@ CI's served step names this module by file (its name is plain on purpose, so tes
 rule, which reads served file names, leaves the gen-key skip a skip). The module therefore holds its own preconditions
 under that switch: with ROMP_SERVED_TESTS_REQUIRE=1 a skip raised by lab_dist.copy_dist (no built dist: node_modules
 incomplete, esbuild failing) or by the hermetic kernel boot (never served /healthz) is a FAILURE carrying the skip's reason,
-so the executed part cannot go unrun with the job green (review round 1, 2026-09-20); the gen-key skip is the one skip
+so the executed part cannot go unrun with the job green (the maintainer's round 1, 2026-09-20); the gen-key skip is the one skip
 that stays a skip there. PreconditionSkipsUnderRequire below drives that.
 
 Loads no romp code in-process (the kernel is a subprocess), so this module carries no state-isolation preamble and is not
@@ -96,7 +96,7 @@ def _rev_as_js(v):
     """A rev field as a JS hook keeps it off the parsed wire (`typeof m[k] === "number"`, the value as the client's Number): any
     JSON number that is not a bool, an integral float read as the int JavaScript reads it (the wire text 1.0 or 2e0 is the number
     1 or 2 there, where Python's json gives a float), a non-integral float as itself; anything else none. The author's fixer pass
-    after round 4: this recorder had kept _stamp_field's parsed form, so a negative base the feed gate applies, and a base, rev or
+    after the maintainer's round 4: this recorder had kept _stamp_field's parsed form, so a negative base the feed gate applies, and a base, rev or
     through written 1.0 or 2e0, which the client reads as a safe integer, were dropped here and read as absent, where the four JS
     hooks keep the number; the held-pair rule then read the same wire frame two ways, by recorder."""
     if isinstance(v, bool) or not isinstance(v, (int, float)):
@@ -166,7 +166,7 @@ class RelayDialDeclaresHeldPair(unittest.TestCase):
             if os.environ.get("ROMP_SERVED_TESTS_REQUIRE") == "1":
                 # the conftest's REQUIRE rule reads served file names and this module's is plain (the module docstring), so the
                 # precondition skips are made failures here: the served job has the deps and a kernel that boots, and a skip
-                # there would leave the executed part unrun with the job green (review round 1, 2026-09-20)
+                # there would leave the executed part unrun with the job green (the maintainer's round 1, 2026-09-20)
                 raise AssertionError("ROMP_SERVED_TESTS_REQUIRE=1: a precondition of this module skipped where it must hold "
                                      "(the module holds its own preconditions under the switch; only the gen-key skip stays a skip): %s" % e) from e
             raise

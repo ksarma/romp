@@ -74,7 +74,7 @@ GEN_FIELDS = ("gen", "newGen")
 
 def client_gen_max():
     """The client's cap on a gen's length, read from its one declaration (ui/webview/view-deltas.ts, `export const GEN_MAX =
-    <n>;`), so the mirror below cannot drift from the rule the client applies (round 3, the fixer's pass, 2026-09-20: the
+    <n>;`), so the mirror below cannot drift from the rule the client applies (the author's pass-3 fixer pass, 2026-09-20: the
     cap was a second hand-kept literal). A declaration not found fails here, loudly, at import: a mirror that cannot read
     the client's cap must not derive a dial expectation from a cap of its own."""
     src = open(os.path.join(ROOT, "ui", "webview", "view-deltas.ts"), encoding="utf-8").read()
@@ -108,7 +108,7 @@ def _stamp_field(f, k):
     code units (String.length, the client's count: _utf16_len) holding neither '.' (the held member's own separator) nor ','
     (the caps term's), the kernel's boot token and counter joined by '-'; a rev (base, rev, through) is a non-negative safe
     integer (_safe_int: at most 2^53 - 1, since the client's Number.isSafeInteger refuses a rev past it and this rule read one
-    as a rev until the author's pass after round 4). Anything else is None, the answer for a value the client cannot read AND
+    as a rev until the author's pass after the maintainer's round 4). Anything else is None, the answer for a value the client cannot read AND
     for a key the frame does not carry: a caller that must tell the two apart reads the key's presence with _stamp_present,
     as held_pair does where it matters (the author's pass 4, 2026-09-20: unparseable is not absent; a present gen the client
     cannot read is a refusal on both roads, never a gen-less frame)."""
@@ -123,7 +123,7 @@ def _stamp_present(f, k):
     """Whether a recorded frame carried the stamp field `k` at all, whatever its value: the key itself (a hook records a gen
     or newGen of any string or number form as posted) or the presence flag beside it (`<k>Key`), which EVERY frame recorder
     feeding held_pair sets for gen and newGen: the driver hooks of the dial-terms, relay-redial and capability-corners labs
-    (both of the corners module's, since the author's pass after round 4: until then those two set neither flag, so a gen of
+    (both of the corners module's, since the author's pass after the maintainer's round 4: until then those two set neither flag, so a gen of
     null, a boolean, an object or a list, which the hooks copy no value for, read as a gen-less frame in those two labs) and
     the relay-redial consumer's _record (tests/test_relay_dial_declares_held_pair.py), which keeps the revs as the hooks do (any
     number, an integral float as its int: _rev_as_js) and the gens parsed (_stamp_field), so a gen the client cannot read is
@@ -137,7 +137,7 @@ def held_pair(frames, slot):
     sockets in arrival order (the pair lives on the conn: connect()'s gated reset keeps it across the conn's redials, and
     closeRemote drops the conn, so a host detached and re-attached starts a fresh conn with no pair; the labs using this
     helper never detach a host, so a host's sockets are one conn's), by each road's OWN rule, mirrored test by test in the
-    receiver's order (the author's pass after round 4, 2026-09-20, the maintainer's round 4 C: the arms had carried some of
+    receiver's order (the author's pass after the maintainer's round 4, 2026-09-20, its section C: the arms had carried some of
     the receivers' tests and not others, so this declared a pair for frames the client refused; measured on one probe shape
     per refusal point of each receiver, the logs under the review note's section for that pass).
 
@@ -175,7 +175,7 @@ def held_pair(frames, slot):
     (the receiver's two bases.set writes, the full's seed and the patch's advance). The authorities are the two receivers and the
     writers of Conn.feedHeld, never a list kept here (the maintainer's round 3, tests-3: a hand list here went stale twice in one
     day); test_the_pair_writers_are_counted_so_a_new_one_reds_until_classified derives them from the sources by the PROPERTY and
-    not a spelling (the author's fixer pass after round 5, refusal-1: every `feedHeld` token in federation.ts's code, comments
+    not a spelling (the author's fixer pass after the maintainer's round 5, refusal-1: every `feedHeld` token in federation.ts's code, comments
     blanked, is the declaration, a member read or one of the four writes, whatever the receiver's name or the assignment's form,
     and any other form, an object key, a string, a destructuring, is unclassified), so a writer in any spelling or a frame type
     this rule does not read is a census failure; the refusal-site census reads every `throw` statement and every `return` of
@@ -194,12 +194,12 @@ def held_pair(frames, slot):
     the delta after it finds no base and asks, and the next whole frame that keys seeds again; this rule reads (gen, 0) from the
     recorded full and advances on the delta;
     (3) the feed road's content refusals, which are applyFeedDelta's throws (ui/webview/feed-delta.ts: asks not a list, an ask
-    or a ledger item null, removeAsks not iterable, and since the fixer pass after round 5 a top that is not an object, refusal-5:
+    or a ledger item null, removeAsks not iterable, and since the author's fixer pass after the maintainer's round 5 a top that is not an object, refusal-5:
     a string top had applied with its characters as the frame's keys, an acceptance outside every named refusal): caught in
     tryApplyFeedDelta and refused before Conn.feedHeld is written
     (the maintainer's round 5, refusals-2), so the client's pair STANDS while it asks once, bare, per stall and stops asking
     after the answering full (a full is not progress: the stop lifts on an applying delta alone, so a throw after an answering
-    full and a quiet interval is read as the same stall, the fixer pass after round 5, refusal-4), so its divergence from this
+    full and a quiet interval is read as the same stall, the author's fixer pass after the maintainer's round 5, refusal-4), so its divergence from this
     rule persists across the refused frames where classes 1 and 2 recover
     at the next keyable whole frame; this rule advances it, the one class whose over-demand does not clear on its own. The gate
     itself refuses nothing on content.
@@ -301,7 +301,7 @@ def expected_relay_caps(prev_frames):
     holding a gen across a redial, so a third dial declares what the whole stream left, not what one socket received),
     each omitted when none is held. `prev_frames` is None for a first dial (no socket before it). A redial none of whose
     earlier sockets recorded a frame is an empty drive and an AssertionError: the expectation never rests on nothing.
-    Precondition (review round 1, 2026-09-20): assert_relay_dials keys the earlier sockets by HOST, which equals the conn
+    Precondition (the maintainer's round 1, tests-3, 2026-09-20): assert_relay_dials keys the earlier sockets by HOST, which equals the conn
     only while no host detaches and re-attaches (closeRemote drops the conn and its pair; the re-attach is a first dial
     again, REMOTE_DIAL_CAPS alone). No lab using this helper detaches a host; a lab that does must restart the drive at the
     re-attach, recording the detach's position in the socket sequence, since this helper keeps no socket indices. The
@@ -503,10 +503,10 @@ await page.addInitScript(() => {
         try {
           const m = JSON.parse(ev.data);
           if (m && m.type !== "ka") {
-            const f = { sock: idx, t: typeof m.type === "string" ? m.type : "", slot: typeof m.slot === "string" ? m.slot : "" };   // type and slot as the client reads them: a string, else none (a String() here read an array ['bars'] as the word the client ignores; the author's fixer pass after round 4)
+            const f = { sock: idx, t: typeof m.type === "string" ? m.type : "", slot: typeof m.slot === "string" ? m.slot : "" };   // type and slot as the client reads them: a string, else none (a String() here read an array ['bars'] as the word the client ignores; the author's fixer pass after the maintainer's round 4)
             for (const k of ["gen", "newGen", "base", "rev", "through"]) if (typeof m[k] === "number" || (typeof m[k] === "string" && (k === "gen" || k === "newGen"))) f[k] = m[k];   // the revs as numbers, the gens as the kernel's strings; no content
             if ("gen" in m) f.genKey = true;   // the key's presence, whatever its value: drive_pair tells an unreadable gen from none
-            if ("newGen" in m) f.newGenKey = true;   // the same for newGen: held_pair reads a present newGen the client cannot read as the refusal it is (round 4)
+            if ("newGen" in m) f.newGenKey = true;   // the same for newGen: held_pair reads a present newGen the client cannot read as the refusal it is (the author's pass 4)
             window.__frames.push(f);
           }
         } catch (e) {}
@@ -541,7 +541,7 @@ await browser.close();
 GEN_STAMP = "0123456789abcdef"
 GEN, GEN2, GEN3 = GEN_STAMP + "-7", GEN_STAMP + "-9", GEN_STAMP + "-3"
 
-# ── the mirror against the client, one probe shape per refusal point of each receiver (the author's pass after round 4) ──
+# ── the mirror against the client, one probe shape per refusal point of each receiver (the author's pass after the maintainer's round 4) ──
 # Each row: the case, the slot, the frames as a driver hook RECORDS them (type, slot, the stamp fields the hook copies, the gen
 # and newGen presence flags; no content), and the pair the CLIENT held after the same frames in the probe (view-deltas.ts
 # ViewDeltas for the bars road, the real FederationManager over federation-remote-feed-delta.test.ts's rig for the feed road;
@@ -656,7 +656,7 @@ RECEIVER_BLIND = [
     ('feed-apply-throw-asks-null-item', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 1, "rev": 2, "through": 2, "genKey": True}], (GEN, 1), (GEN, 2)),  # an ask that is null: reading itemId of null
     ('feed-apply-throw-removeAsks-number', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 1, "rev": 2, "through": 2, "genKey": True}], (GEN, 1), (GEN, 2)),  # removeAsks a number: not iterable (new Set)
     ('feed-apply-throw-ledgers-null-item', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 1, "rev": 2, "through": 2, "genKey": True}], (GEN, 1), (GEN, 2)),  # a ledger item that is null: reading sid of null
-    ('feed-apply-throw-top-string', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 1, "rev": 2, "through": 2, "genKey": True}], (GEN, 1), (GEN, 2)),  # a top that is not an object (the top guard, the fixer pass after round 5, refusal-5): a string top had applied, its characters the frame's keys, and moved the pair to (GEN, 2); measured in federation-remote-feed-delta.test.ts
+    ('feed-apply-throw-top-string', 'feed', [{"t": "feed", "slot": "", "gen": GEN, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 0, "rev": 1, "through": 1, "genKey": True}, {"t": "feedDelta", "slot": "", "gen": GEN, "base": 1, "rev": 2, "through": 2, "genKey": True}], (GEN, 1), (GEN, 2)),  # a top that is not an object (the top guard, the author's fixer pass after the maintainer's round 5, refusal-5): a string top had applied, its characters the frame's keys, and moved the pair to (GEN, 2); measured in federation-remote-feed-delta.test.ts
     # the fourth shape, an ACCEPTANCE and not a refusal (the maintainer's round 5, extra7-1, and the 19:31Z ruling): a {type: delta,
     # slot: feed} patch on a remote conn is reassembled by the conn's receiver into a feed frame that enters the feed arm, which
     # re-seeds Conn.feedHeld from the reassembled frame's gen; the recorder keeps the patch's t, slot, base and rev and no rest
@@ -753,7 +753,7 @@ class HeldPairRule(unittest.TestCase):
     def test_the_gens_form_is_the_kernels_string_and_anything_else_reads_as_no_stamp(self):
         # the client's genOf (view-deltas.ts): a non-empty string of at most GEN_MAX characters holding neither '.' nor ','; a
         # number, an empty string, a bool, a string carrying either separator or one over the cap is no stamp, so the full leaves
-        # no pair (and the hook's record of it is dropped); a gen at the cap is a stamp (round 3, 2026-09-20)
+        # no pair (and the hook's record of it is dropped); a gen at the cap is a stamp (the author's pass 3, 2026-09-20)
         over_cap = GEN_STAMP + "-" + "9" * (GEN_MAX - len(GEN_STAMP))
         self.assertEqual(len(over_cap), GEN_MAX + 1)
         for bad in (7, 0, "", GEN_STAMP + ".7", GEN_STAMP + ",7", True, None, over_cap):
@@ -767,7 +767,7 @@ class HeldPairRule(unittest.TestCase):
             self.assertIsNone(_stamp_field({"rev": bad}, "rev"), "a rev is a non-negative int: %r" % (bad,))
 
     def test_the_length_cap_is_the_clients_own_declaration_and_counts_as_the_client_counts(self):
-        # the mirror's cap is read from view-deltas.ts, never a second literal (round 3, the fixer's pass): the declaration is
+        # the mirror's cap is read from view-deltas.ts, never a second literal (the author's pass-3 fixer pass): the declaration is
         # found (an empty read fails, never passes) and the module's GEN_MAX is its value; and the count is String.length's,
         # UTF-16 code units, so a gen of GEN_MAX // 2 + 1 characters outside the Basic Multilingual Plane (GEN_MAX + 2 units)
         # is over the cap where Python's len would read it under, and GEN_MAX // 2 of them (GEN_MAX units) is at the cap
@@ -787,7 +787,7 @@ class HeldPairRule(unittest.TestCase):
         self.assertEqual(_stamp_field({"gen": at}, "gen"), at, "at the cap in the client's units: a stamp")
 
     def test_a_present_gen_or_newGen_the_client_cannot_read_is_a_refusal_and_never_reads_as_absent(self):
-        # unparseable is not absent (round 4, 2026-09-20): a delta carrying a gen key whose value the client cannot read
+        # unparseable is not absent (the author's pass 4, 2026-09-20): a delta carrying a gen key whose value the client cannot read
         # (_stamp_field None, the key present: genOf refuses it) onto a held pair is REFUSED by both roads, never read as a
         # gen-less delta; on the feed road the pair stands (needFullFeed with the held pair, nothing applied), on the bars
         # road the base is dropped (needSlot), so nothing is held until the next whole frame. The same for a composed frame
@@ -830,8 +830,8 @@ class HeldPairRule(unittest.TestCase):
         self.assertIsNone(held_pair([{"t": "feedDelta", "gen": GEN, "base": 0, "rev": 1, "through": 1}], "feed"), "a delta before any full: nothing held")
 
     def test_a_gen_less_delta_moves_no_feed_pair_and_advances_the_bars_pairs_rev_under_the_held_gen(self):
-        # the roads differ on a gen-less delta onto a held pair, and the difference was measured at both clients (round 4, the
-        # mirror measured, 2026-09-20; held_pair's docstring carries the two probes' readings): the feed road writes its pair
+        # the roads differ on a gen-less delta onto a held pair, and the difference was measured at both clients (the author's
+        # mirror-and-twins pass, the mirror measured, 2026-09-20; held_pair's docstring carries the two probes' readings): the feed road writes its pair
         # under a gen alone (the vintage guard), the bars road's pair is its base, whose rev every applied frame moves, so
         # ViewDeltas.held reads (the held gen, the frame's rev) after one; a newGen on a gen-less frame is adopted on neither
         # road, since the gate never ran for it. Before the measurement this rule read "moves no pair" for both slots.
@@ -933,10 +933,10 @@ class HeldPairRule(unittest.TestCase):
             assert_relay_dials(self, "feed", dials[:3], [])
 
     def test_every_refusal_point_of_both_receivers_is_mirrored_one_probe_shape_each(self):
-        # the shape instruction (the maintainer's round 4, ROUND 5): the client's FULL refusal set, not the shapes changed. One
+        # the shape instruction (the closing section of the maintainer's round 4): the client's FULL refusal set, not the shapes changed. One
         # row per refusal point of view-deltas.ts receive (the unknown slot, no base, the exact base, the gen gate, the newGen
         # test, the rev relation) and of applyRemoteFeedDelta (nobase, then the ladder's nine words in gate order), plus the
-        # applying shapes on each road and the shapes the round measured; every row's expectation is the client's own reading
+        # applying shapes on each road and the shapes the author's mirror-and-twins pass measured; every row's expectation is the client's own reading
         # in the probe. Red at the head before the pass on 28 of these rows (the bars exact-base and rev-relation classes, a
         # foreign readable gen adopted on both roads, the feed gate's base, ahead, through, behind, rev and disagree words, a
         # rev past 2^53, the through-less stamped delta on the bars road).
@@ -952,7 +952,7 @@ class HeldPairRule(unittest.TestCase):
         # type the hooks do not copy (the client drops the base and re-seeds at the next keyable whole frame); the bars receiver's
         # refusal of a whole frame it cannot key (the client holds no pair, re-seeds at the next keyable whole frame; this rule
         # reads the recorded full as a seed); the feed road's applyFeedDelta throws (the client's pair STANDS, it asks once, bare,
-        # then stops after the answering full: round 5's bounded refusal; the divergence persists across the refused frames). And
+        # then stops after the answering full: the bounded refusal of the author's pass after the maintainer's round 5; the divergence persists across the refused frames). And
         # one ACCEPTANCE (the maintainer's round 5, extra7-1): a delta slot:feed patch the receiver reassembles into a feed frame
         # that re-seeds the feed pair, from content or from the recorded full's gen at rev 0, where this rule reads no delta on
         # the feed slot. This pins each measured reading so no divergence is silent, and the class per row by its shape.
@@ -1005,7 +1005,7 @@ class HeldPairRule(unittest.TestCase):
         self.assertEqual(vd.count("throw new Unkeyable("), sum(v.count("throw new Unkeyable(") for v in regions.values()), "and every Unkeyable throw")
         self.assertEqual(regions["stringKeys"].count("throw new Error("), 1, "stringKeys' one throw (an invalid key list), reached from receive for del and order (recorder-blind, class 1)")
         self.assertEqual(regions["assemble"].count("throw new Error("), 1, "assemble's one throw (a lane holding both scalar and item entries), reached from receive inside its try (recorder-blind, class 1)")
-        # the PROPERTY beside the spellings (the author's fixer pass after round 5, refusal-2: the counts above read two
+        # the PROPERTY beside the spellings (the author's fixer pass after the maintainer's round 5, refusal-2: the counts above read two
         # constructor spellings, so a `throw new TypeError(` or a thrown variable planted in split() left them green): every
         # `throw` statement in the module's CODE (comments blanked: a comment naming a throw is not a site), per region and by
         # form, the rethrow of the full arm's caught `e` classified with the two constructors, any other form unclassified and
@@ -1084,7 +1084,7 @@ class HeldPairRule(unittest.TestCase):
         # the arm's frame reds here until the rule's docstring classifies it
         fed = open(os.path.join(ROOT, "ui", "webview", "federation.ts"), encoding="utf-8").read()
         # every `feedHeld` token in the module's CODE, classified by the property of its site (the author's fixer pass after
-        # round 5, refusal-1: the census read `c.feedHeld =` and `conn.feedHeld =`, two receiver spellings, so a fifth writer
+        # the author's fixer pass after the maintainer's round 5, refusal-1: the census read `c.feedHeld =` and `conn.feedHeld =`, two receiver spellings, so a fifth writer
         # through another variable name or an Object.assign left it green): the declaration once; a member write whatever the
         # receiver's name and the assignment's form (plain, compound, delete); a member read; any other form (an object key, a
         # quoted name, a destructuring) is unclassified and reds until a row classifies it
@@ -1159,7 +1159,7 @@ class FrameRecorderCensus(unittest.TestCase):
                 # the message variable differs per hook (m, j); the frame variable is the pushed one
                 self.assertRegex(block, r'if \("gen" in \w+\) %s\.genKey = true;' % re.escape(var), "%s: the gen presence flag" % name)
                 self.assertRegex(block, r'if \("newGen" in \w+\) %s\.newGenKey = true;' % re.escape(var), "%s: the newGen presence flag" % name)
-                # type and slot as the client reads them, a string else none (the author's fixer pass after round 4: a String()
+                # type and slot as the client reads them, a string else none (the author's fixer pass after the maintainer's round 4: a String()
                 # read an array ['bars'] as the word, and the mirror applied a delta or reseeded a pair the client ignored)
                 self.assertRegex(block, r'const %s = \{ sock: idx, t: typeof (\w+)\.type === "string" \? \1\.type : "", slot: typeof \1\.slot === "string" \? \1\.slot : ""' % re.escape(var), "%s: type and slot recorded only when strings" % name)
                 self.assertRegex(block, r'for \(const k of \["gen", "newGen", "base", "rev", "through"\]\) if \(typeof \w+\[k\] === "number" \|\| \(typeof \w+\[k\] === "string" && \(k === "gen" \|\| k === "newGen"\)\)\) %s\[k\] = \w+\[k\];' % re.escape(var), "%s: the stamp fields, the revs as numbers, the gens as strings or numbers" % name)
@@ -1196,7 +1196,7 @@ class FrameRecorderCensus(unittest.TestCase):
 
     def test_the_python_recorder_keeps_type_slot_and_revs_as_the_js_hooks_do(self):
         # the fifth recorder reads the wire itself (Python json), the four JS hooks the client's parse (JavaScript); the same wire
-        # text must leave the same record, or held_pair reads one frame two ways by lab (the author's fixer pass after round 4,
+        # text must leave the same record, or held_pair reads one frame two ways by lab (the author's fixer pass after the maintainer's round 4,
         # refusals-3 and refusals-4). The JS side of each row is the hook line's semantics: `typeof m[k] === "number"` keeps
         # any number (a bool is not one), JSON.parse reads 1.0 and 2e0 as 1 and 2, -1 as -1, 1.5 as 1.5, and a string, null or
         # bool is not copied; type and slot are kept when strings.

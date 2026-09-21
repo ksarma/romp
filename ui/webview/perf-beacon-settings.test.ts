@@ -55,7 +55,7 @@ test("the store keys are one contract: settings.ts, the collector, the pane shim
   assert.equal((KERNEL.match(/perfShare/g) || []).length, 0, "the kernel never reads the share switch: the collector does, per page");
 });
 
-// The share sub-line against the SHARED categories, derived (round 3, 2026-09-20; the copy said nothing of the per-machine
+// The share sub-line against the SHARED categories, derived (the author's pass 3, 2026-09-20; the copy said nothing of the per-machine
 // byte figure and this file stayed green): the collector's shared field list is the `data.<key> =` writes of extend() in
 // perf-telemetry.ts, and perf-telemetry.test.ts pins the same keys as SHARED_KEYS; the two must be one set, every key must
 // have a phrase in the copy and every phrase must name a key, so a shared field with no words in the person's consent text

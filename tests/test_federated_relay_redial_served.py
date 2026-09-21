@@ -77,10 +77,10 @@ const hook = () => {
         try {
           const m = JSON.parse(ev.data);
           if (m && m.type !== "ka") {
-            const f = { sock: idx, t: typeof m.type === "string" ? m.type : "", slot: typeof m.slot === "string" ? m.slot : "" };   // type and slot as the client reads them: a string, else none (the author's fixer pass after round 4: a String() read an array as the word)
+            const f = { sock: idx, t: typeof m.type === "string" ? m.type : "", slot: typeof m.slot === "string" ? m.slot : "" };   // type and slot as the client reads them: a string, else none (the author's fixer pass after the maintainer's round 4: a String() read an array as the word)
             for (const k of ["gen", "newGen", "base", "rev", "through"]) if (typeof m[k] === "number" || (typeof m[k] === "string" && (k === "gen" || k === "newGen"))) f[k] = m[k];   // the revs as numbers, the gens as the kernel's strings; no content
             if ("gen" in m) f.genKey = true;   // the key's presence, whatever its value: drive_pair tells an unreadable gen from none
-            if ("newGen" in m) f.newGenKey = true;   // the same for newGen: held_pair reads a present newGen the client cannot read as the refusal it is (round 4)
+            if ("newGen" in m) f.newGenKey = true;   // the same for newGen: held_pair reads a present newGen the client cannot read as the refusal it is (the author's pass 4)
             window.__frames.push(f);
           }
         } catch (e) {}
