@@ -83,8 +83,8 @@ class CapSwitchOffer(unittest.TestCase):
         # "set_auth_guarded", None); name = "set_auth" then getattr(be, name)). Its stated limit: a name assembled at run
         # time ("set_" + "auth", a format, a lookup table) is no constant, and no static walk sees it; that spelling is
         # adversarial rather than accidental, and only a runtime spy on SdkBackend.set_auth under a kernel exercise would
-        # census it, which this file does not attempt. Two more limits are stated at (1) below: a reaching helper defined in
-        # a third kernel module, and a non-def carrier in kernel/sdk_backend.py.
+        # census it, which this file does not attempt. One more limit is stated at (1) below: a reaching helper defined in a
+        # third kernel module (a non-def carrier in kernel/sdk_backend.py, an alias, joins the derivation there since round 6).
         ROOT = os.path.dirname(HERE)
         sdk_src = Path(os.path.join(ROOT, "kernel", "sdk_backend.py")).read_text()
         ker_src = Path(os.path.join(ROOT, "kernel", "kernel.py")).read_text()
@@ -119,13 +119,21 @@ class CapSwitchOffer(unittest.TestCase):
         # widening). Two classes can share a method name, so nodes are kept per name. set_auth_guarded and
         # set_auth_followers each run self.set_auth in their step; no other callable in the file reaches it. Derived, not
         # listed, so a new reaching def at module or class scope both grows this set and, being a name the kernel census
-        # below looks for, cannot be called from kernel.py without redding. THE RESIDUALS, stated, each a carrier this walk
-        # does not visit: a reaching helper defined in a THIRD kernel module (neither kernel/sdk_backend.py nor
-        # kernel/kernel.py) is outside both walks; a NON-DEF binding at module or class scope grows nothing (DERIVED by the
-        # same parent-map walk over kernel/sdk_backend.py, counting every name-binding node whose nearest scope is the
-        # module or a class, defs aside: AnnAssign 9, Assign 199, ClassDef 8, Import 20, ImportFrom 3, Lambda 9 at the
-        # round-6 head; of these only an Assign or AnnAssign whose value is a lambda or a bound method could carry a call to
-        # set_auth under another name, and no kernel.py site spells such a name); and the run-time-assembled name above. The
+        # below looks for, cannot be called from kernel.py without redding. A NON-DEF BINDING at module or class scope joins
+        # the set the same way (round 6 of the review, its closing pass, 2026-09-21, on the round's verifier finding: this
+        # comment argued that residual from a COUNT of those bindings, AnnAssign 9 and Assign 199 at the round's first
+        # commit, and the count was stale at the round's own head, where cluster A had added a class and an assignment; a
+        # count in a comment is a claim nobody re-measures, so the population is derived and run over below instead of
+        # counted here): every Assign, AnnAssign, AugAssign or NamedExpr whose nearest scope is the module or a class and
+        # whose value reaches for a name in the set (an alias `_door = SdkBackend.set_auth`, a lambda calling it, a table
+        # holding its name as a string, a bare name the set already holds) binds its stored names into the set (a Name
+        # target's id, an attribute target's attribute, a subscript target's container, each element of a tuple target), so
+        # a kernel.py call through the alias is censused under the alias's own name; a module-level `for` or `with` whose
+        # iterable or context reaches for the set is asserted absent, since a name bound that way would need widening here
+        # first; an import binds a module, which reaches for nothing in this file, and a class's methods are defs at class
+        # scope, walked above. The binding population is asserted non-empty before the rule runs over it. THE RESIDUALS,
+        # stated, each a carrier this walk does not visit: a reaching helper defined in a THIRD kernel module (neither
+        # kernel/sdk_backend.py nor kernel/kernel.py) is outside both walks; and the run-time-assembled name above. The
         # class SdkBackend must still exist by that name: the widened derivation no longer stops on it.
         mod = ast.parse(sdk_src)
         self.assertTrue(any(isinstance(n, ast.ClassDef) and n.name == "SdkBackend" for n in mod.body),
@@ -143,6 +151,30 @@ class CapSwitchOffer(unittest.TestCase):
         for d in ast.walk(mod):
             if isinstance(d, (ast.FunctionDef, ast.AsyncFunctionDef)) and isinstance(scope_of(d), (ast.ClassDef, ast.Module)):
                 defs.setdefault(d.name, []).append(d)
+
+        def at_scope(n):
+            return isinstance(scope_of(n), (ast.ClassDef, ast.Module))
+        binds = [n for n in ast.walk(mod) if isinstance(n, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.NamedExpr))
+                 and n.value is not None and at_scope(n)]
+        self.assertTrue(binds, "the non-def bindings at module or class scope the alias rule runs over: a derived population, "
+                               "asserted non-empty before the rule runs")
+
+        def reaches(value, names):
+            """`mentions`, plus a bare Name the set already holds (an alias of an alias)."""
+            return bool(mentions(value, names)) or any(isinstance(c, ast.Name) and c.id in names for c in ast.walk(value))
+
+        def bound(target):
+            """The names a binding target stores under: a Name's id, an attribute target's attribute (SdkBackend._door = ...),
+            a subscript or starred target's container (_DOORS["auth"] = ...), each element of a tuple or list target."""
+            if isinstance(target, ast.Name):
+                return {target.id}
+            if isinstance(target, ast.Attribute):
+                return {target.attr}
+            if isinstance(target, (ast.Subscript, ast.Starred)):
+                return bound(target.value)
+            if isinstance(target, (ast.Tuple, ast.List)):
+                return set().union(*(bound(e) for e in target.elts))
+            return set()
         reach = {"set_auth"}
         changed = True
         while changed:
@@ -151,9 +183,21 @@ class CapSwitchOffer(unittest.TestCase):
                 if name not in reach and any(mentions(d, reach) for d in nodes):
                     reach.add(name)
                     changed = True
+            for b in binds:
+                names = set().union(*(bound(t) for t in (b.targets if isinstance(b, ast.Assign) else [b.target])))
+                if not names <= reach and reaches(b.value, reach):
+                    reach |= names
+                    changed = True
+        for n in ast.walk(mod):
+            if isinstance(n, (ast.For, ast.AsyncFor)) and at_scope(n):
+                self.assertFalse(reaches(n.iter, reach), "a module-level for binds a reaching value (line %d): widen the alias rule" % n.lineno)
+            elif isinstance(n, (ast.With, ast.AsyncWith)) and at_scope(n):
+                for it in n.items:
+                    self.assertFalse(reaches(it.context_expr, reach), "a module-level with binds a reaching value (line %d): widen the alias rule" % n.lineno)
         self.assertEqual(reach, {"set_auth", "set_auth_guarded", "set_auth_followers"},
-                         "set_auth and the two entry points whose step runs it; a new reaching def at module or class scope in "
-                         "kernel/sdk_backend.py, whatever statement wraps it, reds here (a closure reds through its enclosing def)")
+                         "set_auth and the two entry points whose step runs it; a new reaching def, or a non-def binding whose value "
+                         "reaches for one (an alias, a lambda, a table naming it), at module or class scope in kernel/sdk_backend.py, "
+                         "whatever statement wraps it, reds here (a closure reds through its enclosing def)")
         # (2) every kernel.py site that reaches for one of those names, recorded as (enclosing def, kind): "call:" an
         # attribute call on any receiver; "ref:" an attribute reference that is not the func of a call (a bound method
         # handed on as a value: a partial, an alias); "name:" a string constant equal to the name (the getattr doors, a
