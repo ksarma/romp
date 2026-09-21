@@ -916,7 +916,8 @@ test("round 5's fifth addendum, third fix-up: the lexer resolves a substitution 
   assert.deepEqual(seg('bash -c "${x:=cp a b}"').words[2].readings, ['cp a b'], 'the := form');
   assert.deepEqual(seg('bash -c "${x:+cp a b}"').words[2].readings, ['cp a b'], 'the :+ form');
   assert.deepEqual(seg('bash -c "${x:-${y:-cp a b}}"').words[2].readings, ['cp a b'], 'a default word that is one nested default carries its readings up');
-  assert.equal(seg('bash -c "${x:?cp a b}"').words[2].readings, undefined, 'the message form gives none');
+  assert.deepEqual(seg('bash -c "${x:?cp a b}"').words[2].readings, [], "the message form gives no text of its own (round 6's fifth commit: the word stands for the value of x, carried as readingParams for extract's scriptTexts)");
+  assert.deepEqual(seg('bash -c "${x:?cp a b}"').words[2].readingParams, [{ name: 'x', op: ':?', before: '', after: '' }], 'and names the parameter it stands for');
   assert.equal(seg('bash -c "${x}"').words[2].readings, undefined, 'a plain name gives none');
   assert.equal(seg('bash -c "${x:-$(cat f)}"').words[2].readings, undefined, 'a word the lexer cannot read gives none (its command is read)');
   assert.deepEqual(seg('bash -c "${x:-$(cat f)}"').viaSubs.map((v) => v.text), ['cat f']);
@@ -928,7 +929,8 @@ test("round 5's fifth addendum, third fix-up: the lexer resolves a substitution 
   assert.deepEqual(hd('cat <<EOF\n${x:-$(cp a b)}\nEOF').viaSubs.map((v) => v.text), ['cp a b'], 'and one nested in a ${...} word of the body');
   assert.deepEqual(hd("cat <<EOF\n${x:-'$(cp a b)'}\nEOF").viaSubs.map((v) => v.text), ['cp a b'], 'a quote is a character in the body');
   assert.deepEqual(hd("bash <<EOF\n$(echo 'echo x > f')\nEOF").heredocs, ['echo x > f'], 'the body a shell consumer reads is the text after the expansions');
-  assert.deepEqual(hd("bash <<EOF\n${x:-$(echo 'cp a b')}\nEOF").heredocs, ['cp a b'], "and a body that is one default word hands the consumer its reading alone (round 6's second commit: the spelling is not a text the consumer sees, and read as a plain script it reached THE HEAD SPLICE with its quotes removed)");
+  assert.deepEqual(hd("bash <<EOF\n${x:-$(echo 'cp a b')}\nEOF").heredocs, [], "a body that is one default word is no plain here-document text (round 6's fifth commit: its reading depends on the parameter's value)");
+  assert.deepEqual(hd("bash <<EOF\n${x:-$(echo 'cp a b')}\nEOF").stdin.map((s) => [s.readings, s.readingParams]), [[['cp a b'], [{ name: 'x', op: ':-', before: '', after: '' }]]], "and hands the consumer its reading with the name it depends on, for scriptTexts to join the value or refuse (round 6's second commit had it hand the reading alone: the spelling is not a text the consumer sees, and read as a plain script it reached THE HEAD SPLICE with its quotes removed)");
   for (const c of ["cat <<'EOF'\n$(cp a b)\nEOF", 'cat <<"EOF"\n$(cp a b)\nEOF', 'cat <<\\EOF\n$(cp a b)\nEOF', 'cat <<E"O"F\n$(cp a b)\nEOF']) assert.deepEqual([hd(c).heredocs, hd(c).viaSubs], [['$(cp a b)'], []], `a quoted delimiter keeps the body as written: ${JSON.stringify(c)}`);
   assert.deepEqual([hd('cat <<EOF\n\\$(cp a b)\nEOF').heredocs, hd('cat <<EOF\n\\$(cp a b)\nEOF').viaSubs], [['$(cp a b)'], []], 'a backslash quotes the dollar');
   assert.deepEqual(hd('cat <<-EOF\n\t$(cp a b)\n\tEOF').viaSubs.map((v) => v.text), ['cp a b'], '<<- strips the tabs and expands alike');
@@ -955,7 +957,9 @@ test("round 5's fifth addendum, third fix-up: the lexer resolves a substitution 
   assert.deepEqual(targets("echo 'cp base/report.md docs/report.md' | bash -c 'bash'"), [report], "a -c script's inner shell reads its caller's stdin");
   assert.deepEqual(targets("echo 'cp base/report.md docs/report.md' | f() { bash; }"), [], 'a definition reads nothing');
   assert.deepEqual(targets("bash -c \"$(echo 'cp base/report.md docs/report.md')\""), [report], 'a resolved -c operand is the script');
-  assert.deepEqual(targets("bash -c \"${x:-$(echo 'cp base/report.md docs/report.md')}\""), [report], 'a default word alone is read as the script');
+  assert.deepEqual(targets("x=cp; bash -c \"${x:-echo} base/report.md docs/report.md\""), [report], "a default word is read as the script under the value the command gives its name (round 6's fifth commit, THE PARAMETER'S VALUE: x=cp runs the copy where the word alone read `echo`)");
+  assert.deepEqual(targets("bash -c \"${x:-$(echo 'cp base/report.md docs/report.md')}\""), [], 'a default word of a name the command never sets is no target of its own');
+  assert.ok(extractWriteTargets("bash -c \"${x:-$(echo 'cp base/report.md docs/report.md')}\"", proj).unresolved.some((u) => u.why && u.why.kind === 'unresolvableReading' && /does not set `x`/.test(u.why.text)), 'it is UNRESOLVABLE: the value is the shell\'s own, which the guard does not read (refused while a project is in play; the third fix-up read the word alone as the script)');
   assert.deepEqual(targets('cat <<EOF\n$(cp base/report.md docs/report.md)\nEOF'), [report], "an unquoted body's substitution runs");
   assert.deepEqual(targets("cat <<'EOF'\n$(cp base/report.md docs/report.md)\nEOF"), [], 'a quoted one does not');
   assert.deepEqual(targets("$(echo 'cp base/report.md docs/report.md')"), [report], 'the substitution alone is the command line, split');

@@ -3941,7 +3941,7 @@ document stands on its own, each with the reasoning it was given.
     `tools/file-review-plan-bash-guard.test.mjs` holds this decision to the hook and the installer, and
     `tools/file-review-plan-bash-guard-review.test.mjs` its cost sentence to the hook's closure and every
     `romp-track-bash-guard…` module under `tools/` to this decision and the Tests bullet.
-    Round 5 of the review (2026-09-20; romp-manager's round-4 ruling over the seventh pass's head: twenty-nine findings,
+    Round 5 of the review (2026-09-20; the reviewer's round-4 ruling over the seventh pass's head: twenty-nine findings,
     seven highs, six of them one defect, and none refuted) closed two root causes and their riders. THE FRAME ON PARSED
     STRUCTURE: the frame decision (a body that may not run: its names unreadable, its `cd` unknown at the closer) was keyed
     on the segment's FIRST word, so a leading `!`, `time`, `{`, a `then` or `do` before a nested head, and `select`, which
@@ -4529,6 +4529,71 @@ document stands on its own, each with the reasoning it was given.
     word was read as the command name). THE RESIDUAL TABLE gains the members its classes lacked (unshare, setpriv, perf
     and prlimit, wrappers outside the set; parallel, a reader like xargs; an alias in a sourced written file; an eval
     printing before the pipe; perl's File::Copy) and loses the two THE HEAD CANDIDATES read.
+    ROUND 6, FIFTH COMMIT (2026-09-21; the round's three verifiers on the fourth commit's head: every finding a command
+    a shell wrote onto the tracked file while the guard allowed it, each closed by a rule fitted to its class, none
+    relabelled, and the table gaining the members its classes lacked). THE PARAMETER'S VALUE (defaultWordReading, lex's
+    defaultReading, extract's scriptTexts): a default word's text is the parameter's value when it is set and the word
+    otherwise, and the reading was the word alone, so `c=cp; ${c:-cat} a b` ran the copy in every shell (and `${c-cat}`,
+    `${c:-}`, `${c:-''}`, `"${c:-}"`, `${c:?}`, `${c?}`, `${c:=cat}`, through `eval "${c:-cat} a b"`, as a piped
+    script's consumer and as a here-string's); the reading carries the name (`params`, with the literal text glued
+    around the expansion, so the value stands where the expansion stands) and scriptTexts joins the value the
+    readability rule and THE HEAD CANDIDATES hold for it, refusing the word as UNRESOLVABLE where that value is not
+    readable: a name a construct the resolver does not follow wrote (`read c`, `c=$(which cp)`), one a value the
+    resolver could not establish was given, or one the command never sets, whose value is the shell's own (a
+    `${X:-default}` command name or script from a tracked cwd with X untouched refuses, a stated cost; the `+` forms
+    depend on no value and keep the word alone; a default word glued to another expansion is UNRESOLVABLE). THE MOVED
+    SHELL (extract's return, recurse's adopt): a cd inside a text this shell ran in place (eval's text, a sourced
+    standard input, here-string or `<(..)`, a head splice, emulate's and mapfile's texts) moved nothing for the rest of
+    the command, so `eval 'cd ../notes'; cp ../base/report.md n1.md` landed on the tracked notes/ in every shell while
+    the copy was judged from docs/ (with `eval "cd $d"`, `pushd`, `. /dev/stdin`, `source /dev/stdin <<< ..`, `. <(echo
+    ..)`, an alias whose body is a cd, `alias c=cd`, `c=cd; $c ..`, inside a function, and the copy through cp, mv, tee,
+    a `>`, sed -i, python or `bash -c`); the sub-walk's directory state comes back and is adopted, recorded on the
+    frames and on a function body around it, and a trap action that moves leaves the directory unknown (`trap 'cd
+    ../notes' DEBUG; cp ..` moved bash and zsh before the cp). THE DUPLICATED DESCRIPTOR (lex's dups, fdsFor): `[n]<&m`
+    was skipped, so `exec 3< <(echo 'cp a b'); bash <&3`, `bash 0<&3`, `bash 3< <(..) <&3`, `{ bash; } 3< <(..) <&3`,
+    `bash /dev/fd/4 4<&3` and `exec <&3; bash` ran the text in bash and zsh; a consumer reads every descriptor a dup on
+    its segment or on an exec feed reaches, to a fixpoint, and a dup from a word the lexer cannot read reads every
+    descriptor fed. THE PASSED-THROUGH TEXT (passthroughCat, pipedScripts): a plain `cat` of its standard input before a
+    pipe prints what feeds it (`echo 'cp a b' | cat | bash`, `cat < <(echo ..) | bash`, `exec 3< <(..); cat <&3 | bash`,
+    `(echo ..) | cat | bash` and `| (cat | bash)` each ran the text in the shells named), so that text is the consumer's
+    script; a cat with an option word is UNRESOLVABLE where a text is fed (`cat -s` passes a script unchanged), a cat of
+    a file stays the residual, and the property's fifth class says so. THE STARTUP FEED (the shells' branch): a BASH_ENV
+    or ENV value naming the standard input or a descriptor the shell is fed is the text fed, sourced at startup
+    (`BASH_ENV=/dev/stdin bash -c : <<< 'cp a b'`, `echo '..' | BASH_ENV=/dev/stdin bash -c :`, `BASH_ENV=/dev/fd/3 ..
+    3< <(..)`, through export, env and a nested `bash -c`, and `ENV=/dev/stdin dash -i -c :`), read whether or not this
+    shell would. THE EXPORTED FUNCTION (the walk; commandOf's env operand): env sets any operand holding a `=`, and a
+    bash the command starts imports `BASH_FUNC_NAME%%=() { .. }` as the function NAME, so the quoted word was read as a
+    command name while `env 'BASH_FUNC_c%%=() { cp "$@"; }' bash -c 'c a b'` (and through `env -i`, `echo c | env ..
+    bash`, `bash -s <<< c`, a `BASH_FUNC_cat%%` shadowing cat) copied in every shell; the word is a definition, its body
+    read as `export -f`'s is. THE SPLICED DEFINITION (defLineOf): a definition made inside a head splice bound at
+    Infinity, after every later use, so `alias a=alias`, then `a c=cp`, then `c a b` copied in dash (and, through a
+    here-document or a pipe, in every shell); it binds at the spliced segment's line. THE CALLED BODY (functionBodies,
+    popFunction, the walk, recurse's runFunction and callArgs): a function the command defines, called where a text the
+    guard holds feeds it, was an unknown command while its body ran a shell on that text (`f() { bash; }; echo 'cp a b'
+    | f`, `f <<< ..`, `f <<'EOF'`, `f < <(..)`, bodies of `sh`, `cat | bash`, `. /dev/stdin` and `bash "$@"` called with
+    /dev/stdin, the call inside a subshell or a group); the definition's text is kept by name and replayed at the call
+    with the fed text on its standard input and the call's operands, a call inside its own body not followed again. THE
+    HEAD CANDIDATES' three gaps (noteCandidate, candidateTexts, scriptTexts): `+=` appends (`c=c; c+=p; $c a b` copied
+    in bash and zsh), a value's newline is a blank where the value is a command name (`c='cp<newline>a b'; $c` copied in
+    bash and dash), and two names in one quoted text compose (`a=cp; b='a b'; eval "$a $b"`, `bash -c "$a $b"` and `sh
+    -c "$a $b"` copied in every shell); and THE ASSIGNMENT VALUE (lex's assignmentValue, noteCandidate's value road): no
+    shell splits an expansion's result in an assignment's value, while the lexer cut `x=$(echo 'cp a b')` into three
+    words and the candidates read `cp` alone (`$x` then copied in bash and dash), so the value is one text, and a value
+    that is a reading on the script road (`x=$(printf '%s' 'cp a b')`) is a candidate through scriptTexts, one the
+    resolver could not establish marking the name (unreadValues), refused where the name is a command name or a script.
+    THE RESIDUAL TABLE gains the members its classes lacked that the verifiers measured: zsh's `${=c}`, `${~c}`,
+    `${(z)c}`, `$=c`, `${(L)c}`, `${c:s/x/p/}` and `${c:q}`; bash's `${c:0:2}`, `${c:0}`, `${c,}`, `${c@P}`, `${c@E}`,
+    `${c//x}`, `${c#}` and `${c%?}`; arrays by every spelling; getopts's OPTARG, REPLY, select and a loop variable after
+    its loop; a function's positionals and its `eval "$*"`; `${d:=$c}`, `declare d=$c` and `set -- $c`; a `read` or
+    `mapfile` of a fed text, inside a called body too; the loader `/lib64/ld-linux-x86-64.so.2`; xargs by every
+    spelling; a written `.zshenv` read through ZDOTDIR or HOME; a name glued to another expansion in head position; an
+    eval, a backgrounded echo, `time`, `yes | head`, a second `| bash` and a tee before the pipe; python's `os.truncate`
+    and `os.write`, and its `os.system` through a called body or a descriptor. The contract paragraph says on its four
+    surfaces that deleting or moving a tracked file away is not a write the guard refuses, a scope question raised with
+    the round's review. Stated costs, each pinned with no shell writing: an untouched `${X:-word}` command name or
+    script from a tracked cwd; `cat -n` before a pipe fed a text; `exec 3<<< ..; BASH_ENV=/dev/fd/3 bash -c :` (bash
+    does not read it there); `env 'BASH_FUNC_..' sh -c c` (dash imports nothing); a function calling itself before its
+    shell.
     THE RESIDUAL PROPERTY. The guard refuses a write only when it resolves the command to a writer it models (the
     writer cases of extract's switch, a write redirection, an interpreter's write call it scans) reached through a road it reads
     (the wrapper set, the shells' script roads, the readings of the resolver, the alias and hash roads), with a target it can
@@ -4542,14 +4607,14 @@ document stands on its own, each with the reasoning it was given.
     cannot read, busybox's applets); a reader outside the roads, a program that runs a command or a script the hook does not
     follow into it (xargs, an interpreter's system, exec or subprocess call, a wrapper outside the set, a shell outside SHELLS,
     a file the command writes and then runs or sources); a command name the resolver never reads, a command whose name is an
-    expansion of a kind the resolver does not read ("$@", $1, $*, "${a[@]}", a loop variable, a name read, printf -v or a
-    nameref filled, ${SHELL}, a substitution outside the output model such as $(which cp), a ${...} operator form the resolver
+    expansion of a kind the resolver does not read ("$@", $1, $*, "${a[@]}", a loop variable, a name read or filled by getopts, printf -v or a
+    nameref, ${SHELL}, a substitution outside the output model such as $(which cp), a ${...} operator form the resolver
     does not read); a script held in a variable, a value the command gives a name through a construct the resolver does not read
     (`read`, `printf -v`, a positional parameter), run as a command or handed to a shell (`$c` after `read c`, `eval "$1"`,
     `bash -c "$c"` after `printf -v c`; a value an assignment word gives, whitespace included, is read through THE HEAD
     CANDIDATES since round 6's fourth commit); a producer outside the output model, a pipe into a shell from anything but a
-    literal echo or printf, alone or in a subshell or group of such commands (a call of a function the command defines, a tee
-    or a further pipe, a cat of a file); zsh's glob grouping, a `(..)` inside a
+    literal echo or printf, alone or in a subshell or group of such commands, or a plain cat passing such a text through (a call of a function the command defines, a tee
+    or a pipe through another command, a cat of a file); zsh's glob grouping, a `(..)` inside a
     word handed to zsh, read as a subshell by the lexer's zsh grammar while zsh globs it (a lexer gap, stated since the first
     commit of this round); an opaque expansion from a cwd outside every project, a leading opaque expansion, or one after a
     literal head outside every project, from a cwd in no project (B2 as ruled, with its boundary). A shape outside these classes

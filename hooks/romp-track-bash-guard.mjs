@@ -359,7 +359,7 @@
 // against the corpus (285 entries, no verdict changes) and the dollar matrix and stated with the change: a `~/` value resolves
 // through HOME at no cost; `declare -i x=5` (and `-a`, `-A`) then `$x`, `let x=5` then `$x`, a pipeline-tail assignment (which
 // zsh keeps) and a piped plain group then `$x` each refuse from a tracked cwd where the shell's value was known.
-// THE ADDENDUM (romp-manager's four items, the same day): (1) a plain top-level `HOME=<path>` assignment is the one readable
+// THE ADDENDUM (the reviewer's four items, the same day): (1) a plain top-level `HOME=<path>` assignment is the one readable
 // write to HOME (readableHomeWrites): `~` and `$HOME` in LATER commands resolve through it, a bare `cd` moves to it (resolved
 // against the cwd like `cd <dir>`; a bare `pushd` is no such move: bash and dash stay, zsh goes home, so it leaves the
 // directory unknown, a live overwrite since before this pass closed with it), and a
@@ -698,6 +698,66 @@
 // reader like xargs; an alias in a sourced written file; an eval printing before the pipe; perl's File::Copy) and loses the two THE
 // HEAD CANDIDATES read.
 //
+// ROUND 6, FIFTH COMMIT (2026-09-21; the round's three verifiers on the fourth commit's head: every finding a command a shell
+// wrote onto the tracked file while the guard allowed it, each closed by a rule fitted to its class, none relabelled, and the
+// table gaining the members its classes lacked). THE PARAMETER'S VALUE (defaultWordReading, lex's defaultReading, extract's
+// scriptTexts): a default word's text is the parameter's value when it is set and the word otherwise, and the reading was the
+// word alone, so `c=cp; ${c:-cat} a b` ran the copy in every shell (and `${c-cat}`, `${c:-}`, `${c:-''}`, `"${c:-}"`, `${c:?}`,
+// `${c?}`, `${c:=cat}`, through `eval "${c:-cat} a b"`, as a piped script's consumer and as a here-string's); the reading carries
+// the name (`params`, with the literal text glued around the expansion, so the value stands where the expansion stands) and
+// scriptTexts joins the value the readability rule and THE HEAD CANDIDATES hold for it, refusing the word as UNRESOLVABLE where
+// that value is not readable: a name a construct the resolver does not follow wrote (`read c`, `c=$(which cp)`), one a value the
+// resolver could not establish was given, or one the command never sets, whose value is the shell's own (a `${X:-default}`
+// command name or script from a tracked cwd with X untouched refuses, a stated cost; the `+` forms depend on no value and keep
+// the word alone; a default word glued to another expansion is UNRESOLVABLE). THE MOVED SHELL (extract's return, recurse's
+// adopt): a cd inside a text this shell ran in place (eval's text, a sourced standard input, here-string or `<(..)`, a head
+// splice, emulate's and mapfile's texts) moved nothing for the rest of the command, so `eval 'cd ../notes'; cp ../base/report.md
+// n1.md` landed on the tracked notes/ in every shell while the copy was judged from docs/ (with `eval "cd $d"`, `pushd`, `.
+// /dev/stdin`, `source /dev/stdin <<< ..`, `. <(echo ..)`, an alias whose body is a cd, `alias c=cd`, `c=cd; $c ..`, inside a
+// function, and the copy through cp, mv, tee, a `>`, sed -i, python or `bash -c`); the sub-walk's directory state comes back and
+// is adopted, recorded on the frames and on a function body around it, and a trap action that moves leaves the directory unknown
+// (`trap 'cd ../notes' DEBUG; cp ..` moved bash and zsh before the cp). THE DUPLICATED DESCRIPTOR (lex's dups, fdsFor): `[n]<&m`
+// was skipped, so `exec 3< <(echo 'cp a b'); bash <&3`, `bash 0<&3`, `bash 3< <(..) <&3`, `{ bash; } 3< <(..) <&3`, `bash
+// /dev/fd/4 4<&3` and `exec <&3; bash` ran the text in bash and zsh; a consumer reads every descriptor a dup on its segment or on
+// an exec feed reaches, to a fixpoint, and a dup from a word the lexer cannot read reads every descriptor fed. THE PASSED-THROUGH
+// TEXT (passthroughCat, pipedScripts): a plain `cat` of its standard input before a pipe prints what feeds it (`echo 'cp a b' |
+// cat | bash`, `cat < <(echo ..) | bash`, `exec 3< <(..); cat <&3 | bash`, `(echo ..) | cat | bash` and `| (cat | bash)` each ran
+// the text in the shells named), so that text is the consumer's script; a cat with an option word is UNRESOLVABLE where a text is
+// fed (`cat -s` passes a script unchanged), a cat of a file stays the residual, and the property's fifth class says so. THE
+// STARTUP FEED (the shells' branch): a BASH_ENV or ENV value naming the standard input or a descriptor the shell is fed is the
+// text fed, sourced at startup (`BASH_ENV=/dev/stdin bash -c : <<< 'cp a b'`, `echo '..' | BASH_ENV=/dev/stdin bash -c :`,
+// `BASH_ENV=/dev/fd/3 .. 3< <(..)`, through export, env and a nested `bash -c`, and `ENV=/dev/stdin dash -i -c :`), read whether
+// or not this shell would. THE EXPORTED FUNCTION (the walk; commandOf's env operand): env sets any operand holding a `=`, and a
+// bash the command starts imports `BASH_FUNC_NAME%%=() { .. }` as the function NAME, so the quoted word was read as a command
+// name while `env 'BASH_FUNC_c%%=() { cp "$@"; }' bash -c 'c a b'` (and through `env -i`, `echo c | env .. bash`, `bash -s <<<
+// c`, a `BASH_FUNC_cat%%` shadowing cat) copied in every shell; the word is a definition, its body read as `export -f`'s is. THE
+// SPLICED DEFINITION (defLineOf): a definition made inside a head splice bound at Infinity, after every later use, so `alias
+// a=alias`, then `a c=cp`, then `c a b` copied in dash (and, through a here-document or a pipe, in every shell); it binds at the
+// spliced segment's line. THE CALLED BODY (functionBodies, popFunction, the walk, recurse's runFunction and callArgs): a function
+// the command defines, called where a text the guard holds feeds it, was an unknown command while its body ran a shell on that
+// text (`f() { bash; }; echo 'cp a b' | f`, `f <<< ..`, `f <<'EOF'`, `f < <(..)`, bodies of `sh`, `cat | bash`, `. /dev/stdin`
+// and `bash "$@"` called with /dev/stdin, the call inside a subshell or a group); the definition's text is kept by name and
+// replayed at the call with the fed text on its standard input and the call's operands, a call inside its own body not followed
+// again. THE HEAD CANDIDATES' three gaps (noteCandidate, candidateTexts, scriptTexts): `+=` appends (`c=c; c+=p; $c a b` copied
+// in bash and zsh), a value's newline is a blank where the value is a command name (`c='cp<newline>a b'; $c` copied in bash and
+// dash), and two names in one quoted text compose (`a=cp; b='a b'; eval "$a $b"`, `bash -c "$a $b"` and `sh -c "$a $b"` copied in
+// every shell); and THE ASSIGNMENT VALUE (lex's assignmentValue, noteCandidate's value road): no shell splits an expansion's
+// result in an assignment's value, while the lexer cut `x=$(echo 'cp a b')` into three words and the candidates read `cp` alone
+// (`$x` then copied in bash and dash), so the value is one text, and a value that is a reading on the script road (`x=$(printf
+// '%s' 'cp a b')`) is a candidate through scriptTexts, one the resolver could not establish marking the name (unreadValues),
+// refused where the name is a command name or a script. THE RESIDUAL TABLE gains the members its classes lacked that the
+// verifiers measured: zsh's `${=c}`, `${~c}`, `${(z)c}`, `$=c`, `${(L)c}`, `${c:s/x/p/}` and `${c:q}`; bash's `${c:0:2}`,
+// `${c:0}`, `${c,}`, `${c@P}`, `${c@E}`, `${c//x}`, `${c#}` and `${c%?}`; arrays by every spelling; getopts's OPTARG, REPLY,
+// select and a loop variable after its loop; a function's positionals and its `eval "$*"`; `${d:=$c}`, `declare d=$c` and `set --
+// $c`; a `read` or `mapfile` of a fed text, inside a called body too; the loader `/lib64/ld-linux-x86-64.so.2`; xargs by every
+// spelling; a written `.zshenv` read through ZDOTDIR or HOME; a name glued to another expansion in head position; an eval, a
+// backgrounded echo, `time`, `yes | head`, a second `| bash` and a tee before the pipe; python's `os.truncate` and `os.write`,
+// and its `os.system` through a called body or a descriptor. The contract paragraph says on its four surfaces that deleting or
+// moving a tracked file away is not a write the guard refuses, a scope question raised with the round's review. Stated costs,
+// each pinned with no shell writing: an untouched `${X:-word}` command name or script from a tracked cwd; `cat -n` before a pipe
+// fed a text; `exec 3<<< ..; BASH_ENV=/dev/fd/3 bash -c :` (bash does not read it there); `env 'BASH_FUNC_..' sh -c c` (dash
+// imports nothing); a function calling itself before its shell.
+//
 // THE LISTS THAT REMAIN are not written here (round 5 of the review, 2026-09-20). The hand-written census that stood here
 // omitted the two lists whose gap falls on the WRITE side, the compound-head frame push and CLOSERS, and that omission is
 // how a `select` missing from both slipped through round 3: an instrument built to bound the hand-maintained lists that
@@ -727,7 +787,10 @@
 // for paths, a link whose source it cannot read, a `~` or `$HOME` write beside a mention of HOME or beside a variable
 // name the shell fills in, a template or format string as an interpreter's write path, and, from any working directory,
 // a write through an alias the command makes (a hard link, `cp -l`, `cp -s`, `link`, a link whose source it cannot read)
-// whose source lies in a tracked project or is one it cannot read. A value it can read is resolved first and the real
+// whose source lies in a tracked project or is one it cannot read. Deleting or moving a tracked file away (`rm`, `unlink`,
+// `mv` to another name, `find -delete`) is not a write it refuses: the contract is the write that lands on a tracked file,
+// and whether the tracked set shrinking is such a write is a scope question raised with the round's review and not decided
+// here. A value it can read is resolved first and the real
 // path judged. A name is readable only when every write to it in the command is a plain top-level `NAME=plain-string`
 // the shell performs as spelled: no tilde opening the value, no declaration flag at all, no `declare`, `typeset` or `local`
 // (dash has none of the three; `export` and `readonly` with no option word are the two declarations every shell performs),
@@ -750,13 +813,13 @@
 // program that runs a command or a script the hook does not follow into it (xargs, an interpreter's system, exec or subprocess
 // call, a wrapper outside the set, a shell outside SHELLS, a file the command writes and then runs or sources); a command name
 // the resolver never reads, a command whose name is an expansion of a kind the resolver does not read ("$@", $1, $*, "${a[@]}",
-// a loop variable, a name read, printf -v or a nameref filled, ${SHELL}, a substitution outside the output model such as
+// a loop variable, a name read or filled by getopts, printf -v or a nameref, ${SHELL}, a substitution outside the output model such as
 // $(which cp), a ${...} operator form the resolver does not read); a script held in a variable, a value the command gives a name
 // through a construct the resolver does not read (`read`, `printf -v`, a positional parameter), run as a command or handed to a
 // shell (`$c` after `read c`, `eval "$1"`, `bash -c "$c"` after `printf -v c`; a value an assignment word gives, whitespace
 // included, is read through THE HEAD CANDIDATES since round 6's fourth commit); a producer outside the output model, a pipe into
-// a shell from anything but a literal echo or printf, alone or in a subshell or group of such commands (a call of a function the
-// command defines, a tee or a further pipe, a cat of a file);
+// a shell from anything but a literal echo or printf, alone or in a subshell or group of such commands, or a plain cat passing such a text through (a call of a function the
+// command defines, a tee or a pipe through another command, a cat of a file);
 // zsh's glob grouping, a `(..)` inside a word handed to zsh, read as a subshell by the lexer's zsh grammar while zsh globs it
 // (a lexer gap, stated since the first commit of this round); an opaque expansion from a cwd outside every project, a leading
 // opaque expansion, or one after a literal head outside every project, from a cwd in no project (B2 as ruled, with its
@@ -1089,7 +1152,7 @@ function parenCloseAt(text) {
 // addendum, 2026-09-20): a `(( ))` body under dash's reading, a `$((` bash and zsh read as `$( (`, and every `$(...)` or backtick
 // inside an arithmetic body; `dashPieces` the further commands dash reads after a `&&` or `||` inside a `[[ ... ]]`, spliced into
 // extract's walk after the test's segment (withDashPieces), and `dashFirstOp` the operator that joins the first of them.
-const newSegment = () => ({ words: [], redirects: [], heredocs: [], stdin: [], subs: [], arith: [], arithAt: [], viaSubs: [], dashPieces: null, dashFirstOp: '', op: '', start: 0 });   // start: the source index the segment begins at (extract counts the lines before it: THE ALIAS ROAD applies to a later line)   // stdin: the words a `<` redirects into the standard input (the third fix-up: `bash < <(echo '..')` reads the script the substitution prints)   // arithAt: the number of words before each `(( ))` (round 5's third addendum: compoundBody tells `if (( 0 )) {` from `if { cond } {` by it)
+const newSegment = () => ({ words: [], redirects: [], heredocs: [], stdin: [], dups: [], subs: [], arith: [], arithAt: [], viaSubs: [], dashPieces: null, dashFirstOp: '', op: '', start: 0 });   // dups: the input descriptors this command duplicates, `[n]<&m` as { to: n or '0', from: m, or null for a word the lexer cannot read } (THE DUPLICATED DESCRIPTOR, round 6's fifth commit: `exec 3< <(echo '..'); bash <&3` read the text through 3 while the `<&` was skipped)   // start: the source index the segment begins at (extract counts the lines before it: THE ALIAS ROAD applies to a later line)   // stdin: the words a `<` redirects into the standard input (the third fix-up: `bash < <(echo '..')` reads the script the substitution prints)   // arithAt: the number of words before each `(( ))` (round 5's third addendum: compoundBody tells `if (( 0 )) {` from `if { cond } {` by it)
 
 // `shell` is the name of the shell the command is a script of, when the call is a recursion into `sh -c '...'`,
 // `bash <<EOF` or a `$(...)` inside one (null for the Bash tool's own command): it decides whether `$'...'` is
@@ -1172,23 +1235,30 @@ export function lex(command, shell = null, opts = {}) {
   const ambiguous = () => { sawExpansion = true; numericOnly = false; };
   // The texts the word under way can stand for beyond its spelling, when the word is the expansion that carries them alone
   // (unquoted or inside double quotes): THE RESOLVED SUBSTITUTION's two echo readings and THE DEFAULT WORD (both below).
-  const readingsOf = () => {
-    if (!wordReadings) return [];
-    if (raw === wordReadings.raw || raw === '"' + wordReadings.raw + '"' || (oneWord && raw.endsWith(wordReadings.raw))) return wordReadings.texts;   // in a `${...}` word (oneWord) the name and operator precede the expansion, so a default word that is one `${...}` carries the inner readings up (`${x:-${y:-cp a b}}`)
+  // the literal text around the expansion that carries the word's readings ({ before, after }; both empty when the word is the expansion
+  // alone), or null when the word holds more than that one expansion
+  const glueOf = () => {
+    if (!wordReadings) return null;
+    if (raw === wordReadings.raw || raw === '"' + wordReadings.raw + '"' || (oneWord && raw.endsWith(wordReadings.raw))) return { before: '', after: '' };   // in a `${...}` word (oneWord) the name and operator precede the expansion, so a default word that is one `${...}` carries the inner readings up (`${x:-${y:-cp a b}}`)
     // THE GLUED READING (round 6's fourth commit, 2026-09-21): the expansion glued to literal text stands for each reading with that text
     // around it (`${c:-c}p a b` ran cp in every shell while the default word's reading `c` was dropped for the glued `p`; a `NAME=<(..)`
     // assignment's value is the file the substitution stands for): the word's one run of expansion marks is the expansion, its
     // spelling or the NUL a substitution stands as, and the text on either side is literal
     const runs = [...marks.matchAll(/x+/g)];
-    if (runs.length !== 1) return [];
+    if (runs.length !== 1) return null;
     const [r] = runs;
     const inner = buf.slice(r.index, r.index + r[0].length);
-    if (inner !== wordReadings.raw && inner !== '\0') return [];
+    if (inner !== wordReadings.raw && inner !== '\0') return null;
     const before = buf.slice(0, r.index);
     const after = buf.slice(r.index + r[0].length);
-    if (before.includes('\0') || after.includes('\0')) return [];
-    return wordReadings.texts.map((t) => before + t + after);
+    if (before.includes('\0') || after.includes('\0')) return null;
+    return { before, after };
   };
+  const readingsOf = () => { const g = glueOf(); return g ? wordReadings.texts.map((t) => g.before + t + g.after) : []; };
+  // THE DEFAULT WORD's params with the glue around the expansion (round 6's fifth commit: `eval "${c:-cat} a b"` with c=cp ran `cp a b`, so the
+  // value stands where the expansion stands, the literal text around it kept), null when the word holds another expansion beside it
+  const paramsOf = () => { if (!wordReadings || !wordReadings.params) return null; const g = glueOf(); return g ? wordReadings.params.map((p) => ({ ...p, before: g.before + (p.before || ''), after: (p.after || '') + g.after })) : null; };
+  const glueUnresolvable = () => ({ raw: wordReadings.raw, why: `the word glues \`${wordReadings.raw}\`, whose text depends on a parameter's value, to another expansion, so the text the word stands for is not known` });   // a default word beside another expansion in one word (`${c:-cat}$x`): the value would stand in a text the resolver cannot compose
   // THE SPLIT TARGET (round 6's third commit, 2026-09-21): the fields bash and zsh make of a resolved substitution's text at a
   // redirection target, the text cut at every blank the resolver placed (an 'e' mark; a quoted blank is text in every shell), the
   // empty fields dropped; none when no such blank cuts it (the whole text is then the one redirection endWord already records).
@@ -1220,11 +1290,23 @@ export function lex(command, shell = null, opts = {}) {
         // operator); both readings are judged, and the refusal names the one that lands on a tracked file
         if (expect.bang === 'glued') seg.redirects.push({ op: expect.op, target: mk('!' + buf, 'u' + marks) });
       } else if (expect.kind === 'heredoc') pendingHeredocs.push({ delim: buf, stripTabs: expect.stripTabs, owner: seg, quoted: /q/.test(marks) });   // any quoted character in the delimiter: the body is not expanded (the third fix-up, readHeredocBodies)
+      else if (expect.kind === 'dup') {
+        // THE DUPLICATED DESCRIPTOR (round 6's fifth commit, 2026-09-21; the body auditor: `exec 3< <(echo 'cp a b'); bash <&3`, `bash 0<&3`,
+        // `bash 3< <(..) <&3`, `{ bash; } 3< <(..) <&3` and `cat <&3 | bash` ran the printed text in bash and zsh while the `<&` was skipped): the
+        // word is the descriptor duplicated onto `n` (bash: REDIRECTION, Duplicating File Descriptors; dash(1) and zshmisc(1) alike), a run of
+        // digits, with a `-` after it moving it; `-` alone closes and duplicates nothing; a word the lexer cannot read (an expansion) may name any
+        // descriptor, recorded as null, so a consumer reading `n` reads every descriptor this command feeds (the safe side)
+        const m = buf.match(/^([0-9]+)-?$/);
+        if (buf !== '-') seg.dups.push({ to: expect.fd == null ? '0' : expect.fd, from: m && !sawExpansion ? m[1] : null });
+      }
       else if (expect.kind === 'herestring') {
         // a word with readings stands for each of them, and for nothing else (the third fix-up); one the resolver could not establish is
-        // recorded on the segment's stdin for scriptTexts to refuse (THE RESOLVER'S CONTRACT), never handed to the consumer as its spelling
+        // recorded on the segment's stdin for scriptTexts to refuse (THE RESOLVER'S CONTRACT), never handed to the consumer as its spelling;
+        // one whose readings depend on a parameter's value (THE DEFAULT WORD's params, round 6's fifth commit) is recorded there too, so
+        // scriptTexts reads the value beside the word
         const rd = readingsOf();
         if (wordUnresolvable) seg.stdin.push(Object.assign(word(buf, false, raw, { marks }), { fd: null, unresolvableReading: wordUnresolvable, herestring: true }));
+        else if (wordReadings && wordReadings.params) { const ps = paramsOf(); seg.stdin.push(Object.assign(word(buf, false, raw, { marks }), ps ? { fd: null, readings: rd, readingParams: ps, herestring: true } : { fd: null, unresolvableReading: glueUnresolvable(), herestring: true })); }
         else if (rd.length) seg.heredocs.push(...rd);
         else seg.heredocs.push(buf);
       }
@@ -1234,6 +1316,7 @@ export function lex(command, shell = null, opts = {}) {
         const rd = readingsOf();
         const extra = { fd: expect.fd == null ? null : expect.fd };
         if (rd.length) extra.readings = rd;
+        if (wordReadings && wordReadings.params) { const ps = paramsOf(); if (ps) { extra.readings = rd; extra.readingParams = ps; } else extra.unresolvableReading = glueUnresolvable(); }
         if (wordUnresolvable) extra.unresolvableReading = wordUnresolvable;
         if (wordMayReadStdin) extra.mayReadStdin = wordMayReadStdin;   // THE FED SUBSTITUTION: `bash < <(head -1)` after a pipe reads the piped text
         seg.stdin.push(Object.assign(mk(buf, marks), extra));
@@ -1251,6 +1334,7 @@ export function lex(command, shell = null, opts = {}) {
       else for (const [t, m] of alts) seg.words.push(mk(t, m));
       const rd = readingsOf();
       if (rd.length && (!alts || alts.length === 1)) seg.words[seg.words.length - 1].readings = rd;   // the word alone carries its readings (THE RESOLVED SUBSTITUTION, THE DEFAULT WORD)
+      if (wordReadings && wordReadings.params && (!alts || alts.length === 1)) { const ps = paramsOf(); const last = seg.words[seg.words.length - 1]; if (ps) { last.readings = rd; last.readingParams = ps; } else last.unresolvableReading = glueUnresolvable(); }   // THE DEFAULT WORD's params (round 6's fifth commit): the names whose values the readings depend on, with the glue around the expansion, read beside the texts in extract's scriptTexts (the readings may be none: `${c:?}` stands for the value alone); glued to another expansion, the word is UNRESOLVABLE
       if (wordUnresolvable) for (let k = alts ? alts.length : 1; k > 0; k--) seg.words[seg.words.length - k].unresolvableReading = wordUnresolvable;   // every word the expansion is part of (each brace alternative) carries the mark (THE RESOLVER'S CONTRACT)
       if (wordMayReadStdin) for (let k = alts ? alts.length : 1; k > 0; k--) seg.words[seg.words.length - k].mayReadStdin = wordMayReadStdin;   // THE FED SUBSTITUTION
     }
@@ -1361,7 +1445,8 @@ export function lex(command, shell = null, opts = {}) {
       // the consumer reads the body after the shell's expansions: a body that is one word with readings hands over the readings alone (the
       // spelling is not a text the consumer sees; round 6's second commit, when THE HEAD SPLICE read the spelling `${x:-'cp a b'}` as a
       // plain script and refused a body every shell runs as a quoted command name), any other body its text after quote removal
-      if (w && w.readings) for (const t of w.readings) owner.heredocs.push(t);
+      if (w && w.readingParams) owner.stdin.push(Object.assign(word(w.text, false, w.raw, { marks: w.marks }), { fd: null, readings: w.readings, readingParams: w.readingParams, herestring: true }));   // a body that is one default word depends on the parameter's value: recorded for scriptTexts to join the value or refuse (THE PARAMETER'S VALUE, round 6's fifth commit: `c=cp; bash <<EOF` with `${c:-cat} a b` as the body ran the copy)
+      else if (w && w.readings) for (const t of w.readings) owner.heredocs.push(t);
       else owner.heredocs.push(w ? w.text : body);
       if (w && w.unresolvableReading) owner.stdin.push(Object.assign(word(w.text, false, w.raw, { marks: w.marks }), { fd: null, unresolvableReading: w.unresolvableReading, herestring: true }));   // the body's text is not known: scriptTexts refuses the consumer (THE RESOLVER'S CONTRACT)
       for (const sg of x.segments) {
@@ -1512,6 +1597,14 @@ export function lex(command, shell = null, opts = {}) {
   // carries the reason (`word.unresolvableReading`, attached at endWord), so a script consumer refuses it too (extract's scriptTexts). A
   // plain reading alone (one text produced by no interpretation) takes the text road; every other reading is the word's
   // `readings`, read on the script road while the word keeps the non-literal rule as a target.
+  // THE ASSIGNMENT VALUE (round 6's fifth commit, 2026-09-21; the body auditor: `x=$(echo 'cp ../base/report.md report.md'); $x` gave x the
+  // whole text in every shell and ran the copy while the lexer cut the resolved text into three words, so the candidates read `cp`
+  // alone): no shell splits an expansion's result in the value of an assignment word (bash: Simple Command Expansion and Shell
+  // Parameters; dash(1): Word Expansions, "field splitting is not performed on assignments"; zsh splits no expansion), the words before
+  // it being assignment words alone or a declaration command (`export`, `declare`, `typeset`, `local`, `readonly`, whose operands bash
+  // and zsh read as assignments; dash splits an `export` operand, and the whole text is the reading that runs the copy in bash and zsh,
+  // the safe side, while a value holding a blank never resolves into a target)
+  const assignmentValue = () => /^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(buf) && /^u+$/.test(marks.slice(0, buf.indexOf('=') + 1)) && seg.words.every((w, k) => isAssignmentWord(w) || (plainWord(w) && RESERVED.has(w.text)) || (k === 0 && plainWord(w) && (VAR_ASSIGNERS.has(w.text) || w.text === 'local')));
   const placeReading = (r, spelling, mode, target = seg) => {
     if (r == null) return false;
     const printed = (props) => Object.assign(word('\0', false, spelling, { marks: 'x' }), props);   // `target`: the segment the producer's printed text is placed on (the producer itself, or the closer of the subshell or group holding it: THE OUTPUT MODEL, round 6's second commit)
@@ -1528,14 +1621,14 @@ export function lex(command, shell = null, opts = {}) {
     if (mode === 'readings' || trimmed.length > 1 || !r.plain) {
       // the script road: the word is an expansion standing for each text; as a target it keeps the non-literal rule
       if (!sawExpansion) opaqueExpansion();
-      wordReadings = { raw: spelling, texts: trimmed };
+      wordReadings = { raw: spelling, texts: trimmed, params: r.params || null };   // params: THE DEFAULT WORD's names (round 6's fifth commit), read beside the texts in extract's scriptTexts
       return true;
     }
     // the text road: one plain text stands in the word where the shell puts it, whole where no shell splits an expansion's
     // result and split at blanks among unquoted operands (bash and dash; zsh splits nothing, and its reading, the whole text, is
     // the default word's)
     const text = trimmed[0];
-    if (dqInner || hdInner || inDq || noSplitOpt || oneWord || (expect && expect.kind === 'herestring')) { quoted(text); return true; }
+    if (dqInner || hdInner || inDq || noSplitOpt || oneWord || (expect && expect.kind === 'herestring') || assignmentValue()) { quoted(text); return true; }
     if (ifsNamed) return false;   // among unquoted operands, and at a redirection target (round 6's fourth commit: `IFS=:; echo x > $(echo 'report.md:x')` opened report.md in zsh while the text was judged whole), while the command names IFS the result splits by a rule the guard does not read: not resolved, the expansion stays (a target the hook cannot read) and its command is read
     if (expect) { buf += text; marks += 'e'.repeat(text.length); return true; }   // a redirection target, or a `<`: the whole text, globbed; at a write target endWord adds each blank-separated field beside it (THE SPLIT TARGET)
     const parts = text.split(/[ \t\n]+/);   // '' at an end when the text begins or ends with a blank: the word under way ends there
@@ -1572,9 +1665,9 @@ export function lex(command, shell = null, opts = {}) {
   const braceParameter = (dq = false) => {
     raw += '${'; i += 2; const inner = skipNested('{', '}', dq); raw += inner + '}';
     opaqueExpansion('${' + inner + '}');
-    const op = inner.match(/^[A-Za-z_][A-Za-z0-9_]*(?::?[-=+])/);   // THE DEFAULT WORD's name and operator, when the word has one
+    const op = inner.match(/^([A-Za-z_][A-Za-z0-9_]*)(:?[-=+?])/);   // THE DEFAULT WORD's name and operator, when the word has one (`?` since round 6's fifth commit: the word is a message and the text is the value alone)
     const nested = nestedExpansions(inner, dq, !!op);   // ONE descent serves both reads: a second lex per level was exponential in the nesting (the cap test's 70 levels never returned)
-    if (op && nested) defaultReading(inner, op[0].length, nested);
+    if (op && nested) defaultReading(inner, op[0].length, nested, { name: op[1], op: op[2] });
   };
   // THE DEFAULT WORD (round 5's fifth addendum, third fix-up, 2026-09-20; found beside the verifiers' rows while reproducing them:
   // `bash -c "${x:-$(echo 'cp ../base/report.md report.md')}"` from docs/ allowed while bash, zsh and dash copied, the `${...}` word
@@ -1589,7 +1682,17 @@ export function lex(command, shell = null, opts = {}) {
   // result (`bash -c ${x:-cp a b}` unquoted copies in zsh and hands `cp` alone to bash in bash and dash, measured); the `${...}` word
   // itself keeps the non-literal rule everywhere else, and a `${name}` with no operator, `${name:?word}` (the shell exits, the word
   // is a message) and every other form give no reading.
-  const defaultReading = (inner, prefixLen, nested) => placeReading(defaultWordReading(nested, prefixLen), '${' + inner + '}', 'readings');
+  // THE PARAMETER'S VALUE (round 6's fifth commit, 2026-09-21; the residuals verifier: `c=cp; ${c:-cat} ../base/report.md report.md` ran
+  // the copy in every shell while the reading was `cat` alone, and `${c-cat}`, `${c:-}`, `${c:-''}`, `"${c:-}"`, `${c:?}`, `${c?}`,
+  // `${c:=cat}`, the same through `eval`, as a piped script's consumer and as a here-string's, alike): the text a default word stands
+  // for is the parameter's value when it is set (or non-empty, with the colon) and the word otherwise, so a reading of the word alone
+  // is sound only when the value is known too; the reading carries the name (`params`), and extract's scriptTexts, which alone reads
+  // extract's names, joins the value THE HEAD CANDIDATES and the readability rule hold for it (a plain assignment of the command) and
+  // refuses the word as UNRESOLVABLE where that value is not readable: a name a construct the resolver does not follow wrote (`read c`,
+  // `c=$(which cp)`), or one the command never sets, whose value is the shell's own, which the guard does not read (a `${X:-default}`
+  // command name or script from a tracked cwd with X untouched is refused, a stated cost; the `+` forms depend on no value and keep
+  // the word alone). A nested default word carries the inner word's names up with its own.
+  const defaultReading = (inner, prefixLen, nested, param) => placeReading(defaultWordReading(nested, prefixLen, param), '${' + inner + '}', 'readings');
   // THE NESTED EXPANSION (round 5's fifth addendum, second fix-up, 2026-09-20; the fix-up's verifiers found `echo ${x:-$(cp
   // ../base/report.md report.md)}` from docs/ allowed while bash, zsh and dash copied, and the same through `${x-..}`, `${x:=..}`,
   // `${x#..}`, `${x:?..}`, `${x/b/..}`, `${x[..]}`, a backtick, a `<(...)` in bash, a `${` nested two deep, inside double quotes,
@@ -1841,7 +1944,7 @@ export function lex(command, shell = null, opts = {}) {
         if (src[i + 1] === '<' && src[i + 2] === '<') { i += 3; expect = { kind: 'herestring' }; continue; }
         if (src[i + 1] === '<') { const strip = src[i + 2] === '-'; i += strip ? 3 : 2; expect = { kind: 'heredoc', stripTabs: strip }; continue; }
         if (src[i + 1] === '>') { i += 2; expect = { kind: 'target', op: '<>' }; continue; }
-        if (src[i + 1] === '&') { i += 2; while (i < src.length && /[0-9-]/.test(src[i])) i++; continue; }
+        if (src[i + 1] === '&') { i += 2; expect = { kind: 'dup', fd: fdDigits }; continue; }   // `[n]<&word`: the descriptor word names is duplicated onto n (the standard input when no n), recorded at endWord (THE DUPLICATED DESCRIPTOR, round 6's fifth commit; before, the digits were skipped and the consumer read nothing through them)
         i++; expect = { kind: 'data', fd: fdDigits }; continue;   // the standard input, or the descriptor numbered before the `<` (the third fix-up: `bash 3</dev/null` still reads the pipe)
       }
       if (c === '&') {
@@ -2301,7 +2404,7 @@ function commandOf(words) {
   for (;;) {
     while (k < words.length && plainWord(words[k]) && RESERVED.has(words[k].text)) k++;   // unquoted: `"{" cd ../scratch` runs a command named `{`, and the cd is its operand (round 5's fourth addendum)
     const first = k;
-    while (k < words.length && (/^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(words[k].raw) || (wrappers[wrappers.length - 1] === 'env' && words[k].literal && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[k].text)))) k++;   // after env an assignment operand however quoted is env's (round 6's fourth commit: `env 'X=a b' cp a b` copied in every shell while the quoted word was read as the command name and the cp as its operand)
+    while (k < words.length && (/^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(words[k].raw) || (wrappers[wrappers.length - 1] === 'env' && words[k].literal && words[k].text.includes('=')))) k++;   // after env an operand holding a `=`, however quoted and whatever its name, is env's (round 6's fourth commit: `env 'X=a b' cp a b` copied in every shell while the quoted word was read as the command name and the cp as its operand; the fifth: env(1) sets any NAME=VALUE operand, so `env 'BASH_FUNC_c%%=() { cp "$@"; }' bash -c '..'`, whose name is no identifier, was read as a command named so)
     // The readability rule (the sixth pass's attacker, C5c, 2026-09-19): after a wrapper an assignment-shaped word is the
     // wrapper's ARGUMENT, not an assignment (bash looks `command x=b` up as a command; env sets it for a command that is not
     // there; `time x=b` assigns in bash alone), so the segment is not assignment-only: the words come back as the arguments
@@ -3427,16 +3530,22 @@ function listOutput(segs) {
 // whose value the resolver does not read (`${x:-$(cat f)}`, `${x:-$y}`: the resolver applies to the operator's word and cannot
 // establish it; the plain `${x}`, which has no operator, is no reading of this function and keeps the residual). null when the
 // operator's word is several segments or empty.
-function defaultWordReading(nested, prefixLen) {
+function defaultWordReading(nested, prefixLen, param = null) {
+  // THE PARAMETER'S VALUE (round 6's fifth commit; lex's defaultReading says why): the reading carries the name and operator whose value
+  // decides between the value and the word (`params`), so extract's scriptTexts can join the value or refuse; the `+` forms depend on no
+  // value (the word, or nothing) and carry none; a `?` form stands for the value alone (the word is a message the shell prints as it
+  // exits), so its reading is no text and the name
+  const withParam = (r) => (param && !/\+$/.test(param.op) ? Object.assign(r, { params: [...(r.params || []), param] }) : r);
+  if (param && /\?$/.test(param.op)) return withParam(sound([]));
   if (nested.opaque || nested.segments.length !== 1 || !nested.segments[0].words.length) return null;
   const [s] = nested.segments;
   if (s.words.length > 1) return unresolvable('the word holds a brace list, which zsh expands where the word is unquoted while bash and dash close the `${...}` at its first brace, so the text the shell makes of it is not the text spelled');   // oneWord mode makes one word of the text but for a brace list
   const [w] = s.words;
   if (s.subs.length || s.viaSubs.length) return unresolvable('the word holds a substitution whose text I do not read, so the text the shell makes of it is not known');   // `${x:-$(cat f)}`, `${x:-$(cp a b)}`: the command runs (read through viaSubs) and its output is the word
   if (s.redirects.length || s.heredocs.length || (s.stdin && s.stdin.length)) return null;
-  if (w.literal) return sound([w.text.slice(prefixLen)]);   // the name and operator are literal characters at the text's start
+  if (w.literal) return withParam(sound([w.text.slice(prefixLen)]));   // the name and operator are literal characters at the text's start
   if (w.unresolvableReading) return unresolvable(w.unresolvableReading.why);
-  if (w.readings && w.marks && /^x+$/.test(w.marks.slice(prefixLen))) return sound(w.readings);   // the word is one expansion with readings of its own (a nested default word, a two-reading echo): they are this word's too
+  if (w.readings && w.marks && /^x+$/.test(w.marks.slice(prefixLen))) return withParam(Object.assign(sound(w.readings), w.readingParams ? { params: [...w.readingParams] } : {}));   // the word is one expansion with readings of its own (a nested default word, a two-reading echo): they are this word's too, and so are the names the inner word depends on
   if ((w.marks && w.marks.slice(prefixLen).includes('x')) || w.text.includes('\0')) return unresolvable('the word holds an expansion whose value I do not read, so the text the shell makes of it is not known');   // `${x:-$(cat f)}`, `${x:-$y}`: the resolver applies to the operator\'s word and cannot establish it
   return unresolvable('the word holds a glob character, a brace list or a quoting whose reading depends on the shell, so the text the shell makes of it is not the text spelled');
 }
@@ -3979,19 +4088,35 @@ function extract(command, ctx) {
   // side is the refusal it already gives an unreadable name). A name no assignment word gives a value (a loop variable, a name read, a
   // positional parameter) stays the residual the property names.
   const candidates = ctx.candidates || new Map();
+  const unreadValues = ctx.unreadValues || new Set();   // the names a value the resolver looked at and could not establish is given (round 6's fifth commit): a command name or script formed from such a name is UNRESOLVABLE
   const noteCandidate = (w) => {
-    const m = w.text.match(/^([A-Za-z_][A-Za-z0-9_]*)=([^]*)$/);
-    if (!m || !w.literal || w.text.includes('\0') || (w.marks && /x/.test(w.marks.slice(0, m[1].length)))) return;
+    const m = w.text.match(/^([A-Za-z_][A-Za-z0-9_]*)(\+?=)([^]*)$/);
+    if (!m || (w.marks && /x/.test(w.marks.slice(0, m[1].length)))) return;   // the name itself an expansion: no candidate (the NUL a substitution stands as is in the value of a word whose readings scriptTexts answers below)
     if (!candidates.has(m[1])) candidates.set(m[1], new Set());
-    candidates.get(m[1]).add(m[2]);
+    const set = candidates.get(m[1]);
+    // a value that is not a plain string: the texts the word stands for on the script road (a resolved echo or printf that is no plain reading,
+    // `x=$(printf '%s' 'cp a b')`, THE GLUED READING with the name before them), obtained through scriptTexts as every text is (THE RESOLVER'S
+    // CONTRACT), each a value; a value the resolver looked at and could not establish marks the name (unreadValues); an expansion the resolver
+    // never reads gives nothing (the name keeps the residual the property names)
+    const values = w.literal ? [m[3]] : (() => { const ts = scriptTexts(w, `\`${m[1]}${m[2]}\` value`, 'value'); if (ts == null) { unreadValues.add(m[1]); return []; } return ts.map((t) => (t.startsWith(m[1] + m[2]) ? t.slice(m[1].length + m[2].length) : t)); })();
+    // `+=` appends the text to the value the name holds (bash: Shell Parameters; zsh: Simple Commands and Pipelines), so each value noted so far
+    // stands with the text after it, and the text alone stands too, since the name may hold nothing the command shows (round 6's fifth commit,
+    // the residuals verifier: `c=c; c+=p; $c a b` copied in bash and zsh while the append was no assignment word to this reader)
+    for (const value of values) {
+      if (m[2] === '+=') { for (const v of [...set]) set.add(v + value); set.add(value); continue; }
+      set.add(value);
+    }
   };
-  for (const s of segments) {
-    const c = commandOf(s.words);
-    if (c === null) { for (const w of s.words) noteCandidate(w); continue; }
-    if (c.unknown || c.opaque || 'script' in c) continue;
-    for (const w of s.words.slice(0, c.name ? s.words.length - c.args.length - 1 : s.words.length)) noteCandidate(w);   // the words before the command name: prefix assignments, a wrapper's assignment operands (`env c=cp bash -c '$c a b'`, `c=cp bash -c '..'`)
-    if (c.name && (VAR_ASSIGNERS.has(c.name) || c.name === 'local')) for (const w of c.args) noteCandidate(w);
-  }
+  // the candidates are noted below, once scriptTexts exists (noteCandidate reads a value's texts through it), before the walk
+  const noteCandidates = () => {
+    for (const s of segments) {
+      const c = commandOf(s.words);
+      if (c === null) { for (const w of s.words) noteCandidate(w); continue; }
+      if (c.unknown || c.opaque || 'script' in c) continue;
+      for (const w of s.words.slice(0, c.name ? s.words.length - c.args.length - 1 : s.words.length)) noteCandidate(w);   // the words before the command name: prefix assignments, a wrapper's assignment operands (`env c=cp bash -c '$c a b'`, `c=cp bash -c '..'`)
+      if (c.name && (VAR_ASSIGNERS.has(c.name) || c.name === 'local')) for (const w of c.args) noteCandidate(w);
+    }
+  };
   // THE EXEC FEED (round 6's fourth commit): the segments of a bare `exec` with redirections alone, whose here-documents, here-strings and `<`
   // words feed every later command of this shell and of the processes it starts (`exec 3<<< 'cp a b'; . /dev/fd/3` and `exec < <(echo 'cp a
   // b'); bash` ran the text in bash and zsh while the exec segment fed nothing); shared by every recursion, since a child inherits the descriptors
@@ -4005,6 +4130,15 @@ function extract(command, ctx) {
   // (bash parses eval's text line by line) and by every later outer line, and not on the outer line itself (`eval 'alias c=cp'; c a b`
   // expands in no shell: the line was parsed whole before eval ran). A head splice stands after every binding (Infinity).
   const lineOf = (seg) => (ctx.headSplice ? Infinity : (ctx.lineBase || 0) + (ctx.lineStep || 1) * (seg && seg.start ? command.slice(0, seg.start).split('\n').length : 1));
+  // a definition made inside a head splice binds at the line of the segment the splice stands for (round 6's fifth commit, 2026-09-21; the
+  // residuals verifier: `alias a=alias`, then `a c=cp`, then `c a b` copied in dash and, through a here-document or a pipe, in every shell,
+  // while the alias the spliced `alias c=cp` defined bound at Infinity and so stood after every later use)
+  const defLineOf = (seg) => (ctx.headSplice ? (ctx.spliceLine == null ? Infinity : ctx.spliceLine) : lineOf(seg));
+  // THE CALLED BODY (round 6's fifth commit): the text of each function this command defines, name -> the definition as spelled (popFunction),
+  // replayed with the call's standard input where a call is fed a text the guard holds (the walk), and the names of the functions being replayed
+  // on this road (fnChain: a call inside its own body is not followed again); both shared by every recursion
+  const functionBodies = ctx.functionBodies || new Map();
+  const fnChain = ctx.fnChain || new Set();
   // The readability rule's two marks: a name a construct outside the plain form may write (sticky), and the whole table
   // once a construct may write any name. The text names the construct, so the refusal can say why the name was not read.
   const wroteThrough = (name, construct, raw) => `the command writes \`${name}\` through ${construct} (${raw}), which I do not follow`;
@@ -4130,6 +4264,7 @@ function extract(command, ctx) {
     const g = !hasX && hasGlobChar(text, marks);
     const resolved = word(text, !hasX && !g, w.raw, { glob: g, marks, at: w.at, numeric: hasX && numericRunsOnly(text, marks) && !hasGlobChar(text, marks), why: named });
     if (w.readings) resolved.readings = w.readings;   // the texts a `-c` operand or a here-string can stand for survive the resolution (the third fix-up)
+    if (w.readingParams) resolved.readingParams = w.readingParams;   // and THE DEFAULT WORD's names (round 6's fifth commit)
     if (w.unresolvableReading) resolved.unresolvableReading = w.unresolvableReading;   // and so does the resolver's mark (THE RESOLVER'S CONTRACT)
     if (w.mayReadStdin) resolved.mayReadStdin = w.mayReadStdin;   // and THE FED SUBSTITUTION's mark
     return resolved;
@@ -4573,9 +4708,32 @@ function extract(command, ctx) {
   // play, with the reason) and yields no text, so no site can hand such a script to the shell as the residual pass; a word with
   // readings yields them; a literal word its text (role 'text'); anything else is a script the guard cannot see, the residual
   // decision 47 names, marked opaque.
-  const candidateName = (w) => { if (w.literal) return null; const m = w.raw.match(/^"?\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))"?$/); return m ? (m[1] || m[2]) : null; };   // THE HEAD CANDIDATES: the name of a word that is one `$name` or `${name}` expansion, quoted or not
+  // THE HEAD CANDIDATES' template (round 6's fifth commit, 2026-09-21; the residuals verifier: `a=cp; b='../base/report.md report.md'; eval "$a
+  // $b"`, `bash -c "$a $b"`, `eval "${a} ${b}"` and `sh -c "$a $b"` each ran the copy in every shell while a word holding two names was no
+  // candidate, the one-name rule before it): a word whose expansions are each a `$name` or `${name}` the command gives a value (every run of
+  // expansion marks a sequence of such spellings; a value with no blank the readability rule resolved already) stands for each text the
+  // values and the literal characters around them compose, the product capped at 64; null when an expansion of another kind stands in the
+  // word, or a name has no value, and the word keeps what it had before
+  const CANDIDATE_TOKEN = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/y;
+  const candidateTexts = (w) => {
+    if (w.literal || !w.marks || w.text.includes('\0') || !w.marks.includes('x')) return null;   // no expansion in the word (a glob-shaped head such as `[[`): nothing to stand for
+    let texts = [''];
+    for (let i = 0; i < w.text.length;) {
+      let j = i;
+      while (j < w.text.length && w.marks[j] === w.marks[i]) j++;
+      const run = w.text.slice(i, j);
+      if (w.marks[i] !== 'x') { texts = texts.map((t) => t + run); i = j; continue; }
+      const names = [];
+      CANDIDATE_TOKEN.lastIndex = 0;
+      while (CANDIDATE_TOKEN.lastIndex < run.length) { const m = CANDIDATE_TOKEN.exec(run); if (!m) return null; names.push(m[1] || m[2]); }
+      for (const n of names) { if (unreadValues.has(n)) return { unread: n }; if (!candidates.has(n)) return null; texts = texts.flatMap((t) => [...candidates.get(n)].map((v) => t + v)); if (texts.length > 64) return null; }
+      i = j;
+    }
+    return { texts };
+  };
   const scriptTexts = (w, how, role = 'text') => {
     if (!w) return [];
+    if (role === 'value' && (w.unresolvableReading || w.readingParams)) return null;   // THE HEAD CANDIDATES' value road: an assignment value the resolver looked at and could not establish, or one that depends on a parameter's value (`y=${c:-x}`, read before the walk knows any value), marks its name (noteCandidate, unreadValues) and refuses where the name is used as a command name or a script, never here (`OUT=${OUT:-out}` alone is no write)
     if (w.unresolvableReading) { cannotRead(w, how, { kind: 'unresolvableReading', spelling: w.unresolvableReading.raw, text: w.unresolvableReading.why }); return []; }
     if (w.why && w.why.kind === 'ifsNamed') { cannotRead(w, how, w.why); return []; }   // THE IFS RULE: a `$name` the shell splits by a rule the resolver does not compute is a text it cannot read here
     // THE FED SUBSTITUTION (round 6's fourth commit, 2026-09-21; the body auditor: `echo 'cp a b' | bash -c "$(head -1)"`, `$(sed '')`, `$(tr a a)`,
@@ -4584,9 +4742,37 @@ function extract(command, ctx) {
     // runs a command outside the output model, which MAY read the standard input, so where this command feeds that input with a text the
     // guard read (a pipe from a producer it reads, a closer's redirection, an exec feed, the caller's) the text produced may be that text, and
     // the word is UNRESOLVABLE; with nothing fed, the text is not in the command and the word keeps the residual the property names
-    if (w.mayReadStdin && fedTexts(walkIdx).length) { cannotRead(w, how, { kind: 'unresolvableReading', spelling: w.mayReadStdin, text: 'the substitution runs a command outside the output model (no echo or printf), which may read the standard input, and this command feeds that input with a text I read here, so the text produced may be that text' }); return []; }
-    if (w.readings) return w.readings;
-    if (role === 'head' || role === 'text') { const c = candidateName(w); if (c != null && candidates.has(c)) return [...candidates.get(c)]; }   // THE HEAD CANDIDATES: a word that is one `$name` expansion the readability rule did not resolve stands for each value the command gives the name
+    if (role !== 'value' && w.mayReadStdin && fedTexts(walkIdx).length) { cannotRead(w, how, { kind: 'unresolvableReading', spelling: w.mayReadStdin, text: 'the substitution runs a command outside the output model (no echo or printf), which may read the standard input, and this command feeds that input with a text I read here, so the text produced may be that text' }); return []; }   // role 'value' is read before the walk, where nothing is fed yet (a value built from a fed cat stays the residual, class 4)
+    if (w.readings) {
+      if (!w.readingParams) return w.readings;
+      // THE PARAMETER'S VALUE (round 6's fifth commit, 2026-09-21; lex's defaultReading says why): the readings of a default word depend on
+      // the value of a name the command may set, so the value the readability rule holds for it (a plain assignment performed by now) and
+      // every value THE HEAD CANDIDATES hold for it join the texts; a name a construct the resolver does not follow wrote, or one this
+      // command never sets (its value is the shell's own, which the guard does not read), makes the word UNRESOLVABLE, refused as a text
+      // the hook cannot read, never the word alone
+      const texts = new Set(w.readings);
+      for (const { name, before = '', after = '' } of w.readingParams) {
+        const stands = `the word stands for the value of \`${name}\` when it is set, and`;
+        if (varsPoisoned) { cannotRead(w, how, { kind: 'unresolvableReading', spelling: w.raw, text: `${stands} ${poisonWhy || 'an earlier construct may assign any name'}, so that value is not known` }); return []; }
+        if (vars.has(name) && vars.get(name) === null) { cannotRead(w, how, { kind: 'unresolvableReading', spelling: w.raw, text: `${stands} ${unreadableWhy.get(name) || `the command writes \`${name}\` through a construct I do not follow`}, so that value is not known` }); return []; }
+        if (unreadValues.has(name)) { cannotRead(w, how, { kind: 'unresolvableReading', spelling: w.raw, text: `${stands} a value this command gives \`${name}\` comes from a text I looked at and could not establish, so that value is not known` }); return []; }
+        if (!vars.has(name) && !candidates.has(name)) { cannotRead(w, how, { kind: 'unresolvableReading', spelling: w.raw, text: `${stands} this command does not set \`${name}\`, so its value is the shell's own, which I do not read` }); return []; }
+        if (vars.has(name)) texts.add(before + vars.get(name) + after);   // the value stands where the expansion stands, the literal text around it kept (`eval "${c:-cat} a b"` with c=cp runs `cp a b`)
+        for (const v of candidates.get(name) || []) texts.add(before + v + after);
+      }
+      return [...texts];
+    }
+    if (role === 'value') return [];   // an assignment word with no reading of its own gives its name no text (noteCandidate: the readability rule reads the plain value)
+    if (role === 'head' || role === 'text') {
+      // THE HEAD CANDIDATES: a word whose expansions are `$name` spellings the readability rule did not resolve stands for each text the
+      // command's values compose (candidateTexts); a name one of whose values the resolver looked at and could not establish (`x=$(printf '%q'
+      // ..)`, unreadValues) makes the word UNRESOLVABLE; a command name splits at every blank, a newline among them (bash and dash), so a
+      // value's newline is a blank in head position (round 6's fifth commit: `c='cp<newline>a b'; $c` copied in bash and dash while the text
+      // was read as two commands)
+      const c = candidateTexts(w);
+      if (c && c.unread) { cannotRead(w, how, { kind: 'unresolvableReading', spelling: w.raw, text: `a value this command gives \`${c.unread}\` comes from a text I looked at and could not establish, so what the word stands for is not known` }); return []; }
+      if (c) return role === 'head' ? c.texts.map((t) => t.replace(/\n+/g, ' ')) : c.texts;
+    }
     if (role === 'head') return [];
     if (role === 'text' && w.literal) return [w.text];
     if (role === 'text' || w.herestring || procsubOf(w) != null) sawOpaqueCommand = true;
@@ -4648,7 +4834,11 @@ function extract(command, ctx) {
   };
   // A script run by `sh` (a `$(...)`, a heredoc-fed shell, a `-c` operand) is read as that shell reads it; a
   // `$(...)` in this command runs in this command's shell, so it inherits `shell`, and the directory state.
-  const recurse = (text, sh = shell, fresh = sh !== shell, via = '', stdin = null, chain = aliasChain, spliced = false) => {
+  // `opts` (round 6's fifth commit): `adopt`, the text runs in THIS shell (eval, a sourced standard input or process substitution, a head
+  // splice, emulate's and mapfile's texts), so a cd inside it moves the shell for the rest of this command (THE MOVED SHELL); `trapMove`, the
+  // text is a trap action, which runs when the trap fires (before every command under DEBUG, at exit under EXIT), so a cd inside it leaves the
+  // directory unknown from here; `runFunction`, `callArgs`, `fnChain`: THE CALLED BODY's replay of a function definition fed a text
+  const recurse = (text, sh = shell, fresh = sh !== shell, via = '', stdin = null, chain = aliasChain, spliced = false, opts = {}) => {
     if (depth >= RECURSION_CAP) { sawOpaqueCommand = true; return; }
     // B2: a `$(...)` runs in a subshell of this shell and sees its names (a copy: its own assignments do not come back);
     // a script handed to a named shell sees the environment alone, so it inherits none of them (fail closed: a name
@@ -4659,8 +4849,10 @@ function extract(command, ctx) {
     const homeValue = vars.has('HOME') && vars.get('HOME') != null ? [['HOME', vars.get('HOME')]] : [];
     const sub = extract(text, {
       dir, unknownDir, unknownWhy, shell: sh, depth: depth + 1, homeAssigned: homeUnreadableNow(), homeWhy: homeWhyNow(), unreadableNames, links, cdFunctions, mutated, keywordMode,
-      ifsNamed, candidates, execFeeds,   // THE IFS RULE, THE HEAD CANDIDATES and THE EXEC FEED hold in every text this command hands over, a fresh shell's included (round 6's fourth commit)
+      ifsNamed, candidates, unreadValues, execFeeds,   // THE IFS RULE, THE HEAD CANDIDATES and THE EXEC FEED hold in every text this command hands over, a fresh shell's included (round 6's fourth commit)
       aliases: fresh ? new Map() : aliases, hashes: fresh ? new Map() : hashes, aliasState: fresh ? { unread: null } : aliasState, bound, aliasChain: chain, headSplice: spliced,   // THE ALIAS ROAD: a fresh shell starts with no alias or hash; the paths made are on the filesystem for every shell
+      spliceLine: spliced ? defLineOf(walkIdx >= 0 ? segments[walkIdx] : null) : undefined,   // a definition inside the splice binds at the spliced segment's line (defLineOf)
+      functionBodies, fnChain: opts.fnChain || fnChain, runFunction: opts.runFunction || null, callArgs: opts.callArgs || null,   // THE CALLED BODY
       lineBase: lineOf(walkIdx >= 0 ? segments[walkIdx] : null), lineStep: (ctx.lineStep || 1) / (String(text).split('\n').length + 1),   // the inner text's lines lie between this segment's line and the next (lineOf)
       vars: fresh ? new Map(homeValue) : new Map(vars), unreadableWhy: fresh ? new Map() : new Map(unreadableWhy), refTargets: fresh ? new Set() : new Set(refTargets), readonlyNames: fresh ? new Set() : new Set(readonlyNames), oldDir, varsPoisoned: fresh ? false : varsPoisoned, poisonWhy: fresh ? null : poisonWhy, definedFunctions,
       via: viaOf() + via,
@@ -4674,6 +4866,15 @@ function extract(command, ctx) {
     targets.push(...sub.targets);
     unresolved.push(...sub.unresolved);
     if (sub.opaque) sawOpaqueCommand = true;
+    // THE MOVED SHELL (round 6's fifth commit, 2026-09-21; the residuals verifier: `eval 'cd ../notes'; cp ../base/report.md n1.md` and the same
+    // through `eval "cd $d"`, `${d:-../notes}`, `pushd`, a sourced standard input, here-string or `<(..)`, an alias of cd or one whose body is a
+    // cd, a candidate head `$c` with c=cd, with the copy through cp, mv, tee, a `>`, sed -i, python or a fresh `bash -c`, and inside a function,
+    // each landed on the tracked notes/ in the shells named while the later relative target was judged against the directory before the eval;
+    // `trap 'cd ../notes' DEBUG; cp ..` moved bash and zsh before the cp): a text this shell ran in place moves it exactly as a top-level cd
+    // does, the sub-walk's directory state adopted (known or unknown, with the construct that made it so), the move recorded on the frames
+    // around it and on a function body it stands in; a trap action that moves leaves the directory unknown, since when it fires is not known
+    if (sub.moved && opts.adopt) { dir = sub.dir; unknownDir = sub.unknownDir; unknownWhy = sub.unknownWhy; oldDir = sub.oldDir; movedHere(); markFunctionBody(); }
+    else if (sub.moved && opts.trapMove) { setUnknown('an earlier `trap` action moves the shell (its cd runs when the trap fires, before a later command under DEBUG or at exit), so where the shell is when the command runs is not known'); movedHere(); markFunctionBody(); }
   };
   // What a command at segment `idx` reads on stdin, as text the hook holds: its own heredocs and
   // here-strings, those of the commands piped into it (cat <<EOF | python3 -), and THE PIPED SCRIPT (round 5's fifth addendum,
@@ -4710,7 +4911,7 @@ function extract(command, ctx) {
   const producerAt = (idx) => {
     if (idx > 0 && segments[idx - 1].op === '|') return idx - 1;
     for (let j = frames.length - 1; j >= 0; j--) {
-      if (frames[j].kind === 'function' && !frames[j].coproc) return null;   // a definition: its body runs later, with a stdin of its own
+      if (frames[j].kind === 'function' && !frames[j].coproc && !frames[j].running) return null;   // a definition: its body runs later, with a stdin of its own (a body being replayed for a fed call reads the call's: THE CALLED BODY)
       if (frames[j].stdinFrom != null) return frames[j].stdinFrom;
     }
     return null;
@@ -4730,10 +4931,26 @@ function extract(command, ctx) {
   // other than 0 was skipped), so a `<` on that descriptor is read beside the ones on the standard input; a here-document or here-string body
   // is read on any descriptor (the lexer keeps none on it: the safe side); a `<` on a descriptor no operand names stays unread (`bash 3< <(..)`
   // reads its script from the standard input, not from 3)
-  const textsOf = (seg, fd = null) => {
+  // THE DUPLICATED DESCRIPTOR (round 6's fifth commit, 2026-09-21; the body auditor: `exec 3< <(echo 'cp a b'); bash <&3`, `bash 0<&3`, `bash 3<
+  // <(..) <&3`, `{ bash; } 3< <(..) <&3`, `exec 3< <(..); cat <&3 | bash` and `bash /dev/fd/4 4<&3` ran the printed text in bash and zsh while
+  // every `<&` was skipped by the lexer): the descriptors a consumer at `seg` reads when it reads `fd` (the standard input when null) are `fd`
+  // and every descriptor a `[n]<&m` on the segment, or on an exec feed earlier in this shell, duplicates onto one of them, to a fixpoint (bash:
+  // Duplicating File Descriptors; dash(1) and zshmisc(1) alike); a dup from a word the lexer cannot read makes every descriptor this command
+  // feeds readable (null), since the word may name any of them (the safe side)
+  const fdsFor = (seg, fd = null) => {
+    const set = new Set(['0']);
+    if (fd != null) set.add(fd);
+    const dups = [...(seg && seg.dups ? seg.dups : []), ...execFeeds.flatMap((s) => s.dups || [])];
+    for (let grew = true; grew;) {
+      grew = false;
+      for (const d of dups) if (set.has(d.to)) { if (d.from == null) return null; if (!set.has(d.from)) { set.add(d.from); grew = true; } }
+    }
+    return set;
+  };
+  const textsOf = (seg, fds = new Set(['0'])) => {
     const out = [...seg.heredocs];
     for (const s of seg.stdin || []) {
-      if (s.fd != null && s.fd !== '0' && s.fd !== fd) continue;
+      if (s.fd != null && fds && !fds.has(s.fd)) continue;   // `fds`: the descriptors read (THE DUPLICATED DESCRIPTOR); null reads every one
       out.push(...scriptTexts(s, s.herestring ? 'here-string script' : 'standard-input script', 'file'));   // a `<(echo '..')` carries the printed text as its readings; a here-string or body the resolver could not establish refuses
     }
     return out;
@@ -4743,7 +4960,7 @@ function extract(command, ctx) {
       let depth = 0;
       for (let j = from; j < segments.length; j++) {
         if (segments[j].paren === '(') depth++;
-        else if (segments[j].paren === ')' && --depth === 0) { const next = segments[j + 1]; return next && !next.words.length ? textsOf(next) : []; }
+        else if (segments[j].paren === ')' && --depth === 0) { const next = segments[j + 1]; return next && !next.words.length ? textsOf(next, fdsFor(next)) : []; }
       }
       return [];
     }
@@ -4753,7 +4970,7 @@ function extract(command, ctx) {
         for (const w of segments[j].words) {
           if (!plainWord(w)) continue;
           if (w.text === '{') depth++;
-          else if (w.text === '}' && --depth === 0) return textsOf(segments[j]);
+          else if (w.text === '}' && --depth === 0) return textsOf(segments[j], fdsFor(segments[j]));
         }
       }
       return [];
@@ -4765,7 +4982,7 @@ function extract(command, ctx) {
       for (const w of segments[j].words) {
         if (!plainWord(w)) continue;
         if (CLOSERS[closer].includes(w.text)) depth++;
-        else if (w.text === closer && --depth === 0) return textsOf(segments[j]);
+        else if (w.text === closer && --depth === 0) return textsOf(segments[j], fdsFor(segments[j]));
       }
     }
     return [];
@@ -4774,10 +4991,10 @@ function extract(command, ctx) {
   // redirections of the compounds around it, the producer piped into it, an `exec` redirection earlier in this shell (THE EXEC FEED), else what
   // the caller feeds (THE INHERITED STDIN). THE FED SUBSTITUTION reads this with no `own` to know whether a substitution's command may read a
   // text the command carries: a segment's own redirection applies to the command, not to the substitutions the shell performs before it.
-  const fedTexts = (idx, fd = null, own = []) => {
+  const fedTexts = (idx, fds = new Set(['0']), own = []) => {
     const out = [...own];
     for (let j = frames.length - 1; j >= 0; j--) {   // THE CLOSER'S STDIN of the compounds around the command, innermost first
-      if (frames[j].kind === 'function' && !frames[j].coproc) break;
+      if (frames[j].kind === 'function' && !frames[j].coproc && !frames[j].running) break;   // a body being replayed for a fed call reads on (THE CALLED BODY)
       if (frames[j].stdinText && frames[j].stdinText.length) out.push(...frames[j].stdinText);
     }
     const p = producerAt(idx);
@@ -4785,13 +5002,45 @@ function extract(command, ctx) {
       for (let j = p; j >= 0 && segments[j].op === '|'; j--) out.push(...segments[j].heredocs);
       out.push(...pipedScripts(p));
     } else if (!out.length) out.push(...inheritedStdin);
-    for (const s of execFeeds) out.push(...textsOf(s, fd));   // THE EXEC FEED: read beside the rest (a descriptor an exec opened stays open through a pipe)
+    for (const s of execFeeds) out.push(...textsOf(s, fds));   // THE EXEC FEED: read beside the rest (a descriptor an exec opened stays open through a pipe)
     return out;
   };
-  const stdinBodies = (idx, fd = null) => fedTexts(idx, fd, textsOf(segments[idx], fd));
+  const stdinBodies = (idx, fd = null) => { const fds = fdsFor(segments[idx], fd); return fedTexts(idx, fds, textsOf(segments[idx], fds)); };
+  // THE PASSED-THROUGH TEXT (round 6's fifth commit, 2026-09-21; the body auditor: `exec 3< <(echo 'cp a b'); cat <&3 | bash` ran the text in
+  // bash and zsh, and `echo 'cp a b' | cat | bash`, `| cat - |`, `cat < <(echo '..') | bash` in the shells named, each with the cat a producer
+  // outside the output model): a `cat` with no file operand prints its standard input as it is (`-`, `-u`, `--` and a name of the standard
+  // input change nothing), so before a pipe it prints the text this command feeds it (stdinBodies: the producer before it, a `<`, a duplicated
+  // descriptor, an exec feed), read as the consumer's script; a cat with another option word (`-n`, `-b`, `-A`, `-e`, `-E`, `-s`, `-t`, `-T`,
+  // `-v`) prints a text the option shapes, which the model does not compute, so where a text is fed it is UNRESOLVABLE, refused (`cat -s` and
+  // `cat -v` pass an ordinary script unchanged, so the option cannot be skipped on the safe side); a cat of a file, or one fed nothing the
+  // guard holds, stays the producer outside the model (the residual)
+  const passthroughCat = (s) => {
+    if (s.paren || s.redirects.some((r) => WRITE_REDIRECTS.has(r.op)) || (s.closerTail && s.closerTail.length)) return null;   // a write redirection takes the output off the pipe; a `<(..)` on its `<` is the text fed (stdinBodies), so a substitution among the segment's commands is no bar, and an expansion among the operands is (below)
+    const cmd = commandOf(s.words);
+    if (!cmd || cmd.unknown || cmd.opaque || 'script' in cmd || cmd.chdirs.length || cmd.writes.length || cmd.name !== 'cat') return null;
+    if (cmd.args.some((w) => !w.literal)) return null;
+    const plainArg = (w) => w.text === '-' || w.text === '--' || w.text === '-u' || isStdinName(w.text);
+    if (cmd.args.some((w) => !plainArg(w) && !w.text.startsWith('-'))) return null;   // a file operand: outside the model
+    return { options: cmd.args.filter((w) => !plainArg(w)).map((w) => w.text) };
+  };
   // THE PIPED SCRIPT (the second fix-up), read at the producer's segment `p` (the segment before the consumer, or before the compound
-  // holding it): the words a literal echo or printf would print
-  const pipedScripts = (p) => (segments[p].printed ? scriptTexts(segments[p].printed, 'piped script', 'file') : []);   // lex placed the producer's printed text on the segment (placeReading, mode 'segment'): the echo or printf itself, or since round 6's second commit the `)` or `}` closing a subshell or group of such commands (THE OUTPUT MODEL); a producer with no printed text is outside the model
+  // holding it): the words a literal echo or printf would print, or (the fifth commit) the text a plain cat passes through
+  const pipedActive = new Set();   // the producers whose feed is being read (a compound fed by the cat itself points its stdinFrom back at it: `cat <<'EOF' | (bash)`)
+  const pipedScripts = (p) => {
+    if (segments[p].printed) return scriptTexts(segments[p].printed, 'piped script', 'file');   // lex placed the producer's printed text on the segment (placeReading, mode 'segment'): the echo or printf itself, or since round 6's second commit the `)` or `}` closing a subshell or group of such commands (THE OUTPUT MODEL); a producer with no printed text is outside the model
+    const cat = passthroughCat(segments[p]);
+    if (!cat || pipedActive.has(p)) return [];
+    pipedActive.add(p);
+    let fed;
+    try { const fds = fdsFor(segments[p]); fed = fedTexts(p, fds, textsOf(segments[p], fds).slice(segments[p].heredocs.length)); } finally { pipedActive.delete(p); }   // the cat's own here-documents are fed to the consumer by fedTexts's pipeline loop already: its `<` words and what feeds it are what this adds
+    if (!fed.length) return [];
+    if (cat.options.length) {
+      const spelling = segments[p].words.map((w) => w.raw).join(' ');
+      cannotRead(word(spelling, false, spelling, { marks: 'x'.repeat(spelling.length) }), 'piped script', { kind: 'unresolvableReading', spelling, text: `a \`cat\` with the option word ${cat.options.map((o) => `\`${o}\``).join(', ')} stands before the pipe, and what it prints of the text this command feeds it depends on the option, which I do not model, so the script the shell reads is not known` });
+      return [];
+    }
+    return fed;
+  };
   // Open scopes, innermost last: a subshell frame holds the dir to restore at its `)`; a function
   // frame (`f() { ... }`, a body defined, not run) holds the dir to restore at its closing brace;
   // a compound frame (if, while, until, for, case) records whether a cd ran in its body.
@@ -4853,8 +5102,11 @@ function extract(command, ctx) {
       return;
     }
   };
-  const popFunction = (f) => {
+  const popFunction = (f, upTo = walkIdx) => {
     if (f.bodyMoved && f.name) cdFunctions.add(f.name);
+    // THE CALLED BODY: the definition's text as spelled, from its first word to the end of the segment its body closes on (`upTo`), kept by
+    // each name it defines for a fed call to replay
+    if (f.defFrom != null && f.names) { const next = segments[upTo + 1]; const end = next && next.start > f.defFrom ? next.start : command.length; const text = command.slice(f.defFrom, end); for (const nm of f.names) functionBodies.set(nm, text); }
     // a `function NAME` without parentheses whose body opens on a later segment (round 5's addendum, F10): bash and zsh define it,
     // dash has no `function` word and runs the body as plain commands in THIS shell, so a cd in it leaves the directory unknown
     if (f.dashRuns && f.bodyMoved) setUnknown('an earlier `cd` sits in the body of a `function NAME` written without parentheses, which bash and zsh define and dash, having no `function` word, runs in this shell');
@@ -4875,7 +5127,7 @@ function extract(command, ctx) {
     for (;;) {
       const t = frames[frames.length - 1];
       if (!t || !t.oneSegment) return;
-      if (t.kind === 'function') popFunction(t);
+      if (t.kind === 'function') popFunction(t, walkIdx - 1);   // the one-segment body was the previous segment
       else if (t.kind === 'subshell') { restore(t); frames.pop(); }
       else closeCompoundAt(frames.length - 1);
     }
@@ -4960,7 +5212,9 @@ function extract(command, ctx) {
     }
     return 0;
   };
+  let movedAny = false;   // a cd, pushd, popd, chdir or a directory-changing option ran at this text's level (THE MOVED SHELL, round 6's fifth commit)
   const movedHere = () => {
+    movedAny = true;
     for (let j = frames.length - 1; j >= 0 && !isScope(frames[j]); j--) frames[j].moved = true;
   };
   activeLinks = links;   // foldSegments follows these while this command's literal targets resolve (the walk-around lens second pass)
@@ -5027,6 +5281,7 @@ function extract(command, ctx) {
     try { for (const r of seg.redirects) if (WRITE_REDIRECTS.has(r.op)) add(r.target, r.how || `${r.op} redirection`); }   // a dash-reading redirect carries its own how, naming the construct (round 5's fifth addendum)
     finally { if (construct) ({ dir, unknownDir, unknownWhy } = saved); }
   };
+  noteCandidates();   // THE HEAD CANDIDATES, over the words as lexed, before the walk (scriptTexts exists by now)
   for (let idx = 0; idx < segments.length; idx++) {
     const seg = segments[idx];
     walkIdx = idx;
@@ -5048,7 +5303,8 @@ function extract(command, ctx) {
       if (!listOf && next && next.paren === ')' && rest.length) {
         const names = rest.filter((w) => !(plainWord(w) && w.text === 'function')).map((w) => w.text);
         for (const nm of names) definedFunctions.add(nm);   // B2: a call of any of them may assign any name
-        frames.push({ kind: 'function', name: names.length ? names[names.length - 1] : rest[rest.length - 1].text, bodyMoved: false, dir, unknownDir, unknownWhy, depth: 0 });   // name() ... : a definition, not a run
+        const fnNames = names.length ? names : [rest[rest.length - 1].text];
+        frames.push({ kind: 'function', name: fnNames[fnNames.length - 1], names: fnNames, defFrom: prev.start, running: ctx.runFunction != null && fnNames.includes(ctx.runFunction), bodyMoved: false, dir, unknownDir, unknownWhy, depth: 0 });   // name() ... : a definition, not a run; `names`, `defFrom`: the definition's text is kept for a fed call (THE CALLED BODY); `running`: this text is the replay of a fed call, so the body reads the call's standard input
         idx++;
         continue;
       }
@@ -5106,9 +5362,10 @@ function extract(command, ctx) {
         // dash and the write after it landed on the tracked file, F10), so a cd in such a body leaves the directory unknown at
         // its close (`dashRuns`, popFunction)
         let q = p + 1;
-        while (q < seg.words.length && !(plainWord(seg.words[q]) && seg.words[q].text === '{')) { if (seg.words[q].literal) definedFunctions.add(seg.words[q].text); q++; }
+        const fnNames = [];
+        while (q < seg.words.length && !(plainWord(seg.words[q]) && seg.words[q].text === '{')) { if (seg.words[q].literal) { definedFunctions.add(seg.words[q].text); fnNames.push(seg.words[q].text); } q++; }
         const body = q < seg.words.length;
-        frames.push({ kind: 'function', name: seg.words[p + 1].text, bodyMoved: false, dir, unknownDir, unknownWhy, depth: body ? 1 : 0, dashRuns: !body });
+        frames.push({ kind: 'function', name: seg.words[p + 1].text, names: fnNames, defFrom: seg.start, running: ctx.runFunction != null && fnNames.includes(ctx.runFunction), bodyMoved: false, dir, unknownDir, unknownWhy, depth: body ? 1 : 0, dashRuns: !body });   // `names`, `defFrom`, `running`: THE CALLED BODY, as on the paren path
         seg.words = seg.words.slice(q + (body ? 1 : 0));
         // the body opens on the next segment, which `braces` counts; the segment's redirections are still judged, since dash,
         // having no `function` word, runs the line as a command and performs them (`function f echo x > report.md` truncated
@@ -5142,6 +5399,13 @@ function extract(command, ctx) {
     // is read as a script; zsh's `functions[NAME]=BODY` binds a function the way an alias binds a text (THE ALIAS ROAD; `functions[c]='cp
     // "$@"'; c a b` copied in zsh), a body the resolver reads spliced at the name's later uses and one it does not read binding null
     readValuedWords(seg.words);
+    // THE EXPORTED FUNCTION (round 6's fifth commit, 2026-09-21; the residuals verifier: `env 'BASH_FUNC_c%%=() { cp "$@"; }' bash -c 'c a b'`,
+    // `env -i .. /usr/bin/bash -c c`, `echo c | env .. bash`, `.. bash -s <<< c` and a `BASH_FUNC_cat%%` shadowing cat each ran the copy in
+    // every shell while the quoted word was read as a command name): a bash the command starts imports a variable named `BASH_FUNC_NAME%%`
+    // whose value opens with `() {` as the function NAME (bash's import of exported functions, since 4.4), so such an assignment word anywhere
+    // in the command defines that function for the bash it reaches, its body read as a definition's is (walked, not run: a writer inside
+    // refuses, `cp "$@"` through THE SPLIT OPERAND), as `export -f` already was
+    for (const w of seg.words) { const m = w.literal ? w.text.match(/^BASH_FUNC_([A-Za-z_][A-Za-z0-9_]*)%%=(\(\) \{[^]*)$/) : null; if (m) recurse(`${m[1]} ${m[2]}`, 'bash', true, ` through the exported function \`BASH_FUNC_${m[1]}%%\``, []); }
     if (shell == null || shell === 'bash') for (const w of seg.words) for (const e of w.raw.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)@P\}/g)) for (const v of candidates.get(e[1]) || []) recurse(v, shell, false, ` through \`\${${e[1]}@P}\``);
     if (shell == null || shell === 'zsh') for (const w of seg.words) { const m = w.text.match(/^functions\[([^\]\0]+)\]=([^]*)$/); if (m && !(w.marks && /x/.test(w.marks.slice(0, m[0].length - m[2].length)))) aliases.set(m[1], { body: w.literal && !/[$`]/.test(m[2]) ? m[2] : null, line: 0, global: false, suffix: false }); }
     // B2: the expansions the guard can read are resolved before the segment's words and targets are judged
@@ -5196,7 +5460,7 @@ function extract(command, ctx) {
       continue;
     }
     // THE EXEC FEED (round 6's fourth commit): a bare `exec` with redirections alone opens them for the rest of this shell
-    if (cmd.wrapped && cmd.name === '' && !cmd.args.length && cmd.wrappers.length === 1 && cmd.wrappers[0] === 'exec' && (seg.heredocs.length || (seg.stdin && seg.stdin.length))) execFeeds.push(seg);
+    if (cmd.wrapped && cmd.name === '' && !cmd.args.length && cmd.wrappers.length === 1 && cmd.wrappers[0] === 'exec' && (seg.heredocs.length || (seg.stdin && seg.stdin.length) || (seg.dups && seg.dups.length))) execFeeds.push(seg);   // a bare `exec <&3` duplicates for the rest of this shell too (THE DUPLICATED DESCRIPTOR)
     if (cmd.unknown) {
       // rule (b) (the third pass, 2026-09-19): a wrapper option its table does not parse in full. The option, its `=value`
       // and every later word are recorded as targets the hook cannot read, so the own-project step judges each literal
@@ -5313,7 +5577,7 @@ function extract(command, ctx) {
       const before = seg.words.slice(0, headIdx).map((w) => w.raw).join(' ');
       const after = seg.words.slice(headIdx + 1).map((w) => w.raw).join(' ');
       const redirs = seg.redirects.map((r) => `${r.op} ${r.target.raw}`).join(' ');
-      for (const { text, chain } of headTexts) recurse([before, text, after, redirs].filter(Boolean).join(' '), shell, false, ` through the command name \`${headWord.raw}\``, stdinBodies(idx), chain, true);
+      for (const { text, chain } of headTexts) recurse([before, text, after, redirs].filter(Boolean).join(' '), shell, false, ` through the command name \`${headWord.raw}\``, stdinBodies(idx), chain, true, { adopt: true });   // the spliced text runs in this shell: a cd in it moves the shell (THE MOVED SHELL: `alias c=cd`, then `c ../notes`; `c=cd; $c ../notes`)
     }
     const asSpelled = cmd.args;
     let { name } = cmd;
@@ -5335,6 +5599,19 @@ function extract(command, ctx) {
     // after a command as one more operand (`cp a }` writes a file named `}` where no group is open, and they reject the group
     // spelling), so each writer is judged as cut and with the braces back as operands, and a write under either reading is refused.
     if (seg.closerTail && seg.closerTail.length) variants = [...variants, ...variants.map((v) => [...v, ...seg.closerTail])];
+    // THE CALLED BODY (round 6's fifth commit, 2026-09-21; the residuals verifier: `f() { bash; }; echo 'cp a b' | f`, `f <<< '..'`, `f <<'EOF'`,
+    // `f < <(echo '..')`, a body of `sh`, of `cat | bash`, of `. /dev/stdin`, of `bash "$@"` called with /dev/stdin, and the call inside a
+    // subshell or a group, each ran the piped text in the shells named while the call was an unknown command and the body had been read as a
+    // definition with a standard input of its own): a function this command defines, called where a text the guard holds feeds it (a pipe, a
+    // here-document or here-string, a `<`, a compound's closer, an exec feed, the caller's), runs its body with that text on its standard
+    // input, so the definition is read again as the running body (`runFunction`: its frame reads the fed text as a compound's does) with the
+    // call's operands (`callArgs`: a shell inside it whose script operand is a positional parameter runs with them); a call inside its own
+    // body is not followed again (fnChain)
+    {
+      const calledRaw = rawHeadOf(seg.words);
+      const fnName = functionBodies.has(name) ? name : (calledRaw != null && functionBodies.has(calledRaw) ? calledRaw : null);
+      if (fnName != null && !fnChain.has(fnName)) { const fed = stdinBodies(idx); if (fed.length) recurse(functionBodies.get(fnName), shell, false, ` through the function \`${fnName}\``, fed, aliasChain, false, { runFunction: fnName, callArgs: asSpelled, fnChain: new Set([...fnChain, fnName]) }); }
+    }
     for (const args of variants) {
     // the walk-around lens second pass (family 6): a call to a function whose body moved the shell moves the cwd, which the guard does not
     // follow into the call, so the directory is unknown from here (the body was modelled as not moving the shell)
@@ -5594,14 +5871,14 @@ function extract(command, ctx) {
           if (texts.length > 64) { unread = true; break; }
         }
         if (unread) { if (name === 'eval') sawOpaqueCommand = true; break; }
-        for (const t of texts) recurse(t, shell, false, ` through \`${name}\``);
+        for (const t of texts) recurse(t, shell, false, ` through \`${name}\``, null, aliasChain, false, { adopt: name === 'eval', trapMove: name === 'trap' });   // eval's text runs in this shell and moves it (THE MOVED SHELL); a trap action that moves leaves the directory unknown
         break;
       }
       case 'xargs': sawOpaqueCommand = true; break;
       case 'emulate': {
         // zsh's `emulate [-LR] [shell [flags]] -c TEXT` runs TEXT under the emulation, in this shell (round 6's third commit: `emulate sh -c 'cp a
         // b'` copied in zsh while the walk read an unknown command); the text after `-c` is a script of zsh, read as `eval`'s text is
-        for (let k = 0; k < args.length; k++) if (args[k].literal && args[k].text === '-c' && args[k + 1]) for (const tx of scriptTexts(args[k + 1], '`emulate -c` script')) recurse(tx, 'zsh', false, ' through `emulate -c`');
+        for (let k = 0; k < args.length; k++) if (args[k].literal && args[k].text === '-c' && args[k + 1]) for (const tx of scriptTexts(args[k + 1], '`emulate -c` script')) recurse(tx, 'zsh', false, ' through `emulate -c`', null, aliasChain, false, { adopt: true });
         break;
       }
       case 'mapfile': case 'readarray': {
@@ -5609,7 +5886,7 @@ function extract(command, ctx) {
         // auditor: `mapfile -C 'cp a b #' -c 1 < f` copied in bash while the callback's text stood in the command unread): the text is a script
         // of this shell, read as eval's text is (the appended index and line are operands the text's last command takes; a text the resolver
         // cannot read refuses through scriptTexts, an expansion it never reads is the residual)
-        for (let k = 0; k < args.length; k++) if (args[k].literal && /^-[A-Za-z]*C$/.test(args[k].text) && args[k + 1]) for (const tx of scriptTexts(args[k + 1], `\`${name} -C\` callback`)) recurse(tx, shell, false, ` through \`${name} -C\``);
+        for (let k = 0; k < args.length; k++) if (args[k].literal && /^-[A-Za-z]*C$/.test(args[k].text) && args[k + 1]) for (const tx of scriptTexts(args[k + 1], `\`${name} -C\` callback`)) recurse(tx, shell, false, ` through \`${name} -C\``, null, aliasChain, false, { adopt: true });
         break;
       }
       case 'alias': {
@@ -5627,7 +5904,7 @@ function extract(command, ctx) {
           if (eq < 0) continue;
           const nameLiteral = !w.marks || !w.marks.slice(0, eq).includes('x');
           if (!nameLiteral) { if (!aliasState.unread) aliasState.unread = w.raw; continue; }
-          aliases.set(w.text.slice(0, eq), { body: w.literal && !/[$`]/.test(w.text.slice(eq + 1)) ? w.text.slice(eq + 1) : null, line: lineOf(seg), global, suffix });   // a body the shell expands when the alias is USED (a quoted `$x` or a backtick; round 6's fourth commit: `alias c='$x'`, then `x=cp`, then `c a b` copied in dash while the body was spliced as the text `$x`) binds null, as an expansion at the definition does: the safe side
+          aliases.set(w.text.slice(0, eq), { body: w.literal && !/[$`]/.test(w.text.slice(eq + 1)) ? w.text.slice(eq + 1) : null, line: defLineOf(seg), global, suffix });   // defLineOf: inside a head splice the definition binds at the spliced segment's line (`alias a=alias`, then `a c=cp`: round 6's fifth commit)   // a body the shell expands when the alias is USED (a quoted `$x` or a backtick; round 6's fourth commit: `alias c='$x'`, then `x=cp`, then `c a b` copied in dash while the body was spliced as the text `$x`) binds null, as an expansion at the definition does: the safe side
         }
         break;
       }
@@ -5647,17 +5924,29 @@ function extract(command, ctx) {
         // body, measured) reads what this command reads, in this shell (round 6's second commit); a sourced file's contents are not in the
         // command (the residual the surfaces name; the name poison VAR_POISONERS applies as before)
         const ops = args.length && args[0].literal && args[0].text === '--' ? args.slice(1) : args;   // `. -- FILE`: the option terminator (round 6's fourth commit: `. -- <(echo 'cp a b')` copied in bash and zsh while the `--` was read as the operand)
-        if (ops.length && ops[0].literal && isStdinName(ops[0].text)) for (const body of stdinBodies(idx, fdOfName(ops[0].text))) recurse(body, shell, false, ` through \`${name} ${ops[0].text}\``, []);   // the descriptor named is read (THE DESCRIPTOR FEED: `. /dev/fd/3 3< <(..)`)
+        if (ops.length && ops[0].literal && isStdinName(ops[0].text)) for (const body of stdinBodies(idx, fdOfName(ops[0].text))) recurse(body, shell, false, ` through \`${name} ${ops[0].text}\``, [], aliasChain, false, { adopt: true });   // the descriptor named is read (THE DESCRIPTOR FEED: `. /dev/fd/3 3< <(..)`); a sourced text runs in this shell and moves it (THE MOVED SHELL)
         // a sourced process substitution is the text a literal echo or printf prints, as a script operand that is one is (round 6's third
         // commit: `. <(echo 'cp a b')` copied in bash and zsh, zsh's `. =(echo '..')` too, while the operand was read as a file outside the command)
-        else if (ops.length && procsubOf(ops[0]) != null) for (const t of scriptTexts(ops[0], `\`${name}\` operand`, 'file')) recurse(t, shell, false, ` through \`${name} <(..)\``);
+        else if (ops.length && procsubOf(ops[0]) != null) for (const t of scriptTexts(ops[0], `\`${name}\` operand`, 'file')) recurse(t, shell, false, ` through \`${name} <(..)\``, null, aliasChain, false, { adopt: true });
         break;
       }
       default:
         if (SHELLS.has(name)) {
           // the script is read as the shell named reads it (`$'...'` is quoting under bash and zsh only; the
           // options a cluster takes a word for differ; shellScript and lex)
-          const sh = shellScript(args, name);
+          let sh = shellScript(args, name);
+          // THE CALLED BODY: in the replay of a fed function, a script operand that is a positional parameter stands for the call's operands, so
+          // the shell is read as it runs with them (`f() { bash "$@"; }; echo 'cp a b' | f /dev/stdin` ran the piped text in every shell)
+          const positional = (w) => !!w && !w.literal && /^"?\$(?:[@*]|\{[@*]\}|[1-9][0-9]*|\{[1-9][0-9]*\})"?$/.test(w.raw);
+          if (ctx.callArgs && sh.file && positional(sh.file)) sh = shellScript(ctx.callArgs, name);
+          // THE STARTUP FEED (round 6's fifth commit, 2026-09-21; the body auditor: `BASH_ENV=/dev/stdin bash -c : <<< 'cp a b'`, `echo '..' |
+          // BASH_ENV=/dev/stdin bash -c :`, `BASH_ENV=/dev/fd/3 bash -c : 3< <(..)`, `export BASH_ENV=/dev/stdin; bash -c : <<< '..'`, the same
+          // through env and a nested `bash -c`, and `ENV=/dev/stdin dash -i -c :` each ran the fed text while the value was read as a path
+          // outside the command): a STARTUP_FILE_NAMES value the command gives (THE HEAD CANDIDATES: a prefix assignment, an export, env's
+          // operand, in any text of the command) that names the standard input or a descriptor this shell is fed (STDIN_NAMES, fdOfName) is
+          // the text fed, which the shell sources at startup; read whether or not this shell would (bash reads BASH_ENV when not interactive
+          // and ENV under POSIX mode when interactive, dash reads ENV when interactive: the safe side, as `--rcfile` is read)
+          for (const nm of STARTUP_FILE_NAMES) for (const v of candidates.get(nm) || []) if (isStdinName(v)) for (const body of stdinBodies(idx, fdOfName(v))) recurse(body, name, undefined, ` through \`${nm}\``, []);
           if ('script' in sh) {
             for (const t of scriptTexts(sh.script, `\`${name} -c\` script`)) recurse(t, name, undefined, sh.script.literal ? '' : READING_VIA(sh.script.raw));   // the texts the word can stand for, each a script (THE RESOLVED SUBSTITUTION, THE DEFAULT WORD; THE RESOLVER'S CONTRACT)
           } else if (sh.stdin) {
@@ -5690,7 +5979,8 @@ function extract(command, ctx) {
   // a numeric target's literal directory part is folded through a link the same command makes before it, as the kernel
   // will follow it once it exists (`ln -s <proj>/notes <out>/d && echo x > <out>/d/x-$$.md` landed in the tracked folder
   // while the numeric view resolved `<out>/d` through a filesystem where the link did not yet exist).
-  return { targets, opaque: opaque || sawOpaqueCommand, unresolved, links };
+  // the directory state at the text's end, for a caller whose shell ran this text in place (recurse's adopt: THE MOVED SHELL, round 6's fifth commit)
+  return { targets, opaque: opaque || sawOpaqueCommand, unresolved, links, dir, unknownDir, unknownWhy, oldDir, moved: movedAny || dir !== ctx.dir || unknownDir !== !!ctx.unknownDir };
 }
 
 // ── the verdict ─────────────────────────────────────────────────────
