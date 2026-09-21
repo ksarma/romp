@@ -34,10 +34,15 @@
 #
 # A read the hook cannot COMPLETE is not an empty result: a tip whose tree git
 # grep could not scan, a tree whose listing failed, a link whose blob could not
-# be read, a commit whose diff could not be read is refused as unscanned, the way
-# a tag field the hook cannot read is (pre-push-identity.bats). The cases at the
-# end hold that line, each with a git first on the hook's PATH that refuses one
-# command shape.
+# be read, a commit whose diff or parent count could not be read is refused as
+# unscanned, the way a tag field the hook cannot read is (pre-push-identity.bats).
+# The cases at the end hold that line, each with a git first on the hook's PATH
+# that refuses one command shape. The last section turns the credential scan
+# back on with the REAL scanner (skipped where none is installed) for the read
+# the hook makes INSIDE it: gitleaks' own log, because its exit status does not
+# carry its git's failure. A scanner reporting a clean scan after its git wrote
+# to stderr, or handed it fewer commits than the push has, is refused as
+# unscanned too.
 
 ROMP_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
 HOOK="$ROMP_DIR/.githooks/pre-push"
@@ -70,7 +75,7 @@ setup() {
     printf '# synthetic\nzzsynthuser\nTESTHOST\n' > "$STRINGS"
 
     export ROMP_PRIVATE_STRINGS="$STRINGS"
-    export ROMP_NO_GITLEAKS=1          # the credential half has its own test file
+    export ROMP_NO_GITLEAKS=1          # the credential half: stubbed in install-sh.bats, real in gitleaks-config.bats and the last section here
 }
 
 teardown() { rm -rf "${TEST_DIR:-}"; }
@@ -194,6 +199,32 @@ branch_inheriting_mains_symlink_leak() {
     commit_file bad.txt "home is /home/zzsynthuser/x" "leak"
     run_hook
     [ "$status" -eq 0 ]
+}
+
+# The denylist is read line by line, and a file whose LAST line has no trailing
+# newline (an editor that adds none, a `printf` or an `echo -n` that wrote it) ends
+# in a line `read` returns with status 1, the line in hand. A plain `while read`
+# loop stopped there and never saw it: the entry on that line was scanned for by
+# nothing, and a one-entry file so written armed no scan at all, with nothing
+# printed either way (2026-09-21). Both files below are written without the
+# final newline on purpose.
+
+@test "a denylist whose LAST entry has no trailing newline still bans that entry" {
+    printf 'zzsynthuser\nTESTHOST' > "$STRINGS"       # two entries; the second is the unterminated last line
+    commit_file hosts.txt "the TESTHOST machine" "leak"
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"would publish a personal identifier"* ]]
+    [[ "$output" == *"  hosts.txt"* ]]
+}
+
+@test "a ONE-entry denylist with no trailing newline still arms the scan" {
+    printf 'TESTHOST' > "$STRINGS"                     # the whole file is one unterminated line
+    commit_file hosts.txt "the TESTHOST machine" "leak"
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"would publish a personal identifier"* ]]
+    [[ "$output" == *"  hosts.txt"* ]]
 }
 
 # ── which commits a push publishes ────────────────────────────────────────
@@ -512,6 +543,7 @@ fail_diff_tree() {   # [<sha whose diff-tree fails; every commit's when omitted>
         git_refusing '[ "${1:-}" = diff-tree ]' 128 "fatal: shim: diff-tree refused"
     fi
 }
+fail_rev_list_parents() { git_refusing '[ "${1:-}" = rev-list ] && [ "${2:-}" = --parents ]' 128 "fatal: shim: rev-list --parents refused"; }
 
 # The tip's CONTENT scan is one `git grep` over the tree. It exits 1 for no match
 # and above 1 when it could not scan (a git that would not run, a killed process,
@@ -559,6 +591,39 @@ fail_diff_tree() {   # [<sha whose diff-tree fails; every commit's when omitted>
     [[ "$output" == *"the CONTENT of the tip of refs/heads/main (${sha:0:10}) could not be"*"scanned"* ]]
     [[ "$output" == *"unable to read"* ]]
     [[ "$output" != *"BLOCKED"* ]]
+}
+
+# The hit-or-error split above reads a hit as `<sha>:<path>` and anything else as
+# an error line. With color.ui or color.grep set to always, git wraps each hit line
+# of `git grep -l` in colour codes even off a terminal, so a real hit read as an
+# error: the tip that carried the string was reported as a broken scanner (refused,
+# but with the wrong report and only the bypass as advice), where every text of the
+# hook before the split had named the file (2026-09-21). The grep asks for no colour.
+
+@test "a hit in the tip is reported as a hit under color.ui=always: a coloured hit line is not an error line" {
+    branch_inheriting_mains_leak             # only the tip scan can see leak.txt
+    git -C "$REPO" config color.ui always
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    run _hook_in "$REPO" -c 'git grep -i -I -l -F -e zzsynthuser "$1" --' _ "$sha"   # the hit line as git colours it
+    [ "$status" -eq 0 ]
+    [[ "$output" == *$'\e['* ]]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the tip of refs/heads/main (${sha:0:10}) would publish a personal identifier in:"* ]]
+    [[ "$output" == *"  leak.txt"* ]]
+    [[ "$output" == *"BLOCKED"* ]]
+    [[ "$output" != *"could not be fully scanned"* ]]
+}
+
+@test "the same under color.grep=always, the other key that colours a hit line" {
+    branch_inheriting_mains_leak
+    git -C "$REPO" config color.grep always
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the tip of refs/heads/main (${sha:0:10}) would publish a personal identifier in:"* ]]
+    [[ "$output" == *"  leak.txt"* ]]
+    [[ "$output" != *"could not be fully scanned"* ]]
 }
 
 # The symlink LISTING: `git ls-tree -r` was piped straight into the grep for link
@@ -764,6 +829,30 @@ fail_diff_tree() {   # [<sha whose diff-tree fails; every commit's when omitted>
     [[ "$output" == *"BLOCKED"* ]]
 }
 
+@test "a commit whose PARENT COUNT cannot be read is refused as unscanned, naming that read: the added lines are two reads, and the refusal says which failed" {
+    # Two CLEAN commits, so only the failed read can refuse: on a leaking fixture the
+    # diff alone would refuse the push and only the wording would be under test. The
+    # parent count decides how many columns a merge's combined diff has; read as one
+    # when it fails, a merge is over-scanned, but a read that failed all the same.
+    commit_file base.txt "notes-api" "base"
+    commit_file web.txt "the web session's work" "clean commit"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    fail_rev_list_parents
+    # the fault as the hook meets it, from the repo's top level: the parent count fails, the diff and the range read
+    run _hook_in "$REPO" -c 'git rev-list --parents -n 1 "$1"' _ "$sha"
+    [ "$status" -eq 128 ]
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1" >/dev/null && git rev-list "$1" --not --remotes >/dev/null' _ "$sha"
+    [ "$status" -eq 0 ]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the ADDED LINES of commit ${sha:0:10} could not be read (git rev-list --parents exited 128)"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" == *"git push --no-verify"* ]]
+    [[ "$output" != *"diff-tree"* ]]                 # the read that worked is not the one named
+    [[ "$output" != *"ADDS a personal identifier"* ]]
+    [[ "$output" != *"BLOCKED"* ]]
+}
+
 @test "an EMPTY commit and a merge with no line of its own pass beside that git when the fault sits on a commit not in the push: an empty diff is absent, not unreadable" {
     add_remote
     commit_file base.txt "notes-api" "base"
@@ -785,4 +874,191 @@ fail_diff_tree() {   # [<sha whose diff-tree fails; every commit's when omitted>
     run_hook
     [ "$status" -eq 0 ]
     [ -z "$output" ]
+}
+
+# ── the credential scan's own read: gitleaks' log ────────────────────────
+# The credential scan is one read the hook makes INSIDE another program: gitleaks
+# runs `git log -p` itself, and its exit status does not carry that git's failure.
+# Any stderr line from that git that gitleaks does not allowlist (it allowlists
+# the rename-detection warnings and the auto-gc notice) makes it log the line at
+# its ERR level, drop the rest of the scan, report the commits it did read, say
+# no leaks were found and exit 0, whatever git's own status was. Found by
+# execution (2026-09-21): a git that wrote ONE benign line to stderr, and a git
+# that handed gitleaks one commit fewer, each let two live credentials through a
+# real push with nothing printed by the hook, on a clone with the denylist armed.
+# The hook now reads gitleaks' log: an ERR line refuses the push as unscanned,
+# and so does a reported commit count other than the hook's own count of the
+# commits with content to scan, derived the way gitleaks counts them (a commit
+# with a hunk in a file that is neither deleted nor binary; an empty commit, a
+# deletion, a binary add count for nothing) from the same `git log -p` stream.
+# Two conditions, because either alone has a hole: the shorter log writes no ERR
+# line, and a discarded scan can still report the whole count.
+#
+# These cases run the REAL scanner, as tests/gitleaks-config.bats does (skipped,
+# out loud, where none is installed; CI installs it). The credential-shaped
+# probes are assembled at run time: gitleaks scans this repo too, and a token
+# written out longhand would flag the very test that proves the scan works.
+
+real_gitleaks() {
+    GL="${ROMP_GITLEAKS:-$(command -v gitleaks || true)}"
+    if [ -z "$GL" ] || [ ! -x "$GL" ]; then skip "gitleaks not installed"; fi
+    export ROMP_GITLEAKS="$GL"
+    unset ROMP_NO_GITLEAKS
+}
+# ghp_ + 36 chars, as tests/gitleaks-config.bats builds it, and a slack bot token,
+# so two rules fire and the control names both.
+probe_token() { printf 'gh%s_%s%s' p "$(printf '0123456789%.0s' 1 2 3)" abcdef; }
+probe_slack() { printf 'xox%s-%s-%s-%s' b 123456789012 123456789012 abcdefghijklmnopqrstuvwx; }
+
+# A git that runs the real git UNCHANGED for every command and, for ONE command
+# shape, first writes a line to stderr or appends one argument: the faults the
+# scanner's own git can meet (a message from a filter or a wrapper; a log that
+# returns fewer commits). The shape is gitleaks' invocation, `git -C <root> log`,
+# which no read of the hook's own has, so the hook's git is untouched. Once per
+# test, like git_refusing.
+git_passing_through() {   # <bash test over the shim's "$@"> <stderr line, or empty> [<argument appended>]
+    local real_git
+    real_git="$(command -v git)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if %s; then\n' "$1"
+        [ -z "$2" ] || printf '    echo %q >&2\n' "$2"
+        [ -z "${3:-}" ] || printf '    exec %q "$@" %q\n' "$real_git" "$3"
+        printf 'fi\n'
+        printf 'exec %q "$@"\n' "$real_git"
+    } > "$TEST_DIR/shim/git"
+    chmod 755 "$TEST_DIR/shim/git"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+GITLEAKS_GIT='[ "${1:-}" = -C ] && [ "${3:-}" = log ]'
+gitleaks_git_noisy()   { git_passing_through "$GITLEAKS_GIT" "note: a benign line on stderr"; }
+gitleaks_git_short()   { git_passing_through "$GITLEAKS_GIT" "" --max-count=1; }
+gitleaks_git_warning() { git_passing_through "$GITLEAKS_GIT" "warning: inexact rename detection was skipped due to too many files."; }
+
+# The scanner as the hook invokes it, over everything the tip reaches (the fixture has no remote).
+scan_direct() {   # <sha>
+    run _hook_in "$REPO" -c '"$1" git "$2" --no-banner --redact -v --exit-code 2 --log-opts="$3 --diff-merges=first-parent"' _ "$GL" "$REPO" "$1"
+}
+
+@test "two planted credentials in two commits are both named and refused by the real scanner: the control for the cases below" {
+    real_gitleaks
+    commit_file probe.py "token = \"$(probe_token)\"" "a credential"
+    commit_file slack.txt "slack = \"$(probe_slack)\"" "another credential"
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"2 commits scanned"* ]]
+    [[ "$output" == *"github-pat"* ]]
+    [[ "$output" == *"slack-bot-token"* ]]
+    [[ "$output" == *"gitleaks found a credential"* ]]
+    [[ "$output" != *"$(probe_token)"* ]]           # --redact
+    [[ "$output" != *"the scan is incomplete"* ]]   # a finding, not a failed scan
+}
+
+@test "a clean commit passes the real scanner, its reported count the hook's own: the count read refuses nothing extra" {
+    real_gitleaks
+    commit_file file.txt "nothing to see" "clean"
+    run_hook
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"1 commits scanned"* ]]        # gitleaks' own log line, shown as before
+    [[ "$output" != *"romp pre-push"* ]]
+}
+
+@test "commits with no content to scan (an empty commit, a deletion, a binary add) are counted the way the scanner counts them: no false refusal" {
+    real_gitleaks
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" commit -q --allow-empty -m "an empty commit"
+    remove_file base.txt "a deletion"
+    printf 'ab\0cd\0\1\2\n' > "$REPO/blob.bin"
+    git -C "$REPO" add blob.bin
+    git -C "$REPO" commit -qm "a binary add"
+    [ "$(git -C "$REPO" rev-list --count HEAD)" -eq 4 ]   # four commits, one of them with content gitleaks reads
+    run_hook
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"1 commits scanned"* ]]
+    [[ "$output" != *"romp pre-push"* ]]
+}
+
+@test "a scan gitleaks reports as clean after its own git wrote to stderr is refused as unscanned: exit 0 is not a completed scan" {
+    real_gitleaks
+    commit_file probe.py "token = \"$(probe_token)\"" "a credential"
+    commit_file slack.txt "slack = \"$(probe_slack)\"" "another credential"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    gitleaks_git_noisy
+    scan_direct "$sha"                                  # the scanner as the hook meets it: an ERR line, no finding, exit 0
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ERR"* ]]
+    [[ "$output" == *"no leaks found"* ]]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the CREDENTIAL scan of refs/heads/main (${sha:0:10}) did not complete: gitleaks logged an error"* ]]
+    [[ "$output" == *"a benign line on stderr"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" == *"gitleaks could not scan"* ]]      # the scanner advice, not the rotate advice
+    [[ "$output" == *"git push --no-verify"* ]]
+    [[ "$output" != *"gitleaks found a credential"* ]]
+}
+
+@test "a scan whose reported count falls short of the commits with content to scan is refused as unscanned, with both numbers: a shorter log is not a clean one" {
+    real_gitleaks
+    commit_file probe.py "token = \"$(probe_token)\"" "a credential"
+    commit_file clean.txt "nothing to see" "a clean tip"   # the secret is in the OLDER commit: a log of one commit reads the clean tip alone
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    gitleaks_git_short
+    scan_direct "$sha"                                  # the scanner as the hook meets it: one commit, no ERR line, exit 0
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"1 commits scanned"* ]]
+    [[ "$output" != *"ERR"* ]]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the CREDENTIAL scan of refs/heads/main (${sha:0:10}) covered 1 of the 2 commits with content to scan"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" == *"gitleaks could not scan"* ]]
+    [[ "$output" != *"did not complete: gitleaks logged"* ]]   # the count condition alone caught this
+    [[ "$output" != *"gitleaks found a credential"* ]]
+}
+
+@test "the rename-detection warning gitleaks allowlists passes: a WRN line is not an ERR line, and the count is whole" {
+    real_gitleaks
+    commit_file file.txt "nothing to see" "clean"
+    gitleaks_git_warning
+    run_hook
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"inexact rename detection was skipped"* ]]
+    [[ "$output" == *"1 commits scanned"* ]]
+    [[ "$output" != *"romp pre-push"* ]]
+}
+
+# Both reads ask git for no colour. With color.ui or color.diff set to always,
+# git colours `log -p` written to a pipe; gitleaks finds no file header in the
+# coloured stream and reports `0 commits scanned` with no ERR line, and a count
+# read from the same coloured stream agreed with it, so a push carrying a
+# credential passed both conditions (found by execution, 2026-09-21, the review
+# round's derivation). The scanner's git is given --no-color through --log-opts
+# and the hook's own count reads with --no-color too.
+
+@test "a credential is found under color.ui=always: the scanner's git and the hook's own count both ask git for no colour" {
+    real_gitleaks
+    commit_file probe.py "token = \"$(probe_token)\"" "a credential"
+    commit_file clean.txt "nothing to see" "a clean tip"
+    git -C "$REPO" config color.ui always
+    run _hook_in "$REPO" -c 'git log -p -U0 --format="commit %H" HEAD'    # the stream as git colours it for a pipe
+    [ "$status" -eq 0 ]
+    [[ "$output" == *$'\e['* ]]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"2 commits scanned"* ]]
+    [[ "$output" == *"github-pat"* ]]
+    [[ "$output" == *"gitleaks found a credential"* ]]
+    [[ "$output" != *"the scan is incomplete"* ]]
+}
+
+@test "a clean push under color.diff=always passes: neither read is coloured, so the counts agree for the right reason" {
+    real_gitleaks
+    commit_file file.txt "nothing to see" "clean"
+    git -C "$REPO" config color.diff always
+    run_hook
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"1 commits scanned"* ]]
+    [[ "$output" != *"romp pre-push"* ]]
 }

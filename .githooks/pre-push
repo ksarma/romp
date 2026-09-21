@@ -78,22 +78,40 @@
 #
 # A read the hook cannot COMPLETE is not an empty result. The tip's content scan,
 # its symlink listing, each link's target, an object's type, a tag's fields and
-# each new commit's added lines, addresses and message are git reads whose
-# output the checks above grep, and a read that FAILED (git's status, or an
-# error line) leaves the push part-scanned: what went unread may be exactly the
-# string the scan exists for. Each such read reports one line naming the ref or
-# the commit and the read, and refuses the push as unscanned, as a gitleaks that
-# cannot scan does; an ABSENT value (a tag with no message, a tree with no
-# links, a commit whose diff or message is empty) reads as empty and passes.
-# Found by execution (2026-09-20), one read at a time, each letting a dirty tip,
-# tag or commit through a real push with nothing printed but git's own error
-# line where it printed one; the per-commit diff failed that way with the real
-# git once the added file's blob was gone from the store.
+# each new commit's parent count, added lines, addresses and message are git
+# reads whose output the checks above grep, and a read that FAILED (git's
+# status, or an error line) leaves the push part-scanned: what went unread may
+# be exactly the string the scan exists for. Each such read reports one line
+# naming the ref or the commit and the read, and refuses the push as unscanned,
+# as a gitleaks that cannot scan does; an ABSENT value (a tag with no message, a
+# tree with no links, a commit whose diff or message is empty) reads as empty
+# and passes. Found by execution (2026-09-20), one read at a time, each letting
+# a dirty tip, tag or commit through a real push with nothing printed but git's
+# own error line where it printed one; the per-commit diff failed that way with
+# the real git once the added file's blob was gone from the store.
 #
 # The credential scan reads the same new commits, each merge by its
 # first-parent diff, and refuses the push on a hit. A range this clone cannot
 # resolve (a force-push over a remote tip nobody fetched) sends both scans over
-# everything the pushed tip reaches.
+# everything the pushed tip reaches. That scan has one read of its own INSIDE
+# gitleaks, whose exit status does not carry it: gitleaks runs `git log -p`
+# itself, and any stderr line from that git it does not allowlist (the
+# rename-detection warnings, the auto-gc notice) makes it log the line at its
+# ERR level, drop the rest of the scan, report the commits it did read, say no
+# leaks were found and exit 0, whether or not git failed. So exit 0 is read as
+# "no finding reported", never as "scanned": the hook reads gitleaks' log, and
+# refuses the push as unscanned on any ERR line, and separately when the commit
+# count gitleaks reports is not the hook's own count of the commits with content
+# to scan, derived from the same `git log -p` stream by gitleaks' rule. Two
+# conditions, because either alone has a hole: a log that came up short writes
+# no ERR line, and a discarded scan can still report the whole count. Found by
+# execution (2026-09-21): a git that wrote one benign line to stderr, and one
+# that handed gitleaks a commit fewer, each let two live credentials through a
+# real push with nothing printed, on a clone with the denylist armed. Both
+# reads ask git for no colour: with color.ui or color.diff set to always, git
+# colours the patch it writes to a pipe, gitleaks finds no file header in it
+# and reports 0 commits with no ERR line, and a count read from the same
+# coloured stream agreed with it, so a credential passed (2026-09-21).
 #
 # Why pushed commits rather than a working-tree scan: the hook is symlinked into
 # the SHARED git hooks dir (by install.sh), so it fires from every worktree —
@@ -155,14 +173,16 @@ rev_range() {   # <local_sha> <remote_sha> → a rev-list argument list
 # from the `+++ b/<path>` header, read only between a `diff --git` or
 # `diff --combined` line and the first hunk: inside a hunk, a line that begins
 # with `+++ ` is added content (`++ b/x` as written) and belongs to the current
-# file. The function's status is its reads': the diff's through pipefail, and
-# the parent count's through `|| return` (a failure there left n empty, which
-# awk read as 1, and a merge's combined diff was read in one column: over-scan,
-# but a read that failed all the same).
-added_lines() {   # <rev>
-    local n
-    n=$(git rev-list --parents -n 1 "$1" | awk '{ print NF - 1 }') || return $?
-    git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1" | awk -v n="$n" '
+# file. Two reads, made apart by the caller so a refusal can name the one that
+# failed: the parent count (parent_count; rev-list's status through pipefail; a
+# failure there leaves n empty, which awk reads as 1, and a merge's combined
+# diff is read in one column: over-scan, but a read that failed all the same)
+# and the diff (added_lines, whose status is the diff-tree's through pipefail).
+parent_count() {   # <rev>
+    git rev-list --parents -n 1 "$1" | awk '{ print NF - 1 }'
+}
+added_lines() {   # <rev> <parent count>
+    git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1" | awk -v n="$2" '
         BEGIN { if (n < 1) n = 1; for (i = 0; i < n; i++) plus = plus "+" }
         /^diff --(git|combined) /        { hdr = 1; next }
         hdr && /^\+\+\+ b\//             { f = substr($0, 7); next }
@@ -239,7 +259,8 @@ tag_message() {   # <tag_sha>
 # domain and one whose message named a banned host, git's own error line the only
 # sign: piped into the grep or the loop that judged it, the read's failure was a
 # no-match. Each caller says what could not be read; the tail and the counter are
-# the same for all.
+# the same for all. The credential scan's read inside gitleaks is judged the same
+# way, from gitleaks' own log (scan_credentials).
 unscanned() {   # <what could not be read, as a clause>
     echo "romp pre-push: $1; the scan is incomplete, so the push is refused" >&2
     failed_scan=1
@@ -258,13 +279,18 @@ type_unread() {   # <local_ref> <sha>
 # ── identifiers ───────────────────────────────────────────────────────────
 scan_identifiers() {
     local strings_file line grep_args local_ref local_sha _remote_ref remote_sha lines role email obj tagger chosen
-    local rc out errs hits listing links link blob link_path target revs rev msg addrs inner kind
+    local rc out errs hits listing links link blob link_path target revs rev n msg addrs inner kind
     strings_file="${ROMP_PRIVATE_STRINGS:-${XDG_CONFIG_HOME:-$HOME/.config}/romp/private-strings.txt}"
     [ -f "$strings_file" ] || return 0
 
-    # Banned strings: strip comments and surrounding whitespace, drop blanks.
+    # Banned strings: strip comments and surrounding whitespace, drop blanks. The
+    # `|| [ -n "$line" ]`: a last line with no trailing newline (an editor that
+    # adds none, a printf that wrote the file) comes back from read with status 1
+    # and the line in hand, and a plain `while read` dropped it: the entry on
+    # that line was scanned for by nothing, and a one-entry file so written armed
+    # no scan at all, nothing printed either way (found by execution, 2026-09-21).
     grep_args=()
-    while IFS= read -r line; do
+    while IFS= read -r line || [ -n "$line" ]; do
         line="${line%%#*}"
         line="${line#"${line%%[![:space:]]*}"}"
         line="${line%"${line##*[![:space:]]}"}"
@@ -288,8 +314,12 @@ scan_identifiers() {
         # git grep reads as one file); any other line is an error, echoed under
         # the report. Found by execution (2026-09-20):
         # with a git grep exiting 2, and again with the leaking file's blob
-        # missing, a tip whose tree carried a denylist string passed.
-        rc=0; out=$(git grep -i -I -l -F "${grep_args[@]}" "$local_sha" -- 2>&1) || rc=$?
+        # missing, a tip whose tree carried a denylist string passed. --no-color:
+        # with color.ui or color.grep set to always, git wraps each hit line in
+        # colour codes even off a terminal, and a coloured hit is not
+        # "<sha>:<path>": it read as an error line, and a real hit was reported
+        # as a broken scanner (2026-09-21).
+        rc=0; out=$(git grep --no-color -i -I -l -F "${grep_args[@]}" "$local_sha" -- 2>&1) || rc=$?
         hits=$(printf '%s\n' "$out" | grep -E "^$local_sha(:|\$)" || true)
         errs=$(printf '%s\n' "$out" | grep -Ev "^$local_sha(:|\$)" | grep . || true)
         if [ "$rc" -gt 1 ] || [ -n "$errs" ]; then
@@ -345,7 +375,7 @@ scan_identifiers() {
         fi
 
         # The lines each commit new to the remote adds. Each per-commit read below
-        # (the diff, the addresses, the message) is captured with its status before
+        # (the parent count and the diff, the addresses, the message) is captured with its status before
         # the grep or the loop that judges it: piped straight in, a diff-tree or log
         # that failed was the grep's no-match or a loop with nothing to read, a
         # commit that added, said and was stamped with nothing (found by execution,
@@ -360,7 +390,9 @@ scan_identifiers() {
         revs=$(git rev-list $(rev_range "$local_sha" "$remote_sha") 2>/dev/null \
                || git rev-list "$local_sha")
         for rev in $revs; do
-            rc=0; out=$(added_lines "$rev") || rc=$?
+            rc=0; n=$(parent_count "$rev") || rc=$?
+            [ "$rc" -eq 0 ] || unscanned "the ADDED LINES of commit ${rev:0:10} could not be read (git rev-list --parents exited $rc)"
+            rc=0; out=$(added_lines "$rev" "$n") || rc=$?
             [ "$rc" -eq 0 ] || unscanned "the ADDED LINES of commit ${rev:0:10} could not be read (git diff-tree exited $rc)"
             if hits=$(printf '%s\n' "$out" | grep -i -F "${grep_args[@]}" | cut -f1 | sort -u) && [ -n "$hits" ]; then
                 echo "romp pre-push: commit ${rev:0:10} ADDS a personal identifier in:" >&2
@@ -464,10 +496,43 @@ scan_identifiers() {
 # publishes: the same range per ref as the identifier scan, so a secret that is
 # already on a remote does not refuse every later push, and a secret in an
 # intermediate commit whose tip is clean is still caught.
+#
+# The commits gitleaks COUNTS over a range, derived the way it counts them, so
+# the count it reports can be checked (scan_credentials). gitleaks reads
+# `git log -p -U0` over the range and counts a commit once it has scanned one
+# hunk of one file that is neither a deletion nor binary: its "N commits
+# scanned" is the distinct commits among the fragments it scanned, and its own
+# debug note says the number can be smaller than expected "due to commits with
+# no additions". So an empty commit, a deletion, a binary add, a mode-only or a
+# rename-only change count for nothing, and `git rev-list --count` over-counts
+# every one of them. This reads the same stream, with the same first-parent view
+# of a merge, and applies the same rule; checked by execution against gitleaks
+# 8.28.0 and 8.30.1 over 22 commit shapes and a 4556-commit range (2026-09-21).
+# The cost is a second patch read, about what gitleaks' own read costs. The
+# `commit` header line is the format's own: no line of a patch begins with
+# `commit `. A git older than 2.31 rejects --diff-merges, for gitleaks' log and
+# for this one alike: refused, not skipped.
+# --no-color, here and on gitleaks' own log (scan_credentials): with color.ui
+# or color.diff set to always, git colours `log -p` written to a pipe, gitleaks
+# finds no file header in the coloured stream and reports 0 commits with no ERR
+# line, and a count read from the same coloured stream agreed with it, so a
+# credential passed both conditions (found by execution, 2026-09-21). Each read
+# asks git for a plain stream of its own; an option on the log outranks the
+# config in every scope.
+scannable_commits() {   # <rev-list argument list>
+    git log --no-color -p -U0 --format='commit %H' --diff-merges=first-parent "$@" | awk '
+        /^commit [0-9a-f]+$/       { c = $2; f = 0; next }
+        /^diff --git /             { f = 1; skip = 0; next }
+        f && /^deleted file mode / { skip = 1; next }
+        f && /^Binary files /      { skip = 1; next }
+        f && /^@@/ && !skip && !(c in seen) { seen[c] = 1; n++ }
+        END { print n + 0 }'
+}
+
 scan_credentials() {
     [ -n "${ROMP_NO_GITLEAKS:-}" ] && return 0
 
-    local gl root cfg range rc _local_ref local_sha _remote_ref remote_sha
+    local gl root cfg range rc local_ref local_sha _remote_ref remote_sha log plain err expected reported
     gl="${ROMP_GITLEAKS:-$(command -v gitleaks || true)}"
     if [ -z "$gl" ] || [ ! -x "$gl" ]; then
         # Loud rather than silent, but not a blocker: requiring an install to
@@ -487,17 +552,27 @@ scan_credentials() {
     cfg=()
     [ -f "$root/.gitleaks.toml" ] && cfg=(--config "$root/.gitleaks.toml")
 
-    while read -r _local_ref local_sha _remote_ref remote_sha; do
+    while read -r local_ref local_sha _remote_ref remote_sha; do
         [ -n "${local_sha:-}" ] || continue
         [ "$local_sha" = "$zero" ] && continue      # deleting a remote ref pushes nothing
-        # The range has to resolve in THIS clone before gitleaks sees it: handed
+        # The range has to RESOLVE in this clone before gitleaks sees it: handed
         # a sha git cannot find (a force-push over a remote tip nobody fetched),
-        # gitleaks logs git's error, scans no commits and exits 0, and the push
-        # would go out unscanned. The identifier scan falls back to everything
-        # the pushed tip reaches; so does this one.
+        # gitleaks' git log fails, and the identifier scan falls back to
+        # everything the pushed tip reaches; so does this one. That is all this
+        # probe covers. What gitleaks did with the range it was given (a git
+        # that ran but failed, or wrote to stderr; a log that came up short) is
+        # read from its own log after the scan, below, not from its exit status.
         range="$(rev_range "$local_sha" "$remote_sha")"
         # shellcheck disable=SC2086  # the range is deliberately word-split
         git rev-list $range >/dev/null 2>&1 || range="$local_sha"
+        # The commits gitleaks should count over that range, read before the scan
+        # so a range this git cannot read is refused on a line of its own.
+        # shellcheck disable=SC2086  # the range is deliberately word-split
+        rc=0; expected=$(scannable_commits $range) || { rc=$?; expected=""; }
+        if [ "$rc" -ne 0 ]; then
+            unscanned "the COMMITS of $local_ref (${local_sha:0:10}) could not be counted for the credential scan (git log exited $rc)"
+            failed_creds=1
+        fi
         # -v prints the file, line and rule; without it gitleaks reports only a
         # COUNT, which says a push was refused but not what to fix. --redact
         # keeps the secret itself out of terminal scrollback: the location is
@@ -509,16 +584,47 @@ scan_credentials() {
         # during a conflict resolution (in neither parent, only the merge tree)
         # would be scanned by nothing. The first-parent diff of each merge
         # surfaces exactly that content; non-merges are unaffected.
+        # --no-color: the colour road (scannable_commits' comment): gitleaks'
+        # git, given a plain stream, scans what the hook's count counts.
         # ${cfg[@]+...}: an empty array expands to nothing under set -u in
         # every bash, the 3.2 that macOS ships included.
+        # gitleaks' stdout (the findings, under -v) goes to stderr as it is
+        # written; its stderr, the log, is captured and shown after it, because
+        # the verdict is read from the log (the header): gitleaks logs its git's
+        # stderr at ERR and then reports the commits it did read as if the scan
+        # were whole. The colour codes it writes even off a terminal are stripped
+        # from the copy that is read, not from the copy shown.
         rc=0
-        "$gl" git "$root" --no-banner --redact -v --exit-code 2 ${cfg[@]+"${cfg[@]}"} \
-            --log-opts="$range --diff-merges=first-parent" >&2 || rc=$?
+        log=$( { "$gl" git "$root" --no-banner --redact -v --exit-code 2 ${cfg[@]+"${cfg[@]}"} \
+            --log-opts="$range --diff-merges=first-parent --no-color" 2>&1 1>&3; } 3>&2 ) || rc=$?
+        [ -z "$log" ] || printf '%s\n' "$log" >&2
         case $rc in
             0) ;;
             2) blocked_creds=1 ;;
             *) failed_scan=1; failed_creds=1 ;;
         esac
+        # A scan gitleaks reports (exit 0 or 2) is whole only on its own evidence:
+        # no line at its ERR level (`<time> ERR <message>`; its git's stderr
+        # comes back as `[git] <line>`), and a reported count equal to the
+        # hook's. An absent count line is no evidence either. Both refuse as
+        # unscanned, with the scanner's advice; a finding beside them still
+        # prints its own.
+        if [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ]; then
+            plain=$(printf '%s\n' "$log" | sed $'s/\e\\[[0-9;]*m//g')
+            err=$(printf '%s\n' "$plain" | awk '$2 == "ERR" { sub(/^[^ ]+ ERR /, ""); print; exit }')
+            if [ -n "$err" ]; then
+                unscanned "the CREDENTIAL scan of $local_ref (${local_sha:0:10}) did not complete: gitleaks logged an error ($err)"
+                failed_creds=1
+            fi
+            reported=$(printf '%s\n' "$plain" | awk '$2 == "INF" && $4 == "commits" && $5 == "scanned." { print $3; exit }')
+            if [ -z "$reported" ]; then
+                unscanned "the CREDENTIAL scan of $local_ref (${local_sha:0:10}) reported no commit count, so what it read is unknown"
+                failed_creds=1
+            elif [ -n "$expected" ] && [ "$reported" != "$expected" ]; then
+                unscanned "the CREDENTIAL scan of $local_ref (${local_sha:0:10}) covered $reported of the $expected commits with content to scan"
+                failed_creds=1
+            fi
+        fi
     done <<< "$refs"
 
     if [ "$blocked_creds" -ne 0 ]; then
