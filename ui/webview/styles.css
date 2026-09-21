@@ -2968,10 +2968,18 @@ a.ut-link:hover { filter: brightness(1.12); text-decoration: none; }
    stands and kept so the shrink survives a change to it, as .bg-list and .cmt-msgs write it), and a short window (the
    keyboard up; both builders toggle kb-tight on this window's own resize, as the picker does) pins the sheet to the
    top under the picker's 12px frame so the buttons sit above the keyboard. The picker's kb-tight rules on
-   .picker-overlay reach this overlay through the class it shares (the dvh cap, overflow-y auto on the box). */
+   .picker-overlay reach this overlay through the class it shares (the dvh cap, overflow-y auto on the box).
+   A fourth rule, the box's own scroll at EVERY height (the maintainer's round 1 ruling): the shared .picker-box is
+   overflow hidden and scrolls only under the fold, so above 480px a row laid out past the box's cap was clipped, and
+   clipped content is not hit-testable. At 390x508 with the keyboard up, a wrapped ask with both chips and an answer
+   grown to the window-share cap put Cancel and Send below the clip, and a tap where Send was painted fell on the
+   backdrop, which closes the sheet: the typed answer was gone. The box scrolls instead, whatever the window's height;
+   the grow handlers in both builders cap the answer at the room the box has left (read from the box, never from the
+   window), so the scroll is the backstop for the state the floors alone overflow, never the everyday path. */
 #ut-reply-prompt .ut-reply-input { flex: 0 0 auto; min-height: calc(3lh + 16px); }
 #ut-reply-prompt .ut-detail.open { flex: 1 1 auto; min-height: 0; max-height: min(12em, 35dvh); overflow-y: auto; overscroll-behavior: contain; }
 #ut-reply-prompt.kb-tight { align-items: flex-start; padding: 12px 16px; }
+#ut-reply-prompt .picker-box { overflow-y: auto; }
 
 /* ---------- postal cards (romp peer mail) + teammate messages ---------- */
 /* Both are THE notice since 2026-09-08 (renderPostalService / renderTeammate): a peer's mail wears its

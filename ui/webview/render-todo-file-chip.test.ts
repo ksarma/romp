@@ -73,6 +73,7 @@ class Elm {
   tagName: string;
   className = ""; title = ""; id = ""; role = ""; tabIndex = -1; type = ""; placeholder = ""; rows = 0; value = "";
   dataset: Record<string, string | undefined> = {};
+  style: Record<string, string> = {};   // the Reply modal's grow handler writes style.height (a fake with no layout to measure: it clears it again)
   parentElement: Elm | null = null;
   childNodes!: Kid[];
   listeners: Record<string, Array<(ev: unknown) => void>> = {};

@@ -306,9 +306,10 @@ function showReply(sid: string, todoId: string, todoText: string, todoDetail = "
   // line). The shell sizes this iframe to the VISIBLE height, so the on-screen keyboard opening or closing lands here as
   // this window's own resize — the picker's fold (render.ts kbFit), on this overlay: short window → kb-tight, and
   // styles.css pins the sheet to the top under a 12px frame and lets the box scroll (#ut-reply-prompt.kb-tight, the
-  // .picker-overlay.kb-tight rules the class shares). Gone with the modal: close() drops it, and it drops itself when
-  // the overlay was removed some other way (a second Reply replacing this one), as onFocus does.
-  const kbFit = () => { if (!overlay.isConnected) { window.removeEventListener("resize", kbFit); return; } overlay.classList.toggle("kb-tight", window.innerHeight < 480); };
+  // .picker-overlay.kb-tight rules the class shares). The same resize re-runs grow: the answer's cap is the room the
+  // box has left, and the keyboard opening or closing changes the room. Gone with the modal: close() drops it, and it
+  // drops itself when the overlay was removed some other way (a second Reply replacing this one), as onFocus does.
+  const kbFit = () => { if (!overlay.isConnected) { window.removeEventListener("resize", kbFit); return; } overlay.classList.toggle("kb-tight", window.innerHeight < 480); grow(); };
   const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey, true); window.removeEventListener("focus", onFocus); window.removeEventListener("resize", kbFit); };
   const go = () => {
     const text = input.value.trim();
@@ -321,10 +322,24 @@ function showReply(sid: string, todoId: string, todoText: string, todoDetail = "
   send.addEventListener("click", go);
   input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); go(); } });
   input.addEventListener("input", () => input.classList.remove("bad"));
-  // the box grows with the answer (render.ts growComposer, the composer's precedent): height auto measures the floor —
+  // the box grows with the answer (render.ts growComposer's auto-then-measure idiom): height auto measures the floor —
   // three rows (rows=3; styles.css min-height) — then the content's scroll height plus the border a border-box height
-  // carries, capped at a share of the window so Cancel and Send stay in the box; never under the floor, whatever the cap
-  const grow = () => { input.style.height = "auto"; const floor = input.offsetHeight; input.style.height = Math.max(floor, Math.min(input.scrollHeight + floor - input.clientHeight, Math.round(window.innerHeight * 0.4))) + "px"; };
+  // carries. The cap is the ROOM the box has left, read from the box itself, never a share of the window (the
+  // maintainer's round 1 ruling: a window-share cap laid Cancel and Send out below the box's clip at 390x508 with the
+  // keyboard up, and a tap there fell on the backdrop): the wanted height is written, the box's overflow past its own
+  // cap read, and the height gives that overflow back, never under the floor. Run on the window's resize too (kbFit),
+  // so a keyboard opening or closing re-fits an answer already grown; the box's own scroll (styles.css
+  // #ut-reply-prompt .picker-box) is the backstop for a window the floors alone overflow. render.ts showUserTodoReply
+  // carries the same block, byte for byte (reply-sheet-keyboard.test.ts pins the two equal).
+  const grow = () => {
+    input.style.height = "auto";
+    const floor = input.offsetHeight;
+    if (!(floor > 0)) { input.style.height = ""; return; }   // no layout to measure (a box not laid out): no inline height
+    const want = input.scrollHeight + floor - input.clientHeight;
+    input.style.height = want + "px";
+    const over = box.scrollHeight - box.clientHeight;   // the box past its own cap with the answer at its content's height
+    if (over > 0) input.style.height = Math.max(floor, want - over) + "px";
+  };
   input.addEventListener("input", grow);
   overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
   box.append(h, d); if (chip) box.appendChild(chip); if (lchip) box.appendChild(lchip); if (dd) box.appendChild(dd); box.append(input, actions);

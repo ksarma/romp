@@ -50,8 +50,16 @@ function line(src: string, re: RegExp, what: string, name: string): string {
 const KBFIT = /^\s*const kbFit = .*$/m;
 const CLOSE = /^\s*const close = .*$/m;
 const KB_ARM = /window\.addEventListener\("resize", kbFit\);\n\s*kbFit\(\);/;
-const GROW = /^\s*const grow = .*$/m;
 const GROW_ARM = /input\.addEventListener\("input", grow\);/;
+// the grow handler is a BLOCK (its head, its statements, the `};` that closes it), sliced whole; a builder whose head or
+// close moved is a loud failure here, and the browser legs slice the same block
+function growBlock(src: string, name: string): string {
+  const head = src.indexOf("\n  const grow = () => {\n");
+  assert.ok(head >= 0, "the grow block's head not found in " + name + ": re-anchor");
+  const end = src.indexOf("\n  };\n", head);
+  assert.ok(end > head, "the grow block's close not found in " + name + ": re-anchor");
+  return src.slice(head + 1, end + "\n  };".length);
+}
 
 // an EventTarget stand-in for the window: listeners by type, every removal recorded, one type fired at a time; the
 // dispatch walks a COPY of the set, as the DOM does, so a listener that removes itself mid-dispatch runs to its end.
@@ -70,15 +78,18 @@ const makeNode = nodeFactory();
 // ── the fold, executed out of each builder ───────────────────────────────────────────────────────
 type Fold = { kbFit: () => void; close: () => void };
 // the kbFit line, the close line and the arming lines, run with the names they read handed in: the overlay (a shim
-// node under a body, so isConnected is the tree's answer), the window stand-in, and stand-ins for the other names
-// the close line removes (onKey, onFocus) and the document it removes them from
-function fold(name: string, src: string, overlay: unknown, win: Win): Fold & { doc: Win } {
+// node under a body, so isConnected is the tree's answer), the window stand-in, stand-ins for the other names the
+// close line removes (onKey, onFocus) and the document it removes them from, and grow, the answer box's handler kbFit
+// re-runs on the same resize (the room the box has left changes with the window), as a counter
+function fold(name: string, src: string, overlay: unknown, win: Win): Fold & { doc: Win; grown: () => number } {
   const doc = new Win();
+  let grown = 0;
+  const grow = () => { grown++; };
   const body = line(src, KBFIT, "the kbFit line", name) + "\n" + line(src, CLOSE, "the close line", name) + "\n" + line(src, KB_ARM, "the arming lines", name) + "\nreturn { kbFit, close };";
   const onKey = () => { /* the modal's Escape handler, by reference only */ };
   const onFocus = () => { /* waiting.ts's focus-return listener, by reference only */ };
-  const r = new Function("overlay", "window", "document", "onKey", "onFocus", body)(overlay, win, doc, onKey, onFocus) as Fold;
-  return { ...r, doc };
+  const r = new Function("overlay", "window", "document", "onKey", "onFocus", "grow", body)(overlay, win, doc, onKey, onFocus, grow) as Fold;
+  return { ...r, doc, grown: () => grown };
 }
 function world() {
   const body = makeNode("body"), overlay = makeNode("div");
@@ -91,15 +102,18 @@ for (const [name, src] of BUILDERS) {
   test(`${name}: kb-tight follows this window's height — on under 480px at open and on every resize, off again with the room back`, () => {
     const w = world();
     w.win.innerHeight = 420;   // the keyboard already up when Reply is tapped
-    fold(name, src, w.overlay, w.win);
+    const f = fold(name, src, w.overlay, w.win);
     assert.equal(w.win.count("resize"), 1, "one resize listener armed");
     assert.equal(w.tight(), true, "synced at open: a short window folds before any resize");
+    assert.equal(f.grown(), 1, "the open's own kbFit() fits the answer box once: the room is read with the box in the document");
     w.win.innerHeight = 900; w.win.fire("resize");
     assert.equal(w.tight(), false, "the keyboard down (or a tall screen): the fold comes off on the same event");
+    assert.equal(f.grown(), 2, "the same resize re-fits the answer box: its cap is the room, which the window's height changes");
     w.win.innerHeight = 479; w.win.fire("resize");
     assert.equal(w.tight(), true, "479px is short: the picker's threshold, shared");
     w.win.innerHeight = 480; w.win.fire("resize");
     assert.equal(w.tight(), false, "480px is not");
+    assert.equal(f.grown(), 4, "one grow per resize while the modal is up");
     assert.equal(w.win.count("resize"), 1, "the listener stays for the next resize while the modal is up");
     assert.equal(w.overlay.isConnected, true, "the fold never removes the modal");
   });
@@ -129,6 +143,7 @@ for (const [name, src] of BUILDERS) {
     assert.equal(w.overlay.isConnected, false);
     w.win.innerHeight = 420; w.win.fire("resize");
     assert.equal(w.tight(), false, "a modal that is gone is not folded");
+    assert.equal(f.grown(), 1, "and its answer box is not re-fitted: only the open's own fit is on record");
     assert.equal(w.win.count("resize"), 0, "the listener removed itself");
     assert.deepEqual(w.win.removed.map(([t, fn]) => [t, fn === f.kbFit]), [["resize", true]], "by its own reference");
     w.win.fire("resize");
@@ -150,18 +165,29 @@ function inputNode(geom: { offset: number; client: number; scroll: number }) {
   Object.defineProperty(input, "scrollHeight", { get: () => geom.scroll, configurable: true });
   return { input, writes, geom };
 }
-function grower(name: string, src: string, input: unknown, win: Win): () => void {
-  const body = line(src, GROW, "the grow line", name) + "\n" + line(src, GROW_ARM, "the grow arming line", name) + "\nreturn grow;";
-  return new Function("input", "window", body)(input, win) as () => void;
+// the box (.picker-box.confirm-box) as the handler reads it: its scroll height against its client height is the content
+// past the cap, the room the answer does not have; a stand-in whose two numbers are the test's input. The handler writes
+// the wanted height FIRST and reads the box after it, so a stand-in that answers a fixed overflow models a box whose
+// content, with the answer at that height, runs `over` past its cap
+function boxNode(geom: { scroll: number; client: number }) {
+  const box = makeNode("div");
+  Object.defineProperty(box, "scrollHeight", { get: () => geom.scroll, configurable: true });
+  Object.defineProperty(box, "clientHeight", { get: () => geom.client, configurable: true });
+  return { box, geom };
+}
+function grower(name: string, src: string, input: unknown, box: unknown, win: Win): () => void {
+  const body = growBlock(src, name) + "\n" + line(src, GROW_ARM, "the grow arming line", name) + "\nreturn grow;";
+  return new Function("input", "box", "window", body)(input, box, win) as () => void;
 }
 
 for (const [name, src] of BUILDERS) {
-  test(`${name}: the box grows with the answer from height auto, to the content's height plus the border; never under the three-row floor, capped at a share of the window`, () => {
+  test(`${name}: the box grows with the answer from height auto, to the content's height plus the border; never under the three-row floor; capped at the ROOM the box has left, read from the box`, () => {
     // laid out at height auto the box is its floor: three rows of text, the padding and the 1px borders (78px of
-    // border-box; 76px inside the border)
+    // border-box; 76px inside the border); the sheet's box fits its content (no overflow)
     const g = inputNode({ offset: 78, client: 76, scroll: 76 });
+    const b = boxNode({ scroll: 400, client: 400 });
     const win = new Win(); win.innerHeight = 900;
-    const grow = grower(name, src, g.input, win);
+    const grow = grower(name, src, g.input, b.box, win);
     assert.equal(g.input._listeners.input === grow, true, "armed on the box's input event");
     g.input._listeners.input({ type: "input" });
     assert.deepEqual(g.writes, ["auto", "78px"], "measured at auto first, then the floor: an empty box is three rows");
@@ -169,19 +195,31 @@ for (const [name, src] of BUILDERS) {
     // reads scrollHeight the same way; the border is what a bare scrollHeight would leave as a one-line scroll)
     g.writes.length = 0; g.geom.scroll = 200;
     grow();
-    assert.deepEqual(g.writes, ["auto", "202px"], "grows to the content: 200px of content and padding plus the 2px of border");
-    // the cap: a share of the window, so Cancel and Send stay in the box on a phone
-    g.writes.length = 0; g.geom.scroll = 5000; win.innerHeight = 508;
+    assert.deepEqual(g.writes, ["auto", "202px"], "grows to the content: 200px of content and padding plus the 2px of border; the box fit it, so the wanted height stands");
+    // the cap is the room: with the answer at its content's height the box runs past its own cap, and the answer gives
+    // exactly that overflow back, so Cancel and Send end at the box's bottom edge, inside its clip
+    g.writes.length = 0; g.geom.scroll = 5000; b.geom.scroll = 5300; b.geom.client = 400;
     grow();
-    assert.deepEqual(g.writes, ["auto", Math.round(508 * 0.4) + "px"], "capped at 40% of a 508px window");
-    // the floor beats the cap on a window too short for even three rows' share: never under three rows
+    assert.deepEqual(g.writes, ["auto", "5002px", (5002 - 4900) + "px"], "the wanted height written, the box's 4900px of overflow read, and the height is the wanted less the overflow: the room");
+    // the room does not go under the floor: a box whose fixed rows alone overflow keeps three rows (the box itself scrolls,
+    // styles.css's every-height backstop; that is the browser legs' measurement, not this harness's)
+    g.writes.length = 0; b.geom.scroll = 5390;
+    grow();
+    assert.deepEqual(g.writes, ["auto", "5002px", "78px"], "5002 less 4990 is 12px, under the floor: the floor stands");
+    // the window's height is not what caps the answer: the same box overflow at another window gives the same height
     g.writes.length = 0; win.innerHeight = 150;
     grow();
-    assert.deepEqual(g.writes, ["auto", "78px"], "a 150px window's 40% is 60px, under the floor: the floor stands");
+    assert.deepEqual(g.writes, ["auto", "5002px", "78px"], "a 150px window changes nothing here: the box's own overflow is the input, never window.innerHeight");
+    assert.doesNotMatch(growBlock(src, name), /window\.innerHeight|innerHeight \* 0\.4/, name + ": the handler reads no share of the window");
     // the floor is read from the layout, not a constant: a larger font lays out a taller floor and the handler follows
-    g.writes.length = 0; g.geom.offset = 100; g.geom.client = 98; g.geom.scroll = 98; win.innerHeight = 900;
+    g.writes.length = 0; g.geom.offset = 100; g.geom.client = 98; g.geom.scroll = 98; b.geom.scroll = 400; win.innerHeight = 900;
     grow();
     assert.deepEqual(g.writes, ["auto", "100px"], "the floor is whatever height auto laid out");
+    // a box with no layout to measure (a fake DOM, a display:none box) keeps no inline height: nothing is written past
+    // the measuring auto, as file-comments.ts autosizeComposer stands down when the scroll height reads 0
+    g.writes.length = 0; g.geom.offset = 0; g.geom.client = 0; g.geom.scroll = 0;
+    grow();
+    assert.deepEqual(g.writes, ["auto", ""], "no layout: the measuring auto, then the inline height cleared");
   });
 }
 
@@ -189,10 +227,12 @@ for (const [name, src] of BUILDERS) {
 test("the two builders stay twins for this fix: the same kbFit line, the same grow line, the same threshold as the picker's fold", () => {
   const [[, w], [, r]] = BUILDERS;
   assert.equal(line(w, KBFIT, "kbFit", "waiting.ts").trim(), line(r, KBFIT, "kbFit", "render.ts").trim(), "one kbFit line in both builders");
-  assert.equal(line(w, GROW, "grow", "waiting.ts").trim(), line(r, GROW, "grow", "render.ts").trim(), "one grow line in both builders");
+  assert.equal(growBlock(w, "waiting.ts"), growBlock(r, "render.ts"), "one grow block in both builders, byte for byte");
   for (const [name, src] of BUILDERS) {
     assert.match(line(src, KBFIT, "kbFit", name), /overlay\.classList\.toggle\("kb-tight", window\.innerHeight < 480\)/, name + ": the picker's 480px threshold (render.ts showPicker), so the two folds agree on what a short window is");
     assert.match(line(src, KBFIT, "kbFit", name), /if \(!overlay\.isConnected\) \{ window\.removeEventListener\("resize", kbFit\); return; \}/, name + ": the listener drops itself when the overlay was replaced");
+    assert.match(line(src, KBFIT, "kbFit", name), /window\.innerHeight < 480\); grow\(\); \};$/, name + ": the fold re-runs grow after its own toggle, so the room is read with the fold's cap applied (executed above: one grow per resize)");
+    assert.ok(src.search(KBFIT) < src.indexOf("\n  const grow = () => {\n"), name + ": kbFit is declared before grow and reads it only when called; the first call is kbFit() after the append, past grow's declaration");
     assert.match(line(src, CLOSE, "close", name), /window\.removeEventListener\("resize", kbFit\)/, name + ": close() removes it too");
     const armAt = src.search(KB_ARM), appendAt = src.indexOf("document.body.appendChild(overlay);");
     assert.ok(appendAt >= 0 && armAt > appendAt, name + ": armed after the overlay is in the document, so the first kbFit() reads a connected overlay");
@@ -238,8 +278,15 @@ test("a short window pins the sheet to the top under the picker's 12px frame, on
   assert.match(RENDER, /const kbFit = \(\) => document\.getElementById\("picker"\)\?\.classList\.toggle\("kb-tight", window\.innerHeight < 480\)/, "the picker's own kbFit is untouched");
 });
 
+test("this dialog's box scrolls at EVERY height, on its own selector: the backstop for a window the floors alone overflow", () => {
+  const r = rule("#ut-reply-prompt .picker-box");
+  assert.match(r, /overflow-y: auto;/, "the shared .picker-box is overflow hidden and scrolls only under the fold (480px); above it a row laid out past the cap was clipped and not hit-testable, so a tap where Send was painted fell on the backdrop and closed the sheet with the answer (the maintainer's round 1 ruling); the box scrolls instead, at any height");
+  assert.doesNotMatch(r, /max-height|height:|padding|display/, "the scroll alone: no cap of its own (an id-scoped max-height would outrank the fold's calc(100dvh - 24px) and widen this dialog's sizing)");
+  assert.equal(r.replace(/\s+/g, " ").trim(), "#ut-reply-prompt .picker-box { overflow-y: auto; }", "one declaration, so the shared box rule's other declarations reach this dialog unchanged");
+});
+
 test("the fix adds no font-size and touches no shared dialog rule", () => {
-  for (const sel of ["#ut-reply-prompt .ut-reply-input", "#ut-reply-prompt .ut-detail.open", "#ut-reply-prompt.kb-tight"]) {
+  for (const sel of ["#ut-reply-prompt .ut-reply-input", "#ut-reply-prompt .ut-detail.open", "#ut-reply-prompt.kb-tight", "#ut-reply-prompt .picker-box"]) {
     assert.doesNotMatch(rule(sel), /font-size/, sel + ": no new font-size (ui/CLAUDE.md: reuse a size already on the surface)");
     assert.equal((CSS.match(new RegExp("\\n" + sel.replace(/[.#]/g, "\\$&") + " \\{", "g")) || []).length, 1, sel + " is declared once");
   }

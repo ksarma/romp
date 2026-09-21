@@ -1,19 +1,29 @@
-// The chat pane's Reply sheet (render.ts showUserTodoReply, the twin of waiting.ts showReply) on a phone with the
-// keyboard up, in a real engine (the user 2026-09-19, screenshot; waiting-reply-sheet-browser.test.ts is the pane's
-// leg, reply-sheet-keyboard.test.ts the rules and the executed closures). The chat page loads styles.css alone, and
-// render.ts is not bundled for a test page; so, as render-todo-file-chip-sheet.test.ts does, the page is the sheet as
-// showUserTodoReply builds it — the title, the quoted line, .ut-detail.open with a forty-line detail, the rows=3
-// textarea, Cancel and Send — and the fold and the grow handler are the builder's OWN LINES, sliced out of render.ts's
-// source and run in the page against the real overlay and textarea: kbFit and its arming, grow and its arming.
+// The chat pane's Reply sheet (render.ts showUserTodoReply; waiting.ts showReply is the Waiting pane's builder) on a
+// phone with the keyboard up, in a real engine (the user 2026-09-19, screenshot; waiting-reply-sheet-browser.test.ts
+// is the pane's leg, reply-sheet-keyboard.test.ts the rules and the executed closures). The chat page loads styles.css
+// alone, and render.ts is not bundled for a test page; so the sheet in the page is the REAL builder's output:
+// showUserTodoReply and the two chip builders are lifted out of render.ts by name (the render-todo-file-chip.test.ts
+// idiom) and bundled with the modules they import (path-links, url-links), the other names they read from render.ts's
+// scope handed in as stand-ins (el; the URL pass alone for the two path linkers and nothing for the PR-ref linker, since
+// paths and PR refs are not under test; a vscodeApi that RECORDS every postMessage on the window, so a Send is
+// observable as the message it posts). The builder's own kbFit, grow, close, go and the backdrop's click run as written.
 //
-// The browser legs (Chromium, Firefox, and WebKit when the box has them; CI installs none, so they skip LOUDLY) open
-// the page at the phone's width and drive the viewport's HEIGHT as the keyboard would (inside the shell the chat
-// iframe is sized to the visible height, so its innerHeight is the keyboard's signal). At 508px, above the fold's
-// threshold: the answer box holds three rows (a probe textarea of the same class outside the sheet gives the exact
-// three-row height; on the base tree the box was a sliver, the assertion that goes red there), the detail overflows
-// its cap and scrolls within itself, the buttons' bottom edge is inside the viewport. At 420px the fold is on from
-// the window's own resize: the sheet sits at the top under the 12px frame, three rows still, the buttons reachable.
-// Typing grows the box, capped; clearing returns it to the floor. At 900px the fold is off. Synthetic fixtures only.
+// THE COMPOSITION (the maintainer's round 1 ruling): at 390 by 508 with the keyboard up, a wrapped ask carrying both
+// chips inside the quoted line, a forty-line detail and an answer grown to the cap, the round-1 tree laid Cancel and
+// Send out below the box's clip (the answer box grown to a share of the WINDOW, the box overflow hidden above the fold's
+// 480px); clipped content is not hit-testable, so a tap where Send was painted fell on the backdrop, whose click closes
+// the sheet: the typed answer was gone. The assembled sheet is measured with a finger where Send is painted: Send and
+// Cancel inside the box's clip and the viewport, elementFromPoint at Send's centre IS Send, a real click there posts
+// the userTodoAnswer message and closes the sheet by the send, never by the backdrop. The answer's cap is the room the
+// box has left, read from the box, and the box scrolls at every height (#ut-reply-prompt .picker-box), so the same is
+// measured after the answer has grown and the window then shrinks (900 to 508 and 420: kbFit re-runs grow), at 420
+// under the fold, at 490 with a todo that has no detail, and at 900.
+//
+// The browser legs (Chromium, Firefox, and WebKit when the box has them) open the page at the phone's width and drive
+// the viewport's HEIGHT as the keyboard would (inside the shell the chat iframe is sized to the visible height, so its
+// innerHeight is the keyboard's signal). Where they skip, the served leg tests/test_reply_sheet_served.py runs the same
+// composition against the served chat page in CI's browser step. Synthetic fixtures only: a placeholder sid, an
+// invented path.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -25,81 +35,113 @@ const EXT = process.cwd();                                        // npm test ru
 const UI = path.resolve(EXT, "..", "ui", "webview");
 const STYLES_CSS = fs.readFileSync(path.join(UI, "styles.css"), "utf8");
 const RENDER = fs.readFileSync(path.join(UI, "render.ts"), "utf8");
-const MODAL = RENDER.slice(RENDER.indexOf("function showUserTodoReply("), RENDER.indexOf("// ── COMMENT THREADS"));
-assert.ok(MODAL.length > 200, "showUserTodoReply's slice was found");
 
-// the builder's lines, by regexes (reply-sheet-keyboard.test.ts slices the same ones). A line not found is recorded, not
-// thrown here: the page is built with what was found, so that on a tree without the fix the leg reaches the geometry and
-// goes red on the squeezed answer box first (the defect), and the test asserts the slices right after that block, so a
-// moved anchor is still a loud failure at the head
-const MISSING: string[] = [];
-const line = (re: RegExp, what: string): string => { const m = MODAL.match(re); if (!m) { MISSING.push(what); return ""; } return m[0]; };
-const KBFIT = line(/^\s*const kbFit = .*$/m, "the kbFit line");
-const KB_ARM = line(/window\.addEventListener\("resize", kbFit\);\n\s*kbFit\(\);/, "the fold's arming lines");
-const GROW = line(/^\s*const grow = .*$/m, "the grow line");
-const GROW_ARM = line(/input\.addEventListener\("input", grow\);/, "the grow arming line");
+// one top-level function of render.ts, whole, by name (render-todo-file-chip.test.ts liftRender)
+function lift(name: string): string {
+  const at = RENDER.indexOf("\nfunction " + name + "(");
+  const end = RENDER.indexOf("\n}\n", at);
+  assert.ok(at > 0 && end > at, "anchor not found: render.ts's " + name + " moved; re-anchor");
+  return RENDER.slice(at, end + 3);
+}
+// the sheet's builder and the two chip builders, as render.ts has them, bundled for the page with the modules they
+// import and stand-ins for the rest of the scope they read
+function sheetBundle(): string {
+  const esbuild = requireCjs("esbuild");
+  const entry = [
+    'import { openPathLink } from "./path-links";',
+    'import { urlChip, linkifyUrls } from "./url-links";',
+    "declare const window: any;",
+    "const el = (tag: string, cls?: string): HTMLElement => { const e = document.createElement(tag); if (cls) e.className = cls; return e; };",
+    "const linkTodoLinePaths = (node: HTMLElement, _sid: string | null): void => { linkifyUrls(node); };",
+    "const linkTodoDetailPaths = (node: HTMLElement, _sid: string | null): void => { linkifyUrls(node); };",
+    "const linkifyPrRefs = (_node: HTMLElement, _repo: string | null): void => { /* not under test */ };",
+    "const prRepoFor = (_sid: string): string | null => null;",
+    "const vscodeApi = { postMessage: (m: unknown) => { (window.__posted = window.__posted || []).push(m); } };",
+    lift("todoFileChip"), lift("todoLinkChip"), lift("showUserTodoReply"),
+    "window.__openReply = showUserTodoReply;",
+  ].join("\n");
+  const r = esbuild.buildSync({
+    stdin: { contents: entry, resolveDir: UI, loader: "ts", sourcefile: "reply-sheet-page.ts" },
+    bundle: true, write: false, format: "iife", platform: "browser", target: "es2020",
+    nodePaths: [path.join(EXT, "node_modules")], logLevel: "silent",
+  });
+  return r.outputFiles[0].text;
+}
 
+// synthetic fixtures: the notes-api demo's question, a forty-line detail; the composition fixture's wrapped ask, file and
+// address, its detail's first line carrying an address; a todo with no detail
+const SID = "11111111-2222-3333-4444-555555555555";
 const TEXT = "Which layout should the quarterly report use?";
 const DETAIL = Array.from({ length: 40 }, (_, i) => `Option ${i + 1}: the summary section leads and the tables follow, with the notes folded under each table.`).join("\n");
+const LONG_TEXT = "Which layout should the quarterly report use for the regional tables, the summary section and the appendix, given that the notes under each table now run to several lines and the reviewers asked for the totals to lead every page rather than close it?";
+const FILE = "/srv/notes-api/docs/quarterly-report-layout.md";
+const LINK = "https://github.com/example-org/notes-api/pull/398";
+const LINKED_DETAIL = "The earlier draft is at https://github.com/example-org/notes-api/pull/398 and the reviewers' notes follow.\n" + DETAIL;
+type Todo = { id: string; text: string; detail?: string; file?: string; link?: string };
+const TODOS: Todo[] = [
+  { id: "t1", text: TEXT, detail: DETAIL },
+  { id: "t2", text: LONG_TEXT, detail: LINKED_DETAIL, file: FILE, link: LINK },
+  { id: "t3", text: TEXT },
+];
+const ANSWER = (n: number) => Array.from({ length: n }, (_, i) => `line ${i + 1}`).join("\n");
 const PHONE_W = 390;
 const KEYBOARD_UP = 508;   // above the fold's threshold: the squeeze fix alone
 const KEYBOARD_TIGHT = 420;   // under it: the fold too
+const ONSET = 490;   // the shared box rule's clip band began here (extra9-2's refuter): above the fold, under the old clip
 const TALL = 900;
-const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
-// the chat page: an empty transcript and the Reply sheet as showUserTodoReply builds it, open, with the builder's own
-// fold and grow lines run against it
-const PAGE_HTML = `<!DOCTYPE html><html><head><meta charset=utf-8><link href=/dist/styles.css rel=stylesheet></head><body>
+// the chat page: an empty transcript, the builder's bundle; the test opens the sheet through window.__openReply
+const PAGE_HTML = (js: string) => `<!DOCTYPE html><html><head><meta charset=utf-8><link href=/dist/styles.css rel=stylesheet></head><body>
 <div id="content"></div>
-<div class="picker-overlay confirm-overlay" id="ut-reply-prompt"><div class="picker-box confirm-box">
-<div class="confirm-title">Reply</div>
-<div class="confirm-detail ut-reply-quote">${esc(TEXT)}</div>
-<div class="ut-detail open">${esc(DETAIL)}</div>
-<textarea class="ut-reply-input" rows="3" placeholder="Your answer — it goes straight to the session…"></textarea>
-<div class="confirm-actions"><button class="picker-action confirm-btn">Cancel</button><button class="picker-action confirm-btn">Send</button></div>
-</div></div>
-<script>(function () {
-  const overlay = document.getElementById("ut-reply-prompt");
-  const input = overlay.querySelector(".ut-reply-input");
-${KBFIT}
-${GROW}
-  ${GROW_ARM}
-  ${KB_ARM}
-})();</script></body></html>`;
+<script>${js}</script></body></html>`;
 
 let pw: any = null;
 try { pw = requireCjs("playwright"); } catch { pw = null; }
 
+type Rect = { top: number; bottom: number; left: number; right: number };
 type Sheet = {
   frameH: number; tight: boolean; alignItems: string; paddingTop: string;
-  inputH: number; floorH: number; lineHeight: string;
+  inputH: number; floorH: number; lineHeight: string; inputStyleH: string;
   detailScrollH: number; detailClientH: number; detailOverflowY: string;
-  actionsBottom: number; boxBottom: number; boxScrollH: number; boxClientH: number; boxOverflowY: string;
+  actionsBottom: number; boxTop: number; boxBottom: number; boxScrollH: number; boxClientH: number; boxOverflowY: string;
+  sendRect: Rect; cancelRect: Rect; hitAtSend: string; hitAtCancel: string; kinds: string[]; quoteChips: string[];
 };
+const rectOf = (r: Rect) => `${r.top.toFixed(1)}..${r.bottom.toFixed(1)}`;
+const centre = (r: Rect) => ({ x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2 });
 
 async function boot(browser: any) {
   const errors: string[] = [];
+  const js = sheetBundle();
   const page = await browser.newPage({ viewport: { width: PHONE_W, height: KEYBOARD_UP } });
   page.on("pageerror", (e: Error) => { errors.push(e.message); });
   await page.route("http://romp.test/**", (route: any) => {
     const u = new URL(route.request().url());
-    if (u.pathname === "/chat") return route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: PAGE_HTML });
+    if (u.pathname === "/chat") return route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: PAGE_HTML(js) });
     if (u.pathname === "/dist/styles.css") return route.fulfill({ status: 200, contentType: "text/css; charset=utf-8", body: STYLES_CSS });
     return route.fulfill({ status: 404, body: "" });
   });
   await page.goto("http://romp.test/chat");
+  const settle = () => page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
   // the keyboard: the viewport's height, which the page's window sees as its own resize
   const setHeight = async (h: number) => {
     await page.setViewportSize({ width: PHONE_W, height: h });
     await page.waitForFunction((hh: number) => window.innerHeight === hh, h, { timeout: 10000 });
+    await settle();
   };
   const measure = (): Promise<Sheet | null> => page.evaluate(() => {
     const overlay = document.getElementById("ut-reply-prompt");
     if (!overlay) return null;
     const box = overlay.querySelector(".confirm-box") as HTMLElement;
     const input = overlay.querySelector(".ut-reply-input") as HTMLTextAreaElement;
-    const detail = overlay.querySelector(".ut-detail") as HTMLElement;
+    const detail = overlay.querySelector(".ut-detail") as HTMLElement | null;
+    const quote = overlay.querySelector(".ut-reply-quote") as HTMLElement;
     const actions = overlay.querySelector(".confirm-actions") as HTMLElement;
+    const [cancel, send] = Array.from(actions.querySelectorAll("button")) as HTMLElement[];
     const cs = (e: Element) => getComputedStyle(e);
+    const rect = (e: Element) => { const r = e.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right }; };
+    const hit = (e: HTMLElement) => {
+      const r = e.getBoundingClientRect(); const at = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2);
+      return at === e ? "target" : at === overlay ? "overlay" : at === box ? "box" : at ? ((at as HTMLElement).className || at.tagName).split(" ")[0] : "none";
+    };
     // the three-row height in THIS engine: a probe of the same class, rows=3, outside the sheet where nothing squeezes it
     const probe = document.createElement("textarea"); probe.className = "ut-reply-input"; probe.rows = 3;
     document.body.appendChild(probe);
@@ -107,31 +149,70 @@ async function boot(browser: any) {
     probe.remove();
     return {
       frameH: window.innerHeight, tight: overlay.classList.contains("kb-tight"), alignItems: cs(overlay).alignItems, paddingTop: cs(overlay).paddingTop,
-      inputH: input.clientHeight, floorH, lineHeight: cs(input).lineHeight,
-      detailScrollH: detail.scrollHeight, detailClientH: detail.clientHeight, detailOverflowY: cs(detail).overflowY,
-      actionsBottom: actions.getBoundingClientRect().bottom, boxBottom: box.getBoundingClientRect().bottom,
+      inputH: input.clientHeight, floorH, lineHeight: cs(input).lineHeight, inputStyleH: input.style.height,
+      detailScrollH: detail ? detail.scrollHeight : 0, detailClientH: detail ? detail.clientHeight : 0, detailOverflowY: detail ? cs(detail).overflowY : "",
+      actionsBottom: actions.getBoundingClientRect().bottom, boxTop: box.getBoundingClientRect().top, boxBottom: box.getBoundingClientRect().bottom,
       boxScrollH: box.scrollHeight, boxClientH: box.clientHeight, boxOverflowY: cs(box).overflowY,
+      sendRect: rect(send), cancelRect: rect(cancel), hitAtSend: hit(send), hitAtCancel: hit(cancel),
+      kinds: Array.from(box.children).map((c) => (["wt-file", "wt-link", "ut-file", "ut-link"].find((k) => c.classList.contains(k)) || (c.className || c.tagName).split(" ")[0])),
+      quoteChips: Array.from(quote.querySelectorAll(".ut-file, .ut-link")).map((c) => (c.classList.contains("ut-file") ? "ut-file" : "ut-link")),
     };
   });
+  const openReply = async (t: Todo) => {
+    await page.evaluate(([sid, todo]: [string, Todo]) => { (window as any).__posted = []; (window as any).__openReply(sid, todo.id, todo.text, todo.detail || "", todo.file || "", todo.link || ""); }, [SID, t] as [string, Todo]);
+    await page.locator("#ut-reply-prompt .ut-reply-input").waitFor({ timeout: 10000 });
+    await settle();
+  };
+  const cancelReply = async () => {
+    await page.locator("#ut-reply-prompt .confirm-actions button").first().click();
+    await page.waitForFunction(() => !document.getElementById("ut-reply-prompt"), null, { timeout: 10000 });
+  };
+  const fill = async (text: string) => { await page.locator("#ut-reply-prompt .ut-reply-input").fill(text); await settle(); };
   const waitTight = (on: boolean) => page.waitForFunction((want: boolean) => document.getElementById("ut-reply-prompt")?.classList.contains("kb-tight") === want, on, { timeout: 10000 });
-  return { page, setHeight, measure, waitTight, errors };
+  // the tap: a real click at Send's painted centre, then what the sheet did: is the overlay still up, what was posted
+  const tapSend = async () => {
+    const m = (await measure())!;
+    const c = centre(m.sendRect);
+    const inFrame = c.y >= 0 && c.y <= m.frameH && c.x >= 0 && c.x <= PHONE_W;
+    if (inFrame) await page.mouse.click(c.x, c.y);
+    await settle();
+    const after = await page.evaluate(() => ({
+      overlayUp: !!document.getElementById("ut-reply-prompt"),
+      posted: ((window as any).__posted || []).filter((p: any) => p && p.type === "userTodoAnswer").map((p: any) => ({ type: p.type, id: p.id, todoId: p.todoId, text: String(p.text).slice(0, 40) })),
+    }));
+    return { before: m, tapAt: c, inFrame, ...after };
+  };
+  return { page, setHeight, settle, measure, openReply, cancelReply, fill, tapSend, waitTight, errors };
 }
 
+const sendInsideBox = (m: Sheet) => m.sendRect.top >= m.boxTop - 0.5 && m.sendRect.bottom <= m.boxBottom + 0.5;
+const cancelInsideBox = (m: Sheet) => m.cancelRect.top >= m.boxTop - 0.5 && m.cancelRect.bottom <= m.boxBottom + 0.5;
+const boxInsideFrame = (m: Sheet) => m.boxTop >= -0.5 && m.boxBottom <= m.frameH + 0.5;
+const where = (m: Sheet) => `Send ${rectOf(m.sendRect)}, Cancel ${rectOf(m.cancelRect)}, box ${m.boxTop.toFixed(1)}..${m.boxBottom.toFixed(1)} (${m.boxClientH} of ${m.boxScrollH}px, overflow-y ${m.boxOverflowY}), viewport ${m.frameH}px, input ${m.inputH}px (floor ${m.floorH}), detail ${m.detailClientH} of ${m.detailScrollH}px`;
 const reachable = (m: Sheet) => m.actionsBottom <= m.frameH + 0.5 || (m.boxOverflowY === "auto" && m.boxScrollH > m.boxClientH + 1);
+function assertFits(m: Sheet, what: string) {
+  assert.ok(boxInsideFrame(m), `${what}: the box is inside the viewport (${where(m)})`);
+  assert.ok(sendInsideBox(m) && cancelInsideBox(m), `${what}: Cancel and Send are inside the box's clip (${where(m)})`);
+  assert.ok(m.boxScrollH <= m.boxClientH + 1, `${what}: the box's content fits its cap, so nothing is a scroll away (${where(m)})`);
+  assert.equal(m.hitAtSend, "target", `${what}: a finger at Send's painted centre reaches Send (${where(m)})`);
+  assert.equal(m.hitAtCancel, "target", `${what}: a finger at Cancel's painted centre reaches Cancel (${where(m)})`);
+}
 
 for (const name of ["chromium", "firefox", "webkit"]) {
-  test(`in ${name}: the chat's Reply sheet holds three rows with the keyboard up, the detail scrolls within its cap, the buttons stay in view; the fold follows the window's height`, async (t) => {
-    if (!pw) { t.skip("playwright is not installed under vscode-extension — the browser legs need it (CI installs no browsers)"); return; }
+  test(`in ${name}: the chat's Reply sheet holds three rows with the keyboard up, the detail scrolls within its cap, the buttons stay in view; the fold follows the window's height; a tap where Send is painted sends`, async (t) => {
+    if (!pw) { t.skip("playwright is not installed under vscode-extension — the browser legs need it; the served leg tests/test_reply_sheet_served.py runs this composition in CI's browser step"); return; }
     let browser: any;
     try { browser = await pw[name].launch(); }
-    catch (e) { t.skip("no playwright " + name + " on this box — this leg needs it (CI installs none): " + String((e as Error).message).split("\n")[0]); return; }
+    catch (e) { t.skip("no playwright " + name + " on this box — this leg needs it; the served leg tests/test_reply_sheet_served.py is the guard where this skips (CI's browser step runs it in chromium): " + String((e as Error).message).split("\n")[0]); return; }
     try {
-      const { page, setHeight, measure, waitTight, errors } = await boot(browser);
+      const { setHeight, measure, openReply, cancelReply, fill, tapSend, waitTight, errors } = await boot(browser);
+      await openReply(TODOS[0]);
       // ── 508px: the keyboard up on a phone, above the fold's threshold — the squeeze fix alone
       let m = (await measure())!;
       assert.ok(m, "the Reply sheet is up");
       assert.equal(m.frameH, KEYBOARD_UP);
       assert.equal(m.tight, false, "508px is not a short window: no fold, so what follows is the squeeze fix on its own");
+      assert.deepEqual(m.kinds, ["confirm-title", "confirm-detail", "ut-detail", "ut-reply-input", "confirm-actions"], "the builder's tree: title, the quoted line, the detail, the answer box, the buttons");
       assert.ok(m.floorH > 30, `the probe laid out three rows (${m.floorH}px; line-height ${m.lineHeight})`);
       assert.ok(m.inputH >= m.floorH - 1, `the answer box holds three rows: ${m.inputH}px against the ${m.floorH}px three-row probe (on the base tree it was a sliver)`);
       assert.equal(m.detailOverflowY, "auto", "the detail scrolls within itself");
@@ -139,9 +220,7 @@ for (const name of ["chromium", "firefox", "webkit"]) {
       assert.ok(m.detailClientH > 20, `the detail still shows some lines (${m.detailClientH}px)`);
       assert.ok(m.actionsBottom > 0 && m.actionsBottom <= m.frameH + 0.5, `Cancel and Send are inside the viewport (bottom edge ${m.actionsBottom.toFixed(1)} of ${m.frameH}px)`);
       assert.ok(m.boxBottom <= m.frameH + 0.5, `the whole box is inside the viewport (${m.boxBottom.toFixed(1)} of ${m.frameH}px)`);
-      // the builder's own lines ran in the page: every slice was found, and none carries a type annotation (plain JS there)
-      assert.deepEqual(MISSING, [], "not found in showUserTodoReply: " + MISSING.join(", ") + " — re-anchor");
-      for (const l of [KBFIT, KB_ARM, GROW, GROW_ARM]) assert.doesNotMatch(l, /: (HTMLTextAreaElement|HTMLElement|KeyboardEvent|string|number)\b/, "the sliced lines carry no type annotation, so they run as plain JS in the page");
+      assert.equal(m.boxOverflowY, "auto", "the box scrolls at this height too, not only under the fold: the every-height backstop (#ut-reply-prompt .picker-box)");
       // ── 420px: a short window — the builder's kbFit, on the window's own resize
       await setHeight(KEYBOARD_TIGHT);
       await waitTight(true);
@@ -153,14 +232,13 @@ for (const name of ["chromium", "firefox", "webkit"]) {
       assert.ok(m.detailScrollH > m.detailClientH + 8, `folded, the detail still scrolls (${m.detailClientH} of ${m.detailScrollH}px)`);
       assert.ok(reachable(m), `folded, the buttons are reachable (bottom edge ${m.actionsBottom.toFixed(1)} of ${m.frameH}px; box ${m.boxClientH} of ${m.boxScrollH}px, overflow-y ${m.boxOverflowY})`);
       assert.ok(m.boxClientH <= KEYBOARD_TIGHT - 24 + 1, `the box is capped at the visible height less the 12px frame (${m.boxClientH}px)`);
-      // ── typing: the builder's grow handler, on the real textarea
+      // ── typing: the builder's grow handler, on the real textarea, capped at the room the box has left
       const before = m.inputH;
-      await page.locator("#ut-reply-prompt .ut-reply-input").fill(Array.from({ length: 12 }, (_, i) => `line ${i + 1}`).join("\n"));
+      await fill(ANSWER(12));
       m = (await measure())!;
       assert.ok(m.inputH > before + 20, `twelve lines grow the box (${before} → ${m.inputH}px)`);
-      assert.ok(m.inputH <= Math.round(KEYBOARD_TIGHT * 0.4) + 2, `capped at a share of the window (${m.inputH}px of a ${KEYBOARD_TIGHT}px window)`);
-      assert.ok(reachable(m), `with the answer grown the buttons are still reachable (bottom edge ${m.actionsBottom.toFixed(1)} of ${m.frameH}px; box ${m.boxClientH} of ${m.boxScrollH}px)`);
-      await page.locator("#ut-reply-prompt .ut-reply-input").fill("");
+      assertFits(m, "folded, the answer grown");
+      await fill("");
       m = (await measure())!;
       assert.ok(Math.abs(m.inputH - before) <= 2, `cleared, the box is back at the floor (${m.inputH} vs ${before}px)`);
       // ── 900px: the keyboard down
@@ -171,6 +249,53 @@ for (const name of ["chromium", "firefox", "webkit"]) {
       assert.notEqual(m.alignItems, "flex-start", "the sheet centers again (.confirm-overlay)");
       assert.ok(m.inputH >= m.floorH - 1, `tall, the answer box holds three rows (${m.inputH} against ${m.floorH}px)`);
       assert.ok(m.actionsBottom <= m.frameH + 0.5, "the buttons are inside the viewport");
+      // ── the answer grown TALL, then the keyboard: the window shrinks under an answer already grown, and the resize re-fits it
+      await fill(ANSWER(14));
+      m = (await measure())!;
+      const grownTall = m.inputH;
+      assert.ok(grownTall > m.floorH + 60, `at 900px fourteen lines grow the box well past the floor (${grownTall}px against ${m.floorH})`);
+      assertFits(m, "tall, the answer grown");
+      await setHeight(KEYBOARD_UP);
+      m = (await measure())!;
+      assert.ok(m.inputH < grownTall, `the window shrunk to 508px re-fits the answer box (${grownTall} → ${m.inputH}px): grow ran on the resize`);
+      assert.ok(m.inputH >= m.floorH - 1, `and never under three rows (${m.inputH} against ${m.floorH}px)`);
+      assertFits(m, "900 then 508, the answer grown");
+      await setHeight(KEYBOARD_TIGHT);
+      await waitTight(true);
+      m = (await measure())!;
+      assert.ok(m.inputH >= m.floorH - 1, `then 420px, folded: three rows still (${m.inputH} against ${m.floorH}px)`);
+      assertFits(m, "900 then 420, the answer grown");
+      await fill("");
+      await setHeight(KEYBOARD_UP);
+      await waitTight(false);
+      await cancelReply();
+      // ── THE COMPOSITION, at 390 by 508 with the keyboard up: the ask wrapped to several lines with both chips inside it, the
+      // forty-line detail, the answer grown to the cap — the state in which the round-1 tree laid Send out below the box's clip
+      await openReply(TODOS[1]);
+      m = (await measure())!;
+      assert.deepEqual(m.kinds, ["confirm-title", "confirm-detail", "ut-detail", "ut-reply-input", "confirm-actions"], "the chat's sheet: the chips are inside the quoted line, not children of the box (render.ts showUserTodoReply; the pane's builder appends them as flex children)");
+      assert.deepEqual(m.quoteChips, ["ut-file", "ut-link"], "both chips trail the quoted line, the file's first");
+      assert.equal(m.tight, false, "508px: no fold");
+      assert.ok(m.inputH >= m.floorH - 1, `with the chips and the wrapped ask the answer box holds three rows (${m.inputH} against ${m.floorH}px)`);
+      await fill(ANSWER(14));
+      const tap = await tapSend();
+      const rec = JSON.stringify({ tapAt: tap.tapAt, inFrame: tap.inFrame, hitAtSend: tap.before.hitAtSend, sendRect: tap.before.sendRect, box: [tap.before.boxTop, tap.before.boxBottom, tap.before.boxClientH, tap.before.boxScrollH, tap.before.boxOverflowY], inputH: tap.before.inputH, detailH: tap.before.detailClientH, after: { overlayUp: tap.overlayUp, posted: tap.posted } });
+      assert.ok(boxInsideFrame(tap.before), `composition: the box is inside the viewport (${where(tap.before)})`);
+      assert.ok(sendInsideBox(tap.before) && cancelInsideBox(tap.before), `composition: Cancel and Send are inside the box's clip (${where(tap.before)}); on the round-1 tree the answer box grown to 40% of the window laid them out below it`);
+      assert.equal(tap.before.hitAtSend, "target", `composition: a finger at Send's painted centre reaches Send, not the backdrop (${rec})`);
+      assert.ok(tap.inFrame, `composition: the tap point is inside the viewport (${rec})`);
+      assert.deepEqual(tap.posted.map((p) => [p.type, p.id, p.todoId, p.text.split("\n")[0]]), [["userTodoAnswer", SID, "t2", "line 1"]], `composition: the tap SENT the answer (one userTodoAnswer posted); on the round-1 tree it fell on the backdrop and posted nothing (${rec})`);
+      assert.equal(tap.overlayUp, false, `composition: the sheet closed by the send itself (${rec})`);
+      // ── the onset of the old clip band, 490px, a todo with no detail and a fourteen-line answer
+      await setHeight(ONSET);
+      await openReply(TODOS[2]);
+      m = (await measure())!;
+      assert.deepEqual(m.kinds, ["confirm-title", "confirm-detail", "ut-reply-input", "confirm-actions"], "no detail: the sheet's smallest tree");
+      await fill(ANSWER(14));
+      m = (await measure())!;
+      assert.ok(m.inputH > m.floorH + 20, `490px, no detail: fourteen lines grow the box (${m.inputH} against ${m.floorH}px)`);
+      assertFits(m, "490px, no detail, the answer grown");
+      await cancelReply();
       assert.deepEqual(errors, [], "no script error on the page");
     } finally { await browser.close(); }
   });
