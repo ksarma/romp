@@ -406,21 +406,6 @@ import json, sys
 d = json.load(sys.stdin)
 assert d["shed_minute_rows"] == 1 and d["shed_keys"] == {"loaf": 1, "wsBytesByHost": 1} and d["capped_rows"] == 1 and d["cut_rows"] == 0 and d["cut_keys"] == {}, d
 '
-    # the fallback covered (the maintainer's round 5, kernel-1): a row whose cut list names no string key (an empty list) counts as a cut row and the
-    # parenthetical says so, since the count is above zero and the key map is empty
-    python3 - "$DIAG" <<'PY'
-import json, sys, time
-now = int(time.time())
-W1 = "11111111-2222-3333-4444-555555555555"
-open(sys.argv[1], "w").write(json.dumps({"t": now - 10, "wid": W1, "surface": "perf", "what": "minute", "data": {
-    "app": "shell", "since": (now - 70) * 1000, "span_ms": 60000, "free": {"n": 3, "p50": 8, "p90": 12, "max": 15},
-    "loaf": {"n": 0, "blocking_ms": 0, "worst_ms": 0, "top": [], "src": "none"},
-    "slow": {"sent": 0, "suppressed": 0, "suppressed_worst_ms": 0}, "heap_mb": 30.0, "dom": 200, "visible": True, "hidden_pane": False, "ua": "chrome-desktop",
-    "cut": []}}) + "\n")
-PY
-    run "$ROMP_SCRIPT" perf client
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"0 minute rows shed keys, 0 rows capped whole, 1 row with a value cut (no key named)"* ]]
     # a window holding cap markers alone is a loss to report, not an idle dashboard: the refusal names them
     python3 - "$DIAG" <<'PY'
 import json, sys, time

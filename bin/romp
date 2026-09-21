@@ -464,7 +464,8 @@ for key, r in sorted(rows.items(), key=order):
     # be told from a whole one here as the two row-level shapes can), so the loss is visible and never silent; a
     # shed minute row still folds by its span, heap and DOM, and by its frames when the map alone was shed
     # (capped.dropped names what went, and the header counts the shed rows by it, every key shed named from
-    # shed_keys itself: "shed keys (frames on %d, wsBytesByHost on %d)", shed_keys in --json, since the author's pass 1
+    # shed_keys itself, one "<key> on <count>" per key joined by commas: a window whose chat row shed its frames and whose
+    # timeline row shed the map reads "shed keys (frames on 1, wsBytesByHost on 1)"; shed_keys in --json, since the author's pass 1
     # (the maintainer's round 1, regression-4) put the map ahead of the frames a row shed alone before it; the cut term is printed only when a
     # row carried cut). It folds the last <n>
     # minutes per dashboard and pane (window percentiles from the summed histograms, the worst minute, the
@@ -704,16 +705,18 @@ capped_note = ""                            # said only when the file lost somet
 if shed_minute_rows or capped_rows or cut_rows:   # by what was dropped: a row that shed the wsBytesByHost map alone kept its frames, which folded above; a cut row names the keys the cut fell under
     # the shed clause is worded from shed_keys itself, as the cut clause is from cut_keys (the maintainer's round 5, kernel-2: it named
     # two of the ladder's five keys by hand, so a row that shed loaf, free or slow reported it in --json and not here), and each
-    # key list is rendered only when its count is above zero (the maintainer's round 5, regression-5: "0 rows with a value cut (no key named)" was
-    # printed whenever any other shape fired); the cut term appears only when a row carried cut, and its fallback names the case
-    # of a cut list naming no string key
+    # key list is rendered only when it names a key (the maintainer's round 5, regression-5: "0 rows with a value cut (no key named)" was
+    # printed whenever any other shape fired); the cut term appears only when a row carried cut. Neither clause has a fallback for
+    # a counted row whose list names no string key: the kernel writes `cut` and `capped.dropped` only when they name a key and drops
+    # a poster's own `cut` as a foreign key, so no writer in this repo emits such a row and a fallback for it covered nothing (the
+    # maintainer's round 6, tests-3 and kernel-1: the fallback and the hand-written case for it are gone)
     shed_named = ", ".join("%s on %d" % kv for kv in sorted(shed_keys.items()))
-    cut_named = ", ".join("%s on %d" % kv for kv in sorted(cut_keys.items())) or "no key named"
+    cut_named = ", ".join("%s on %d" % kv for kv in sorted(cut_keys.items()))
     capped_note = "; %d minute row%s shed keys%s, %d row%s capped whole" % (
-        shed_minute_rows, "" if shed_minute_rows == 1 else "s", " (%s)" % shed_named if shed_minute_rows else "",
+        shed_minute_rows, "" if shed_minute_rows == 1 else "s", " (%s)" % shed_named if shed_named else "",
         capped_rows, "" if capped_rows == 1 else "s")
     if cut_rows:
-        capped_note += ", %d row%s with a value cut (%s)" % (cut_rows, "" if cut_rows == 1 else "s", cut_named)
+        capped_note += ", %d row%s with a value cut%s" % (cut_rows, "" if cut_rows == 1 else "s", " (%s)" % cut_named if cut_named else "")
 print("romp perf client: browser telemetry from the last %d min (%s): %d dashboard%s, %d pane%s, %d minute row%s, %d slow frame row%s%s"
       % (minutes, shown, n_dash, "" if n_dash == 1 else "s", len(panes), "" if len(panes) == 1 else "s",
          len(rows) - n_slow, "" if len(rows) - n_slow == 1 else "s", n_slow, "" if n_slow == 1 else "s", capped_note))
