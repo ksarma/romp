@@ -49,7 +49,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { cssRules, renderRule, underScreen } from './css-rules.mjs';
+import { cssRules, renderRule, underScreen } from '../ui/webview/css-rules.mjs';
 import { execFileSync } from 'node:child_process';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -281,7 +281,7 @@ test('L3: the control\'s words are the viewer\'s literal, quoted by the section 
   // them). The entry's execution is md-config-figure-gate-place.test.ts's labelled scene, its count word file-figure-open.test.ts's
   // derived pin, and the structural exclusion file-view-place-blocks.test.ts's top-level figure.
   assert.ok(viewer.includes('const n = (figureControlAfter(anchor) || anchor).nextSibling;'), 'the label lookup steps past the control');
-  // the sheets: the same fv-figopen rules in both, read as RULES through ./css-rules.mjs (the reader this home shares with
+  // the sheets: the same fv-figopen rules in both, read as RULES through ui/webview/css-rules.mjs (the reader this home shares with
   // ui/webview/file-figure-open.test.ts: brace-matched over the comment-stripped sheet, each rule with the at-rules enclosing
   // it), every rule naming the control's class that reveals it under screen, none in the print block; the population is the
   // rules whose SELECTOR names the class, so a rule whose selector would match the control's element without naming the class
@@ -319,7 +319,7 @@ test('L3: the control\'s words are the viewer\'s literal, quoted by the section 
   assert.ok(section.includes('a right float\'s at the top-LEFT corner (`fv-figopen-left`, `fv-figopen-right`'));
 });
 
-test('the rule reader the two homes of the closed set share (./css-rules.mjs): a sheet is read as rules with their enclosing at-rules, not as lines, so a rule indented under an at-rule, a grouped selector wrapped across lines, a one-line at-rule block and a column-zero rule read alike; a statement at-rule, a declaration-only at-rule and a comment yield no rule; a brace inside a string is text; whether a chain confines a rule to screens is a property of the whole query list; a nested block, an unbalanced brace and an open comment are refused (the file review\'s round 10, correctness-1 with tests-1 and ui-1)', () => {
+test('the rule reader the two homes of the closed set share (ui/webview/css-rules.mjs): a sheet is read as rules with their enclosing at-rules, not as lines, so a rule indented under an at-rule, a grouped selector wrapped across lines, a one-line at-rule block and a column-zero rule read alike; a statement at-rule, a declaration-only at-rule and a comment yield no rule; a brace inside a string is text; whether a chain confines a rule to screens is a property of the whole query list; a nested block, an unbalanced brace and an open comment are refused (the file review\'s round 10, correctness-1 with tests-1 and ui-1)', () => {
   const sheet = [
     '/* a comment naming .fv-figopen { */',
     '.fileview-md .fv-figopen { opacity: 0; }',

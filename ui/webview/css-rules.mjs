@@ -5,7 +5,11 @@
 // rules on LINES at column zero carrying the class and a brace, so a rule written the way the sheets already write them, an
 // indented rule inside an at-rule block or a grouped selector wrapped across lines, was outside the population the set
 // closed). A plain module with no dependency, so CI's Shell job, which runs tools/*.test.mjs with no npm ci, loads it as the
-// webview test bundle does (esbuild bundles it into the .ts test; tools/css-rules.d.mts types it for the typecheck).
+// webview test bundle does (esbuild bundles it into the .ts test; ui/webview/css-rules.d.mts types it for the typecheck). It
+// lives under ui/, the tree the bundles read, since a ui test may not import from tools/, hooks/ or tests/: the kernel's
+// bundle-staleness inputs read ui/, vendor/ and vscode-extension/ alone, and tests/test_lab_dist.py derives the trees the
+// bundles' imports reach, the test bundles' among them, from the exported esbuild configs and holds them to those three (the
+// author's closing pass after the file review's round 10, which moved the reader from tools/, where that pin had been red).
 //
 // What the reader refuses, loudly, rather than classifies: a block opened inside a style rule's declarations (CSS nesting,
 // which the sheets do not use; a reader with no rule for a form names it), an unbalanced brace, a string left open. A

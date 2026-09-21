@@ -5,13 +5,13 @@
 // for a file of the session, a tab for an http source, nothing for a `data:` one), where it is decided (mdBlock's file arm after
 // the anchors; the body's `load` and `error` capture pair for a figure the browser answers for later), how a click on it or on a bare figure is routed
 // (a listener of its own beside the links', with the guards for a link, a panel mark, the open panel and a drag-select), the
-// label lookup that steps past it, the two text walks that skip it, the glyph, and the sheets' rules under `screen`, read as rules through tools/css-rules.mjs. Every pin
+// label lookup that steps past it, the two text walks that skip it, the glyph, and the sheets' rules under `screen`, read as rules through ui/webview/css-rules.mjs. Every pin
 // reads the tree's own source, so a rename here fails loudly. Synthetic values only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { cssRules, renderRule, underScreen } from "../../tools/css-rules.mjs";
+import { cssRules, renderRule, underScreen } from "./css-rules.mjs";
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const VIEW = web("file-view.ts");
@@ -146,7 +146,7 @@ test("the sheets: the control rests transparent over the figure's corner with a 
     assert.match(css, /\n@media screen and \(hover: none\) \{ \.fileview-md \.fv-figopen \{ opacity: 0\.8; \} \}/, name + ": no hover keeps it visible, screen only");
     const print = css.slice(css.indexOf("\n@media print {"), css.indexOf("\n}", css.indexOf("\n@media print {")));
     assert.doesNotMatch(print, /fv-figopen/, name + ": the print block names it nowhere");
-    // the closed set over the control's rules, read as RULES (tools/css-rules.mjs, the reader this home shares with
+    // the closed set over the control's rules, read as RULES (ui/webview/css-rules.mjs, the reader this home shares with
     // tools/markdown-viewer-plan-linknav.test.mjs: brace-matched over the comment-stripped sheet, each rule with the at-rules
     // enclosing it), so a rule written the sheets' own way, indented inside an at-rule block or on a grouped selector wrapped
     // across lines, is in the population (the file review's round 10, correctness-1 with tests-1 and ui-1: the set had been

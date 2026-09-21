@@ -1,4 +1,4 @@
-// The types of tools/css-rules.mjs for the webview tests that import it (the typecheck reads this file beside the module).
+// The types of ui/webview/css-rules.mjs for the webview tests that import it (the typecheck reads this file beside the module).
 export interface CssRule {
   /** The selector list, whitespace collapsed to single spaces. */
   selector: string;
