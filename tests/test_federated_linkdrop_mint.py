@@ -898,8 +898,11 @@ class OldHubMintIsPrivate(unittest.TestCase):
             self.assertEqual(seen, [["true"]], "a shell string is recorded as one token: %r" % (seen,))
             for name in ("PIPE", "STDOUT", "DEVNULL", "TimeoutExpired", "CompletedProcess", "CalledProcessError"):
                 self.assertIs(getattr(L.subprocess, name), getattr(subprocess, name), "%s is delegated to the real module" % name)
-            with self.assertRaises(AssertionError, msg="the recorder's own __getattr__ hands out no spawning function (a dunder lookup would reach the real one unrecorded)"):
+            with self.assertRaises(AssertionError, msg="the recorder's own __getattr__ hands out no spawning function (a dunder lookup would reach the real one unrecorded)") as cm:
                 L.subprocess.__getattr__("run")
+            self.assertIn("__getattr__ was asked for run", str(cm.exception),
+                          "the recorder's own refusal, naming the spawning name it was asked for, not any red (the maintainer's round 4 addendum: a bare "
+                          "assertRaises is satisfied by the cell's own breakage): %s" % cm.exception)
             self.assertIs(L.subprocess.__getattr__("PIPE"), subprocess.PIPE, "...and delegates every other name")
 
     def _assert_commands_are_private(self, seen, expect_commands=True):
