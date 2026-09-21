@@ -3687,10 +3687,13 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   root that leaves the memo mid-cycle (an ownership eviction, most
   often of an unowned sibling root an agent-file miss scan inserted; a tree
   found missing or replaced; a session departing is one such root) drops
-  from every open scope that root's pair, the stamps indexed from it and the
-  launch folds of the agents whose files resolved under it, and nothing
-  else, so an eviction costs one read of that root at its next lookup in
-  the cycle plus one fold per agent under it, its D plus its A, not a
+  from every open scope that root's pair, the stamps indexed from it, the
+  launch folds of the agents whose files resolved under it and, since no
+  root vouches for them, the stamps the scope took itself (an agent-file
+  lookup's re-check before the tree was read that cycle, the project
+  directory on a miss), and nothing else, so an eviction costs one read of
+  that root at its next lookup in the cycle plus one fold per agent under
+  it, its D plus its A, plus one stat per such own stamp, not a
   re-validation of every held tree (since 2026-09-21; before it one
   process-wide generation emptied every scope on any eviction, and a lab
   lifted from `tests/test_subagent_tree_stamps_per_cycle.py`'s world, run

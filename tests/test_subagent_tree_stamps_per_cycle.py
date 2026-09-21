@@ -56,7 +56,9 @@ finds it gone; (5) the invalidation is scoped to what became stale (since 2026-0
 round 1 of #882's ruling): an eviction of a root drops from every open scope that root's pair, the stamps indexed from it and the launch folds
 of the agents whose files resolved under it, and nothing else, so a held tree, a held stamp and held launch folds survive
 the eviction of a root they are not under (0 lstats, 0 stats, 0 folds on the next read), a cached agent-file path is not
-answered after another thread found its tree gone (the stamps of the removed tree are dropped), held launch folds are
+answered after another thread found its tree gone (the stamps of the removed tree are dropped, whether indexed from the held
+tree or taken as own stats by a lookup that preceded any tree read), a stamp the scope took itself, vouched by no root, is
+re-taken after any eviction (1 stat) where a tree-indexed one is served (0), held launch folds are
 re-read when their own root leaves the memo (the attribution changes), and the table of evicted roots at its cap is
 cleared with every held entry dropped once. Before 2026-09-21 one process-wide generation emptied every scope's three maps on
 any root's eviction: every held tree paid its D lstats again, every held stamp its stat, every awaiting agent its fold.
@@ -337,6 +339,27 @@ class _World(unittest.TestCase):
         km._subagent_scope_open()
         self.addCleanup(km._subagent_scope_close)
         return km._subagent_scope()
+
+    def _read_on_a_thread_with_no_scope(self, root):
+        """`root` read once on a helper thread that holds no scope (_live_scope is thread-local): the read a thread holding
+        the root never makes inside its cycle, since its served call precedes the root's lstat. Returns what the helper
+        saw: its scope (None), _subagent_tree's answer, and the generation right after."""
+        errs, seen = [], {}
+
+        def helper():
+            try:
+                seen["scope"] = _scope()
+                seen["answer"] = km._subagent_tree(str(root))
+                seen["gen"] = km._SUBAGENT_TREES_GEN[0]
+            except Exception:
+                errs.append(traceback.format_exc())
+        th = threading.Thread(target=helper, name="stamps-popper")
+        th.start()
+        th.join(30)
+        self.assertFalse(th.is_alive(), "the helper returned")
+        self.assertEqual(errs, [])
+        self.assertIsNone(seen.get("scope"), "the helper thread holds no scope")
+        return seen
 
     @staticmethod
     def _counting_fold(folded):
@@ -946,27 +969,6 @@ class Guards(_World):
         self.assertEqual(list(got), dirs, "the sibling's tree walked into the cross-cycle memo: its D = %d directories in walk order" % D)
         return other, dirs
 
-    def _read_on_a_thread_with_no_scope(self, root):
-        """`root` read once on a helper thread that holds no scope (_live_scope is thread-local): the read a thread holding
-        the root never makes inside its cycle, since its served call precedes the root's lstat. Returns what the helper
-        saw: its scope (None), _subagent_tree's answer, and the generation right after."""
-        errs, seen = [], {}
-
-        def helper():
-            try:
-                seen["scope"] = _scope()
-                seen["answer"] = km._subagent_tree(str(root))
-                seen["gen"] = km._SUBAGENT_TREES_GEN[0]
-            except Exception:
-                errs.append(traceback.format_exc())
-        th = threading.Thread(target=helper, name="stamps-popper")
-        th.start()
-        th.join(30)
-        self.assertFalse(th.is_alive(), "the helper returned")
-        self.assertEqual(errs, [])
-        self.assertIsNone(seen.get("scope"), "the helper thread holds no scope")
-        return seen
-
     def _assert_not_a_tree(self, answer, shape, what):
         """What _subagent_tree answers for a root that is not a tree: (), () when nothing is at the path ("missing"); (), (its
         lstat,) with a regular file's mode when a file stands in its place ("replaced"). Keys on dirs == () and the stat
@@ -1238,6 +1240,83 @@ class ScopedInvalidation(_World):
         self.assertEqual(km._SUBAGENT_ROOT_EVICTED.get(str(self.sub)), seen.get("gen"),
                          "the pop recorded this root's eviction at the value the gen moved to")
         self.assertNotIn(str(self.sub), sc["trees"], "the removed tree's held pair left the scope at its lookup")
+
+    def test_own_stat_stamps_are_dropped_by_any_eviction_so_a_cached_agent_file_is_not_answered_after_its_tree_went(self):
+        """The stamps _dir_stamp took itself, vouched by no root: the owner-lookup-first order (a _subagent_file hit inside the
+        scope BEFORE any tree read this cycle, as a command row's owner lookup makes it) re-stats every directory the agent's
+        walk read and holds each as an own stat under root None, since no tree the scope could name was read. Held within the
+        cycle (a second lookup is served, 0 stats) and released at ANY eviction: the tree is removed on disk and popped by a
+        thread with no scope, and the holding thread's next _subagent_file answers None, the own stats dropped at their lookup
+        (the re-check stats and mismatches, the walk finds nothing). Keys on None against the cached path: a vouch that answers
+        True for root None serves the own stats past the tree's removal and answers the path of a file that is gone, which
+        build_subagent shows as an error pane; the case above pins the same for stamps indexed from a held tree, this one the
+        population that has no root to key on."""
+        sc = self._open()
+        aid = self.aids[0]
+        stamps0, p0 = km._SUBAGENT_FILE_CACHE[(self.path, aid)]
+        dirs_read = [sd for sd, _m in stamps0 if sd in self.dirset]
+        self.assertTrue(dirs_read, "premise: the agent's walk read directories of the tree")
+        with self._spy() as sp:
+            p1 = km._subagent_file(self.path, aid)         # the hit's re-check, no tree read this cycle: own stats
+        self.assertEqual(p1, p0)
+        self.assertEqual(sp.total()["dir_stat"], len(dirs_read), "premise: the hit re-stat'd every directory its walk read, nothing served")
+        self.assertNotIn(str(self.sub), sc["trees"], "premise: no tree read this cycle")
+        held = [sc["stamps"].get(sd) for sd in dirs_read]
+        self.assertTrue(all(h is not None and h[1] is None for h in held),
+                        "premise: each re-checked directory's stamp is held as an own stat, vouched by no root: %r" % (held[:2],))
+        with self._spy() as sp:
+            p1b = km._subagent_file(self.path, aid)
+        self.assertEqual((p1b, sp.total()["dir_stat"]), (p0, 0), "held within the cycle: the second lookup is served the own stats, 0 stats")
+        shutil.rmtree(self.sub)
+        seen = self._read_on_a_thread_with_no_scope(self.sub)
+        self.assertEqual(seen.get("answer"), ((), ()), "the missing-root pop on the thread with no scope")
+        self.assertEqual(km._SUBAGENT_ROOT_EVICTED.get(str(self.sub)), seen.get("gen"), "the pop recorded this root's eviction")
+        with self._spy() as sp:
+            p2 = km._subagent_file(self.path, aid)
+        self.assertIsNone(p2, "the agent file answered after another thread found its tree gone, the stamps held as own stats: %r; keyed "
+                              "on None (an own stat is vouched by no root, so any eviction drops it at its lookup: the re-check stats and "
+                              "mismatches, the walk finds nothing); a vouch that answers True for root None serves the own stats and answers "
+                              "the cached path %r to a removed file" % (p2, p0))
+        self.assertGreater(sp.total()["dir_stat"], 0, "the own stats were dropped and re-taken (stat attempts on the removed directories), not served")
+        for sd in dirs_read:
+            self.assertNotIn(sd, sc["stamps"], "the dropped own stat left the scope at its lookup (a failed stat is never held)")
+
+    def test_an_own_stat_stamp_is_re_taken_after_an_unrelated_roots_eviction_where_a_tree_indexed_stamp_is_served(self):
+        """The cost face of the same rule, the one the reference and the ledger state per eviction event: an own stat (root
+        None) costs one stat after ANY eviction, an unrelated root's included, where a stamp indexed from a held tree costs 0
+        across the same eviction (the survival case above). Keys on 1 stat after the unrelated eviction while held as an own
+        stat, then 0 after the next such eviction once the tree's hold has re-indexed the same directory under its root: a
+        vouch that answers True for root None serves the own stat (0 where 1 is owed) and, by the same answer, serves it past
+        its own tree's removal (the case above)."""
+        _op, other = self._other_root()
+        sc = self._open()
+        target = self.dirs[3]
+        with self._spy() as sp:
+            r1 = km._dir_stamp(target)                    # no tree read this cycle: an own stat
+        self.assertEqual(sp.total()["dir_stat"], 1)
+        self.assertIsNotNone(r1[1])
+        self.assertIsNone(sc["stamps"][target][1], "premise: held as an own stat, root None")
+        with self._spy() as sp:
+            km._dir_stamp(target)
+        self.assertEqual(sp.total()["dir_stat"], 0, "held within the cycle: served")
+        self._evict([other], [])
+        with self._spy() as sp:
+            r2 = km._dir_stamp(target)
+        self.assertEqual(sp.total()["dir_stat"], 1,
+                         "os.stat for an own stamp on the read after an UNRELATED root's eviction: %d; keyed on 1, re-taken (vouched by no "
+                         "root, so any eviction drops it: the one stat per own stamp per eviction event the reference states); a vouch that "
+                         "answers True for root None serves it (0) and serves it past its own tree's removal too" % sp.total()["dir_stat"])
+        self.assertEqual(r1, r2)
+        km._subagent_tree(str(self.sub))                  # the tree's hold re-indexes the same directory under its root
+        self.assertEqual(sc["stamps"][target][1], str(self.sub), "premise: now indexed from the held tree, vouched by its root")
+        _op2, other2 = self._other_root("other2")
+        self._evict([other2], [])
+        with self._spy() as sp:
+            r3 = km._dir_stamp(target)
+        self.assertEqual(sp.total()["dir_stat"], 0,
+                         "os.stat for the same directory's stamp, indexed from the held tree, after another unrelated eviction: %d; keyed "
+                         "on 0 (served: its root did not leave the memo), the contrast with the own stat's 1" % sp.total()["dir_stat"])
+        self.assertEqual(r3, r1)
 
     def test_held_launch_folds_are_dropped_when_their_own_root_leaves_the_memo(self):
         """The launches half, behavioural (extra7-1's refuters: a launch fold is produced through the agent file's

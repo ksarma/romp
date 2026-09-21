@@ -35308,8 +35308,8 @@ def _subagent_tree_charge(kind, t0):
 # is one such root). An eviction of root r costs, per open scope that held r: one read of r at its next lookup in the cycle (a
 # walk, or a validation of D_r lstats when a read on another thread has re-inserted it since), which re-indexes the stamps of
 # r's directories with no extra stat, and one re-fold per awaiting agent whose file was resolved under r (a stat each on a
-# quiescent file); every other root's pair, stamps and launch folds are untouched, so the cost of an eviction is D_r + A_r,
-# not the sum over every held root (which it was until 2026-09-21, round 1 of #882's ruling; a lab lifted from
+# quiescent file); every other root's pair, stamps and launch folds are untouched, so the cost of an eviction is D_r + A_r
+# plus one stat per stamp the scope took itself (the next sentence but one), not the sum over every held root (which it was until 2026-09-21, round 1 of #882's ruling; a lab lifted from
 # tests/test_subagent_tree_stamps_per_cycle.py's world and run outside the repo, its records kept outside it too: at
 # (R, D, A, N) = (1, 8, 3, 3) and (3, 8, 3, 3) with one or three unrelated roots evicted between each pair of the N reads,
 # the one-generation design paid R x D x N lstats and R x A x N folds per cycle, the scoped invalidation R x D and R x A,
