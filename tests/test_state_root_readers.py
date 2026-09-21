@@ -111,6 +111,25 @@ ALLOWLIST = {
     ("kernel/codex_backend.py", "CodexBackend._write_registry_locked", "open", "str(self.root)"):
         "the Codex registry's directory descriptor opened O_RDONLY for fsync after the atomic publish of registry.json into it: "
         "nothing is read through it (the bus's entry above is the same shape)",
+    # PR 814 (the session host's socket published owner-only; merged 2026-09-21): its reads under hosts/ go through a
+    # DESCRIPTOR DESCENT with its own owner check (hosts/ opened O_DIRECTORY|O_NOFOLLOW off the state root and fstat-verified
+    # a directory this uid owns, <sid> the same way relative to it, every file then taken by NAME under the verified
+    # descriptor with an fstat or fstatat owner compare: _stat_name, _open_host_file, host_sock_present), pinned by its own
+    # census (tests/test_hosts_path_census.py) and by tests/test_host_transport.py ReadDescent. Those name-relative reads
+    # carry no path under the root and this census does not see them; the three sites below are the ones it does.
+    ("kernel/host_transport.py", "_open_dir_nofollow", "open", "name"):
+        "814's descent: hosts/ opened by path O_RDONLY|O_DIRECTORY|O_NOFOLLOW off the state root (<sid> by name under that "
+        "descriptor at the second call), then fstat-verified a directory this uid owns; nothing is read through the descriptor "
+        "but the fstat, and every read below it takes a name relative to it with its own owner check (the read roads are "
+        "pinned by tests/test_hosts_path_census.py and tests/test_host_transport.py ReadDescent)",
+    ("kernel/session_host.py", "hosts_dir", "open", "root"):
+        "814's create road: the state root this call has just made is opened O_RDONLY|O_DIRECTORY|O_NOFOLLOW for the fchmod that "
+        "tightens it and the fstat that reads the mode back (a link swapped in after the lstat fails the open); nothing under "
+        "the root is read through it (tests/test_session_host.py StateRootByHostsDir)",
+    ("kernel/session_host.py", "SessionHost._sweep_stale_temps", "dir", "self.sock_path.parent"):
+        "814's prelude: the host's sweep of its own socket temps (sock_names' *.tmp) under a hosts/ that hosts_dir has just made "
+        "ours and 0700 on the same road; each match is probed by the pid in its name and unlinked by name, never read (the "
+        "serve-token mint's temp sweep is the same shape)",
 }
 
 PATH_METHODS = {"with_name", "with_suffix", "with_stem", "joinpath", "resolve", "absolute", "expanduser"}
