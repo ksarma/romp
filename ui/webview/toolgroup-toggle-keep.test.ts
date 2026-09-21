@@ -138,8 +138,8 @@ test("the anchor row was inside the run that collapsed and is gone after the bui
   w.onSync = () => { w.take(); w.host.removeChild(w.rows[3]); w.host.removeChild(w.rows[4]); };
   w.toggle("tg:k");
   assert.deepEqual(w.syncs, [[undefined, true]], "a row was captured before the build, so the sync was flagged (the row's fate is known only after the build)");
-  assert.equal(w.untakes(), 1, "the restore missed: the take is given back before the raw write");
   assert.equal(w.spacer.h, 2000, "the head spacer stands where the pre-toggle top was read (at the head it stood 300 px taller, the reader 300 px off where they were)");
+  assert.equal(w.untakes(), 1, "the restore missed: the take is given back before the raw write");
   assert.deepEqual(w.writes, [{ writer: "toolgroup-toggle", top: 2350, stick: false, from: 2350 }], "no anchor to restore: the raw write, its origin the top read before the build, exact in the layout it was read in");
 });
 

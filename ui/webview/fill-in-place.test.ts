@@ -145,8 +145,8 @@ test("a row in hand that is GONE from the rebuilt window with no point to name (
   w.fill();
   assert.deepEqual(w.builds, [[0, 10, true]], "a row was captured, so the build was flagged: its fate is known only after the build");
   assert.equal(w.takes, 1, "the build took");
-  assert.equal(w.untakes, 1, "the row gone and no point: the take is given back before the raw write");
   assert.equal(w.spacer.h, 2000, "the head spacer stands where the pre-fill top was read (at the head it stood 300 px taller under the raw write)");
+  assert.equal(w.untakes, 1, "the row gone and no point: the take is given back before the raw write");
   assert.equal(w.parked, true, "the figures wait for a paint that anchors");
   assert.deepEqual(w.writes, [{ writer: "gap-fill", top: 2350, stick: false, from: 2350 }], "the raw pre-fill top, exact in the layout it was read in");
 });
@@ -155,9 +155,9 @@ test("a point whose turn maps to no y, on the fill and again on its re-window (n
   const w = world({ spacerH: 0, scrollTop: 3000, bottomSpacerH: 5000, point: 7.5, yOf: () => null });
   w.fill();
   assert.deepEqual(w.builds, [[0, 10, true], [0, 10, true]], "the fill's build around the point's unit, then, with no row on screen after its write, the re-window around the same unit, both flagged");
+  assert.equal(w.spacer.h, 0, "the head spacer stands where the pre-fill top was read (at the head the maintainer's round 3 ruled on it stood 300 px taller: the property, asserted before the mechanism)"); assert.equal(w.parked, true);
   assert.equal(w.takes, 2, "the figures were parked again by the first untake, so the re-window took them again");
   assert.equal(w.untakes, 2, "…and gave them back again: the point mapped to no y both times");
-  assert.equal(w.spacer.h, 0, "the head spacer stands where the pre-fill top was read"); assert.equal(w.parked, true);
   assert.deepEqual(w.writes, [{ writer: "gap-fill", top: 3000, stick: false, from: 3000 }, { writer: "gap-fill", top: 3000, stick: false, from: 3000 }], "the raw pre-fill top, twice, in the layout it was read in");
 });
 

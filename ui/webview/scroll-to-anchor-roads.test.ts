@@ -131,8 +131,8 @@ test("the miss roads reached from markjump, replyjump and cmtjump: the build's r
   assert.equal(miss.jump(U(4)), false);
   assert.deepEqual(builds(miss), [["renderWindowItems", 0, 4, true]], "the build took");
   assert.deepEqual(lands(miss), []); assert.deepEqual(miss.writes, [], "…and nothing placed the reader (the window rebuilt around the unit is where they are now)");
+  assert.equal(miss.parked(), true, "the figures wait for a paint that anchors (at the head the maintainer's round 3 ruled on the take stood, the spacers re-sized under a reader nothing had placed: the property, asserted before the mechanism)");
   assert.deepEqual(miss.calls.filter((c) => c[0] === "take" || c[0] === "untakeMeasure").map((c) => c[0]), ["take", "untakeMeasure"], "the build took, the re-query missed, the take was given back");
-  assert.equal(miss.parked(), true, "the figures wait for a paint that anchors (at the head the take stood, the spacers re-sized under a reader nothing had placed)");
   assert.deepEqual(miss.state().landTrail, ["pointer-not-rendered"]); assert.equal(miss.state().pendingAnchor, U(4), "armed for the next pass");
   assert.deepEqual(miss.rows.map((r) => r[0]), ["landmiss"], "the miss files the state it saw");
   // a prompt-intent link whose anchor resolves to an assistant row
@@ -140,7 +140,7 @@ test("the miss roads reached from markjump, replyjump and cmtjump: the build's r
   assert.equal(kind.jump(U(4)), false);
   assert.deepEqual(builds(kind), [["renderWindowItems", 0, 4, true]], "the build took");
   assert.deepEqual(lands(kind), []); assert.deepEqual(kind.writes, []);
-  assert.deepEqual(kind.calls.filter((c) => c[0] === "take" || c[0] === "untakeMeasure").map((c) => c[0]), ["take", "untakeMeasure"], "the wrong kind: the take given back too"); assert.equal(kind.parked(), true);
+  assert.equal(kind.parked(), true, "the wrong kind: the figures wait (the property first)"); assert.deepEqual(kind.calls.filter((c) => c[0] === "take" || c[0] === "untakeMeasure").map((c) => c[0]), ["take", "untakeMeasure"], "the wrong kind: the take given back too");
   assert.deepEqual(kind.state().landTrail, ["pointer-wrong-kind"]); assert.equal(kind.state().pendingAnchor, null, "the arm is dropped"); assert.equal(kind.state().pendingAnchorIntent, null);
   // called after a taker of its own (landActive's or keepPlaceAcrossWindow's attempt): nothing parked when the build runs, nothing given back
   const after = world({ resident: [U(1), U(2)], events, rendersOnBuild: false, parked: false });

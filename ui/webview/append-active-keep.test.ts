@@ -117,8 +117,8 @@ test("a scrolled-up reader whose captured row is GONE after the sync (folded int
   w.onSync = () => { w.host.removeChild(w.rows[3]); w.host.removeChild(w.rows[4]); };   // r3 and r4 folded away by the paint
   w.append();
   assert.deepEqual(w.syncs, [[false, true]], "a row was captured, so the sync was flagged: the row's fate is known only after the sync");
+  assert.equal(w.spacer.h, 2000, "the head spacer stands where the pre-append top was read (at the head the maintainer's round 3 ruled on it stood 300 px taller under the raw write: the property, asserted before the mechanism so the red-before is on it)");
   assert.equal(w.untakes, 1, "the restore missed: the take is given back before the raw write");
-  assert.equal(w.spacer.h, 2000, "the head spacer stands where the pre-append top was read (at the head it stood 300 px taller under the raw write)");
   assert.equal(w.parked, true, "the figures wait for a paint that anchors");
   assert.deepEqual(w.writes, [{ writer: "append-raw", top: 2350, stick: false, from: 2350 }], "the raw write: target and origin the pre-append top, exact in the layout it was read in");
 });

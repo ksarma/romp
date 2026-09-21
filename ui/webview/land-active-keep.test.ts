@@ -157,8 +157,8 @@ test("an armed miss with no row at the saved place (the saved place inside a spa
   const w = world({ spacerH: 0, saved: 3000, bottomSpacerH: 5000 }, { anchor: "11111111-2222-4333-8444-000000000002", land: false });
   w.land(w.content, w.v);
   assert.equal(takes(w), 1, "the take is on the arm, not the row");
+  assert.equal(w.spacer.h, 0, "the head spacer is back where the saved scrollTop was measured (at the head the maintainer's round 3 ruled on it stood 300 px taller under the raw write: the property, asserted before the mechanism so the red-before is on it)");
   assert.deepEqual(w.calls.filter((c) => typeof c === "string"), ["applyMeasure", "redrawGapUnits", "sizeSpacers", "untakeMeasure"], "the take before the attempt, then, with no row to put back, the untake before the raw write");
-  assert.equal(w.spacer.h, 0, "the head spacer is back where the saved scrollTop was measured (at the head it stood 300 px taller under the raw write)");
   assert.equal(w.parked(), true, "the figures are parked again for the next paint that anchors");
   assert.deepEqual(w.writes, [{ writer: "land-saved", top: 3000, stick: false, from: undefined }], "nothing to put back: the raw write, exact in the layout it was saved in");
 });
