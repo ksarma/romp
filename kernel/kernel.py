@@ -35309,17 +35309,13 @@ def _subagent_tree_charge(kind, t0):
 # THE CYCLE SCOPE (2026-09-19): a tree is validated at most once per pusher cycle and once per jobs pass, plus once more when
 # the root itself left _SUBAGENT_TREES inside the cycle (an ownership eviction by _subagent_trees_forget, most often of an
 # unowned sibling root a _subagent_file miss scan inserted, or _subagent_tree's missing or replaced root; a session departing
-# is one such root). An eviction of root r costs, per open scope that held r: one read of r at its next lookup in the cycle (a
-# walk, or a validation of D_r lstats when a read on another thread has re-inserted it since), which re-indexes the stamps of
-# r's directories with no extra stat, and one re-fold per awaiting agent of the transcripts whose OWN subagents root is r (a
-# stat each on a quiescent file; A_r is 0 for an unowned sibling root whatever files were found under it: the fold's root,
-# its bound and the test that executes both are stated once, in _subagent_scope's docstring); every other root's pair,
-# stamps and launch folds are untouched, so the cost of an eviction is D_r + A_r
-# plus one stat per stamp the scope took itself (the next sentence but one), not the sum over every held root (which it was until 2026-09-21, round 1 of #882's ruling; a lab lifted from
-# tests/test_subagent_tree_stamps_per_cycle.py's world and run outside the repo, its records kept outside it too: at
-# (R, D, A, N) = (1, 8, 3, 3) and (3, 8, 3, 3) with one or three unrelated roots evicted between each pair of the N reads,
-# the one-generation design paid R x D x N lstats and R x A x N folds per cycle, the scoped invalidation R x D and R x A,
-# the same as with no eviction). A stamp the
+# is one such root). An eviction of root r drops, from every open scope that held r, r's pair (read again at its next lookup
+# in the cycle: a walk, or a validation when a read on another thread has re-inserted it since, which re-indexes the stamps
+# of r's directories with no extra stat), the stamps indexed from r and the launch folds of the awaiting agents of the
+# transcripts whose OWN subagents root is r (none for an unowned sibling root whatever files were found under it: the fold's
+# root, its bound and the test that executes both are stated once, in _subagent_scope's docstring), and nothing else; every
+# other root's pair, stamps and launch folds are served on (until 2026-09-21, round 1 of #882's ruling, one process-wide
+# generation emptied every scope on any eviction). A stamp the
 # scope took itself for a directory of no held tree (the project directory on an agent-file miss) is vouched by no root and is
 # re-taken after any eviction; a table clear (_SUBAGENT_ROOT_EVICTED at its cap) drops every held entry once. The walk memo
 # made a call cost one lstat per known directory instead of a
@@ -35328,24 +35324,13 @@ def _subagent_tree_charge(kind, t0):
 # lstats plus D stats per agent whose launches() is consulted, which is every agent when there are two or more (each is
 # excluded from its own owner lookup, so a single agent with no command row paid D alone and folded nothing) or when a
 # command row's owner is read from the agents' transcripts; and it runs up to five times per session per pusher cycle (the
-# chat, feed and timeline builds and the chips) and once per jobs pass (the nudge look). THE COST, DERIVED (round 1 of #882's extra9-3:
-# it was stated per call and per tree, with two production kernels' totals as its evidence, and two kernels cannot separate
-# the directories from the sessions, the agents and the reads; the lab can): per pusher cycle or jobs pass, for the two
-# loops' own reads, with N the _session_awaiting reads per session in the cycle, A_s the agents of session s whose launches
-# are consulted, D_s the directories of its tree and D_r those of each of the R roots read, the cost before the scope was
-# N x sum_s D_s lstats, N x sum_s A_s x D_s stamp stats and N x sum_s A_s folds, linear in the reads, the sessions, the
-# agents and the directories at once; with the scope it is sum_r D_r lstats (each root's one validation, whatever the
-# readers, agents and reads consult it), 0 stamp stats (D_r for a root whose command row's owner lookup re-checked stamps
-# before the tree was read) and sum_s A_s folds, plus the eviction term above and, while a fold faults, A_s folds per read.
-# Evidence, a lab lifted from tests/test_subagent_tree_stamps_per_cycle.py's world (R sessions of D directories, A agents
-# and N reads, through the real _pusher_cycle and _jobs_cycle) and run outside the repo, its records kept outside it too:
-# in each of the cells run, (R, D, A, N) in {(1, 8, 3, 1), (1, 8, 3, 3), (1, 8, 3, 5), (9, 156, 3, 1), (9, 156, 3, 3),
-# (9, 156, 3, 5), (9, 156, 8, 3), (1, 156, 3, 3), (9, 8, 3, 3), (3, 96, 3, 3), (9, 32, 3, 3), (3, 32, 3, 3)}, the cost
-# before was N x R x A x D stats and N x R x D lstats (72 stats at (1, 8, 3, 3); 2,592 at (9, 32, 3, 3); 12,636 at
-# (9, 156, 3, 3); 21,060 at (9, 156, 3, 5); 33,696 at (9, 156, 8, 3)), and
-# with the scope R x D lstats and 0 stats, nine roots of 32 directories costing what three of 96 cost (288 lstats; before,
-# 864 lstats and 2,592 stats both): the total directories decide, not their split over roots, which the module's
-# SumOverRoots cases pin in the tree at three roots of unequal size through the real cycles. Motivation, a
+# chat, feed and timeline builds and the chips) and once per jobs pass (the nudge look). THE COST: one derived expression in
+# the reads, the sessions, the agents and the directories, before the scope and with it, the eviction, fault and miss-path
+# terms included, with the lab cells that are its evidence and the tests that execute it in the tree, is stated once in
+# _subagent_tree_memo_report's docstring; this block, docs/reference.md's memos paragraph and the ledger entry point there
+# (round 1 of #882's extra9-3 asked for the derived form in place of a per-call figure; the owner's pass before round 2 found
+# the miss-path term stated per agent in four homes where the code pays it once per cycle, shared, and made the docstring
+# its one home). Motivation, a
 # dated reading and not the law's evidence: on two deployed kernels (2026-09-19), on one _dir_stamp's one os.stat was the top
 # self frame of a 20 s py-spy profile, 28% of the samples by that profile's reading, and on the other the memo's own counters
 # showed 24.5 million validation lstats in 6.8 hours over 1,294 directories (the user 2026-09-05, who wanted the one-core
@@ -35629,21 +35614,61 @@ def _subagent_tree_memo_report():
     unowned), dirStats (the directory stats both validators paid: the tree validation's lstat per known directory below the
     root and the agent-file lookup's os.stat per directory it re-checks, _dir_stamp; the lstat half alone before 2026-09-19), walkMs and
     validateMs (the time in each, every thread), and the gauges roots (entries) and dirs (directories held). A validation
-    happens at most once per pusher cycle and once per jobs pass since 2026-09-19 (_subagent_scope), plus, per root that
-    left the memo in the cycle (an ownership eviction, a missing or replaced root), one read of that root at its next lookup
-    and one fold per awaiting agent of the transcripts whose own root it is (the fold's root: _subagent_scope's docstring),
-    with every other held root untouched (since 2026-09-21; the comment block at _subagent_scope_open derives it), so the two
-    loops' own reads pay per cycle or pass, in dirStats, the sum over the roots
-    read of D_r - 1 (`dirs` less `roots` when every held root is read: one validation per root, whatever the readers, agents
-    and reads consult it; before the scope N x that for N reads per session, and N x A x D stamp re-check stats per session
-    besides, which the counter did not see), plus D_r for a root whose command row's owner lookup re-checked stamps before
-    the tree was read, plus, per agent whose file is nowhere or under a sibling's tree, one stat of the project directory and
-    one per directory of each sibling subagents tree that no read of the cycle holds (the cold walk, which lists the project
-    directory and reads each sibling's tree, is paid once, when the agent-file memo has no entry for the agent or a stamp it
-    read moved); the reads a handler thread makes (per call, as before) and the re-read of a root that left the memo
-    mid-cycle land in the same counter, so dirStats over an interval is bounded per scoped reader set, not per interval. The
-    derivation and the lab cells behind it are in the comment block at _subagent_scope_open. Written from several threads; a
-    resize under the sum is read again."""
+    happens at most once per pusher cycle and once per jobs pass since 2026-09-19 (_subagent_scope).
+
+    THE COST, one derived expression, stated here once: the comment block at _subagent_scope_open, docs/reference.md's
+    memos paragraph and the ledger entry point here and restate none of it (round 1 of #882's extra9-3: it was stated per
+    call and per tree, with two production kernels' totals as its evidence, and two kernels cannot separate the
+    directories from the sessions, the agents and the reads; the lab below can). Per pusher cycle or jobs pass, for the two
+    loops' own reads, with N the _session_awaiting reads per session in the cycle, A_s the agents of session s whose
+    launches are consulted, D_s the directories of its tree and D_r those of each of the R roots read:
+      - before the scope, N x sum_s D_s lstats, N x sum_s A_s x D_s stamp stats and N x sum_s A_s folds, linear in the
+        reads, the sessions, the agents and the directories at once (each read validated the tree, re-checked every
+        directory its walk read per agent and folded every agent's file);
+      - with it, sum_r D_r lstats (each root's one validation, whatever the readers, agents and reads consult it; in
+        dirStats sum_r (D_r - 1), `dirs` less `roots` when every held root is read), 0 stamp stats, plus D_r for a root
+        whose command row's owner lookup re-checked stamps before the tree was read, and sum_s A_s folds (a stat each);
+      - the miss path, ONCE PER CYCLE and shared by every agent whose file is nowhere or under a sibling's tree, however
+        many such agents and sessions: one stat of the project directory and one per directory of each sibling subagents
+        tree no read of the cycle holds (own stats, keyed by directory under root None in the scope's stamps map, so the
+        first such lookup's re-check pays them and every later one in the cycle is served: _dir_stamp), in dirStats 1 plus
+        those sibling trees' directories; plus, per such agent whose walk runs (once per cycle, when the agent-file memo
+        has no entry for the agent or a stamp it read moved: the cold walk, which lists the project directory and reads
+        each sibling's tree once for every such agent), that walk's own cost outside dirStats, one stat per candidate
+        place (the flat place and one per directory of each tree it looked through) and, for each sibling tree it reaches,
+        one lstat of the sibling root by _find_agent_file's realpath (the symlink guard). Until the owner's pass before
+        round 2 of #882 this term read per such agent, G of them predicting G project-directory stats where the code pays 1;
+      - per root that left the memo in the cycle (an ownership eviction, a missing or replaced root), one read of that root
+        at its next lookup (a walk, or D_r lstats when a read on another thread re-inserted it since) and one fold per
+        awaiting agent of the transcripts whose own root it is, A_r (the fold's root, its bound and the test that executes
+        both: _subagent_scope's docstring; A_r is 0 for an unowned sibling root whatever files were found under it), plus
+        one stat per stamp the scope took itself (vouched by no root: re-taken after any eviction), with every other root's
+        pair, stamps and folds untouched: D_r + A_r, not the sum over every held root (which it was until 2026-09-21, round
+        1 of #882's ruling);
+      - while a fold faults, A_s folds per read, the fault held for the one call that observed it (_awaiting_nest).
+    Evidence, a lab lifted from tests/test_subagent_tree_stamps_per_cycle.py's world (R sessions of D directories, A agents
+    and N reads, through the real _pusher_cycle and _jobs_cycle) and run outside the repo, its records kept outside it
+    too. The bound: in each of the cells run, (R, D, A, N) in {(1, 8, 3, 1), (1, 8, 3, 3), (1, 8, 3, 5), (9, 156, 3, 1),
+    (9, 156, 3, 3), (9, 156, 3, 5), (9, 156, 8, 3), (1, 156, 3, 3), (9, 8, 3, 3), (3, 96, 3, 3), (9, 32, 3, 3),
+    (3, 32, 3, 3)}, the cost before was N x R x A x D stats and N x R x D lstats (72 stats at (1, 8, 3, 3); 2,592 at
+    (9, 32, 3, 3); 12,636 at (9, 156, 3, 3); 21,060 at (9, 156, 3, 5); 33,696 at (9, 156, 8, 3)) and with the scope R x D
+    lstats and 0 stats, nine roots of 32 directories costing what three of 96 cost (288 lstats; before, 864 lstats and 2,592
+    stats both): the total directories decide, not their split over roots. The eviction term: at (R, D, A, N) = (1, 8, 3, 3)
+    and (3, 8, 3, 3) with one or three unrelated roots evicted between each pair of the N reads, the one-generation design
+    paid R x D x N lstats and R x A x N folds per cycle, the scoped invalidation R x D and R x A, the figure with no
+    eviction. The miss path: one session of D = 8 with A = 3 and N = 3, G agents whose file is nowhere and SIB dead sibling
+    trees of DSIB directories in its project directory, (G, SIB, DSIB) in {1, 2, 3} x {(0, 0), (1, 4), (2, 6)}, every
+    pusher cycle and jobs pass paid 1 project-directory stat and SIB x DSIB sibling-directory stats whatever G, dirStats
+    (D - 1) + 1 + SIB x DSIB (8, 12, 20), where the per-agent reading predicted (D - 1) + G x (1 + SIB x DSIB); and the
+    cycle of the cold walks paid SIB x DSIB lstats for the sibling trees' one read plus G x SIB for the realpath of each
+    sibling root per walk. Executed in the tree by tests/test_subagent_tree_stamps_per_cycle.py through the real cycles:
+    the bound and the shared miss-path term by BoundPerCycleAndPerPass (the one-row case and
+    test_two_agents_whose_files_are_nowhere_share_the_project_directorys_one_stamp_stat, dirStats D at one row and at
+    two), the sum over roots by SumOverRoots, the eviction term by ScopedInvalidation, the fault term by Guards.
+
+    The reads a handler thread makes (per call, as before) and the re-read of a root that left the memo mid-cycle land in
+    the same counter, so dirStats over an interval is bounded per scoped reader set, not per interval. Written from several
+    threads; a resize under the sum is read again."""
     for _ in range(3):
         try:
             dirs = sum(len(v[0]) for v in list(_SUBAGENT_TREES.values()))
@@ -35733,7 +35758,10 @@ def _dir_stamp(sd):
     """(dir, mtime_ns) for one directory, a stat (None when missing). Inside a cycle scope (_subagent_scope, 2026-09-19) the
     stamp is served from the scope when held and still vouched (indexed from a tree validated this cycle, vouched by that
     tree's root, or taken by an earlier call on this thread, vouched by no root and so only while no root has left the memo
-    since: _subagent_vouched), else taken once and held under the generation read before the stat; a stat that raises is
+    since: _subagent_vouched), else taken once and held under the generation read before the stat, keyed by directory, so
+    a second agent's lookup that re-checks the same directory in the cycle (the project directory, on every miss) is served
+    it: the miss path's term is once per cycle and shared, the cost expression's one home being _subagent_tree_memo_report's
+    docstring; a stat that raises is
     answered (sd, None) and never held, so the next call stats again. Each os.stat that succeeds counts under
     memos.subagentTree dirStats beside _subagent_tree's validation lstats (a stat that raises is answered and not counted)."""
     sc = _subagent_scope()

@@ -3697,17 +3697,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `_subagent_scope`'s docstring in `kernel/kernel.py`) and, since no root
   vouches for them, the stamps the scope took itself (an agent-file
   lookup's re-check before the tree was read that cycle, the project
-  directory on a miss), and nothing else, so an eviction costs one read of
-  that root at its next lookup in the cycle plus those folds plus one stat
-  per such own stamp, not a re-validation of every held tree (since
-  2026-09-21; before it one
-  process-wide generation emptied every scope on any eviction, and a lab
-  lifted from `tests/test_subagent_tree_stamps_per_cycle.py`'s world, run
-  outside the repo with its records kept outside it, measured R roots of D
-  directories and A agents with one or three unrelated roots evicted
-  between each pair of N reads, at (R, D, A, N) = (1, 8, 3, 3) and
-  (3, 8, 3, 3), at R x D x N lstats and R x A x N folds per cycle, against
-  R x D and R x A once scoped, the figure with no eviction); a
+  directory on a miss), and nothing else (since 2026-09-21; before it one
+  process-wide generation emptied every scope on any eviction; what an
+  eviction costs is a term of the cost expression under `dirStats` below); a
   thread outside a cycle, a WS or HTTP handler's build or the act-now nudge
   pass, reads per call as before), with `hit` and `miss`
   (trees vouched for by one stat per known directory against trees walked:
@@ -3723,34 +3715,20 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   paid: the tree validation's lstat per known directory below the root and
   the agent-file lookup's stat per directory its stamp re-check takes;
   before 2026-09-19 it counted the lstat half alone, so a figure from
-  before that change and one from after are not one series; since then the
-  two loops' own reads pay per cycle or pass the sum over the roots read of
-  one lstat per directory below the root (`dirs` less `roots` when every
-  held root is read: one validation per root, whatever the readers, the
-  agents and the reads per cycle that consult it, where before each of a
-  session's N reads in the cycle paid its tree's D lstats and D stamp stats
-  per agent whose launches were consulted, N x (A + 1) x D per session, a
-  cost linear in the reads, the sessions, the agents and the directories at
-  once; a lab lifted from `tests/test_subagent_tree_stamps_per_cycle.py`'s
-  world, R sessions of D directories with A agents and N reads driven
-  through the real cycle functions, run outside the repo with its records
-  kept outside it, measured N x R x A x D stats and N x R x D lstats before
-  and R x D lstats with 0 stats after in each of the cells run, (R, D, A, N)
-  in {(1, 8, 3, 1), (1, 8, 3, 3), (1, 8, 3, 5), (9, 156, 3, 1), (9, 156, 3,
-  3), (9, 156, 3, 5), (9, 156, 8, 3), (1, 156, 3, 3), (9, 8, 3, 3),
-  (3, 96, 3, 3), (9, 32, 3, 3), (3, 32, 3, 3)}, the same 288 at nine roots
-  of 32 directories as at three of 96: the total directories decide, not
-  their split over roots, which the module's `SumOverRoots` cases pin at
-  three roots of unequal size), plus D more for a root whose command
-  row's owner lookup re-checks stamps before the tree is read, plus, per
-  agent whose file is nowhere or under a sibling's tree, one stat of the
-  project directory and one per directory of each sibling subagents tree
-  that no read of the cycle holds (the cold walk, which lists the project
-  directory and reads each sibling's tree, is paid once, when the
-  agent-file memo has no entry for the agent or a stamp it read moved), and
-  a handler thread's per-call reads and the re-read of a root that left the
-  memo mid-cycle land in the same counter, so the figure is bounded per
-  scoped reader set, not per interval), `walkMs`
+  before that change and one from after are not one series; the cost the
+  two loops' own reads pay in it per cycle or pass is one derived
+  expression in the reads, the sessions, the agents and the directories,
+  stated once, with the lab cells that are its evidence, in
+  `_subagent_tree_memo_report`'s docstring in `kernel/kernel.py` (each
+  root's one validation whatever the readers, agents and reads consult it;
+  the miss path's stats once per cycle, shared by every agent whose file is
+  nowhere or under a sibling's tree; an eviction's cost confined to the
+  evicted root) and executed through the real cycles by
+  `BoundPerCycleAndPerPass`, `SumOverRoots` and `ScopedInvalidation` in
+  `tests/test_subagent_tree_stamps_per_cycle.py`; a handler thread's
+  per-call reads and the re-read of a root that left the memo mid-cycle
+  land in the same counter, so the figure is bounded per scoped reader set,
+  not per interval), `walkMs`
   and `validateMs` (the time in each, every thread), and the gauges `roots`
   (entries) and `dirs` (directories held); a directory stamped within the
   last two seconds, or one whose listing failed, is stored unvouched and

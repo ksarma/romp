@@ -29,7 +29,10 @@ never by a count of asks per read; round 1 of #882's extra8-1) and A agent-file 
 each call paid A x D os.stat, D lstats and A file stats, and the scope's reads moved no counter; with an agent row whose
 file is nowhere the miss walk runs once per cycle and its dependency notes to the chat build cost no stat on the tree's
 directories (round 1 of #882's correctness-1:
-the own tree's note was a fresh stat, one per walk); the scope is closed after the cycle; and a read
+the own tree's note was a fresh stat, one per walk), and two such rows share the project directory's one stamp stat, an own
+stat _dir_stamp holds in the scope keyed by directory under root None (dirStats moves by (D - 1) + 1 at one row and at two,
+where the cost term as stated before the owner's pass before round 2 of #882, per agent, predicted (D - 1) + G; the term's
+one home is _subagent_tree_memo_report's docstring); the scope is closed after the cycle; and a read
 outside any cycle (a handler thread's) still pays per call, with dirStats now counting the stats of both validators;
 (2) per cycle, not sticky: a directory and a fourth agent landing between two cycles are seen by the second cycle's
 first read (a re-walk; the listing equals os.walk's and the sidecar reaches the map) while its later reads that cycle
@@ -497,19 +500,21 @@ class BoundPerCycleAndPerPass(_World):
         self._assert_bound("jobs pass", sp.total(), self._delta(b), rec)
         self.assertIn(str(self.sub), km._SUBAGENT_TREES, "the interrupt tick's forget kept the alive session's root")
 
-    def test_one_pusher_cycle_with_an_agent_whose_file_is_nowhere_walks_once_and_its_notes_cost_no_stat(self):
-        """The miss path inside the bound (fresh-4 of the round-1 review: no case entered it): a live agent row whose file
-        exists nowhere, under the own tree or a sibling's. The first read's owner lookups resolve it, the walk misses and the
-        scope's launches map holds set() for it, so the walk runs once per cycle; the walk's dependency notes to the running
-        chat build (the absent own place, every directory of each tree it looked through) come from the pair the lookup was
-        answered, the served tree, so they cost no stat on the tree's directories: 0 os.stat (round 1 of #882's correctness-1: the own tree's
-        note was a fresh _chat_stat_key stat, 1 per walk). The walk's other costs, derived: W lstats of the own root, its two
-        symlink checks (os.path.islink, and os.path.realpath's lstat per component), counted by running those two calls; one
-        os.stat per candidate file, the flat place and one per served directory (D + 1); the project directory's one stamp
-        stat, in dirStats and outside the tree. The walk's own ask on the root is among the first read's and is served, not
-        a second validation: the asks are asserted by shape, and served by the asks the scope answered (_assert_asks)."""
-        ghost = "a%016x" % 0x7cf1
-        self.live_aids.append(ghost)                          # in the live row; no sidecar and no file anywhere
+    def _miss_walk_cycle(self, G):
+        """One pusher cycle over the world plus G live agent rows whose file exists nowhere, under the own tree or a
+        sibling's (the ghosts), with the miss path's costs that are each row's own asserted here, derived from D, A and G:
+        each row's first owner lookup walks once (the walk misses and the scope's launches map holds set() for it, so the
+        rest of the cycle is served), the walk's dependency notes to the running chat build (the absent own place, every
+        directory of each tree it looked through) come from the pair the lookup was answered, the served tree, so they cost
+        no stat on the tree's directories (0 os.stat; round 1 of #882's correctness-1: the own tree's note was a fresh
+        _chat_stat_key stat, 1 per walk), and each walk pays W lstats of the own root, its two symlink checks (os.path.islink,
+        and os.path.realpath's lstat per component), counted by running those two calls, and one os.stat per candidate file,
+        the flat place and one per served directory (D + 1). The walk's own ask on the root is among the first read's and is
+        served, not a second validation: the asks are asserted by shape, and served by the asks the scope answered
+        (_assert_asks). What the rows SHARE, the project directory's one stamp stat in dirStats, the caller asserts: one row
+        and two rows pay the same. Returns (the spy's totals, the counters' delta, the job's record, the ghosts)."""
+        ghosts = ["a%016x" % (0x7cf1 + i) for i in range(G)]
+        self.live_aids.extend(ghosts)                         # in the live row; no sidecar and no file anywhere
         own = str(self.sub)
         with self._spy() as sp0:
             os.path.islink(own); os.path.realpath(own)
@@ -520,25 +525,60 @@ class BoundPerCycleAndPerPass(_World):
         with self._spy() as sp:
             km._pusher_cycle()
         t, d = sp.total(), self._delta(b)
-        self.assertEqual(rec.get("counts"), [A + 1] * CALLS, "each of the %d reads saw the A agents and the row nobody owns: %r" % (CALLS, rec))
-        flat = self._assert_asks("pusher cycle with the miss walk", rec.get("asked") or [], d, CALLS)
+        what = "pusher cycle with the miss walk" if G == 1 else "pusher cycle with %d miss walks" % G
+        self.assertEqual(rec.get("counts"), [A + G] * CALLS, "each of the %d reads saw the A agents and the %d rows nobody owns: %r" % (CALLS, G, rec))
+        flat = self._assert_asks(what, rec.get("asked") or [], d, CALLS)
         self.assertGreater(len(flat), CALLS, "the asks on the root: %r; the miss walk asked the tree too, beyond the %d reads' own asks "
                                              "(and was served: the shape above)" % (rec.get("asked"), CALLS))
         self.assertEqual(t["dir_stat"], 0,
-                         "os.stat on the tree's %d directories over one pusher cycle with the miss walk: %d; keyed on 0, the walk's notes "
+                         "os.stat on the tree's %d directories over one %s: %d; keyed on 0, the walk's notes "
                          "to the chat build taken from the served pair and the stamp re-checks served as in the bound (round 1 of #882: "
-                         "the own tree's note was a fresh stat, 1 per walk)" % (D, t["dir_stat"]))
-        self.assertEqual(t["dir_lstat"], D + W,
-                         "os.lstat on the tree's directories: %d; expected D + W = %d + %d, the one validation plus the walk's symlink "
-                         "checks of the own root" % (t["dir_lstat"], D, W))
-        self.assertEqual(t["file_stat"], A + D + 1,
-                         "os.stat on files under the tree: %d; expected A + D + 1 = %d, one fold per agent with a file plus the walk's "
-                         "candidate stats, the flat place and one per served directory" % (t["file_stat"], A + D + 1))
+                         "the own tree's note was a fresh stat, 1 per walk)" % (D, what, t["dir_stat"]))
+        self.assertEqual(t["dir_lstat"], D + G * W,
+                         "os.lstat on the tree's directories: %d; expected D + G x W = %d + %d x %d, the one validation plus each walk's "
+                         "symlink checks of the own root" % (t["dir_lstat"], D, G, W))
+        self.assertEqual(t["file_stat"], A + G * (D + 1),
+                         "os.stat on files under the tree: %d; expected A + G x (D + 1) = %d, one fold per agent with a file plus each "
+                         "walk's candidate stats, the flat place and one per served directory" % (t["file_stat"], A + G * (D + 1)))
         self.assertEqual((d["hit"], d["miss"], d["evict"]), (1, 0, 0), "one validated hit, no walk of the tree, nothing evicted: %r" % (d,))
+        for ghost in ghosts:
+            self.assertIsNone(km._SUBAGENT_FILE_CACHE.get((self.path, ghost), ("unset",))[-1], "the miss is memoized: the file is nowhere")
+        return t, d, rec, ghosts
+
+    def test_one_pusher_cycle_with_an_agent_whose_file_is_nowhere_walks_once_and_its_notes_cost_no_stat(self):
+        """The miss path inside the bound (fresh-4 of the round-1 review: no case entered it): one live agent row whose file
+        exists nowhere. Its own costs are _miss_walk_cycle's assertions; here, the project directory's one stamp stat, in
+        dirStats and outside the tree (the two-row case beside this one pins that it is shared)."""
+        t, d, rec, ghosts = self._miss_walk_cycle(1)
         self.assertEqual(d["dirStats"], D,
                          "dirStats %d; expected (D - 1) + 1 = %d: the validation's lstats plus the project directory's one stamp stat, "
                          "the walk's, held for the cycle under no root" % (d["dirStats"], D))
-        self.assertIsNone(km._SUBAGENT_FILE_CACHE.get((self.path, ghost), ("unset",))[-1], "the miss is memoized: the file is nowhere")
+
+    def test_two_agents_whose_files_are_nowhere_share_the_project_directorys_one_stamp_stat(self):
+        """The miss path's term of the cost expression is once per cycle, SHARED by every agent whose file is nowhere or
+        under a sibling's tree, not once per such agent (the owner's pass before round 2 of #882: the term's homes read per
+        agent, G such rows paying G project-directory stats where the code pays 1; the expression's one home is
+        _subagent_tree_memo_report's docstring). Two such rows: each walks once and pays its own candidate stats and symlink
+        checks (G x, _miss_walk_cycle), but the project directory's stamp stat is an own stat _dir_stamp holds in the scope
+        keyed by directory under root None, so the first walk pays it and the second walk, and every re-check of either row
+        in the cycle, is served it: dirStats moves by (D - 1) + 1, not (D - 1) + G, and the scope's stamps map holds the
+        directory once, under root None. Own stats keyed per (agent, directory) leave the one-row case green and turn this
+        one red (dirStats D + 1), which is why the bound has a two-row case."""
+        G = 2
+        t, d, rec, ghosts = self._miss_walk_cycle(G)
+        self.assertEqual(d["dirStats"], D,
+                         "dirStats %d; expected (D - 1) + 1 = %d, not (D - 1) + G = %d: the project directory's one stamp stat, an own stat "
+                         "keyed by directory under root None, paid by the first of the %d walks and served to the other and to every "
+                         "re-check in the cycle (once per cycle, shared, whatever the number of agents whose file is nowhere)"
+                         % (d["dirStats"], D, (D - 1) + G, G))
+        stamps = (rec.get("scope") or {}).get("stamps") or {}
+        proj = str(Path(self.path).parent)
+        held = stamps.get(proj)
+        self.assertIsNotNone(held, "the scope's stamps map holds the project directory under its path (the served entry both walks and "
+                                   "every re-check keyed on): %r" % (sorted(str(k) for k in stamps),))
+        self.assertIsNone(held[1], "the project directory's stamp is an own stat, vouched by no root (root None): %r" % (held,))
+        self.assertEqual([k for k in stamps if str(k).startswith(proj) and k not in self.dirset and not str(k).startswith(str(self.sub))], [proj],
+                         "the project directory is held once, keyed by directory alone and not per agent: %r" % (sorted(str(k) for k in stamps),))
 
     def test_outside_a_cycle_every_reader_validates_for_itself_and_dirstats_counts_both_validators(self):
         """A handler thread's read (a WS or HTTP build, the act-now nudge pass) holds no scope and pays what it paid: the
