@@ -109,9 +109,11 @@ probe_token() { printf 'gh%s_%s%s' p "$(printf '0123456789%.0s' 1 2 3)" abcdef; 
     [[ "$output" == *"Binary files"* ]]
 
     # CI's line, from the workflow's own text: exactly one `run: gitleaks git .` line is expected,
-    # the credential-scan job's history step. Zero or two and the premise is gone, so say so.
+    # the credential-scan job's history step. Zero or two and the premise is gone, so say so. grep -c
+    # prints 0 and exits 1 on no match, and bats runs under errexit, so without `|| true` the zero
+    # case would stop at this assignment and never reach the message below.
     ci="$ROMP_DIR/.github/workflows/ci.yml"
-    n=$(grep -cE '^[[:space:]]*run: gitleaks git \. ' "$ci")
+    n=$(grep -cE '^[[:space:]]*run: gitleaks git \. ' "$ci" || true)
     [ "$n" -eq 1 ] || { echo "expected exactly one 'run: gitleaks git .' line in ci.yml, found $n"; false; }
     line=$(grep -E '^[[:space:]]*run: gitleaks git \. ' "$ci")
     # The arguments after `gitleaks git .`, split the way the runner's bash splits the run line:
