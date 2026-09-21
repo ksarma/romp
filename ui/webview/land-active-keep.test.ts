@@ -55,9 +55,13 @@ function liftBetween(startAnchor: string, endAnchor: string): string {
  *  on a read or a write. A child inserted or removed through the DOM's methods (appendChild, insertBefore, removeChild, replaceChildren, a
  *  node's remove) is recorded; the children collection is read-only like the DOM's. A selector is resolved for what the lifted code and
  *  production's spacer code are entitled to query among the children (every uuid-carrying row, one uuid, one class with or without
- *  `:scope > `), and any other selector throws, so an unmodelled query fails closed instead of matching nothing. The geometry events on the
- *  trace: `style <class> height=<px> (was <px>)`, `child +<class>:<px>`, `child -<class>:<px>`, beside the take-class events the stubs and
- *  the accessors push (the world below). */
+ *  `:scope > `), and any other selector throws, so an unmodelled query fails closed instead of matching nothing. Every property the model
+ *  LACKS fails closed too (the author's fixer pass over the pass after the maintainer's round 4 ruling: until then a write of `hidden`,
+ *  `innerHTML` or `textContent` on a node created the property in silence under strict mode, and a read of `lastElementChild`, `firstChild`
+ *  or `classList` gave undefined, which an optional chain swallowed, so a production-shaped change or removal in the window passed both
+ *  halves green): each of the scroller, the view element and a row is a Proxy (failClosed) whose read, write or delete of a key that is neither
+ *  an own property nor on the prototype throws with the model's message. The geometry events on the trace: `style <class> height=<px> (was
+ *  <px>)`, `child +<class>:<px>`, `child -<class>:<px>`, beside the take-class events the stubs and the accessors push (the world below). */
 type Write = { writer: string; top: number; stick: boolean; from: number | undefined };
 const px = (v: unknown, what: string): number => { const m = /^(-?\d+(?:\.\d+)?)px$/.exec(String(v)); assert.ok(m, what + ": the model reads a height in px, not " + JSON.stringify(v)); return Number(m![1]); };
 /** A `style` whose `height` reads `read()` and writes through `write`; every other key throws on a read, a write or a delete (a write there
@@ -70,9 +74,22 @@ function styleOf(name: string, read: () => number, write: (h: number) => void): 
     deleteProperty: (_t, k) => refuse(k, "deleted"),
   });
 }
+/** A model object that FAILS CLOSED on any property it lacks: a read or a write of a key that is neither an own property nor on the
+ *  prototype throws, naming the object and the key, and a delete of any key throws (the DOM's nodes have no deletable geometry), so a
+ *  production-shaped change the model has no figure for reds with the model's message instead of passing as a silent no-op. The JS internals
+ *  a dump or an await reads (symbols, `then`, `toJSON`) read undefined. `hideEdges` runs on the raw object before it is wrapped, so the
+ *  projection is the raw object's and the ratchet in test-dom-shim.test.ts reads the call. */
+function failClosed<T extends object>(o: T, name: string): T {
+  const known = (k: string | symbol): boolean => typeof k === "symbol" || k in o || k === "then" || k === "toJSON";
+  return new Proxy(o, {
+    get: (t, k, r) => { if (known(k)) return Reflect.get(t, k, r); throw new Error(name + "." + String(k) + " read: the model has no such property, so this fails closed rather than reading undefined"); },
+    set: (t, k, v, r) => { if (known(k)) return Reflect.set(t, k, v, r); throw new Error(name + "." + String(k) + " written as " + JSON.stringify(v) + ": the model has no such property, so this fails closed rather than passing as a silent no-op"); },
+    deleteProperty: (_t, k) => { throw new Error(name + "." + String(k) + " deleted: the model has nothing to delete, so this fails closed rather than passing as a silent no-op"); },
+  });
+}
 class Content {
   scrollTop = 0; host: Host | null = null;
-  constructor(public clientHeight: number, public trace: string[]) { hideEdges(this); }
+  constructor(public clientHeight: number, public trace: string[]) { hideEdges(this); return failClosed(this, "content"); }
   get scrollHeight(): number { return this.host ? this.host.height() : 0; }
   getBoundingClientRect() { return { top: 0, bottom: this.clientHeight }; }
 }
@@ -83,7 +100,7 @@ class Node {
     // a height written on a row moves the model's geometry and is recorded on the trace of the view the row is in (a detached row's write
     // reaches the trace when the row is inserted, with its height)
     this.style = styleOf("<" + className + ">", () => this.h, (h) => { this.host?.content.trace.push("style " + this.className + " height=" + h + " (was " + this.h + ")"); this.h = h; });
-    hideEdges(this);
+    hideEdges(this); return failClosed(this, "<" + className + ">");
   }
   getBoundingClientRect() { const top = this.host!.offsetOf(this) - this.host!.content.scrollTop; return { top, bottom: top + this.h }; }
   remove(): void { this.host?.removeChild(this); }
@@ -91,10 +108,9 @@ class Node {
 class Host {
   private kids: Node[] = []; readonly style: Record<string, string>;
   constructor(public content: Content) {
-    content.host = this;
     const noHeight = (): never => { throw new Error("v.el.style.height: the view element's height is its children's sum and the model has no figure of its own for it, so a read or a write here fails closed rather than passing as a silent no-op"); };
     this.style = styleOf("v.el", noHeight, noHeight);
-    hideEdges(this);
+    hideEdges(this); const p = failClosed(this, "v.el"); content.host = p; return p;
   }
   /** The children, read-only like the DOM's collection: insertion and removal go through the methods below, which record them. */
   get children(): readonly Node[] { return Object.freeze([...this.kids]); }
