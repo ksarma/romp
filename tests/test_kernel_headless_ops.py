@@ -21,6 +21,8 @@ import io
 import json
 import os
 import tempfile
+import threading
+import time
 import unittest
 from unittest import mock
 from romp_load import load_source
@@ -2794,16 +2796,34 @@ class UnknownSessionRefused(_RouteServer):
                 # the names read the control below expects (in a fresh process on 3.10 at 61ee8e50 it was the only
                 # open the control caught, then the legacy ledger's through builtins.open)
                 km._sdk()
+                # ...and its boot reconcile starts the dead-test-root sweep on a thread of its own, AFTER _sdk() returns; both
+                # read files (the sweep reads the temp root's owner marker) and would trip the guard below when they land
+                # inside the guarded window, which the state-root readers' extra lstats made the timing of (2026-09-21).
+                # The event waited on is the two threads' end, bounded, never a pause.
+                deadline = time.monotonic() + 30
+                while time.monotonic() < deadline:                                     # loop-ok: bounded by the deadline
+                    live = [t for t in threading.enumerate() if t.name in ("sdk-boot-reconcile", "test-root-sweep")]
+                    if not live:
+                        break
+                    for t in live:
+                        t.join(0.05)
                 with mock.patch("builtins.open", guard), mock.patch.object(iolib, "open", guard), path_open:
                     for who in spellings:
                         refused(who, "guarded")
                     self.assertEqual(opened, [], "no file was opened for reading while the spellings were refused")
-                    # the fake bites: a spelling inside the alphabet reads the names registry at once (_name_of,
-                    # through pathlib)
+                    # the fake bites: a spelling inside the alphabet reaches the record doors at once. The names
+                    # registry's read of an ABSENT entry goes through the state root's guarded reader (2026-09-21),
+                    # which ends at os.open's ENOENT before any io.open the fake could see, so the first open the fake
+                    # meets is the next door's, the Codex registry (kernel/judge.py _codex_rows); on a tree where the
+                    # entry existed it would be the names read itself
                     with self.assertRaises(_Opened):
                         km._resolve_sid(self.GHOST, door=True)
-                    self.assertEqual([os.path.basename(f) for f in opened], [self.GHOST],
-                                     "the open the control caught is the names registry's read of the spelling")
+                    self.assertEqual(len(opened), 1, opened)
+                    # a guarded reader opens the descriptor it lstat'ed and hands io.open the NUMBER, so the fake sees a
+                    # digit string for a door that read through the guard, and the file's name for one that did not
+                    self.assertTrue(os.path.basename(opened[0]) in (self.GHOST, "registry.json") or opened[0].isdigit(),
+                                    "the open the control caught is a record door's read of the spelling (names or the Codex registry, "
+                                    "by name or by a guarded reader's descriptor): %r" % opened)
             self.assertEqual(ended, [], "the end routine never ran on a spelling")
             self.assertEqual(fake.method_calls, [], "nothing reached a backend at either door")
             for who in spellings:

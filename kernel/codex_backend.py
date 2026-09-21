@@ -54,6 +54,42 @@ _runtime = load_source("romp_codex_runtime", HERE / "codex_runtime.py")
 echo_text_key = (sys.modules.get("romp_session_backend")
                  or load_source("romp_session_backend_keys", HERE / "session_backend.py")).echo_text_key
 
+
+def _load_state_root_mode():
+    """kernel/state_root_mode.py under its fixed module name, THE SAME FILE the judge, the event model, the bus and the
+    session host load (one implementation; a copy already in sys.modules under that name is reused, so one process holds
+    one module object). A loader, not a copy of the predicate: tests/test_state_root_mode.py's OneText pins that."""
+    import importlib.util
+    name = "romp_state_root_mode"
+    mod = sys.modules.get(name)
+    if mod is not None:
+        return mod
+    path = Path(__file__).resolve().parent / "state_root_mode.py"
+    spec = importlib.util.spec_from_file_location(name, str(path))
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    try:
+        spec.loader.exec_module(mod)
+    except BaseException:
+        sys.modules.pop(name, None)
+        raise
+    return mod
+
+
+_srm = _load_state_root_mode()
+
+
+def _reader(state_dir):
+    """THE GUARDED READER over `state_dir` (kernel/state_root_mode.py, Reader; round 4 of the state-root review). This
+    module is handed the state root by its caller and binds none at import, so the reader is built per call over the
+    root it was handed. Every read of a path under that root in this module goes through one (the AST census in
+    tests/test_state_root_readers.py pins it): every component from the root down is lstat'ed (not a symlink, this
+    uid's, not writable by another local user), a failing entry is quarantined and read as absent, never adopted, and
+    a path outside the root passes through. Its rows file through the shared module's REFUSED_HOOKS (the kernel's
+    error-centre hook, registered at the kernel's import)."""
+    root = Path(state_dir)
+    return _srm.Reader(lambda: root, who='codex-backend')
+
 SDK_PIN = "openai-codex==0.144.4"     # bin/romp-codex-setup installs exactly this into codexvenv
 SETUP_HINT = ("Session not created: the Codex backend isn't installed. "
               "Run romp-codex-setup, then try again.")
@@ -206,18 +242,21 @@ def ensure_codex_sdk(state_dir):
     so a codexvenv built with a newer python (the picker before 2026-09-06 took the newest on PATH)
     failed deep inside the import under the kernel's python, with an error naming a module rather than
     the venv, and shadowed shared dependencies for every later lazy import in the process. A venv for
-    another tag adds nothing and is named on stderr once, with the remedy. True when importable."""
+    another tag adds nothing and is named on stderr once, with the remedy. True when importable. Read through the
+    guarded reader (round 4 of the state-root review: a codexvenv a peer planted while the root was writable, or a
+    symlink to one, went onto sys.path at position zero here exactly as the SDK venv did in kernel.py, kernel-1): every
+    component from the root down must be this uid's, not a symlink and not writable by another local user, else the
+    entry is quarantined and nothing is answered; a 0775 venv under the owner's private group passes."""
     import importlib.util
-    import glob
     global _CODEX_VENV_BUILT_FOR
     if importlib.util.find_spec("openai_codex"):
         return True
     running = _running_python_tag()
-    found = sorted(glob.glob(str(Path(state_dir) / "codexvenv" / "lib" / "python3.*" / "site-packages")))
+    _gr = _reader(state_dir)
+    found = [str(p) for p in _gr.glob(str(Path(state_dir) / "codexvenv" / "lib"), "python3.*/site-packages")]
     match = [sp for sp in found if Path(sp).parent.name == "python" + running]
     for sp in match:
-        if sp not in sys.path:
-            sys.path.insert(0, sp)
+        _gr.sys_path_dir(sp, 0)                   # the guard again at the door: a directory judged, then sys.path[0]
     if found and not match:
         built = sorted(Path(sp).parent.name[len("python"):] for sp in found)
         if built != _CODEX_VENV_BUILT_FOR:          # one line per verdict, not one per launch
@@ -248,13 +287,14 @@ def _dump(payload):
     return getattr(payload, "params", None) or {}
 
 
-def _tail_state(path):
+def _tail_state(path, gr):
     """(last_uuid, recent uuids) off a materialized file, to re-anchor the normalizer's chain and
     seed its replay dedup after a restart. Reads the whole file once; keeps only the tail's uuids —
-    replay across a reconnect only ever re-delivers recent items."""
+    replay across a reconnect only ever re-delivers recent items. `gr` is the backend's guarded reader
+    (the file lives under the state root)."""
     last, tail = None, []
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with gr.open(path, "r", encoding="utf-8") as f:
             for line in f:
                 try:
                     u = json.loads(line).get("uuid")
@@ -270,13 +310,13 @@ def _tail_state(path):
     return last, set(tail)
 
 
-def _ends_mid_line(path):
+def _ends_mid_line(path, gr):
     """True when the file is non-empty and its last byte is not a newline: an earlier write was torn
     (write(2) returned short under ENOSPC, the process was killed between pages, power was lost) and
     left a partial line, a record with no line end. The next record must start its own line, or the
-    two join in ONE unparseable line every reader skips."""
+    two join in ONE unparseable line every reader skips. `gr` is the backend's guarded reader."""
     try:
-        with open(path, "rb") as f:
+        with gr.open(path, "rb") as f:
             if f.seek(0, os.SEEK_END) == 0:
                 return False
             f.seek(-1, os.SEEK_END)
@@ -325,6 +365,16 @@ class _Session:
 
 
 class CodexBackend:
+    @property
+    def _gr(self):
+        """The guarded reader over this object's state root (kernel/state_root_mode.py), built on first use: every read of a
+        path under the root in this class goes through it (the census), and an instance a test assembles without __init__
+        has one too."""
+        gr = self.__dict__.get("_gr_")
+        if gr is None:
+            gr = self.__dict__["_gr_"] = _reader(self.state)
+        return gr
+
     def __init__(self, state_dir, notify=None, poke=None, push=None, push_session=None,
                  codex_bin=None, log=None, client_factory=None):
         self.state = Path(state_dir)
@@ -386,7 +436,7 @@ class CodexBackend:
     def _load_registry(self):
         self._registry_unreadable = False   # end_marker: while set, "not held" is a reader's fault, not no record
         try:
-            rows = json.loads(self._reg_path().read_text())
+            rows = json.loads(self._gr.read_text(self._reg_path()))
             if not isinstance(rows, dict):
                 raise ValueError("registry root is not an object")
         except FileNotFoundError:
@@ -507,7 +557,7 @@ class CodexBackend:
 
     def _registry_rows_for_update(self):
         try:
-            rows = json.loads(self._reg_path().read_text())
+            rows = json.loads(self._gr.read_text(self._reg_path()))
         except FileNotFoundError:
             return {}
         except Exception as e:
@@ -908,7 +958,7 @@ class CodexBackend:
         with s.norm_lock:
             if s.norm is None:
                 path = self.transcript_path(s.sid)
-                last, seen = _tail_state(path)
+                last, seen = _tail_state(path, self._gr)
                 s.norm = _events.ThreadNormalizer(s.tid, cwd=s.cwd, model=s.model,
                                                   version="codex", last_uuid=last,
                                                   seen_uuids=seen)
@@ -923,7 +973,7 @@ class CodexBackend:
         workers pushing concurrently AB-BA across their sessions' locks."""
         path = self.transcript_path(s.sid)
         with open(path, "a", encoding="utf-8") as f:
-            if _ends_mid_line(path):
+            if _ends_mid_line(path, self._gr):
                 # A torn earlier write left a partial line. Written straight after it, this batch's first
                 # record would join it in ONE unparseable line every reader skips (_tail_state, the event
                 # model's readers), so the record vanished while the retire below still took its echo: a
@@ -1311,7 +1361,7 @@ class CodexBackend:
         d.mkdir(parents=True, exist_ok=True)
         with self._names_lock:
             try:
-                old = (d / s.sid).read_text().rstrip("\n").split("\t")
+                old = self._gr.read_text(d / s.sid).rstrip("\n").split("\t")
             except (OSError, UnicodeDecodeError):
                 old = []
             bg = bg or (old[2] if len(old) > 2 else "") or s.color

@@ -64,7 +64,6 @@ class GoalCompactionTest(unittest.TestCase):
         }
         jd.save_goals(SID, self.store)
         # the durable view-cleared seal (cleared.jsonl) for g1
-        (jd.STATE).mkdir(parents=True, exist_ok=True)
         (jd.STATE / "cleared.jsonl").write_text(json.dumps({"id": g("g1"), "t": 1, "op": "clear"}) + "\n")
         self.g = g
 
@@ -133,13 +132,13 @@ class GoalCompactionTest(unittest.TestCase):
         jd.save_goals(other, {"rompUuid": other, "seq": 1, "lastNode": g("g1"), "placements": {},
                               "nodes": {g("g1"): _node(g("g1"), None, cleared=True)},
                               "status": {g("g1"): "cleared"}})
-        target, orig = jd.GOALDIR / (other + ".json"), Path.read_text
+        target, orig = jd.GOALDIR / (other + ".json"), jd._gr.read_text   # the store is read through the judge's guarded reader
 
-        def faulting(path, *a, **kw):
-            if path == target:
+        def faulting(path, *a, **kw):                  # (kernel/state_root_mode.py; since round 4 of the state-root review every
+            if Path(path) == target:                   # read under the root goes through it), so the fault sits on that reader
                 raise OSError(errno.EIO, "Input/output error", str(path))
             return orig(path, *a, **kw)
-        with mock.patch.object(Path, "read_text", faulting):
+        with mock.patch.object(jd._gr, "read_text", faulting):
             km._compact_goal_stores()
         self.assertNotIn(other, km._compact_seen, "an unreadable store is not recorded as swept...")
         self.assertFalse((jd.GOALARCHDIR / (other + ".json")).exists(), "...and nothing moved out of it")
@@ -190,7 +189,6 @@ class ClearedLedgerIsAuthoritativeAcrossTheCompaction(unittest.TestCase):
         km._CLEARED_MEMO["slot"] = None
         jd._GOALARCH_MEMO.clear()
         self.g = lambda n: "%s:%s" % (SID, n)
-        (jd.STATE).mkdir(parents=True, exist_ok=True)
         (jd.STATE / "cleared.jsonl").write_text("")
 
     def tearDown(self):

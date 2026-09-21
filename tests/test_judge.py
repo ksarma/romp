@@ -6083,7 +6083,7 @@ class Distiller(unittest.TestCase):
     def test_a_give_up_stamps_a_failed_warn_that_names_a_generic_cause(self):
         # the user 2026-07-03 (who wanted it to fail loudly): a give-up must not blank the card SILENTLY — it stamps a
         # brief-failed / summary-failed warn (yellow chip → modal) so the failure is followable from the card.
-        (jd.STATE).mkdir(parents=True, exist_ok=True)       # no maxed account window → the generic cause
+        # no maxed account window → the generic cause
         (jd.STATE / "usage.json").write_text(json.dumps({"five_hour": {"pct": 20}, "seven_day": {"pct": 40}}))
         gid, now = self._blocked_goal()
         jd.brief_llm = lambda g, w, ow="", frame=None, user_ask=None: ""               # every call fails (real, not a pause-skip)
@@ -6099,7 +6099,6 @@ class Distiller(unittest.TestCase):
     def test_a_give_up_names_the_account_limit_when_one_is_maxed(self):
         # when the Session/Weekly window is maxed the modal names it as the cause; Fable-5 is NOT named (it's
         # model-scoped and doesn't fail the Sonnet summarizer — same reasoning as the retry-pause fix)
-        (jd.STATE).mkdir(parents=True, exist_ok=True)
         FUT = 4102444800   # far-future reset (year 2100) — _giveup_cause() compares against real time.time()
         (jd.STATE / "usage.json").write_text(json.dumps({
             "five_hour": {"pct": 100, "resets_at": FUT},
@@ -6509,7 +6508,7 @@ class JudgeFailureScanMemo(unittest.TestCase):
         would re-parse a store that did not change again (one wasted parse, never a wrong count)."""
         self._store(self.A, failed=True)
         path = self._path(self.A)
-        real_open, fired = open, []
+        real_open, fired = jd._gr.open, []
 
         def hooked(fp, *a, **k):
             if not fired and str(fp) == path:
@@ -6517,11 +6516,10 @@ class JudgeFailureScanMemo(unittest.TestCase):
                 self._store(self.A, failed=False, mt=T0 + 500)   # a writer lands between the stat and the open
             return real_open(fp, *a, **k)
 
-        jd.open = hooked                                         # module global shadows the builtin
-        try:
+        # the scan opens through the judge's guarded reader (round 4 of the state-root review: every read under the root does),
+        # so the hook sits on that reader's open rather than on a module-global `open`
+        with mock.patch.object(jd._gr, "open", hooked):
             self.assertIsNone(jd.judge_failure_scan(), "the bytes read are the new version's")
-        finally:
-            del jd.open
         self.assertEqual(fired, [1])
         self.assertEqual(len(self.parses), 1)
         self.assertIsNone(jd.judge_failure_scan())

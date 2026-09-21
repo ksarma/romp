@@ -38,6 +38,7 @@ import time
 import types
 import unittest
 from romp_load import load_source
+from tests import guarded_reads   # the shared Reader seam: every read under the state root goes through it (round 4 of the state-root review)
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -1316,7 +1317,7 @@ class RefusedToggleTellsTheDeliveringSocket(_Base):
         self._real_read = Path.read_text
 
     def tearDown(self):
-        Path.read_text = self._real_read
+        self._heal()
         super().tearDown()
 
     def _fault(self):
@@ -1327,6 +1328,12 @@ class RefusedToggleTellsTheDeliveringSocket(_Base):
                 raise OSError(errno.EIO, "Input/output error")
             return real(p, *a, **k)
         Path.read_text = failing
+        self._reader_fault = guarded_reads.start_fault(self.ledger, lambda: OSError(errno.EIO, "Input/output error"))   # the guarded reader's open too
+
+    def _heal(self):
+        Path.read_text = self._real_read
+        if getattr(self, "_reader_fault", None) is not None:
+            self._reader_fault.stop()
 
     def _dispatch(self, msg):
         sent = []
@@ -1343,7 +1350,7 @@ class RefusedToggleTellsTheDeliveringSocket(_Base):
         before = self.ledger.read_bytes()
         self._fault()                                                  # …and the new bytes cannot be read
         sent, client = self._dispatch({"type": "setAutoNudge", "enabled": True, "gt": T_NEW})
-        Path.read_text = self._real_read
+        self._heal()
         self.assertEqual(self.ledger.read_bytes(), before, "the file keeps its bytes: nothing rewritten from a copy the reader could not vouch for")
         frames = [m for m in sent if m.get("type") == "settingStale"]
         self.assertEqual(len(frames), 1, "the delivering socket hears the refusal: the gear re-fills and says not applied")
@@ -1376,7 +1383,7 @@ class RefusedToggleTellsTheDeliveringSocket(_Base):
         self.ledger.write_text(json.dumps(json.loads(self.ledger.read_bytes()), indent=1))   # the file moves on…
         self._fault()                                                  # …and the new bytes cannot be read
         sent, _c = self._dispatch({"type": "setAutoNudge", "enabled": False, "gt": T_NEW})
-        Path.read_text = self._real_read
+        self._heal()
         frames = [m for m in sent if m.get("type") == "settingStale"]
         self.assertEqual(len(frames), 1)
         self.assertIs(frames[0]["kept"], True, "the kept value is what this kernel last proved — its own write, ON")
@@ -1390,7 +1397,7 @@ class RefusedToggleTellsTheDeliveringSocket(_Base):
         before = self.ledger.read_bytes()
         self._fault()
         sent, _c = self._dispatch({"type": "setCompactSuggest", "enabled": False, "gt": T_NEW})
-        Path.read_text = self._real_read
+        self._heal()
         self.assertEqual(self.ledger.read_bytes(), before)
         frames = [m for m in sent if m.get("type") == "settingStale"]
         self.assertEqual(len(frames), 1)

@@ -45,6 +45,72 @@ from pathlib import Path
 # ── protocol constants ──────────────────────────────────────────────────────────────────────────
 PROTOCOL_VERSION = 1
 LEASE_HEARTBEAT_S = 3.0          # the stage 1 cadence (sdk_backend.LEASE_HEARTBEAT_S; pinned equal by a test)
+
+
+def _load_state_root_mode():
+    """kernel/state_root_mode.py under its fixed module name, THE SAME FILE the kernel's judge and the bus load (one
+    implementation; a copy already in sys.modules under that name is reused). A loader, not a copy of the predicate:
+    tests/test_state_root_mode.py's OneText pins that this file defines none of its functions."""
+    import importlib.util
+    name = "romp_state_root_mode"
+    mod = sys.modules.get(name)
+    if mod is not None:
+        return mod
+    path = Path(__file__).resolve().parent / "state_root_mode.py"
+    spec = importlib.util.spec_from_file_location(name, str(path))
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    try:
+        spec.loader.exec_module(mod)
+    except BaseException:
+        sys.modules.pop(name, None)
+        raise
+    return mod
+
+
+_srm = _load_state_root_mode()
+
+
+def state_root_gate(root, where, log=None, stop=None):
+    """THE STATE ROOT'S CHECK IN THE SESSION HOST (round 3 of the state-root review, extra8-3: this process is on by
+    default, writes its lease under the root every LEASE_HEARTBEAT_S and is built to outlive the kernel, so the kernel's
+    exit 2 on a hostile root stopped nothing here until round 4). The one implementation, kernel/state_root_mode.py:
+    the root is READ, judged by the discriminator (an other write bit, or a group write bit under a group that is not
+    the owner's private group, refuses; a lookup that fails refuses with its own remedy; a path that is not a directory
+    refuses with ENOTDIR; an unreadable root is unknown, refuse-class), THEN repaired best-effort. At `where` "start" a
+    pre-existing root that held entries and read writable by another local user is refused whatever the chmod did
+    (the import-read rule, in the kernel's words). A refuse or unknown verdict: the full line on stderr (this uid's
+    surface), one host.log row through `log` (kind "state-root-refused": the errno name and the verdict, never a
+    path), and `stop(2)` (os._exit by default: no drain, no further write, the same shape as the kernel's runtime
+    exit; the CLI child loses its stdin and ends). Returns the check dict otherwise; a warn root (0755, or 0775 under
+    the private group) is re-tightened and said once on stderr."""
+    chk = _srm.check(root, list_entries=(where == "start"))
+    verdict, line = chk["verdict"], chk["line"]
+    if where == "start" and verdict != "unknown" and chk["modeRead"] is not None and not chk["notDirectory"]:
+        empty = chk["entries"] is not None and len(chk["entries"]) == 0
+        ref = _srm.import_read_refusal(root, chk["modeRead"], (chk["uid"], chk["gid"]), "start",
+                                       repair_error=chk["repairError"], empty=empty)
+        if ref is not None:
+            verdict, line = "refuse", ref["line"]
+    if verdict in ("refuse", "unknown"):
+        try:
+            sys.stderr.write("romp-session-host: %s. The host stops now (exit 2; found at %s).\n" % (line, where))
+            sys.stderr.flush()
+        except Exception:
+            pass
+        if log is not None:
+            try:
+                log("state-root-refused", verdict=verdict, where=where, errno=chk.get("statErrno") or chk.get("repairErrno") or "")
+            except Exception:
+                pass
+        (stop or os._exit)(2)
+        return chk
+    if line and where == "start":
+        try:
+            sys.stderr.write("romp-session-host: %s\n" % line)
+        except Exception:
+            pass
+    return chk
 HOOK_TIMEOUT_S = 540.0           # what the kernel registers on every hook matcher (inside the CLI's 600 s default)
 HOOK_SELF_ANSWER_S = 480.0       # a parked hook is answered by the host after this much parking, unattached
 END_GRACE_DEFAULT_S = 120.0      # `end` without a grace: the long bound (conserve_close, request_reconnect)
@@ -305,8 +371,12 @@ class Journal:
     exceeds `segment_bytes`; a segment whose last record has been ACKNOWLEDGED and that is not the current
     one is deleted at the next turn boundary."""
 
-    def __init__(self, directory, segment_bytes=JOURNAL_SEGMENT_BYTES):
+    def __init__(self, directory, segment_bytes=JOURNAL_SEGMENT_BYTES, root=None):
         self.dir = Path(directory)
+        # the guarded reader over the state root (the host passes it; the host directory is <root>/hosts/<sid>), or over the
+        # journal directory itself when no root is named (a bare Journal in a test): a segment replaced by a symlink or a
+        # foreign-owned file while the root was writable is quarantined and read as absent
+        self._gr = _srm.Reader(lambda: Path(root) if root is not None else self.dir, who="session-host")
         self.dir.mkdir(parents=True, exist_ok=True)
         self.segment_bytes = int(segment_bytes)
         self.next_offset = 0
@@ -435,7 +505,7 @@ class Journal:
                         fh.close()
                     cur_seg = seg
                     try:
-                        fh = open(self._path(seg), "rb")
+                        fh = self._gr.open(self._path(seg), "rb")
                     except OSError:
                         fh = None
                 if fh is None:
@@ -465,16 +535,17 @@ def read_journal_dir(directory, offset: int = 0):
     first-offset order, each record numbered from its segment's first offset, so acknowledged-and-deleted
     early segments cost nothing but the records they held. Pure on the files."""
     d = Path(directory)
-    segs = sorted((f, p) for p in d.glob("journal-*.jsonl") for f in [_segment_first(p.name)] if f is not None)
+    _gr = _srm.Reader(lambda: d, who="session-host")   # guarded from the host directory down (the kernel's reader judged the root)
+    segs = sorted((f, p) for p in _gr.glob(d, "journal-*.jsonl") for f in [_segment_first(p.name)] if f is not None)
     try:
-        gaps = set(json.loads((d / "gaps.json").read_text()))
+        gaps = set(json.loads(_gr.read_text(d / "gaps.json")))
     except Exception:
         gaps = set()
     for first, p in segs:
         n = first
         while n in gaps:            # an unrecorded gap at the segment's head
             n += 1
-        with open(p, "rb") as fh:
+        with _gr.open(p, "rb") as fh:
             for line in fh:
                 if n >= offset:
                     try:
@@ -684,15 +755,20 @@ class SessionHost:
 
     def __init__(self, spec_path, lease_api=None, now=None):
         self.spec_path = Path(spec_path)
-        with open(self.spec_path) as f:
+        # the spec lives at <root>/hosts/<sid>/spawn.json, so the root is three parents up: the guarded reader judges
+        # every component from there down before the spec is trusted (a spec replaced by a symlink or a foreign-owned
+        # file while the root was writable is quarantined, and the host does not start)
+        self._gr = _srm.Reader(lambda: self.spec_path.parent.parent.parent, who="session-host")
+        with self._gr.open(self.spec_path) as f:
             self.spec = json.load(f)
         self.sid = str(self.spec["sid"])
         self.name = str(self.spec.get("name") or self.sid[:8])
         self.state_dir = Path(self.spec["state_dir"])
+        self._gr = _srm.Reader(lambda: self.state_dir, who="session-host")   # the spec's root from here on
         self.dir = self.spec_path.parent
         self.sock_path = self.state_dir / "hosts" / (self.sid[:8] + ".sock")
         self.log_path = self.dir / "host.log"
-        self.journal = Journal(self.dir)
+        self.journal = Journal(self.dir, root=self.state_dir)
         self.parked = Parked(float(self.spec.get("hook_self_answer_s") or HOOK_SELF_ANSWER_S))
         self.grace_s = float(self.spec.get("unattached_grace_s") or UNATTACHED_GRACE_DEFAULT_S)
         self.reader_behind_records = int(self.spec.get("reader_behind_records") or READER_BEHIND_RECORDS)
@@ -759,6 +835,7 @@ class SessionHost:
     async def _beat(self) -> None:
         while self.exit_info is None:
             await asyncio.sleep(LEASE_HEARTBEAT_S)
+            state_root_gate(self.state_dir, "beat", log=self.log)   # read before repair; a hostile root exits 2 here, every beat
             self._write_lease()
 
     # ── the CLI ──
@@ -1210,7 +1287,29 @@ def main(argv=None) -> int:
     if len(argv) != 1:
         sys.stderr.write("usage: romp-session-host <spawn.json>\n")
         return 2
-    host = SessionHost(argv[0])
+    # THE GATE FIRST, before anything under the root is read, the spec included: the spec lives at <root>/hosts/<sid>/spawn.json,
+    # so the root and this host's log are known from its path alone
+    spec_path = Path(argv[0])
+    root, log_path = spec_path.parent.parent.parent, spec_path.parent / "host.log"
+
+    def early_log(kind, **fields):
+        row = {"t": round(time.time(), 3), "kind": str(kind)}
+        row.update({k: (v if isinstance(v, (str, int, float, bool)) else str(v)) for k, v in fields.items() if v is not None})
+        try:
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(row, separators=(",", ":")) + "\n")
+        except Exception:
+            pass
+    state_root_gate(root, "start", log=early_log)            # exit 2 on refuse or unknown, before the spec is read
+    try:
+        host = SessionHost(argv[0])
+    except OSError as e:
+        # the spec could not be read: absent, or refused and quarantined by the guarded reader (its line is on stderr)
+        sys.stderr.write("romp-session-host: cannot read the spawn spec %s (%s); the host did NOT start (exit 2)\n"
+                         % (argv[0], _srm.errno_text(e)))
+        return 2
+    if Path(host.state_dir) != root:
+        state_root_gate(host.state_dir, "start", log=host.log)   # a spec naming another root: that root is gated too, before the CLI
     try:
         return asyncio.run(host.run())
     except SdkInternalsMismatch as e:

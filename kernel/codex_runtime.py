@@ -14,6 +14,43 @@ import sys
 import tempfile
 from pathlib import Path
 
+
+def _load_state_root_mode():
+    """kernel/state_root_mode.py under its fixed module name, THE SAME FILE the judge, the event model, the bus and the
+    session host load (one implementation; a copy already in sys.modules under that name is reused, so one process holds
+    one module object). A loader, not a copy of the predicate: tests/test_state_root_mode.py's OneText pins that."""
+    import importlib.util
+    name = "romp_state_root_mode"
+    mod = sys.modules.get(name)
+    if mod is not None:
+        return mod
+    path = Path(__file__).resolve().parent / "state_root_mode.py"
+    spec = importlib.util.spec_from_file_location(name, str(path))
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    try:
+        spec.loader.exec_module(mod)
+    except BaseException:
+        sys.modules.pop(name, None)
+        raise
+    return mod
+
+
+_srm = _load_state_root_mode()
+
+
+def _reader(state_dir):
+    """THE GUARDED READER over `state_dir` (kernel/state_root_mode.py, Reader; round 4 of the state-root review). This
+    module is handed the state root by its caller and binds none at import, so the reader is built per call over the
+    root it was handed. Every read of a path under that root in this module goes through one (the AST census in
+    tests/test_state_root_readers.py pins it): every component from the root down is lstat'ed (not a symlink, this
+    uid's, not writable by another local user), a failing entry is quarantined and read as absent, never adopted, and
+    a path outside the root passes through. Its rows file through the shared module's REFUSED_HOOKS (the kernel's
+    error-centre hook, registered at the kernel's import)."""
+    root = Path(state_dir)
+    return _srm.Reader(lambda: root, who='codex-runtime')
+
+
 VERSION = '0.153.3'
 # SHA-256 digests published with OpenAI's rust-v0.153.3 GitHub release.
 _WHEELS = {
@@ -35,10 +72,11 @@ def wheel_url(system=None, machine=None):
             % (VERSION, name, digest))
 
 
-def _package_path(target):
+def _package_path(target, gr):
+    """The CLI under `target`, or a RuntimeError; `gr` is the guarded reader over the state root the target lies under."""
     root = Path(target) / 'codex_cli_bin'
     try:
-        metadata = json.loads((root / 'codex-package.json').read_text())
+        metadata = json.loads(gr.read_text(root / 'codex-package.json'))
         if metadata.get('version') != VERSION:
             raise ValueError('wrong runtime version')
         files = ['bin/codex', 'bin/codex-code-mode-host', 'codex-path/rg']
@@ -54,19 +92,20 @@ def _package_path(target):
 
 
 def runtime_path(state_dir):
-    return _package_path(Path(state_dir) / 'codex-runtime' / VERSION)
+    return _package_path(Path(state_dir) / 'codex-runtime' / VERSION, _reader(state_dir))
 
 
 def install_runtime(state_dir):
     url = wheel_url()  # Refuse unsupported hosts before creating an installation.
     base = Path(state_dir).resolve() / 'codex-runtime'
+    gr = _reader(state_dir)
     base.mkdir(parents=True, exist_ok=True)
     target = base / VERSION
     # Serialize concurrent setup calls and publish only a validated full package.
     with (base / 'install.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
-            return _package_path(target)
+            return _package_path(target, gr)
         except RuntimeError:
             pass
         with tempfile.TemporaryDirectory(prefix='.install-', dir=base) as scratch:
@@ -76,7 +115,7 @@ def install_runtime(state_dir):
                 '--disable-pip-version-check', '--no-index', '--no-deps',
                 '--only-binary=:all:', '--require-hashes', '--target', str(staging), url,
             ], check=True)
-            exe = _package_path(staging)
+            exe = _package_path(staging, gr)
             result = subprocess.run([str(exe), '--version'], check=True,
                                     capture_output=True, text=True, timeout=15)
             if result.stdout.strip() != 'codex-cli ' + VERSION:
@@ -87,7 +126,7 @@ def install_runtime(state_dir):
             elif target.exists():
                 shutil.rmtree(target)
             staging.rename(target)
-    return _package_path(target)
+    return _package_path(target, gr)
 
 
 if __name__ == '__main__':

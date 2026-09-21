@@ -5230,21 +5230,31 @@ class UpdateRegDroppingUnreadable(unittest.TestCase):
         self.assertIn("unreadable", err.getvalue(), err.getvalue())
         self.assertEqual(sb.read_reg(root, self.SID), {"sid": self.SID, "name": "web", "alive": True}, "name and alive stand")
 
-    def test_a_symlink_loop_reg_path_is_never_a_writable_absence(self):
-        """ELOOP: Path.exists() answered False on every interpreter, so _update_reg built {sid}+fields over a path that cannot hold
-        a reg and the session lost name and alive (the 2026-08-31 blink class); read_reg_for_rmw answered {} there, the
-        writable-empty base its docstring forbids. A writer may build a fresh record only on ENOENT."""
+    def test_a_symlink_loop_reg_path_is_quarantined_and_the_reg_is_then_absent(self):
+        """ELOOP, as it stood until round 4 of the state-root review: Path.exists() answered False on every interpreter, so
+        _update_reg built {sid}+fields over a path that cannot hold a reg (the 2026-08-31 blink class), and the rule became
+        "a writer may build a fresh record only on ENOENT". Since round 4 every read under the state root goes through the
+        guarded reader (kernel/state_root_mode.py), and a symlink at a reg path, a loop included, is not read at all: the
+        first read QUARANTINES it to <root>/quarantine (kept for review) and answers absent, so the path is then genuinely
+        ENOENT, a fresh record may be built there, and a reader finds it. Nothing is written through the link, ever: it is
+        out of the root before any write. The writers' rule stands for a loop the stat itself meets (_reg_absent_for_write)."""
         root = tempfile.mkdtemp(); _hosts_off(root)
         be = sb.SdkBackend(root, "/bin/true", lambda *a, **k: None)
         p = sb._reg_path(root, self.SID); p.parent.mkdir(parents=True, exist_ok=True)
         os.symlink(p.name, p)                                   # a loop: the path names itself
-        self.assertIsNone(sb.read_reg_for_rmw(root, self.SID), "a loop is not an absent reg: None, the caller skips its write")
         err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(sb.read_reg_for_rmw(root, self.SID), {}, "the loop is quarantined at the first read; the reg is then absent")
+        self.assertIn("quarantined", err.getvalue())
+        self.assertFalse(os.path.lexists(p), "the link is out of the root")
+        q = os.path.join(root, "quarantine")
+        self.assertTrue(os.path.isdir(q) and any(n.endswith(".sdk.%s.json" % self.SID) for n in os.listdir(q)), "kept for review")
         with contextlib.redirect_stderr(err):
             be._update_reg(self.SID, name="x")
             be._update_reg_dropping(self.SID, drop=("cwdPending",), name="y")
-        self.assertEqual(err.getvalue().count("unreadable"), 2, err.getvalue())
-        self.assertTrue(os.path.islink(p) and not os.path.exists(p), "the loop stands, nothing was written through it")
+        self.assertEqual(err.getvalue().count("unreadable"), 0, err.getvalue())
+        self.assertTrue(os.path.isfile(p) and not os.path.islink(p), "a fresh record, a regular file, where the loop was")
+        self.assertEqual((sb.read_reg(root, self.SID) or {}).get("name"), "y")
         self.assertEqual(sb.read_reg_for_rmw(root, "11111111-2222-3333-4444-555555555599"), {}, "a genuinely absent reg: the empty base")
 
     def test_read_reg_for_rmw_answers_none_under_an_unlistable_directory(self):

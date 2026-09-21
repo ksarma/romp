@@ -603,7 +603,12 @@ def install_guards(km, sbmod, shadow, rec, no_git=False):
     real_start = threading.Thread.start
 
     def counted_start(self, *a, **k):
-        rec["thread_starts"] += 1
+        # the state root's guarded readers ask the group database about a file's group once per (gid, uid), in a thread
+        # joined with a bound (kernel/state_root_mode.py: a hung name service must not hang a read); the judge primes the
+        # process's own group at import, and this counter replaces pwd.getpwuid above, so the first group-bit read in a
+        # builder asks once more through the counting wrapper. That one bounded lookup is the guard's, not a builder's.
+        if getattr(self, "name", "") != "state-root-group-lookup":
+            rec["thread_starts"] += 1
         return real_start(self, *a, **k)
     threading.Thread.start = counted_start
     return names

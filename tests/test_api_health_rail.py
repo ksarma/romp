@@ -17,6 +17,7 @@ import os
 import tempfile
 import unittest
 from romp_load import load_source
+from tests import guarded_reads   # the shared Reader seam: every read under the state root goes through it (round 4 of the state-root review)
 from pathlib import Path
 from unittest import mock
 
@@ -395,7 +396,8 @@ class PauseDoorRefusal(_Fixture):
                 raise OSError(errno.EMFILE, "too many open files")
             return real(p, *a, **k)
         err = io.StringIO()
-        with contextlib.redirect_stderr(err), mock.patch.object(Path, "read_text", faulting):
+        with contextlib.redirect_stderr(err), mock.patch.object(Path, "read_text", faulting), \
+                guarded_reads.fault(path, lambda: OSError(errno.EMFILE, "too many open files")):   # the guarded reader's open, the pause file's road now
             km.Handler._dispatch_ws(None, {"type": "setGlobalRetryPaused", "value": False}, client)
         self.assertEqual([m["type"] for m in got], ["warn"], got)
         self.assertEqual(got[0]["text"], "Couldn't change the pause: its file could not be read; nothing was changed \u2014 retry")

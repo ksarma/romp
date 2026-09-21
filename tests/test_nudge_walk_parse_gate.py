@@ -487,6 +487,8 @@ class NudgeWalkParseGate(unittest.TestCase):
             #                                         version: the store, its journal and archive, keyed files 3 to 5) and holding a pure function of it
             "_last_state_cache", "_machine_cut_cache",   # _fold_records cursors over the state log (a keyed file), keyed by its path and stat
             "_stat_key",                            # a (mtime, size) reader
+            "_gr",                                  # the guarded reader over the state root (kernel/state_root_mode.py): the door every read
+            #                                         of a keyed file under the root takes since round 4 of the state-root review; no input of its own
             "_NUDGE_HORIZON",                       # the look's thread-local horizon: its notes, and the keyed and overflow asker sets the
             #                                         gate derived from the postal log's maps (keyed) before the look; no input of its own
             "_NUDGE_WALK_STATS",                    # the walk's counters (no input)

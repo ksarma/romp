@@ -54,9 +54,8 @@ class TabMetaPush(unittest.TestCase):
                        km._mark_views_dirty, km.Sessions.backend_for,
                        km._chat_tab_sessions, km._cached_feed)
         km.NAMES = self.names
-        km.jd.STATE = Path(self.tmp) / "state"
-        km.jd.STATE.mkdir(parents=True, exist_ok=True)
-        km.jd.STATE.chmod(0o700)   # owner-only, as production leaves it (2026-09-20): a pass on a umask-mode root exits the process
+        (Path(self.tmp) / "state").mkdir(parents=True, exist_ok=True)
+        km.jd._rebind_state(Path(self.tmp) / "state")   # the seam floors a umask-mode root at 0700 (round 4, 2026-09-21): the per-module chmod is gone
         km._pal_cache.update({"name": km.pal.DEFAULT, "mt": None})
         km._live_map = lambda: {}
         km._live_names = lambda tm: {self._name(): SID}
@@ -85,6 +84,7 @@ class TabMetaPush(unittest.TestCase):
         (km.NAMES, km.jd.STATE, km._live_map, km._live_names,
          km._mark_views_dirty, km.Sessions.backend_for,
          km._chat_tab_sessions, km._cached_feed) = self._saved
+        km.jd._rebind_state(km.jd.STATE)
         km._pal_cache.update({"name": km.pal.DEFAULT, "mt": None})
 
     def _name(self):

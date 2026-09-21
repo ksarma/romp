@@ -50,6 +50,42 @@ from pathlib import Path
 import importlib
 import importlib.util
 _HERE = Path(__file__).resolve().parent
+
+
+def _load_state_root_mode():
+    """kernel/state_root_mode.py under its fixed module name, THE SAME FILE the judge, the event model, the bus and the
+    session host load (one implementation; a copy already in sys.modules under that name is reused, so one process holds
+    one module object). A loader, not a copy of the predicate: tests/test_state_root_mode.py's OneText pins that."""
+    import importlib.util
+    name = "romp_state_root_mode"
+    mod = sys.modules.get(name)
+    if mod is not None:
+        return mod
+    path = Path(__file__).resolve().parent / "state_root_mode.py"
+    spec = importlib.util.spec_from_file_location(name, str(path))
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    try:
+        spec.loader.exec_module(mod)
+    except BaseException:
+        sys.modules.pop(name, None)
+        raise
+    return mod
+
+
+_srm = _load_state_root_mode()
+
+
+def _reader(state_dir):
+    """THE GUARDED READER over `state_dir` (kernel/state_root_mode.py, Reader; round 4 of the state-root review). This
+    module is handed the state root by its caller and binds none at import, so the reader is built per call over the
+    root it was handed. Every read of a path under that root in this module goes through one (the AST census in
+    tests/test_state_root_readers.py pins it): every component from the root down is lstat'ed (not a symlink, this
+    uid's, not writable by another local user), a failing entry is quarantined and read as absent, never adopted, and
+    a path outside the root passes through. Its rows file through the shared module's REFUSED_HOOKS (the kernel's
+    error-centre hook, registered at the kernel's import)."""
+    root = Path(state_dir)
+    return _srm.Reader(lambda: root, who='sdk-backend')
 _ls_spec = importlib.util.spec_from_file_location("romp_loadsource", str(_HERE / "loadsource.py"))
 _ls_mod = importlib.util.module_from_spec(_ls_spec)
 _ls_spec.loader.exec_module(_ls_mod)
@@ -918,7 +954,7 @@ def known_fsids(state_dir: Path, sid: str, reg: dict | None = None, faults: list
     for sub, pick in (("episodes", lambda r: [r.get("fsid")]),
                       ("states", lambda r: [(r.get("resumeFork") or {}).get(k) for k in ("from", "to")])):
         try:
-            lines = (Path(state_dir) / sub / (str(sid) + ".jsonl")).read_text().splitlines()
+            lines = _reader(state_dir).read_text(Path(state_dir) / sub / (str(sid) + ".jsonl")).splitlines()
         except OSError as e:
             if faults is not None and e.errno not in (errno.ENOENT, errno.ENOTDIR):
                 faults.append(sub)
@@ -1583,7 +1619,7 @@ def note_cli_model_block(state_dir, model_id, error_text) -> bool:
         return False
     p = Path(state_dir) / CLI_MODEL_BLOCKS_FILE
     try:
-        d = json.loads(p.read_text())
+        d = json.loads(_reader(state_dir).read_text(p))
         d = d if isinstance(d, dict) else {}
     except Exception:
         d = {}
@@ -1598,7 +1634,7 @@ def clear_cli_model_block(state_dir, model_id) -> bool:
     mid = str(model_id or "")
     p = Path(state_dir) / CLI_MODEL_BLOCKS_FILE
     try:
-        d = json.loads(p.read_text())
+        d = json.loads(_reader(state_dir).read_text(p))
     except Exception:
         return False
     if not isinstance(d, dict) or mid not in d:
@@ -1864,11 +1900,12 @@ def _same_window(a, b) -> bool:
     return abs(a - b) <= WINDOW_SLACK
 
 
-def _lines_from_end(p: Path, block: int = 65536):
+def _lines_from_end(p: Path, gr, block: int = 65536):
     """The file's lines LAST to first, newline-stripped, read backwards in blocks — so a reader that
     wants the newest record touches the tail of the file, not all of it. Exactly the lines forward
-    iteration would yield: a trailing newline closes the last line rather than opening an empty one."""
-    with open(p, "rb") as f:
+    iteration would yield: a trailing newline closes the last line rather than opening an empty one. `gr` is the
+    guarded reader over the state root the file lies under."""
+    with gr.open(p, "rb") as f:
         f.seek(0, os.SEEK_END)
         pos = f.tell()
         rest = b""
@@ -1911,7 +1948,7 @@ def last_state(state_dir: Path, sid: str) -> dict:
     if hit is not None and hit[0] == key:
         return dict(hit[1])
     try:
-        line = next(_lines_from_end(p), "")
+        line = next(_lines_from_end(p, _reader(state_dir)), "")
         rec = json.loads(line) if line.strip() else {}
     except (OSError, ValueError):
         return {}
@@ -1930,7 +1967,7 @@ def last_state_record(state_dir: Path, sid: str) -> dict:
     (the boot reconcile's cut-turn detector) must read through the overlays, not the last line."""
     p = Path(state_dir) / "states" / (sid + ".jsonl")
     try:
-        for line in _lines_from_end(p):              # newest first; the first STATE record wins
+        for line in _lines_from_end(p, _reader(state_dir)):              # newest first; the first STATE record wins
             line = line.strip()
             if not line:
                 continue
@@ -1978,7 +2015,7 @@ def cut_turn_start(state_dir: Path, sid: str) -> int | None:
     boundary: int | None = None     # a machineCut newer than every state record
     tail_seen = False
     try:
-        for line in _lines_from_end(p):              # newest first
+        for line in _lines_from_end(p, _reader(state_dir)):              # newest first
             line = line.strip()
             if not line:
                 continue
@@ -2017,7 +2054,7 @@ def last_awaiting(state_dir: Path, sid: str) -> bool | None:
     p = Path(state_dir) / "states" / (sid + ".jsonl")
     val = None
     try:
-        with open(p) as f:
+        with _reader(state_dir).open(p) as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -2046,7 +2083,7 @@ def write_name(state_dir: Path, sid: str, name: str, cwd: str, bg: str = "", fg:
     p.parent.mkdir(parents=True, exist_ok=True)
     if emoji is None:
         try:
-            old = p.read_text().rstrip("\n").split("\t")
+            old = _reader(state_dir).read_text(p).rstrip("\n").split("\t")
         except (OSError, UnicodeDecodeError):
             old = []
         emoji = old[4] if len(old) > 4 else ""
@@ -2791,6 +2828,16 @@ class ApiHealth:
     the HTTP thread — hence the lock. Holds at most a few thousand tuples over the retention (the slow
     window plus the hold); a snapshot is one pass per bucket, run with the lock RELEASED."""
 
+    @property
+    def _gr(self):
+        """The guarded reader over this object's state root (kernel/state_root_mode.py), built on first use: every read of a
+        path under the root in this class goes through it (the census), and an instance a test assembles without __init__
+        has one too."""
+        gr = self.__dict__.get("_gr_")
+        if gr is None:
+            gr = self.__dict__["_gr_"] = _reader(self.state_dir)
+        return gr
+
     def __init__(self, state_dir, log=None, boot_at=None):
         self.state_dir = Path(state_dir)
         self._log = log
@@ -2832,7 +2879,7 @@ class ApiHealth:
                 return self._salt
             p = self.state_dir / API_HEALTH_SALT_FILE
             try:
-                self._salt = p.read_text().strip()
+                self._salt = self._gr.read_text(p).strip()
                 return self._salt
             except FileNotFoundError:
                 pass
@@ -2856,7 +2903,7 @@ class ApiHealth:
                         os.link(str(tmp), str(p))       # publish whole, or lose to a sibling that did
                     except FileExistsError:
                         try:
-                            self._salt = p.read_text().strip()   # one salt per install: theirs
+                            self._salt = self._gr.read_text(p).strip()   # one salt per install: theirs
                         except OSError:
                             self._salt = ""
                     else:
@@ -3014,7 +3061,7 @@ class ApiHealth:
         try:
             rows, per, recs, bad = [], {}, {}, 0
             try:
-                doc = json.loads(self._state_path().read_text())
+                doc = json.loads(self._gr.read_text(self._state_path()))
             except FileNotFoundError:
                 return
             if not isinstance(doc, dict):
@@ -3266,7 +3313,7 @@ def read_reg(state_dir: Path, sid: str) -> dict | None:
     round 6, 2026-09-09)."""
     _REG_READ_TL.n = getattr(_REG_READ_TL, "n", 0) + 1   # counted before the read: an attempt, whatever it answers
     try:
-        reg = json.loads(_reg_path(state_dir, sid).read_text())
+        reg = json.loads(_reader(state_dir).read_text(_reg_path(state_dir, sid)))
     except (OSError, ValueError):
         return None
     return reg if isinstance(reg, dict) else None
@@ -3478,7 +3525,7 @@ def newest_down_stop(state_dir: Path) -> int | None:
     stop. The caller still checks the row is no older than the cut turn's start, so a `down` from
     days ago cannot be blamed for a later crash's cut."""
     try:
-        for line in _lines_from_end(Path(state_dir) / "restart-audit.jsonl"):
+        for line in _lines_from_end(Path(state_dir) / "restart-audit.jsonl", _reader(state_dir)):
             line = line.strip()
             if not line:
                 continue
@@ -3790,8 +3837,9 @@ def sdk_venv_built_for(state_dir) -> list:
     """The python tags (`3.12`, `3.14t`) the SDK venv under `state_dir` has site-packages for, [] with no
     venv."""
     try:
+        _gr = _reader(state_dir)
         lib = Path(state_dir) / "sdkvenv" / "lib"
-        return sorted(p.name[len("python"):] for p in lib.glob("python3.*") if (p / "site-packages").is_dir())
+        return sorted(p.name[len("python"):] for p in _gr.glob(lib, "python3.*") if _gr.isdir(p / "site-packages"))
     except Exception:
         return []
 
@@ -3844,7 +3892,7 @@ def sdk_venv_interpreter(state_dir) -> str:
     """The interpreter the venv's pyvenv.cfg records: `executable` (python >= 3.11), else `home` plus the
     version line (`version` from venv, `version_info` from uv). "" when there is no cfg or it names none."""
     try:
-        lines = (Path(state_dir) / "sdkvenv" / "pyvenv.cfg").read_text(encoding="utf-8").splitlines()
+        lines = _reader(state_dir).read_text(Path(state_dir) / "sdkvenv" / "pyvenv.cfg", encoding="utf-8").splitlines()
     except Exception:
         return ""
     kv = {}
@@ -3867,9 +3915,10 @@ def sdk_venv_fingerprint(state_dir) -> tuple:
     launch_error) re-derives the verdict, and re-runs the interpreter probe, only when the disk changed."""
     root = Path(state_dir) / "sdkvenv"
     parts = []
+    _gr = _reader(state_dir)
     try:
-        for p in sorted((root / "lib").glob("python3.*")):
-            if (p / "site-packages").is_dir():
+        for p in sorted(_gr.glob(root / "lib", "python3.*")):
+            if _gr.isdir(p / "site-packages"):
                 parts.append((p.name, (p / "site-packages" / "claude_agent_sdk" / "__init__.py").is_file()))
     except Exception:
         pass
@@ -4433,7 +4482,7 @@ def write_lease(state_dir, lease: dict) -> None:
 def read_lease(state_dir, sid: str) -> dict | None:
     """The session's lease as written, or None when there is none (or it does not parse)."""
     try:
-        d = json.loads(lease_path(state_dir, sid).read_text())
+        d = json.loads(_reader(state_dir).read_text(lease_path(state_dir, sid)))
     except (OSError, ValueError):
         return None
     if not isinstance(d, dict) or not d.get("sid"):
@@ -4456,7 +4505,7 @@ def list_leases(state_dir) -> list[dict]:
     d = Path(state_dir) / LEASE_DIR
     out = []
     try:
-        names = sorted(os.listdir(d))
+        names = sorted(_reader(state_dir).listdir(d))   # [] when absent or refused; each lease is then read through the guard
     except OSError:
         return out
     for n in names:
@@ -5233,8 +5282,10 @@ def list_regs(state_dir: Path) -> list[dict]:
     the same tick succeeded (specimens 2026-08-31 01:01 and 18:30)."""
     d = Path(state_dir) / "sdk"
     out = []
+    _gr = _reader(state_dir)
     try:
-        entries = list(os.scandir(d))
+        entries = list(_gr.scandir(d))       # the guarded reader lists an absent (or refused) directory as EMPTY, which
+        #                                       is the arm below's answer ([]); a listing that raises still takes the OSError arm
     except FileNotFoundError:
         # a MISSING sdk/ dir is genuine emptiness (a fresh state root the first write hasn't
         # created yet), not a transient fault — scandir RAISES on it, it does not yield []. The
@@ -5288,7 +5339,7 @@ def list_regs(state_dir: Path) -> list[dict]:
             continue                                   # latch never cleared and later blips logged
         #                                                nothing (review find 2026-09-01)
         try:
-            r = json.loads(Path(de.path).read_text())
+            r = json.loads(_gr.read_text(de.path))
             if not isinstance(r, dict):
                 # JSON, but not an object (a list, a string, null): no writer produces this, so it is a
                 # broken record like the torn body below and takes the same arm (the cached last good row
@@ -5579,7 +5630,7 @@ def thinking_summaries_on(state_dir: Path) -> bool:
     OFF is the shipped default and the opt-in must be provable. Same file the kernel writes
     ({"enabled": bool, "gt": ms}); reading never creates it."""
     try:
-        d = json.loads((Path(state_dir) / THINKING_SUMMARIES_FILE).read_text())
+        d = json.loads(_reader(state_dir).read_text(Path(state_dir) / THINKING_SUMMARIES_FILE))
         return bool(isinstance(d, dict) and d.get("enabled"))
     except (OSError, ValueError):
         return False
@@ -5642,7 +5693,7 @@ def read_sdk_defaults(state_dir: Path) -> dict:
     if hit is not None and hit[0] == ident:
         return dict(hit[1])
     try:
-        d = json.loads(p.read_text())
+        d = json.loads(_reader(state_dir).read_text(p))
     except (OSError, ValueError):
         return {}
     d = d if isinstance(d, dict) else {}
@@ -13254,6 +13305,16 @@ class SdkBackend:
     """Manages SDK-backed sessions. Constructed by the kernel with callbacks for
     pushing to clients and a few launch parameters that mirror the tmux launch."""
 
+    @property
+    def _gr(self):
+        """The guarded reader over this object's state root (kernel/state_root_mode.py), built on first use: every read of a
+        path under the root in this class goes through it (the census), and an instance a test assembles without __init__
+        has one too."""
+        gr = self.__dict__.get("_gr_")
+        if gr is None:
+            gr = self.__dict__["_gr_"] = _reader(self.state_dir)
+        return gr
+
     def __init__(self, state_dir, claude_bin: str, notify, poke=None, push=None,
                  push_session=None, push_live=None,
                  mcp_config: str | None = None, append_prompt_path: str | None = None,
@@ -15396,7 +15457,7 @@ class SdkBackend:
         with self._rl_lock:
             p = self.state_dir / "spend.json"
             try:
-                d = json.loads(p.read_text())
+                d = json.loads(self._gr.read_text(p))
                 days = d.get("days") if isinstance(d, dict) and isinstance(d.get("days"), dict) else {}
                 hours = d.get("hours") if isinstance(d, dict) and isinstance(d.get("hours"), dict) else {}
             except Exception:
@@ -15682,7 +15743,7 @@ class SdkBackend:
             return
         with self._rl_lock:
             try:
-                cur = json.loads((self.state_dir / "usage.json").read_text())
+                cur = json.loads(self._gr.read_text(self.state_dir / "usage.json"))
                 if not isinstance(cur, dict):
                     cur = {}
             except Exception:
@@ -15717,7 +15778,7 @@ class SdkBackend:
         injectable so a frozen-clock caller (tests) never straddles an hour boundary mid-assertion."""
         p = self.state_dir / "usage-history.json"
         try:
-            hist = json.loads(p.read_text())
+            hist = json.loads(self._gr.read_text(p))
         except Exception:
             hist = {}
         hours = hist.get("hours") if isinstance(hist, dict) and isinstance(hist.get("hours"), dict) else {}
@@ -15794,7 +15855,7 @@ class SdkBackend:
             pct = 100                                 # rejected IS 100%: the CLI sends no utilization with it
         with self._rl_lock:                           # one read-merge-write at a time (many sessions stream events)
             try:
-                cur = json.loads((self.state_dir / "usage.json").read_text())
+                cur = json.loads(self._gr.read_text(self.state_dir / "usage.json"))
                 if not isinstance(cur, dict):
                     cur = {}
             except Exception:
@@ -18110,7 +18171,7 @@ class SdkBackend:
         # renameNote this rename stamped) and re-raise so the caller stays loud. The in-memory name
         # moves last, so a failure never touches it — the shape CodexBackend.rename has.
         try:
-            parts = (Path(self.state_dir) / "names" / sid).read_text().rstrip("\n").split("\t")
+            parts = self._gr.read_text(Path(self.state_dir) / "names" / sid).rstrip("\n").split("\t")
         except (OSError, UnicodeDecodeError):
             parts = [new_name, reg.get("cwd", "")]
         parts += ["", "", ""]
@@ -18329,7 +18390,7 @@ class SdkBackend:
                                   movedFrom={"cwd": old, "t": int(time.time())})
         reg = read_reg(self.state_dir, sid) or {}
         try:
-            parts = (Path(self.state_dir) / "names" / sid).read_text().rstrip("\n").split("\t")
+            parts = self._gr.read_text(Path(self.state_dir) / "names" / sid).rstrip("\n").split("\t")
         except OSError:
             parts = [str(reg.get("name") or sid), old]
         parts += ["", "", ""]

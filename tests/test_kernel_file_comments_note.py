@@ -171,8 +171,8 @@ class _SendWorld(unittest.TestCase):
                                         "reply": {"ok": True, "verb": "log-send", "logged": True}}))
         self._saved = (km._FILE_COMMENTS_HOST, km._name_of, km._sdk, km._send_or_park, jd.STATE)
         km._FILE_COMMENTS_HOST = Path(self.stub_path)
-        jd.STATE = Path(self.tmp) / "state"
-        jd.STATE.mkdir()
+        self.addCleanup(jd._rebind_state, jd.STATE)   # the shared judge goes back to the root it had
+        jd._rebind_state(Path(self.tmp) / "state", make=True)   # made and floored at 0700 through the seam (tests-5 of the state-root review)
         km._user_todos_cache.clear()
         km._user_todos_bad.clear()
         km._set_user_todos(True)

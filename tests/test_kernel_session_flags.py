@@ -7,6 +7,7 @@ import pathlib
 import tempfile
 import unittest
 from romp_load import load_source
+from tests import guarded_reads   # the shared Reader seam: every read under the state root goes through it (round 4 of the state-root review)
 from pathlib import Path
 
 BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "bin")
@@ -146,7 +147,8 @@ class FlagsStoreUnreadableRefuses(unittest.TestCase):
                 raise OSError(errno.EIO, "injected EIO")
             return real_rt(self, *a, **k)
         Path.read_bytes, Path.read_text = rb, rt
-        return (real_rb, real_rt)
+        self._reader_fault = guarded_reads.start_fault(target, lambda: OSError(errno.EIO, "injected EIO"))   # the guarded
+        return (real_rb, real_rt)                                                                                    # reader's open too
 
     def test_a_flag_toggle_is_refused_when_the_flags_store_cannot_be_read(self):
         # a populated store: the OTHER session is isolated from the postal bus — a safety boundary
@@ -161,6 +163,7 @@ class FlagsStoreUnreadableRefuses(unittest.TestCase):
             raised = e
         finally:
             Path.read_bytes, Path.read_text = saved
+            self._reader_fault.stop()
         km._flags_cache.clear()
         # THE erasure the audit is about: on origin/main the read folds to {}, the setter writes
         # {SID:{hideFromFeed}} and the OTHER session's isolation boundary is GONE — this assertion is
@@ -326,7 +329,8 @@ def _stat_fault(target):
         return real_stat(self, *a, **k)
     Path.stat = st
     try:
-        yield
+        with guarded_reads.stat_fault(target, lambda: OSError(errno.EACCES, "injected EACCES")):   # ...and the guarded reader's stat,
+            yield                                                                                 # the arm the readers take now
     finally:
         Path.stat = real_stat
 
@@ -347,7 +351,8 @@ def _reads_fault(target):
         return real_rt(self, *a, **k)
     Path.read_bytes, Path.read_text = rb, rt
     try:
-        yield
+        with guarded_reads.fault(target, lambda: OSError(errno.EIO, "injected EIO")):   # ...and the guarded reader's open, the store's road now
+            yield
     finally:
         Path.read_bytes, Path.read_text = real_rb, real_rt
 

@@ -12,6 +12,7 @@ unchanged file, an appended file and a rewritten file.
 
 Synthetic fixtures only: placeholder UUIDs, invented text. The fork seed below mints a goal store, so
 the sids are PRIVATE to this module (CLAUDE.md, goal-store fixtures)."""
+import errno
 import inspect
 import io
 import json
@@ -22,7 +23,9 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr
 from romp_load import load_source
+from tests import guarded_reads   # the shared Reader seam: every read under the state root goes through it (round 4 of the state-root review)
 from pathlib import Path
+from unittest import mock
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -254,15 +257,23 @@ class CaptionsMemo(_State):
         self.assertEqual(km._caps_memo_report()["entries"], 1)
 
     def test_a_read_after_a_failed_stat_is_counted_and_names_the_stats_error(self):
-        # a symlink loop where the store file should be: the stat fails (ELOOP), jd._file_key answers a _StatFailed
-        # carrying the error, the open fails with the same error, and the read is a `fail` that is not memoized,
-        # its one stderr line naming the read's error and the stat's (round 12; the chmod-0 case above is the
-        # successful-stat case and cannot tell the wordings apart)
-        jd.CAPDIR.mkdir(parents=True, exist_ok=True)
-        os.symlink(self.cap_path().name, self.cap_path())
-        self.assertIsInstance(jd._file_key(str(self.cap_path())), jd._StatFailed, "the premise: the stat fails")
+        # a store whose stat AND read fail with the same error: jd._file_key answers a _StatFailed carrying the error, the
+        # open fails the same way, and the read is a `fail` that is not memoized, its one stderr line naming the read's
+        # error and the stat's (round 12; the chmod-0 case above is the successful-stat case and cannot tell the wordings
+        # apart). The fault is an EIO interposed on os.stat for this path and on the guarded reader's open: the symlink
+        # loop this test staged before round 4 of the state-root review is quarantined by the guarded reader now and reads
+        # as ABSENT, which is no read failure at all.
+        self.write_caps(self.ROWS)
+        target, real_stat = str(self.cap_path()), os.stat
+
+        def failing_stat(p, *a, **k):
+            if isinstance(p, (str, bytes, os.PathLike)) and os.fspath(p) == target:
+                raise OSError(errno.EIO, "Input/output error", target)
+            return real_stat(p, *a, **k)
         err = io.StringIO()
-        with redirect_stderr(err):
+        with redirect_stderr(err), mock.patch.object(os, "stat", failing_stat), \
+                guarded_reads.fault(self.cap_path(), lambda: OSError(errno.EIO, "Input/output error", target)):
+            self.assertIsInstance(jd._file_key(str(self.cap_path())), jd._StatFailed, "the premise: the stat fails")
             a = km._captions(SID)
             b = km._captions(SID)
         self.assertEqual((dict(a), dict(b)), ({}, {}))
@@ -271,8 +282,7 @@ class CaptionsMemo(_State):
         self.assertEqual(err.getvalue().count("captions: %s.jsonl did not read (" % SID), 1, "one stderr line per failure episode")
         self.assertIn("; its stat failed (", err.getvalue(), "the stat's error is named beside the read's")
         self.assertNotIn("successful stat", err.getvalue())
-        os.unlink(self.cap_path())
-        self.write_caps(self.ROWS)
+        self.write_caps(self.ROWS)                       # the fault lifted: a real file again
         self.assertEqual(dict(km._captions(SID)), ref_captions(SID), "a real file again: read and memoized")
         self.assertEqual(km._caps_memo_report()["entries"], 1)
 

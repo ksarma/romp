@@ -26,7 +26,45 @@ exactly what identity colors want. Each list is ordered so the FIRST few
 assignments are maximally distinct (blue/green-family first, mirroring the romp
 set's colorblind-tuned order).
 """
+import sys
 from pathlib import Path
+
+
+def _load_state_root_mode():
+    """kernel/state_root_mode.py under its fixed module name, THE SAME FILE the judge, the event model, the bus and the
+    session host load (one implementation; a copy already in sys.modules under that name is reused, so one process holds
+    one module object). A loader, not a copy of the predicate: tests/test_state_root_mode.py's OneText pins that."""
+    import importlib.util
+    name = "romp_state_root_mode"
+    mod = sys.modules.get(name)
+    if mod is not None:
+        return mod
+    path = Path(__file__).resolve().parent / "state_root_mode.py"
+    spec = importlib.util.spec_from_file_location(name, str(path))
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    try:
+        spec.loader.exec_module(mod)
+    except BaseException:
+        sys.modules.pop(name, None)
+        raise
+    return mod
+
+
+_srm = _load_state_root_mode()
+
+
+def _reader(state_dir):
+    """THE GUARDED READER over `state_dir` (kernel/state_root_mode.py, Reader; round 4 of the state-root review). This
+    module is handed the state root by its caller and binds none at import, so the reader is built per call over the
+    root it was handed. Every read of a path under that root in this module goes through one (the AST census in
+    tests/test_state_root_readers.py pins it): every component from the root down is lstat'ed (not a symlink, this
+    uid's, not writable by another local user), a failing entry is quarantined and read as absent, never adopted, and
+    a path outside the root passes through. Its rows file through the shared module's REFUSED_HOOKS (the kernel's
+    error-centre hook, registered at the kernel's import)."""
+    root = Path(state_dir)
+    return _srm.Reader(lambda: root, who='palette')
+
 
 DEFAULT = "romp"
 
@@ -133,7 +171,7 @@ def fg_for(bg):
 def active_name(state_dir):
     """The chosen palette name from STATE/palette, validated; the default when unset/unknown."""
     try:
-        n = (Path(state_dir) / "palette").read_text().strip()
+        n = _reader(state_dir).read_text(Path(state_dir) / "palette").strip()
     except OSError:
         return DEFAULT
     return n if n in PALETTES else DEFAULT

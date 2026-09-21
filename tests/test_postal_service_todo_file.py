@@ -166,10 +166,8 @@ class WiredToTheKernel(unittest.TestCase):
         self.tmp = os.path.realpath(self.td.name)
         self._saved_state = jd.STATE
         self.addCleanup(self._restore_state)
-        jd.STATE = Path(self.tmp) / "state"
-        jd.STATE.mkdir()
-        os.chmod(jd.STATE, 0o700)   # as kernel/judge.py's import leaves it: a subdir made under a group-writable umask
-        #                             is 0775, which the state-root check (2026-09-20) reads as writable and refuses on
+        (Path(self.tmp) / "state").mkdir()
+        jd._rebind_state(Path(self.tmp) / "state")   # the seam floors a umask-mode root at 0700 (round 4, 2026-09-21): the per-module chmod is gone
         km._user_todos_cache.clear()
         km._user_todos_bad.clear()
         km._set_user_todos(True)
@@ -193,7 +191,7 @@ class WiredToTheKernel(unittest.TestCase):
         self.assertTrue(pm._user_todos_on())
 
     def _restore_state(self):
-        jd.STATE = self._saved_state
+        jd._rebind_state(self._saved_state)
         km._user_todos_cache.clear()
         km._user_todos_bad.clear()
 

@@ -8,7 +8,7 @@ machine's token). Also pins the peer-token plumbing: /peer notifies carry the pe
 token, a token-less down notify keeps the last known one, and the dialer sends ?token=.
 
 The Postal* classes pin the bus's COPY of the serve-token read-or-mint (`_serve_token_read_or_mint`,
-the same shape as the kernel's; the bus imports nothing from kernel/) to the same contract the
+the same shape as the kernel's; the bus imports nothing else from kernel/) to the same contract the
 kernel's tests pin in tests/test_kernel_serve_token_mode.py, whose docstring carries the reasoning:
 born 0600 by rename of a finished temp with the live path never opened for writing, one mint among
 racing starters under serve-token.lock, an unreadable existing token is a refusal, never a rotation

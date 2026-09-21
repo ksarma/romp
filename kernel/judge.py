@@ -159,12 +159,57 @@ _ls_mod = importlib.util.module_from_spec(_ls_spec)
 _ls_spec.loader.exec_module(_ls_mod)
 load_source = _ls_mod.load_source   # file-path imports with load_module()'s sys.modules semantics (kernel/loadsource.py)
 em = load_source("romp_event_model", HERE / "event_model.py")
-em.set_checkpoint_dir(lambda: STATE / "checkpoints")   # T323 stage 3: the fold checkpoints live under the state root, read at
-#                                                        call time so _rebind_state moves them with everything else
+# (em.set_checkpoint_dir is called below, once the shared state-root module and its guarded reader exist: T323 stage 3's
+#  checkpoint directory is read through the guard, once and cached)
 _cred = sys.modules.get("romp_credentials") or load_source("romp_credentials", HERE / "credentials.py")
 # the stored Claude logins' registry (T346): a judge call for a session billed to one names that login's helper,
 # and never runs as a login the registry holds refused
 _logins = sys.modules.get("romp_logins") or load_source("romp_logins", HERE / "logins.py")
+# the state root's mode check, ONE implementation for the kernel and the postal bus (2026-09-20, round 4): loaded by path
+# under a fixed name here and in postal/postal_service.py, so a process holding both holds one module object
+srm = sys.modules.get("romp_state_root_mode") or load_source("romp_state_root_mode", HERE / "state_root_mode.py")
+#     (reused when the event model, loaded first, already holds it: one module object AND one Reader class per process)
+READER_REFUSED_HOOKS = []   # (path, reason, line) callables the kernel registers at its import: an error-centre row per refusal
+
+
+def _reader_refused(path, reason, line):
+    """The guarded readers' row hook: every registered hook hears one refusal (the kernel files a refused-kind row; a
+    judge subprocess has nobody to file to and the stderr line the reader already said is its record)."""
+    for fn in list(READER_REFUSED_HOOKS):
+        try:
+            fn(path, reason, line)
+        except Exception:
+            pass
+
+
+# THE GUARDED READERS over this module's root (kernel/state_root_mode.py, part 3): every read of a path under STATE in
+# this file goes through _gr (tests/test_state_root_readers.py's census pins that), and a planted entry, a symlink, a
+# foreign-owned or a writable-by-another file or directory, is quarantined and read as absent. The root is resolved at
+# call time, so _rebind_state moves the guard with everything else.
+_gr = srm.Reader(lambda: STATE, on_refused=_reader_refused, who="judge")
+srm.prime_private_group()    # this account's primary group judged once here, so the readers' first group-bit read hits the memo
+_CKPT_DIR_TRUSTED = [None]   # the checkpoints directory the guard last passed as a real directory of this uid's, or None
+
+
+def _ckpt_dir_guarded():
+    """<root>/checkpoints, guarded ONCE AND CACHED (round 3's C: the guard belongs at _ckpt_dir() itself, since every
+    checkpoint door, the boot sweep included, builds its paths under this directory and the sweep is the one that turned
+    a planted symlink into deletions outside the root). The first call that finds a trusted real directory caches the
+    path until _rebind_state; an absent directory is answered as the path (the first write creates it, and the guard runs
+    again next call, two lstats); a symlink, a foreign-owned or a writable-by-another entry is quarantined by the reader
+    (one stderr line, one row through the hooks) and the path answered as it now is, absent, so the sweep sweeps nothing
+    through it and the next write makes a fresh directory of this uid's."""
+    p = STATE / "checkpoints"
+    if _CKPT_DIR_TRUSTED[0] == p:
+        return p
+    if _gr.isdir(p):
+        _CKPT_DIR_TRUSTED[0] = p
+    return p
+
+
+em.set_checkpoint_dir(_ckpt_dir_guarded)   # T323 stage 3: the fold checkpoints live under the state root, read at call time so
+#                                             _rebind_state moves them with everything else; guarded here (round 4)
+em.set_state_root(lambda: STATE)           # the event model's own guarded reader follows this module's root (and its rebind)
 
 HOME     = Path.home()
 STATE    = Path(os.environ.get("ROMP_STATE_DIR")   # per-kernel state root override (plans/multi-kernel.md)
@@ -177,24 +222,27 @@ STATE    = Path(os.environ.get("ROMP_STATE_DIR")   # per-kernel state root overr
 # since review round 2 of PR 789 (2026-09-19) the mode is read back afterwards
 # and said once on stderr when it is not 0700 (_state_root_mode_line). Since
 # 2026-09-20 the import records the mode it READ before its own chmod
-# (_STATE_ROOT_MODE_AT_IMPORT), whether its own mkdir CREATED the root
+# (_STATE_ROOT_MODE_AT_IMPORT) with that read's owner and group
+# (_STATE_ROOT_IDS_AT_IMPORT), whether its own mkdir CREATED the root
 # (_STATE_ROOT_CREATED_AT_IMPORT: a fresh directory carries the umask's mode,
 # which is a creation default and not a loosening) and a failed mkdir or chmod
 # with its errno and the call that failed (_STATE_ROOT_REPAIR_STEP,
-# _STATE_ROOT_REPAIR_ERROR) rather than only swallowing it, and
-# state_root_mode_check below is the kernel's and the bus's check: it reads the
-# mode FIRST, takes its verdict from that read (refuse when group or other can
-# write the root, warn when it is not 0700, unknown when it cannot be read), THEN
-# re-attempts the chmod and records what the repair did. The kernel's boot
-# REPORTS the import's pre-chmod read (kernel.py: a pre-existing root that read
-# anything but 0700 at import and was tightened by this chmod boots with one loud
-# line and one error-centre row, with the distrust remedy when the read carried a
-# write bit: entries planted while it was writable are not to be trusted); the
-# kernel's refusals stand on the mode as read at each of its own checks (the
-# settled rule, round 2b). Run at the kernel's import, at its boot and on a
+# _STATE_ROOT_REPAIR_ERROR) rather than only swallowing it. The check itself
+# lives in kernel/state_root_mode.py (srm, loaded above), ONE implementation
+# for the kernel and the postal bus: it reads the mode FIRST, takes its verdict
+# from that read by the DISCRIMINATOR (an other write bit, or a group write bit
+# under a group that is not the owner's private group, refuses; a group write
+# bit under the owner's private group, or 0755 and the like, warns; a group
+# database that cannot be read or does not answer within a bound refuses with
+# its own message), THEN re-attempts the chmod and records what the repair did.
+# state_root_mode_check below delegates to it and folds in the import's facts,
+# among them THE IMPORT-READ RULE (round 4): a pre-existing root whose mode as
+# read here, before this chmod, was writable by another local user is refused
+# by the kernel's import gate and its boot check whatever the chmod did next
+# (importRefusal); a root this mkdir created is exempt. The CLI still starts
+# whatever happened here. Run at the kernel's import, at its boot and on a
 # cadence after it (kernel.py: _state_root_import_gate, _state_root_boot_check,
-# _state_root_verdict); postal/postal_service.py carries a reduced copy for the
-# bus (KEEP IN SYNC).
+# _state_root_verdict); the bus loads the same file (postal/postal_service.py).
 
 
 def _state_root_mode_line(root):
@@ -209,24 +257,23 @@ def _state_root_mode_line(root):
     stands, files tighten on their next write). tests/test_judge_scratch_private.py (TheStateRootModeIsChecked)
     pins both roads, the import road in a child process."""
     try:
-        mode = stat.S_IMODE(os.stat(root).st_mode)
+        st = os.stat(root)
+        mode = stat.S_IMODE(st.st_mode)
     except OSError as e:
         return ("romp-judge: state root %s could not be checked for its mode (%s): every file under it is only as "
                 "private as its own mode" % (root, e))
+    if not stat.S_ISDIR(st.st_mode):
+        # a FILE at the root's path is not a loose root: the kernel's check refuses it as ENOTDIR (round 3's regression-1),
+        # so this line says that rather than a mode the chmod never touched (the round-4 review)
+        return ("romp-judge: state root %s exists and is not a directory (ENOTDIR): nothing under it can be read or written; "
+                "remove it and recreate the root as a directory" % root)
     if mode == 0o700:
         return None
     return ("romp-judge: state root %s is mode %04o, not 0700: the chmod at import did not tighten it, so every file "
             "under it is only as private as its own mode" % (root, mode))
 
 
-def _errno_text(e):
-    """"ENAME: strerror" for an OSError, from its errno alone (errno.errorcode and os.strerror), never str(e), which
-    carries the path: "EPERM: Operation not permitted". An OSError raised with no errno reads as its type name and
-    its strerror when it has one."""
-    code = getattr(e, "errno", None)
-    if code is None:
-        return "%s: %s" % (type(e).__name__, getattr(e, "strerror", None) or "no errno")
-    return "%s: %s" % (errno.errorcode.get(code, "E%d" % code), os.strerror(code))
+_errno_text = srm.errno_text   # "ENAME: strerror" from the errno alone, never str(e), which carries the path (kernel/state_root_mode.py)
 
 
 # The import's own repair, recorded (2026-09-20). The mode is read BEFORE the chmod, so what the chmod changed is a
@@ -244,18 +291,33 @@ def _errno_text(e):
 # must not stop a tool; the kernel's state_root_mode_check folds these four into its own check when it checks its own
 # root.
 _STATE_ROOT_MODE_AT_IMPORT = None   # stat.S_IMODE of the root as read before the import's chmod, or None when it could not be read
+_STATE_ROOT_IDS_AT_IMPORT = None    # (st_uid, st_gid) of that read, for the discriminator's group judgment; None with the mode
 _STATE_ROOT_CREATED_AT_IMPORT = False   # True when the mkdir below made the root (it did not exist before this process)
+_STATE_ROOT_EMPTY_AT_IMPORT = None  # True when the root held NO entry at this read (a root this mkdir made, or one another tool
+#                                     made a moment ago): a creation default whoever made it, exempt from the import-read
+#                                     rule (round 4, correctness-3 of round 3); False when it held entries; None unlisted
+_STATE_ROOT_NOT_A_DIRECTORY_AT_IMPORT = False   # a FILE at the root's path: recorded as the mkdir's EEXIST, never chmod'ed here,
+#                                                 refused by every check as ENOTDIR (regression-1 of round 3)
 _STATE_ROOT_REPAIR_STEP = None      # "mkdir" or "chmod 700": the call that failed at import, or None when both ran
 _STATE_ROOT_REPAIR_ERROR = None     # that call's "ENAME: strerror" (_errno_text), or None
 try:
     STATE.mkdir(parents=True, exist_ok=False)
     _STATE_ROOT_CREATED_AT_IMPORT = True
-except FileExistsError:
-    pass                            # pre-existing (a file at the path is pre-existing too; the stat below reads what it is)
+except FileExistsError as _repair_e:
+    if not os.path.isdir(STATE):    # pre-existing, and not a directory: the EEXIST is the record, and the chmod is skipped
+        _STATE_ROOT_NOT_A_DIRECTORY_AT_IMPORT = True
+        _STATE_ROOT_REPAIR_STEP, _STATE_ROOT_REPAIR_ERROR = "mkdir", _errno_text(_repair_e)
 except OSError as _repair_e:
     _STATE_ROOT_REPAIR_STEP, _STATE_ROOT_REPAIR_ERROR = "mkdir", _errno_text(_repair_e)
 try:
-    _STATE_ROOT_MODE_AT_IMPORT = stat.S_IMODE(os.stat(STATE).st_mode)
+    _import_st = os.stat(STATE)
+    _STATE_ROOT_MODE_AT_IMPORT = stat.S_IMODE(_import_st.st_mode)
+    _STATE_ROOT_IDS_AT_IMPORT = (_import_st.st_uid, _import_st.st_gid)
+    if stat.S_ISDIR(_import_st.st_mode):
+        try:
+            _STATE_ROOT_EMPTY_AT_IMPORT = not os.listdir(STATE)   # listed at the same read: an empty root is a creation default
+        except OSError:
+            _STATE_ROOT_EMPTY_AT_IMPORT = None
 except OSError:
     pass
 if _STATE_ROOT_REPAIR_STEP is None:
@@ -267,141 +329,59 @@ _STATE_ROOT_MODE_LINE = _state_root_mode_line(STATE)   # the line said at import
 if _STATE_ROOT_MODE_LINE:
     sys.stderr.write(_STATE_ROOT_MODE_LINE + "\n")
 
-STATE_ROOT_REFUSE_MASK = 0o022    # a group or other WRITE bit on the root: another local user can create or replace
-#                                   entries under it, which is the cross-session code-execution road; refuse to serve
+STATE_ROOT_WRITE_BITS = srm.WRITE_BITS   # the group and other WRITE bits (0o022), the bits the discriminator judges: an other
+#                                          write bit, or a group write bit under a group that is not the owner's private group,
+#                                          is another local user able to create or replace entries under the root, the
+#                                          cross-session code-execution road; a group write bit under the owner's private
+#                                          group is not (kernel/state_root_mode.py)
 
 
-def _errno_name(text):
-    """The errno name at the head of an _errno_text ("EPERM" of "EPERM: Operation not permitted"), or None."""
-    return text.split(":", 1)[0] if text else None
+_errno_name = srm.errno_name   # the errno name at the head of an _errno_text, or None
 
 
-def state_root_mode_check(root=None):
-    """The state root's mode as a verdict, for the kernel's import gate, its boot check and its re-check (2026-09-20;
-    postal/postal_service.py carries a reduced copy for the bus, KEEP IN SYNC). Returns a dict: root (str), modeRead
-    (int or None: the mode as READ, before any repair), modeReadText ("%04o" or None), verdict ("ok" | "warn" |
-    "refuse" | "unknown"), repaired (bool: this call's chmod changed the mode to 0700), modeAfter (int or None: the
-    mode read back after the repair), err (str or None: the failed stat and/or chmod, each as "ENAME: strerror",
-    and, for the module's own root, the import's failed call labelled as the import's), statErrno and repairErrno
-    (the errno names, for a caller keying transitions on the cause), importModeRead (the mode the import read before
-    its chmod, for the module's own root; else None), importCreated (True when the import's own mkdir made the root,
-    so importModeRead is a creation default and not a loosening; False for a pre-existing root or another root),
-    importRepairError (the import's failed call, labelled; else None), line (the one full sentence to say, naming
-    the root; None when nothing is to be said), point (the same
-    fact with no path, for a bounded surface), remedy (str, naming the root), remedyPublic (the remedy with the root
-    named as "the state root") and t (time.time()).
+def state_root_mode_check(root=None, **lookups):
+    """The state root's mode as a verdict, for the kernel's import gate, its boot check and its re-check (2026-09-20; the
+    postal bus loads the same implementation, kernel/state_root_mode.py, by path). Returns srm.check's dict (root,
+    modeRead, modeReadText, uid, gid, verdict "ok" | "warn" | "refuse" | "unknown", writableBy, groupPrivate, lookupError,
+    repaired, modeAfter, err, repairError, statErrno, repairErrno, line, point, remedy, remedyPublic, bellRemedy, t; the
+    contract is in that module's docstrings) with the import's facts folded in for the module's own root (root None):
+    importModeRead (the mode the import read before its chmod), importIds (that read's (uid, gid)), importCreated (True
+    when the import's own mkdir made the root, so importModeRead is a creation default and not a loosening), importRepairError
+    (the import's failed call, labelled as the import's, also folded into err), importEmpty (True when the root held no
+    entry at the import's read: a creation default, whoever made it) and importRefusal (THE IMPORT-READ RULE,
+    round 4: srm.import_read_refusal's dict when the import read a pre-existing root that HELD ENTRIES and was writable by
+    another local user, or could not tell, whatever the chmod did afterwards; None otherwise, and None for another root,
+    for a root the import created and for a root that was empty at the read). For another root every import field is
+    None or False.
 
-    READ BEFORE REPAIR (the 2026-09-20 review, extra6-1): the mode is read first and the verdict comes from that read;
-    the best-effort chmod 0700 runs afterwards and is REPORTED (repaired, modeAfter, repairErrno), never raised. Until
-    then the chmod ran first, so a root this uid owns that was loosened after boot was silently re-tightened and read
-    ok: the case the re-check exists to report left no trace. For the module's own root the FIRST read in the process
-    is the import's (importModeRead, taken before the import's chmod), which the kernel's boot REPORTS rather than
-    refuses on (kernel.py: _state_root_import_mode_row, one loud line and one row for a pre-existing root that read
-    anything but 0700 and was tightened by this module's chmod, with the distrust remedy for a writable read); every
-    refusal of the kernel's stands on the mode as read at that check (round 2b). Verdict: a mode with a group or
-    other write bit
-    (mode & 0o022) is "refuse", since write access by another local user is what enables the cross-session
-    code-execution road; any other mode that is not 0700 is "warn", a privacy fault and not a code-execution one;
-    0700 is "ok"; a root whose mode cannot be read is "unknown", which the kernel and the bus treat as refuse-class
-    (kernel.py: the argument beside _state_root_import_gate). A root that reads 0700 but whose chmod failed (a root
-    another uid owns) is verdict ok WITH a line: the mode is right today and not this uid's to keep, so the failed
-    chmod is the signal. The check never creates the root: the import did that once, and a per-check mkdir would
-    re-create a root an operator removed (correctness-3); a stat that fails skips the chmod. The check reads the mode
-    of the path the root resolves to and nothing else: not the parent directories, not the owner, not whether it is
-    a directory; the repair chmods that resolved path. tests/test_state_root_mode.py pins the discriminator."""
+    READ BEFORE REPAIR (the 2026-09-20 review, extra6-1): the mode is read first and the verdict comes from that read by the
+    discriminator (an other write bit refuses; a group write bit refuses under a shared group, warns under the owner's
+    private group, and refuses with its own message when the group database cannot be read or does not answer within
+    the bound); the best-effort chmod 0700 runs afterwards and is REPORTED, never raised. A root whose mode cannot be read
+    is "unknown", which the kernel and the bus treat as refuse-class (kernel.py: the argument beside
+    _state_root_import_gate). The check never creates the root: the import did that once, and a per-check mkdir would
+    re-create a root an operator removed (correctness-3). `lookups` (getgrgid, getpwall, getpwuid, bound) reach the
+    discriminator, for tests. tests/test_state_root_mode.py pins the discriminator and the import-read rule."""
     r = STATE if root is None else Path(root)
-    stat_err = None
-    try:
-        mode = stat.S_IMODE(os.stat(r).st_mode)
-    except OSError as e:
-        mode, stat_err = None, _errno_text(e)
-    if mode is None:
-        verdict = "unknown"
-    elif mode & STATE_ROOT_REFUSE_MASK:
-        verdict = "refuse"
-    elif mode != 0o700:
-        verdict = "warn"
-    else:
-        verdict = "ok"
-    # THEN the repair, best-effort and reported: only when there was a mode to read (a stat that failed means no
-    # directory to chmod, and never a mkdir: see the docstring)
-    repair_err, mode_after = None, mode
-    if mode is not None:
-        try:
-            os.chmod(r, 0o700)
-        except OSError as e:
-            repair_err = _errno_text(e)
-        try:
-            mode_after = stat.S_IMODE(os.stat(r).st_mode)
-        except OSError:
-            mode_after = None
-    repaired = mode is not None and mode != 0o700 and repair_err is None and mode_after == 0o700
-    import_mode, import_err, import_created = None, None, False
+    import_mode, import_err, import_created, import_ids, refusal, import_empty = None, None, False, None, None, None
     if root is None:
         import_mode, import_created = _STATE_ROOT_MODE_AT_IMPORT, _STATE_ROOT_CREATED_AT_IMPORT
+        import_ids, import_empty = _STATE_ROOT_IDS_AT_IMPORT, _STATE_ROOT_EMPTY_AT_IMPORT
         if _STATE_ROOT_REPAIR_ERROR:
             import_err = "%s failed at import: %s" % (_STATE_ROOT_REPAIR_STEP, _STATE_ROOT_REPAIR_ERROR)
-    errs = []
-    if stat_err:
-        errs.append("stat failed: " + stat_err)
-    if repair_err:
-        errs.append("chmod 700 failed: " + repair_err)
-    if import_err:
-        errs.append(import_err)
-    err = "; ".join(errs) or None
-    not_ours = _errno_name(repair_err) in ("EPERM", "EACCES")
-    mode_text = ("%04o" % mode) if mode is not None else None
-    fail = (" (%s)" % err) if err else ""
-    if verdict == "unknown":
-        remedy = "restore the state root at %s (it could not be read: %s)" % (r, _errno_name(stat_err))
-        bell = "restore the state root (it could not be read: %s)" % _errno_name(stat_err)
-        point = "the state root's mode could not be read (%s)" % _errno_name(stat_err)
-        line = ("state root %s could not be read%s: an unverified root is not served from; %s" % (r, fail, remedy))
-    elif verdict == "refuse":
-        # the remedy restores the CONTENTS as well as the mode (the 2026-09-20 review, fresh-1): entries planted while
-        # the root was writable are not to be trusted, the serve token and the repo-root record first among them
-        remedy = ("remove serve-token and repo-root under %s (entries planted while it was writable are not to be "
-                  "trusted; the next boot re-mints them), then chmod 700 it" % r)
-        bell = "remove serve-token and repo-root, then chmod 700 the root (its contents are not to be trusted)"
-        if not_ours:
-            remedy += (", which failed here (%s): make the root itself this uid's, not its entries (adopt nothing "
-                       "you did not create)" % repair_err)
-            bell = "make the root itself this uid's, then remove serve-token and repo-root under it (adopt nothing)"
-        point = "the state root is mode %s, writable by other local users" % mode_text
-        line = ("state root %s is mode %s, writable by other local users (a group or other write bit)%s: romp refuses "
-                "to serve from it%s; %s" % (r, mode_text, fail, " (re-tightened to 0700 after the read; the refusal stands "
-                                                                "on what was read)" if repaired else "", remedy))
-    elif verdict == "warn" and repaired:
-        remedy = "nothing to do now (re-tightened to 0700); find what loosened %s" % r
-        bell = "re-tightened to 0700; find what loosened it"
-        point = "the state root was mode %s, re-tightened to 0700" % mode_text
-        line = ("state root %s was mode %s, re-tightened to 0700%s: something loosened it after it was made 0700; %s"
-                % (r, mode_text, fail, remedy))
-    elif verdict == "warn":
-        if not_ours:
-            remedy = "the root is not this uid's to change: make %s owned by this uid, then chmod 700 it" % r
-            bell = "the root is not this uid's: make it this uid's, then chmod 700"
-        else:
-            remedy = "chmod 700 %s" % r
-            bell = "chmod 700 the state root"
-        point = "the state root is mode %s, not 0700" % mode_text
-        line = ("state root %s is mode %s, not 0700%s: every file under it is only as private as its own mode; %s"
-                % (r, mode_text, fail, remedy))
-    elif repair_err:
-        # the mode reads right, the chmod that keeps it so could not run: said, since the failed chmod is the signal
-        remedy = "the root is not this uid's to change: make %s owned by this uid" % r
-        bell = "the root is not this uid's to change: make it this uid's"
-        point = "the state root is 0700, but chmod 700 failed (%s)" % _errno_name(repair_err)
-        line = ("state root %s is mode 0700, but chmod 700 failed (%s): the mode is right today and not this uid's to "
-                "keep; %s" % (r, repair_err, remedy))
-    else:
-        remedy, bell, point, line = "chmod 700 %s" % r, "chmod 700 the state root", None, None
-    return {"root": str(r), "modeRead": mode, "modeReadText": mode_text, "verdict": verdict, "repaired": repaired,
-            "modeAfter": mode_after, "err": err, "statErrno": _errno_name(stat_err), "repairErrno": _errno_name(repair_err),
-            "importModeRead": import_mode, "importCreated": import_created, "importRepairError": import_err,
-            "line": line, "point": point,
-            "remedy": remedy, "remedyPublic": remedy.replace(str(r), "the state root"), "bellRemedy": bell,
-            "t": time.time()}
+    chk = srm.check(r, extra_err=import_err, **lookups)
+    if root is None and import_mode is not None:
+        # the import-read rule: judged on the pre-chmod read of a pre-existing root that HELD ENTRIES; a root this mkdir
+        # created, or one that was empty at the read (another tool made it a moment ago at the umask's mode), is a creation
+        # default and exempt (round 4); a read that could not be taken (None) leaves the current read to decide (unknown
+        # is refuse-class there)
+        refusal = srm.import_read_refusal(r, import_mode, import_ids, "import",
+                                          repair_error=(_STATE_ROOT_REPAIR_ERROR if _STATE_ROOT_REPAIR_STEP == "chmod 700"
+                                                        else None),
+                                          empty=bool(import_created or import_empty), **lookups)
+    chk.update({"importModeRead": import_mode, "importIds": import_ids, "importCreated": import_created,
+                "importEmpty": import_empty, "importRepairError": import_err, "importRefusal": refusal})
+    return chk
 NAMES    = STATE / "names"
 PROJECTS = Path(os.environ.get("CLAUDE_CONFIG_DIR") or str(HOME / ".claude")) / "projects"   # per-kernel Claude root (plans/multi-kernel.md phase 2)
 CAPDIR   = STATE / "captions"            # the new summaries/ — one .jsonl per transcript, keyed by unit id
@@ -470,15 +450,30 @@ def _ensure_judge_scratch(path=None):
     return d
 
 
-def _rebind_state(path):
+def _rebind_state(path, make=False):
     """Repoint STATE and EVERY dir derived from it at `path`. Tests patch jd.STATE to a tempdir; without
     this the import-time GOALDIR / ERRORS / etc. stayed aimed at the LIVE ~/.local/state/romp — so
     save_goals wrote synthetic fixtures into the live goals/ and the triage pass then stormed
     judge-errors.jsonl over those orphans every pass forever (the user 2026-06-24). A test must call this
-    instead of assigning jd.STATE alone. Not used in production (STATE is bound once at import)."""
+    instead of assigning jd.STATE alone; `make` creates the root first (parents included) when the test
+    has not, so the floor below reaches a root the test would otherwise have made at the umask's mode with
+    a bare mkdir (tests/test_state_root_mode.py's TheFloorReachesEveryMintedRoot pins that no test does).
+    Not used in production (STATE is bound once at import)."""
     global STATE, NAMES, CAPDIR, ARCHDIR, GOALDIR, GOALARCHDIR, STATESDIR, PCACHE, MESSAGES, ERRORS, USAGE, SDKDIR, EPIDIR, GONEDIR, JUDGE_AUTH, CODEXDIR
     global JUDGE_SCRATCH
     STATE = path
+    if make:
+        Path(STATE).mkdir(parents=True, exist_ok=True)
+    try:
+        # THE FLOOR (tests-5 of round 3, one rule in one place): a root a test minted under the umask (0775 under 0002) is
+        # chmod'ed 0700 here when it exists and is this uid's, so a request or a housekeeping pass on it never exits the
+        # test process; the eleven per-module chmods that did this by hand are gone. Never a root another uid owns.
+        _st = os.stat(STATE)
+        if stat.S_ISDIR(_st.st_mode) and _st.st_uid == os.geteuid() and stat.S_IMODE(_st.st_mode) != 0o700:
+            os.chmod(STATE, 0o700)
+    except OSError:
+        pass
+    _CKPT_DIR_TRUSTED[0] = None                   # the guarded checkpoint directory is judged afresh under the new root
     JUDGE_SCRATCH = str(STATE / "judge-scratch")   # state-rooted now, so it rebinds with the rest
     NAMES, CAPDIR, ARCHDIR, GOALDIR = STATE / "names", STATE / "captions", STATE / "archive", STATE / "goals"
     GONEDIR, JUDGE_AUTH = STATE / "gone", STATE / "judge-auth.json"
@@ -560,7 +555,7 @@ def _state_str(name, default=""):
     c = _state_cache.get(name)
     if not c or c["mt"] != mt:
         try:
-            v = f.read_text().strip()
+            v = _gr.read_text(f).strip()
         except (OSError, ValueError):   # ValueError: an undecodable file (UnicodeDecodeError) reads as the
             v = ""                      # default too, like a missing one — a hand edit must never fail a pass
         _state_cache[name] = c = {"val": v or default, "mt": mt}
@@ -1262,7 +1257,7 @@ def _debug_mode():
         return False
     if _DEBUG_CACHE[0] != key:
         try:
-            _DEBUG_CACHE[:] = [key, bool(json.loads(p.read_text()).get("on"))]
+            _DEBUG_CACHE[:] = [key, bool(json.loads(_gr.read_text(p)).get("on"))]
         except Exception:
             _DEBUG_CACHE[:] = [key, False]
     return _DEBUG_CACHE[1]
@@ -1695,7 +1690,7 @@ def _reg_spawned_at(fsid):
     computed."""
     p = STATE / "sdk" / (fsid + ".json")
     try:
-        raw = p.read_text()
+        raw = _gr.read_text(p)
     except FileNotFoundError:
         _read_ok(str(p))
         return None
@@ -1952,7 +1947,7 @@ def _prune_usage_log():
         if USAGE.stat().st_size <= _USAGE_PRUNE_BYTES:
             return
         parsed = []
-        for ln in USAGE.read_text(errors="replace").splitlines():
+        for ln in _gr.read_text(USAGE, errors="replace").splitlines():
             try:
                 o = json.loads(ln)
             except Exception:
@@ -2009,7 +2004,7 @@ FAST_REFUSED = STATE / "fast-refused.json"   # tier -> {"reason", "model", "t"}:
 def _fast_refused():
     """The per-tier refusal record, {} when none stands. Read fresh: the judges write it, the kernel reads it."""
     try:
-        d = json.loads(FAST_REFUSED.read_text())
+        d = json.loads(_gr.read_text(FAST_REFUSED))
         return d if isinstance(d, dict) else {}
     except (OSError, ValueError):
         return {}
@@ -2148,7 +2143,7 @@ def _judge_auth(fsid):
     reg = {}
     if fsid:
         try:
-            reg = json.loads((SDKDIR / (fsid + ".json")).read_text())
+            reg = json.loads(_gr.read_text(SDKDIR / (fsid + ".json")))
             reg = reg if isinstance(reg, dict) else {}
         except Exception:
             reg = {}
@@ -2237,7 +2232,7 @@ def _auth_down_map():
         return {}
     if _auth_cache[0] != key:
         try:
-            d = json.loads(JUDGE_AUTH.read_text())
+            d = json.loads(_gr.read_text(JUDGE_AUTH))
             _auth_cache[:] = [key, d if isinstance(d, dict) else {}]
         except Exception:
             _auth_cache[:] = [key, {}]
@@ -2308,7 +2303,7 @@ def _limit_down():
         return None
     if _limit_cache[0] != key:
         try:
-            d = json.loads(JUDGE_LIMIT.read_text())
+            d = json.loads(_gr.read_text(JUDGE_LIMIT))
             _limit_cache[:] = [key, d if isinstance(d, dict) else {}]
         except Exception:
             _limit_cache[:] = [key, {}]
@@ -2360,9 +2355,8 @@ def _judge_codex_bin():
          or os.path.expanduser("~/.local/bin/codex"))
     if os.path.exists(p):
         return p
-    for c in sorted(glob.glob(str(STATE / "codexvenv" / "lib" / "python3.*" /
-                                  "site-packages" / "codex_cli_bin" / "bin" / "codex"))):
-        return c
+    for c in _gr.glob(str(STATE / "codexvenv" / "lib"), "python3.*/site-packages/codex_cli_bin/bin/codex"):
+        return str(c)                                # a planted venv under the root is quarantined here, never run
     return p
 # Hard wall-clock cap on ONE judge call (perl alarm → SIGALRM, logged as "empty stdout (exit -14)").
 # Was 45s until 2026-07-27, when an API slow patch killed a burst of healthy-but-slow calls across four
@@ -2600,7 +2594,7 @@ def _judge_run_impl(model, sys_prompt, user, effort=None, judge=None, tier="tria
     _judge_ctx.paused = False                         # a SKIPPED-because-paused call is not a failure: the
     try:                                              # distiller/brief give-up MUST NOT count it (see below)
         p = STATE / "retry-paused.json"
-        if p.exists() and json.loads(p.read_text()).get("paused"):
+        if _gr.exists(p) and json.loads(_gr.read_text(p)).get("paused"):
             _judge_ctx.paused = True                  # the caller reads this to tell a pause-skip "" apart
             return ""                                 # from a real call failure — event-based, no time window
     except Exception:
@@ -2628,7 +2622,7 @@ def _judge_run_impl(model, sys_prompt, user, effort=None, judge=None, tier="tria
         # ruling) and always proceeds. The old fleet-wide gate predated the per-session billing rule
         # and starved key-billed judging for nothing. `resets_at` keeps the gate self-expiring, skips
         # ride the paused flag, unreadable usage.json never gates — all unchanged.
-        u = json.loads((STATE / "usage.json").read_text()) if auth == "login" else {}
+        u = json.loads(_gr.read_text(STATE / "usage.json")) if auth == "login" else {}
         # The gated buckets FOLLOW THE CALL'S MODEL (2026-08-18, user-approved via the optimizer's
         # audit): the account-wide windows gate every model, and a model-scoped window gates exactly
         # the calls that would bill it. The old tuple hardcoded the account buckets and deliberately
@@ -2730,7 +2724,7 @@ def _judge_run_impl(model, sys_prompt, user, effort=None, judge=None, tier="tria
                     return ""
                 recv = time.time()
                 try:
-                    with open(outp, "r", encoding="utf-8") as f:
+                    with _gr.open(outp, "r", encoding="utf-8") as f:   # under the judge scratch, itself under the root
                         reply = f.read().strip()
                 except OSError:
                     reply = ""
@@ -3701,7 +3695,7 @@ def _load_planner_seen():
     if _PLANNER_SEEN_LOADED[0]:
         return 0
     try:
-        raw = (STATE / _PLANNER_SEEN_FILE).read_bytes()
+        raw = _gr.read_bytes(STATE / _PLANNER_SEEN_FILE)
     except FileNotFoundError:
         _PLANNER_SEEN_LOADED[0] = True                                 # a fresh root: an empty memo, nothing to refuse, latched
         _PLANNER_SEEN_READ_FAULT[0] = False
@@ -4390,7 +4384,7 @@ def tasks_for(fsid, leaf, files, now, done=None):
     # hold until the file moved, which a permission bit or an EMFILE never does. Before, every failure
     # was a silent miss.
     try:
-        o = json.loads(cf.read_text())
+        o = json.loads(_gr.read_text(cf))
         hit = o["tasks"] if (o.get("key") == key and o.get("capKey") == cap_key and o.get("v") == 9) else None   # v8 = the harness skill-load wrapper no longer emits a command atom, so the prompt segment grows (T333, 2026-09-11; with PLACEMENTS_V 14);
         #                                                                            v7 = machine-written triggers key their segment on the anchor uuid, so those seg ids moved (T318, 2026-09-10; with PLACEMENTS_V 13);
         #                                                                            v6 = absorbed atoms placed at their landing time, so their seg ids moved (T252d, 2026-09-08);
@@ -4552,7 +4546,7 @@ def _captions_rows(fsid):
         _CAPTIONS_STATS["served"] += 1
         return ent[1]
     try:
-        text = p.read_text(errors="replace")
+        text = _gr.read_text(p, errors="replace")
     except (FileNotFoundError, NotADirectoryError):   # absent (gone since the stat), as _ident reads it
         return []
     except OSError as e:
@@ -4623,7 +4617,7 @@ def _caption_fails(fsid):
     """{unit_id: consecutive empty-capture count} for units still under the cap — the captioner's
     fail ledger (CAPDIR/<fsid>.fails.json), the archiver give-up's per-unit sibling."""
     try:
-        d = json.loads((CAPDIR / (fsid + ".fails.json")).read_text())
+        d = json.loads(_gr.read_text(CAPDIR / (fsid + ".fails.json")))
         return d if isinstance(d, dict) else {}
     except Exception:
         return {}
@@ -4759,7 +4753,7 @@ def _read_archive(fsid):
     could not see, and a non-empty document that was not a record crashed the pass at `prev.get`."""
     p = ARCHDIR / (fsid + ".json")
     try:
-        text = p.read_text()
+        text = _gr.read_text(p)
     except (FileNotFoundError, NotADirectoryError):   # absent, as _ident reads it
         return None, False
     except OSError as e:
@@ -5380,8 +5374,8 @@ def _read_store_json(path, *, quarantine=False, _tries=3):
     the entry answers a fresh copy of the earlier parse; any other outcome drops the path's entry."""
     path_s = str(path)
     try:
-        st = path.stat()
-        raw = path.read_text(encoding="utf-8")
+        st = _gr.stat(path)
+        raw = _gr.read_text(path, encoding="utf-8")
     except FileNotFoundError:
         _raw_store_forget(path_s)
         return None
@@ -5596,7 +5590,7 @@ def _disk_rev(fsid):
     read."""
     path_s = str(GOALDIR / (fsid + ".json"))
     try:
-        fd = os.open(path_s, os.O_RDONLY)
+        fd = _gr.os_open(path_s)
     except FileNotFoundError:
         return 0                                     # absent: a create's base
     try:
@@ -5919,10 +5913,10 @@ def _replay_overrides(fsid, store, lines=None):
     cannot be read marks the store `_unread` (see load_goals) after the judge-errors row."""
     if lines is None:
         fp = _overrides_dir() / (fsid + ".jsonl")
-        if not fp.is_file():
+        if not _gr.exists(fp):                       # a planted journal is quarantined here and reads as absent
             return False
         try:
-            lines = fp.read_text().splitlines()
+            lines = _gr.read_text(fp).splitlines()
         except OSError as e:
             _log_judge_error("romp", fsid, "history-unreadable",
                              note="override journal unreadable: %s — user actions may show undone until it reads" % e)
@@ -6238,7 +6232,7 @@ def _disk_entry(fsid):
     that could not be read, and the caller publishes nothing over it."""
     path_s = str(GOALDIR / (fsid + ".json"))
     try:
-        fd = os.open(path_s, os.O_RDONLY)
+        fd = _gr.os_open(path_s)
     except FileNotFoundError:
         _disk_forget(path_s)
         return None
@@ -6623,7 +6617,7 @@ def _journal_read(fsid):
     Raises OSError when it exists but cannot be read; the caller does not memoize then."""
     p = str(_overrides_dir() / (fsid + ".jsonl"))
     try:
-        fd = os.open(p, os.O_RDONLY)
+        fd = _gr.os_open(p)
     except FileNotFoundError:
         return None, ()
     try:
@@ -6712,7 +6706,7 @@ def load_goals_shared(fsid):
     path_s = str(GOALDIR / (fsid + ".json"))
     jkey0, akey0 = _journal_key(fsid), _archive_key(fsid)   # BEFORE the store read: see the fill below
     try:
-        fd = os.open(path_s, os.O_RDONLY)
+        fd = _gr.os_open(path_s)
     except FileNotFoundError:
         _shared_forget(path_s)
         _shared_bump("absent")
@@ -6928,7 +6922,7 @@ def load_goal_archive(fsid):
         return dict(fresh, _unread="archive")
 
     try:
-        text = Path(path_s).read_text()
+        text = _gr.read_text(Path(path_s))
     except (FileNotFoundError, NotADirectoryError):
         _read_ok(path_s)                               # absent is the common case and a real state
         return fresh
@@ -7716,7 +7710,7 @@ def _giveup_cause():
     usage.json (a maxed window whose reset is still in the future = live; past its reset = rolled, ignore)."""
     names = []
     try:
-        u = json.loads((STATE / "usage.json").read_text())
+        u = json.loads(_gr.read_text(STATE / "usage.json"))
         now = time.time()
         # the windows wear their ONE display name here too (the user 2026-08-09: '5 hours' on the rail
         # but 'Session (5h)' in this modal was two vocabularies for the same window) — prose-shaped
@@ -9376,7 +9370,7 @@ def _sdk_last_sid(sid):
     if hit is not None and hit[0] == mt:
         return hit[1]
     try:
-        ls = json.loads(p.read_text()).get("lastSid")
+        ls = json.loads(_gr.read_text(p)).get("lastSid")
     except (OSError, ValueError):
         ls = None
     ls = ls if (isinstance(ls, str) and ls and ls != sid) else None
@@ -9458,7 +9452,7 @@ def _episode_read(sid):
         return hit[1], hit[2]
     rows, settles = [], {}
     try:
-        text = p.read_text(errors="replace")
+        text = _gr.read_text(p, errors="replace")
     except (FileNotFoundError, NotADirectoryError):
         _read_ok(str(p))                               # gone between the stat and the read: absent is a real state
         _episode_memo.pop(sid, None)
@@ -9517,7 +9511,7 @@ def resume_lineage(sid):
     _goal_io_bump("lineage_reads")
     out = []
     try:
-        lines = (STATESDIR / (sid + ".jsonl")).read_text().splitlines()
+        lines = _gr.read_text(STATESDIR / (sid + ".jsonl")).splitlines()
     except OSError:
         return []
     for line in lines:
@@ -9593,7 +9587,7 @@ def _codex_rows(cutoff, seen):
     2026-09-11) — the TID rides only in the transcript PATH, which
     is the one place it means anything to a reader (the v1.3.13 audit's P1, executed)."""
     try:
-        reg = json.loads((CODEXDIR / "registry.json").read_text())
+        reg = json.loads(_gr.read_text(CODEXDIR / "registry.json"))
     except Exception:
         return []
     rows = []
@@ -9639,7 +9633,7 @@ def _discover_fingerprint():
     MTIME is re-stat'd every call without exception: that is the fork signal this whole fingerprint exists to
     catch, and caching it would blind discover() to new forks."""
     try:
-        entries = sorted(e for e in NAMES.iterdir() if not e.name.endswith(".tmp"))
+        entries = sorted(e for e in _gr.iterdir(NAMES) if not e.name.endswith(".tmp"))
     except OSError:
         return None
     fp = []
@@ -9653,7 +9647,7 @@ def _discover_fingerprint():
             pdir = hit[1]
         else:
             try:
-                parts = f.read_text().rstrip("\n").split("\t")
+                parts = _gr.read_text(f).rstrip("\n").split("\t")
                 cdir = parts[1] if len(parts) > 1 else ""
             except Exception:
                 cdir = ""
@@ -9757,7 +9751,7 @@ def _discover_impl(now, window=None, forks=True):
     critical path of EVERY pane's first paint). Now: os.scandir (DirEntry caches name+stat from the dir read,
     no pathlib), each project dir listed ONCE (dir_jsonl memo), and each fork's title read ONCE (title memo)."""
     out, seen = [], set()
-    if not NAMES.is_dir():
+    if not _gr.isdir(NAMES):
         return out
     cutoff = now - (WINDOW if window is None else int(window))
     dir_jsonl = {}      # proj-dir str -> [(stem, path_str, mtime)] for its .jsonl files — scandir'd ONCE
@@ -9784,12 +9778,12 @@ def _discover_impl(now, window=None, forks=True):
             dir_jsonl[key] = cached
         return cached
 
-    for f in sorted(NAMES.iterdir()):
+    for f in _gr.iterdir(NAMES):
         sid = f.name
         if sid.endswith(".tmp"):
             continue                      # a writer's staging file, never a session
         try:
-            parts = f.read_text().rstrip("\n").split("\t")
+            parts = _gr.read_text(f).rstrip("\n").split("\t")
         except Exception:
             continue
         name = parts[0] if parts else ""
@@ -10182,7 +10176,7 @@ def _death_marker(sid):
     read it would skip the session until the marker moved, which a permission bit never makes it do."""
     path_s = str(GONEDIR / (sid + ".json"))
     try:
-        with open(path_s) as f:
+        with _gr.open(path_s) as f:
             m = json.load(f)
     except (FileNotFoundError, NotADirectoryError):
         _read_ok(path_s)                               # absent is the common case and a real state
@@ -10206,7 +10200,7 @@ def _cli_epoch(sid):
     second death. (The kernel's copy delegates here.)"""
     sp = None
     try:
-        with open(STATE / "sdk" / (sid + ".json")) as f:
+        with _gr.open(STATE / "sdk" / (sid + ".json")) as f:
             v = json.load(f).get("spawnedAt")
         sp = v if isinstance(v, (int, float)) else None
     except Exception:
@@ -10751,7 +10745,7 @@ def _prompt_gist(fsid, seg_id):
     out = ""
     path_s = str(CAPDIR / (fsid + ".jsonl"))
     try:
-        text = Path(path_s).read_text(errors="replace")
+        text = _gr.read_text(Path(path_s), errors="replace")
     except (FileNotFoundError, NotADirectoryError):
         _read_ok(path_s)                               # absent is a real state, and ends a failure episode
         return out
@@ -10911,7 +10905,7 @@ def _cleared_context(fsid, store, cap=6):
     sealed — nothing here regroups, revives, or re-mints archived nodes."""
     times = {}
     try:
-        for line in (STATE / "cleared.jsonl").read_text().splitlines():
+        for line in _gr.read_text(STATE / "cleared.jsonl").splitlines():
             try:
                 o = json.loads(line)
             except Exception:
@@ -11610,11 +11604,11 @@ def migrate_all_stores():
     Returns the number of files rewritten."""
     n = 0
     for d in (GOALDIR, GOALARCHDIR):
-        if not d.is_dir():
+        if not _gr.isdir(d):
             continue
-        for p in d.glob("*.json"):
+        for p in _gr.glob(d, "*.json"):
             try:
-                store = json.loads(p.read_text())
+                store = json.loads(_gr.read_text(p))
             except Exception:
                 continue                              # unreadable → leave for the owner path to surface
             if not isinstance(store, dict):
@@ -12324,10 +12318,10 @@ def _wrap_index_load():
         return
     _WRAP_LOADED["v"] = True
     idx_path = STATE / "skill-load-index.json"
-    if not idx_path.exists():
+    if not _gr.exists(idx_path):
         return
     try:
-        o = json.loads(idx_path.read_text())
+        o = json.loads(_gr.read_text(idx_path))
         for k, v in (o.get("files") or {}).items():
             if isinstance(v, list) and len(v) == 4:
                 _WRAP_INDEX[k] = (v[0], v[1], v[2], v[3])
@@ -12375,9 +12369,9 @@ def restamp_skill_load_tops_all(now=None, window=SKILL_SWEEP_WINDOW, byte_budget
     lanes = {fsid: Path(path) for fsid, path, anchor, name in discover(now, window, forks=False)}
     stores = tops = 0
     todo = []                                          # (sid, candidates, leaf) for every store with a candidate top in reach
-    for p in (sorted(GOALDIR.glob("*.json")) if GOALDIR.is_dir() else []):
+    for p in _gr.glob(GOALDIR, "*.json"):
         try:
-            raw = json.loads(p.read_text())
+            raw = json.loads(_gr.read_text(p))
         except Exception:
             continue
         cands = _skill_load_candidates(raw.get("nodes") or {}) if isinstance(raw, dict) else []
@@ -13039,7 +13033,7 @@ def _hidden_from_feed(fsid):
     (run_index) is deliberately NOT gated: a muted session stays captioned/archived for the dashboard.
     Best-effort; any read error → not hidden (fail open)."""
     try:
-        f = json.loads((STATE / "session-flags.json").read_text()).get(fsid)
+        f = json.loads(_gr.read_text(STATE / "session-flags.json")).get(fsid)
         return bool(isinstance(f, dict) and f.get("hideFromFeed"))
     except Exception:
         return False
@@ -13177,9 +13171,9 @@ def run_echo_backfill(now=None, age=86400, window=45 * 86400, max_passes=20, ver
         now = int(time.time())
     affected = []
     try:
-        for f in sorted(STATESDIR.glob("*.jsonl")):
+        for f in _gr.glob(STATESDIR, "*.jsonl"):
             try:
-                if any('"orphanReply"' in ln for ln in f.read_text(errors="replace").splitlines()):
+                if any('"orphanReply"' in ln for ln in _gr.read_text(f, errors="replace").splitlines()):
                     affected.append(f.stem)
             except OSError:
                 continue
@@ -13357,7 +13351,7 @@ def _view_cleared_scan(path):
     """The unmemoized replay behind _view_cleared over the log at `path`: a 'clear' row adds its id, an
     'undo' row removes it, newest wins. Raises OSError when the file cannot be read."""
     cur = set()
-    for line in Path(path).read_text().splitlines():
+    for line in _gr.read_text(Path(path)).splitlines():
         try:
             o = json.loads(line)
         except Exception:
@@ -14197,7 +14191,7 @@ def _postal_ask_maps():
         return _PEER_ASK_CACHE[1]
     last_any, last_ask, rows, alias, returned = {}, {}, [], {}, {}   # returned: mid -> t of its terminal bounced row
     try:
-        for line in MESSAGES.read_text(errors="replace").splitlines():
+        for line in _gr.read_text(MESSAGES, errors="replace").splitlines():
             try:
                 o = json.loads(line)
             except Exception:
@@ -14275,7 +14269,7 @@ def _peer_name(sid):
     if key.startswith("peer:"):
         return key.rsplit(":", 1)[-1].strip()
     try:
-        return (NAMES / key).read_text().split("\t", 1)[0].strip()
+        return _gr.read_text(NAMES / key).split("\t", 1)[0].strip()
     except Exception:
         return ""
 
@@ -14298,7 +14292,7 @@ def _delegates_to():
         return _DELEG_CACHE[1]
     out, rows, returned, by_mid = {}, [], {}, {}
     try:
-        for line in MESSAGES.read_text(errors="replace").splitlines():
+        for line in _gr.read_text(MESSAGES, errors="replace").splitlines():
             try:
                 o = json.loads(line)
             except Exception:
@@ -14919,9 +14913,9 @@ def _requeue_relays_all():
     and so does every node that owes recalls (relayRecall) with no entry, so a parked question retired by the judge is
     withdrawn whatever became of its entry (the manager's eighth review). Returns the number re-queued."""
     n = 0
-    for p in (sorted(GOALDIR.glob("*.json")) if GOALDIR.is_dir() else []):
+    for p in _gr.glob(GOALDIR, "*.json"):
         try:
-            raw = json.loads(p.read_text())
+            raw = json.loads(_gr.read_text(p))
         except Exception:
             continue
         for nid, nd in ((raw or {}).get("nodes") or {}).items():
@@ -14944,9 +14938,9 @@ def restamp_peer_wait_blocks_all(now=None):
     converted node is no longer blocked. Returns (stores, nodes)."""
     now = now or int(time.time())
     stores = nodes_n = 0
-    for p in (sorted(GOALDIR.glob("*.json")) if GOALDIR.is_dir() else []):
+    for p in _gr.glob(GOALDIR, "*.json"):
         try:
-            raw = json.loads(p.read_text())
+            raw = json.loads(_gr.read_text(p))
         except Exception:
             continue
         if not isinstance(raw, dict):
@@ -16094,7 +16088,7 @@ def _newest_states_t(fsid):
     no closer stamp lands and the marker stays in the drain until the file reads."""
     path_s = str(STATESDIR / (fsid + ".jsonl"))
     try:
-        rows = (STATESDIR / (fsid + ".jsonl")).read_text().splitlines()
+        rows = _gr.read_text(STATESDIR / (fsid + ".jsonl")).splitlines()
     except (FileNotFoundError, NotADirectoryError):
         _read_ok(path_s)                               # absent is the common case and a real state
         return 0
@@ -16119,7 +16113,7 @@ def _death_pending(exclude):
     markers skip straight from the mtime memo with zero reads."""
     out = []
     try:
-        entries = sorted(((p.stat().st_mtime_ns, p) for p in GONEDIR.iterdir()
+        entries = sorted(((p.stat().st_mtime_ns, p) for p in _gr.iterdir(GONEDIR)
                           if p.name.endswith(".json")), key=lambda x: x[0])
     except OSError:
         return out
@@ -16131,7 +16125,7 @@ def _death_pending(exclude):
         if memo and memo[0] == mt and memo[1]:
             continue
         try:
-            m = json.loads(p.read_text())
+            m = json.loads(_gr.read_text(p))
         except Exception:
             continue
         done = isinstance(m, dict) and "endedAt" in m
@@ -17395,7 +17389,7 @@ def stalled_facts(fsid, strict=False):
     out = {}
     path_s = str(STATE / "auto-nudge.json")
     try:
-        d = json.loads(Path(path_s).read_text())
+        d = json.loads(_gr.read_text(Path(path_s)))
     except FileNotFoundError:
         _read_ok(path_s)                               # absent is a real state, and ends a failure episode
         return out
@@ -17481,7 +17475,7 @@ def _live_prompt_since_scan(path):
     transition into the trailing picker/permission run, else None. Raises OSError when the file cannot be
     opened, so the memo never records an answer under an identity it did not read."""
     since, prev = None, ""
-    with open(path, errors="replace") as f:
+    with _gr.open(path, errors="replace") as f:
         for line in f:
             if '"state"' not in line:
                 continue
@@ -18186,7 +18180,7 @@ def judge_failure_scan():
     global _jf_store_memo, _jf_cause_memo
     old, new = _jf_store_memo, {}
     count = hits = parses = 0
-    for fp in glob.glob(str(GOALDIR / "*.json")):
+    for fp in _gr.glob(str(GOALDIR), "*.json"):
         try:
             st = os.stat(fp)
         except OSError:
@@ -18199,7 +18193,7 @@ def judge_failure_scan():
         else:
             parses += 1
             try:
-                with open(fp, "rb") as f:              # one fd: the key describes exactly the bytes read
+                with _gr.open(fp, "rb") as f:          # one fd: the key describes exactly the bytes read
                     st = os.fstat(f.fileno())
                     key = (st.st_ino, st.st_mtime_ns, st.st_size)
                     store = json.loads(f.read())
@@ -18270,7 +18264,7 @@ def rearm_failed_summaries(now=None, auto=False):
     burn DISTILL_FAIL_CAP calls on every edge a healthy neighbor produces. Returns the count re-armed."""
     import glob
     n = 0
-    for fp in glob.glob(str(GOALDIR / "*.json")):
+    for fp in _gr.glob(str(GOALDIR), "*.json"):
         fsid = Path(fp).stem
         try:
             store = load_goals(fsid)
@@ -18485,7 +18479,7 @@ def _drain_undiscovered(now, fleet_sids):
     store — three stats since the predicate moved onto _absent_store_flags (memoized on file
     identity, shared with run_propagate's sweep over the same stores). Returns goals distilled."""
     stuck = []
-    files = sorted(GOALDIR.glob("*.json"))
+    files = _gr.glob(GOALDIR, "*.json")
     _absent_flags_evict({str(f) for f in files})
     for f in files:
         sid = f.stem
@@ -18899,7 +18893,7 @@ def _postal_ledger():
         return ent[1]
     mp, xcands, returned = {}, [], {}
     try:
-        for line in MESSAGES.read_text(errors="replace").splitlines():
+        for line in _gr.read_text(MESSAGES, errors="replace").splitlines():
             try:
                 r = json.loads(line)
             except Exception:
@@ -19589,7 +19583,7 @@ def _presumed_closed(sid, now):
     if str(sid).startswith("ext:"):
         return True
     try:
-        remote = set((STATE / "remote-sids").read_text().split())
+        remote = set(_gr.read_text(STATE / "remote-sids").split())
     except OSError:
         return False                                   # the bus has not spoken → cannot determine
     return sid not in remote
@@ -19887,7 +19881,7 @@ def run_propagate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=None, verbos
     # writer object, or a view an earlier ref took) is evaluated from that object; a store the
     # sweep does read is a writer load that stays in `loaded` for the loop below.
     _sw_senders = [f for f, _p, _a, _n in sessions]
-    _sw_files = sorted(GOALDIR.glob("*.json"))
+    _sw_files = _gr.glob(GOALDIR, "*.json")
     _absent_flags_evict({str(f) for f in _sw_files})
     for _f in _sw_files:
         if _f.stem in seen:
@@ -20388,9 +20382,9 @@ def _test(path):
 def _dump_archives():
     """Print the current per-session archive records (headline + abstract) — for eyeballing."""
     import glob
-    for fp in sorted(glob.glob(str(ARCHDIR / "*.json"))):
+    for fp in _gr.glob(str(ARCHDIR), "*.json"):
         try:
-            o = json.loads(Path(fp).read_text())
+            o = json.loads(_gr.read_text(fp))
         except Exception:
             continue
         print("%s  (%d turns)" % (Path(fp).stem[:8], o.get("turns", 0)))
@@ -20401,9 +20395,9 @@ def _dump_archives():
 def _dump_goals():
     """Print each session's goal tree (top-level status, nodes indented) — for eyeballing."""
     import glob
-    for fp in sorted(glob.glob(str(GOALDIR / "*.json"))):
+    for fp in _gr.glob(str(GOALDIR), "*.json"):
         try:
-            store = json.loads(Path(fp).read_text())
+            store = json.loads(_gr.read_text(fp))
         except Exception:
             continue
         nodes, status = store["nodes"], store.get("status", {})
@@ -20688,7 +20682,7 @@ def sweep_stale_temps(dirs=None):
     removed = 0
     for d in dirs:
         try:
-            names = os.listdir(d)
+            names = _gr.listdir(d)
         except OSError:
             continue
         for name in names:

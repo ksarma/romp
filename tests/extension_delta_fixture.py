@@ -14,7 +14,7 @@ FIXTURE = Path(__file__).parent / "fixtures" / "extension-view-deltas.json"
 
 
 def fixture():
-    km.jd.STATE.mkdir(parents=True, exist_ok=True)
+    km.jd._rebind_state(km.jd.STATE, make=True)   # made when absent and floored at 0700 through the seam (tests-5 of the state-root review)
     (km.jd.STATE / "session-hosts").write_text("off")
     km._delta_parts_cache.clear()
 

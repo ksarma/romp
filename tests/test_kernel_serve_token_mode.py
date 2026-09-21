@@ -24,8 +24,9 @@ LockWaitIsAnnounced (a starter blocked by another holder says so before waiting)
 tighter-mode cases in TightenMode and LockFailureIsFailClosed (0400 is left alone; only bits outside
 0600 go).
 ServeTokenLoadersMatch pins the bus's copy of the routine to the kernel's, since the bus imports
-nothing from kernel/ and carries its own: AST identity with the docstring stripped (any divergence
-is red), plus the named invariants as a readable second layer.
+nothing else from kernel/ (the state root's mode check, kernel/state_root_mode.py, is the one file
+it loads from there, by path) and carries its own: AST identity with the docstring stripped (any
+divergence is red), plus the named invariants as a readable second layer.
 
 ServeTokenFileMode is the original mode case. It INTERPOSES on os.chmod because the old shape's
 trailing chmod repaired the mode before anything could observe it; the shape now needs no chmod on
@@ -73,7 +74,7 @@ class _TokenFile(unittest.TestCase):
     def setUp(self):
         self.f = km.jd.STATE / "serve-token"
         self.lock = self.f.with_name("serve-token.lock")
-        km.jd.STATE.mkdir(parents=True, exist_ok=True)
+        km.jd._rebind_state(km.jd.STATE, make=True)   # made when absent and floored at 0700 through the seam (tests-5 of the state-root review)
         self._env = self._umask = None
         self.addCleanup(self._restore)      # registered FIRST: a failing _clear() must not leak a zeroed umask
         self._env = os.environ.pop("ROMP_SERVE_TOKEN", None)
@@ -617,8 +618,9 @@ class ImportRefusalIsLoud(unittest.TestCase):
 
 
 class ServeTokenLoadersMatch(unittest.TestCase):
-    """The bus imports nothing from kernel/ (by design: it is one self-contained file, and the two
-    daemons boot together), so postal_service.py carries its OWN copy of _serve_token_read_or_mint.
+    """The bus imports nothing else from kernel/ (the state root's mode check is the one file it loads
+    from there, by path; the two daemons boot together), so postal_service.py carries its OWN copy of
+    _serve_token_read_or_mint.
     Two layers pin the copies together. The AST identity (docstring stripped) is the gate: ANY
     divergence is red, so a fix to one copy that forgets the other cannot land. The named invariants
     are the readable layer that says WHAT a divergence broke. The gate exists because three

@@ -1,0 +1,618 @@
+#!/usr/bin/env python3
+"""THE CENSUS: every read of a path under the state root, derived from the code, pinned to the guarded readers.
+
+Round 3 of the state-root review (2026-09-21) found that the roster of entries a peer could have planted under a
+writable state root was a hand list of two, and that the population was at least eight; its ruling: stop enumerating,
+derive the population of everything the import reads or adopts, put ONE shared guarded reader over all of it, and pin
+the population so a new reader cannot join unguarded. This module is that derivation and that pin.
+
+WHAT IT DOES. An AST census over the five modules that bind the state root at import (kernel/kernel.py, kernel/judge.py,
+kernel/event_model.py, postal/postal_service.py, kernel/session_host.py) and the six kernel-side modules the kernel hands
+its root to per call (kernel/logins.py, kernel/palette.py, kernel/host_transport.py, kernel/sdk_backend.py,
+kernel/codex_backend.py, kernel/codex_runtime.py; the round-4 review found their reads outside the first census's view:
+a planted logins record reached the login-billing road and a planted codexvenv reached sys.path[0]). It seeds each
+module with its ROOT NAMES (the state root and the directories bound from it at import: the judge's rebind globals, the
+bus's constants, the event model's, the session host's spec-derived attributes; for the handed-root modules every
+parameter named `state_dir` or `state` and the `self.state` / `self.state_dir` attributes), then derives, to a fixpoint,
+every expression that is a path under the root: a module-level name bound from a root name, a `/` or a join onto one,
+a function whose return is one, a parameter a caller hands one, a local bound from one (keyed on the nearest preceding
+binding, so a long dispatch that reuses `p` for a client's path and a root path in different branches is read branch
+by branch), a loop or comprehension target over a root listing, a scandir entry's `.path`, and the ENTRIES a guarded
+listing answers. Over those it lists every READ: read_text, read_bytes, open in a read mode, os.open read-only,
+gzip.open, glob, rglob, glob.glob, iterdir, listdir, scandir, is_dir and os.path.isdir, and sys.path.insert or append
+of one. The bytes a read answers are data, not a path (a names entry's cwd used as a browse path is not a root read),
+and writes (open in a write mode, _atomic_write, an O_EXCL temp) are not reads.
+
+WHAT IT ASSERTS. Every read in the census either goes through a Reader (kernel/state_root_mode.py: a call on a reader
+instance, whose guard lstat's every component from the root down, quarantines a failing one and reads the path as
+absent) or sits on ALLOWLIST below with a one-line reason. A reader instance is recognised by its binding: a module
+global assigned from `<module>.Reader(...)`, a call of a module function whose return is one (`_reader(state_dir)`, the
+per-call shape of the handed-root modules), or a name ending in `_gr` (a global, an instance attribute, a local) or
+named `gr` (a parameter a caller hands its reader). A new unguarded reader anywhere in the eleven modules reds this
+module (test_the_census_reds_on_a_planted_unguarded_reader proves the pin can red by planting one in a copy of the
+kernel). The allowlist is checked for stale entries too, so it cannot grow quietly.
+
+HOW TO RE-RUN IT BY HAND. `python3 tests/test_state_root_readers.py --list` prints the population (file:line, function,
+kind, target, guarded or allowlisted) and exits 1 when an unguarded, unallowlisted read exists. plans/state-root-mode.md
+records the method. The census reads source text alone and loads no romp module.
+
+WHAT IT DOES NOT SEE. A read through a name the derivation cannot follow (a path stored in a dict and read back, a path
+handed in from another module) is invisible to it; the seeds and the parameter seeds (PARAM_SEEDS) are where such a
+road is declared when found. The guard's own boundary is stated in kernel/state_root_mode.py: a descriptor a peer
+already holds inside the root survives the tightening, so remove-and-recreate is the boundary of what any check
+promises.
+"""
+import ast
+import collections
+import os
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+ROOT = os.path.dirname(HERE)
+
+ROOT_BINDERS = ("kernel/kernel.py", "kernel/judge.py", "kernel/event_model.py", "postal/postal_service.py", "kernel/session_host.py")
+HANDED_ROOT = ("kernel/logins.py", "kernel/palette.py", "kernel/host_transport.py", "kernel/sdk_backend.py",
+               "kernel/codex_backend.py", "kernel/codex_runtime.py")   # handed the root per call by the kernel (jd.STATE / self.state)
+MODULES = ROOT_BINDERS + HANDED_ROOT
+
+# The ROOT NAMES per module: the expressions that ARE the state root or a directory bound from it at import. The judge's
+# are its _rebind_state globals (test_the_judges_seeds_are_its_rebind_globals derives that list from the AST and holds
+# this one equal to it); the kernel's are the same names through `jd.`; the bus's are its module constants; the session
+# host's are the attributes its spec binds.
+SEEDS = {
+    "kernel/kernel.py": {"jd.STATE", "jd.NAMES", "jd.CAPDIR", "jd.ARCHDIR", "jd.GOALDIR", "jd.GOALARCHDIR", "jd.STATESDIR",
+                         "jd.PCACHE", "jd.MESSAGES", "jd.ERRORS", "jd.USAGE", "jd.SDKDIR", "jd.EPIDIR", "jd.GONEDIR",
+                         "jd.JUDGE_AUTH", "jd.CODEXDIR", "jd.JUDGE_SCRATCH", "jd.JUDGE_LIMIT", "jd.FAST_REFUSED",
+                         "jd._overrides_dir()", "em._ckpt_dir()", "em.STATE", "em.NAMES", "em.STATES_DIR", "em.MESSAGES_LOG"},
+    "kernel/judge.py": {"STATE", "NAMES", "CAPDIR", "ARCHDIR", "GOALDIR", "GOALARCHDIR", "STATESDIR", "PCACHE", "MESSAGES",
+                        "ERRORS", "USAGE", "SDKDIR", "EPIDIR", "GONEDIR", "JUDGE_AUTH", "CODEXDIR", "JUDGE_SCRATCH",
+                        "JUDGE_LIMIT", "FAST_REFUSED", "_overrides_dir()", "em._ckpt_dir()", "em.STATE", "em.STATES_DIR"},
+    "kernel/event_model.py": {"STATE", "NAMES", "STATES_DIR", "MESSAGES_LOG", "_ckpt_dir()"},
+    "postal/postal_service.py": {"STATE", "MAILROOT", "MAILPENDING", "MAILHELD", "WARNED", "LOG", "PIDFILE", "NAMES_DIR",
+                                 "TLDIR", "SESSION_FLAGS", "USER_TODOS_SWITCH", "CODEX_REGISTRY", "STATE.parent"},
+    "kernel/session_host.py": {"self.state_dir", "self.dir", "self.spec_path", "self.log_path", "self.sock_path"},
+    "kernel/logins.py": set(), "kernel/palette.py": set(), "kernel/host_transport.py": set(), "kernel/codex_runtime.py": set(),
+    "kernel/sdk_backend.py": {"self.state_dir"}, "kernel/codex_backend.py": {"self.state"},
+}
+PARAM_SEEDS = {   # function -> parameters a caller OUTSIDE the module hands a root-derived path (kernel/host_transport.py)
+    "kernel/session_host.py": {"read_journal_dir": {"directory"}, "Journal.__init__": {"directory"}},
+}
+PARAM_NAME_SEEDS = {rel: {"state_dir", "state"} for rel in HANDED_ROOT}   # every parameter of these names, in every def, is the root
+
+# THE ALLOWLIST: (file, function, kind, target text) -> the one-line reason the read is not through a Reader. Every
+# entry must match a read the census finds (test_the_allowlist_carries_no_stale_entry), so the list cannot outlive the
+# code it describes.
+ALLOWLIST = {
+    ("kernel/kernel.py", "_serve_token_read_or_mint.read", "text", "f"):
+        "the serve-token loader keeps its own guards (lstat refuses a symlink before any read; every read fault but ENOENT is "
+        "fatal; a foreign-owned token is unreadable or untightenable), the one copy the repo keeps on purpose, held equal to "
+        "the bus's by ServeTokenLoadersMatch",
+    ("kernel/kernel.py", "_serve_token_read_or_mint.mint", "dir", "f.parent"):
+        "the mint's sweep of its own serve-token.*.tmp temps under the lock: each match is unlinked by name, never read",
+    ("postal/postal_service.py", "_serve_token_read_or_mint.read", "text", "f"):
+        "the bus's copy of the serve-token loader (see the kernel's entry): its own guards, pinned equal by ServeTokenLoadersMatch",
+    ("postal/postal_service.py", "_serve_token_read_or_mint.mint", "dir", "f.parent"):
+        "the bus's copy of the mint's temp sweep: unlinked by name, never read",
+    ("kernel/kernel.py", "_judge_child_records", "dir", "root"):
+        "os.listdir of the ROOT itself, kept for its raise on an unlistable root (Path.glob answers [] to EACCES and ENOTDIR "
+        "alike), which the orphan sweep's mark depends on; each record it names is then read through _gr",
+    ("kernel/judge.py", "<module>", "isdir", "STATE"):
+        "the import's own read of the root after its mkdir met EEXIST: is the path a directory (ENOTDIR is the check's verdict "
+        "otherwise); the gate's input, not a read of an entry",
+    ("kernel/judge.py", "<module>", "dir", "STATE"):
+        "the import's listing of the root at its first read, which decides the creation exemption (an empty root is a creation "
+        "default); the names are counted, never opened",
+    ("postal/postal_service.py", "_atomic_json_put", "open", "str(path.parent)"):
+        "a directory descriptor opened O_RDONLY for fsync after an atomic publish into a directory this process just wrote: "
+        "nothing is read through it",
+    ("kernel/codex_backend.py", "CodexBackend._write_registry_locked", "open", "str(self.root)"):
+        "the Codex registry's directory descriptor opened O_RDONLY for fsync after the atomic publish of registry.json into it: "
+        "nothing is read through it (the bus's entry above is the same shape)",
+}
+
+PATH_METHODS = {"with_name", "with_suffix", "with_stem", "joinpath", "resolve", "absolute", "expanduser"}
+PATH_ATTRS = {"parent", "parents", "path"}   # `path`: a scandir entry's (DirEntry.path), a path under the listed directory
+PATH_FUNCS = {"Path", "str", "os.fspath", "os.path.join", "os.path.realpath", "os.path.abspath", "os.path.normpath",
+              "os.path.dirname", "pathlib.Path", "PurePath", "sorted", "list", "tuple", "set", "reversed", "next", "iter"}
+READ_METHODS = {"read_text": "text", "read_bytes": "bytes", "iterdir": "dir", "glob": "dir", "rglob": "dir",
+                "is_dir": "isdir"}
+READ_FUNCS = {"open": "open", "io.open": "open", "gzip.open": "open", "os.listdir": "dir", "os.scandir": "dir",
+              "glob.glob": "dir", "glob.iglob": "dir", "os.path.isdir": "isdir"}
+DATA_METHODS = {"read_text", "read_bytes", "read", "readlines", "readline", "split", "splitlines", "strip", "rstrip", "lstrip",
+                "decode", "encode", "get", "items", "keys", "values", "stat", "lstat", "exists", "is_file", "is_dir", "load",
+                "loads", "partition", "rpartition", "lower", "upper", "startswith", "endswith", "count", "index", "find"}
+DATA_FUNCS = {"json.load", "json.loads", "open", "io.open", "gzip.open", "os.stat", "os.lstat", "os.path.getsize", "os.path.exists",
+              "len", "int", "float", "bool", "dict", "hash", "hashlib.sha1", "os.path.getmtime", "os.listdir", "os.scandir",
+              "glob.glob", "glob.iglob", "os.fstat"}
+GUARD_METHODS = {"read_text", "read_bytes", "open", "os_open", "gzip_open", "json", "listdir", "glob", "iterdir", "scandir",
+                 "isdir", "is_dir", "sys_path_dir", "dir", "exists", "stat", "trust"}
+LISTING_METHODS = ("iterdir", "glob", "scandir", "listdir", "dir")
+
+
+def unparse(n):
+    try:
+        return ast.unparse(n)
+    except Exception:
+        return "<?>"
+
+
+class ModuleFacts:
+    def __init__(self, rel, tree, seeds):
+        self.rel = rel
+        self.tree = tree
+        self.seeds = set(seeds)
+        self.globals = set()
+        self.funcs = {}            # qualname -> def node (top-level and one class level)
+        self.root_funcs = set()    # top-level function names whose return is root-derived
+        self.root_methods = set()  # class method names whose return is root-derived (self.<m>() is then root-derived)
+        self.root_params = collections.defaultdict(set)
+        self.readers = set()
+        self.reader_funcs = set()  # top-level function names whose return is a Reader (the per-call `_reader(state_dir)`)
+        self.self_attrs = set()
+        self.enclosing = {}        # id(node) -> innermost enclosing def node (None at module level)
+        self.calls_by_name = collections.defaultdict(list)   # callee simple name -> [Call]
+        self.locals = {}           # id(def) -> {name: [(line, root-derived)]} (recomputed per round)
+        self.all_calls = []
+
+
+def build_index(mf):
+    """One pass: enclosing map (innermost def), call index, function table."""
+    def visit(node, cur):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                mf.enclosing[id(child)] = cur
+                visit(child, child)
+            else:
+                mf.enclosing[id(child)] = cur
+                if isinstance(child, ast.Call):
+                    mf.all_calls.append(child)
+                    if isinstance(child.func, ast.Name):
+                        mf.calls_by_name[child.func.id].append(child)
+                visit(child, cur)
+    visit(mf.tree, None)
+    for node in mf.tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            mf.funcs[node.name] = node
+        if isinstance(node, ast.ClassDef):
+            for sub in node.body:
+                if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    mf.funcs[node.name + "." + sub.name] = sub
+
+
+def _is_root(mf, node, fn):
+    """Whether expression `node` derives from the state root inside def `fn` (None: module level)."""
+    txt = unparse(node)
+    if txt in mf.seeds:
+        return True
+    if isinstance(node, ast.Name):
+        if node.id in mf.globals:
+            return True
+        f = fn
+        while f is not None:
+            hist = list(mf.locals.get(id(f), {}).get(node.id) or [])
+            if node.id in mf.root_params.get(getattr(f, "name", ""), ()):
+                hist.append((getattr(f, "lineno", 0), True))   # a parameter is bound at the def, before every local binding
+            if hist:
+                # flow-insensitive within a function, but keyed on the NEAREST PRECEDING binding of the name (a long
+                # dispatch reuses `p` for a client's path and a root path in different branches)
+                hist.sort()
+                before = [r for (ln, r) in hist if ln < node.lineno]
+                if before:
+                    return before[-1]
+                return any(r for (_ln, r) in hist)     # a loop-carried or later-bound name: any root binding counts
+            f = mf.enclosing.get(id(f))
+        return False
+    if isinstance(node, ast.Attribute):
+        if txt in mf.self_attrs:
+            return True
+        if node.attr in PATH_ATTRS:
+            return _is_root(mf, node.value, fn)
+        return False
+    if isinstance(node, ast.Call):
+        f = unparse(node.func)
+        if (isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id == "self"
+                and node.func.attr in mf.root_methods):
+            return True
+        if (isinstance(node.func, ast.Attribute) and node.func.attr in ("iterdir", "glob", "scandir", "listdir", "dir")
+                and _is_reader(mf, node.func.value)):
+            return True           # the ENTRIES a guarded listing answers are paths under the root: their reads are censused
+        if isinstance(node.func, ast.Attribute) and node.func.attr in DATA_METHODS:
+            return False          # the BYTES a read answers are data, not a path under the root
+        if f in DATA_FUNCS:
+            return False
+        if isinstance(node.func, ast.Attribute) and node.func.attr in PATH_METHODS:
+            return _is_root(mf, node.func.value, fn)
+        if f in PATH_FUNCS:
+            return any(_is_root(mf, a, fn) for a in node.args)
+        if isinstance(node.func, ast.Name) and node.func.id in mf.root_funcs:
+            return True
+        if (f + "()") in mf.seeds:
+            return True
+        if isinstance(node.func, ast.Attribute) and node.func.attr == "format":
+            return _is_root(mf, node.func.value, fn) or any(_is_root(mf, a, fn) for a in node.args)
+        return False
+    if isinstance(node, ast.BinOp):
+        if isinstance(node.op, (ast.Div, ast.Add, ast.Mod)):
+            return _is_root(mf, node.left, fn) or _is_root(mf, node.right, fn)
+        return False
+    if isinstance(node, ast.JoinedStr):
+        return any(isinstance(v, ast.FormattedValue) and _is_root(mf, v.value, fn) for v in node.values)
+    if isinstance(node, (ast.Tuple, ast.List)):
+        return any(_is_root(mf, e, fn) for e in node.elts)
+    if isinstance(node, ast.Subscript):
+        return _is_root(mf, node.value, fn)
+    if isinstance(node, ast.IfExp):
+        return _is_root(mf, node.body, fn) or _is_root(mf, node.orelse, fn)
+    if isinstance(node, ast.BoolOp):
+        return any(_is_root(mf, v, fn) for v in node.values)
+    if isinstance(node, ast.NamedExpr):
+        return _is_root(mf, node.value, fn)
+    if isinstance(node, (ast.ListComp, ast.GeneratorExp, ast.SetComp)):
+        for g in node.generators:
+            if _is_root(mf, g.iter, fn):
+                return True          # elements of a listing of a root directory are root-derived entries
+        return _is_root(mf, node.elt, fn)
+    return False
+
+
+def _targets(t):
+    """The names a target BINDS: a Name, the Names inside a Tuple, List or Starred. A Subscript or Attribute target
+    (cache[str(p)] = ..., self.x = ...) mutates an object and binds no name (the names inside it are reads)."""
+    if isinstance(t, ast.Name):
+        return [t.id]
+    if isinstance(t, (ast.Tuple, ast.List)):
+        return [n for e in t.elts for n in _targets(e)]
+    if isinstance(t, ast.Starred):
+        return _targets(t.value)
+    return []
+
+
+def _own_nodes(fn):
+    """The nodes of `fn` not inside a nested def (those belong to the nested def's scope)."""
+    out = []
+    stack = [fn]
+    while stack:
+        node = stack.pop()
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue
+            out.append(child)
+            stack.append(child)
+    return out
+
+
+def _seed_locals(mf, fn):
+    """Fixpoint over the function's own nodes: every binding of a local (assignments, loop, with and comprehension
+    targets) recorded as (line, root-derived) in mf.locals[id(fn)][name], sorted by line. A nested def sees its parent's
+    bindings (closures read the parent's path variables)."""
+    parent = mf.enclosing.get(id(fn))
+    hist = {k: list(v) for k, v in mf.locals.get(id(parent), {}).items()} if parent is not None else {}
+    mf.locals[id(fn)] = hist
+    bindings = []          # (lineno, [names], value node or None for a target with no expression)
+    for n in _own_nodes(fn):
+        if isinstance(n, ast.Assign):
+            bindings.append((n.lineno, [x for t in n.targets for x in _targets(t)], n.value))
+        elif isinstance(n, (ast.AnnAssign, ast.AugAssign)) and n.value is not None:
+            bindings.append((n.lineno, _targets(n.target), n.value))
+        elif isinstance(n, ast.NamedExpr):
+            bindings.append((n.lineno, [n.target.id], n.value))
+        elif isinstance(n, (ast.For, ast.AsyncFor)):
+            bindings.append((n.lineno, _targets(n.target), n.iter))
+        elif isinstance(n, (ast.With, ast.AsyncWith)):
+            for item in n.items:
+                if item.optional_vars is not None:
+                    bindings.append((n.lineno, _targets(item.optional_vars), item.context_expr))
+        elif isinstance(n, ast.comprehension):
+            bindings.append((n.iter.lineno, _targets(n.target), n.iter))
+    for ln, names, _v in bindings:
+        for name in names:
+            hist.setdefault(name, [])
+    def _empty_literal(v):
+        # a fallback binding to an empty literal (`boxes = []` in an except arm) says nothing about the name's path-ness
+        return (isinstance(v, (ast.List, ast.Tuple, ast.Dict, ast.Set)) and not getattr(v, "elts", getattr(v, "keys", None))) \
+            or (isinstance(v, ast.Constant) and v.value in (None, "", b""))
+    bindings = [(ln, names, value) for (ln, names, value) in bindings if not _empty_literal(value)]
+    for _round in range(8):
+        changed = False
+        for ln, names, value in bindings:
+            r = _is_root(mf, value, fn)
+            for name in names:
+                cur = hist[name]
+                if (ln, r) not in cur:
+                    cur[:] = sorted([(l, x) for (l, x) in cur if l != ln] + [(ln, r)])
+                    changed = True
+        if not changed:
+            break
+
+
+def module_facts(root, rel, src=None):
+    """The census's facts for one module: its root-derived names, functions, parameters, attributes and reader instances,
+    derived to a fixpoint (bounded rounds). `src` overrides the file's text (the mutation tests)."""
+    if src is None:
+        src = (root / rel).read_text(encoding="utf-8")
+    tree = ast.parse(src, filename=rel)
+    mf = ModuleFacts(rel, tree, SEEDS.get(rel, set()))
+    build_index(mf)
+    for fname, params in PARAM_SEEDS.get(rel, {}).items():
+        mf.root_params[fname.split(".")[-1]].update(params)
+    all_defs = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    for d in all_defs:                       # the handed-root modules: every `state_dir` / `state` parameter is the root
+        for a in d.args.posonlyargs + d.args.args + d.args.kwonlyargs:
+            if a.arg in PARAM_NAME_SEEDS.get(rel, ()):
+                mf.root_params[d.name].add(a.arg)
+    for name, fn in mf.funcs.items():        # a function whose return is `<x>.Reader(...)` answers a reader (`_reader(state_dir)`)
+        if "." not in name and any(isinstance(n, ast.Return) and isinstance(n.value, ast.Call)
+                                   and unparse(n.value.func).endswith(".Reader") for n in _own_nodes(fn)):
+            mf.reader_funcs.add(name)
+    # order defs outer-first so a nested def sees its parent's locals
+    depth = {}
+    for d in all_defs:
+        k, p = 0, mf.enclosing.get(id(d))
+        while p is not None:
+            k += 1
+            p = mf.enclosing.get(id(p))
+        depth[id(d)] = k
+    all_defs.sort(key=lambda d: depth[id(d)])
+    self_assigns = [n for n in ast.walk(tree) if isinstance(n, ast.Assign)
+                    and any(isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name) and t.value.id == "self"
+                            for t in n.targets)]
+    for _round in range(12):
+        changed = False
+        for node in tree.body:
+            if isinstance(node, ast.Assign):
+                if isinstance(node.value, ast.Call) and unparse(node.value.func).endswith(".Reader"):
+                    for t in node.targets:
+                        for name in _targets(t):
+                            if name not in mf.readers:
+                                mf.readers.add(name); changed = True
+                    continue
+                if _is_root(mf, node.value, None):
+                    for t in node.targets:
+                        for name in _targets(t):
+                            if name not in mf.globals:
+                                mf.globals.add(name); changed = True
+        for d in all_defs:
+            _seed_locals(mf, d)
+        for name, fn in mf.funcs.items():
+            for n in _own_nodes(fn):
+                if isinstance(n, ast.Return) and n.value is not None and _is_root(mf, n.value, fn):
+                    if "." in name:
+                        m = name.split(".", 1)[1]
+                        if m not in mf.root_methods:
+                            mf.root_methods.add(m); changed = True
+                    elif name not in mf.root_funcs:
+                        mf.root_funcs.add(name); changed = True
+                    break
+        for n in self_assigns:
+            fn = mf.enclosing.get(id(n))
+            if _is_root(mf, n.value, fn):
+                for t in n.targets:
+                    txt = unparse(t)
+                    if txt.startswith("self.") and txt not in mf.self_attrs:
+                        mf.self_attrs.add(txt); changed = True
+        for fn_name, fn in mf.funcs.items():
+            if "." in fn_name:
+                continue
+            params = [a.arg for a in fn.args.posonlyargs + fn.args.args + fn.args.kwonlyargs]
+            for call in mf.calls_by_name.get(fn_name, ()):
+                caller = mf.enclosing.get(id(call))
+                for i, a in enumerate(call.args):
+                    if i < len(params) and _is_root(mf, a, caller):
+                        if params[i] not in mf.root_params[fn_name]:
+                            mf.root_params[fn_name].add(params[i]); changed = True
+                for kw in call.keywords:
+                    if kw.arg in params and _is_root(mf, kw.value, caller):
+                        if kw.arg not in mf.root_params[fn_name]:
+                            mf.root_params[fn_name].add(kw.arg); changed = True
+        if not changed:
+            break
+    return mf
+
+
+def _read_mode_is_read(call, mode_index=1):
+    for i, a in enumerate(call.args):
+        if i == mode_index and isinstance(a, ast.Constant) and isinstance(a.value, str):
+            return "r" in a.value and not any(c in a.value for c in "wax+")
+    for kw in call.keywords:
+        if kw.arg == "mode" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+            return "r" in kw.value.value and not any(c in kw.value.value for c in "wax+")
+    return True
+
+
+def _qual(mf, fn):
+    if fn is None:
+        return "<module>"
+    for name, d in mf.funcs.items():
+        if d is fn:
+            return name
+    parent = mf.enclosing.get(id(fn))
+    return (_qual(mf, parent) + "." if parent is not None else "") + getattr(fn, "name", "<lambda>")
+
+
+
+def _is_reader(mf, recv):
+    """Whether `recv` is a reader instance: a module global bound from `.Reader(...)`, a call of a function that returns
+    one (`_reader(state_dir)`), a name ending in `_gr` (a global, `self._gr`, a local), or a parameter named `gr`."""
+    if isinstance(recv, ast.Name) and (recv.id in mf.readers or recv.id == "gr"):
+        return True
+    if isinstance(recv, ast.Call) and isinstance(recv.func, ast.Name) and recv.func.id in mf.reader_funcs:
+        return True
+    return unparse(recv).endswith("_gr")
+
+
+def census(root, rels, sources=None):
+    """Every read of a path under the state root in `rels` (files under `root`, or the texts `sources` maps them to):
+    dicts with file, func, line, kind, target and guarded."""
+    entries = []
+    for rel in rels:
+        src = (sources or {}).get(rel)
+        mf = module_facts(root, rel, src)
+        for n in mf.all_calls:
+            fn = mf.enclosing.get(id(n))
+            f = n.func
+            ftxt = unparse(f)
+            kind = target = None
+            guarded = False
+            if isinstance(f, ast.Attribute):
+                recv = f.value
+                if _is_reader(mf, recv) and f.attr in GUARD_METHODS:
+                    guarded, kind = True, f.attr
+                    target = n.args[0] if n.args else None
+                elif f.attr in READ_METHODS and _is_root(mf, recv, fn):
+                    kind, target = READ_METHODS[f.attr], recv
+                elif f.attr == "open" and _is_root(mf, recv, fn) and _read_mode_is_read(n, 0):
+                    kind, target = "open", recv
+                elif ftxt == "os.open" and n.args and _is_root(mf, n.args[0], fn) and (
+                        len(n.args) < 2 or not any(w in unparse(n.args[1])
+                                                   for w in ("O_WRONLY", "O_RDWR", "O_CREAT", "O_APPEND", "O_TRUNC"))):
+                    kind, target = "open", n.args[0]
+                elif ftxt in READ_FUNCS and n.args and _is_root(mf, n.args[0], fn):
+                    if ftxt in ("io.open", "gzip.open") and not _read_mode_is_read(n):
+                        continue
+                    kind, target = READ_FUNCS[ftxt], n.args[0]
+                elif ftxt in ("sys.path.insert", "sys.path.append") and n.args and _is_root(mf, n.args[-1], fn):
+                    kind, target = "syspath", n.args[-1]
+            elif isinstance(f, ast.Name) and f.id == "open" and n.args and _is_root(mf, n.args[0], fn) and _read_mode_is_read(n):
+                kind, target = "open", n.args[0]
+            if kind is None:
+                continue
+            entries.append({"file": rel, "func": _qual(mf, fn), "line": n.lineno, "kind": kind,
+                            "target": unparse(target) if target is not None else "", "guarded": guarded})
+    return entries
+
+
+def unaccounted(entries):
+    """The census entries that are neither guarded nor allowlisted."""
+    return [e for e in entries if not e["guarded"] and (e["file"], e["func"], e["kind"], e["target"]) not in ALLOWLIST]
+
+
+def render(entries):
+    lines = []
+    for e in entries:
+        how = "guarded" if e["guarded"] else ("allowlisted" if (e["file"], e["func"], e["kind"], e["target"]) in ALLOWLIST else "UNGUARDED")
+        lines.append("%s:%d %s [%s] %s: %s" % (e["file"], e["line"], e["func"], e["kind"], e["target"], how))
+    return lines
+
+
+class TheCensus(unittest.TestCase):
+    """The population of reads under the state root, derived by code and pinned to the guarded readers."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.entries = census(Path(ROOT), MODULES)
+
+    def test_every_read_of_a_path_under_the_root_is_guarded_or_allowlisted(self):
+        """THE PIN. Every read the census finds in the eleven modules goes through a Reader, or sits on ALLOWLIST with its
+        reason. A new unguarded reader anywhere in them fails here, naming its file, line, function and target."""
+        bad = unaccounted(self.entries)
+        self.assertEqual(bad, [], "unguarded reads of paths under the state root:\n" + "\n".join(render(bad)))
+        guarded = [e for e in self.entries if e["guarded"]]
+        self.assertGreater(len(guarded), 300, "the census sees the population (%d guarded reads)" % len(guarded))
+        by_file = collections.Counter(e["file"] for e in guarded)
+        for rel in MODULES:
+            self.assertGreater(by_file[rel], 0, "%s has guarded reads (%r)" % (rel, dict(by_file)))
+
+    def test_the_allowlist_carries_no_stale_entry_and_every_entry_has_a_reason(self):
+        found = {(e["file"], e["func"], e["kind"], e["target"]) for e in self.entries if not e["guarded"]}
+        for key, reason in ALLOWLIST.items():
+            self.assertIn(key, found, "a stale allowlist entry: %r no longer names a read the census finds" % (key,))
+            self.assertTrue(isinstance(reason, str) and len(reason.split()) >= 8, "a reason, not a label: %r" % (key,))
+
+    def test_the_census_reds_on_a_planted_unguarded_reader(self):
+        """The pin can red: a copy of kernel/kernel.py with one new function that reads `(jd.STATE / "planted.json")`
+        through Path.read_text, and one that lists `jd.STATE / "planted"` through os.listdir, is censused, and both
+        reads come out unguarded and unallowlisted. The same copy with the reads through _gr comes out clean."""
+        src = open(os.path.join(ROOT, "kernel", "kernel.py"), encoding="utf-8").read()
+        plant = ('\n\ndef _planted_reader():\n    return json.loads((jd.STATE / "planted.json").read_text())\n\n\n'
+                 'def _planted_listing():\n    d = jd.STATE / "planted"\n    return os.listdir(d)\n')
+        entries = census(Path(ROOT), ["kernel/kernel.py"], sources={"kernel/kernel.py": src + plant})
+        bad = unaccounted(entries)
+        self.assertEqual(sorted((e["func"], e["kind"]) for e in bad), [("_planted_listing", "dir"), ("_planted_reader", "text")],
+                         "the two planted reads, and nothing else:\n" + "\n".join(render(bad)))
+        fixed = ('\n\ndef _planted_reader():\n    return json.loads(_gr.read_text(jd.STATE / "planted.json"))\n\n\n'
+                 'def _planted_listing():\n    d = jd.STATE / "planted"\n    return _gr.listdir(d)\n')
+        entries = census(Path(ROOT), ["kernel/kernel.py"], sources={"kernel/kernel.py": src + fixed})
+        self.assertEqual(unaccounted(entries), [])
+        self.assertEqual(sorted(e["func"] for e in entries if e["func"].startswith("_planted")),
+                         ["_planted_listing", "_planted_reader"], "the guarded reads are still seen, as guarded")
+
+    def test_a_reader_through_a_parameter_a_helper_and_a_loop_is_seen(self):
+        """The derivation's reach, pinned on planted shapes: a helper whose parameter a caller hands a root path; a
+        function whose return is a root path, read at its call site; the entries of a listing of a root directory, read
+        in a loop; a local rebound to a client's path in a later branch is NOT flagged (the nearest preceding binding
+        decides)."""
+        src = open(os.path.join(ROOT, "kernel", "kernel.py"), encoding="utf-8").read()
+        plant = ('\n\ndef _planted_helper(path):\n    return path.read_text()\n\n\n'
+                 'def _planted_caller():\n    return _planted_helper(jd.STATE / "a.json")\n\n\n'
+                 'def _planted_path():\n    return jd.STATE / "b.json"\n\n\n'
+                 'def _planted_call_site():\n    return json.loads(_planted_path().read_text())\n\n\n'
+                 'def _planted_loop():\n    out = []\n    for f in _gr.iterdir(jd.STATE / "d"):\n        out.append(f.read_text())\n    return out\n\n\n'
+                 'def _planted_rebound(msg):\n    p = jd.STATE / "c.json"\n    _gr.read_text(p)\n    p = str(msg["path"])\n    return open(p, "rb").read()\n')
+        entries = census(Path(ROOT), ["kernel/kernel.py"], sources={"kernel/kernel.py": src + plant})
+        bad = sorted(e["func"] for e in unaccounted(entries))
+        self.assertEqual(bad, ["_planted_call_site", "_planted_helper", "_planted_loop"], "\n".join(render(unaccounted(entries))))
+
+    def test_the_judges_seeds_are_its_rebind_globals(self):
+        """The judge's seed list is not a hand list: it is what _rebind_state declares global (the names a test's rebind
+        moves), read from the AST, plus the call-time derivations (_overrides_dir(), em._ckpt_dir()) and the event
+        model's constants; the kernel's seeds are the same names through `jd.`."""
+        tree = ast.parse(open(os.path.join(ROOT, "kernel", "judge.py"), encoding="utf-8").read())
+        fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_rebind_state")
+        declared = set()
+        for n in ast.walk(fn):
+            if isinstance(n, ast.Global):
+                declared.update(n.names)
+        self.assertTrue(declared, "the rebind declares its globals")
+        expected = set(declared) | {"_overrides_dir()", "em._ckpt_dir()", "em.STATE", "em.STATES_DIR"}
+        self.assertEqual(SEEDS["kernel/judge.py"], expected)
+        self.assertEqual(SEEDS["kernel/kernel.py"], {"jd." + s for s in declared} | {"jd._overrides_dir()", "em._ckpt_dir()", "em.STATE",
+                                                                                     "em.NAMES", "em.STATES_DIR", "em.MESSAGES_LOG"})
+
+    def test_the_bus_and_the_kernel_hold_a_reader_over_the_root(self):
+        """The census recognises a module's reader instances by their binding to the shared module's Reader class; each of
+        the eleven modules binds at least one: the five root binders hold a `_gr` (the session host's are instance
+        attributes named _gr, and the census recognises those by name), the six handed-root modules build one per call
+        through `_reader(state_dir)`, a function whose return the census recognises as a reader."""
+        for rel in MODULES:
+            src = open(os.path.join(ROOT, rel), encoding="utf-8").read()
+            self.assertIn(".Reader(", src, rel)
+            self.assertIn("_gr" if rel in ROOT_BINDERS else "_reader(", src, rel)
+        for rel in HANDED_ROOT:
+            mf = module_facts(Path(ROOT), rel)
+            self.assertIn("_reader", mf.reader_funcs, rel)
+
+    def test_a_handed_root_modules_planted_reads_are_seen(self):
+        """The handed-root derivation, pinned on planted shapes in a copy of kernel/logins.py: a read of a path built from
+        a `state_dir` parameter is censused (unguarded when bare, guarded through `_reader(state_dir)`), a read through a
+        `gr` parameter is guarded, and a scandir entry's `.path` read is seen."""
+        src = open(os.path.join(ROOT, "kernel", "logins.py"), encoding="utf-8").read()
+        plant = ('\n\ndef _planted_bare(state_dir):\n    return (Path(state_dir) / "x.json").read_text()\n\n\n'
+                 'def _planted_guarded(state_dir):\n    return _reader(state_dir).read_text(Path(state_dir) / "x.json")\n\n\n'
+                 'def _planted_param(p, gr):\n    with gr.open(p, "rb") as f:\n        return f.read()\n\n\n'
+                 'def _planted_entries(state_dir):\n    out = []\n    for de in list(_reader(state_dir).scandir(Path(state_dir) / "d")):\n'
+                 '        out.append(open(de.path).read())\n    return out\n')
+        entries = census(Path(ROOT), ["kernel/logins.py"], sources={"kernel/logins.py": src + plant})
+        bad = sorted((e["func"], e["kind"]) for e in unaccounted(entries))
+        self.assertEqual(bad, [("_planted_bare", "text"), ("_planted_entries", "open")],
+                         "\n".join(render(unaccounted(entries))))
+        self.assertIn(("_planted_guarded", "read_text", True), [(e["func"], e["kind"], e["guarded"]) for e in entries])   # a guarded read's kind is the reader method
+        self.assertIn(("_planted_param", "open", True), [(e["func"], e["kind"], e["guarded"]) for e in entries])
+
+
+def _main(argv):
+    entries = census(Path(ROOT), MODULES)
+    for line in render(entries):
+        print(line)
+    bad = unaccounted(entries)
+    print("\n%d reads under the state root: %d guarded, %d allowlisted, %d UNGUARDED"
+          % (len(entries), sum(e["guarded"] for e in entries), len(entries) - sum(e["guarded"] for e in entries) - len(bad), len(bad)))
+    return 1 if bad else 0
+
+
+if __name__ == "__main__":
+    if "--list" in sys.argv[1:]:
+        sys.exit(_main(sys.argv[1:]))
+    unittest.main()

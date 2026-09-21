@@ -23,6 +23,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from romp_load import load_source
+from tests import guarded_reads   # the shared Reader seam: every read under the state root goes through it (round 4 of the state-root review)
 from pathlib import Path
 from unittest import mock
 
@@ -101,8 +102,9 @@ def _fault_on(path):
         if str(path_s) == str(path):
             raise OSError(errno.EIO, "Input/output error", str(path))
         return orig_disk(fd, path_s)
-    with mock.patch.object(Path, "read_text", faulting), mock.patch.object(jd, "_disk_read", faulting_disk):
-        yield
+    with mock.patch.object(Path, "read_text", faulting), mock.patch.object(jd, "_disk_read", faulting_disk), \
+            guarded_reads.fault(path, lambda: OSError(errno.EIO, "Input/output error", str(path))):   # the guarded reader's open: the
+        yield                                                                                          # third seam since round 4 of the state-root review
 
 
 class _World(unittest.TestCase):

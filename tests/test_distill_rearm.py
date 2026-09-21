@@ -70,7 +70,7 @@ def _drain_health():
 
 class JudgeCallHealthEdge(unittest.TestCase):
     def setUp(self):
-        jd.STATE.mkdir(parents=True, exist_ok=True)
+        jd._rebind_state(jd.STATE, make=True)   # made when absent and floored at 0700 through the seam (tests-5 of the state-root review)
         _drain_health()
 
     def test_first_served_reply_on_the_failing_model_is_one_edge(self):
@@ -163,7 +163,6 @@ class RearmRecoveryEvents(unittest.TestCase):
         scan = jd.judge_failure_scan()
         self.assertEqual(scan["count"], 1, "a given-up stall note counts toward the banner")
         self.assertEqual(jd.rearm_failed_summaries(T0 + 100), 0, "no live stall → nothing to retry")
-        jd.STATE.mkdir(parents=True, exist_ok=True)
         (jd.STATE / "auto-nudge.json").write_text(json.dumps(
             {"deferred": {NID: {"why": "reviver-hold", "at": T0}}}))
         self.assertEqual(jd.rearm_failed_summaries(T0 + 200), 1)
@@ -188,7 +187,6 @@ class StallWarnRetires(unittest.TestCase):
                          "the warn retires with the surface — the banner count can reach zero again")
 
     def test_a_live_stalls_warn_survives_rollup(self):
-        jd.STATE.mkdir(parents=True, exist_ok=True)
         (jd.STATE / "auto-nudge.json").write_text(json.dumps(
             {"deferred": {NID: {"why": "reviver-hold", "at": T0}}}))
         _seed(status="working", stallSummary="", warns=[_warn("stall-failed")])
@@ -205,7 +203,7 @@ class GiveUpWarnNamesTheError(unittest.TestCase):
     tier served — the modal gave no way to see that only the distill tier's model was down."""
 
     def setUp(self):
-        jd.STATE.mkdir(parents=True, exist_ok=True)
+        jd._rebind_state(jd.STATE, make=True)   # made when absent and floored at 0700 through the seam (tests-5 of the state-root review)
         (jd.STATE / "usage.json").write_text(json.dumps(
             {"five_hour": {"pct": 10}, "seven_day": {"pct": 10}}))
         jd._judge_ctx.last_call_fail = None
@@ -345,7 +343,7 @@ class ModelHealthDiagnosis(unittest.TestCase):
     WHICH model is down and what to do about it)."""
 
     def setUp(self):
-        jd.STATE.mkdir(parents=True, exist_ok=True)
+        jd._rebind_state(jd.STATE, make=True)   # made when absent and floored at 0700 through the seam (tests-5 of the state-root review)
         (jd.STATE / "usage.json").write_text(json.dumps(
             {"five_hour": {"pct": 10}, "seven_day": {"pct": 10}}))
         _drain_health()

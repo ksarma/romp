@@ -178,7 +178,6 @@ class ModelsRoute(unittest.TestCase):
     def test_the_codex_default_backend_opens_the_gate_without_a_live_session(self):
         fake = FakeCodex(models=MODELS)
         km._codex_backend = fake
-        km.jd.STATE.mkdir(parents=True, exist_ok=True)
         (km.jd.STATE / "default-backend").write_text("codex\n")
         cx = self._codex()
         self.assertEqual((cx["models"], cx["error"], fake.catalog_calls), (MODELS, None, 1))
@@ -195,7 +194,6 @@ class ModelsRoute(unittest.TestCase):
         be = cb.CodexBackend(tempfile.mkdtemp(), log=lambda m: None,
                              client_factory=lambda: (_ for _ in ()).throw(RuntimeError("codex login missing")))
         km._codex_backend = be
-        km.jd.STATE.mkdir(parents=True, exist_ok=True)
         (km.jd.STATE / "default-backend").write_text("codex\n")
         cx = self._codex()
         self.assertEqual((cx["models"], cx["error"]),

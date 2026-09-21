@@ -78,7 +78,7 @@ class ConvergeWhileLeaving(unittest.TestCase):
         self.target = commit(other, "two")
         git(other, "push", "-q", "origin", "main")
         self.saved_state = jd.STATE
-        jd.STATE = root / "state"; jd.STATE.mkdir()
+        jd._rebind_state(root / "state", make=True)   # made and floored at 0700 through the seam (tests-5 of the state-root review)
         _Manager.posts = []
         self.srv = http.server.HTTPServer(("127.0.0.1", 0), _Manager)
         threading.Thread(target=self.srv.serve_forever, daemon=True).start()
@@ -89,7 +89,7 @@ class ConvergeWhileLeaving(unittest.TestCase):
     def tearDown(self):
         km._TERMINATING[0] = self.saved_term
         self.srv.shutdown(); self.srv.server_close()
-        jd.STATE = self.saved_state
+        jd._rebind_state(self.saved_state)
         self.td.cleanup()
 
     def _converge(self):

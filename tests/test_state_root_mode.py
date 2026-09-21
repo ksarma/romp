@@ -1,56 +1,82 @@
 #!/usr/bin/env python3
-"""The state root's mode has a consequence, and the consequence is one shape: THE PROCESS STOPS (round 2, 2026-09-20).
+"""The state root's trust boundary: the process stops on a hostile root, and every reader of the root's contents is guarded
+(rounds 2 to 4, 2026-09-20 and 2026-09-21).
 
 kernel/judge.py makes the state root 0700 at import, best-effort, and until this change swallowed the OSError, read the
 mode back once and said one stderr sentence when it was not 0700, refusing nothing. The root's mode is the premise of
 _atomic_write's interim-mode argument (a file this uid wrote at a looser mode is not exposed because the root is
 owner-only), so a guard that cannot refuse left a security argument resting on a diagnostic. Round 1 answered with a
 runtime 503 latch that closed the kernel's two doors and left every internal writer running under the hostile root, the
-housekeeping pass whose own stage set the latch included; round 2 replaces the latch with an EXIT, because an exit is
-the only shape that stops every writer by construction.
+housekeeping pass whose own stage set the latch included; round 2 replaced the latch with an EXIT, because an exit is
+the only shape that stops every writer by construction. Round 4 (romp-manager's word, 2026-09-20 22:51Z, after the
+artifact enumeration in plans/state-root-mode.md) settled WHAT is refused and WHEN it is judged:
 
-  REFUSE AT IMPORT   a root writable by group or other (mode & 0o022), or one whose mode cannot be read, exits 2 at the
-        kernel's module import, BEFORE the serve token is read and repo-root is written (_state_root_import_gate), so the
-        kernel never adopts an entry planted under a writable root; the remedy says to remove serve-token and repo-root.
-        The verdict stands on the mode as read AT THE GATE, after the judge module's own chmod (the settled rule, round
-        2b): a pre-existing root this uid owns that read 0777 and was tightened to 0700 a moment ago is NOT refused
-        (refusing it would refuse the first boot after every creation of the root by another tool under a group-writable
-        umask); what the import read is reported at boot instead, one loud line and one row with the distrust remedy
-        (_state_root_import_mode_row), and a root the import itself CREATED is exempt from that too, the umask's mode on
-        a fresh directory being a creation default and not a loosening. A planted symlink at serve-token under such a
-        root is stopped by the token loader's own fault; repo-root is written by a temp and a rename, so a planted entry
-        at that path is replaced, never written through or left.
-  REFUSE AT BOOT     the same verdict in main() exits 2 before any thread starts (_state_root_boot_check, SystemExit in
-        the main thread); the import's pre-chmod mode, when it differed, is a warn-class transition, loud and not fatal.
-  REFUSE AT RUNTIME  found by the jobs pass's first stage or by a request's cached re-check, os._exit(2) from whichever
+  ONE IMPLEMENTATION   kernel/state_root_mode.py, loaded by path under one fixed module name by kernel/judge.py and by
+        postal/postal_service.py (the bus carried a reduced copy marked KEEP IN SYNC until round 4): the two daemons on one
+        root judge it by one rule and say it in one voice. TheBusSharesTheCheck pins the same file, the same object.
+  THE DISCRIMINATOR    "writable by another local user" is an OTHER write bit, or a GROUP write bit under a group that is
+        not the owner's private group (the group lists no member but the owner, and no other account has the gid as its
+        primary group). A group write bit under the owner's private group is warn-class (0775 under umask 0002 on a
+        user-private-group box: every harness root), like 0755. A group database that cannot be read or does not answer
+        within a bound (a daemon thread joined with a timeout) counts as writable, the restricted side, with its OWN
+        message and remedy (check getent group <gid> and the name service), never the distrust remedy. Discriminator.
+  THE IMPORT-READ RULE a PRE-EXISTING root whose mode as read at the judge module's import, before its own chmod, was
+        writable by another local user REFUSES at kernel import (exit 2) whatever the chmod did afterwards, with the
+        distrust remedy (entries planted while it was writable are not to be trusted: remove serve-token, repo-root and
+        every entry you did not make, or recreate the root, then chmod 700); a root the import CREATED is exempt. The same
+        at boot (the two doors agree) and in the bus's start gate. A pre-existing 0775 root under the owner's private
+        group, or 0755, is re-tightened and reported once (the round-2b row). TheImportGateComesFirst, Boot, TheBusRefuses.
+  REFUSE AT RUNTIME    found by the jobs pass's first stage or by a request's cached re-check, os._exit(2) from whichever
         thread found it (_state_root_exit_now), so no later jobs stage, no pusher cycle, no judge pass runs on under the
         root; the manager restarts the kernel and the boot refuses again while the root reads so.
-  READ BEFORE REPAIR the check reads the mode FIRST and the verdict is from that read; its own best-effort chmod runs
+  READ BEFORE REPAIR   the check reads the mode FIRST and the verdict is from that read; its own best-effort chmod runs
         after and is reported (repaired, modeAfter), so a root this uid owns that was loosened is re-tightened AND leaves
         a trace, never a silent repair that erases the case the re-check exists to report.
-  WARN               a root not 0700 but not writable by others files one error-centre row per transition under the
+  WARN                 a root not 0700 but writable by nobody else files one error-centre row per transition under the
         bell's "refused" kind (not the mutable "sdk" kind, whose one mute would hide it with the backend's), built to
         fit the bell whole with the remedy first, and refuses nothing.
-  THE BUS            postal/postal_service.py carries a reduced copy of the check and the same exit: a bus on a hostile
-        or unreadable root exits 2 at start and from its monitor loop; a warn root logs one line and serves.
+  THE GUARDED READERS  round 4 (the round-3 ruling's A, B and C): every read of a path under the root in the kernel, the
+        judge, the event model, the bus and the session host goes through kernel/state_root_mode.py's Reader, whose guard
+        lstat's every component from the root down (not a symlink, this uid's, not writable by another local user by the
+        discriminator: a 0775 venv or a 0664 mirror under the private group PASSES) and QUARANTINES what fails to
+        <root>/quarantine/<stamp>.<relative-path-with-dots>, says one stderr line, files one refused-kind row and reads
+        the path as absent, so nothing planted is adopted and nothing is merely skipped (a skipped plant was re-adopted
+        at the next boot). The population is derived by an AST census (tests/test_state_root_readers.py), not by hand.
+        TheGuardedReadersQuarantine, TheCheckpointsDirectoryIsGuarded, TheBusRefuses (planted mail and links).
+  THE CREATION EXEMPTION keys on the root being EMPTY at the import's read, whoever made it: an empty pre-existing root
+        at the umask's mode is a creation default (the manager, the CLI and every harness make the root a moment before
+        the first romp process tightens it), and boots silently; the distrust refusal is for a pre-existing root that read
+        writable by another AND held entries (round 3's H). Boot, TheImportGateComesFirst, AServedKernelRefusesAtRuntime.
+  ENOTDIR              a state root path that exists and is not a directory is verdict refuse with ENOTDIR and its own
+        remedy at every check (round 3's I). Discriminator, TheImportGateComesFirst, TheRuntimeRefusalExits, TheBusRefuses.
+  EVERY LONG-LIVED WRITER RUNS THE CHECK: the bus at import in every mode (not only argv "serve") and the session host at
+        start and on its beat (round 3's E). TheBusRefuses, TheSessionHostRunsTheCheck.
+  ONE TEXT             the predicate lives in kernel/state_root_mode.py alone; the loaders define no copy (OneText).
 
 For each arm the test below names, in its docstring, what the arm does to everything that is NOT the door it guards (the
-round's shape demand). The refuse arms are proved behaviourally through child processes that exist at 84b27dd39 too: a
-kernel spawned with a hermetic root serves 200 there and never exits when the root is loosened, where here it exits 2
-with the line within seconds (recorded under the notes' scratch, a detached worktree of 84b27dd39, removed after). The
-in-process tests pin the check dict, the transitions, the fit, the concurrency and the import-ordering.
+round's shape demand), and what fails at 9748684d3 (round 2's head, before round 4) and how that was checked: this module
+copied into a detached worktree of that commit under the notes' scratch (removed after) and run there.
 
 Hermetic: every root is a fresh temp dir (mkdtemp is 0700 whatever the umask); every kernel-side cache is saved and
 restored; the runtime exit is a module-level indirection (_state_root_exit) a test replaces with a raising double, so
 the refusal is observable in-process without taking the test runner down; os.chmod is interposed only for the planted
-root and only for the test's length; nothing here reads real state. tests/test_judge_scratch_private.py, which pins
-_state_root_mode_line and the import's one line, is unchanged by this change and still passes.
+root and only for the test's length; the group database is INJECTED (kernel/state_root_mode.py takes the lookups as
+keyword arguments, and resolves them at call time from grp and pwd otherwise, so a mock.patch of grp.getgrgid and
+pwd.getpwall reaches the real boot path), so no test needs a second account on the box and none reads or writes an
+account name; the arms that rely on the real database (a child kernel over a 0775 root) skip unless this account's
+primary group is private here. tests/test_judge_scratch_private.py, which pins _state_root_mode_line and the import's
+one line, is unchanged by this change and still passes.
 """
+import ast
+import base64
 import contextlib
+import errno
+import grp
 import http.client
 import io
 import json
 import os
+import pwd
 import shutil
 import socket
 import stat
@@ -63,11 +89,13 @@ import unittest
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
+ROOT = os.path.dirname(HERE)
 
 # tests/test_kernel_cors.py's load order: hermetic state BEFORE the loads (they resolve the root at import), the token
 # env so _load_token() never touches a real state dir, NO_OPEN so the import launches no browser. The XDG root here is
@@ -78,14 +106,18 @@ os.makedirs(os.path.join(os.environ["XDG_STATE_HOME"], "romp"), exist_ok=True)
 os.chmod(os.path.join(os.environ["XDG_STATE_HOME"], "romp"), 0o700)   # under a group-writable umask a fresh mkdir is 0775
 with open(os.path.join(os.environ["XDG_STATE_HOME"], "romp", "session-hosts"), "w") as _fh:
     _fh.write("off\n")                                                # this module mints roots and rebinds; floor its own too
-load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
+em = load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
 jd = load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "test-token-DO-NOT-USE")
 km = load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))
 assert km.jd is jd, "romp_load re-executes a loaded name into the same module: the kernel's judge IS this module's"
+srm = jd.srm                                                          # kernel/state_root_mode.py, the shared check
+assert sys.modules["romp_state_root_mode"] is srm
 
 REFUSED = PermissionError(1, "chmod refused (interposed)")   # errno 1 is EPERM; os.strerror(1) is "Operation not permitted"
+DISTRUST = "remove serve-token, repo-root and every entry you did not make"   # the round-4 distrust remedy's head
+LOOKUP_REMEDY = "check getent group"                                   # the lookup failure's own remedy's head
 
 
 class _Exited(BaseException):
@@ -100,6 +132,11 @@ def _mode(p):
     return stat.S_IMODE(os.stat(p).st_mode)
 
 
+def _ids(p):
+    st = os.stat(p)
+    return (st.st_uid, st.st_gid)
+
+
 def _refusing_chmod(root):
     """An os.chmod that raises EPERM for `root` alone and delegates every other path: the shape of a root this uid cannot
     tighten, interposed the way tests/test_judge_scratch_private.py interposes it."""
@@ -111,6 +148,55 @@ def _refusing_chmod(root):
             raise PermissionError(REFUSED.errno, REFUSED.strerror)
         return real(path, mode, *a, **k)
     return refuse
+
+
+def _fakes(members=(), primaries=0, fail=None, block=0.0, gid=None):
+    """Injected group-database lookups for the discriminator (kernel/state_root_mode.py takes getgrgid, getpwall and
+    getpwuid as keyword arguments): the root's group with `members` beside its owner (synthetic names), `primaries` other
+    accounts (synthetic uids) holding `gid` (default: this process's gid, the gid of every root a test makes) as their
+    primary group, `fail` an exception getgrgid raises, `block` seconds getgrgid sleeps before answering. The owner is
+    named "owner" here; no real account name is read or written by any test."""
+    gid = os.getgid() if gid is None else gid
+
+    def getpwuid(uid):
+        return SimpleNamespace(pw_name="owner", pw_uid=uid, pw_gid=gid)
+
+    def getgrgid(g):
+        if block:
+            time.sleep(block)
+        if fail is not None:
+            raise fail
+        return SimpleNamespace(gr_name="private", gr_gid=g, gr_mem=list(members))
+
+    def getpwall():
+        rows = [SimpleNamespace(pw_name="owner", pw_uid=os.getuid(), pw_gid=gid)]
+        rows += [SimpleNamespace(pw_name="peer-%d" % i, pw_uid=900000 + i, pw_gid=gid) for i in range(primaries)]
+        return rows
+    return {"getgrgid": getgrgid, "getpwall": getpwall, "getpwuid": getpwuid}
+
+
+def _no_lookup():
+    """Lookups that must not run: any call is a fault the discriminator would report as a lookup failure, so a test that
+    asserts lookupError is None has proved no lookup was made."""
+    def boom(*a, **k):
+        raise AssertionError("the group database was consulted")
+    return {"getgrgid": boom, "getpwall": boom, "getpwuid": boom}
+
+
+@contextlib.contextmanager
+def _patched_lookups(fakes):
+    """The injected database on the REAL boot path (which passes no lookups): the shared module resolves grp.getgrgid and
+    pwd.getpwall at call time, so patching the two module attributes for the block's length is enough; pwd.getpwuid stays
+    real (the owner's name is compared against the fake group's member list and written nowhere)."""
+    with mock.patch("grp.getgrgid", new=fakes["getgrgid"]), mock.patch("pwd.getpwall", new=fakes["getpwall"]):
+        yield
+
+
+def _private_group_here():
+    """Whether this account's primary group is private on this box (the real database): the child arms that rely on the
+    real lookups (a 0775 root that must read warn-class) skip when it is not."""
+    private, _why = srm.private_group(os.getgid(), os.getuid())
+    return private is True
 
 
 def _free_port():
@@ -127,37 +213,44 @@ def inspect_getsource_module():
     return open(os.path.join(BIN, "romp-kernel"), encoding="utf-8").read()
 
 
-# ── arm READ-BEFORE-REPAIR, WARN, REFUSE, UNKNOWN, and arm-four errno: the discriminator ─────────────────────────────
+# ── the discriminator: READ-BEFORE-REPAIR, WARN, REFUSE, UNKNOWN, the group judgment, the lookup bound ──────────────
 
 class Discriminator(unittest.TestCase):
-    """jd.state_root_mode_check's verdict over the modes that matter, and what the check's own repair does to the
-    verdict: NOTHING. The verdict is taken from the mode as READ; the best-effort chmod runs after and is reported
-    (repaired, modeAfter), so a loosened root this uid owns is re-tightened and its loosening still shows, rather than
-    the silent re-tighten round 1 shipped. At 84b27dd39 the judge module has no state_root_mode_check: every test here
-    fails with AttributeError."""
+    """jd.state_root_mode_check's verdict over the modes that matter, judged by kernel/state_root_mode.py's discriminator,
+    and what the check's own repair does to the verdict: NOTHING. The verdict is taken from the mode as READ; the
+    best-effort chmod runs after and is reported (repaired, modeAfter), so a loosened root this uid owns is re-tightened
+    and its loosening still shows. The group database is injected (kernel/state_root_mode.py's keyword arguments), so
+    every case runs on one account. At 9748684d3 the check takes no lookup arguments (TypeError on every injected case),
+    jd.srm does not exist (AttributeError), and 0770 or 0775 under any group is refuse (`mode & 0o022`); checked by
+    running this module against a detached worktree of that commit."""
 
     def _root(self, mode):
         d = tempfile.mkdtemp()
         os.chmod(d, mode)
         return d
 
-    def test_0700_is_ok_and_says_nothing(self):
+    def test_0700_is_ok_and_says_nothing_and_consults_no_database(self):
         d = tempfile.mkdtemp()
-        chk = jd.state_root_mode_check(d)
+        chk = jd.state_root_mode_check(d, **_no_lookup())
         self.assertEqual(chk["verdict"], "ok")
         self.assertIsNone(chk["line"])
         self.assertIsNone(chk["err"])
+        self.assertIsNone(chk["lookupError"], "no group bit: no lookup")
         self.assertEqual((chk["modeRead"], chk["modeReadText"], chk["root"]), (0o700, "0700", d))
+        self.assertEqual((chk["uid"], chk["gid"]), _ids(d), "the read's owner and group travel with the mode")
         self.assertFalse(chk["repaired"], "0700 already: nothing to repair")
         self.assertEqual(chk["modeAfter"], 0o700)
+        self.assertIsNone(chk["importRefusal"], "another root: no import fact")
         self.assertLessEqual(abs(chk["t"] - time.time()), 5)
 
     def test_not_0700_but_not_writable_by_others_warns(self):
         for mode in (0o755, 0o750, 0o711):
             d = self._root(mode)
             with mock.patch("os.chmod", new=_refusing_chmod(d)):   # else the repair tightens it and repaired is True
-                chk = jd.state_root_mode_check(d)
+                chk = jd.state_root_mode_check(d, **_no_lookup())
             self.assertEqual(chk["verdict"], "warn", "%04o" % mode)
+            self.assertIsNone(chk["writableBy"])
+            self.assertIsNone(chk["lookupError"], "no group write bit: no lookup")
             self.assertEqual(chk["modeReadText"], "%04o" % mode, "the verdict names the mode READ, not the mode after")
             self.assertIn(d, chk["line"])
             self.assertIn("%04o" % mode, chk["line"], "names the mode read back")
@@ -166,17 +259,128 @@ class Discriminator(unittest.TestCase):
             self.assertNotIn("\n", chk["line"], "one line")
             self.assertEqual(_mode(d), mode, "the refused chmod healed nothing")
 
-    def test_writable_by_group_or_other_refuses(self):
-        for mode in (0o770, 0o707, 0o722, 0o777):
+    def test_an_other_write_bit_refuses_with_no_lookup(self):
+        """An OTHER write bit is the whole answer: every local user can write the root, so the group database is not
+        consulted (the injected lookups fault if called, and a fault would show as lookupError). The remedy distrusts the
+        contents in round 4's words. At 9748684d3: TypeError (no lookup arguments), and the remedy reads "remove
+        serve-token and repo-root under ..., then chmod 700 it"."""
+        for mode in (0o707, 0o722, 0o777, 0o702):
             d = self._root(mode)
             with mock.patch("os.chmod", new=_refusing_chmod(d)):
-                chk = jd.state_root_mode_check(d)
+                chk = jd.state_root_mode_check(d, **_no_lookup())
             self.assertEqual(chk["verdict"], "refuse", "%04o" % mode)
-            self.assertTrue(mode & jd.STATE_ROOT_REFUSE_MASK)
+            self.assertEqual(chk["writableBy"], "other")
+            self.assertIsNone(chk["lookupError"], "no lookup ran (a call would have faulted into lookupError)")
+            self.assertIsNone(chk["groupPrivate"])
             self.assertIn("refuses to serve", chk["line"])
-            self.assertIn("remove serve-token and repo-root", chk["remedy"], "the remedy distrusts the contents (fresh-1)")
+            self.assertIn("an other write bit", chk["line"], "the line says which bit")
+            self.assertIn(DISTRUST, chk["remedy"], "the remedy distrusts the contents (fresh-1, round 4's words)")
+            self.assertIn("or recreate the root, then chmod 700 it", chk["remedy"])
             self.assertIn(d, chk["line"])
             self.assertIn("%04o" % mode, chk["line"])
+
+    def test_a_group_write_bit_under_the_owners_private_group_is_warn_class(self):
+        """THE DISCRIMINATOR's other half: a group write bit whose group lists no member but the owner and is nobody
+        else's primary group is writable by nobody but the owner, so 0775 (what every directory made under umask 0002
+        reads on a user-private-group box) and 0770 are warn-class: re-tightened by the check's chmod and reported, never
+        refused. groupPrivate is True and the line says why. At 9748684d3 every one of these is refuse (`mode & 0o022`)."""
+        for mode in (0o775, 0o770, 0o720):
+            d = self._root(mode)
+            chk = jd.state_root_mode_check(d, **_fakes())
+            self.assertEqual(chk["verdict"], "warn", "%04o" % mode)
+            self.assertTrue(chk["groupPrivate"])
+            self.assertIsNone(chk["writableBy"])
+            self.assertIsNone(chk["lookupError"])
+            self.assertTrue(chk["repaired"], "a warn root this uid owns is re-tightened")
+            self.assertEqual(_mode(d), 0o700)
+            self.assertIn("re-tightened to 0700", chk["line"])
+            self.assertIn("owner's private group", chk["line"], "the line says why a group write bit is not a refusal")
+            self.assertNotIn(DISTRUST, chk["line"])
+        # and standing (the chmod refused): still warn, with the private-group clause on the point and the line
+        d = self._root(0o775)
+        with mock.patch("os.chmod", new=_refusing_chmod(d)):
+            chk = jd.state_root_mode_check(d, **_fakes())
+        self.assertEqual(chk["verdict"], "warn")
+        self.assertIn("owner's private group", chk["point"])
+        self.assertEqual(_mode(d), 0o775)
+
+    def test_a_group_write_bit_under_a_group_with_another_member_refuses(self):
+        """The group holds another account: every member can write the root, so it is writable by another local user
+        and refused, the line naming the count (never the member's name). At 9748684d3: TypeError."""
+        d = self._root(0o775)
+        chk = jd.state_root_mode_check(d, **_fakes(members=["peer-a"]))
+        self.assertEqual(chk["verdict"], "refuse")
+        self.assertEqual(chk["writableBy"], "group")
+        self.assertIs(chk["groupPrivate"], False)
+        self.assertIn("is shared: 1 other member", chk["line"])
+        self.assertNotIn("peer-a", chk["line"], "counts, never account names")
+        self.assertIn(DISTRUST, chk["remedy"])
+        self.assertIn("re-tightened to 0700 after the read; the refusal stands on what was read", chk["line"])
+        # the owner listed as a member of their own group is not "another" member
+        d2 = self._root(0o770)
+        chk2 = jd.state_root_mode_check(d2, **_fakes(members=["owner"]))
+        self.assertEqual(chk2["verdict"], "warn", "the owner in the member list does not make the group shared")
+
+    def test_a_group_write_bit_where_another_account_has_the_gid_as_primary_refuses(self):
+        """No member listed, but another account has the gid as its primary group (a shared default group such as
+        `users`): writable by that account, refused, the count on the line. At 9748684d3: TypeError."""
+        d = self._root(0o775)
+        chk = jd.state_root_mode_check(d, **_fakes(primaries=2))
+        self.assertEqual(chk["verdict"], "refuse")
+        self.assertEqual(chk["writableBy"], "group")
+        self.assertIn("2 other accounts with it as their primary group", chk["line"])
+        self.assertNotIn("peer-", chk["line"])
+        self.assertIn(DISTRUST, chk["remedy"])
+
+    def test_a_lookup_that_raises_refuses_with_the_lookup_message_not_the_distrust_remedy(self):
+        """LOOKUP FAILURE IS RESTRICTED AND DISTINCT: getgrgid raising KeyError (no entry for the gid) or an OSError (the
+        name service) makes the verdict refuse (romp cannot tell who else can write here) with its OWN line and remedy:
+        the database could not be read, check getent group <gid> and the name service; never the distrust remedy, which
+        would send the operator to remove entries when the fault is elsewhere. At 9748684d3: TypeError."""
+        for fail, name in ((KeyError("getgrgid(): gid not found"), "KeyError"), (OSError(errno.EIO, "io"), "EIO")):
+            d = self._root(0o775)
+            chk = jd.state_root_mode_check(d, **_fakes(fail=fail))
+            self.assertEqual(chk["verdict"], "refuse", name)
+            self.assertIsNone(chk["writableBy"])
+            self.assertIsNone(chk["groupPrivate"])
+            self.assertIn(name, chk["lookupError"])
+            self.assertIn("the group database could not be read (%s" % name, chk["line"])
+            self.assertIn(LOOKUP_REMEDY, chk["remedy"])
+            self.assertIn("%d" % _ids(d)[1], chk["remedy"], "the remedy names the gid to look up")
+            self.assertIn("romp refuses until it can tell who else can write here", chk["line"])
+            self.assertNotIn(DISTRUST, chk["line"], "the distinct message, never the distrust remedy")
+        # a missing passwd entry for the OWNER is a lookup failure too
+        fakes = _fakes()
+
+        def no_owner(uid):
+            raise KeyError("getpwuid(): uid not found")
+        fakes["getpwuid"] = no_owner
+        chk = jd.state_root_mode_check(self._root(0o775), **fakes)
+        self.assertEqual(chk["verdict"], "refuse")
+        self.assertIn("no passwd entry for uid", chk["lookupError"])
+
+    def test_a_lookup_that_blocks_past_the_bound_refuses_with_the_timeout_message_and_returns(self):
+        """THE BOUND: a group database that does not answer (getgrgid sleeping past the bound) is a lookup failure with the
+        timeout message, and the check RETURNS within the bound plus a little, because the lookup runs in a daemon thread
+        joined with a timeout; the thread is left to finish on its own and holds no process (daemon). A 0700 root and a
+        0777 root pay no lookup at all, so the bound is never on their path. At 9748684d3: TypeError. The import's own
+        bound is pinned in a child by TheImportGateComesFirst.test_a_group_lookup_that_blocks_does_not_hang_the_import."""
+        d = self._root(0o775)
+        t0 = time.monotonic()
+        chk = jd.state_root_mode_check(d, bound=0.3, **_fakes(block=2.0))
+        elapsed = time.monotonic() - t0
+        self.assertLess(elapsed, 1.5, "the check returned at the bound, not at the lookup's leisure: %.2fs" % elapsed)
+        self.assertEqual(chk["verdict"], "refuse")
+        self.assertTrue(chk["lookupError"].startswith("timeout: the group database did not answer within 0.3 s"), chk["lookupError"])
+        self.assertIn(LOOKUP_REMEDY, chk["remedy"])
+        self.assertNotIn(DISTRUST, chk["line"])
+        self.assertEqual(srm.LOOKUP_BOUND_S, 3.0, "the production bound: a few seconds")
+        # the default bound is read at call time from the module constant, so a process can lower it before its checks
+        with mock.patch.object(srm, "LOOKUP_BOUND_S", 0.2):
+            t0 = time.monotonic()
+            chk = jd.state_root_mode_check(self._root(0o775), **_fakes(block=2.0))
+            self.assertLess(time.monotonic() - t0, 1.5)
+        self.assertIn("within 0.2 s", chk["lookupError"])
 
     def test_read_before_repair_a_loosened_owned_root_is_retightened_and_reported(self):
         """The re-check's whole reason (the 2026-09-20 review's extra6-1): a 0755 or 0777 root THIS UID OWNS, loosened
@@ -218,6 +422,7 @@ class Discriminator(unittest.TestCase):
                 chk = jd.state_root_mode_check(d)
             self.assertEqual(chk["verdict"], verdict, "%04o" % mode)
             self.assertEqual(chk["repairErrno"], "EPERM")
+            self.assertEqual(chk["repairError"], "EPERM: %s" % os.strerror(1))
             self.assertIn("EPERM", chk["err"], "the errno name")
             self.assertIn(os.strerror(1), chk["err"], "and its text")
             self.assertIn("EPERM", chk["line"])
@@ -258,58 +463,91 @@ class Discriminator(unittest.TestCase):
         self.assertIsNone(jd.state_root_mode_check(d)["line"], "the chmod ran: plain ok, nothing said")
 
     def test_the_suites_own_root_reads_ok_and_recorded_no_repair_error(self):
-        self.assertIsNone(jd._STATE_ROOT_REPAIR_ERROR, "the import's mkdir and chmod succeeded on the suite's root")
+        """This module made its root 0700 before the judge import (a 0700 read, no refusal). Under pytest every collected
+        module's top level runs before any test, so a later module that loads the judge over a root of its own re-executes
+        the import over that root: then the recorded read is that root's umask mode (0775 under 0002, 0755 under 022), a
+        creation default with no entries, and still no refusal."""
+        self.assertIsNone(jd._STATE_ROOT_REPAIR_ERROR, "the import's mkdir and chmod succeeded on the root it read")
         self.assertIsNone(jd._STATE_ROOT_REPAIR_STEP)
+        self.assertIn(jd._STATE_ROOT_MODE_AT_IMPORT, (0o700, 0o775, 0o755), "this module's 0700 root, or another module's umask-mode root")
+        self.assertEqual(jd._STATE_ROOT_IDS_AT_IMPORT, _ids(jd.STATE), "and the import recorded the read's owner and group")
         chk = jd.state_root_mode_check()
         self.assertEqual(chk["verdict"], "ok")
         self.assertIsNone(chk["importRepairError"])
+        self.assertIsNone(chk["importRefusal"], "a 0700 read, or an empty umask-mode root: no refusal")
+        self.assertEqual(chk["importCreated"], jd._STATE_ROOT_CREATED_AT_IMPORT,   # a later module's judge execution may have
+                         "the check reports what the last judge execution recorded")   # MADE its root (a fresh ROMP_STATE_DIR): recorded, not refused
+
+    def test_the_kernel_the_judge_and_the_bus_name_one_write_bit_set(self):
+        """The bits the discriminator judges are one constant (0o022), spelled once in kernel/state_root_mode.py and
+        re-exported by the judge; the old STATE_ROOT_REFUSE_MASK, whose name said a set bit was a refusal, is gone from
+        the tree. At 9748684d3 jd.STATE_ROOT_WRITE_BITS does not exist and the mask is in three files."""
+        self.assertEqual(jd.STATE_ROOT_WRITE_BITS, 0o022)
+        self.assertIs(jd.STATE_ROOT_WRITE_BITS, srm.WRITE_BITS)
+        self.assertEqual((srm.OTHER_WRITE, srm.GROUP_WRITE, srm.TARGET_MODE), (0o002, 0o020, 0o700))
+        for rel in ("kernel/judge.py", "kernel/kernel.py", "postal/postal_service.py", "kernel/state_root_mode.py"):
+            self.assertNotIn("STATE_ROOT_REFUSE_MASK", open(os.path.join(ROOT, rel), encoding="utf-8").read(), rel)
 
 
 class TheImportRecordsItsOwnRepair(unittest.TestCase):
-    """Arm four at the import: the judge module records the mode it READ before its own chmod (_STATE_ROOT_MODE_AT_IMPORT)
-    and, for a call that failed, WHICH call it was and its errno (_STATE_ROOT_REPAIR_STEP, _STATE_ROOT_REPAIR_ERROR), so
-    a mkdir failure is not mislabelled as a chmod's (correctness-3). state_root_mode_check on the module's own root folds
-    the import's failed call into err, labelled as the import's. The import's one stderr line is exactly as
-    tests/test_judge_scratch_private.py pins it. At 84b27dd39 the module has no _STATE_ROOT_REPAIR_STEP (the child
-    prints an AttributeError and exits 1); this runs in a child so the planted root and refused chmod stay out of this
-    process."""
+    """Arm four at the import: the judge module records the mode it READ before its own chmod (_STATE_ROOT_MODE_AT_IMPORT),
+    that read's owner and group (_STATE_ROOT_IDS_AT_IMPORT, round 4: the discriminator needs them) and, for a call that
+    failed, WHICH call it was and its errno (_STATE_ROOT_REPAIR_STEP, _STATE_ROOT_REPAIR_ERROR), so a mkdir failure is
+    not mislabelled as a chmod's (correctness-3). state_root_mode_check on the module's own root folds the import's
+    failed call into err, labelled as the import's, and builds THE IMPORT-READ RULE's refusal (importRefusal) for a
+    pre-existing root that read writable by another local user, whatever the chmod did. The judge module itself never
+    exits (a CLI must start); the kernel's gates act on the dict. The import's one stderr line is exactly as
+    tests/test_judge_scratch_private.py pins it. Runs in a child so the planted root and refused chmod stay out of this
+    process. At 9748684d3 the module has no _STATE_ROOT_IDS_AT_IMPORT and the dict no importRefusal, so the child's
+    print faults (AttributeError, exit 1: "1 != 0" here); checked against a detached worktree of that commit."""
 
-    def test_a_refused_chmod_at_import_is_recorded_with_its_errno_and_step(self):
+    def _child(self, setup, extra_env=None):
         root = os.path.join(tempfile.mkdtemp(), "romp")
         env = dict(os.environ)
         env["ROMP_STATE_DIR"] = root
+        env.update(extra_env or {})
         code = ("import json, os, sys\n"
                 "sys.path.insert(0, %r)\n"
                 "from romp_load import load_source\n"
                 "root = %r\n"
-                "os.mkdir(root)\n"
-                "os.chmod(root, 0o755)\n"
-                "real = os.chmod\n"
-                "def refuse(path, mode, *a, **k):\n"
-                "    if os.path.realpath(str(path)) == os.path.realpath(root):\n"
-                "        raise PermissionError(1, 'chmod refused (interposed)')\n"
-                "    return real(path, mode, *a, **k)\n"
-                "os.chmod = refuse\n"
+                "%s"
                 "jd = load_source('romp_judge_child', %r)\n"
                 "chk = jd.state_root_mode_check()\n"
+                "ref = chk['importRefusal']\n"
                 "print(json.dumps({'step': jd._STATE_ROOT_REPAIR_STEP, 'rec': jd._STATE_ROOT_REPAIR_ERROR,\n"
-                "                  'atImport': jd._STATE_ROOT_MODE_AT_IMPORT, 'err': chk['err'], 'verdict': chk['verdict'],\n"
-                "                  'importErr': chk['importRepairError'], 'chkImport': chk['importModeRead'],\n"
-                "                  'created': chk['importCreated']}))\n"
-                % (HERE, root, os.path.join(BIN, "romp-judge")))
+                "                  'atImport': jd._STATE_ROOT_MODE_AT_IMPORT, 'ids': jd._STATE_ROOT_IDS_AT_IMPORT,\n"
+                "                  'err': chk['err'], 'verdict': chk['verdict'], 'importErr': chk['importRepairError'],\n"
+                "                  'chkImport': chk['importModeRead'], 'created': chk['importCreated'],\n"
+                "                  'refusal': ref and ref['line'], 'refusalCause': ref and ref['cause'],\n"
+                "                  'empty': chk['importEmpty'], 'statErrno': chk['statErrno'], 'notDir': chk['notDirectory'],\n"
+                "                  'remedy': chk['remedy'], 'modeNow': chk['modeRead']}))\n"
+                % (HERE, root, setup, os.path.join(BIN, "romp-judge")))
         r = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=180)
         self.assertEqual(r.returncode, 0, r.stderr)
-        out = json.loads(r.stdout.strip().splitlines()[-1])
+        return root, json.loads(r.stdout.strip().splitlines()[-1]), r.stderr
+
+    def test_a_refused_chmod_at_import_is_recorded_with_its_errno_and_step(self):
+        setup = ("os.mkdir(root)\n"
+                 "os.chmod(root, 0o755)\n"
+                 "real = os.chmod\n"
+                 "def refuse(path, mode, *a, **k):\n"
+                 "    if os.path.realpath(str(path)) == os.path.realpath(root):\n"
+                 "        raise PermissionError(1, 'chmod refused (interposed)')\n"
+                 "    return real(path, mode, *a, **k)\n"
+                 "os.chmod = refuse\n")
+        root, out, err = self._child(setup)
         self.assertEqual(out["step"], "chmod 700", "the call that failed, named")
         self.assertEqual(out["rec"], "EPERM: %s" % os.strerror(1), "recorded from the errno alone")
         self.assertEqual(out["atImport"], 0o755, "the mode read BEFORE the import's chmod")
+        self.assertEqual(tuple(out["ids"]), _ids(root), "with that read's owner and group")
         self.assertEqual(out["chkImport"], 0o755, "and folded into the check dict for the module's own root (the boot reads it there)")
         self.assertFalse(out["created"], "a pre-existing root: the import did not make it")
         self.assertEqual(out["verdict"], "warn")
+        self.assertIsNone(out["refusal"], "0755 is writable by nobody else: no import-read refusal")
         self.assertIn("chmod 700 failed at import: EPERM", out["importErr"], "labelled as the import's, not as a fresh chmod")
         self.assertIn("EPERM", out["err"])
-        said = [l for l in r.stderr.splitlines() if "state root" in l]
-        self.assertEqual(len(said), 1, "the import's one line, unchanged:\n" + r.stderr)
+        said = [l for l in err.splitlines() if "state root" in l]
+        self.assertEqual(len(said), 1, "the import's one line, unchanged:\n" + err)
         self.assertIn(root, said[0])
         self.assertIn("0755", said[0])
         self.assertEqual(_mode(root), 0o755, "read, not healed")
@@ -327,7 +565,8 @@ class TheImportRecordsItsOwnRepair(unittest.TestCase):
                 "jd = load_source('romp_judge_child', %r)\n"
                 "chk = jd.state_root_mode_check()\n"
                 "print(json.dumps({'step': jd._STATE_ROOT_REPAIR_STEP, 'rec': jd._STATE_ROOT_REPAIR_ERROR,\n"
-                "                  'verdict': chk['verdict'], 'importErr': chk['importRepairError']}))\n"
+                "                  'verdict': chk['verdict'], 'importErr': chk['importRepairError'],\n"
+                "                  'refusal': chk['importRefusal']}))\n"
                 % (HERE, os.path.join(BIN, "romp-judge")))
         r = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=180)
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -336,13 +575,91 @@ class TheImportRecordsItsOwnRepair(unittest.TestCase):
         self.assertTrue(out["rec"].startswith("EACCES") or out["rec"].startswith("EPERM"), out["rec"])
         self.assertEqual(out["verdict"], "unknown", "the root was never created: its mode cannot be read")
         self.assertIn("mkdir failed at import", out["importErr"])
+        self.assertIsNone(out["refusal"], "nothing was read at import: the current read (unknown) decides")
+
+    def test_a_pre_existing_root_that_read_writable_by_another_is_an_import_refusal_whatever_the_chmod_did(self):
+        """THE IMPORT-READ RULE at the judge: a pre-existing 0777 root this uid owns, no chmod interposed. The import's
+        chmod tightens it (the root reads 0700 now, the check's verdict is ok), and the dict still carries importRefusal
+        with the distrust remedy, since the window in which the root was writable is what the rule is about. The judge
+        module started (a CLI must); the kernel's gates exit on the dict (TheImportGateComesFirst). With the chmod
+        refused the refusal says so and the root stays 0777. The root HELD AN ENTRY at the read (round 4: an empty root is
+        a creation default, the next test). At 9748684d3 the child faults on the missing attribute (exit 1)."""
+        root, out, err = self._child("os.mkdir(root)\nos.chmod(root, 0o777)\nopen(os.path.join(root, 'planted'), 'w').close()\n")
+        self.assertEqual(out["atImport"], 0o777)
+        self.assertIs(out["empty"], False, "the root held an entry at the import's read")
+        self.assertEqual(out["modeNow"], 0o700, "the import's chmod ran")
+        self.assertEqual(_mode(root), 0o700)
+        self.assertEqual(out["verdict"], "ok", "the current read is fine; the rule is about the read before the chmod")
+        self.assertIsNotNone(out["refusal"])
+        self.assertEqual(out["refusalCause"], "other")
+        self.assertIn("read 0777 at import (writable by other local users: an other write bit), re-tightened to 0700 by the "
+                      "import's chmod", out["refusal"])
+        self.assertIn("entries planted while it was writable are not to be trusted", out["refusal"])
+        self.assertIn("%s under %s, or recreate the root, then chmod 700 it" % (DISTRUST, root), out["refusal"])
+        self.assertEqual([l for l in err.splitlines() if "state root" in l], [], "the judge says nothing: the root reads 0700; the kernel's gate speaks")
+        setup = ("os.mkdir(root)\nos.chmod(root, 0o777)\nopen(os.path.join(root, 'planted'), 'w').close()\nreal = os.chmod\n"
+                 "def refuse(path, mode, *a, **k):\n"
+                 "    if os.path.realpath(str(path)) == os.path.realpath(root):\n"
+                 "        raise PermissionError(1, 'chmod refused (interposed)')\n"
+                 "    return real(path, mode, *a, **k)\n"
+                 "os.chmod = refuse\n")
+        root2, out2, _err2 = self._child(setup)
+        self.assertEqual(out2["verdict"], "refuse", "the current read refuses too")
+        self.assertIn("and the import's chmod failed (EPERM", out2["refusal"], "the refusal says what the chmod did")
+        self.assertEqual(_mode(root2), 0o777)
+
+    def test_an_empty_pre_existing_root_is_a_creation_default_whoever_made_it(self):
+        """THE CREATION EXEMPTION, re-keyed (round 4, correctness-3 of round 3): a pre-existing 0777 root that held NO
+        entry at the import's read is what another romp tool made a moment ago at the umask's mode (the manager's
+        mkdirSync, the CLI's mkdir -p, a harness's makedirs), and nothing could have been planted in an empty directory,
+        so importEmpty is True, importRefusal is None, the import's chmod tightens it and nothing is said. Before round 4
+        the exemption keyed on THIS process's mkdir, so this root filed the loud distrust row on the ordinary first boot."""
+        root, out, err = self._child("os.mkdir(root)\nos.chmod(root, 0o777)\n")
+        self.assertEqual(out["atImport"], 0o777)
+        self.assertIs(out["empty"], True)
+        self.assertFalse(out["created"], "pre-existing: another tool made it")
+        self.assertIsNone(out["refusal"], "empty at the read: a creation default, not a window")
+        self.assertEqual(out["verdict"], "ok")
+        self.assertEqual(_mode(root), 0o700)
+        self.assertEqual([l for l in err.splitlines() if "state root" in l], [])
+
+    def test_a_file_at_the_root_path_is_refused_with_enotdir_and_never_chmoded(self):
+        """regression-1 of round 3 (I): a state root path that exists and is NOT A DIRECTORY. The judge import's mkdir
+        meets EEXIST, which is recorded (step mkdir), the file is never chmod'ed 0700 (a 0700 file at the root path would
+        be the import's own doing), and the check's verdict is refuse with statErrno ENOTDIR and its own remedy (remove
+        it and recreate the root as a directory), at every check. At 9748684d3 the EEXIST was dropped and the verdict
+        read ok, err None, line None."""
+        root, out, err = self._child("open(root, 'w').close()\nos.chmod(root, 0o644)\n")
+        self.assertEqual(out["step"], "mkdir")
+        self.assertTrue(out["rec"].startswith("EEXIST"), out["rec"])
+        self.assertEqual(out["verdict"], "refuse")
+        self.assertEqual(out["statErrno"], "ENOTDIR")
+        self.assertTrue(out["notDir"])
+        self.assertIn("is not a directory", out["remedy"])
+        self.assertIn("recreate the root as a directory", out["remedy"])
+        self.assertEqual(_mode(root), 0o644, "the file's mode is untouched: no chmod 700 on a file")
+        self.assertIsNone(out["refusal"], "the import-read rule is about directories; ENOTDIR is the current read's refusal")
+
+    def test_a_root_the_import_created_has_no_import_refusal_whatever_its_umask_mode(self):
+        """The exemption: the judge module's own mkdir made the root at the umask's mode (0775 under 002, 0777 under 000);
+        nothing could have been planted in a directory that did not exist a moment before, so importCreated is True and
+        importRefusal None even for a 0777 creation default. At 9748684d3 the child faults on the missing attribute
+        (exit 1)."""
+        root, out, err = self._child("os.umask(0o000)\n")
+        self.assertTrue(out["created"])
+        self.assertEqual(out["atImport"], 0o777, "the umask's creation default, read before the chmod")
+        self.assertIsNone(out["refusal"], "a root the import created is exempt")
+        self.assertEqual(out["verdict"], "ok")
+        self.assertEqual(_mode(root), 0o700)
 
 
 # ── the kernel-side shared harness ───────────────────────────────────────────────────────────────────────────────
 
 class _KernelState(unittest.TestCase):
     """Save and restore every module-level piece the arms touch, give each test a fresh 0700 root as the state root, and
-    replace the runtime exit with a raising double so a refusal is observable in-process rather than killing the runner."""
+    replace the runtime exit with a raising double so a refusal is observable in-process rather than killing the runner.
+    import_facts() plants what the judge module recorded at import (the pre-chmod mode, its owner and group, whether the
+    import created the root, a failed call), so the REAL boot check computes the import-read rule from them."""
 
     def setUp(self):
         self.saved_state = jd.STATE
@@ -353,14 +670,27 @@ class _KernelState(unittest.TestCase):
         self.saved_seq = km._SYNC_SEQ
         self.saved_env = os.environ.get("ROMP_STATE_ROOT_CHECK_S")
         self.saved_repo_err = km._REPO_ROOT_WRITE_ERROR
+        self.saved_import = (jd._STATE_ROOT_MODE_AT_IMPORT, jd._STATE_ROOT_IDS_AT_IMPORT, jd._STATE_ROOT_CREATED_AT_IMPORT,
+                             jd._STATE_ROOT_REPAIR_STEP, jd._STATE_ROOT_REPAIR_ERROR, jd._STATE_ROOT_EMPTY_AT_IMPORT)
+        self.saved_pending = list(km._READER_REFUSED_PENDING)
+        self.saved_refused_reads = (list(km._gr.refused), list(jd._gr.refused), list(em._gr.refused))
+        self.saved_sys_path = list(sys.path)
         km._STATE_ROOT_MODE, km._STATE_ROOT_KEY, km._STATE_ROOT_REFUSED = None, None, False
         km._REPO_ROOT_WRITE_ERROR = None
+        km._READER_REFUSED_PENDING[:] = []
+        km._gr.refused[:] = []; jd._gr.refused[:] = []; em._gr.refused[:] = []
         km._SYNC_NOTICES[:] = []
         self.exits = []
         km._state_root_exit = self._exit_double
         self.root = tempfile.mkdtemp()                    # mkdtemp creates 0700 whatever the umask
         Path(self.root, "session-hosts").write_text("off\n")   # a minted root writes off before a kernel is bound to it (regression-6)
         jd._rebind_state(Path(self.root))
+        self.import_facts(0o700)                          # a clean baseline: pytest imports every collected module before any test
+        #                                                    runs, and a later module's judge re-execution leaves ITS root's pre-chmod
+        #                                                    read (0775 under the umask) in the globals; a test plants what it needs
+        for hooks in (jd.READER_REFUSED_HOOKS, em.READER_REFUSED_HOOKS, srm.REFUSED_HOOKS):   # ...and a judge re-executed after the kernel
+            if km._reader_refused_row not in hooks:            # loaded holds a fresh hook list without the kernel's row hook: put it back
+                hooks.append(km._reader_refused_row)           # (srm.REFUSED_HOOKS: the handed-root modules' per-call readers file there)
         self.patcher = None
 
     def _exit_double(self, code):
@@ -375,6 +705,11 @@ class _KernelState(unittest.TestCase):
         except OSError:
             pass
         jd._rebind_state(self.saved_state)
+        (jd._STATE_ROOT_MODE_AT_IMPORT, jd._STATE_ROOT_IDS_AT_IMPORT, jd._STATE_ROOT_CREATED_AT_IMPORT,
+         jd._STATE_ROOT_REPAIR_STEP, jd._STATE_ROOT_REPAIR_ERROR, jd._STATE_ROOT_EMPTY_AT_IMPORT) = self.saved_import
+        km._READER_REFUSED_PENDING[:] = self.saved_pending
+        km._gr.refused[:], jd._gr.refused[:], em._gr.refused[:] = self.saved_refused_reads
+        sys.path[:] = self.saved_sys_path
         km._STATE_ROOT_MODE, km._STATE_ROOT_KEY = self.saved_mode, self.saved_key
         km._STATE_ROOT_REFUSED = self.saved_refused
         km._REPO_ROOT_WRITE_ERROR = self.saved_repo_err
@@ -385,6 +720,19 @@ class _KernelState(unittest.TestCase):
             os.environ.pop("ROMP_STATE_ROOT_CHECK_S", None)
         else:
             os.environ["ROMP_STATE_ROOT_CHECK_S"] = self.saved_env
+
+    def import_facts(self, mode, created=False, chmod_failed=False, ids="root", empty=False):
+        """What the judge module recorded at import, planted: the pre-chmod `mode` of the test's root (its real owner and
+        group unless `ids` is given), whether the import `created` it, whether the root was `empty` at that read (the
+        creation exemption's key since round 4; False here means it held entries), and a failed import chmod."""
+        jd._STATE_ROOT_MODE_AT_IMPORT = mode
+        jd._STATE_ROOT_IDS_AT_IMPORT = _ids(self.root) if ids == "root" else ids
+        jd._STATE_ROOT_CREATED_AT_IMPORT = created
+        jd._STATE_ROOT_EMPTY_AT_IMPORT = bool(empty or created)
+        if chmod_failed:
+            jd._STATE_ROOT_REPAIR_STEP, jd._STATE_ROOT_REPAIR_ERROR = "chmod 700", "EPERM: %s" % os.strerror(1)
+        else:
+            jd._STATE_ROOT_REPAIR_STEP, jd._STATE_ROOT_REPAIR_ERROR = None, None
 
     def interpose(self):
         """os.chmod refuses the root from here to tearDown (or until release())."""
@@ -403,14 +751,17 @@ class _KernelState(unittest.TestCase):
         return [r for r in km._SYNC_NOTICES if r["kind"] == "refused"]
 
 
-# ── REFUSE AT BOOT, and WARN at boot ─────────────────────────────────────────────────────────────────────────────
+# ── REFUSE AT BOOT (the two doors agree), and WARN at boot ────────────────────────────────────────────────────────
 
 class Boot(_KernelState):
     """_state_root_boot_check, called from main() right after check_boot_environment and BEFORE any thread starts. What
     the refuse/unknown arm does to everything that is not the door: it raises SystemExit(2) in the MAIN thread, so
     _ensure_bundles, the reconcile, and every loop thread below it in main() never run. What the warn arm does: files
-    one row and one line and lets the boot go on, starting every thread as before. At 84b27dd39 the kernel has no
-    _state_root_boot_check (AttributeError)."""
+    one row and one line and lets the boot go on, starting every thread as before. The boot applies THE SAME TWO READS
+    as the import gate (_state_root_refusal): the current read by the discriminator, and the import-read rule on what
+    the judge module read before its chmod (planted here through import_facts, then computed by the real check). At
+    9748684d3 the boot refuses on `mode & 0o022` of the current read alone and BOOTS a root that read 0777 at import
+    (one loud row); checked against a detached worktree of that commit."""
 
     def test_a_root_writable_by_others_stops_the_boot_with_exit_2_and_the_line(self):
         os.chmod(self.root, 0o777)
@@ -423,10 +774,50 @@ class Boot(_KernelState):
         line = err.getvalue()
         self.assertIn(self.root, line, "names the root")
         self.assertIn("0777", line, "names the mode read back")
-        self.assertIn("remove serve-token and repo-root", line, "the remedy distrusts the contents")
+        self.assertIn("an other write bit", line, "and which bit")
+        self.assertIn(DISTRUST, line, "the remedy distrusts the contents")
         self.assertIn("did NOT start", line)
         self.assertEqual(self.exits, [], "SystemExit in main(), not the runtime os._exit double")
         self.assertEqual(_mode(self.root), 0o777, "read, not healed (the chmod was refused)")
+
+    def test_a_group_writable_root_under_a_shared_group_stops_the_boot_and_under_the_private_group_warns(self):
+        """The discriminator on the boot's current read, through the real path (grp and pwd patched for the block): 0775
+        under a group with another member exits 2 naming the shared group; the same 0775 under the owner's private group
+        is a warn (re-tightened and filed, the boot goes on). At 9748684d3 both exit 2."""
+        os.chmod(self.root, 0o775)
+        err = io.StringIO()
+        with _patched_lookups(_fakes(members=["peer-a"])), contextlib.redirect_stderr(err):
+            with self.assertRaises(SystemExit) as cm:
+                km._state_root_boot_check()
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn("is shared: 1 other member", err.getvalue())
+        self.assertIn(DISTRUST, err.getvalue())
+        self.assertEqual(_mode(self.root), 0o700, "the check's chmod ran after the read; the refusal stood on the read")
+        os.chmod(self.root, 0o775)
+        km._STATE_ROOT_MODE, km._STATE_ROOT_KEY = None, None
+        err = io.StringIO()
+        with _patched_lookups(_fakes()), contextlib.redirect_stderr(err):
+            chk = km._state_root_boot_check()
+        self.assertEqual(chk["verdict"], "warn")
+        self.assertTrue(chk["groupPrivate"])
+        self.assertEqual(_mode(self.root), 0o700, "re-tightened")
+        rows = [r["text"] for r in self.refused_rows()]
+        self.assertEqual(len(rows), 1, rows)
+        self.assertIn("0775", rows[0])
+        self.assertIn("re-tightened to 0700", rows[0])
+        self.assertNotIn(DISTRUST, rows[0])
+        self.assertIn("owner's private group", err.getvalue())
+
+    def test_a_lookup_failure_on_the_boots_read_stops_the_boot_with_the_lookup_remedy(self):
+        os.chmod(self.root, 0o775)
+        err = io.StringIO()
+        with _patched_lookups(_fakes(fail=KeyError("gid"))), contextlib.redirect_stderr(err):
+            with self.assertRaises(SystemExit) as cm:
+                km._state_root_boot_check()
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn("the group database could not be read (KeyError", err.getvalue())
+        self.assertIn(LOOKUP_REMEDY, err.getvalue())
+        self.assertNotIn(DISTRUST, err.getvalue(), "the distinct remedy, never the distrust one")
 
     def test_an_unreadable_root_stops_the_boot_with_exit_2(self):
         """The UNKNOWN decision (the review's section E): unverified defaults to the restricted side, so a root whose
@@ -468,9 +859,13 @@ class Boot(_KernelState):
             if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call) \
                     and getattr(node.value.func, "id", None) == "_persist_repo_root":
                 pos.setdefault("repo", node.lineno)
+            if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call) \
+                    and getattr(node.value.func, "id", None) == "_load_downtime":
+                pos.setdefault("downtime", node.lineno)
         self.assertIn("gate", pos)
         self.assertLess(pos["gate"], pos["token"], "the gate statement runs before the serve token is read")
         self.assertLess(pos["gate"], pos["repo"], "and before repo-root is written")
+        self.assertLess(pos["gate"], pos["downtime"], "and before the first read of an entry under the root (the enumeration's item 1)")
 
     def test_a_root_not_0700_but_not_writable_by_others_files_one_row_and_boots(self):
         os.chmod(self.root, 0o755)
@@ -498,92 +893,145 @@ class Boot(_KernelState):
         self.assertEqual(len(self.refused_rows()), 1, "one row per transition, and the boot's check was the previous state")
 
     def test_the_import_pre_chmod_mode_is_a_warn_transition_at_boot(self):
-        """The 2026-09-20 review's item 2, last clause: a root the import READ looser than 0700 and re-tightened to 0700
-        is reported at boot as its own warn-class transition (loud, not fatal), so a loosening that happened while romp
-        was down leaves a trace. The check itself reads ok now, but the import's pre-chmod mode is a fact the boot line
-        and row carry."""
-        km._STATE_ROOT_MODE = None
-        chk = dict(jd.state_root_mode_check(), importModeRead=0o755)   # the module root reads 0700; force the import fact
-        with mock.patch.object(jd, "state_root_mode_check", return_value=chk):
-            err = io.StringIO()
-            with contextlib.redirect_stderr(err):
-                km._state_root_boot_check()
+        """The 2026-09-20 review's item 2, last clause: a root the import READ looser than 0700 (0755: writable by nobody
+        else) and re-tightened to 0700 is reported at boot as its own warn-class transition (loud, not fatal), so a
+        loosening that happened while romp was down leaves a trace. The check itself reads ok now, but the import's
+        pre-chmod mode is a fact the boot line and row carry."""
+        self.import_facts(0o755)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            out = km._state_root_boot_check()
+        self.assertEqual(out["verdict"], "ok")
+        self.assertIsNone(out["importRefusal"])
         self.assertIn("read 0755 at import", err.getvalue())
         self.assertIn("re-tightened to 0700", err.getvalue())
         rows = [r["text"] for r in self.refused_rows()]
         self.assertTrue(any("read 0755 at import" in r for r in rows), rows)
 
-    def test_the_import_pre_chmod_writable_mode_boots_loud_with_the_distrust_remedy(self):
-        """The settled rule (round 2b): a pre-existing root that READ writable at import and was tightened to 0700 by the
-        judge module's chmod BOOTS (the verdict is on the mode as read now; refusing it would refuse the first boot after
-        every creation of the root by another tool under a group-writable umask), and the boot is LOUD about what was
-        read: one stderr line and one refused-kind row, both carrying the distrust remedy (entries planted while the
-        root was writable are not to be trusted: remove serve-token and repo-root under the root and restart, so the
-        next boot re-mints them). The row fits the bell with the remedy whole."""
-        km._STATE_ROOT_MODE = None
-        chk = dict(jd.state_root_mode_check(), importModeRead=0o775, importCreated=False)   # group-writable at import, 0700 now
-        with mock.patch.object(jd, "state_root_mode_check", return_value=chk):
-            err = io.StringIO()
-            with contextlib.redirect_stderr(err):
-                out = km._state_root_boot_check()
-        self.assertEqual(out["verdict"], "ok", "the root reads 0700 now: not a refusal")
+    def test_a_pre_existing_root_that_read_0775_under_the_private_group_at_import_boots_with_one_row(self):
+        """The round-2b row, kept under the discriminator: a pre-existing root that read 0775 at import under the owner's
+        private group (what every harness root reads on this box until the judge import tightens it) BOOTS, with one
+        stderr line and one refused-kind row naming the private group and the fact, and NOT the distrust remedy (no
+        other account could write through that group). The row fits the bell with the remedy whole. At 9748684d3 the
+        dict has no importRefusal (KeyError) and the row reads "(writable by other local users)" with the distrust remedy."""
+        self.import_facts(0o775)
+        err = io.StringIO()
+        with _patched_lookups(_fakes()), contextlib.redirect_stderr(err):
+            out = km._state_root_boot_check()
+        self.assertEqual(out["verdict"], "ok", "the root reads 0700 now")
+        self.assertIsNone(out["importRefusal"], "a private group's write bit is not another user's")
         line = err.getvalue()
         self.assertEqual(line.count("state root"), 1, "one line:\n" + line)
-        self.assertIn("read 0775 at import (writable by other local users), re-tightened to 0700", line)
-        self.assertIn("entries planted while it was writable are not to be trusted", line)
-        self.assertIn("remove serve-token and repo-root under %s and restart" % self.root, line)
-        self.assertIn("the next boot re-mints them", line)
+        self.assertIn("read 0775 at import (a group write bit under the owner's private group", line)
+        self.assertIn("re-tightened to 0700", line)
+        self.assertNotIn(DISTRUST, line)
         self.assertNotIn("did NOT start", line, "loud, not fatal")
         rows = [r["text"] for r in self.refused_rows()]
         self.assertEqual(len(rows), 1, rows)
-        self.assertIn("read 0775 at import (writable by other local users), re-tightened to 0700", rows[0])
-        self.assertIn("Remove serve-token and repo-root under the root and restart", rows[0], "the remedy, path-free, whole")
-        self.assertIn("entries planted while it was writable are not to be trusted", rows[0])
+        self.assertIn("read 0775 at import (a group write bit under the owner's private group), re-tightened to 0700", rows[0])
+        self.assertIn("Find what made or loosened the state root while romp was down", rows[0], "the remedy, path-free, whole")
         self.assertLessEqual(len(rows[0]), km.SYNC_NOTICE_FIT)
         v = km._version_info()["stateRootMode"]
         self.assertEqual((v["verdict"], v["modeRead"]), ("ok", "0700"))
-        # the first runtime pass sees plain ok: no second row for the import fact
         os.environ["ROMP_STATE_ROOT_CHECK_S"] = "0"
         with contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(km._state_root_verdict(time.time()), "ok")
-        self.assertEqual(len(self.refused_rows()), 1)
+        self.assertEqual(len(self.refused_rows()), 1, "the first runtime pass files no second row for the import fact")
 
-    def test_a_writable_root_the_import_could_not_tighten_refuses_at_boot_on_the_current_read(self):
-        """The refusal the settled rule keeps: a root whose import chmod FAILED still reads writable, and the boot refuses
-        on that read (the import fact files no separate row: the check's own refusal line carries the mode and the
-        import's failed call, labelled)."""
-        os.chmod(self.root, 0o775)
-        self.interpose()
-        base = jd.state_root_mode_check()
-        chk = dict(base, importModeRead=0o775, importCreated=False,
-                   importRepairError="chmod 700 failed at import: EPERM: %s" % os.strerror(1),
-                   err=(base["err"] or "") + "; chmod 700 failed at import: EPERM: %s" % os.strerror(1))
-        self.assertIsNone(km._state_root_import_mode_row(chk), "the import's chmod failed: nothing was re-tightened")
-        with mock.patch.object(jd, "state_root_mode_check", return_value=chk):
+    def test_a_pre_existing_root_that_read_writable_by_another_at_import_stops_the_boot_with_the_distrust_remedy(self):
+        """THE IMPORT-READ RULE at the boot door (the two doors agree): the judge module read 0777 at import on a
+        pre-existing root and its chmod tightened it (the root reads 0700 now, the current read is ok), and the boot
+        REFUSES on the import read: SystemExit(2), the line naming the read, the chmod and the distrust remedy, no row
+        filed (the process is stopping), every thread below it in main() never started. At 9748684d3 the same facts
+        boot with one loud row ("re-tightened to 0700" and the old remedy): "SystemExit not raised" there."""
+        self.import_facts(0o777)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            with self.assertRaises(SystemExit) as cm:
+                km._state_root_boot_check()
+        self.assertEqual(cm.exception.code, 2)
+        line = err.getvalue()
+        self.assertIn("read 0777 at import (writable by other local users: an other write bit), re-tightened to 0700 by the "
+                      "import's chmod", line)
+        self.assertIn("entries planted while it was writable are not to be trusted", line)
+        self.assertIn("%s under %s, or recreate the root, then chmod 700 it" % (DISTRUST, self.root), line)
+        self.assertIn("did NOT start", line)
+        self.assertEqual(self.refused_rows(), [], "no row: the process is stopping")
+        self.assertEqual(self.exits, [], "SystemExit in main(), not the runtime double")
+        self.assertEqual(_mode(self.root), 0o700, "the current root is untouched (it was 0700 already)")
+        # the same read under a SHARED group, and one whose lookup fails: refused, the latter with the lookup remedy
+        for fakes, expect, absent in ((_fakes(members=["peer-a"]), "is shared: 1 other member", LOOKUP_REMEDY),
+                                      (_fakes(fail=OSError(errno.EIO, "io")), "could not be read (EIO", DISTRUST)):
+            km._STATE_ROOT_MODE, km._STATE_ROOT_KEY = None, None
+            self.import_facts(0o775)
             err = io.StringIO()
-            with contextlib.redirect_stderr(err):
+            with _patched_lookups(fakes), contextlib.redirect_stderr(err):
                 with self.assertRaises(SystemExit) as cm:
                     km._state_root_boot_check()
+            self.assertEqual(cm.exception.code, 2)
+            self.assertIn("read 0775 at import", err.getvalue())
+            self.assertIn(expect, err.getvalue())
+            self.assertNotIn(absent, err.getvalue(), "one remedy each: the distrust one, or the lookup one")
+
+    def test_a_writable_root_the_import_could_not_tighten_refuses_at_boot_on_the_current_read(self):
+        """Both reads refuse and the CURRENT read's line is the one said (it carries this check's own errno and the
+        import's failed call, labelled): a root whose import chmod FAILED still reads 0777; the import fact files no
+        separate row and builds no import-mode row."""
+        os.chmod(self.root, 0o777)
+        self.interpose()
+        self.import_facts(0o777, chmod_failed=True)
+        chk = jd.state_root_mode_check()
+        self.assertIsNone(km._state_root_import_mode_row(chk), "the import's chmod failed: nothing was re-tightened")
+        self.assertIsNotNone(chk["importRefusal"])
+        self.assertIn("and the import's chmod failed (EPERM", chk["importRefusal"]["line"])
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            with self.assertRaises(SystemExit) as cm:
+                km._state_root_boot_check()
         self.assertEqual(cm.exception.code, 2)
-        self.assertIn("0775", err.getvalue())
-        self.assertIn("writable by other local users", err.getvalue())
+        self.assertIn("is mode 0777, writable by other local users (an other write bit)", err.getvalue(), "the current read's line")
+        self.assertIn("chmod 700 failed at import: EPERM", err.getvalue(), "with the import's failed call, labelled")
         self.assertIn("did NOT start", err.getvalue())
         self.assertEqual(self.refused_rows(), [])
 
     def test_a_root_the_import_created_at_the_umasks_mode_is_neither_a_warning_nor_a_refusal(self):
         """The exemption: the judge module's own mkdir made the root, so the mode it read before its chmod is the
-        umask's creation default (0775 under a group-writable umask), not a loosening, and nothing could have been
-        planted in a directory that did not exist a moment before. No exit, no row, no line."""
-        km._STATE_ROOT_MODE = None
-        chk = dict(jd.state_root_mode_check(), importModeRead=0o775, importCreated=True)
-        with mock.patch.object(jd, "state_root_mode_check", return_value=chk):
+        umask's creation default (0775 under a group-writable umask, 0777 under umask 0), not a loosening, and nothing
+        could have been planted in a directory that did not exist a moment before. No exit, no row, no line. tests-3 of
+        round 3: the created fact is planted here (True), where before no test set it."""
+        for created_mode in (0o775, 0o777):
+            km._STATE_ROOT_MODE, km._STATE_ROOT_KEY = None, None
+            self.import_facts(created_mode, created=True)
+            self.assertTrue(jd._STATE_ROOT_CREATED_AT_IMPORT)
             err = io.StringIO()
             with contextlib.redirect_stderr(err):
                 out = km._state_root_boot_check()
-        self.assertEqual(out["verdict"], "ok")
-        self.assertEqual(err.getvalue(), "")
-        self.assertEqual(self.refused_rows(), [])
-        self.assertIsNone(km._state_root_import_mode_row(chk))
+            self.assertEqual(out["verdict"], "ok")
+            self.assertTrue(out["importCreated"])
+            self.assertIsNone(out["importRefusal"], "%04o" % created_mode)
+            self.assertEqual(err.getvalue(), "")
+            self.assertEqual(self.refused_rows(), [])
+            self.assertIsNone(km._state_root_import_mode_row(out))
+
+    def test_a_root_that_was_empty_at_the_imports_read_boots_silently_whoever_made_it(self):
+        """THE CREATION EXEMPTION RE-KEYED (round 4; correctness-3 and tests-7 of round 3): a PRE-EXISTING root (not this
+        process's mkdir) that read 0777 or 0775 at import and held NO entry is a creation default, whoever made it: no
+        refusal, no row, no line, the boot goes on. Before round 4 the same facts filed the loud distrust row and told the
+        operator to delete a serve token the manager minted seconds earlier. The same root WITH an entry refuses (the
+        previous test): the difference is the entry, not the maker."""
+        for imp_mode in (0o777, 0o775):
+            km._STATE_ROOT_MODE, km._STATE_ROOT_KEY = None, None
+            self.import_facts(imp_mode, created=False, empty=True)
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                out = km._state_root_boot_check()
+            self.assertEqual(out["verdict"], "ok", "%04o" % imp_mode)
+            self.assertIs(out["importEmpty"], True)
+            self.assertFalse(out["importCreated"], "another tool made it")
+            self.assertIsNone(out["importRefusal"])
+            self.assertEqual(err.getvalue(), "", "silent: nothing was planted in an empty directory")
+            self.assertEqual(self.refused_rows(), [])
+            self.assertIsNone(km._state_root_import_mode_row(out))
 
     def test_repo_root_is_written_by_a_rename_that_replaces_a_planted_entry(self):
         """fresh-1's second half (round 2): repo-root is published by a temp and os.replace, the token mint's shape, so
@@ -629,6 +1077,28 @@ class Boot(_KernelState):
         self.assertIn("EACCES", rows[0])
         self.assertLessEqual(len(rows[0]), km.SYNC_NOTICE_FIT)
 
+    def test_a_reader_refusal_parked_at_import_is_filed_at_boot(self):
+        """The kernel-side row for a guarded reader's refusal made before _sync_notice existed (the import-time readers:
+        the downtime log, the memo files, pending-ops.json, the checkpoints directory, the sdkvenv): parked in
+        _READER_REFUSED_PENDING by the reader's hook, and filed by the boot check as one refused-kind row that fits the
+        bell, naming the entry relative to the root and the reason. At 9748684d3 there is no reader, no hook and no row."""
+        km._READER_REFUSED_PENDING.append((os.path.join(self.root, "checkpoints"), "symlink", "the reader's stderr line"))
+        with contextlib.redirect_stderr(io.StringIO()):
+            chk = km._state_root_boot_check()
+        self.assertEqual(chk["verdict"], "ok")
+        rows = [r["text"] for r in self.refused_rows()]
+        self.assertEqual(len(rows), 1, rows)
+        self.assertTrue(rows[0].startswith("State root entry checkpoints was a symlink: quarantined and read as absent; nothing "
+                                           "planted is adopted."), rows[0])
+        self.assertLessEqual(len(rows[0]), km.SYNC_NOTICE_FIT)
+        self.assertLessEqual(rows[0].count(self.root), 1)
+        self.assertEqual(km._READER_REFUSED_PENDING, [], "filed, not left parked")
+        for reason, what in (("owner", "not this uid's"), ("writable", "writable by another local user"),
+                             ("lookup", "the group database could not describe")):
+            row = km._state_root_reader_row("/some/where/very/long/" * 12 + "entry.json", reason)
+            self.assertIn(what, row)
+            self.assertLessEqual(len(row), km.SYNC_NOTICE_FIT, "a long path costs the quarantine path on the row, never the point")
+
     def test_a_0700_root_files_nothing(self):
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
@@ -653,8 +1123,10 @@ class Boot(_KernelState):
 class TheRuntimeRefusalExits(_KernelState):
     """_state_root_verdict is the runtime arm. What the refuse/unknown verdict does to everything that is not the check:
     it hands the whole process to _state_root_exit_now, which in production is os._exit(2) (here the double). A verdict
-    read once and cached answers without a re-read inside the interval, so an ordinary request never pays a stat. At
-    84b27dd39 there is no _state_root_verdict (AttributeError)."""
+    read once and cached answers without a re-read inside the interval, so an ordinary request never pays a stat. The
+    discriminator applies here too: a loosening to 0775 under a shared group exits, under the private group warns. At
+    84b27dd39 there is no _state_root_verdict (AttributeError); at 9748684d3 the shared-group arm is a TypeError-free
+    refuse and the private-group arm exits (`mode & 0o022`)."""
 
     def test_a_loosened_root_found_at_runtime_exits_the_process(self):
         with contextlib.redirect_stderr(io.StringIO()):
@@ -673,6 +1145,24 @@ class TheRuntimeRefusalExits(_KernelState):
         self.assertIn("romp stops now", err.getvalue())
         self.assertIn("found by a request", err.getvalue())
 
+    def test_a_group_loosening_is_judged_by_the_discriminator_at_runtime(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            km._state_root_boot_check()
+        os.environ["ROMP_STATE_ROOT_CHECK_S"] = "0"
+        os.chmod(self.root, 0o775)
+        with _patched_lookups(_fakes()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(km._state_root_verdict(time.time(), "the housekeeping pass"), "warn", "the private group: warn, re-tightened")
+        self.assertEqual(self.exits, [])
+        self.assertEqual(_mode(self.root), 0o700)
+        self.assertEqual(len(self.refused_rows()), 1)
+        os.chmod(self.root, 0o775)
+        err = io.StringIO()
+        with _patched_lookups(_fakes(primaries=1)), contextlib.redirect_stderr(err):
+            with self.assertRaises(_Exited):
+                km._state_root_verdict(time.time(), "the housekeeping pass")
+        self.assertEqual(self.exits, [2], "a shared group: the exit")
+        self.assertIn("1 other account with it as its primary group", err.getvalue())
+
     def test_an_unreadable_root_found_at_runtime_exits_the_process(self):
         with contextlib.redirect_stderr(io.StringIO()):
             km._state_root_boot_check()
@@ -687,6 +1177,27 @@ class TheRuntimeRefusalExits(_KernelState):
         self.assertEqual(self.exits, [2])
         self.assertIn("could not be read", err.getvalue())
         self.assertIn("unverified root is not served from", err.getvalue())
+
+    def test_a_file_at_the_root_path_found_at_runtime_exits_the_process_with_enotdir(self):
+        """regression-1 of round 3 (I) at the runtime check: the root is replaced by a FILE at its path; the check's
+        verdict is refuse with ENOTDIR (never ok, never a chmod 700 on the file) and the process exits."""
+        with contextlib.redirect_stderr(io.StringIO()):
+            km._state_root_boot_check()
+        os.environ["ROMP_STATE_ROOT_CHECK_S"] = "0"
+        gone = self.root + ".away"
+        os.rename(self.root, gone)
+        Path(self.root).write_text("not a directory\n")
+        os.chmod(self.root, 0o644)
+        self.addCleanup(lambda: (os.path.isfile(self.root) and os.unlink(self.root), os.path.isdir(gone) and os.rename(gone, self.root)))
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            with self.assertRaises(_Exited):
+                km._state_root_verdict(time.time(), "the housekeeping pass")
+        self.assertEqual(self.exits, [2])
+        self.assertIn("ENOTDIR", err.getvalue())
+        self.assertIn("is not a directory", err.getvalue())
+        self.assertIn("recreate the root as a directory", err.getvalue())
+        self.assertEqual(_mode(self.root), 0o644, "no chmod 700 on a file at the root's path")
 
     def test_a_raising_check_exits_the_process_with_the_traceback_said_once(self):
         with contextlib.redirect_stderr(io.StringIO()):
@@ -804,7 +1315,7 @@ class TheRequestRoadExits(_KernelState):
     def setUp(self):
         super().setUp()
         self.saved_hook = threading.excepthook            # the double leaving the handler thread is the expected outcome, not noise
-        threading.excepthook = lambda a: None if a.exc_type is _Exited else self.saved_hook(a)
+        threading.excepthook = lambda a: None if a.exc_type in (_Exited, km._StateRootExiting) else self.saved_hook(a)
         self.srv = ThreadingHTTPServer(("127.0.0.1", 0), km.Handler)
         self.port = self.srv.server_address[1]
         self.t = threading.Thread(target=self.srv.serve_forever, daemon=True)
@@ -854,6 +1365,105 @@ class TheRequestRoadExits(_KernelState):
             answered.assert_not_called()
             authorized.assert_not_called()
 
+    def test_a_second_finder_on_the_request_road_answers_nothing(self):
+        """tests-1 of round 3, the pin that can red: the exit is already on its way (_STATE_ROOT_REFUSED set by a first
+        finder whose stderr write is in flight), and a request arrives. Its re-check finds the same refuse verdict and is
+        the SECOND finder: _state_root_exit_now raises _StateRootExiting, a BaseException, which passes through
+        _state_root_recheck's `except Exception` and the handler's own guards, so the thread ends and NOTHING is
+        answered: send_response never runs. The one-token mutation of _StateRootExiting's base to Exception is caught
+        by _state_root_recheck's guard, the request is routed and the client is served under the hostile root; this pin
+        reds on it (send_response called), where the module's other tests stayed green (verified by mutation in a scratch
+        copy of the tree)."""
+        for method, path in (("GET", "/healthz"), ("POST", "/nudge")):
+            km._STATE_ROOT_REFUSED, km._STATE_ROOT_MODE = True, None    # a first finder is exiting; the cache is stale
+            self.exits[:] = []
+            err = io.StringIO()
+            with mock.patch.object(km.Handler, "send_response") as answered, \
+                 mock.patch.object(km.Handler, "_authorize") as authorized, \
+                 contextlib.redirect_stderr(err):
+                status = self._request(method, path)
+                time.sleep(0.3)                                # the handler thread's end lands after the socket drops
+            self.assertIsNone(status, "%s %s: no answer (got %r)" % (method, path, status))
+            self.assertEqual(self.exits, [], "%s: a second finder takes no exit of its own (the first finder's is in flight)" % method)
+            answered.assert_not_called()
+            authorized.assert_not_called()
+
+
+class TheSocketRoadHonoursAnExitAlreadyTaken(_KernelState):
+    """tests-6 of round 3, pinned (the round-4 review found the contract stated and the guard in place, but no test): a
+    client frame on an ALREADY-OPEN WebSocket runs its op with no read of the root's mode of its own (the check is the
+    request road's, before the upgrade, and the jobs road's), and what the socket road holds is the exit already taken:
+    once a finder set _STATE_ROOT_REFUSED, a frame that arrives while that finder's line is in flight runs NOTHING
+    (_dispatch_ws never runs; _StateRootExiting ends the handler thread as it ends a second finder's). Driven against a
+    live km.Handler: the socket is upgraded on the 0700 root (the request road's check passes), the flag is then set as a
+    first finder would set it, and one decoded text frame is sent. With the guard removed (`if False and
+    _STATE_ROOT_REFUSED:`) the frame is dispatched under the hostile root and this pin reds; verified by mutation in a
+    scratch copy of the tree. The control: with the flag clear the same frame reaches _dispatch_ws once."""
+
+    def setUp(self):
+        super().setUp()
+        self.saved_hook = threading.excepthook            # the BaseException leaving the handler thread is the expected outcome
+        threading.excepthook = lambda a: None if a.exc_type in (_Exited, km._StateRootExiting) else self.saved_hook(a)
+        self.srv = ThreadingHTTPServer(("127.0.0.1", 0), km.Handler)
+        self.port = self.srv.server_address[1]
+        self.t = threading.Thread(target=self.srv.serve_forever, daemon=True)
+        self.t.start()
+        with contextlib.redirect_stderr(io.StringIO()):
+            km._state_root_boot_check()                    # ok on the 0700 root: the upgrade's own recheck passes on the cache
+        self.socks = []
+
+    def tearDown(self):
+        for s in self.socks:
+            s.close()
+        self.srv.shutdown()
+        self.srv.server_close()
+        threading.excepthook = self.saved_hook
+        super().tearDown()
+
+    def _open(self):
+        """One raw upgrade with the token; the socket, after the 101."""
+        key = base64.b64encode(os.urandom(16)).decode()
+        req = ("GET /ws?app=chat&token=%s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+               "Sec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\n\r\n" % (km.TOKEN, self.port, key)).encode()
+        s = socket.create_connection(("127.0.0.1", self.port), timeout=5)
+        self.socks.append(s)
+        s.sendall(req)
+        buf = b""
+        while b"\r\n\r\n" not in buf:
+            chunk = s.recv(4096)
+            if not chunk:
+                break
+            buf += chunk
+        self.assertIn(b" 101 ", buf.split(b"\r\n", 1)[0], buf[:200])
+        return s
+
+    @staticmethod
+    def _frame(obj):
+        payload = json.dumps(obj).encode()
+        assert len(payload) < 126
+        return bytes([0x81, len(payload)]) + payload       # one text frame, FIN set (the kernel's reader accepts an unmasked client frame)
+
+    def test_a_frame_on_an_open_socket_runs_nothing_once_the_exit_is_taken(self):
+        with mock.patch.object(km.Handler, "_dispatch_ws") as dispatched, contextlib.redirect_stderr(io.StringIO()):
+            s = self._open()
+            km._STATE_ROOT_REFUSED = True                  # a first finder is exiting; its line is in flight
+            s.sendall(self._frame({"type": "ready"}))
+            time.sleep(0.5)
+            dispatched.assert_not_called()
+            self.assertEqual(self.exits, [], "the socket road takes no exit of its own: the first finder's is in flight")
+        # the control: with no exit taken, the same frame runs its op once
+        km._STATE_ROOT_REFUSED = False
+        with mock.patch.object(km.Handler, "_dispatch_ws") as dispatched, contextlib.redirect_stderr(io.StringIO()):
+            s = self._open()
+            s.sendall(self._frame({"type": "ready"}))
+            for _ in range(100):
+                if dispatched.called:
+                    break
+                time.sleep(0.05)
+            dispatched.assert_called_once()
+            self.assertEqual(dispatched.call_args[0][0], {"type": "ready"})
+            self.assertEqual(self.exits, [])
+
 
 # ── WARN: one row per transition, the bell's kind, the fit ───────────────────────────────────────────────────────
 
@@ -862,7 +1472,8 @@ class TheWarnSurface(_KernelState):
     (extra7-1: not the mutable "sdk" kind of _sdk_problem, whose one mute would hide a security row with a backend
     error), one row per transition keyed on the cause so an errno flap under a constant mode refiles (extra6-2), and it
     is built to fit SYNC_NOTICE_FIT whole with the remedy first and the root's path at most once (extra7-2). At
-    84b27dd39 there is no _state_root_verdict (AttributeError)."""
+    84b27dd39 there is no _state_root_verdict (AttributeError); at 9748684d3 the fit test's new shapes (the shared
+    group, the lookup failure, the private-group warn, the private-group import row) are TypeErrors or absent."""
 
     def _serving_warn(self, mode=0o755):
         with contextlib.redirect_stderr(io.StringIO()):
@@ -921,12 +1532,17 @@ class TheWarnSurface(_KernelState):
     def test_every_row_fits_the_bell_with_the_remedy_first_and_the_path_at_most_once(self):
         """extra7-2, pinned against a long synthetic root so the length-is-doubled-path failure cannot hide behind a
         short test root: every row a check can file fits SYNC_NOTICE_FIT, leads with the point and the path-free remedy,
-        and names the root at most once (a long root costs the path on the row, never the way out)."""
+        and names the root at most once (a long root costs the path on the row, never the way out). Fourteen shapes after
+        round 4: the four interposed modes (0775 and 0770 now under the private group), 0700 with a failed chmod, unknown,
+        two self-owned repaired, the raise row, the boot's two import-mode rows, and round 4's three: a shared-group
+        refusal, a lookup-failure refusal and a private-group warn that stands."""
         longroot = "/home/someone/.local/state/romp-profiles/a-research-kernel-with-a-very-long-name-indeed/romp"
+        gid = os.stat(tempfile.gettempdir()).st_gid          # _stat_as answers with the temp dir's owner and group
+        private = _fakes(gid=gid)
         cases = []
         for mode in (0o755, 0o750, 0o777, 0o770):
             with mock.patch("os.chmod", new=_refusing_chmod(longroot)), mock.patch("os.stat", new=_stat_as(longroot, mode)):
-                cases.append(jd.state_root_mode_check(longroot))
+                cases.append(jd.state_root_mode_check(longroot, **private))
         # a 0700-with-failed-chmod, and an unknown, both over the long root
         with mock.patch("os.chmod", new=_refusing_chmod(longroot)), mock.patch("os.stat", new=_stat_as(longroot, 0o700)):
             cases.append(jd.state_root_mode_check(longroot))
@@ -939,6 +1555,12 @@ class TheWarnSurface(_KernelState):
                 chk = jd.state_root_mode_check(longroot)
                 self.assertTrue(chk["repaired"], "%04o" % mode)
                 cases.append(chk)
+        # round 4's shapes: a shared group (refuse), a lookup failure (refuse), the private-group warn standing
+        with mock.patch("os.chmod", new=_refusing_chmod(longroot)), mock.patch("os.stat", new=_stat_as(longroot, 0o775)):
+            cases.append(jd.state_root_mode_check(longroot, **_fakes(members=["peer-a"], primaries=2, gid=gid)))
+            cases.append(jd.state_root_mode_check(longroot, **_fakes(fail=KeyError("gid"), gid=gid)))
+            cases.append(jd.state_root_mode_check(longroot, **private))
+        self.assertEqual([c["verdict"] for c in cases[-3:]], ["refuse", "refuse", "warn"])
         # the raise row (_state_root_unknown_check) over the long root
         saved = jd.STATE
         jd._rebind_state(Path(longroot))
@@ -951,14 +1573,12 @@ class TheWarnSurface(_KernelState):
         with mock.patch("os.chmod"), mock.patch("os.stat", new=_stat_as(longroot, 0o700)):
             base = jd.state_root_mode_check(longroot)
         for imp_mode in (0o755, 0o775):
-            imp_chk = dict(base, importModeRead=imp_mode, importCreated=False, modeRead=0o700)
+            imp_chk = dict(base, importModeRead=imp_mode, importCreated=False, importRefusal=None, modeRead=0o700)
             imp = km._state_root_import_mode_row(imp_chk)
             self.assertIsNotNone(imp, "the boot files a row for a root that read %04o at import" % imp_mode)
             line, point, bell = imp
             rows.append((imp_chk, km._state_root_row(imp_chk, point=point, remedy=bell), bell))
-        self.assertEqual(len(rows), 11, "every shape a row can take: four interposed modes, 0700 with a failed chmod, "
-                                        "unknown, two self-owned repaired, the raise row, the boot's two import-mode rows "
-                                        "(a 0755 read, and a writable read with the distrust remedy)")
+        self.assertEqual(len(rows), 14, "every shape a row can take")
         for chk, row, bell in rows:
             self.assertLessEqual(len(row), km.SYNC_NOTICE_FIT, "%r is over the bell: %d" % (chk["verdict"], len(row)))
             self.assertLessEqual(row.count(longroot), 1, "the path appears at most once: %r" % row)
@@ -969,6 +1589,31 @@ class TheWarnSurface(_KernelState):
             for tail in ((" (%s)." % chk["err"]) if chk.get("err") else None, " Root: "):
                 if tail and tail in row:
                     self.assertLess(row.index(rem), row.index(tail), "the remedy comes before %r: %r" % (tail, row))
+
+    def test_a_loosened_root_the_check_can_tighten_is_reported_as_retightened(self):
+        """tests-4 of round 3: the repaired=True road through _state_root_verdict, with NO chmod interposed. A root this
+        uid owns is loosened to 0755 after boot; the runtime check reads warn, its own chmod tightens it, and the row and
+        the line say so ("was mode 0755, re-tightened to 0700"), so the loosening leaves a trace. Suppressing the row for
+        exactly the repaired case stayed green before this pin, since every kernel-side warn test interposed a chmod
+        refusal."""
+        with contextlib.redirect_stderr(io.StringIO()):
+            km._state_root_boot_check()
+        os.environ["ROMP_STATE_ROOT_CHECK_S"] = "0"
+        os.chmod(self.root, 0o755)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(km._state_root_verdict(time.time()), "warn", "the verdict is the mode as read")
+        self.assertEqual(_mode(self.root), 0o700, "the check's own chmod ran, after the read")
+        chk = km._STATE_ROOT_MODE
+        self.assertTrue(chk["repaired"])
+        rows = [r["text"] for r in self.refused_rows()]
+        self.assertEqual(len(rows), 1, rows)
+        self.assertIn("0755", rows[0])
+        self.assertIn("re-tightened to 0700", rows[0])
+        self.assertIn("was mode 0755, re-tightened to 0700", err.getvalue())
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(km._state_root_verdict(time.time()), "ok", "and the next check reads plain ok")
+        self.assertEqual(len(self.refused_rows()), 1, "a return to ok files no row")
 
     def test_the_row_is_filed_under_the_refused_kind(self):
         self._serving_warn(0o755)
@@ -1014,37 +1659,42 @@ def _stat_missing(target):
     return f
 
 
-# ── REFUSE AT IMPORT: the ordering, proved by execution in a child ───────────────────────────────────────────────
+# ── REFUSE AT IMPORT: the two reads, proved by execution in a child ──────────────────────────────────────────────
 
 class TheImportGateComesFirst(unittest.TestCase):
-    """fresh-1, fresh-2 and correctness-4, proved by what did and did not happen in a child kernel process (never a
-    source index). What the import gate does to the token work and the bundles when it refuses: they never run. A 0777
-    root whose chmod is refused (a foreign owner, a refusing mount: it still reads writable at the gate) exits 2 with
-    the STATE-ROOT line before the token work, the planted serve-token entry untouched. A 0777 root THIS UID OWNS, no
-    chmod interposed, is tightened to 0700 by the judge module's import and PASSES the gate (the settled rule, round 2b:
-    the verdict is on the mode as read at the gate, and refusing the tightened root would refuse the first boot after
-    every creation of the root by another tool under a group-writable umask); what it read is said at boot
-    (AServedKernelRefusesAtRuntime pins the line in a real kernel). With a planted symlink at serve-token under such a
-    root the token loader's own fault stops the import (exit 1, its own message: the loader reads no token through a
-    link), the link's target untouched: that fault, and repo-root's atomic replace, are what close the adoption risk.
-    A 0700 root imports fine (the token work runs). At 84b27dd39 the import runs the token load first on every root,
-    so a chmod-refused 0777 root never prints the state-root refusal there."""
+    """fresh-1, fresh-2, correctness-4 and round 4's import-read rule, proved by what did and did not happen in a child
+    kernel process (never a source index). What the import gate does to the token work and the bundles when it refuses:
+    they never run. A pre-existing 0777 root THIS UID OWNS, no chmod interposed, is tightened to 0700 by the judge
+    module's import and REFUSED by the gate on what the import read (exit 2, the distrust remedy), so the planted
+    symlink at serve-token is never reached: the loader's fault does not appear, the link's target is untouched and the
+    link stands for the operator. A 0777 root whose chmod is refused (a foreign owner, a refusing mount: it still reads
+    writable) exits 2 on the current read, the same way. A pre-existing 0775 root under the owner's private group imports
+    (warn-class; the boot says it); a root the import CREATED imports; a 0700 root imports fine; an unreadable root
+    exits 2; a group database that never answers costs the bound, not a hang. At 9748684d3 the self-owned 0777 root
+    PASSES the gate (the settled rule of round 2b: the verdict on the mode as read after the chmod), so with the plant
+    the child exits 1 on the loader's fault ("1 != 2" here), the blocked-lookup child exits 0 ("0 != 2": no lookup, no
+    bound), the chmod-refused root's line reads "(a group or other write bit)", and the 0775, created and 0700 children
+    are controls that pass there too: checked against a detached worktree of that commit."""
 
-    def _child(self, plant_symlink, mode, interpose=False):
+    def _child(self, plant_symlink, mode, interpose=False, prelude="", plant_file=False):
         root = os.path.join(tempfile.mkdtemp(), "romp")
-        os.makedirs(root)
+        if mode is not None:
+            os.makedirs(root)
         target = os.path.join(tempfile.mkdtemp(), "elsewhere")
         Path(target).write_text("attacker-planted\n")
         if plant_symlink:
             os.symlink(target, os.path.join(root, "serve-token"))   # the plant the token load would follow
-        os.chmod(root, mode)
+        if plant_file:
+            Path(root, "planted.json").write_text("{}\n")            # any entry: the root is not empty at the read
+        if mode is not None:
+            os.chmod(root, mode)
         env = dict(os.environ)
         env["ROMP_STATE_DIR"] = root
         env.pop("ROMP_SERVE_TOKEN", None)                           # force the token to be read/minted from the root
         env["ROMP_KERNEL_NO_OPEN"] = "1"
         # `interpose`: the shape of a root this uid cannot tighten (a foreign owner, a refusing mount). Without it the root
-        # is self-owned and the judge module's import chmod DOES tighten it before the kernel's gate runs, so the gate
-        # reads 0700 and passes (the settled rule); the boot says what was read
+        # is self-owned and the judge module's import chmod DOES tighten it before the kernel's gate runs; the gate then
+        # judges the import's read as well as the current one
         interpose = "" if not interpose else (
             "real = os.chmod\n"
             "def refuse(path, m, *a, **k):\n"
@@ -1052,38 +1702,48 @@ class TheImportGateComesFirst(unittest.TestCase):
             "        raise PermissionError(1, 'chmod refused (interposed)')\n"
             "    return real(path, m, *a, **k)\n"
             "os.chmod = refuse\n")
-        code = ("import os, sys\n"
+        code = ("import os, sys, time\n"
                 "sys.path.insert(0, %r)\n"
                 "from romp_load import load_source\n"
                 "root = %r\n"
-                "%s"
+                "%s%s"
                 "load_source('romp_kernel', %r)\n"
                 "print('IMPORTED-OK')\n"
-                % (HERE, root, interpose, os.path.join(BIN, "romp-kernel")))
+                % (HERE, root, prelude, interpose, os.path.join(BIN, "romp-kernel")))
+        t0 = time.monotonic()
         r = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=180)
+        r.elapsed = time.monotonic() - t0
         return root, target, r
 
-    def test_a_self_owned_writable_root_is_tightened_at_import_and_a_planted_token_faults_in_the_loader(self):
-        """No chmod interposed: the judge module's import tightens the root to 0700 before the kernel's gate runs, the
-        gate reads 0700 and passes (the settled rule), and the token loader then meets the planted symlink and faults
-        on its own terms (exit 1, the loader's message; it reads or tightens no token through a link). The state-root
-        gate refused nothing here: the line it would print says "did NOT start", and it is absent. The link's target
-        is untouched and the link still in place for the operator; the root reads 0700."""
+    def test_a_pre_existing_root_that_read_writable_by_another_exits_2_at_import_whatever_the_chmod_did(self):
+        """THE IMPORT-READ RULE by execution: a pre-existing 0777 root this uid owns, a symlink planted at serve-token, no
+        chmod interposed. The judge module's import tightens the root (it reads 0700 afterwards), and the gate exits 2 on
+        what the import READ, with the distrust remedy, before the token work: the loader's own fault ("symlink") is
+        absent, the link stands, its target is untouched, nothing was minted. At 9748684d3 this child exits 1 with the
+        loader's fault and the state-root line is absent (the gate passed on the tightened mode)."""
         root, target, r = self._child(plant_symlink=True, mode=0o777)
-        self.assertEqual(r.returncode, 1, "the token loader's RuntimeError, not the gate's exit 2:\n%s" % r.stderr)
-        self.assertNotIn("did NOT start", r.stderr, "the gate passed on the mode as read now (0700)")
-        self.assertIn("serve-token", r.stderr, "the loader's own fault names the token path")
-        self.assertIn("symlink", r.stderr, "and says why: a link is not read through")
+        self.assertEqual(r.returncode, 2, "the gate's exit 2, not the loader's exit 1:\n%s" % r.stderr)
+        self.assertIn("read 0777 at import (writable by other local users: an other write bit), re-tightened to 0700 by the "
+                      "import's chmod", r.stderr)
+        self.assertIn("entries planted while it was writable are not to be trusted", r.stderr)
+        self.assertIn("%s under %s, or recreate the root, then chmod 700 it" % (DISTRUST, root), r.stderr)
+        self.assertIn("did NOT start", r.stderr)
+        self.assertNotIn("symlink", r.stderr, "the token loader never ran: the gate came first")
         self.assertNotIn("IMPORTED-OK", r.stdout, "the import did not complete")
         self.assertEqual(Path(target).read_text(), "attacker-planted\n", "the planted entry's target is untouched")
         self.assertTrue(os.path.islink(os.path.join(root, "serve-token")), "and the link is still in place: the operator removes it")
-        self.assertEqual(_mode(root), 0o700, "the import's chmod ran")
+        self.assertEqual(_mode(root), 0o700, "the import's chmod ran; the refusal stood on what was read before it")
+        self.assertEqual(sorted(os.listdir(root)), ["serve-token"], "nothing was minted or written under the root")
 
-    def test_a_self_owned_writable_root_without_a_plant_imports_fine_and_reads_0700(self):
-        """The same root with nothing planted: tightened at import, the gate passes, the token work and the rest of the
-        import run, and the import itself says nothing about the mode (the judge module's read-back is 0700); the boot
-        is where the pre-chmod read is reported (AServedKernelRefusesAtRuntime)."""
-        root, target, r = self._child(plant_symlink=False, mode=0o777)
+    def test_a_pre_existing_0775_root_under_the_private_group_imports_and_reads_0700(self):
+        """The discriminator keeps the suite collectable: a pre-existing 0775 root (what every harness root reads on this
+        box before the judge import) under the owner's private group is warn-class, so the gate passes on both reads,
+        the token work and the rest of the import run, and the import itself says nothing about the mode (the judge
+        module's read-back is 0700); the boot is where the pre-chmod read is reported (Boot, AServedKernelRefusesAtRuntime).
+        Skips where this account's primary group is not private (the real database decides in a child)."""
+        if not _private_group_here():
+            raise unittest.SkipTest("this account's primary group is shared on this box: 0775 is a refusal here")
+        root, target, r = self._child(plant_symlink=False, mode=0o775)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("IMPORTED-OK", r.stdout)
         self.assertNotIn("did NOT start", r.stderr)
@@ -1091,14 +1751,86 @@ class TheImportGateComesFirst(unittest.TestCase):
         self.assertEqual(_mode(root), 0o700)
         self.assertTrue(os.path.exists(os.path.join(root, "serve-token")), "a token was minted under the now-tight root")
 
+    def test_a_root_the_import_created_imports_whatever_the_umask(self):
+        """The exemption by execution: no root before the child; the judge module's mkdir makes it at the umask's mode
+        (0777 under umask 0 here, the loosest creation default) and the import goes on, since nothing could have been
+        planted in a directory that did not exist. At 9748684d3 the same child passes too (a control)."""
+        root, target, r = self._child(plant_symlink=False, mode=None, prelude="os.umask(0o000)\n")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("IMPORTED-OK", r.stdout)
+        self.assertNotIn("state root", r.stderr)
+        self.assertEqual(_mode(root), 0o700)
+
     def test_a_writable_root_whose_chmod_is_refused_exits_2_the_same_way(self):
         root, target, r = self._child(plant_symlink=True, mode=0o777, interpose=True)
         self.assertEqual(r.returncode, 2, "the import gate exits 2:\n%s" % r.stderr)
-        self.assertIn("writable by other local users", r.stderr)
+        self.assertIn("is mode 0777, writable by other local users (an other write bit)", r.stderr, "the current read's line")
+        self.assertIn("EPERM", r.stderr, "with the chmod's errno")
         self.assertIn("did NOT start", r.stderr)
         self.assertNotIn("serve token", r.stderr.lower(), "the token work never ran")
         self.assertEqual(Path(target).read_text(), "attacker-planted\n")
         self.assertEqual(_mode(root), 0o777, "the chmod was refused: read, not healed")
+
+    def test_a_group_lookup_that_blocks_does_not_hang_the_import(self):
+        """THE BOUND by execution: grp.getgrgid patched to never answer before the loads (the shared module resolves it at
+        call time), a pre-existing 0775 root that holds an entry (an empty one is a creation default and needs no
+        judgment), the production bound (3 s). The import gate's import-read judgment needs the group, waits the bound,
+        counts the lookup as failed and exits 2 with the lookup message and remedy, never the distrust one, a few seconds
+        after the load; the daemon thread left in the lookup does not hold the process (the child returns). At 9748684d3
+        there is no lookup and no bound: the child exits 0 (the root imports)."""
+        prelude = ("import grp\n"
+                   "def never(gid):\n"
+                   "    time.sleep(600)\n"
+                   "grp.getgrgid = never\n")
+        root, target, r = self._child(plant_symlink=False, mode=0o775, prelude=prelude, plant_file=True)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("read 0775 at import (a group write bit), re-tightened to 0700 by the import's chmod, and the group "
+                      "database could not be read (timeout: the group database did not answer within 3 s)", r.stderr)
+        self.assertIn(LOOKUP_REMEDY, r.stderr)
+        self.assertNotIn(DISTRUST, r.stderr)
+        self.assertIn("did NOT start", r.stderr)
+        self.assertLess(r.elapsed, 120, "the child returned: the bound, not a hang (%.1fs)" % r.elapsed)
+
+    def test_an_empty_pre_existing_writable_root_imports_silently_whoever_made_it(self):
+        """THE CREATION EXEMPTION by execution (round 4; correctness-3 of round 3): a pre-existing 0777 root with NOTHING
+        in it, made by another tool (this test) a moment before the child imports. The judge import reads 0777 and an
+        empty listing, tightens the root, and the gate passes silently: no distrust line, no exit, the import completes
+        and mints its token under the now-tight root. Before round 4 this child exited 2 with the distrust remedy."""
+        root, target, r = self._child(plant_symlink=False, mode=0o777)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("IMPORTED-OK", r.stdout)
+        self.assertNotIn("state root", r.stderr, "nothing said: an empty root at the umask's mode is a creation default")
+        self.assertNotIn(DISTRUST, r.stderr)
+        self.assertEqual(_mode(root), 0o700)
+        self.assertTrue(os.path.exists(os.path.join(root, "serve-token")))
+
+    def test_a_file_at_the_root_path_exits_2_with_enotdir(self):
+        """regression-1 of round 3 (I) at the import gate: a FILE where the root should be. The judge import's mkdir meets
+        EEXIST (recorded), the file is not chmod'ed, and the gate exits 2 on the check's ENOTDIR verdict with its remedy,
+        before the token work (which would have died on the token's ENOTDIR under a remedy that could not work)."""
+        parent = tempfile.mkdtemp()
+        root = os.path.join(parent, "romp")
+        Path(root).write_text("not a directory\n")
+        os.chmod(root, 0o644)
+        env = dict(os.environ)
+        env["ROMP_STATE_DIR"] = root
+        env.pop("ROMP_SERVE_TOKEN", None)
+        code = ("import sys\n"
+                "sys.path.insert(0, %r)\n"
+                "from romp_load import load_source\n"
+                "load_source('romp_kernel', %r)\n"
+                "print('IMPORTED-OK')\n"
+                % (HERE, os.path.join(BIN, "romp-kernel")))
+        r = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=180)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("ENOTDIR", r.stderr)
+        self.assertIn("exists and is not a directory", r.stderr)
+        self.assertIn("recreate the root as a directory", r.stderr)
+        self.assertIn("did NOT start", r.stderr)
+        self.assertNotIn("serve token", r.stderr.lower(), "the gate came before the token work")
+        self.assertNotIn("not 0700", r.stderr, "the judge's import diagnostic names ENOTDIR, not a loose mode (the round-4 review)")
+        self.assertIn("romp-judge: state root %s exists and is not a directory (ENOTDIR)" % root, r.stderr)
+        self.assertEqual(_mode(root), 0o644, "the file was never chmod'ed 0700")
 
     def test_a_0700_root_imports_fine(self):
         root, target, r = self._child(plant_symlink=False, mode=0o700)
@@ -1127,6 +1859,132 @@ class TheImportGateComesFirst(unittest.TestCase):
         self.assertIn("unverified root is not served from", r.stderr)
 
 
+# ── HIGH 1 of the enumeration: the boot sweep refuses a checkpoints entry that is not a real directory ───────────
+
+class TheCheckpointsDirectoryIsGuarded(_KernelState):
+    """The enumeration's HIGH 1 under round 4's contract: kernel/event_model.py's checkpoint_sweep runs at kernel import
+    (kernel.py, after the gate) and, until round 4, followed a symlink planted at <root>/checkpoints: Path.is_dir and
+    glob follow a link, so the sweep opened the directory the link pointed at and unlinked every *.json there that did
+    not parse as a checkpoint document with an existing path (measured in the enumeration: a victim file outside the
+    root, gone). The guard now sits at _ckpt_dir() itself, ONCE AND CACHED (the judge's _ckpt_dir_guarded is the
+    provider every checkpoint door calls; the ruling's C), and every read of a document or sidecar goes through the
+    event model's guarded reader: a planted link is QUARANTINED to <root>/quarantine/<stamp>.checkpoints (not left
+    standing to be followed again next boot, the ruling's B), one stderr line says so, one refused-kind row is filed,
+    and the path reads as absent, so nothing is swept through it and the next write makes a fresh directory of this
+    uid's. What the guard does to everything that is not the link: a real directory still sweeps (a control that passes
+    at 9748684d3 too); an absent entry is nothing to sweep; a plain FILE of this uid's at the path is not a plant by the
+    guard's property (not a symlink, this uid's, not writable by another) and is left where it is. At 9748684d3 the
+    in-process arm sweeps both files THROUGH the link ("2 != 0") and the child's victim is gone after the import; the
+    round-3 head refused the link but left it in place; checked against a detached worktree of 9748684d3."""
+
+    def setUp(self):
+        super().setUp()                                        # a fresh 0700 root, rebound (the judge's provider follows it)
+        self.saved_provider, self.saved_root_fn = em._CKPT_DIR_FN, em._STATE_ROOT_FN
+        em.set_checkpoint_dir(jd._ckpt_dir_guarded)           # THIS judge's provider and root (a judge loaded under a private name
+        em.set_state_root(lambda: jd.STATE)                    #  by another test module may have re-pointed the event model's)
+        self.victim_dir = tempfile.mkdtemp()
+        self.victim = Path(self.victim_dir, "victim.json")
+        self.victim.write_text('{"not": "a checkpoint document"}')
+        Path(self.victim_dir, "other.json").write_text("[1, 2, 3]")
+
+    def tearDown(self):
+        em.set_checkpoint_dir(self.saved_provider)
+        em.set_state_root(self.saved_root_fn)
+        super().tearDown()
+
+    def _quarantined(self, root=None):
+        q = Path(root or self.root, srm.QUARANTINE_DIR)
+        return sorted(p.name for p in q.iterdir()) if q.is_dir() else []
+
+    def test_a_symlinked_checkpoints_directory_is_quarantined_and_the_victim_survives(self):
+        link = os.path.join(self.root, "checkpoints")
+        os.symlink(self.victim_dir, link)
+        self.assertIs(em._CKPT_DIR_FN, jd._ckpt_dir_guarded, "the provider is the judge's guarded checkpoint directory")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(em.checkpoint_sweep(), 0, "nothing swept through the link")
+        self.assertTrue(self.victim.exists(), "the file outside the root survives the sweep")
+        self.assertTrue(Path(self.victim_dir, "other.json").exists())
+        self.assertFalse(os.path.lexists(link), "the link is gone from the root: quarantined, not left to be followed next boot")
+        q = self._quarantined()
+        self.assertEqual(len(q), 1, q)
+        self.assertTrue(q[0].endswith(".checkpoints"), q[0])
+        self.assertTrue(os.path.islink(os.path.join(self.root, srm.QUARANTINE_DIR, q[0])), "moved, not deleted: the evidence stands")
+        self.assertEqual(_mode(os.path.join(self.root, srm.QUARANTINE_DIR)), 0o700, "the quarantine directory is 0700")
+        self.assertIn("is a symlink: quarantined to", err.getvalue())
+        self.assertIn("read as absent; nothing planted is adopted", err.getvalue())
+        rows = [r["text"] for r in self.refused_rows()]
+        self.assertEqual(len(rows), 1, rows)
+        self.assertIn("checkpoints was a symlink: quarantined", rows[0])
+        self.assertLessEqual(len(rows[0]), km.SYNC_NOTICE_FIT)
+        self.assertIsNone(jd._CKPT_DIR_TRUSTED[0], "nothing trusted is cached for a refused entry")
+
+    def test_a_real_directory_still_sweeps_and_is_trusted_once_and_cached(self):
+        real = Path(self.root, "checkpoints")
+        real.mkdir()
+        Path(real, "stale.json").write_text('{"path": "/nonexistent/file/for/this/checkpoint"}')
+        Path(real, "junk.json").write_text("not json")
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(em.checkpoint_sweep(), 2, "both non-documents leave with the sweep")
+        self.assertEqual(sorted(p.name for p in real.iterdir()), [])
+        self.assertEqual(self._quarantined(), [])
+        self.assertTrue(self.victim.exists())
+        self.assertEqual(jd._CKPT_DIR_TRUSTED[0], real, "the trusted directory is cached (once, until a rebind)")
+        with mock.patch.object(jd._gr, "isdir", side_effect=AssertionError("the guard ran again on a cached directory")):
+            self.assertEqual(em._ckpt_dir(), real)
+        jd._rebind_state(Path(self.root))
+        self.assertIsNone(jd._CKPT_DIR_TRUSTED[0], "a rebind judges the directory afresh")
+
+    def test_a_file_at_checkpoints_and_an_absent_entry_sweep_nothing_and_quarantine_nothing(self):
+        plain = Path(self.root, "checkpoints")
+        plain.write_text("not a directory")
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(em.checkpoint_sweep(), 0)
+        self.assertEqual(plain.read_text(), "not a directory", "a file of this uid's is not a plant: untouched")
+        self.assertEqual(self._quarantined(), [])
+        plain.unlink()
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(em.checkpoint_sweep(), 0)
+        self.assertEqual(self._quarantined(), [], "absent is nothing to sweep and nothing to quarantine")
+        self.assertEqual(self.refused_rows(), [])
+
+    def test_the_kernel_import_over_a_root_with_a_planted_link_quarantines_it_and_files_the_row(self):
+        """At the real door: a child imports bin/romp-kernel over a 0700 root holding checkpoints -> a directory outside
+        the root with a victim *.json; the import completes (nothing else is wrong with the root), the victim survives,
+        the link is in the root's quarantine directory, the reader said so on stderr, and the boot check files the
+        parked refusal as one refused-kind row naming the entry. At 9748684d3 the victim is deleted by the import."""
+        root = os.path.join(tempfile.mkdtemp(), "romp")
+        os.makedirs(root)
+        os.chmod(root, 0o700)
+        Path(root, "session-hosts").write_text("off\n")
+        os.symlink(self.victim_dir, os.path.join(root, "checkpoints"))
+        env = dict(os.environ)
+        env["ROMP_STATE_DIR"] = root
+        env["ROMP_KERNEL_NO_OPEN"] = "1"
+        code = ("import contextlib, io, json, sys\n"
+                "sys.path.insert(0, %r)\n"
+                "from romp_load import load_source\n"
+                "km = load_source('romp_kernel', %r)\n"
+                "err = io.StringIO()\n"
+                "with contextlib.redirect_stderr(err):\n"
+                "    km._state_root_boot_check()\n"
+                "print(json.dumps({'rows': [r['text'] for r in km._SYNC_NOTICES if r['kind'] == 'refused'], 'boot': err.getvalue()}))\n"
+                % (HERE, os.path.join(BIN, "romp-kernel")))
+        r = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=180)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(self.victim.exists(), "the victim outside the root survives the kernel import")
+        self.assertTrue(Path(self.victim_dir, "other.json").exists())
+        self.assertFalse(os.path.lexists(os.path.join(root, "checkpoints")), "the link left the root")
+        q = self._quarantined(root)
+        self.assertTrue(any(n.endswith(".checkpoints") for n in q), q)
+        self.assertIn("checkpoints is a symlink: quarantined to", r.stderr)
+        out = json.loads(r.stdout.strip().splitlines()[-1])
+        rows = [t for t in out["rows"] if "checkpoints" in t]
+        self.assertEqual(len(rows), 1, out["rows"])
+        self.assertIn("was a symlink: quarantined and read as absent", rows[0])
+        self.assertLessEqual(len(rows[0]), km.SYNC_NOTICE_FIT)
+
+
 # ── REFUSE AT RUNTIME, behaviourally, in a served child kernel (the failing-before at 84b27dd39) ─────────────────
 
 def _kernel_env(root, dist, port, token):
@@ -1144,8 +2002,10 @@ class AServedKernelRefusesAtRuntime(unittest.TestCase):
     root, and once the root is loosened to 0777 the process EXITS 2 with the state-root line within seconds: the
     housekeeping pass or a request finds it, and every writer stops with the process. What it does to everything else:
     the process is gone, so no file under the root is written after the exit. At 84b27dd39 the same spawn keeps serving
-    200 after the loosening and never exits (recorded under the notes' scratch, a detached worktree, removed after);
-    the failing-before is that this test's assertRaises-of-exit is a 200 that never becomes an exit there."""
+    200 after the loosening and never exits. Round 4's arms: a pre-existing 0777 root never serves (exit 2 at import,
+    where 9748684d3 served it with one loud line: "unexpectedly None: the kernel exited at import" there), and a
+    pre-existing 0775 root under the private group serves with the private-group boot line (where 9748684d3 said
+    "writable by other local users" with the distrust remedy); the loosening arms are controls that pass at 9748684d3."""
 
     def setUp(self):
         self.lab = tempfile.mkdtemp(prefix="romp-srm2-")
@@ -1162,6 +2022,10 @@ class AServedKernelRefusesAtRuntime(unittest.TestCase):
         if self.kernel and self.kernel.poll() is None:
             self.kernel.kill()
             self.kernel.wait(timeout=10)
+        try:
+            os.chmod(self.root, 0o700)
+        except OSError:
+            pass
         shutil.rmtree(self.lab, ignore_errors=True)
 
     def _spawn(self):
@@ -1191,18 +2055,38 @@ class AServedKernelRefusesAtRuntime(unittest.TestCase):
                 return
             time.sleep(0.5)
 
-    def test_a_root_that_read_writable_at_import_serves_with_one_loud_line(self):
-        """The settled rule end to end: a pre-existing root THIS UID OWNS at 0777, no chmod interposed, planted before the
-        spawn. The kernel's judge module tightens it at import, the gate passes on the mode as read now, and the kernel
-        SERVES, with the boot saying what was read: one line with the distrust remedy (the row beside it is pinned
-        in-process by Boot). At 84b27dd39 the same kernel served with nothing said about the import's read."""
+    def test_a_pre_existing_writable_root_never_serves_the_kernel_exits_2_at_import(self):
+        """THE IMPORT-READ RULE end to end: a pre-existing root THIS UID OWNS at 0777, no chmod interposed, planted before
+        the spawn. The kernel's judge module tightens it at import and the gate refuses on what was read: exit 2 with the
+        distrust remedy, /healthz never answers, the root reads 0700. At 9748684d3 the same kernel SERVED with one loud
+        line ("re-tightened to 0700" and the old remedy)."""
         os.chmod(self.root, 0o777)
+        self._spawn()
+        self._await_exit(60)
+        self.assertIsNotNone(self.kernel.poll(), "the kernel exited at import:\n" + open(self.klog).read()[-800:])
+        self.assertEqual(self.kernel.returncode, 2, open(self.klog).read()[-800:])
+        log = open(self.klog).read()
+        self.assertIn("read 0777 at import (writable by other local users: an other write bit), re-tightened to 0700", log)
+        self.assertIn("entries planted while it was writable are not to be trusted", log)
+        self.assertIn("%s under %s, or recreate the root, then chmod 700 it" % (DISTRUST, self.root), log)
+        self.assertIn("did NOT start", log)
+        self.assertFalse(self._healthz(), "nothing served")
+        self.assertEqual(_mode(self.root), 0o700, "tightened by the import's chmod; refused on what was read before it")
+
+    def test_a_root_that_read_0775_under_the_private_group_at_import_serves_with_the_boot_line(self):
+        """The round-2b row's line in a real kernel, under the discriminator: a pre-existing 0775 root under the owner's
+        private group is warn-class, so the kernel SERVES, with one boot line naming the private group and the
+        re-tightening and NOT the distrust remedy; /version reads ok on the root as it is now. Skips where this account's
+        primary group is not private (the real database decides in the child)."""
+        if not _private_group_here():
+            raise unittest.SkipTest("this account's primary group is shared on this box: 0775 is a refusal here")
+        os.chmod(self.root, 0o775)
         self._spawn()
         self._await_healthz()
         log = open(self.klog).read()
-        self.assertIn("read 0777 at import (writable by other local users), re-tightened to 0700", log)
-        self.assertIn("entries planted while it was writable are not to be trusted", log)
-        self.assertIn("remove serve-token and repo-root under %s and restart" % self.root, log)
+        self.assertIn("read 0775 at import (a group write bit under the owner's private group, which no other account holds), "
+                      "re-tightened to 0700", log)
+        self.assertNotIn(DISTRUST, log)
         self.assertNotIn("did NOT start", log, "loud, not fatal")
         self.assertEqual(log.count("state root"), 1, "one line:\n" + log[-1500:])
         self.assertEqual(_mode(self.root), 0o700, "tightened by the import's chmod")
@@ -1241,9 +2125,25 @@ class AServedKernelRefusesAtRuntime(unittest.TestCase):
         self.assertIn("romp stops now", log)
 
     def test_no_file_under_the_root_is_written_after_the_exit(self):
-        """extra5-2, behaviourally: snapshot the tree at the moment the process is gone; nothing under the root carries
-        an mtime after the exit, because os._exit stopped every writer at once."""
-        self._spawn()
+        """extra5-2, behaviourally, with the exit instant sampled FROM THE CHILD (correctness-4 of round 3: a stamp taken
+        after the parent saw the process gone trails every write the child could have made, so that pin could not red).
+        The child runs bin/romp-kernel under a shim that wraps os._exit to print a wall-clock stamp right before the
+        real exit; the parent lists every file under the root whose mtime is after that stamp. Nothing is, because
+        os._exit stopped every writer of this process at once and no child of the kernel (a bus, a host) writes under
+        this root in the hermetic setup. A writer that outlived the exit (a spawned process still writing, or an exit
+        that only latched) would show as a later mtime or as no stamp at all."""
+        shim = os.path.join(self.lab, "shim.py")
+        Path(shim).write_text(
+            "import os, runpy, sys, time\n"
+            "real = os._exit\n"
+            "def stamped(code):\n"
+            "    sys.stderr.write('EXIT-STAMP %%r\\n' %% time.time()); sys.stderr.flush()\n"
+            "    real(code)\n"
+            "os._exit = stamped\n"
+            "sys.argv = [%r]\n"
+            "runpy.run_path(%r, run_name='__main__')\n" % (os.path.join(BIN, "romp-kernel"), os.path.join(BIN, "romp-kernel")))
+        env = _kernel_env(self.lab, os.path.join(self.lab, "dist"), self.port, self.token)
+        self.kernel = subprocess.Popen([sys.executable, shim], stdout=open(self.klog, "w"), stderr=subprocess.STDOUT, env=env)
         self._await_healthz()
         os.chmod(self.root, 0o777)
         for _ in range(60):
@@ -1251,27 +2151,97 @@ class AServedKernelRefusesAtRuntime(unittest.TestCase):
                 break
             time.sleep(0.5)
         self.assertIsNotNone(self.kernel.poll(), "the kernel exited")
-        exit_wall = time.time()
+        self.assertEqual(self.kernel.returncode, 2)
+        log = open(self.klog).read()
+        stamps = [float(l.split("EXIT-STAMP", 1)[1]) for l in log.splitlines() if l.startswith("EXIT-STAMP")]
+        self.assertEqual(len(stamps), 1, "the child stamped its exit exactly once:\n" + log[-1200:])
+        exit_wall = stamps[0]
         os.chmod(self.root, 0o700)                             # so the walk can read the tree
-        latest = 0.0
+        late = []
         for dirpath, _dirs, files in os.walk(self.root):
             for name in files:
                 try:
-                    latest = max(latest, os.stat(os.path.join(dirpath, name)).st_mtime)
+                    mt = os.stat(os.path.join(dirpath, name)).st_mtime
                 except OSError:
-                    pass
-        self.assertLessEqual(latest, exit_wall + 0.5, "no writer ran past the exit")
+                    continue
+                if mt > exit_wall:
+                    late.append((os.path.relpath(os.path.join(dirpath, name), self.root), mt - exit_wall))
+        self.assertEqual(late, [], "no writer ran past the exit instant the child stamped")
+
+    def test_an_empty_pre_existing_writable_root_boots_silently_whoever_made_it(self):
+        """THE CREATION EXEMPTION end to end (round 4; correctness-3 of round 3): the root exists at 0777 with NOTHING in
+        it when the kernel starts (another tool made it a moment ago). The judge import tightens it, the gates pass on the
+        emptiness, the kernel SERVES with no state-root line at all: no distrust remedy, no row, nothing to alarm the
+        operator on the ordinary first boot. Before round 4 this kernel exited 2 with the distrust remedy."""
+        os.unlink(os.path.join(self.root, "session-hosts"))    # empty: no entry at all (hosts stay off: no session is made here)
+        os.chmod(self.root, 0o777)
+        self._spawn()
+        self._await_healthz()
+        log = open(self.klog).read()
+        self.assertNotIn("state root", log, "silent:\n" + log[-1500:])
+        self.assertNotIn(DISTRUST, log)
+        self.assertEqual(_mode(self.root), 0o700, "tightened by the import's chmod")
+        v = json.loads(urllib.request.urlopen("http://127.0.0.1:%d/version" % self.port, timeout=3).read())["stateRootMode"]
+        self.assertEqual((v["verdict"], v["modeRead"]), ("ok", "0700"))
 
 
-# ── THE BUS: the second daemon on the same root refuses the same way ─────────────────────────────────────────────
+# ── THE BUS: the second daemon on the same root refuses the same way, by the same code ───────────────────────────
+
+class TheBusSharesTheCheck(unittest.TestCase):
+    """romp-manager's word: one implementation imported twice. postal/postal_service.py loads kernel/state_root_mode.py
+    by path under the fixed module name the kernel's judge uses, so a process holding both holds ONE module object, and
+    the bus carries no copy of the check any more (round 2's reduced copy marked KEEP IN SYNC is gone: a comment is not
+    a mechanism). At 9748684d3 the bus has no _srm and defines its own _state_root_mode_check (AttributeError, and the
+    source assertions fail)."""
+
+    def test_the_bus_loads_the_same_file_as_the_same_module_object(self):
+        ps = load_source("romp_postal_srm_probe", os.path.join(BIN, "romp-postal-service"))
+        self.assertIs(ps._srm, srm, "one module object for the kernel's judge and the bus in one process")
+        self.assertIs(ps._srm, sys.modules["romp_state_root_mode"])
+        self.assertEqual(Path(srm.__file__).resolve(), Path(ROOT, "kernel", "state_root_mode.py").resolve())
+        self.assertIs(ps._errno_text, srm.errno_text)
+
+    def test_the_bus_carries_no_copy_of_the_check(self):
+        src = open(os.path.join(ROOT, "postal", "postal_service.py"), encoding="utf-8").read()
+        self.assertNotIn("def _state_root_mode_check", src, "round 2's reduced copy is gone")
+        gate = src[src.index("def _state_root_gate("):src.index('\n_state_root_gate("start", absent_ok=True)')]
+        self.assertIn("_srm.check(STATE.parent", gate, "the gate calls the shared check")
+        self.assertIn("_srm.import_read_refusal(", gate, "and the shared import-read rule for the start read")
+        self.assertNotIn("0o022", gate, "no mask of its own")
+        self.assertNotIn('if sys.argv[1:2] == ["serve"]', src[:src.index("def _load_serve_token")],
+                         "the gate runs at import in every mode (round 3's E), not under argv serve alone")
+        judge = open(os.path.join(ROOT, "kernel", "judge.py"), encoding="utf-8").read()
+        self.assertIn('load_source("romp_state_root_mode", HERE / "state_root_mode.py")', judge)
+        self.assertIn('"romp_state_root_mode"', src, "the same fixed module name")
+        self.assertNotIn("KEEP IN SYNC", src[src.index("the state root's mode (2026-09-20)"):src.index("def _load_state_root_mode")],
+                         "nothing in the state-root block is kept in sync by hand")
+
+    def test_the_shared_module_imports_the_standard_library_alone(self):
+        import ast
+        tree = ast.parse(open(os.path.join(ROOT, "kernel", "state_root_mode.py"), encoding="utf-8").read())
+        names = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names.update(a.name for a in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                names.add(node.module)
+        self.assertEqual(names, {"errno", "glob", "grp", "gzip", "os", "pathlib", "pwd", "stat", "sys", "threading", "time"},
+                         "stdlib only, nothing from kernel/")
+
 
 class TheBusRefuses(unittest.TestCase):
     """fresh-3: the postal bus is a second serving daemon on the same state root, kept alive by the kernel. What the
     bus's refusal does to everything that is not the bus: the kernel's _ensure_postal_bus respawns a bus that exits on
     a hostile root until the kernel itself refuses at its import gate (on the same root, first); the CLI and MCP, which
-    write nothing under the root, are unaffected. A warn root logs one line and serves. Tested in a child bus process
-    with a hermetic root, the way tests/test_hermetic_kernel_postal.py spawns it. At 84b27dd39 the bus has no mode
-    check: it serves on a 0777 root."""
+    write nothing under the root, are unaffected. A warn root logs one line and serves. Round 4: the start gate's read
+    IS the import-read rule's read, so a pre-existing root read writable by another local user at start exits 2 before
+    the serve token under it is read, whatever the gate's own chmod did; a 0775 root under the owner's private group is
+    re-tightened, said once and served. Tested in a child bus process with a hermetic root, the way
+    tests/test_hermetic_kernel_postal.py spawns it. At 84b27dd39 the bus has no mode check; at 9748684d3 the self-owned
+    0777 root is SERVED with one loud line (with the plant, the loader's exit 1 after that line: "1 != 2" here), the
+    0775 root's line reads "writable by other local users" with the distrust remedy, and the chmod-refused root's line
+    is the old shape ("a group or other write bit"); the 0755, absent, unreadable, loosened and warn arms are controls
+    that pass there too."""
 
     def _bus_env(self, root, port, token="bus-tok"):
         env = {k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "LANG", "LC_ALL")}
@@ -1325,12 +2295,12 @@ class TheBusRefuses(unittest.TestCase):
             % (root, os.path.join(BIN, "romp-postal-service"), os.path.join(BIN, "romp-postal-service")))
         return shim
 
-    def test_a_self_owned_writable_root_at_start_is_tightened_said_loud_and_a_planted_token_faults_in_the_loader(self):
-        """The settled rule at the bus's start (round 2b): the start gate reads 0777, its own chmod tightens the root, and
-        the verdict is on the mode as it reads now (0700), so the bus is not refused; it SAYS what it read, one loud line
-        with the distrust remedy, before the serve token under it is read. The planted symlink at serve-token then
-        meets the token loader, which faults on its own terms (a link is not read through; exit 1, its message), so
-        nothing binds; the link's target is untouched and the link still in place for the operator."""
+    def test_a_pre_existing_root_read_writable_at_start_exits_2_before_the_token_whatever_the_chmod_did(self):
+        """THE IMPORT-READ RULE at the bus's start: a pre-existing 0777 root this uid owns with a symlink planted at
+        serve-token, no chmod interposed. The start gate reads 0777, its own chmod tightens the root, and the verdict
+        stands on the read: exit 2 with the distrust remedy in the kernel's words ("read 0777 at start"), before the
+        serve token is read, so the loader's fault ("symlink") is absent; the link stands, its target untouched, nothing
+        binds, the root reads 0700. At 9748684d3 the bus said one loud line and went on to the loader, exit 1."""
         xdg = tempfile.mkdtemp()
         root = os.path.join(xdg, "romp")
         os.makedirs(root)
@@ -1341,17 +2311,71 @@ class TheBusRefuses(unittest.TestCase):
         port = _free_port()
         r = subprocess.run([sys.executable, os.path.join(BIN, "romp-postal-service"), "serve"],
                            env=self._bus_env(xdg, port, token=None), capture_output=True, text=True, timeout=60)
-        self.assertEqual(r.returncode, 1, "the token loader's RuntimeError, not the gate's exit 2:\n" + r.stderr[-800:])
-        self.assertIn("read 0777 at start (writable by other local users), re-tightened to 0700", r.stderr)
-        self.assertIn("remove serve-token and repo-root under %s and restart" % root, r.stderr)
-        self.assertNotIn("did NOT start", r.stderr, "the gate passed on the mode as read now")
-        self.assertLess(r.stderr.index("read 0777 at start"), r.stderr.index("symlink"), "the state-root line came first")
+        self.assertEqual(r.returncode, 2, "the gate's exit 2, not the loader's exit 1:\n" + r.stderr[-800:])
+        self.assertIn("read 0777 at start (writable by other local users: an other write bit), re-tightened to 0700 by the "
+                      "start's chmod", r.stderr)
+        self.assertIn("entries planted while it was writable are not to be trusted", r.stderr)
+        self.assertIn("%s under %s, or recreate the root, then chmod 700 it" % (DISTRUST, root), r.stderr)
+        self.assertIn("did NOT start", r.stderr)
+        self.assertNotIn("symlink", r.stderr, "the token loader never ran")
         self.assertEqual(target.read_text(), "attacker-planted\n", "the planted entry's target is untouched")
         self.assertTrue(os.path.islink(os.path.join(root, "serve-token")), "and the plant is still there for the operator")
-        self.assertEqual(_mode(root), 0o700)
+        self.assertEqual(_mode(root), 0o700, "the gate's chmod ran; the refusal stood on what was read")
         self.assertFalse(self._ping(port), "nothing bound")
 
-    def test_a_self_owned_writable_root_at_start_without_a_plant_is_served_with_one_loud_line(self):
+    def test_a_pre_existing_0775_root_under_the_private_group_at_start_is_retightened_said_once_and_served(self):
+        """The discriminator at the bus's start: 0775 under the owner's private group is warn-class, re-tightened by the
+        gate's chmod AND said, one line naming the private group and no distrust remedy, and the bus serves; a few polls
+        later still one line. Skips where this account's primary group is not private. At 9748684d3 the line reads
+        "read 0775 at start (writable by other local users)" with the distrust remedy."""
+        if not _private_group_here():
+            raise unittest.SkipTest("this account's primary group is shared on this box: 0775 is a refusal here")
+        xdg = tempfile.mkdtemp()
+        root = os.path.join(xdg, "romp")
+        os.makedirs(root)
+        os.chmod(root, 0o775)
+        port = _free_port()
+        proc, logname = self._serve(xdg, port)
+        self._await_ping(proc, port, logname)
+        self.assertEqual(_mode(root), 0o700, "re-tightened at start")
+        time.sleep(2.5)                                        # a few polls (POLL=1)
+        self.assertIsNone(proc.poll(), "a root under the private group does not exit the bus")
+        said = [l for l in open(logname).read().splitlines() if "state root" in l]
+        self.assertEqual(len(said), 1, "one line, at start, not per poll:\n" + "\n".join(said))
+        self.assertIn("was mode 0775, re-tightened to 0700 (its group write bit is under the owner's private group", said[0])
+        self.assertNotIn(DISTRUST, said[0])
+
+    def test_the_bus_refuses_at_start_on_a_writable_root_whose_chmod_is_refused(self):
+        xdg = tempfile.mkdtemp()
+        root = os.path.join(xdg, "romp")
+        os.makedirs(root)
+        Path(root, "session-hosts").write_text("off\n")       # the root holds an entry: the import-read rule's words apply
+        os.chmod(root, 0o777)
+        port = _free_port()
+        r = subprocess.run([sys.executable, self._chmod_refusing_shim(root)],
+                           env=self._bus_env(xdg, port), capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 2, r.stderr[-800:])
+        self.assertIn("read 0777 at start (writable by other local users: an other write bit), and the start's chmod failed (EPERM",
+                      r.stderr)
+        self.assertIn("did NOT start", r.stderr)
+        self.assertEqual(_mode(root), 0o777, "read, not healed")
+        self.assertFalse(self._ping(port), "nothing bound")
+        # the same root EMPTY: the exemption applies to the read, and the current read (still 0777) refuses on its own line
+        xdg2 = tempfile.mkdtemp()
+        root2 = os.path.join(xdg2, "romp")
+        os.makedirs(root2)
+        os.chmod(root2, 0o777)
+        r2 = subprocess.run([sys.executable, self._chmod_refusing_shim(root2)],
+                            env=self._bus_env(xdg2, _free_port()), capture_output=True, text=True, timeout=60)
+        self.assertEqual(r2.returncode, 2, r2.stderr[-800:])
+        self.assertIn("is mode 0777, writable by other local users (an other write bit)", r2.stderr, "the current read's line")
+        self.assertIn("did NOT start", r2.stderr)
+
+    def test_an_empty_pre_existing_writable_root_the_bus_can_tighten_starts_silently(self):
+        """THE CREATION EXEMPTION at the bus's start (round 4): a pre-existing 0777 root with nothing in it, made by another
+        tool a moment ago. The start gate reads 0777 and an empty listing, its chmod tightens the root, and the bus
+        serves with no state-root line: nothing could have been planted in an empty directory. Before round 4 this start
+        exited 2 with the distrust remedy."""
         xdg = tempfile.mkdtemp()
         root = os.path.join(xdg, "romp")
         os.makedirs(root)
@@ -1359,27 +2383,79 @@ class TheBusRefuses(unittest.TestCase):
         port = _free_port()
         proc, logname = self._serve(xdg, port)
         self._await_ping(proc, port, logname)
-        self.assertEqual(_mode(root), 0o700, "re-tightened at start")
-        time.sleep(2.5)                                        # a few polls (POLL=1)
-        self.assertIsNone(proc.poll(), "a root that reads 0700 now does not exit the bus")
-        said = [l for l in open(logname).read().splitlines() if "state root" in l]
-        self.assertEqual(len(said), 1, "one loud line, at start, not per poll:\n" + "\n".join(said))
-        self.assertIn("read 0777 at start (writable by other local users), re-tightened to 0700", said[0])
-        self.assertIn("remove serve-token and repo-root", said[0])
+        self.assertEqual(_mode(root), 0o700, "tightened at start")
+        self.assertEqual([l for l in open(logname).read().splitlines() if "state root" in l], [], "silent")
 
-    def test_the_bus_refuses_at_start_on_a_writable_root_whose_chmod_is_refused(self):
+    def test_the_gate_runs_at_import_in_every_mode_not_only_serve(self):
+        """extra6-2 of round 3 (E): the module reads or mints the serve token under the root at import in EVERY mode, so
+        `romp mail` and each session's MCP process write under an unchecked root when the gate runs under argv "serve"
+        alone. The gate now runs at import whatever argv says: a bus invocation that is not `serve` over a pre-existing
+        0777 root that holds an entry exits 2 with the distrust line before its command runs; the same invocation over a
+        0700 root runs its command. At 9748684d3 the non-serve invocation ran (exit 0) over the hostile root."""
+        for mode, want in ((0o777, 2), (0o700, 0)):
+            xdg = tempfile.mkdtemp()
+            root = os.path.join(xdg, "romp")
+            os.makedirs(root)
+            Path(root, "session-hosts").write_text("off\n")
+            os.chmod(root, mode)
+            r = subprocess.run([sys.executable, os.path.join(BIN, "romp-postal-service"), "sweep"],
+                               env=self._bus_env(xdg, _free_port()), capture_output=True, text=True, timeout=60)
+            self.assertEqual(r.returncode, want, "%04o: %s" % (mode, r.stderr[-800:]))
+            if want == 2:
+                self.assertIn("read 0777 at start", r.stderr)
+                self.assertIn(DISTRUST, r.stderr)
+                self.assertIn("did NOT start", r.stderr)
+            else:
+                self.assertNotIn("did NOT start", r.stderr)
+
+    def test_a_file_at_the_root_path_stops_the_bus_with_enotdir(self):
+        """regression-1 of round 3 (I) at the bus's start: a FILE where the root should be exits 2 with ENOTDIR and the
+        remedy, before the token work."""
         xdg = tempfile.mkdtemp()
         root = os.path.join(xdg, "romp")
-        os.makedirs(root)
-        os.chmod(root, 0o777)
-        port = _free_port()
-        r = subprocess.run([sys.executable, self._chmod_refusing_shim(root)],
-                           env=self._bus_env(xdg, port), capture_output=True, text=True, timeout=60)
+        Path(root).write_text("not a directory\n")
+        r = subprocess.run([sys.executable, os.path.join(BIN, "romp-postal-service"), "serve"],
+                           env=self._bus_env(xdg, _free_port()), capture_output=True, text=True, timeout=60)
         self.assertEqual(r.returncode, 2, r.stderr[-800:])
-        self.assertIn("writable by other local users", r.stderr)
+        self.assertIn("ENOTDIR", r.stderr)
+        self.assertIn("recreate the root as a directory", r.stderr)
         self.assertIn("did NOT start", r.stderr)
-        self.assertEqual(_mode(root), 0o777, "read, not healed")
-        self.assertFalse(self._ping(port), "nothing bound")
+
+    def test_planted_mail_and_links_under_the_root_are_quarantined_by_a_serving_bus(self):
+        """The bus's guarded readers (round 4; the enumeration's HIGH 3 and two MEDIUMs): a message file planted as a
+        symlink in a box's new/, a symlinked timeline/messages.jsonl and a symlinked postal/server.pid under a 0700 root.
+        The bus starts, and its start sweep and pid write meet the plants through the guard: each is quarantined (moved
+        under <root>/quarantine), nothing is read or written THROUGH a link (the targets keep their bytes), the planted
+        message is never listed as mail, and the bus serves. At 9748684d3 the ledger link is read and appended through,
+        the pid link's target is overwritten with the bus's pid, and the planted message stands to be delivered."""
+        xdg = tempfile.mkdtemp()
+        root = os.path.join(xdg, "romp")
+        os.makedirs(os.path.join(root, "postal", "mail", "11111111-2222-3333-4444-000000000001", "new"))
+        os.makedirs(os.path.join(root, "timeline"))
+        os.chmod(root, 0o700)
+        elsewhere = Path(tempfile.mkdtemp())
+        (elsewhere / "ledger.jsonl").write_text('{"t": 1, "ev": "sent", "id": "planted-id"}\n')
+        (elsewhere / "pidfile").write_text("keep-me\n")
+        (elsewhere / "mail").write_text("From: planted\nFrom-Id: x\nDate: 1\n\nplanted body\n")
+        os.symlink(elsewhere / "ledger.jsonl", os.path.join(root, "timeline", "messages.jsonl"))
+        os.symlink(elsewhere / "pidfile", os.path.join(root, "postal", "server.pid"))
+        os.symlink(elsewhere / "mail", os.path.join(root, "postal", "mail", "11111111-2222-3333-4444-000000000001", "new", "planted-id"))
+        port = _free_port()
+        proc, logname = self._serve(xdg, port)
+        self._await_ping(proc, port, logname)
+        time.sleep(1.0)
+        log = open(logname).read()
+        q = sorted(os.listdir(os.path.join(root, "quarantine"))) if os.path.isdir(os.path.join(root, "quarantine")) else []
+        self.assertTrue(any(n.endswith(".timeline.messages.jsonl") for n in q), (q, log[-1500:]))
+        self.assertTrue(any(n.endswith(".postal.server.pid") for n in q), (q, log[-1500:]))
+        self.assertEqual((elsewhere / "ledger.jsonl").read_text(), '{"t": 1, "ev": "sent", "id": "planted-id"}\n',
+                         "nothing appended through the link")
+        self.assertEqual((elsewhere / "pidfile").read_text(), "keep-me\n", "nothing written through the link")
+        self.assertEqual(log.count("quarantined to"), len(q), "one line per quarantine:\n" + log[-1500:])
+        pid = Path(root, "postal", "server.pid")
+        self.assertFalse(pid.is_symlink())
+        self.assertEqual(pid.read_text().strip(), str(proc.pid), "the pid file is the bus's own regular file")
+        self.assertEqual(_mode(os.path.join(root, "quarantine")), 0o700)
 
     def test_a_self_owned_0755_root_at_start_is_retightened_said_once_and_served(self):
         """The repair leaves a trace at the bus's start too (round 2): a pre-existing 0755 root this uid owns is
@@ -1402,7 +2478,7 @@ class TheBusRefuses(unittest.TestCase):
     def test_the_bus_makes_an_absent_root_0700_and_says_nothing(self):
         """The creation case: no root at the bus's start (ENOENT is unmade, not unverified, at import alone). The bus
         makes it, 0700 whatever the umask, and serves with no state-root line: the umask's mode on a directory this
-        process just made is a creation default, not a loosening."""
+        process just made is a creation default, not a loosening (the exemption a created root has under the rule)."""
         xdg = tempfile.mkdtemp()
         root = os.path.join(xdg, "romp")
         self.assertFalse(os.path.exists(root))
@@ -1465,8 +2541,8 @@ class TheBusRefuses(unittest.TestCase):
         root = os.path.join(xdg, "romp")
         os.makedirs(root)
         os.chmod(root, 0o755)
-        # interpose a chmod refusal for the root, so the bus's chmod-first start gate cannot tighten it and the warn
-        # stands (a warn root the bus CAN tighten becomes ok and serves; the signal here is a root it cannot).
+        # interpose a chmod refusal for the root, so the bus's start gate cannot tighten it and the warn stands (a warn
+        # root the bus CAN tighten becomes ok and serves; the signal here is a root it cannot).
         port = _free_port()
         shim = self._chmod_refusing_shim(root)
         logf = tempfile.NamedTemporaryFile(mode="w", suffix=".log", delete=False)
@@ -1491,6 +2567,679 @@ class TheBusRefuses(unittest.TestCase):
             if proc.poll() is None:
                 proc.kill()
                 proc.wait(timeout=10)
+
+
+# ── THE GUARDED READERS: quarantine, never adopt (round 4, the ruling's A, B and C) ──────────────────────────────
+
+def _lstat_owned_by(target, uid):
+    """An os.lstat that reports `target` as owned by `uid` (the shape of an entry another local user planted while the
+    root was writable; a single account cannot make one) and answers every other path from the real lstat."""
+    real = os.lstat
+    rt = os.path.realpath(str(target))          # resolved once, before the patch (realpath calls lstat)
+
+    def f(p, *a, **k):
+        st = real(p, *a, **k)
+        if os.path.normpath(os.fspath(p)) == rt:
+            return os.stat_result(tuple(st)[:4] + (uid,) + tuple(st)[5:])
+        return st
+    return f
+
+
+class TheGuardedReadersQuarantine(_KernelState):
+    """kernel/state_root_mode.py's Reader, as the kernel wires it (_gr over jd.STATE, the row hook into the error centre):
+    the guard is OWNERSHIP plus the absence of a symlink plus the discriminator, checked on every component from the
+    root down (the ruling's C: never the directory's mode alone), and a failure QUARANTINES the entry, says one line,
+    files one row and reads the path as absent (the ruling's B: a plant that was merely skipped was re-adopted at the
+    next boot; a quarantined one is gone from the root). The named plants of round 3: a foreign-owned sdkvenv
+    site-packages (kernel-1: it went onto sys.path[0] and shadowed every later import), a symlinked pending-ops.json
+    (correctness-1: its parked ops replayed into a live session as prompts and picks), the memo files (extra5-5). The
+    legitimacy cases the refuters established: a 0664 pending-ops mirror under the owner's private group (the
+    pre-2026-09-18 mirror) and a 0775 venv under the private group (what bin/romp-sdk-setup builds under umask 0002)
+    are ADOPTED. At 9748684d3 every plant here is adopted: the site-packages joins sys.path, the parked ops load, the
+    memo rows load (checked against a detached worktree of that commit)."""
+
+    def _quarantined(self):
+        q = Path(self.root, srm.QUARANTINE_DIR)
+        return sorted(p.name for p in q.iterdir()) if q.is_dir() else []
+
+    def _mirror_here(self):
+        """_PENDING_OPS_FILE is bound at the kernel's import (a fact of the module, not of this change): pointed at this
+        test's root for the arm's length."""
+        patcher = mock.patch.object(km, "_PENDING_OPS_FILE", Path(self.root, "pending-ops.json"))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _site(self):
+        sp = Path(self.root, "sdkvenv", "lib", "python" + km._running_python_tag(), "site-packages")
+        sp.mkdir(parents=True)
+        (sp / "claude_agent_sdk").mkdir()
+        (sp / "claude_agent_sdk" / "__init__.py").write_text("")
+        return sp
+
+    def _ensure(self, importable_from):
+        import importlib.util
+        real_find_spec = importlib.util.find_spec
+
+        def fake_find_spec(name, *a, **k):
+            if name != "claude_agent_sdk":
+                return real_find_spec(name, *a, **k)
+            if importable_from and any(p.startswith(str(importable_from)) for p in sys.path):
+                return SimpleNamespace(name=name)
+            return None
+        km._SDK_VENV_BUILT_FOR = []
+        with mock.patch.object(importlib.util, "find_spec", fake_find_spec), mock.patch.object(km, "_sdk_backend", None), \
+             contextlib.redirect_stderr(io.StringIO()):
+            return km._ensure_sdk_on_path()
+
+    def test_a_planted_sdkvenv_owned_by_another_uid_is_quarantined_and_never_on_sys_path(self):
+        """kernel-1 of round 3: the venv directory reads as another uid's (os.lstat interposed for that one path: a
+        single account cannot plant a foreign-owned entry for real). _ensure_sdk_on_path finds no venv, sys.path is
+        untouched, the directory is in <root>/quarantine as <stamp>.sdkvenv, one refused-kind row names it and the
+        reason (owner). The same venv owned by this uid is adopted (the control, below)."""
+        sp = self._site()
+        with mock.patch("os.lstat", new=_lstat_owned_by(Path(self.root, "sdkvenv"), os.geteuid() + 1)):
+            self.assertFalse(self._ensure(sp))
+        self.assertNotIn(str(sp), sys.path, "a planted site-packages never reaches sys.path")
+        self.assertFalse(os.path.exists(os.path.join(self.root, "sdkvenv")), "gone from the root")
+        q = self._quarantined()
+        self.assertEqual(len(q), 1, q)
+        self.assertTrue(q[0].endswith(".sdkvenv"), q[0])
+        self.assertTrue(os.path.isdir(os.path.join(self.root, srm.QUARANTINE_DIR, q[0])), "moved whole, not deleted")
+        rows = [r["text"] for r in self.refused_rows()]
+        self.assertEqual(len(rows), 1, rows)
+        self.assertIn("sdkvenv was not this uid's: quarantined", rows[0])
+        self.assertEqual([r[1] for r in km._gr.refused], ["owner"])
+        # the control: this uid's venv at 0775 under the private group (the ruling's legitimacy case) is adopted
+        if not _private_group_here():
+            return
+        sp = self._site()
+        for d in (Path(self.root, "sdkvenv"), Path(self.root, "sdkvenv", "lib"), sp.parent, sp):
+            os.chmod(d, 0o775)
+        self.assertTrue(self._ensure(sp), "a 0775 venv under the owner's private group is adopted")
+        self.assertIn(str(sp), sys.path)
+        self.assertEqual(sys.path.index(str(sp)), 0, "at the front, as before: the guard changes what is admitted, not where")
+        self.assertEqual(len(self._quarantined()), 1, "nothing more quarantined")
+
+    def test_a_0775_venv_under_the_private_group_is_adopted_and_a_symlinked_one_is_not(self):
+        if not _private_group_here():
+            raise unittest.SkipTest("this account's primary group is shared on this box")
+        sp = self._site()
+        for d in (Path(self.root, "sdkvenv"), Path(self.root, "sdkvenv", "lib"), sp.parent, sp):
+            os.chmod(d, 0o775)
+        self.assertTrue(self._ensure(sp))
+        self.assertIn(str(sp), sys.path)
+        self.assertEqual(self._quarantined(), [])
+        # a venv reached through a symlink planted at the root's sdkvenv entry: refused at the first component
+        sys.path[:] = [p for p in sys.path if not p.startswith(self.root)]
+        shutil.rmtree(os.path.join(self.root, "sdkvenv"))
+        elsewhere = Path(tempfile.mkdtemp(), "sdkvenv")
+        (elsewhere / "lib" / ("python" + km._running_python_tag()) / "site-packages").mkdir(parents=True)
+        os.symlink(elsewhere, os.path.join(self.root, "sdkvenv"))
+        self.assertFalse(self._ensure(elsewhere / "lib" / ("python" + km._running_python_tag()) / "site-packages"))
+        self.assertFalse(any(p.startswith(str(elsewhere)) for p in sys.path))
+        self.assertTrue(any(n.endswith(".sdkvenv") for n in self._quarantined()))
+        self.assertTrue(elsewhere.is_dir(), "the link's target is untouched")
+
+    def _codex_backend(self):
+        return sys.modules.get("romp_codex_backend") or load_source("romp_codex_backend", os.path.join(ROOT, "kernel", "codex_backend.py"))
+
+    def _codex_site(self, cb, under=None):
+        sp = Path(under or self.root, "codexvenv", "lib", "python" + cb._running_python_tag(), "site-packages")
+        sp.mkdir(parents=True)
+        (sp / "openai_codex").mkdir()
+        (sp / "openai_codex" / "__init__.py").write_text("")
+        return sp
+
+    def _ensure_codex(self, cb, importable_from):
+        import importlib.util
+        real_find_spec = importlib.util.find_spec
+
+        def fake_find_spec(name, *a, **k):
+            if name != "openai_codex":
+                return real_find_spec(name, *a, **k)
+            if importable_from and any(p.startswith(str(importable_from)) for p in sys.path):
+                return SimpleNamespace(name=name)
+            return None
+        cb._CODEX_VENV_BUILT_FOR = []
+        with mock.patch.object(importlib.util, "find_spec", fake_find_spec), contextlib.redirect_stderr(io.StringIO()):
+            return cb.ensure_codex_sdk(self.root)
+
+    def test_a_planted_codexvenv_owned_by_another_uid_is_quarantined_and_never_on_sys_path(self):
+        """The round-4 review's twin of kernel-1: kernel/codex_backend.py's ensure_codex_sdk globbed codexvenv/lib/python3.*/
+        site-packages under the root bare and inserted the match at sys.path[0] (reachable on /models when Codex is the
+        default backend, and on every Codex launch or resume), and the first census did not cover the module. Now the
+        discovery goes through the module's per-call guarded reader: the venv directory reads as another uid's (os.lstat
+        interposed for that one path), ensure_codex_sdk finds no venv, sys.path is untouched, the directory is in
+        <root>/quarantine as <stamp>.codexvenv, and one refused-kind row names it and the reason (owner), filed through
+        the shared module's REFUSED_HOOKS (the kernel's row hook). The controls: this uid's venv is adopted at sys.path[0]
+        as before, and a venv reached through a symlink planted at the root's codexvenv entry is refused at that first
+        component and never followed. Before this pass (the round-4 tree as reviewed) the planted venv joined sys.path[0]
+        and a module planted in it ran on import (the reviewer's reproduction)."""
+        cb = self._codex_backend()
+        sp = self._codex_site(cb)
+        with mock.patch("os.lstat", new=_lstat_owned_by(Path(self.root, "codexvenv"), os.geteuid() + 1)):
+            self.assertFalse(self._ensure_codex(cb, sp))
+        self.assertNotIn(str(sp), sys.path, "a planted site-packages never reaches sys.path")
+        self.assertFalse(os.path.exists(os.path.join(self.root, "codexvenv")), "gone from the root")
+        q = self._quarantined()
+        self.assertEqual(len(q), 1, q)
+        self.assertTrue(q[0].endswith(".codexvenv"), q[0])
+        rows = [r["text"] for r in self.refused_rows()]
+        self.assertEqual(len(rows), 1, rows)
+        self.assertIn("codexvenv was not this uid's: quarantined", rows[0])
+        # the control: this uid's venv is adopted, at the front
+        sp = self._codex_site(cb)
+        self.assertTrue(self._ensure_codex(cb, sp), "this uid's codexvenv is adopted")
+        self.assertEqual(sys.path.index(str(sp)), 0, "at the front, as before: the guard changes what is admitted, not where")
+        self.assertEqual(len(self._quarantined()), 1, "nothing more quarantined")
+        # a venv reached through a symlink planted at the root's codexvenv entry: refused at the first component
+        sys.path[:] = [p for p in sys.path if not p.startswith(self.root)]
+        shutil.rmtree(os.path.join(self.root, "codexvenv"))
+        elsewhere = Path(tempfile.mkdtemp())
+        far = self._codex_site(cb, under=elsewhere)
+        os.symlink(elsewhere / "codexvenv", os.path.join(self.root, "codexvenv"))
+        self.assertFalse(self._ensure_codex(cb, far))
+        self.assertFalse(any(p.startswith(str(elsewhere)) for p in sys.path), "nothing under the link's target is on sys.path")
+        self.assertEqual(sum(".codexvenv" in n for n in self._quarantined()), 2, self._quarantined())   # the second entry in one second takes a -1 suffix
+        self.assertTrue(far.is_dir(), "the link's target is untouched")
+
+    def test_a_planted_logins_link_is_quarantined_and_no_record_is_read(self):
+        """The round-4 review's demonstration of the handed-root modules: a `logins` symlink planted at the root, pointing
+        at a directory holding a record whose tokenCmd is attacker-chosen (the login-billing road runs that command as
+        /bin/sh). kernel/logins.py reads through its per-call guarded reader now: records() answers nothing, read_record()
+        answers None, the link is quarantined (its target untouched), one row is filed, and a record this uid writes
+        afterwards is read as before. Before this pass records() returned the planted record and the link stood."""
+        lg = km.lg
+        elsewhere = Path(tempfile.mkdtemp(), "logins")
+        elsewhere.mkdir()
+        planted = {"id": "aaaaaaaaaaaa", "label": "planted", "tokenCmd": "echo sk-ant-planted-DO-NOT-USE", "addedAt": 1}
+        (elsewhere / "aaaaaaaaaaaa.json").write_text(json.dumps(planted))
+        os.symlink(elsewhere, os.path.join(self.root, "logins"))
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(lg.records(Path(self.root)), [], "nothing planted is listed")
+        self.assertTrue((elsewhere / "aaaaaaaaaaaa.json").exists(), "the link's target is untouched")
+        self.assertFalse(os.path.lexists(os.path.join(self.root, "logins")), "the link is gone from the root")
+        self.assertTrue(any(n.endswith(".logins") for n in self._quarantined()), self._quarantined())
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertIsNone(lg.read_record(Path(self.root), "aaaaaaaaaaaa"))
+        rows = [r["text"] for r in self.refused_rows()]
+        self.assertEqual(len(rows), 1, rows)
+        self.assertIn("logins was a symlink: quarantined", rows[0])
+        lg.write_record(Path(self.root), {"id": "bbbbbbbbbbbb", "label": "mine", "addedAt": 2})
+        self.assertEqual([r["id"] for r in lg.records(Path(self.root))], ["bbbbbbbbbbbb"], "this uid's record reads as before")
+
+    def test_a_planted_pending_ops_symlink_is_quarantined_and_nothing_is_delivered(self):
+        """correctness-1 of round 3, the plant with the shortest road to the user: pending-ops.json planted as a symlink
+        to a file holding a parked op for a session. _load_pending_ops reads the mirror through the guard: the link is
+        quarantined, the target keeps its bytes, the queue restored is EMPTY, and the drain, driven here with the
+        delivery seam watched, delivers nothing. At 9748684d3 the op loads and the drain replays it."""
+        sid = "11111111-2222-3333-4444-000000000abc"
+        elsewhere = Path(tempfile.mkdtemp(), "ops.json")
+        elsewhere.write_text(json.dumps({sid: [["send", "planted parked text", None, None]]}))
+        os.symlink(elsewhere, os.path.join(self.root, "pending-ops.json"))
+        self._mirror_here()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            queue = km._load_pending_ops()
+        self.assertEqual(queue, {}, "nothing planted is adopted")
+        self.assertFalse(os.path.lexists(os.path.join(self.root, "pending-ops.json")), "the link is gone from the root")
+        q = self._quarantined()
+        self.assertEqual(len(q), 1, q)
+        self.assertTrue(q[0].endswith(".pending-ops.json"), q[0])
+        self.assertEqual(elsewhere.read_text(), json.dumps({sid: [["send", "planted parked text", None, None]]}), "the target's bytes stand")
+        self.assertIn("pending-ops.json is a symlink: quarantined to", err.getvalue())
+        rows = [r["text"] for r in self.refused_rows()]
+        self.assertEqual(len(rows), 1, rows)
+        self.assertIn("pending-ops.json was a symlink: quarantined and read as absent", rows[0])
+        saved = km._pending_ops
+        km._pending_ops = queue
+        try:
+            with mock.patch.object(km, "_deliver_send_batch") as deliver, contextlib.redirect_stderr(io.StringIO()):
+                km._apply_pending_ops()
+            deliver.assert_not_called()
+        finally:
+            km._pending_ops = saved
+        # a second boot: the plant is not there to be re-adopted (the ruling's B), and the quarantine keeps it
+        self.assertEqual(km._load_pending_ops(), {})
+        self.assertEqual(len(self._quarantined()), 1)
+
+    def test_a_0664_pending_ops_mirror_under_the_private_group_is_adopted(self):
+        """The refuters' legitimacy case (round 3's C): a mirror that sat at the umask's 0664 before _save_pending_ops
+        passed mode 0o600 (2026-09-18) is this uid's, not a symlink, and its group write bit is under the owner's private
+        group, so the guard passes it and the queue loads. A rule on the file's mode alone would have dropped it."""
+        if not _private_group_here():
+            raise unittest.SkipTest("this account's primary group is shared on this box")
+        sid = "11111111-2222-3333-4444-000000000abd"
+        p = Path(self.root, "pending-ops.json")
+        p.write_text(json.dumps({sid: [["model", "sonnet"]]}))
+        os.chmod(p, 0o664)
+        self._mirror_here()
+        with contextlib.redirect_stderr(io.StringIO()):
+            queue = km._load_pending_ops()
+        self.assertEqual(queue, {sid: [("model", "sonnet")]})
+        self.assertEqual(self._quarantined(), [])
+        self.assertEqual(self.refused_rows(), [])
+        # and the same mirror with an OTHER write bit is refused: any local user could have written it
+        os.chmod(p, 0o666)
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(km._load_pending_ops(), {})
+        self.assertTrue(any(n.endswith(".pending-ops.json") for n in self._quarantined()))
+        self.assertIn("writable by another local user", self.refused_rows()[0]["text"])
+
+    def test_a_symlinked_memo_file_is_quarantined_and_reads_as_absent(self):
+        """extra5-5 of round 3: the memo files the import reads through read_text with shape checks alone. Each planted as
+        a symlink to a well-formed file elsewhere: the loaders read them as absent (an empty memo), the links are
+        quarantined, the targets untouched."""
+        elsewhere = Path(tempfile.mkdtemp())
+        (elsewhere / "downtime.jsonl").write_text(json.dumps({"start": 1.0, "end": 2.0}) + "\n")
+        (elsewhere / "tick.json").write_text(json.dumps({"auto-nudge|sid": [1, 2, 3, 4, 5, 6]}))
+        os.symlink(elsewhere / "downtime.jsonl", os.path.join(self.root, "kernel-downtime.jsonl"))
+        os.symlink(elsewhere / "tick.json", os.path.join(self.root, "tick-seen.json"))
+        saved_downtime = list(km._downtime)
+        saved_tick = dict(km._TICK_SEEN)
+        try:
+            km._downtime[:] = []
+            km._TICK_SEEN.clear()
+            with contextlib.redirect_stderr(io.StringIO()):
+                km._load_downtime()
+                n = km._load_tick_seen()
+            self.assertEqual(km._downtime, [], "the planted downtime rows are not adopted")
+            self.assertEqual(n, 0, "the planted memo is not adopted")
+        finally:
+            km._downtime[:] = saved_downtime
+            km._TICK_SEEN.clear(); km._TICK_SEEN.update(saved_tick)
+        q = self._quarantined()
+        self.assertEqual(sorted(n.split(".", 1)[1] for n in q), ["kernel-downtime.jsonl", "tick-seen.json"])
+        self.assertTrue((elsewhere / "downtime.jsonl").exists() and (elsewhere / "tick.json").exists())
+        self.assertEqual(len(self.refused_rows()), 2)
+
+    def test_the_quarantine_names_the_stamp_and_the_path_and_is_0700_and_a_failed_move_still_reads_absent(self):
+        """The quarantine contract's shape: <root>/quarantine/<utc-stamp>.<relative-path-with-slashes-as-dots>, the
+        directory created 0700 whatever the umask, the FIRST failing component moved (a symlinked directory takes its
+        contents with it). A quarantine that itself fails (os.rename refused) says so and the read still answers absent,
+        never the planted bytes."""
+        elsewhere = Path(tempfile.mkdtemp())
+        (elsewhere / "b.json").write_text("{}")
+        os.mkdir(os.path.join(self.root, "a"))
+        os.symlink(elsewhere, os.path.join(self.root, "a", "linked"))
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(FileNotFoundError):
+                km._gr.read_text(Path(self.root, "a", "linked", "b.json"))
+        q = self._quarantined()
+        self.assertEqual(len(q), 1, q)
+        stamp, rel = q[0].split(".", 1)
+        self.assertRegex(stamp, r"^\d{8}T\d{6}Z$")
+        self.assertEqual(rel, "a.linked", "the first failing component, its path below the root with slashes as dots")
+        self.assertEqual(_mode(os.path.join(self.root, srm.QUARANTINE_DIR)), 0o700)
+        self.assertTrue(os.path.isdir(os.path.join(self.root, "a")), "the trusted parent stays")
+        self.assertTrue((elsewhere / "b.json").exists())
+        # a move that fails: said, and the read is still absent
+        os.symlink(elsewhere, os.path.join(self.root, "a", "linked2"))
+        err = io.StringIO()
+        real = os.rename
+
+        def refuse(src, dst, *a, **k):
+            if os.path.basename(str(src)) == "linked2":
+                raise PermissionError(1, "refused (interposed)")
+            return real(src, dst, *a, **k)
+        with mock.patch("os.rename", new=refuse), contextlib.redirect_stderr(err):
+            with self.assertRaises(FileNotFoundError):
+                km._gr.read_text(Path(self.root, "a", "linked2", "b.json"))
+        self.assertIn("could not be quarantined (EPERM", err.getvalue())
+        self.assertIn("read as absent", err.getvalue())
+        self.assertTrue(os.path.islink(os.path.join(self.root, "a", "linked2")), "the plant stands; the operator removes it")
+        self.assertNotIn("interposed", err.getvalue(), "the errno, never the exception's text")
+
+    def test_the_readers_pass_a_path_outside_the_root_through_and_read_absent_on_a_root_that_fails(self):
+        """A path that is not under the root is not the root's to guard: the plain read runs (a transcript under the
+        Claude config directory). A root that fails its own check (here: reading as another uid's) makes every read
+        under it absent, and quarantines nothing (the root is not an entry; the gates own that case)."""
+        outside = Path(tempfile.mkdtemp(), "t.jsonl")
+        outside.write_text("outside\n")
+        self.assertEqual(km._gr.read_text(outside), "outside\n")
+        Path(self.root, "spend.json").write_text("{}")
+        with mock.patch("os.lstat", new=_lstat_owned_by(self.root, os.geteuid() + 1)), contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(FileNotFoundError):
+                km._gr.read_text(Path(self.root, "spend.json"))
+        self.assertTrue(Path(self.root, "spend.json").exists(), "nothing under a failing root is moved: the root is the gate's")
+        self.assertEqual(self._quarantined(), [])
+        self.assertEqual([r[1] for r in km._gr.refused], ["root"])
+        self.assertEqual(self.refused_rows(), [], "a root failure files no row: the gate's check is the root's surface")
+        # said once per process per root and cause, not once per read (a backend over a root that is gone read on every cycle)
+        err = io.StringIO()
+        with mock.patch("os.lstat", new=_lstat_owned_by(self.root, os.geteuid() + 1)), contextlib.redirect_stderr(err):
+            for _ in range(3):
+                with self.assertRaises(FileNotFoundError):
+                    km._gr.read_text(Path(self.root, "spend.json"))
+        self.assertEqual(err.getvalue(), "", "already said for this root")
+        self.assertEqual([r[1] for r in km._gr.refused], ["root"], "recorded once")
+
+
+# ── EVERY LONG-LIVED WRITER RUNS THE CHECK: the session host (round 3's E) ───────────────────────────────────────
+
+HOST_BEAT_WAIT_S = 12.0   # a few of the host's beats (LEASE_HEARTBEAT_S is 3 s): the wait for a loosened root to be seen
+
+
+class TheSessionHostRunsTheCheck(unittest.TestCase):
+    """extra8-3 and kernel-3 of round 3: bin/romp-session-host is on by default, writes its lease under the state root
+    every LEASE_HEARTBEAT_S, is built to outlive the kernel and, until round 4, carried no check, so the kernel's exit 2
+    stopped nothing here. Now the host loads the one shared module (kernel/state_root_mode.py) and runs the check at
+    start (a pre-existing root that held entries and read writable by another exits 2 before the CLI is spawned; a file
+    at the root's path exits 2 with ENOTDIR) and on every beat (a root loosened under a running host exits 2 within a
+    beat or two). The fake CLI of tests/fixtures/fake_claude.py stands in for Claude Code; the host runs on its pipe
+    transport (no SDK). At 9748684d3 the host starts and beats on under every one of these roots."""
+
+    def setUp(self):
+        self.state = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.state, True)
+        self.sid = "11111111-2222-3333-4444-0000000000a1"
+        self.fake_log = os.path.join(self.state, "fake-cli.log")
+
+    def _spec(self):
+        d = Path(self.state) / "hosts" / self.sid
+        d.mkdir(parents=True, mode=0o700)
+        spec = {"sid": self.sid, "name": "web", "version": "abc12345", "state_dir": self.state, "protocol": 1,
+                "cli_path": os.path.join(HERE, "fixtures", "fake_claude.py"), "cwd": self.state,
+                "permission_prompt_tool_name": "stdio", "permission_mode": "default",
+                "env": {"FAKE_CLI_LOG": self.fake_log, "FAKE_CLI_TRANSCRIPT_DIR": os.path.join(self.state, "transcripts"),
+                        "FAKE_CLI_SESSION_ID": "11111111-2222-3333-4444-0000000000f1"},
+                "max_buffer_size": 1024 * 1024, "hook_self_answer_s": 2, "unattached_grace_s": 3600}
+        p = d / "spawn.json"
+        p.write_text(json.dumps(spec)); p.chmod(0o600)
+        return str(p)
+
+    def _env(self):
+        env = dict(os.environ, PYTHONUNBUFFERED="1", ROMP_SDK_SITE=os.path.join(self.state, "no-sdk-here"))
+        for name in ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"):
+            env.pop(name, None)
+        return env
+
+    def _start(self):
+        spec_path = self._spec()
+        errlog = os.path.join(self.state, "host.stderr")
+        proc = subprocess.Popen([sys.executable, os.path.join(BIN, "romp-session-host"), spec_path],
+                                stdout=subprocess.DEVNULL, stderr=open(errlog, "w"), env=self._env(), start_new_session=True)
+        self.addCleanup(lambda: proc.poll() is None and (os.killpg(proc.pid, 9), proc.wait(timeout=10)))
+        return proc, errlog
+
+    def _hostlog(self):
+        p = Path(self.state) / "hosts" / self.sid / "host.log"
+        return [json.loads(l) for l in p.read_text().splitlines()] if p.exists() else []
+
+    def test_a_hostile_root_at_start_exits_2_before_the_cli_is_spawned(self):
+        os.chmod(self.state, 0o777)                      # the root holds entries (hosts/): the import-read rule's case
+        proc, errlog = self._start()
+        proc.wait(timeout=60)
+        err = open(errlog).read()
+        self.assertEqual(proc.returncode, 2, err[-1200:])
+        self.assertIn("romp-session-host: state root", err)
+        self.assertIn("read 0777 at start (writable by other local users: an other write bit)", err)
+        self.assertIn(DISTRUST, err)
+        self.assertIn("The host stops now (exit 2; found at start)", err)
+        self.assertFalse(os.path.exists(self.fake_log), "the CLI was never spawned")
+        kinds = [r["kind"] for r in self._hostlog()]
+        self.assertIn("state-root-refused", kinds, kinds)
+        self.assertNotIn("host-started", kinds)
+        row = next(r for r in self._hostlog() if r["kind"] == "state-root-refused")
+        self.assertEqual(row["where"], "start")
+        self.assertNotIn(self.state, json.dumps(row), "the row carries no path")
+        self.assertEqual(_mode(self.state), 0o700, "read before repair: the check's chmod tightened it, the refusal stood on the read")
+
+    def test_a_file_at_the_root_path_exits_2_with_enotdir(self):
+        spec_path = self._spec()
+        spec = json.loads(Path(spec_path).read_text())
+        notdir = os.path.join(tempfile.mkdtemp(), "romp")
+        Path(notdir).write_text("not a directory\n")
+        spec["state_dir"] = notdir
+        Path(spec_path).write_text(json.dumps(spec))
+        r = subprocess.run([sys.executable, os.path.join(BIN, "romp-session-host"), spec_path], env=self._env(),
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 2, r.stderr[-800:])
+        self.assertIn("ENOTDIR", r.stderr)
+        self.assertIn("recreate the root as a directory", r.stderr)
+        self.assertFalse(os.path.exists(self.fake_log))
+
+    def test_a_root_loosened_under_a_running_host_exits_2_within_a_beat(self):
+        proc, errlog = self._start()
+        sock = Path(self.state) / "hosts" / (self.sid[:8] + ".sock")
+        for _ in range(300):                             # the socket is the host's "up" (the CLI is behind it)
+            if sock.exists() or proc.poll() is not None:
+                break
+            time.sleep(0.05)
+        if proc.poll() is not None:
+            raise unittest.SkipTest("the host did not come up here:\n" + open(errlog).read()[-800:])
+        self.assertTrue(sock.exists())
+        os.chmod(self.state, 0o777)
+        for _ in range(int(HOST_BEAT_WAIT_S * 10)):
+            if proc.poll() is not None:
+                break
+            time.sleep(0.1)
+        self.assertIsNotNone(proc.poll(), "the host exited on the loosened root within a beat or two:\n" + open(errlog).read()[-800:])
+        self.assertEqual(proc.returncode, 2)
+        err = open(errlog).read()
+        self.assertIn("is mode 0777, writable by other local users", err)
+        self.assertIn("found at beat", err)
+        kinds = [r["kind"] for r in self._hostlog()]
+        self.assertIn("host-started", kinds)
+        self.assertIn("state-root-refused", kinds)
+        self.assertEqual(_mode(self.state), 0o700, "read before repair: re-tightened on the way out")
+
+    def test_a_planted_spec_is_refused_and_the_host_does_not_start(self):
+        """The spec itself is read through the guard (the host directory is <root>/hosts/<sid>): a spawn.json replaced by
+        a symlink to a file elsewhere is quarantined, and the host exits 2 naming the spec, never running a CLI the
+        planted spec names."""
+        spec_path = self._spec()
+        elsewhere = Path(tempfile.mkdtemp(), "spawn.json")
+        elsewhere.write_text(Path(spec_path).read_text())
+        os.unlink(spec_path)
+        os.symlink(elsewhere, spec_path)
+        r = subprocess.run([sys.executable, os.path.join(BIN, "romp-session-host"), spec_path], env=self._env(),
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 2, r.stderr[-800:])
+        self.assertIn("spawn.json is a symlink: quarantined to", r.stderr)
+        self.assertIn("cannot read the spawn spec", r.stderr)
+        self.assertFalse(os.path.lexists(spec_path))
+        self.assertTrue(any(n.endswith(".hosts.%s.spawn.json" % self.sid) for n in os.listdir(os.path.join(self.state, "quarantine"))))
+        self.assertFalse(os.path.exists(self.fake_log))
+
+
+# ── ONE TEXT: the predicate lives in kernel/state_root_mode.py alone (round 3's F) ────────────────────────────────
+
+class TheFloorReachesEveryMintedRoot(unittest.TestCase):
+    """tests-5 and extra8-6 of round 3, and the round-4 review's finding on their reach: the 0700 floor for a privately
+    minted state root lives in ONE place, jd._rebind_state, which chmods the root when it exists and is this uid's, so it
+    reaches a root a test makes only when the test binds it through the seam AFTER the directory exists. About thirty
+    sites in twenty-two test modules made their root with a bare mkdir at the umask's mode (0775 under 0002) and bound it
+    bare, or bound it through the seam before making it, so the floor never saw it: green on a user-private-group box
+    (warn-class), a killed worker on a box whose primary group is shared. Those sites now bind through
+    `jd._rebind_state(root, make=True)`, and this pin holds the rule by construction, as an AST fact over every
+    tests/*.py: (a) no `<x>.jd.STATE.mkdir(...)` (a root bound first and made after); (b) no bare `<x>.jd.STATE = <name>`
+    where the same scope made `<name>` with mkdir, os.mkdir or os.makedirs and did not chmod it itself (a root a test
+    loosens or locks on purpose is its own subject and stays bare). A root taken from mkdtemp or TemporaryDirectory is
+    0700 already and is outside the hazard."""
+
+    @staticmethod
+    def _offences(src, rel="<src>"):
+        tree = ast.parse(src)
+        enclosing = {}
+
+        def visit(node, cur):
+            for child in ast.iter_child_nodes(node):
+                enclosing[id(child)] = cur
+                visit(child, child if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) else cur)
+        visit(tree, None)
+
+        def scope(fn):
+            return list(ast.walk(fn)) if fn is not None else [n for n in ast.walk(tree) if enclosing.get(id(n)) is None]
+        out = []
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "mkdir" \
+                    and ast.unparse(n.func.value).endswith("jd.STATE"):
+                out.append("%s:%d bare mkdir of the bound root: %s" % (rel, n.lineno, ast.unparse(n)))
+            if isinstance(n, ast.Assign):
+                for tgt in n.targets:
+                    pairs = list(zip(tgt.elts, n.value.elts)) if isinstance(tgt, ast.Tuple) and isinstance(n.value, ast.Tuple) else [(tgt, n.value)]
+                    for t, v in pairs:
+                        if not (ast.unparse(t).endswith("jd.STATE") and isinstance(v, ast.Name)):
+                            continue
+                        made = chmoded = False
+                        for m in scope(enclosing.get(id(n))):
+                            if not (isinstance(m, ast.Call) and getattr(m, "lineno", 0) < n.lineno):
+                                continue
+                            f = ast.unparse(m.func)
+                            first = ast.unparse(m.args[0]) if m.args else ""
+                            if f == v.id + ".mkdir" or (f in ("os.makedirs", "os.mkdir") and first.startswith(v.id)):
+                                made = True
+                            if f in ("os.chmod", v.id + ".chmod") and (not m.args or first.startswith(v.id) or f.startswith(v.id)):
+                                chmoded = True
+                        if made and not chmoded:
+                            out.append("%s:%d a root this scope made is bound bare: %s" % (rel, n.lineno, ast.unparse(n)))
+        return out
+
+    def test_no_test_binds_a_root_it_made_bare(self):
+        bad = []
+        for f in sorted(os.listdir(HERE)):
+            if f.endswith(".py"):
+                bad += self._offences(open(os.path.join(HERE, f), encoding="utf-8").read(), "tests/" + f)
+        self.assertEqual(bad, [], "bind the root through jd._rebind_state(root, make=True), which floors it at 0700:\n" + "\n".join(bad))
+
+    def test_the_pin_reds_on_both_shapes_and_passes_the_seam_and_a_deliberate_mode(self):
+        a = "def setUp(self):\n    km.jd.STATE = Path(self.tmp) / 'state'\n    km.jd.STATE.mkdir(parents=True, exist_ok=True)\n"
+        b = "def setUp(self):\n    root = Path(self.tmp) / 'state'\n    root.mkdir()\n    jd.STATE = root\n"
+        c = "def setUp(self):\n    root = Path(self.tmp) / 'state'\n    os.makedirs(root)\n    self.jd.STATE = root\n"
+        ok1 = "def setUp(self):\n    km.jd._rebind_state(Path(self.tmp) / 'state', make=True)\n"
+        ok2 = "def test(self):\n    locked = Path(self.tmp) / 'locked'\n    locked.mkdir()\n    os.chmod(locked, 0o000)\n    self.jd.STATE = locked\n"
+        ok3 = "def setUp(self):\n    self.td = tempfile.TemporaryDirectory()\n    jd.STATE = Path(self.td.name)\n"
+        self.assertEqual(len(self._offences(a)), 1, self._offences(a))
+        self.assertEqual(len(self._offences(b)), 1, self._offences(b))
+        self.assertEqual(len(self._offences(c)), 1, self._offences(c))
+        for ok in (ok1, ok2, ok3):
+            self.assertEqual(self._offences(ok), [], ok)
+
+
+class OneText(unittest.TestCase):
+    """extra8-4, tests-2, kernel-4, extra7-1 and extra7-2 of round 3: the security predicate lived in two independently
+    editable copies under KEEP IN SYNC comments and drifted within a day. Now it has one text: kernel/state_root_mode.py.
+    The gate here is the ServeTokenLoadersMatch shape (an AST fact, any divergence red): none of the loaders
+    (kernel/judge.py, kernel/event_model.py, postal/postal_service.py, kernel/session_host.py, bin/romp-session-host)
+    defines a function or class the shared module exports, each loads the file by path under the fixed module name
+    romp_state_root_mode, and no KEEP IN SYNC comment about the state root remains. The one copy the repo keeps on
+    purpose, the serve-token loader, stays under its own AST-identity gate (tests/test_kernel_serve_token_mode.py), and
+    its two new guards (O_NOFOLLOW on the lock, the bounded wait) are pinned equal here too."""
+    LOADERS = ("kernel/judge.py", "kernel/event_model.py", "postal/postal_service.py", "kernel/session_host.py", "bin/romp-session-host",
+               "kernel/logins.py", "kernel/palette.py", "kernel/host_transport.py", "kernel/sdk_backend.py", "kernel/codex_backend.py",
+               "kernel/codex_runtime.py")       # the last six: handed the root per call, each builds the shared Reader (round 4's review)
+    WRITE_BIT_LITERALS = {0o022, 0o002, 0o020}
+    WRITE_BIT_NAMES = {"stat.S_IWGRP", "stat.S_IWOTH", "S_IWGRP", "S_IWOTH"}
+
+    def _tree(self, rel):
+        import ast
+        return ast.parse(open(os.path.join(ROOT, rel), encoding="utf-8").read(), filename=rel)
+
+    def test_no_loader_defines_a_copy_of_the_shared_modules_functions(self):
+        import ast
+        shared = self._tree("kernel/state_root_mode.py")
+        exported = {n.name for n in shared.body if isinstance(n, (ast.FunctionDef, ast.ClassDef)) and not n.name.startswith("_")}
+        self.assertTrue({"check", "import_read_refusal", "private_group", "writable_by_another", "trusted_path", "quarantine",
+                         "Reader", "errno_text", "errno_name", "relative_under"} <= exported, exported)
+        for rel in self.LOADERS:
+            names = {n.name for n in ast.walk(self._tree(rel)) if isinstance(n, (ast.FunctionDef, ast.ClassDef))}
+            self.assertEqual(names & exported, set(), "%s defines a copy of %r" % (rel, sorted(names & exported)))
+            src = open(os.path.join(ROOT, rel), encoding="utf-8").read()
+            self.assertIn('"romp_state_root_mode"', src, "%s loads the shared module under its fixed name" % rel)
+            self.assertIn("state_root_mode.py", src)
+            self.assertNotIn("_state_root_mode_check", src, "%s: round 2's reduced copy is gone" % rel)
+            self.assertNotIn("STATE_ROOT_REFUSE_MASK", src)
+
+    @classmethod
+    def _write_bit_tests(cls, tree):
+        """Every `x & <write bit>` in `tree`: a BitAnd whose operand is one of the write-bit literals (0o022, 0o002, 0o020)
+        or stat's S_IWGRP / S_IWOTH, the shape of a local copy of the discriminator under any name."""
+        out = []
+        for n in ast.walk(tree):
+            if isinstance(n, ast.BinOp) and isinstance(n.op, ast.BitAnd):
+                for side in (n.left, n.right):
+                    if (isinstance(side, ast.Constant) and side.value in cls.WRITE_BIT_LITERALS) or ast.unparse(side) in cls.WRITE_BIT_NAMES:
+                        out.append((n.lineno, ast.unparse(n)))
+        return out
+
+    def test_no_loader_tests_a_mode_against_a_write_bit_under_any_name(self):
+        """The round-4 review's sharpening of this gate: the name pins above red only on a copy that reuses an exported
+        name; a renamed copy (`def _root_is_loose(root): return bool(S_IMODE(...) & 0o022)`) passed both. This holds the
+        SHAPE: in every loader and in kernel/kernel.py, no expression ands a mode with a write bit (the literals 0o022,
+        0o002 and 0o020, or stat's S_IWGRP and S_IWOTH); the discriminator's bits live in kernel/state_root_mode.py alone
+        (WRITE_BITS), and a loader that needs them references that constant. The pin reds on the renamed copy (checked
+        below on the bus's source with the copy appended)."""
+        for rel in self.LOADERS + ("kernel/kernel.py",):
+            hits = self._write_bit_tests(self._tree(rel))
+            self.assertEqual(hits, [], "%s tests a mode against a write bit: %r" % (rel, hits))
+        bus = open(os.path.join(ROOT, "postal", "postal_service.py"), encoding="utf-8").read()
+        for copy in ("\n\ndef _root_is_loose(root):\n    return bool(stat.S_IMODE(os.stat(root).st_mode) & 0o022)\n",
+                     "\n\ndef _loose(mode):\n    return mode & stat.S_IWOTH or mode & 0o020\n"):
+            hits = self._write_bit_tests(ast.parse(bus + copy))
+            self.assertTrue(hits, "the pin reds on the renamed copy")
+
+    def test_no_keep_in_sync_comment_about_the_state_root_remains(self):
+        for rel in ("kernel/judge.py", "kernel/kernel.py", "postal/postal_service.py", "kernel/session_host.py", "kernel/event_model.py"):
+            src = open(os.path.join(ROOT, rel), encoding="utf-8").read()
+            for i, line in enumerate(src.splitlines(), 1):
+                if "KEEP IN SYNC" in line:
+                    self.assertNotIn("state root", line.lower(), "%s:%d keeps the state-root predicate in sync by hand" % (rel, i))
+                    self.assertNotIn("state_root", line, "%s:%d" % (rel, i))
+
+    def test_the_two_daemons_hold_one_module_object_and_the_readers_share_the_class(self):
+        ps = load_source("romp_postal_srm_probe", os.path.join(BIN, "romp-postal-service"))
+        self.assertIs(ps._srm, srm)
+        self.assertIs(type(ps._gr), srm.Reader)
+        self.assertIs(type(km._gr), srm.Reader)
+        self.assertIs(type(jd._gr), srm.Reader)
+        self.assertIs(type(em._gr), srm.Reader)
+        self.assertEqual(ps._gr.root_fn(), ps.STATE.parent)
+
+    def test_the_serve_token_loaders_carry_the_same_two_guards_and_one_wait(self):
+        for rel, name in (("kernel/kernel.py", "_serve_token_read_or_mint"), ("postal/postal_service.py", "_serve_token_read_or_mint")):
+            src = open(os.path.join(ROOT, rel), encoding="utf-8").read()
+            body = src[src.index("def %s(" % name):]
+            body = body[:body.index("\ndef ", 10)]
+            self.assertIn("os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600", body, "%s: the lock is opened O_NOFOLLOW" % rel)
+            self.assertIn("SERVE_TOKEN_LOCK_WAIT_S", body, "%s: the wait for the lock's holder is bounded" % rel)
+            self.assertIn("mkdir(parents=True, exist_ok=True, mode=0o700)", body, "%s: a root this call makes is 0700 from its first instant" % rel)
+            self.assertNotIn("fcntl.flock(lfd, fcntl.LOCK_EX)\n", body, "%s: no unbounded blocking take" % rel)
+        self.assertEqual(km.SERVE_TOKEN_LOCK_WAIT_S, 30)
+        ps = load_source("romp_postal_srm_probe", os.path.join(BIN, "romp-postal-service"))
+        self.assertEqual(ps.SERVE_TOKEN_LOCK_WAIT_S, km.SERVE_TOKEN_LOCK_WAIT_S)
+        bus = open(os.path.join(ROOT, "postal", "postal_service.py"), encoding="utf-8").read()
+        serve = bus[bus.index("def serve():"):bus.index("\ndef ", bus.index("def serve():") + 10)]
+        self.assertIn("STATE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)", serve, "serve() makes the root 0700 at the mkdir")
+
+    def test_a_held_serve_token_lock_ends_in_a_loud_fault_not_a_hang(self):
+        """extra5-4 of round 3 by execution: another process holds serve-token.lock flocked and never lets go; the loader
+        waits the bound (lowered here) and faults naming the lock and the timeout, so a planted lock held open cannot
+        hang a start forever. Under a symlinked lock path the open refuses (ELOOP) instead of opening the target."""
+        import fcntl
+        root = Path(tempfile.mkdtemp())
+        lock = root / "serve-token.lock"
+        fd = os.open(str(lock), os.O_RDWR | os.O_CREAT, 0o600)
+        self.addCleanup(os.close, fd)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        t0 = time.monotonic()
+        with mock.patch.object(km, "SERVE_TOKEN_LOCK_WAIT_S", 1), contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(RuntimeError) as cm:
+                km._serve_token_read_or_mint(root / "serve-token", "test")
+        self.assertLess(time.monotonic() - t0, 10, "bounded")
+        self.assertIn("take the lock within 1 s", str(cm.exception))
+        self.assertIn("ETIMEDOUT", str(cm.exception))
+        self.assertIn(str(lock), str(cm.exception))
+        # a symlink at the lock path: never followed
+        root2 = Path(tempfile.mkdtemp())
+        elsewhere = Path(tempfile.mkdtemp(), "elsewhere.lock")
+        elsewhere.write_text("")
+        os.symlink(elsewhere, root2 / "serve-token.lock")
+        (root2 / "serve-token").write_text("tok-DO-NOT-USE\n"); os.chmod(root2 / "serve-token", 0o600)
+        with contextlib.redirect_stderr(io.StringIO()):
+            v = km._serve_token_read_or_mint(root2 / "serve-token", "test")   # the lock cannot be taken (ELOOP): an existing tight token is used as is
+        self.assertEqual(v, "tok-DO-NOT-USE")
+        self.assertEqual(elsewhere.read_text(), "", "nothing opened through the link")
 
 
 if __name__ == "__main__":
