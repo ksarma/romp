@@ -117,6 +117,8 @@ type Ev = { kind: string; uuid: string; t?: number; md?: string; name?: string; 
 type Lifted = {
   syncViewInner: (id: string, atBottom?: boolean) => any;
   renderWindowItems: (v: any, s: any, items: DisplayItem[], ws: number, we: number, working: boolean) => void;
+  rulerState: () => [number[], number[]];   // the lift's own bindings of glowHistory and glowUnits, read after a frame (the ruler instrument's marks half)
+  setRulerState: (history: number[], units: number[]) => void;   // …and set through the lift, the way applyGlow leaves them for the code the seam runs
 };
 const WINDOW_TAIL = 8;   // the harness's window: small, so an append evicts the top within a few frames (the real one is 80; the plan and the trim do not read it)
 
@@ -151,7 +153,9 @@ function lift(sessions: Map<string, any>, views: Map<string, any>, open: Set<str
     const H = HOOKS;
     let renderingSid = null, renderingOwnerSid = null;
     // no document in the lift: the tail paint's ring clear is host-scoped (a document query here is a red), and the overview ruler is an
-    // instrument: paintGlowRuler records its calls, glowHistory and glowUnits stand as applyGlow left them (the maintainer's round 3 ruling D)
+    // instrument: paintGlowRuler records its calls, glowHistory and glowUnits stand as applyGlow left them (the maintainer's round 3 ruling D),
+    // read back through the lift's OWN bindings (rulerState below): a reset inside the seam (glowHistory = []) rebinds these locals and
+    // leaves the hook object's arrays untouched, so the hook read alone was blind to it (the author's fixer pass over pass 4)
     const document = { querySelectorAll: () => { throw new Error("the tail paint queried the document: the ring clear is host-scoped"); } };
     let glowHistory = H.ruler.history, glowUnits = H.ruler.units;
     const paintGlowRuler = () => { H.ruler.paints++; };
@@ -198,7 +202,7 @@ function lift(sessions: Map<string, any>, views: Map<string, any>, open: Set<str
     const Date = { now: () => H.NOW };
   `;
   const hooks = { FakeEl, sessions, views, itemsOf: (s: any) => itemsFor(s, compact), WINDOW_TAIL, compactTailPlan, plans, open, itemAnchor, gapHeight, workedSecsOf, workedFooterPlan, DayWalk, NOW, painted: [] as any[], compact, ruler };
-  return new Function("HOOKS", prelude + rings + rail + first + divider + build + seam + "\nreturn { syncViewInner, renderWindowItems };")(hooks) as Lifted;
+  return new Function("HOOKS", prelude + rings + rail + first + divider + build + seam + "\nreturn { syncViewInner, renderWindowItems, rulerState: () => [glowHistory, glowUnits], setRulerState: (h, u) => { glowHistory = h; glowUnits = u; } };")(hooks) as Lifted;
 }
 /** The overview ruler as an instrument: what applyGlow last left on it (the history marks and the resident units with no row, as fractions and
  *  units) and how many times the tail paint repainted it. A hover through the lift leaves these as applyGlow would; the tail paint must not touch them. */
@@ -402,11 +406,13 @@ function hoverThroughFrame(w: World): void {
   const lit = glowedUnits(w.v.el);
   assert.deepEqual(hoverMarks(w.v.el), { rings: 3, glow: 3 }, "the hover lit three units");
   ruler.history = [0.25]; ruler.units = [0]; ruler.paints = 0;   // the hover's marks on the ruler, as applyGlow left them (a history mark, a resident unit with no row)
+  w.L.setRulerState(ruler.history, ruler.units);   // …bound in the lift's own scope too, where the seam's code reads them (the lift bound the hook's arrays at lift time; these are the frame's)
   frame(w, "the reply grows under a hover", (ev) => { ev[ev.length - 1] = reply("a4", at(10, 4, 20), "second answer, hovered"); return ev; }, "append", { band: true });
   assert.equal(hoverMarks(w.v.el).rings, 0, "the band's rings left with the band: the band module's remover ran on the view's host");
   assert.deepEqual(glowedUnits(w.v.el), lit, "the glow stands on every kept unit that had it: the tail paint does not touch applyGlow's class (at the head the round ruled on: none, the kept units unlit while the ruler still banded them)");
   assert.equal(hoverMarks(rebuild(w)).glow, 0, "the rebuild leg's rows are fresh nodes with no glow: the two legs are compared with the hover class read apart");
   assert.equal(ruler.paints, 0, "the ruler was not repainted by the tail paint"); assert.deepEqual([ruler.history, ruler.units], [[0.25], [0]], "…and its marks stand as applyGlow left them: the ruler and the kept turns' glow agree");
+  assert.deepEqual(w.L.rulerState(), [[0.25], [0]], "…read through the lift's own bindings too: a reset of glowHistory or glowUnits inside the seam rebinds the lift's locals and leaves the hook object's arrays as they were, so the read above alone was green under a planted reset (the author's fixer pass over pass 4)");
   assert.equal((w.v.el as FakeEl).children.filter((c) => c.classList.contains("rail-band")).length, 0, "the band itself is gone (a hover redraws it on the next mouseenter)");
 }
 
