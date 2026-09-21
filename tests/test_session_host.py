@@ -1345,8 +1345,10 @@ class HostProcess(unittest.TestCase):
     # process's PYTHONPATH, so the probe's child must too. Until this round the probe asked sdk_blocker's witness question,
     # which drops PYTHONPATH, and gated "no SDK" for a host whose SDK came from PYTHONPATH alone (no sdkvenv for its minor):
     # under ROMP_SDK_REQUIRE=1 the switch case failed and the two SDK-transport cases skipped. The three cases below are
-    # hermetic, a scratch package standing in for an SDK on PYTHONPATH and the blocker for one hidden there, so each reds
-    # on a box with or without an SDK for this interpreter; the fourth runs the switch case against its refusing input.
+    # hermetic, a scratch package standing in for an SDK on PYTHONPATH and the blocker for one hidden there; against the
+    # stripping probe the package case red where the interpreter lacks the SDK (the probe found nothing), the blocker
+    # case where it has one (the probe found the venv's SDK) and the drift case on both, as each docstring states, so
+    # together they red on a box with or without an SDK; the fourth runs the switch case against its refusing input.
     def test_the_sdk_gate_sees_a_package_the_parents_pythonpath_carries(self):
         """A claude_agent_sdk package reachable through this process's PYTHONPATH alone (an empty __init__.py in a scratch
         directory: find_spec is the probe's question, and bin/romp-session-host's _sdk_on_path asks the same one) gates
