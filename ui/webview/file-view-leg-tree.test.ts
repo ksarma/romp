@@ -8,10 +8,11 @@
 // every other browser leg and the node tests beside them find theirs. The module once let an environment variable name
 // the tree instead (review of the slice, 2026-09-08): a value left in a shell from running a leg over a copy of the base
 // commit would have run these legs over that tree while the rest of the suite read the cwd's, green over a
-// regressed tree or red over a good one, with nothing in the output naming either. Two checks: the module reads no
-// environment variable at all (what the other legs meet by having no process.env), and with a stale variable of the
-// old name in the environment it still resolves the cwd's tree. Running a leg over another tree is done from that
-// tree's vscode-extension, as for every leg.
+// regressed tree or red over a good one, with nothing in the output naming either. Two checks: the module's own text
+// reads no environment variable (no process.env in real-viewer-leg.ts; the one variable it reaches, ROMP_BROWSER_LEGS_REQUIRE
+// through browser-legs-require.ts's launchBrowser, decides whether a failed launch skips or fails and never a path),
+// and with a stale variable of the old name in the environment it still resolves the cwd's tree. Running a leg over
+// another tree is done from that tree's vscode-extension, as for every leg.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -21,7 +22,7 @@ const WEB = path.resolve(process.cwd(), "..", "ui", "webview");
 
 test("real-viewer-leg.ts: the legs' tree is the cwd's ../ui/webview, and no environment variable redirects it", async () => {
   const src = fs.readFileSync(path.join(WEB, "real-viewer-leg.ts"), "utf8");
-  assert.ok(!/process\.env\b/.test(src), "the shared leg page reads no environment variable: the tree under test is the cwd's, like every other leg's");
+  assert.ok(!/process\.env\b/.test(src), "the shared leg page's own text reads no environment variable (the switch it reaches through browser-legs-require.ts decides skip-or-fail, never a path): the tree under test is the cwd's, like every other leg's");
   assert.match(src, /export const UI = path\.resolve\(EXT, "\.\.", "ui", "webview"\)/, "UI is ../ui/webview from EXT, which is process.cwd()");
   const had = Object.prototype.hasOwnProperty.call(process.env, "ROMP_LEG_UI");
   const was = process.env.ROMP_LEG_UI;

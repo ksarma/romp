@@ -3,8 +3,8 @@
 // naming the switch, the reason and the remedy (a Chromium launch: "the runner lost its browser: check the Chromium install
 // step"). The launch is a stub that rejects, so this module runs under plain node in the Test step and needs no browser;
 // the switch is passed as an explicit environment where the test names it, and read from process.env in the one test that
-// sets and restores the variable. The last test holds real-viewer-leg.ts's inBrowser to launchBrowser, the road the 82
-// legs that import it take to the switch. Synthetic values only.
+// sets and restores the variable. The last test holds real-viewer-leg.ts's inBrowser to launchBrowser, the road the legs
+// that call it take to the switch (tools/ci-browser-legs.test.mjs derives which legs those are). Synthetic values only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
