@@ -78,7 +78,11 @@ type FieldWrite = { node: ts.Node; at: ts.Node; owner: string; field: string; de
  *  field or whose literal source or key does (`Object.assign(v, { measured: x })`, `Reflect.set(v, "measured", x)`, a literal key under a
  *  spread of a literal). Outside this census by construction, because the tree reads spellings and resolves no binding: a non-literal
  *  source's keys and a computed key (`Object.assign(v, src)`, `v[k] = x`), a call through an alias of the callee (`const oa = Object.assign;
- *  oa(v, ...)`), and a write through an alias of the parked object (`const pm = v.measured; pm.avg = x`). Each
+ *  oa(v, ...)`), and a write through an alias of the parked object (`const pm = v.measured; pm.avg = x`). Who holds those depends on WHERE
+ *  the write is: inside the span land-active-keep.test.ts lifts (landActive, captureScrollAnchor, restoreScrollAnchor) the first two reach
+ *  the world's accessors at run time and are named there; by an owner outside that span (another function of render.ts) they are outside
+ *  both halves, a residual the body names (the author's fixer pass over the pass after the maintainer's round 4 ruling, VT8: until then
+ *  this docstring and the closed set's message said every such write reaches the accessors, true of the window alone). Each
  *  write is named by its owner (ownerOf) and described in the census's words (the right side of a plain assignment, else the whole form),
  *  and placed (`at`) where it happens: the node itself, or a for-of or for-in's TARGET, because the statement's span runs to the end of its
  *  body, so a window check that read the statement's span missed a loop whose block enclosed the write it was checking and reddened on the
@@ -884,6 +888,6 @@ test("the reload restore's raw write of the persisted rs.top, on the tree: from 
   ];
   assert.deepEqual(between, [], "the reload restore's raw write: the window from the record's binding (line " + line(sB) + ") to the write (line " + line(write) + ") holds a take, so the persisted top, measured in the layout the take before it re-derives, would land in a layout it was not measured in; the site needs no take-back only while this window stays closed");
   // the derivation the window check rests on, pinned after it so a plant in the window is named by the window's message
-  assert.deepEqual([...setters].sort(), ["applyMeasure", "forgetAverage", "measureUnits", "untakeMeasure"], "the take state's writers, by owner from the tree, of any of its three fields in any form the tree can name (writesOf): the take, the reset, the park and the untake; a fifth is a new writer of the take state and belongs with the censuses above (outside this census by construction, the tree reading spellings and resolving no binding: a write through a computed key or a non-literal Object.assign source, a call through an alias of the callee, a write through an alias of the parked object; in the ordering window the first two reach land-active-keep.test.ts's accessors at run time)");
+  assert.deepEqual([...setters].sort(), ["applyMeasure", "forgetAverage", "measureUnits", "untakeMeasure"], "the take state's writers, by owner from the tree, of any of its three fields in any form the tree can name (writesOf): the take, the reset, the park and the untake; a fifth is a new writer of the take state and belongs with the censuses above (outside this census by construction, the tree reading spellings and resolving no binding: a write through a computed key or a non-literal Object.assign source, a call through an alias of the callee, a write through an alias of the parked object; inside the ordering window the first two reach land-active-keep.test.ts's accessors at run time, and by an owner outside the span that test lifts they are outside both halves, a residual the body names)");
   assert.ok(takers.has("landActive") && takers.has("renderWindowItems") && takers.has("scrollToAnchor") && takers.has("syncViewInner"), "the closure reaches the takers one and two hops out (the walk is not empty): " + [...takers].sort().join(", "));
 });
