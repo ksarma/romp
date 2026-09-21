@@ -1,7 +1,7 @@
 """The link-drop lab's old-hub mint writes nothing into the clone it runs from (2026-09-19).
 
 LinkDropOldLocal (tests/test_federated_linkdrop_served.py) needs a hub kernel and bundle from before PR 815; under
-ROMP_LINKDROP_OLD_HUB_BUILD=1 it mints that checkout itself. Round 1 of the fork PR that added the lab found the mint was a
+ROMP_LINKDROP_OLD_HUB_BUILD=1 it mints that checkout itself. The maintainer's round 1 of the fork PR that added the lab found the mint was a
 worktree of the clone every session on this box shares: an interrupted add (a SIGKILL, a timeout) leaves a record git locks
 as "initializing" that neither a forced remove nor a repo-wide clearing of stale records reaches, and the teardown's fallback
 ran that repo-wide clearing there, which can delete the records of worktrees the test never made. A test may not run a
@@ -15,8 +15,8 @@ before the mint, after it and after teardown, with no locked record at any of th
 and borrows the source's objects; an interrupted mint (git killed as the clone starts, the failure path) raises with git's
 words and leaves the source's records untouched; every git command the mint runs is either the clone, which reads the
 source, or bound by -C to a path under the lab, and none names a worktree, a record clearing or an object collection; the
-class's teardown, spied the same way WITH a minted checkout present (round 3: spied with none, a teardown step conditioned
-on the mint, the round-1 defect's own shape, was never exercised), runs no command at all (the lab's rmtree takes the
+class's teardown, spied the same way WITH a minted checkout present (pass 5: spied with none, a teardown step conditioned
+on the mint, the maintainer's round 1 defect's own shape, was never exercised), runs no command at all (the lab's rmtree takes the
 checkout); and no string constant in the lab module's source, in either quoting, is such an argv token (an ast walk, so a
 spelling cannot slip past it). What the spies see is a rule over NAMES, not a list of commands: the recorder patched over
 the lab module's `subprocess` attribute records the argv of every call to one of that module's spawning functions, `run`,
@@ -24,9 +24,9 @@ the lab module's `subprocess` attribute records the argv of every call to one of
 `subprocess.__all__`), each once (a shell string as one token), and hands the call to the real function; every other name
 read through the attribute (PIPE, STDOUT, DEVNULL, TimeoutExpired, CompletedProcess) is delegated and unrecorded, so a
 command reaches the record only through a recorded name. A token assembled at run time or joined into one shell string is
-caught whichever recorded function the module used (round 4: the spies saw `run` alone, and round 1's defect re-planted as a
+caught whichever recorded function the module used (the maintainer's round 3, tests-2: the spies saw `run` alone, and the maintainer's round 1's defect re-planted as a
 `Popen` with its tokens assembled passed every pin, the byte-identical records included, since the peer worktree's directory
-was still alive; the fixer pass of that round found `call`, `check_call` and `check_output` reaching the real module through
+was still alive; pass 8's fixer pass found `call`, `check_call` and `check_output` reaching the real module through
 the delegation unseen while this docstring said the record saw them, and the same plant as a `check_call` passed every pin).
 What the recorder cannot see, a second census refuses by NODE over the parsed source of the lab module and of every module
 it imports from this directory, transitively (_lab_modules, its import derivation reading every spelling of a sibling
@@ -38,25 +38,25 @@ _posixsubprocess.fork_exec, os.fork and os.forkpty, each pinned against the modu
 module other than `import subprocess` (an import under another name, a name imported from it, os under another name, the
 bare name `subprocess` read anywhere but as the value of an attribute, an attribute named `subprocess` on any other value,
 a constant "subprocess"); a spawning function of subprocess BOUND rather than called (`_run = subprocess.run`, a dict value,
-a default argument, a functools.partial, a class attribute: round 5 found such a binding, made before the recorder is
+a default argument, a functools.partial, a class attribute: the maintainer's round 4 (its addendum) found such a binding, made before the recorder is
 installed, calls the real module past it); the reflective primitives (REFLECTIVE_CALLS and REFLECTIVE_ATTRS: exec, eval,
 compile, __import__, vars, globals, locals; import_module, __getattribute__, __dict__, sys.modules, attrgetter; getattr
-over os, and, since round 6, getattr over ANY name the source imports with a name that is not a string constant, since a
+over os, and, since pass 10, getattr over ANY name the source imports with a name that is not a string constant, since a
 name built at run time over a module is a name the census cannot read) as nodes whatever their argument; and any import
 outside ALLOWED_IMPORTS, the modules the censused set uses today, held equal to the imports in use so that a new module is a
 red until it is read. The recorder closes the alias
 road on its own side too: before it is installed, _spy walks the lab module's namespace by IDENTITY (its globals, its own
 classes' attributes, its functions' defaults and closure cells, partials, properties, bound methods, generators' frames,
 containers, and the instance dict of any object that has one) and refuses any object that IS a spawning function of the
-real subprocess module, however it was spelled, and any object it cannot read (_bound_spawners; round 5's fixer pass: a
+real subprocess module, however it was spelled, and any object it cannot read (_bound_spawners; pass 9's fixer pass: a
 property's getter, a SimpleNamespace, a bound method and a generator held `subprocess.run` unseen and unlisted).
 
 What the census cannot see is stated as a rule, not a count: it refuses the nodes it enumerates and nothing else, so a road
 to a process is unseen exactly when no enumerated node spells it. On the census's side the class is a spawning name resolved
 from a STRING inside a function of an allowed module that the censused set calls with it. The enumerated primitives are
 refused as nodes whatever their argument (exec over text that carries the spelling whole is refused at the exec, where the
-earlier disclosure, which called this class "built text", let it pass; the dunder roads since round 5's fixer pass; a built
-name handed to getattr over any imported name since round 6, and since its fixer pass over ANY value, with a reflective
+earlier disclosure, which called this class "built text", let it pass; the dunder roads since pass 9's fixer pass; a built
+name handed to getattr over any imported name since pass 10, and since its fixer pass over ANY value, with a reflective
 primitive read bare, a second binding of `subprocess`, a spawn or a callable at import time refused too), and an attribute
 chain rooted at a foreign import binding is RESOLVED step by step through the modules' own import tables, read by path
 (_reach): a module ALLOWED_IMPORTS does not name, reached through an allowed module's own import (`mock.pkgutil`,
@@ -73,7 +73,7 @@ sources, so a spawning call whose source is outside both, or whose time is befor
 the import that reaches it. (1) A program a censused module's own function starts through that module's own subprocess
 binding when the lab module calls the function (the recorder patches the lab module's attribute alone, and the census reads
 that call as the module's own). (2) A program a function of an IMPORTED module starts through that module's own binding,
-the same road one import further out, which round 4 named and round 5 narrowed away. (3) A program a foreign module the
+the same road one import further out, which pass 8 named and pass 9 narrowed away. (3) A program a foreign module the
 import allow-list permits starts inside its own source, reached by a whole-node name no spawner table carries:
 `uuid.getnode()` runs a program on an interpreter without the `_uuid` extension, `http.server`'s CGI handler forks and
 execs, `os.popen` is a Python body that calls `subprocess.Popen`, `subprocess` itself reaches `_posixsubprocess` and
@@ -85,7 +85,7 @@ The lists are derived and printed by the disclosure cell, none counted here: `_o
 line, function); `_foreign_spawn_roads` for roads (2) and (3), its attribute arm being (2) at the direct depth (a spawner
 named on a foreign module's own os, subprocess, pty, asyncio or _posixsubprocess binding) and the whole scan (3), over every
 module the censused set's import bindings LOAD (`_import_bindings`; a submodule imported by `from pkg import sub` included,
-since the source read is the submodule's: round 6's fixer pass, when `from unittest import mock` was read as an import of
+since the source read is the submodule's: pass 10's fixer pass, when `from unittest import mock` was read as an import of
 unittest and unittest.mock's own source went unread), each module's own source read by path under the standard library
 without importing it and scanned for the spawner families (an attribute of os, subprocess, pty, asyncio or _posixsubprocess
 named as a spawner, or an import of subprocess, pty, _posixsubprocess, multiprocessing, socketserver or asyncio), at the
@@ -149,9 +149,9 @@ OTHER_SPAWNERS = {"pty": ("spawn",), "asyncio": ("create_subprocess_exec", "crea
 OTHER_SPAWNER_MODULES = {"pty": pty, "asyncio": asyncio, "_posixsubprocess": _posixsubprocess, "os": os}
 # the reflective primitives a spawning name could be reached through without being a whole node of the source: refused as
 # NODES, whatever their argument, so the road through them is closed at the primitive and not at the spelling it carries
-# (round 5: `exec("import subprocess as _s; _s.run(...)")` passed a census that read the constant "subprocess" alone); a
+# (the maintainer's round 4: `exec("import subprocess as _s; _s.run(...)")` passed a census that read the constant "subprocess" alone); a
 # getattr whose first argument is the os module is refused the same way (a getattr on the lab module's `subprocess` is the
-# recorder's, which sees the dynamic lookup). The dunder roads (round 5, the fixer pass: a function's `__globals__` reaches
+# recorder's, which sees the dynamic lookup). The dunder roads (pass 9's fixer pass: a function's `__globals__` reaches
 # its module's namespace whole, `subprocess.CompletedProcess.__init__.__globals__["run"]`; `__spec__` and `__loader__` reach
 # the loader; `__class__`, `__subclasses__`, `__code__`, `__closure__`, `__wrapped__`, `__self__` and `__func__` reach an
 # object's type, code or bound function; the bare name `__builtins__` reaches `__import__` by a string) are refused the
@@ -159,7 +159,7 @@ OTHER_SPAWNER_MODULES = {"pty": pty, "asyncio": asyncio, "_posixsubprocess": _po
 REFLECTIVE_CALLS = ("exec", "eval", "compile", "__import__", "vars", "globals", "locals")
 # the attribute-reading builtins: refused with a name that is not a string constant over ANY value (a name built at run time is one
 # the census cannot read), and, like REFLECTIVE_CALLS, refused read as a bare name anywhere but as the function of a call (an alias
-# carries the road under another name: round 6's fixer pass, `_gi = __import__`, `_ga = getattr`, `map(exec, [...])`)
+# carries the road under another name: pass 10's fixer pass, `_gi = __import__`, `_ga = getattr`, `map(exec, [...])`)
 ATTR_BUILTINS = ("getattr", "setattr", "delattr", "hasattr")
 REFLECTIVE_ATTRS = ("import_module", "__getattribute__", "__getattr__", "__dict__", "modules", "attrgetter",
                     "__globals__", "__spec__", "__loader__", "__builtins__", "__class__", "__subclasses__", "__code__", "__closure__", "__wrapped__", "__self__", "__func__")
@@ -187,7 +187,7 @@ FOREIGN_REFLECTIVE_CALLS = ("__import__", "exec", "eval", "compile")
 FOREIGN_REFLECTIVE_ATTRS = ("import_module", "resolve_name", "_getframe", "__import__")
 # The foreign modules whose own source starts a program, on this Python, DERIVED by _foreign_spawn_roads over the censused
 # set's import bindings and held EQUAL to this tuple by the road cell, so a new road (a new import, or a Python whose source
-# changes) is a red until it is read (round 6's fixer pass: the cell pinned a subset, so a fifth road could not red it).
+# changes) is a red until it is read (pass 10's fixer pass: the cell pinned a subset, so a fifth road could not red it).
 FOREIGN_ROADS = ("http.server", "os", "subprocess", "unittest.mock", "uuid")
 # The members the censused set reads on the foreign modules whose source the scan cannot read (built in, an extension module:
 # fcntl, select, sys, time), as {module: (member, ...)}, held EQUAL to the derived reads by the allow-list cell: a member of such a
@@ -232,7 +232,7 @@ def _lab_modules(root=LAB_MODULE, here=HERE):
     derived from the parsed import statements (every spelling _sibling_imports resolves, each naming a file here/x.py), so a
     helper the lab module grows is censused without anyone listing it. `here` is the directory (its basename the package the
     qualified spellings name); the composition pin hands it a synthetic one. A sibling that is a PACKAGE (here/x/__init__.py)
-    is refused, never dropped (round 5: the file check dropped one, and a helper carrying `os.popen` in its __init__ passed the
+    is refused, never dropped (the maintainer's round 4 addendum: the file check dropped one, and a helper carrying `os.popen` in its __init__ passed the
     census): the walk reads modules, and a package sibling needs it extended before it can be imported here. A name that is
     neither a module nor a package here is a foreign module's, left for ALLOWED_IMPORTS."""
     out, todo, package = {}, [root], os.path.basename(here)
@@ -253,7 +253,7 @@ def _lab_modules(root=LAB_MODULE, here=HERE):
 
 def _commands_around_the_recorder(src, siblings=()):
     """Every node of the parsed source that is a road to a process around the recorder, as (line, form), keyed on the ROAD
-    (round 5) and not on a spelling: an attribute read named as one of OS_SPAWNERS or OTHER_SPAWNERS on ANY value (`os.system`,
+    (the maintainer's round 4) and not on a spelling: an attribute read named as one of OS_SPAWNERS or OTHER_SPAWNERS on ANY value (`os.system`,
     `pty.spawn`, a renamed module and a nested attribute are refused alike, the safe side); a call to such a bare name, or its
     import (`from os import system`, `from os import *`, `from pty import spawn`); a spawning function of subprocess BOUND
     rather than called (`subprocess.run` anywhere but as the function of a call: an alias, a dict value, a default argument,
@@ -263,7 +263,7 @@ def _commands_around_the_recorder(src, siblings=()):
     equal to an OS_SPAWNERS name (the road through a string handed to a primitive); a call to one of REFLECTIVE_CALLS, an
     attribute named as one of REFLECTIVE_ATTRS, a bare read of one of REFLECTIVE_NAMES, a getattr whose first argument is the
     os module, a getattr, setattr, delattr or hasattr whose name argument is not a string constant over ANY first argument
-    (round 6: `getattr(_dial, "subproce" + "ss")` was inside the stated class with no red, and the fixer pass found the same
+    (pass 10: `getattr(_dial, "subproce" + "ss")` was inside the stated class with no red, and the fixer pass found the same
     over an alias of os and over an attribute; a built name over any value is a name the census cannot read, and a constant
     name is read by the constant arm), a reflective primitive or an attribute-reading builtin read as a BARE NAME anywhere but
     as the function of a call (`_gi = __import__`, `map(exec, [...])`: an alias carries the road under another name, the rule
@@ -396,11 +396,11 @@ def _import_bindings(src, stdlib=None, package=None):
     """What the source's absolute import statements BIND, and which modules they load: ({bound name: (module, member)}, {dotted
     module}). `import a.b.c` binds `a` to the package `a` and loads a, a.b and a.b.c; `import a.b as x` binds x to a.b; `from M
     import n` binds n to the SUBMODULE M.n when the standard library holds its source (`from unittest import mock` is
-    unittest.mock, whose own source the road scan must read: round 6's fixer pass, residual-1) and otherwise to the member n of
+    unittest.mock, whose own source the road scan must read: pass 10's fixer pass, residual-1) and otherwise to the member n of
     M (`from pathlib import Path`); `from M import n as x` binds x the same way. A relative import (a sibling of this directory,
     or, for a stdlib module read by path, its own package's module, resolved against `package`) binds its name to that
     package-qualified module. The touch derivation and the reach rule key on these bindings, not on the dotted spelling as
-    written (round 6's fixer pass: `import uuid as u; u.getnode()` and `from uuid import getnode; getnode()` printed no touch)."""
+    written (pass 10's fixer pass: `import uuid as u; u.getnode()` and `from uuid import getnode; getnode()` printed no touch)."""
     bindings, loaded = {}, set()
     for n in ast.walk(ast.parse(src)):
         if isinstance(n, ast.Import):
@@ -468,7 +468,7 @@ def _reach(chain, bindings, loaded, siblings=(), stdlib=None):
     censused set reads today; else (module, attribute, why) for the first step the census cannot resolve to something it
     reads: an attribute that is the module's own import of a module outside ALLOWED_IMPORTS (`mock.pkgutil`, `mock.builtins`,
     `mock.partial` from functools, `subprocess.builtins`, `http.server.socketserver`: a road the census would refuse as a
-    direct import, reached through an allowed module's binding, round 6's fixer pass), or a member of a module whose source
+    direct import, reached through an allowed module's binding, pass 10's fixer pass), or a member of a module whose source
     the census cannot read that is outside UNREAD_MEMBERS (`sys._getframe`, `sys.meta_path`, `mock.sys.modules`). A binding
     to a def or a class imported by name (`Path`) is its own: the walk stops there."""
     names = chain.split(".")
@@ -534,7 +534,7 @@ def _foreign_spawn_roads(mods, stdlib=None):
 
 
 def _foreign_reflective_roads(mods, stdlib=None):
-    """The second derived family (round 6's fixer pass, plants-10): for each dotted foreign import of the censused set, the calls in
+    """The second derived family (pass 10's fixer pass, plants-10): for each dotted foreign import of the censused set, the calls in
     that module's OWN source that resolve a name from a string handed to them, {module: [(line, form)]}: a bare call of one of
     FOREIGN_REFLECTIVE_CALLS (__import__, exec, eval, compile; globals, locals and vars return a namespace and are a road only
     with a string key, which is the censused set's own rule), or an attribute named as one of FOREIGN_REFLECTIVE_ATTRS
@@ -611,7 +611,7 @@ def _foreign_touch_sites(mods, roads):
     name) and a bare read of a name imported from it (`getnode()` under `from uuid import getnode`), for the road modules other
     than os and subprocess, whose roads the census refuses itself (OS_SPAWNERS and OTHER_SPAWNERS as attributes; subprocess is
     the recorder's). The outermost chain only. Printed by the disclosure cell beside the roads: the residual's reach into the
-    censused set, derived, never counted (round 6's fixer pass: keyed on the dotted spelling, an alias or a from-import of a
+    censused set, derived, never counted (pass 10's fixer pass: keyed on the dotted spelling, an alias or a from-import of a
     road module printed nothing)."""
     watch = sorted(r for r in roads if r not in ("os", "subprocess"))
     out = set()
@@ -674,7 +674,7 @@ def _bound_spawners(module, depth=8, stats=None):
     object (a boundary by design; the census over the parsed source reads the road to it), a class of another module (its
     attributes are that module's), an object the walk cannot read (no instance dict and no holder shape it knows: an
     iterator, a C-level object), which _spy refuses outright since a spawning function could sit in it unseen, and a holder
-    past the walk's depth bound ("beyond the walk's depth of N": round 5 cut it off silently, so a spawning function bound
+    past the walk's depth bound ("beyond the walk's depth of N": pass 9 cut it off silently, so a spawning function bound
     deeper than the walk was in neither list; _spy refuses it too, with its own sentence, since a holder not entered is not a
     holder read). A scalar leaf (LEAF_TYPES) holds no reference and is not listed. `stats`, when given, receives the
     deepest level the walk entered ("max_depth"), which the disclosure cell prints beside the bound."""
@@ -830,12 +830,12 @@ class OldHubMintIsPrivate(unittest.TestCase):
         module. One namespace over the attribute, never a second patch of `Popen` on the real module: `subprocess.run`,
         `call`, `check_call` and `check_output` start their process through `Popen` as their own module's global, so that
         spelling records every `run` twice (read as 4 != 2 on the mint pin), and for the same reason each recorded function
-        records once here. The recorder exists for the shape round 4 found passing every pin: round 1's repo-global sweep
+        records once here. The recorder exists for the shape the maintainer's round 3 (tests-2) found passing every pin: the maintainer's round 1's repo-global sweep
         re-planted at the top of the class's teardown as `subprocess.Popen(["git", "-C", ROOT, "workt" + "ree", "pr" +
         "une"]).communicate()`, a `Popen` the `run` spy never saw with tokens the ast census never sees; the fixer pass of
-        that round re-planted it as `subprocess.check_call(...)`, which the two-name recorder delegated unseen. Neither plant
+        pass 8 re-planted it as `subprocess.check_call(...)`, which the two-name recorder delegated unseen. Neither plant
         can live in the repo; both are recorded as mutations in the builder's review note outside it (red on
-        test_the_teardown_runs_no_command through this recorder). Round 5: a spawning function BOUND in the lab module before
+        test_the_teardown_runs_no_command through this recorder). The maintainer's round 4 (its addendum): a spawning function BOUND in the lab module before
         the patch (`_run = subprocess.run` at module level, a dict value, a default argument, a partial, a class attribute)
         calls the real module past any recorder over the attribute, so before patching, every recorder refuses such a binding
         by identity (_bound_spawners over the lab module's namespace), whatever spelling made it."""
@@ -853,7 +853,7 @@ class OldHubMintIsPrivate(unittest.TestCase):
         class Recorder:
             def __getattr__(self, name):
                 # every spawning function is a class attribute of the recorder, so a dunder lookup asking for one is a road
-                # around the record (round 6's fixer pass: `subprocess.__getattr__("ru" + "n")` under the recorder ran unrecorded)
+                # around the record (pass 10's fixer pass: `subprocess.__getattr__("ru" + "n")` under the recorder ran unrecorded)
                 if name in SPAWNERS:
                     raise AssertionError("the recorder's __getattr__ was asked for %s: a spawning function is reached only as its class attribute" % name)
                 return getattr(real, name)
@@ -871,7 +871,7 @@ class OldHubMintIsPrivate(unittest.TestCase):
         return seen, Recorder()
 
     def test_the_recorder_sees_every_spawning_function_once_and_delegates_the_rest(self):
-        """The instrument itself (round 4's fixer pass, after a `check_call` sweep passed the `run`-and-`Popen` recorder): under
+        """The instrument itself (pass 8's fixer pass, after a `check_call` sweep passed the `run`-and-`Popen` recorder): under
         the recorder each spawning function of the subprocess module records its argv exactly once (run, call, check_call and
         check_output start their process through the REAL module's Popen, so a recorder over `run` alone misses the others and
         a second patch of Popen doubles them), a shell string is recorded as one token, the names the lab module reads through
@@ -967,12 +967,12 @@ class OldHubMintIsPrivate(unittest.TestCase):
 
     def test_the_teardown_runs_no_command(self):
         """The class's teardown with a MINTED checkout present and nothing to stop (no procs, no door, no splice) runs no
-        subprocess at all: the lab's rmtree takes the checkout, and no git command of the class names the source (round 1's
+        subprocess at all: the lab's rmtree takes the checkout, and no git command of the class names the source (the maintainer's round 1's
         teardown ran a repo-wide record clearing there). The mint runs first under the spy, so a teardown step conditioned
-        on the mint (old_hub_wt set, the round-1 defect's own shape) is exercised; round 3 found the pin spied a teardown
+        on the mint (old_hub_wt set, the maintainer's round 1 defect's own shape) is exercised; pass 5 found the pin spied a teardown
         with nothing minted, which such a step never entered. Behavioural, so the spelling of an argv token cannot matter,
         and the recorder sees every spawning function of the subprocess module alike (SPAWNERS), so the function it was
-        issued through cannot matter either (round 4: a `Popen` sweep with assembled tokens passed the `run` spy, and a
+        issued through cannot matter either (the maintainer's round 3, tests-2: a `Popen` sweep with assembled tokens passed the `run` spy, and pass 8's fixer pass: a
         `check_call` sweep passed the `run`-and-`Popen` recorder; _spy's docstring names the plants)."""
         seen, recorder = self._spy()
         with mock.patch.object(L, "subprocess", recorder):
@@ -990,7 +990,7 @@ class OldHubMintIsPrivate(unittest.TestCase):
 
     def test_the_lab_module_names_no_forbidden_git_command(self):
         """No string constant in the lab module is a forbidden argv token, read from the parsed source (ast.Constant), so a
-        single-quoted spelling is seen as the double-quoted one is (round 2: the pin matched one quoting and passed the
+        single-quoted spelling is seen as the double-quoted one is (the maintainer's round 2: the pin matched one quoting and passed the
         other). A cheap census beside the two spies, and only a census: a token assembled at run time is theirs to catch."""
         with open(L.__file__, encoding="utf-8") as f:
             src = f.read()
@@ -1001,7 +1001,7 @@ class OldHubMintIsPrivate(unittest.TestCase):
         self.assertNotIn("_remove_old_hub", src, "the teardown has no git step of its own: the lab's rmtree takes the checkout")
 
     def test_the_lab_module_and_its_imports_carry_no_road_to_a_process_the_census_enumerates(self):
-        """The census the module docstring names, keyed on the road (round 5; round 4's fixer pass disclosed the first roads
+        """The census the module docstring names, keyed on the road (the maintainer's round 4; pass 8's fixer pass disclosed the first roads
         and its follow-up refused the os family): the recorder sees a command only through the lab module's `subprocess`
         attribute, so the lab module and every module it imports from this directory, transitively (_lab_modules, derived
         from the import statements), carry no node _commands_around_the_recorder refuses: no attribute named as a
@@ -1064,7 +1064,7 @@ class OldHubMintIsPrivate(unittest.TestCase):
                  ('import ctypes\nctypes.CDLL(None).system(b"true")\n', ".system"),
                  ('import operator\noperator.attrgetter("sys" + "tem")\n', ".attrgetter"),
                  ('from importlib import import_module\n', "from importlib import import_module"),
-                 # the dunder roads (round 5, the fixer pass): a function's globals, a module's spec and loader, an object's type,
+                 # the dunder roads (pass 9's fixer pass): a function's globals, a module's spec and loader, an object's type,
                  # code, closure, wrapped function, bound self and function, and the builtins by a bare name
                  ('import subprocess\nsubprocess.CompletedProcess.__init__.__globals__["run"](["true"])\n', ".__globals__"),
                  ('import subprocess\nsubprocess.__spec__.loader.exec_module(m)\n', ".__spec__"),
@@ -1078,7 +1078,7 @@ class OldHubMintIsPrivate(unittest.TestCase):
                  ('f.__wrapped__\n', ".__wrapped__"),
                  ('m.__self__\n', ".__self__"),
                  ('m.__func__\n', ".__func__"),
-                 # round 6's fixer pass: a second binding of the name subprocess; a spawn or a callable at import time; a
+                 # pass 10's fixer pass: a second binding of the name subprocess; a spawn or a callable at import time; a
                  # reflective primitive read bare or handed a built name over any value; a bytes constant; __getattr__
                  ('def f():\n    import subprocess\n    return subprocess.run(["true"])\n', "import subprocess inside a function or a class"),
                  ('class K:\n    import subprocess\n', "import subprocess inside a function or a class"),
@@ -1104,7 +1104,7 @@ class OldHubMintIsPrivate(unittest.TestCase):
                  ('from builtins import getattr as g\n', "from builtins import getattr"),
                  ('b"subprocess".decode()\n', '"subprocess"'),
                  ('x.__getattr__("ru" + "n")\n', ".__getattr__"),
-                 # the reach through an allowed module's own imports, resolved by the modules' import tables (round 6's fixer
+                 # the reach through an allowed module's own imports, resolved by the modules' import tables (pass 10's fixer
                  # pass, plants-10), and a member of a source-less module the censused set does not read
                  ('from unittest import mock\nmock.pkgutil.resolve_name(NAME)\n', "unittest.mock.pkgutil reaches pkgutil, a module ALLOWED_IMPORTS does not name, through unittest.mock's own import"),
                  ('from unittest import mock\nmock.builtins.__import__(NAME)\n', "unittest.mock.builtins reaches builtins"),
@@ -1144,7 +1144,7 @@ class OldHubMintIsPrivate(unittest.TestCase):
         censused modules make today (a module added or dropped in one of them is a red until the tuple says so), none of
         the eight names of DENIED_IMPORTS is among them (a deny list, the check's key; which allowed modules start a program
         inside their own source is not this cell's claim but the next cell's derivation), and UNREAD_MEMBERS equals the members
-        the set reads on the modules whose source the scan cannot read (round 6's fixer pass: `sys._getframe(0).f_builtins`
+        the set reads on the modules whose source the scan cannot read (pass 10's fixer pass: `sys._getframe(0).f_builtins`
         and `sys.meta_path` reached a loader with no red, since sys has no source to scan)."""
         for modname, names in OTHER_SPAWNERS.items():
             with self.subTest(module=modname):
@@ -1166,7 +1166,7 @@ class OldHubMintIsPrivate(unittest.TestCase):
     def test_the_foreign_modules_whose_own_source_starts_a_program_are_derived(self):
         """The third road (the module docstring), derived and pinned: _foreign_spawn_roads over the censused set reads the
         own source of every module its import bindings load, by path, and names the modules that start a program inside it.
-        The derived set is held EQUAL to FOREIGN_ROADS (round 6's fixer pass: the cell pinned a subset, so a fifth road could
+        The derived set is held EQUAL to FOREIGN_ROADS (pass 10's fixer pass: the cell pinned a subset, so a fifth road could
         not red it): on this Python uuid (its node lookup runs a program when the _uuid extension is absent), subprocess
         itself (its _posixsubprocess import and os.posix_spawn), http.server (the CGI handler's fork and exec, deprecated
         upstream), os (os.popen's body calls subprocess.Popen) and unittest.mock (it imports asyncio, a spawner family's
@@ -1222,7 +1222,7 @@ class OldHubMintIsPrivate(unittest.TestCase):
                          "the bindings: a dotted import binds its first name, an alias the whole module, a from-import the submodule when the standard library holds its source and else the member; a relative import binds nothing without a package")
 
     def test_the_touch_derivation_keys_on_the_binding_not_the_spelling(self):
-        """_foreign_touch_sites over a synthetic censused set (round 6's fixer pass): a road module reached through its bare name,
+        """_foreign_touch_sites over a synthetic censused set (pass 10's fixer pass): a road module reached through its bare name,
         an alias, a from-imported name and a submodule alias is one touch each, spelled by the module's name, and a module that
         is no road, or a name imported from one that is a class (`Path`), is none. Red before the fixer pass for every spelling
         but the bare one."""
@@ -1237,13 +1237,13 @@ class OldHubMintIsPrivate(unittest.TestCase):
                          "a touch is keyed on the name the import binds and spelled by the module; a module outside the roads and a class imported by name are none")
 
     def test_the_recorder_refuses_a_spawning_function_bound_before_it_is_installed(self):
-        """The recorder's side of the alias road (round 5): _bound_spawners over a synthetic module finds, by identity and by
+        """The recorder's side of the alias road (pass 9): _bound_spawners over a synthetic module finds, by identity and by
         path, an alias at module level, a dict value, a default argument, a keyword default, a functools.partial, a class
         attribute of the module's own class, a closure cell, a staticmethod, and (the fixer pass) a property's getter, a
         SimpleNamespace attribute, a bound method's function, a generator frame's local and a bound builtin method's object,
         and reports what it does not enter as the boundary by path and kind (a module object, a class of another module, an
-        object it cannot read such as an iterator, and, since round 6, a holder past its depth bound: a spawner nested ten
-        or twelve dicts deep is a boundary entry of its own kind where round 5 dropped it silently, one nested nine deep is
+        object it cannot read such as an iterator, and, since pass 10, a holder past its depth bound: a spawner nested ten
+        or twelve dicts deep is a boundary entry of its own kind where pass 9 dropped it silently, one nested nine deep is
         found, and the holder planted in the lab module's namespace reds _spy with the depth sentence); a module that reads
         subprocess.run at call time (a lambda, a decorator, a function body) binds nothing early and is clean; the lab module
         itself is clean and holds nothing the walk cannot read or enter, which is what every _spy asserts before it patches,
@@ -1278,7 +1278,7 @@ class OldHubMintIsPrivate(unittest.TestCase):
         clean.subprocess = subprocess
         exec("_L = lambda c: subprocess.run(c)\ndef _late(c):\n    return subprocess.Popen(c)\n", vars(clean))
         self.assertEqual(_bound_spawners(clean)[0], [], "a read of the attribute at call time binds nothing early: the recorder sees it")
-        # the depth bound (round 6): a spawner nested past the bound is a boundary entry of its own kind, refused by _spy with
+        # the depth bound (pass 10): a spawner nested past the bound is a boundary entry of its own kind, refused by _spy with
         # its own sentence; one at the last entered level is still FOUND, not a boundary
         for levels, want_found in ((9, True), (10, False), (12, False)):
             with self.subTest(levels=levels):
@@ -1314,7 +1314,7 @@ class OldHubMintIsPrivate(unittest.TestCase):
         self.assertTrue({"subprocess", "os", "lab_dist"} <= {path for path, kind in boundary if kind == "module"}, "the lab module's module objects are the walk's boundary: %r" % (sorted(boundary),))
 
     def test_what_the_census_cannot_see_is_a_rule_with_its_list_derived(self):
-        """The disclosure, derived where it is read and never counted (round 5: the earlier docstring said two roads remained
+        """The disclosure, derived where it is read and never counted (the maintainer's round 4: the earlier docstring said two roads remained
         unseen and named a third's class wrongly; the maintainer's round 5: the rewritten residual then shrank while the blind
         set grew). The rule is the module docstring's: the census refuses the nodes it enumerates and nothing else, and on the
         recorder's side a spawning call whose source is outside the lab module's attribute and the censused sources is unseen.
@@ -1326,7 +1326,7 @@ class OldHubMintIsPrivate(unittest.TestCase):
         subprocess (_foreign_touch_sites, by binding) and the members it reads on the source-less modules
         (_unread_member_reads); road (4), the import-time surface (_import_time_statements); and what _bound_spawners does
         not enter, by path and kind, with the depth it reached against its bound. Each list is printed to stdout, which pytest shows for a passed test under -rA or -s, and
-        carried in an assertion's message for a red, so a run's record can carry the derived residual as it stood (round 5's
+        carried in an assertion's message for a red, so a run's record can carry the derived residual as it stood (pass 9's
         fixer pass: the lists sat in assertion messages alone, which a green run never prints; the maintainer's round 5, tests-3:
         the prints themselves are pinned, the cell's stdout captured, asserted to carry each list and re-emitted). Its two
         assertions over the sites state what they check about the DERIVATION (the maintainer's round 5, extra6-3): the
@@ -1423,7 +1423,7 @@ class OldHubMintIsPrivate(unittest.TestCase):
                 f.write(src)
         self.assertEqual(sorted(_lab_modules("root", here)), ["bare", "deeper", "qualified_from", "qualified_import", "relative", "root"],
                          "the walk reaches a sibling by every spelling, transitively, and no unimported one")
-        # a PACKAGE sibling (round 5): the walk refuses it by name rather than dropping it, so a helper in a package's __init__
+        # a PACKAGE sibling (pass 9): the walk refuses it by name rather than dropping it, so a helper in a package's __init__
         # cannot pass the census unread
         os.makedirs(os.path.join(here, "packaged"))
         with open(os.path.join(here, "packaged", "__init__.py"), "w", encoding="utf-8") as f:

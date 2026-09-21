@@ -1,4 +1,4 @@
-"""The link-drop driver's receiver walk and wait census over the compiler's PARSE of the driver (2026-09-20, round 5 of PR 857).
+"""The link-drop driver's receiver walk and wait census over the compiler's PARSE of the driver (2026-09-20, the author's pass 9 of PR 857).
 
 The `_served` suffix is a PLACEMENT, not a description: this module boots no kernel, drives no page and needs no browser; it
 parses source. The suffix reaches the one CI job whose vscode-extension/node_modules holds the typescript package (the
@@ -8,7 +8,7 @@ Python matrix, which installs no node deps, it skips with a reason saying the sa
 tests/test_federated_linkdrop_driver_bound.py requires every wait the driver places to draw on its budget and every call
 on a playwright receiver to be one an allow-list names for that receiver's kind, because an auto-waiting read inherits
 playwright's 30 s default that no budget caps. Its instruments there are regular expressions over the driver text, keyed
-on a receiver written as a bare dotted name, and round 5's review measured that keying: spellings of the same receiver
+on a receiver written as a bare dotted name, and the maintainer's round 4 (its addendum's prep) measured that keying: spellings of the same receiver
 reached none of them (among them an object literal, an array, a ternary, `null || pages.feed`, an arrow's or a return's
 value, a page awaited into a helper, optional chaining, bracket access to the method, a comma operator, a receiver
 parenthesised before the await, a space or a comment before the member, a second browser from firefox; PLANTS below is
@@ -47,7 +47,7 @@ three things: a NAME no scope of the tree binds, a MEMBER of a root the driver d
 list or an object holding one) reaching a shape the walk does not follow, each refused by construction; what is done with an
 untyped value (`cfg.fifo`, a literal, an arithmetic expression) is not read, and the soundness argument is the consumption
 rule below (a receiver cannot enter an untyped local unrefused), not a per-node refusal. The shapes the walk follows are the
-exceptions, each a list held equal to the driver (round 6: the earlier walk refused the shapes it recognised and let the rest
+exceptions, each a list held equal to the driver (the maintainer's round 5: the earlier walk refused the shapes it recognised and let the rest
 through, so each round of planting found more). The roots: the destructuring of
 `require("playwright")` names a browser type (chromium; firefox and webkit would be named the same way and refused by the
 allow-list, which knows chromium alone), `chromium.launch(...)` is a browser, `browser.newContext(...)` a context,
@@ -91,7 +91,7 @@ call where it stands: an IIFE, `outer()()`, `fns[0]()`), and a receiver returned
 callback handed to a member call, a helper held in a literal or read as a member, a getter, an object or class method, a
 constructor, whose `this` the walk does not type) is refused where it is returned; a helper whose return is a receiver may
 itself sit only in a name binding, an assignment to a name, a direct call, or an argument to a helper the walk follows
-(round 5's fixer pass: nine shapes returned a page from a getter, an object or a class method, `hf.call`, a callback, an
+(pass 9's fixer pass: nine shapes returned a page from a getter, an object or a class method, `hf.call`, a callback, an
 array-held or a returned arrow, and passed silently). Anything else is refused by line and text: a member READ that is not
 itself called (`pages.feed.request`, `pages.feed.keyboard`, `pages.feed.waitForFunction` bound to a name), a computed member
 (`locator(...)[mth]()`, `box[key]`, `pw["chrom" + "ium"]`), a receiver passed to a callee the walk does not follow
@@ -155,7 +155,7 @@ THE PLANTS. PLANTS is a fixture: each row is one line inserted into the driver a
 run through this census, and must give the verdict class its row names (a walk refusal, an unlisted call, an uncapped or
 unlisted wait site, a third fetch; `passed` for the CONTROLS and the DISCLOSED rows, and for nothing else). The rows are the
 prep note's tables for censuses 3, 4 and 5, the addendum's `null || pages.feed`, the builder's and the fixer's, as the
-comment on PLANTS says; the before-outcomes through the round-4 head's regex census are in the review record outside the
+comment on PLANTS says; the before-outcomes through the pass-8 head's regex census are in the review record outside the
 repo, which names the rows that were red there. No count is kept in this docstring: len(PLANTS) is the count.
 
 Synthetic: no kernel, no browser; node and the extension's node_modules only.
@@ -403,7 +403,7 @@ class Walk:
     def declaring_scope(self, name, n):
         """The scope that DECLARES `name` as seen from `n` (the nearest enclosing one that binds it, typed or not), else the
         node's own scope for a name no scope binds (which _kind refuses as free). An assignment types the name where it is
-        declared, so a closure's write to an outer name types the outer binding (round 6's fixer pass: `let cap; const set = ()
+        declared, so a closure's write to an outer name types the outer binding (pass 10's fixer pass: `let cap; const set = ()
         => { cap = pages.feed; }` typed cap inside the arrow alone, and the read at module level saw an untyped name)."""
         s = self.scope_of(n)
         while s is not None:
@@ -839,7 +839,7 @@ class Walk:
         bind on a receiverish value is refused where it stands: a rest element, an element with a default, a computed property
         name, a member of a receiver or of a list read by an object pattern, a pattern over a root's member, an array pattern
         over anything but a list. Its names would otherwise stay untyped with the receiver inside them, and a read of one would
-        be invisible (round 6's fixer pass: a nested pattern, a rest element, a for-of pattern and a parameter pattern with a
+        be invisible (pass 10's fixer pass: a nested pattern, a rest element, a for-of pattern and a parameter pattern with a
         receiver default passed both censuses, since _consume accepted a pattern by its FORM and _declare bound one level of
         plain names). A value with no type flows nowhere: the names stay untyped, as _declare_all left them."""
         if target["k"] == "Identifier":
@@ -984,7 +984,7 @@ class Walk:
                 return   # a table's or a list's member is one of its type whatever the key spells (`pages[app]`), typed by _kind
             if not named:
                 # a record's, the playwright module's or a receiver's member under a key the parse cannot read: the walk cannot
-                # name what the key reaches, so the member's type is unknown (round 5: a record's and the module's returned here)
+                # name what the key reaches, so the member's type is unknown (pass 9: a record's and the module's returned here)
                 return self.refuse(p, "a computed member on %s the walk cannot name" % show(k))
             if isinstance(k, tuple) or k == "playwright":
                 return   # a record's or the playwright module's member under a name or a string literal is typed by _member
@@ -1192,14 +1192,14 @@ def verdict(c):
 
 ANCHOR = "  out.provBefore = await provText();\n"   # the plants go one line after this, inside the driver's try block
 SEL = "cfg.provSel"
-# The plants (round 5 of PR 857): one JS line each, and the class of red this census must give it; `passed` for the CONTROLS
+# The plants (the author's pass 9 of PR 857): one JS line each, and the class of red this census must give it; `passed` for the CONTROLS
 # and the DISCLOSED rows alone. Provenance: the rows from var-held-page to firefox-launch are the prep note's tables for
-# censuses 3, 4 and 5 (the owner's read-only prep over the round-4 head) but for computed-method, newline-chain, return-stmt,
-# param-default, method-ref-binding and reflect-get, the builder's from the round-4 fixlist's shapes (a returned receiver, a
+# censuses 3, 4 and 5 (the owner's read-only prep over the pass-8 head) but for computed-method, newline-chain, return-stmt,
+# param-default, method-ref-binding and reflect-get, the builder's from the maintainer's round 4 fixlist's shapes (a returned receiver, a
 # computed member) and its own, and logical-or, the addendum's; timer-as-member, timer-import and identity-control are the
-# builder's; every row from getter-return on is the fixer pass's (the round's verifiers' shapes and the fixer's own), and the
-# rows from walked-param-identity on are round 6's (the maintainer's round 5 shapes and the method ruling's). Through the
-# round-4 head's regex census these rows were red and the rest passed: of the builder's, var-held-page, var-held-locator,
+# builder's; every row from getter-return on is the fixer pass's (pass 9's verifiers' shapes and the fixer's own), and the
+# rows from walked-param-identity on are pass 10's (the maintainer's round 5 shapes and the method ruling's). Through the
+# pass-8 head's regex census these rows were red and the rest passed: of the builder's, var-held-page, var-held-locator,
 # computed-method, newline-chain, paren-receiver, param-default, space-before-dot-wait, method-ref-binding, reflect-get,
 # third-fetch, set-default-timeout, bracket-page-control and template-string (four of them by an accident of spelling), and of
 # the fixer's, fetch-globalthis; the review record outside the repo carries that table, and no count is kept here.
@@ -1301,13 +1301,13 @@ PLANTS = (
     ("busy-loop", "for (const t0 = Date.now(); Date.now() - t0 < 100000;) {}", "passed"),
     ("evaluate-busy", "await pages.feed.evaluate(() => { const t0 = Date.now(); while (Date.now() - t0 < 100000) {} });", "passed"),
     ("thenable-await", "await { then() {} };", "passed"),
-    # round 6 (the maintainer's round 5, tests-1): an identity helper, an arrow whose expression body is a bare identifier, returns its parameter
+    # pass 10 (the maintainer's round 5, tests-1): an identity helper, an arrow whose expression body is a bare identifier, returns its parameter
     ('walked-param-identity', 'const asPage = (page) => page; await asPage(pages.feed).locator(cfg.provSel).textContent();', 'unlisted'),
     ('identity-bound-then-read', 'const asP3 = (page) => page; const p9 = asP3(pages.feed); await p9.locator(cfg.provSel).textContent();', 'unlisted'),
     ('async-identity', 'const asPA = async (page) => page; await (await asPA(pages.feed)).locator(cfg.provSel).textContent();', 'unlisted'),
     ('identity-unwalked-param', 'const asQ = (q) => q; await asQ(pages.feed).locator(cfg.provSel).textContent();', 'unlisted'),
     ('arrow-returns-table', 'const getT = () => pages; await getT().feed.locator(cfg.provSel).textContent();', 'unlisted'),
-    # round 6 (correctness-1): a record's or the playwright module's member under a key the parse cannot read is refused, a literal key typed
+    # pass 10 (the maintainer's round 5, correctness-1): a record's or the playwright module's member under a key the parse cannot read is refused, a literal key typed
     ('record-computed', 'const kk = "p"; const box9 = { p: pages.feed }; await box9[kk].locator(cfg.provSel).textContent();', 'refused'),
     ('record-computed-key', 'const kk2 = "p"; const rec9 = { [kk2]: pages.feed }; await rec9.p.locator(cfg.provSel).textContent();', 'refused'),
     ('playwright-computed', 'const pw = require("playwright"); const b3 = await pw["chrom" + "ium"].launch({}); const c3 = await b3.newContext({}); const p3 = await c3.newPage(); await p3.locator(cfg.provSel).textContent();', 'refused'),
@@ -1316,11 +1316,11 @@ PLANTS = (
     ('template-key', 'const box7 = { p: pages.feed }; await box7[`${"p"}`].locator(cfg.provSel).textContent();', 'refused'),
     ('playwright-var-key', 'const bn = "chromium"; const pw5 = require("playwright"); const b5 = await pw5[bn].launch({}); const c5 = await b5.newContext({}); const p5 = await c5.newPage(); await p5.locator(cfg.provSel).textContent();', 'refused'),
     ('record-bracket-literal', 'const box4 = { p: pages.feed }; await box4["p"].locator(cfg.provSel).textContent();', 'unlisted'),
-    # round 6 (the METHOD): a FREE name, bound by no scope and no KNOWN_GLOBALS name, is refused wherever it is read
+    # pass 10 (the METHOD, the maintainer's round 5): a FREE name, bound by no scope and no KNOWN_GLOBALS name, is refused wherever it is read
     ('free-name-call', 'fs2.readFileSync("/dev/stdin", "utf8");', 'refused'),
     ('unread-global', 'structuredClone({});', 'refused'),
     ('free-name-member-read', 'const Q9 = Reflect.ownKeys;', 'refused'),
-    # round 6: the round-4 spellings that had no row of their own (bracket-spelled waits on a page and on the table, spaces around
+    # pass 10: the maintainer's round 4 spellings that had no row of their own (bracket-spelled waits on a page and on the table, spaces around
     # every dot, an unbound root read by bracket, and a bracket-spelled locator count as a control)
     ("bracket-dwell", 'await pages.feed["waitForTimeout"](60000);', "wait"),
     ("bracket-table-dwell", 'await pages["feed"]["waitForTimeout"](60000);', "wait"),
@@ -1328,7 +1328,7 @@ PLANTS = (
     ("spaces-around-dots", "await pages . feed . locator(cfg.provSel) . textContent();", "unlisted"),
     ("unbound-root-bracket", 'await pages2["feed"].locator(cfg.provSel).textContent();', "refused"),
     ("bracket-locator-count-control", 'await pages.feed["locator"](cfg.provSel).count();', "passed"),
-    # round 6 (the METHOD, one level down): a member of a known global or of a loaded module is one the driver reads (KNOWN_MEMBERS) or a refusal
+    # pass 10 (the METHOD, one level down): a member of a known global or of a loaded module is one the driver reads (KNOWN_MEMBERS) or a refusal
     ('process-binding-timers', 'const tm = process.binding("timers");', 'refused'),
     ('global-computed-member', 'process["bind" + "ing"]("timers");', 'refused'),
     ('global-alias-member', 'const P2 = process; P2.binding("timers");', 'refused'),
@@ -1337,13 +1337,13 @@ PLANTS = (
     ('fs-opensync', 'const fd = fs.openSync("/dev/stdin", "r"); fs.readSync(fd, new Uint8Array(1));', 'refused'),
     ('fs-computed-member', 'fs["read" + "FileSync"]("/dev/stdin", "utf8");', 'refused'),
     ('named-import-new-member', 'import { watchFile } from "node:fs"; watchFile(cfg.fifo, () => {});', 'refused'),
-    # round 6 (extra5-3): the disclosed class's second member, the driver's own module member called with any argument, however reached
+    # pass 10 (the maintainer's round 5, extra5-3): the disclosed class's second member, the driver's own module member called with any argument, however reached
     ('fs-blocking-read', 'fs.readFileSync("/dev/stdin", "utf8");', 'passed'),
     ('fs-blocking-fifo', 'const raw = fs.readFileSync(cfg.fifo, "utf8"); out.raw = raw.length;', 'passed'),
     ('fs-alias-read', 'const F = fs; F.readFileSync("/dev/stdin", "utf8");', 'passed'),
     ('fs-member-bound', 'const rfs = fs.readFileSync; rfs("/dev/stdin", "utf8");', 'passed'),
     ('named-import-known-member', 'import { readFileSync as rfs2 } from "node:fs"; rfs2("/dev/stdin", "utf8");', 'passed'),
-    # round 6's fixer pass (the pattern binder and the declaring scope): a destructuring element the walk cannot bind is refused,
+    # pass 10's fixer pass (the pattern binder and the declaring scope): a destructuring element the walk cannot bind is refused,
     # one it can is followed to any depth, and an assignment from inside a closure types the outer name
     ("nested-object-destructure", "const { a: { b: nb } } = { a: { b: pages.feed } }; await nb.locator(%s).textContent();" % SEL, "unlisted"),
     ("nested-array-destructure", "const [[nc]] = [[pages.feed]]; await nc.locator(%s).textContent();" % SEL, "unlisted"),
@@ -1356,7 +1356,7 @@ PLANTS = (
     ("iife-assigns-outer", "let ip; (() => { ip = pages.feed; })(); await ip.locator(%s).textContent();" % SEL, "unlisted"),
     ("callback-assigns-outer", "let onp; [1].forEach(() => { onp = pages.feed; }); await onp.locator(%s).textContent();" % SEL, "unlisted"),
     ("closure-fills-table", "const tbl2 = {}; const fill = () => { tbl2.p = pages.feed; }; fill(); await tbl2.p.locator(%s).textContent();" % SEL, "unlisted"),
-    # round 6's fixer pass: the budget is one and its sleep's timer takes the sleep's own delay; a loop whose header reads a
+    # pass 10's fixer pass: the budget is one and its sleep's timer takes the sleep's own delay; a loop whose header reads a
     # receiver, the budget or its poll, and a helper in a call cycle, are refused; a receiver call's options are the driver's
     ("second-budget-slow-sleep", 'const budget2 = makeBudget({ budgetMs: 1, now: Date.now, sleep: () => new Promise((r) => setTimeout(r, 100000)), out }); await budget2.waitFor(() => false, 1, "w");', "refused"),
     ("sleep-nested-timer", 'const budget3 = makeBudget({ budgetMs: 1, now: Date.now, sleep: () => { const q = () => new Promise((r) => setTimeout(r, 100000)); return q(); }, out }); await budget3.waitFor(() => false, 1, "w");', "refused"),
@@ -1410,7 +1410,7 @@ REFUSED_CELLS = {
     "timer-bound": ("const st = setTimeout;", "a wait outside playwright and the budget"),
     "foreign-require": ('const cp = require("child_process");', "a require of a module the census does not know"),
     "foreign-import": ('import { setTimeout as delay } from "node:timers/promises";', "an import of a module the census does not know"),
-    # the fixer pass's roads (round 5)
+    # pass 9's fixer pass's roads
     "return-uninvoked": ("const cb = [1].map(() => pages.feed);", "returned from a helper the walk follows to no call"),
     "return-method": ("const om = { m() { return pages.feed; } };", "returned from a method, an accessor or a constructor"),
     "return-getter": ("const go = { get p() { return pages.feed; } };", "returned from a method, an accessor or a constructor"),
@@ -1431,7 +1431,7 @@ REFUSED_CELLS = {
     "atomics": ("Atomics.wait(x, 0, 0, 1);", "Atomics"),
     "globalthis": ("globalThis.x = 1;", "globalThis"),
     "computed-callee": ('x["a" + "b"]();', "a computed member call on a value the walk does not type"),
-    # round 6 (the maintainer's round 5, tests-2): the branches no cell and no PLANTS row fired, each with its own cell now, so the
+    # pass 10 (the maintainer's round 5, tests-2): the branches no cell and no PLANTS row fired, each with its own cell now, so the
     # derived coverage assertion below is green (it is what closes the class; these cells are what it needs)
     "ternary-two-types": ("const p = cfg.x ? pages.feed : pages.feed.locator(s);", "yields a page and a locator"),
     "budget-unknown-call": ("const budget2 = makeBudget({}); budget2.spend(1);", "a call on the budget the census does not know"),
@@ -1441,7 +1441,7 @@ REFUSED_CELLS = {
     "return-outside-function": ("return pages.feed;", "returned outside a function"),   # a return at module level: the parser accepts it (a grammar error the checker would report), the walk refuses it
     "destructure-table": ("const [q] = pages;", "destructured by an array pattern: the walk types no element of it"),
     "createrequire-as-value": ("const cr = createRequire;", "createRequire read as a value"),
-    # round 6 (the METHOD): the roots the walk resolves to no receiver
+    # pass 10 (the METHOD): the roots the walk resolves to no receiver
     "free-name": ("fs2.readFileSync(u);", "a free name no scope of the tree binds"),
     "unread-member": ("process.binding(u);", "a member of the global process the driver does not read"),
     "root-computed-member": ('process["bind" + "ing"](u);', "a computed member on the global process"),
@@ -1449,7 +1449,7 @@ REFUSED_CELLS = {
     "module-member-member": ("createRequire.call(null, u);", "a member of createRequire imported from node:module, a value the walk reads nothing of"),
     "computed-record-member": ("const box = { p: pages.feed }; await box[mth].locator(s).count();", "a computed member on an object holding {p: a page}"),
     "computed-key-property": ("const rec = { [mth]: pages.feed };", "a page placed under a property name the walk cannot read"),
-    # round 6's fixer pass: the pattern binder (_bind_pattern) refuses every element it cannot bind on a receiverish value, in a
+    # pass 10's fixer pass: the pattern binder (_bind_pattern) refuses every element it cannot bind on a receiverish value, in a
     # declaration, a for-of and a parameter default alike, and an assignment types the name where it is declared
     "pattern-rest": ("const { ...rst } = { p: pages.feed };", "destructured by an element the walk cannot bind (a rest element, a default, a computed property name)"),
     "pattern-default": ("const { p = x } = { p: pages.feed };", "destructured by an element the walk cannot bind (a rest element, a default, a computed property name)"),
@@ -1460,7 +1460,7 @@ REFUSED_CELLS = {
     "for-of-pattern-rest": ("for (const { ...fr } of [{ p: pages.feed }]) {}", "destructured by an element the walk cannot bind"),
     "param-pattern-rest": ("const rp = ({ ...pr } = { p: pages.feed }) => 1;", "destructured by an element the walk cannot bind"),
     "closure-two-types": ("let cv; const set1 = () => { cv = pages.feed; }; const set2 = () => { cv = context; };", "cv is bound to a page and to a context"),
-    # round 6's fixer pass: one budget, the sleep's delay, a loop's header, a call cycle, a receiver call's options
+    # pass 10's fixer pass: one budget, the sleep's delay, a loop's header, a call cycle, a receiver call's options
     "second-budget": ("const budget2 = makeBudget({});", "a makeBudget beyond the driver's one module-level"),
     "sleep-delay": ("const budget3 = makeBudget({ sleep: (ms) => new Promise((r) => setTimeout(r, 1000)) });", "a timer under the budget's sleep whose delay is not the sleep's own argument"),
     # the delay's NAME is the parameter's but an inner declaration shadows it: resolved by scope, not by spelling
@@ -1471,8 +1471,8 @@ REFUSED_CELLS = {
     "unread-option": ('await pages.feed.goto(u, { timeout: budget.capped(x), waitUntil: "load" });', "page.goto({ waitUntil }): an option the driver does not pass"),
     "computed-option": ("await pages.feed.goto(u, { [mth]: 1 });", "an option of page.goto the walk cannot name"),
 }
-# the two-round convergence bound (round 6, tests-2): a page reaches a binding through a helper's return, which the fixpoint types
-# in round 2; under rounds=1 the walk refuses "did not converge", and under the default bound the same source is clean
+# the two-round convergence bound (pass 10, the maintainer's round 5 tests-2): a page reaches a binding through a helper's return, which the fixpoint types
+# in its second round; under rounds=1 the walk refuses "did not converge", and under the default bound the same source is clean
 CONVERGENCE_JS = ROOT_JS + "const gp = () => pages.feed; const p2 = gp(); await p2.locator(s).count();"
 
 
@@ -1514,7 +1514,7 @@ class TheDriverParsed(unittest.TestCase):
         exactly KNOWN_MEMBERS, the modules it imports exactly IMPORTS_ALLOWED and the modules it requires exactly
         REQUIRE_ALLOWED, and the options it passes its receiver calls exactly KNOWN_OPTIONS (the walk's lists over the
         unplanted driver, held equal to the tuples, so a global, a member, a module or an option the driver starts or stops
-        reading is a red until the tuple says so; round 6's fixer pass: the docstring said all three tuples were held equal
+        reading is a red until the tuple says so; pass 10's fixer pass: the docstring said all three tuples were held equal
         while only two were), the module scope makes the one budget exactly once, and the two fetches stand."""
         c = self._census("driver.mjs", L.DRIVER)
         self.assertEqual(c["refusals"], [], "a receiver, or a table, list or object holding one, reaches a shape the walk does not follow (a member read that "
@@ -1550,7 +1550,7 @@ class TheDriverParsed(unittest.TestCase):
                                                              "nothing of what an option does; any other option is a refusal above, so one the driver starts or stops passing is a red until the tuple says so): %r" % (c["options"],))
         self.assertEqual(c["budget_bindings"], [L.DRIVER.count("\n", 0, L.DRIVER.index("const budget = makeBudget(")) + 1],
                          "the module scope makes the driver's one budget, `const budget = makeBudget(...)`, exactly once (every other makeBudget is a refusal above): %r" % (c["budget_bindings"],))
-        self.assertGreaterEqual(len(c["waits"]), 16, "the census saw the driver's wait sites (16 at the round-5 head): %d" % len(c["waits"]))
+        self.assertGreaterEqual(len(c["waits"]), 16, "the census saw the driver's wait sites (16 at the pass-9 head): %d" % len(c["waits"]))
 
     def test_the_config_the_lab_writes_hands_the_launch_no_options(self):
         """The disclosed class's third member, pinned: the driver's `chromium.launch(cfg.launch || {})` hands the launch its
@@ -1628,14 +1628,14 @@ class TheDriverParsed(unittest.TestCase):
                 self.assertTrue(any(token in why and line == 2 for line, _, why in c["refusals"]), "%s: the walk refuses the shape by line and class: %r" % (name, c["refusals"]))
 
     def test_every_refusal_site_of_the_walk_fires_under_a_pinned_cell(self):
-        """The derived coverage (round 6, the maintainer's round 5 tests-2: nine of the walk's refusal branches were exercised by no
+        """The derived coverage (pass 10, the maintainer's round 5 tests-2: nine of the walk's refusal branches were exercised by no
         cell and no row, each deletable with the module green, and four more fired under no pin of their own). The refusal
         sites are read from this module's own source by ast (every `self.refuse(` and `self.refuse_at(` call inside class
         Walk, by line), and every REFUSED_CELLS cell, every PLANTS row, the unplanted driver and the one-round convergence cell
         are run with `Walk.refuse` and `Walk.refuse_at` spied to record the line each call came from; the two sets must be
         EQUAL, so a refusal branch added with no cell or row that fires it is a red until one does, and a cell deleted from
         under a branch is a red too. The convergence cell: under rounds=1 the walk refuses that it did not converge (a page
-        reaches a binding through a helper's return, typed in round 2), and under the default bound the same source is clean
+        reaches a binding through a helper's return, typed in the fixpoint's second round), and under the default bound the same source is clean
         and its one call allowed, so the pin cannot pass because the source was refused for another reason."""
         with open(os.path.realpath(__file__), encoding="utf-8") as f:
             tree = ast.parse(f.read())

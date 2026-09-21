@@ -2,7 +2,7 @@
 
 CI's served job runs every served lab in ONE pytest process under pytest-timeout's per-test cap (600 s, thread method:
 the process ends with a thread dump and no summary), and tests/test_federated_linkdrop_served.py drives its two kernels
-and the browser in setUpClass. Round 2's review found the node driver's subprocess timeout at 900 s, above the cap, with
+and the browser in setUpClass. The author's pass 3 (its verifiers' review of the pass-2 head) found the node driver's subprocess timeout at 900 s, above the cap, with
 waits that alone summed past it: a drive degraded by one unmet precondition (a supervisor that never re-read the row up)
 would have been ended by pytest-timeout inside setUpClass, taking every served lab collected after the module with it
 and leaving no summary for the labs already run. The module now bounds the drive in three layers, pinned here without a
@@ -20,23 +20,23 @@ kernel or a browser:
 - the budget under node: BUDGET_JS, the driver's opening lines, run with a clock of its own: a wait that never comes
   spends the budget once and is recorded, every later wait returns at once, no timeout handed on is ever 0 (playwright
   reads 0 as no timeout), and a wait that comes spends only what it took;
-- the premise of the arithmetic (round 2, fresh-1): every wait the driver places is one the sum counts. A census of the
+- the premise of the arithmetic (the maintainer's round 2, fresh-1): every wait the driver places is one the sum counts. A census of the
   driver's wait call sites against a table of the forms it may use requires each playwright wait to carry
-  timeout: budget.capped(...) as the WHOLE value (round 3: `budget.capped(x) + N`, `* N` or a second argument left the
+  timeout: budget.capped(...) as the WHOLE value (pass 5: `budget.capped(x) + N`, `* N` or a second argument left the
   value uncapped and the census green; a wait with no timeout key inherits playwright's 30 s default, which no budget
   caps: the driver never calls setDefaultTimeout) and each waitForTimeout to draw on the budget or be one of the two fixed
   dwells driver_worst_case_s counts; the navigations (goto, reload, goBack, goForward) are wait forms too; and an unlisted
-  wait form or an auto-waiting action fails by name. Round 4 added the other half of that premise as an ALLOW-list: every
+  wait form or an auto-waiting action fails by name. Pass 8 added the other half of that premise as an ALLOW-list: every
   method the driver calls on a playwright receiver (a page, a locator made from one, the context, the browser, chromium)
-  must be one ALLOWED_CALLS names for that receiver kind, because a deny-list's gap passes (the round-3 head listed the
+  must be one ALLOWED_CALLS names for that receiver kind, because a deny-list's gap passes (the pass-7 head listed the
   auto-waiting ACTIONS and not the auto-waiting locator READS, so `locator(...).textContent()`, which inherits playwright's
   30 s default that no budget caps, kept the census green while the pinned headroom under the subprocess timeout is 7.5 s
-  and 27.5 s); `evaluate` is allowed on a page receiver only, since a locator's evaluate auto-waits. The fixer pass of that
-  round closed the walk's own gap: the walk follows chains on the names it knows (page, pages, context, browser, chromium),
+  and 27.5 s); `evaluate` is allowed on a page receiver only, since a locator's evaluate auto-waits. Pass 8's fixer pass
+  closed the walk's own gap: the walk follows chains on the names it knows (page, pages, context, browser, chromium),
   so a receiver or a locator reachable under any other name was invisible to it and a bound locator's read left the census
   green; it refuses a binding or assignment to a name outside WALKED_NAMES, a locator-making call whose chain ends on it and
   a receiver passed bare to anything but Object.keys or a driver helper whose one parameter is a walked name. Those are the
-  SPELLINGS this module's censuses check, and the rule (round 5) is that a census over a form is keyed on the property, or
+  SPELLINGS this module's censuses check, and the rule (the maintainer's round 4) is that a census over a form is keyed on the property, or
   it parses, or its message says which spellings it checks: these are regular expressions over the driver text, so a
   receiver reached any other way (an object literal, an array, a ternary, `null ||`, a helper's return, an awaited argument,
   optional chaining, bracket access, a space or a comment before the member, a second browser type), a member read followed
@@ -49,15 +49,15 @@ kernel or a browser:
 
 Three more pins ride here because the module they pin has no kernel-free test of its own: LinkDropBothNew gates on no
 knob, wherever such a gate could sit (a class-level skip, setUpClass, _knobs), and LinkDropOldLocal skips as optional
-(round 1's high, closed by a value; round 2 asked for the pin, round 3 for the property over every site); a hub a knob
+(the maintainer's round 1's high, closed by a value; the maintainer's round 2 asked for the pin, pass 5 for the property over every site); a hub a knob
 asked for whose bundle cannot be made ready, or whose root holds no kernel, is an error through _boot, while this
-checkout's own bundle failing to build stays a skip (round 1's tests-3, ruled twice); the old-hub storm's allowance
+checkout's own bundle failing to build stays a skip (the maintainer's round 1's tests-3, ruled twice); the old-hub storm's allowance
 for an empty phase is keyed on a notice post that found the Outline without an open, served relay socket and then on a
 whole keyed feed frame after the bundle's last notice, over a synthetic record, and the floor it guards reds on a planted
-miss with the frame present (round 4: the frame alone excused most recorded phase windows; the census, its figures, its
+miss with the frame present (the maintainer's round 3: the frame alone excused most recorded phase windows; the census, its figures, its
 population and its drive are in _outline_caught_up_whole's docstring, one derivation, and are not repeated here); and the
 gate's control in time takes a phase's waitedMs as a delivery only when every wait behind it resolved and its visibles
-showed, over a synthetic record for each class (round 5: a wait that ran to its cap measured as a delivery at the cap).
+showed, over a synthetic record for each class (pass 6: a wait that ran to its cap measured as a delivery at the cap).
 
 Synthetic: no kernel, no browser; stub classes over scratch directories.
 """
@@ -82,7 +82,7 @@ import test_federated_linkdrop_served as L   # noqa: E402  the lab module: the c
 CFG_KEYS = ("driverBudgetMs", "pageWaitMs", "phaseSettleMs", "quietTries", "quietStepMs")   # plus waitsMs.<mark>, below
 KNOBS = ("ROMP_LINKDROP_LAB", "ROMP_CORNER_OLD_HUB_ROOT", "ROMP_LINKDROP_OLD_HUB_BUILD", "ROMP_LINKDROP_HUB_ROOT")   # the lab's four
 # every ast node class that is a function definition, derived from the property (a class with args, body, decorator_list and
-# returns: FunctionDef and AsyncFunctionDef on this Python; Lambda has no decorator_list or returns) rather than spelled (round 6,
+# returns: FunctionDef and AsyncFunctionDef on this Python; Lambda has no decorator_list or returns) rather than spelled (pass 10,
 # the maintainer's round 5 tests-4: two pins keyed on `ast.FunctionDef` and were blind to `async def`); pinned by name below
 FUNCTION_NODES = tuple(c for c in vars(ast).values() if isinstance(c, type) and issubclass(c, ast.AST) and {"args", "body", "decorator_list", "returns"} <= set(c._fields))
 
@@ -98,10 +98,10 @@ WAIT_FORMS = {"goto": "timeout", "reload": "timeout", "goBack": "timeout", "goFo
               "waitForURL": "timeout", "waitForLoadState": "timeout", ".waitFor": "timeout", "waitForTimeout": "dwell", "waitFor": "budget"}
 FIXED_DWELLS = ("cfg.phaseSettleMs", "cfg.downDwellMs")
 # exactly one capped call and nothing around it: `budget.capped(x) + 600000`, `budget.capped(x) * 30` and `budget.capped(x, 99999)`
-# all begin with the call and none is bounded by the budget (round 3)
+# all begin with the call and none is bounded by the budget (pass 5)
 CAPPED = re.compile(r"budget\.capped\(\s*[\w.]+\s*\)")
 AUTO_WAITING_ACTIONS = ("click", "dblclick", "fill", "press", "type", "check", "uncheck", "hover", "tap", "selectOption", "setInputFiles", "dragTo", "focus")
-# The calls the driver may make on a playwright receiver, by the receiver's kind (round 4, regression-2): an ALLOW-list, so a
+# The calls the driver may make on a playwright receiver, by the receiver's kind (the maintainer's round 3, regression-2): an ALLOW-list, so a
 # call it does not name fails by name whatever it is, where a deny-list's gap passes. Measured at this head (the refuter's
 # probe against the lab's playwright): locator.textContent, innerText, ariaSnapshot and locator.evaluate auto-wait under the
 # 30 s default; count, first, isVisible, isHidden, allTextContents and allInnerTexts do not. Only what the driver calls today
@@ -115,7 +115,7 @@ LOCATOR_MAKERS = ("locator", "first", "last", "nth", "filter", "and", "or", "get
 RECEIVERS = re.compile(r"\b(?P<recv>pages\.\w+|pages\[(?:[^\[\]]|\[[^\[\]]*\])*\]|page|context|browser|chromium)(?=\s*\.)")
 MEMBER = re.compile(r"\s*\.\s*(?P<name>[\w$]+)\s*")
 # The names the walk follows: a playwright receiver, or a locator made from one, reachable under any OTHER name is invisible to
-# it, so the census refuses the spellings of a receiver leaving the walk that these expressions read (round 4's fixer pass:
+# it, so the census refuses the spellings of a receiver leaving the walk that these expressions read (pass 8's fixer pass:
 # `const row = pages.feed.locator(sel); await row.textContent();` and `const fp = pages.feed; await fp.locator(sel).textContent();`
 # left the allow-list green): a binding or assignment whose target is not a walked name (BINDING against WALKED_TARGET), a
 # locator-making call whose chain ends on it (stored, returned or passed on; _receiver_calls reports it), and a receiver passed
@@ -132,7 +132,7 @@ PARAM_LIST_HEADS = ("async", "function")   # `async (page) =>` and `function (pa
 HELPER_PARAM = re.compile(r"\bconst\s+(?P<name>[\w$]+)\s*=\s*(?:async\s*)?\(\s*(?P<param>[\w$]+)\s*\)\s*=>")
 BARE_CALLEES = ("Object.keys",)
 RECEIVER_MAKERS = ("launch", "newContext", "newPage")   # the calls that return a receiver (chromium, browser, context); with LOCATOR_MAKERS, a chain ending on one binds a receiver
-# The driver's record keys by the read that produced them (round 5, tests-3): a waitVisible record (a phase's `seen`, D's
+# The driver's record keys by the read that produced them (the maintainer's round 4, tests-3): a waitVisible record (a phase's `seen`, D's
 # `seenAfterReturn`) carries the waits' outcomes and is read with waited=True by every _assert_seen site that reads it; a
 # visible() record (seenWhileDown, seenA, seenB, seenD) carries none and is read without. Both tuples are pinned against the
 # driver text by the spelling it stores a read under (`<key>: await waitVisible(` in a literal, `.<key> = await waitVisible(`
@@ -171,17 +171,17 @@ def _call_args(text, i):
     raise AssertionError("no closing parenthesis from %d" % i)
 
 
-# a wait-shaped call with the receiver before its dot captured whole, every dotted segment of it (round 4): `budget.waitFor(` is
-# the poll; `mybudget.waitFor(`, `obj.budget.waitFor(` and `this.budget.waitFor(` are a locator's or a member's. The round-3
+# a wait-shaped call with the receiver before its dot captured whole, every dotted segment of it (pass 8): `budget.waitFor(` is
+# the poll; `mybudget.waitFor(`, `obj.budget.waitFor(` and `this.budget.waitFor(` are a locator's or a member's. The pass-7 head's
 # lookback read the seven characters BEFORE the dot and compared them to "budget.", which could never match, so the receiver
-# form of the poll classified as an uncapped locator wait, green only because the driver uses the alias; round 4's first capture
+# form of the poll classified as an uncapped locator wait, green only because the driver uses the alias; pass 8's first capture
 # took one segment, so a receiver whose LAST segment was budget read as the poll (the fixer pass)
 WAIT_SITE = re.compile(r"(?:(?P<recv>(?:[\w$]+\.)*[\w$]*)(?P<dot>\.))?\b(?P<name>goto|reload|goBack|goForward|waitFor\w*)\s*\(")
 
 
 def _wait_sites(text):
     """Every call site of a wait-shaped name in the (comment-stripped) driver: (form, args, line), the navigations included
-    (round 3: `page.reload()` waited under playwright's default and was neither listed nor flagged). `.waitFor(` on a locator
+    (pass 5: `page.reload()` waited under playwright's default and was neither listed nor flagged). `.waitFor(` on a locator
     is the form ".waitFor"; a bare `waitFor(` or `budget.waitFor(` is the budget's poll, the receiver compared whole across its
     dots (WAIT_SITE), so a receiver merely ending in budget, or whose last segment is budget (`obj.budget`), is a locator's.
     The spelling read: the name immediately after a dot (`recv.name(`) or bare (`name(`); a wait written with a space after
@@ -204,7 +204,7 @@ def _receiver_calls(text, escapes=None):
     (page, locator), (locator, first), (locator, waitFor). A member read without a call ends the chain SILENTLY here (so a
     call on that member's value, `pages.feed.request.get(url)`, is not seen: the parsed census refuses the read). A chain that ends
     ON a locator-making call left that locator unconsumed (stored, returned or passed on, to be read under a name the walk
-    does not follow) and is appended to `escapes` as (line, what) when a list is given (round 4's fixer pass)."""
+    does not follow) and is appended to `escapes` as (line, what) when a list is given (pass 8's fixer pass)."""
     out = []
     for m in RECEIVERS.finditer(text):
         kind = "page" if m.group("recv").startswith("page") else m.group("recv")
@@ -262,9 +262,9 @@ def _assert_seen_sites(src):
     """Every call of _assert_seen in the parsed served module, as (line, key, waited): the key of the record its `seen` argument
     reads (`D["seenAfterReturn"]`, `self._phase("B")["seen"]`, or a local assigned in the same function from `rec.get("seen")`,
     the `or {}` default stripped), or None when the argument resolves to no such key (an offender), and whether the call passes
-    waited=True. A source pin over the SITES (round 5, tests-3: the helper's waited branch had a cell and its wiring none, so
+    waited=True. A source pin over the SITES (the maintainer's round 4, tests-3: the helper's waited branch had a cell and its wiring none, so
     removing waited=True from every site left the module green), read from the tree and not from the text. Keyed on the CALL
-    (round 6, the maintainer's round 5 extra7-2: a call whose `seen` was keyword-spelled was skipped, since the census read the
+    (pass 10, the maintainer's round 5 extra7-2: a call whose `seen` was keyword-spelled was skipped, since the census read the
     first positional): the argument is the first positional or the `seen` keyword, and a call with neither (a `**kwargs` pass,
     a starred positional) is an offender with key None rather than a dropped site. What the census keys on: a call spelled
     `<x>._assert_seen(...)` inside a function of any kind (FUNCTION_NODES, `def` and `async def`), a lambda inside one read with
@@ -295,16 +295,16 @@ def _assert_seen_sites(src):
 
 
 def _since_at_the_sites(src):
-    """The `since` each attach reader passes, read from the served module's parse (round 5, extra6-2: the values are read at
+    """The `since` each attach reader passes, read from the served module's parse (the maintainer's round 4, extra6-2: the values are read at
     three sites and a cell reached one helper's): per function of any kind (FUNCTION_NODES), the source text of the argument
     bound to the `since_ms` PARAMETER of every _minus_attach_rows call (its second positional, or the `since_ms` keyword; the
     third positional is `slack_s`; neither method has a `since` parameter, so a `since=` keyword would bind to nothing and is
     not read as one) and of every _attaches_since call (its first), and of the right side of an assignment to a name `since`,
-    in source order. Widening any site's since changes its text here. Keyed on the call and the parameter (round 6, the
-    maintainer's round 5 extra7-2: the census read the LAST positional, so a keyword-spelled since was skipped and a slack
+    in source order. Widening any site's since changes its text here. Keyed on the call and the parameter (pass 10,
+    the maintainer's round 5 extra7-2: the census read the LAST positional, so a keyword-spelled since was skipped and a slack
     passed positionally was read as the since): a site whose since the census cannot read (a starred positional at or before
     the parameter's position, past which no position resolves; a `**kwargs` pass) is recorded as `<a since this census cannot
-    read>` rather than dropped, and reds the pin (round 6's fixer pass: `(*a, since)` was read as the since, though the star
+    read>` rather than dropped, and reds the pin (pass 10's fixer pass: `(*a, since)` was read as the since, though the star
     before it makes the position unresolvable).
     A call through a name bound to the method or through getattr is outside the census by construction (it keys on
     `<x>._minus_attach_rows(...)` and `<x>._attaches_since(...)`)."""
@@ -364,7 +364,7 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         return served[0]
 
     def test_the_arithmetic_and_the_cap_it_is_chosen_against(self):
-        self.assertGreaterEqual(L.DOWN_WINDOW_MARGIN, 2.0, "round 2's ruling: the while-down read comes at least twice this drive's slowest link-up delivery after phase D's "
+        self.assertGreaterEqual(L.DOWN_WINDOW_MARGIN, 2.0, "the maintainer's round 2's ruling: the while-down read comes at least twice this drive's slowest link-up delivery after phase D's "
                                                           "post; widen down_dwell_ms, never the margin. The floor is pinned here because the margin pin's cells are derived from "
                                                           "the constant and shrink with it (a lowered margin passes them all); the relation pin below ceilings it at 2.0 for the "
                                                           "dwell and the cap as they stand, so the constant is bracketed from both sides")
@@ -386,11 +386,11 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         served = self._served_step_line()
         self.assertIn("--timeout=%d --timeout-method=thread" % L.CI_TEST_TIMEOUT_S, served,
                       "CI_TEST_TIMEOUT_S is the cap the served step runs under: %r" % (served,))
-        # The premise (round 2, fresh-1): the sum is an upper bound only if every wait the driver places is one it counts.
+        # The premise (the maintainer's round 2, fresh-1): the sum is an upper bound only if every wait the driver places is one it counts.
         driver = _strip_js_comments(L.DRIVER)
         self.assertNotIn("//", driver, "a // the comment stripper cannot see past (a new comment shape, or // inside a string): teach _strip_js_comments")
         self.assertEqual(driver.count("const waitFor = budget.waitFor;"), 1, "the bare waitFor( sites the census reads as the budget's poll are that one alias of "
-                                                                             "budget.waitFor at the driver's module level (round 5, extra8-3: a bare waitFor bound to anything else "
+                                                                             "budget.waitFor at the driver's module level (the maintainer's round 4, extra8-3: a bare waitFor bound to anything else "
                                                                              "would read as the poll here; the parsed census classifies the bare call by the binding the tree holds)")
         sites = _wait_sites(driver)
         self.assertTrue(sites, "the census saw the driver's wait sites")
@@ -420,7 +420,7 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
                              "the census is not vacuous: the forms the driver uses today are all seen: %r" % (sorted({name for name, _, _ in sites}),))
         actions = re.findall(r"\.(%s)\s*\(" % "|".join(AUTO_WAITING_ACTIONS), driver)
         self.assertEqual(actions, [], "an auto-waiting playwright action in the driver (it waits under playwright's 30 s default, which no budget caps; the driver reads pages, it does not act on them): %r" % (actions,))
-        # the allow-list (round 4): every call on a playwright receiver is one ALLOWED_CALLS names for that receiver's kind; the
+        # the allow-list (pass 8): every call on a playwright receiver is one ALLOWED_CALLS names for that receiver's kind; the
         # deny-list above is the backstop it was, and its gap (the auto-waiting locator READS: textContent, innerText, ariaSnapshot,
         # a locator's evaluate, each under the 30 s default) is what this refuses
         escapes = []
@@ -435,7 +435,7 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
                               ("page", "addInitScript"), ("locator", "first"), ("locator", "count"), ("locator", "waitFor"), ("context", "newPage"),
                               ("browser", "newContext"), ("browser", "close"), ("chromium", "launch")}, {(kind, name) for kind, name, _ in calls},
                              "the walk is not vacuous: every receiver call the driver makes today is seen, by kind: %r" % (sorted({(kind, name) for kind, name, _ in calls}),))
-        # the walk's own gap (round 4's fixer pass): a receiver or a locator reaching a name the walk does not follow is refused
+        # the walk's own gap (pass 8's fixer pass): a receiver or a locator reaching a name the walk does not follow is refused
         self.assertEqual(escapes, [], "a locator made on a playwright receiver and not consumed by a call in its own chain (stored, returned or passed on) is read "
                                       "under a name the walk does not follow, so its reads never reach the allow-list (the spellings this walk reads: a receiver written "
                                       "page, pages.<app>, pages[...], context, browser or chromium, then `.name(` members; the parsed census reads the rest): %r" % (escapes,))
@@ -456,11 +456,11 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         `budget.waitFor(`) is the budget form, whose positional timeout makeBudget caps; a locator's `.waitFor(` (a bare receiver,
         a chain) is the timeout form the census requires capped; a receiver merely ending in budget (`mybudget`, `xbudget`) or
         whose last dotted segment is budget (`obj.budget`, `this.budget`) is a locator's or a member's, never the poll; a
-        navigation and a waitFor* keep their names; the alias assignment is no site. Round 4: the round-3 head's lookback
+        navigation and a waitFor* keep their names; the alias assignment is no site. Pass 8: the pass-7 head's lookback
         compared the seven characters before the dot to "budget." and could never match, so `budget.waitFor(` classified as an
         uncapped locator wait (a driver with the alias deleted and every poll written through the receiver redded the census
         with seven false "no timeout key" entries); the six-character compare the findings offered would have taken `mybudget`
-        for the poll, which is why the receiver is captured whole; and round 4's first capture took one segment, so
+        for the poll, which is why the receiver is captured whole; and pass 8's first capture took one segment, so
         `obj.budget.waitFor(` read as the poll (the fixer pass), which is why the capture spans every dotted segment."""
         self.assertEqual(_wait_sites('await budget.waitFor(fn, 1, "w");'), [("waitFor", 'fn, 1, "w"', 1)])
         self.assertEqual(_wait_sites('await waitFor(fn, cfg.waitsMs.held, "w");'), [("waitFor", 'fn, cfg.waitsMs.held, "w"', 1)])
@@ -479,7 +479,7 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         innerText, ariaSnapshot and evaluate are locator calls the allow-list refuses while a page's evaluate is allowed (the
         refuter measured a locator's evaluate auto-waiting and a page's returning at once); text that names no receiver yields
         nothing. The failing-before is a driver mutation, not a cell: provText rewritten as a locator's `textContent()`
-        passed the round-3 head's census and reds this one by name."""
+        passed the pass-7 head's census and reds this one by name."""
         self.assertEqual(_receiver_calls('await pages.feed.locator(cardSel(ch, n)).first().waitFor({ state: "attached", timeout: budget.capped(ms) });'),
                          [("page", "locator", 1), ("locator", "first", 1), ("locator", "waitFor", 1)])
         self.assertEqual(_receiver_calls('x = (await pages.waiting.locator(".ut-text", { hasText: ch.todoText }).count()) > 0;'),
@@ -496,7 +496,7 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         self.assertEqual(_receiver_calls("const webpage = 1; out.pages[app] = await snap(pages[app]); w.send(d);"), [], "no receiver, no call")
 
     def test_a_receiver_or_a_locator_that_leaves_the_walk_is_refused(self):
-        """The walk's own gap (round 4's fixer pass): the allow-list reads chains on the names it knows, so a receiver or a locator
+        """The walk's own gap (pass 8's fixer pass): the allow-list reads chains on the names it knows, so a receiver or a locator
         reaching any other name was invisible to it and a bound locator's `textContent()` left the census green. By cell: a
         locator bound to a name (refused twice: the binding, and the chain that ended on the maker), a page bound to a name, a
         destructured page table, a locator passed on or returned unconsumed, a page passed bare to a helper whose parameter is
@@ -524,8 +524,8 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         self.assertEqual(allowed, {"context = browser", "page = context", "pages[app] = page", "snap(pages[app])"}, "the allowed shapes are reported as allowed, so the driver's non-vacuity check reads them")
 
     def test_the_new_bundle_class_gates_on_no_knob_and_the_old_hub_class_skips_as_optional(self):
-        """Round 1's high (this lab was the one served lab of 94 with no executing test in CI: its base class gated on a knob)
-        was closed by a value, _LinkDrop._knobs returning None. The property, pinned (round 2, extra6-1; round 3 widened it
+        """The maintainer's round 1's high (this lab was the one served lab of 94 with no executing test in CI: its base class gated on a knob)
+        was closed by a value, _LinkDrop._knobs returning None. The property, pinned (the maintainer's round 2, extra6-1; pass 5 widened it
         from the one call site to every site a gate could sit at, since the same optional gate re-planted as a class
         decorator or in setUpClass re-created the high with the pin green): with the four knobs unset, LinkDropBothNew
         carries no class-level skip (what unittest.skip* sets, __unittest_skip__), its _knobs returns, and its setUpClass runs
@@ -599,10 +599,10 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         self.fail("_boot returned without building")
 
     def test_a_hub_a_knob_asked_for_errs_when_its_bundle_cannot_be_made_ready_and_this_checkouts_stays_a_skip(self):
-        """Round 1's tests-3, through _boot with a stub build: the mint knob with a build that skips (lab_dist's esbuild
+        """The maintainer's round 1's tests-3, through _boot with a stub build: the mint knob with a build that skips (lab_dist's esbuild
         failure) is a RuntimeError carrying the knob and the build's words; a knob-named root with no prebuilt dist is the
         same, under the old-hub class's own knob and under the base-hub lever; a knob-named root with no kernel file at all (a
-        mistyped root) is the same through the kernel check one statement earlier (round 3: it skipped, whatever the knob
+        mistyped root) is the same through the kernel check one statement earlier (pass 5: it skipped, whatever the knob
         said); and with no knob this checkout's own bundle failing to build stays a SkipTest, as in every other served lab."""
         words = "esbuild failed here: the stub build"
 
@@ -668,9 +668,9 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         when one of the bundle's notice posts happened while the Outline held no open relay socket that had already received
         its first feed-family frame (the gap that could have swallowed a notice), and then only for a whole keyed feed frame
         the Outline received after the earliest the bundle's LAST notice could have been posted (the change record's t0 plus
-        the gaps between the notices) and before the window's padded end. Round 3 found the key was the window: a frame at
+        the gaps between the notices) and before the window's padded end. Pass 5 found the key was the window: a frame at
         A0 + 5 ms or between notice 1 and notice 2 excused a stripped phase, though it could not have carried the notices
-        posted after it. Round 4 found the frame alone was no key either: on the old bundle a routine redial produces a whole
+        posted after it. The maintainer's round 3 found the frame alone was no key either: on the old bundle a routine redial produces a whole
         frame after the notices were already delivered as patches, so the excuse was available in most recorded phase windows
         (the census, its figures and its drive are in _outline_caught_up_whole's docstring, one derivation, not repeated here)
         and a planted miss stayed green, and the cells below could not tell the keys apart, since a synthetic socket
@@ -683,7 +683,7 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         the same socket closing after the last post with the redial's frame (no excuse), closed before the posts (an excuse),
         closing between notice 1 and notice 2 (an excuse: the churn's shape as the cells model it, the socket open and served at
         the first post and closed before the second; the recorded churned drives and their dating are _outline_caught_up_whole's
-        docstring's, not repeated here; the fixer pass of round 4 corrected the labels, which had put the recorded churn on the
+        docstring's, not repeated here; pass 8's fixer pass corrected the labels, which had put the recorded churn on the
         closed-before cell), open across the
         posts but served only after notice 2 (an excuse). And the floor the excuse guards, with the excuse frame PRESENT in
         the record: a phase with no patch and no row whose socket was open and served across the posts reds
@@ -727,7 +727,7 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         Rec.changes_made = []
         with self.assertRaises(AssertionError, msg="a phase with no change record fails rather than widening") as cm:
             t._outline_caught_up_whole("A0", "A1")
-        self.assertIn("made phase A's change bundle once", str(cm.exception), "the helper's own words for the missing record, not any red (round 5's fixer pass: a bare assertRaises here): %s" % cm.exception)
+        self.assertIn("made phase A's change bundle once", str(cm.exception), "the helper's own words for the missing record, not any red (pass 9's fixer pass: a bare assertRaises here): %s" % cm.exception)
         # the socket's state at the three posts (A0 + 10, + 1010, + 2010 ms): the gap the excuse is keyed on
         posts = [int((made["t0"] + i * L.NOTICE_GAP_S) * 1000) for i in range(L.NOTICES_PER_PHASE)]
         self.assertEqual(posts, [A0 + 10, A0 + 1010, A0 + 2010], "the derived post times the cells are placed against")
@@ -766,27 +766,27 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
                          "the storm: one patch, its row, the socket open and served throughout")
 
     def test_the_down_windows_attach_exemption_takes_one_feed_row_per_attach_stamped_at_or_after_it(self):
-        """The down window's exemption for the connect push's ledgers attach (round 2's regression-3 fix: a card-less feed slot
+        """The down window's exemption for the connect push's ledgers attach (the maintainer's round 2's regression-3 fix: a card-less feed slot
         patch at or after the resume, and the row the old bundle files for it, are the return's, not the down window's) landed
         keyed on the row's REV as a set over the drive's attaches, with no test, and the Outline's feed patch revs restart at 1
-        on every relay socket, so the gate leg's exact zero was weaker than its message (round 4: the row is matched to the
+        on every relay socket, so the gate leg's exact zero was weaker than its message (pass 8, on the maintainer's round 3 regression-1: the row is matched to the
         attach, at most one row per attach, naming the feed slot, stamped at or after the attach's floored second with a
         second of slack for the kernel's clock against the browser's). Over a synthetic record (one Outline relay socket
         opened after the resume, one card-less feed slot patch 50 ms after it, rows at chosen stamps), the storm test's
         down-window call returns 0 for the attach's row floored a second below the attach, at its floored second and a second
-        above it; a second row of the attach's rev, also stamped at or after it, is the down window's and reds (the round-3
+        above it; a second row of the attach's rev, also stamped at or after it, is the down window's and reds (the pass-7
         head's set exempted both); a row of the attach's rev stamped two seconds below is not the attach's and reds (the set
         exempted it); a row of the attach's rev naming another slot is not the attach's and reds (the set exempted it before
         the slot check ran); a second row with no attach behind it reds (narrowness: a widened exemption passes the first
-        cell alone); and the card conditioning is pinned where each reader applies it (round 5: the earlier control, the
+        cell alone); and the card conditioning is pinned where each reader applies it (pass 9, on the maintainer's round 4 extra6-1: the earlier control, the
         card-carrying patch through the storm site, redded through the patch-side clause at both trees and stayed green when
         either card clause was dropped alone, so it controlled nothing and is replaced): a feed patch carrying cards is no
         attach to _attaches_since, its row stays through _minus_attach_rows and through the gate leg's own read, and the storm
         site reds on its patch side, in that clause's words. The gate leg
         reads attaches from 1.5 s before the resume and the storm test from the resume: an attach 1 s before the resume is in
         the first set and not the second, through the helpers at both since values and through the gate leg's own read
-        (_rows_down_minus_attaches, which carries its since; round 4's fixer pass: the leg's inline since was reached by no
-        test, and a mutation moving it to the resume stayed green; round 5 pins the since at every SITE, in the cell after
+        (_rows_down_minus_attaches, which carries its since; pass 8's fixer pass: the leg's inline since was reached by no
+        test, and a mutation moving it to the resume stayed green; pass 9 pins the since at every SITE, in the cell after
         this one). And the return window's read (_return_window_stray, the
         third reader of the attaches, which kept a set of revs until the fixer pass), in cells beside the down window's: one
         row of an attach's rev in the window is the attach's and nothing is stray (the control); two rows of the same rev
@@ -841,7 +841,7 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         with self.assertRaises(AssertionError, msg="a second row with no attach behind it reds (narrowness)") as cm:
             down([row(7, RESUME - 900), row(99, RESUME - 900)], [attach])
         self.assertIn("one outline/delta-unapplied row per feed slot patch", str(cm.exception), "the attach takes its one row and rev 99's stays: %s" % cm.exception)
-        # the card conditioning at each reader that applies it (round 5, extra6-1: the control this replaces, the card-carrying
+        # the card conditioning at each reader that applies it (the maintainer's round 4, extra6-1: the control this replaces, the card-carrying
         # patch through the storm site alone, redded on the patch side at both trees and stayed green with either card clause
         # dropped alone): the same patch carrying cards is no attach, so its row is nobody's and stays, at the helper, at the
         # gate leg's own read (which has no patch side to red for it) and at the storm site, which reds on its patch side
@@ -852,7 +852,7 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         self.assertEqual(carded._rows_down_minus_attaches(), [{"rev": 7, "slot": "feed"}], "...at the gate leg's own read too, which has no patch side to red for it")
         self.assertEqual(carded._return_window_stray(), ([{"rev": 7, "slot": "feed"}], []),
                          "...and at the return window's read, the third reader with no patch side (the row's floored second sits inside its window): the carded patch is "
-                         "no attach there either, so the row is stray and the attach list empty (round 5's fixer pass: extra6-1's clause named this reader and no cell read it)")
+                         "no attach there either, so the row is stray and the attach list empty (pass 9's fixer pass: extra6-1's clause named this reader and no cell read it)")
         with self.assertRaises(AssertionError, msg="the storm site reds on its patch side: a card-carrying feed patch in the down window reached the Outline while the link was down") as cm:
             down([row(7, RESUME - 900)], [patch(RESUME + 50, ["asks"])])
         self.assertIn("no feed slot patch reached the Outline", str(cm.exception), "the patch filter's card clause keeps the patch, so the storm site reds on it and not on the row: %s" % cm.exception)
@@ -887,7 +887,7 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
                              "bound on the stamp (the flush lag, _minus_attach_rows's docstring), a choice this cell states rather than leaves implied")
 
     def test_the_three_attach_readers_carry_their_since_at_their_sites(self):
-        """The since each reader of the attaches passes, pinned at the SITE (round 5, extra6-2: the gate leg's helper carried
+        """The since each reader of the attaches passes, pinned at the SITE (the maintainer's round 4, extra6-2: the gate leg's helper carried
         its since where a cell could reach it, and the storm site's and the return window's were reached by no cell, so
         widening either left the module green). From the served module's parse: the storm site takes the mark itself
         (`since = self._marks()[attach_after]`, handed to _minus_attach_rows), the gate leg's read takes the resume less
@@ -933,8 +933,8 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
                          "the return window's since is 1.5 s before the resume: an attach 2.5 s before it is none of this window's, so its row is stray (from 3 s before, it would take the row)")
 
     def test_the_ledger_entry_names_every_module_of_this_family(self):
-        """The upstream ledger entry's `where:` line names every module of the link-drop lab's family in the tree (round 6, the
-        maintainer's round 5 correctness-5: the line named three modules while the delta added a fourth, the omission round 2
+        """The upstream ledger entry's `where:` line names every module of the link-drop lab's family in the tree (pass 10,
+        the maintainer's round 5 correctness-5: the line named three modules while the delta added a fourth, the omission the maintainer's round 2
         had closed once on the same entry). The population is derived from the TREE by the glob tests/test_federated_linkdrop*.py,
         a spelling-keyed population (a fifth module named otherwise escapes it), stated here because the alternative is a tool
         reading git's delta against a base a CI checkout may not hold; the pre-push check reads that delta. Every path must
@@ -948,11 +948,11 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         self.assertEqual([m for m in modules if m not in where[0]], [], "every module of the family is named on the entry's where: line: %r" % (where[0],))
 
     def test_the_site_censuses_read_every_function_kind_and_every_argument_spelling(self):
-        """The two site censuses (round 6, the maintainer's round 5 tests-4 and extra7-2) over a synthetic source: a call inside
+        """The two site censuses (pass 10, the maintainer's round 5 tests-4 and extra7-2) over a synthetic source: a call inside
         an `async def` is a site like one inside a `def` (FUNCTION_NODES is derived from ast's node classes, pinned here by
         name), a keyword-spelled `seen` or `since_ms` is read, a `**kwargs` pass and a starred positional are offenders
         (key None; `<a since this census cannot read>`) and not dropped sites, a starred positional BEFORE the since's
-        position makes it unreadable too (round 6's fixer pass: `(*a, since)` was read as `since`), a lambda inside a def is
+        position makes it unreadable too (pass 10's fixer pass: `(*a, since)` was read as `since`), a lambda inside a def is
         read with the def, and a slack passed positionally is not read as the since. Red before: the async sites were
         skipped, the keyword sites skipped, the unreadable sites dropped, and the positional slack read as the since."""
         self.assertEqual(sorted(c.__name__ for c in FUNCTION_NODES), ["AsyncFunctionDef", "FunctionDef"],
@@ -979,7 +979,7 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
                          "the keyword since is read at the async site, the starred since is unreadable and kept, the positional slack is not the since, and a star before the since's position makes it unreadable")
 
     def test_every_waitvisible_read_site_passes_waited_and_no_visible_read_does(self):
-        """The wiring of _assert_seen's `waited` (round 5, tests-3: the helper's waited branch had a cell, and removing
+        """The wiring of _assert_seen's `waited` (the maintainer's round 4, tests-3: the helper's waited branch had a cell, and removing
         waited=True from every call site, phase D's after-return read included, left the module green). The driver stores a
         waitVisible record under the keys WAITED_READS and a visible() record under UNWAITED_READS, pinned against the driver
         text by the spelling it uses (READ_STORE: `<key>: await waitVisible(` in a literal, `.<key> = await waitVisible(` as an
@@ -998,15 +998,15 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
             src = f.read()
         sites = _assert_seen_sites(src)
         bad = [(ln, key, waited) for ln, key, waited in sites if key not in WAITED_READS + UNWAITED_READS or waited != (key in WAITED_READS)]
-        self.assertEqual(bad, [], "an _assert_seen site that reads a waitVisible record without waited=True (its expired list goes unchecked, the round-4 tests-1 hole), "
+        self.assertEqual(bad, [], "an _assert_seen site that reads a waitVisible record without waited=True (its expired list goes unchecked, the maintainer's round 3 tests-1 hole), "
                                   "a visible() record with it (a healthy drive reds), or a record the pin cannot name (line, key, waited): %r" % (bad,))
         self.assertEqual({key for _, key, w in sites if w}, set(WAITED_READS), "every waitVisible record is read with waited=True somewhere: %r" % (sites,))
         self.assertEqual({key for _, key, w in sites if not w}, set(UNWAITED_READS), "every visible() record is read without: %r" % (sites,))
-        self.assertGreaterEqual(sum(1 for _, _, w in sites if w), 7, "the waited sites the served module had at the round-5 head (a site removed is read here): %r" % (sites,))
+        self.assertGreaterEqual(sum(1 for _, _, w in sites if w), 7, "the waited sites the served module had at the pass-9 head (a site removed is read here): %r" % (sites,))
 
     def test_the_margin_leg_takes_no_expired_or_unshown_wait_as_a_delivery(self):
         """The gate's control in time (_assert_the_down_window_outlasts_the_drives_slowest_delivery) reads a phase's
-        seen.waitedMs as this drive's delivery. Round 5 found that a waitVisible wait that TIMED OUT left waitedMs at about
+        seen.waitedMs as this drive's delivery. Pass 6 found that a waitVisible wait that TIMED OUT left waitedMs at about
         wait_ms with no other trace (the driver swallowed the TimeoutError; out.timeouts held only budget.waitFor's
         expiries), so the yardstick became the cap and the leg passed at 42 >= 2 x 20.0x by the relation pin's arithmetic
         with the true delivery unknown; on the old-hub class phase A's visibles were asserted nowhere, so an old-hub drive
@@ -1020,8 +1020,8 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
         the words of the check that refused it (the expired check's own clause, not a token the record's repr carries: the seen
         record embeds 'expired' as a key, so that word alone would let a visibles failure pass for an expired one); a resolved wait
         at 20,012 ms with the visibles present passes, since a resolved wait ended by its cap and the excess is the reads
-        (DOWN_READ_ROOM_MS). Then the inequality itself, which every cell above exercises the guards of and none the bound (round
-        4: the bound deleted, the margin lowered to 0.001, and that with the dwell reverted to round 2's 12 s left every
+        (DOWN_READ_ROOM_MS). Then the inequality itself, which every cell above exercises the guards of and none the bound (the maintainer's round
+        3, correctness-1: the bound deleted, the margin lowered to 0.001, and that with the dwell reverted to the pass-3 head's 12 s left every
         kernel-free test green): with every wait resolved and shown and the slowest delivery 19,900 ms, a window one millisecond
         under DOWN_WINDOW_MARGIN times it reds in the inequality's own words. Two halves pin the margin and both are needed: this
         cell is derived from the constant, so it moves with it and catches a deleted or inverted bound but not a lowered constant,
@@ -1078,10 +1078,10 @@ class TheDriverEndsBeforeCI(unittest.TestCase):
             self.assertIn("phase C", str(cm.exception), "%s: the failure names the slowest phase: %s" % (cls.__name__, cm.exception))
 
     def test_a_waited_read_requires_an_empty_expired_list_and_an_unwaited_read_none(self):
-        """_assert_seen's `waited` (round 4, tests-1): a record waitVisible produced (a phase's seen, D's seenAfterReturn) must carry
+        """_assert_seen's `waited` (the maintainer's round 3, tests-1): a record waitVisible produced (a phase's seen, D's seenAfterReturn) must carry
         an empty expired list, so a wait that expired with the read catching the cards, or an older driver's record with no list,
         reds in the expired check's own words; a visible() record carries no list and is read without one. The gate leg's D read
-        after the return is the waited read that had no reader (the record replay of that event is the round's failing-before)."""
+        after the return is the waited read that had no reader (the record replay of that event is pass 8's failing-before)."""
         class Rec(L.LinkDropOldLocal):
             driver_error = None
         t = Rec("test_nothing_was_asked_of_the_remote")

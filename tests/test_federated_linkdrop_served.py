@@ -32,7 +32,7 @@ on the feed page, the todo's text on the Waiting page, the swap of api's provisi
 drop (the corners lab's baseline), B on the socket the link's return dialed, C on the socket the hub's restart dialed.
 A fourth bundle, D, is posted WHILE THE LINK IS DOWN, once the hub's row has gone down: the control door reaches the
 remote's real port, not the splice, so a patch is due to every page with nothing to carry it. That is the gate's
-discriminating case (round 1 found the down window otherwise idle, so its zero rows could not tell "the link gates the
+discriminating case (the maintainer's round 1 found the down window otherwise idle, so its zero rows could not tell "the link gates the
 patches" from "no patch was due"): D is absent from every page while the link is down, no frame crosses, no row files,
 the link's return serves each redial ONE whole frame that carries D (no patch between the return and phase B's first
 change), and phase B's patches file rows again on the old bundle.
@@ -84,11 +84,11 @@ window and over the whole drive, the rows equal, by rev, the feed slot patches t
 received (the hook records a delta frame's rev; the row files the same rev). The count is one drive's, not a
 property of the bundle: 3 / 0 / 3 / 3 across phase A, the link down, phase B and phase C in most recorded drives
 (ROMP_LINKDROP_LAB=1 ROMP_LINKDROP_OLD_HUB_BUILD=1 pytest tests/test_federated_linkdrop_served.py). One reviewer
-drive at round 1's head gave 3 / 0 / 1 / 3 (two relay sockets churned inside phase B and absorbed two notices into
-whole frames: no patch, so no row, and the equality held at 7 / 7), as did one verifier drive at the round-2 head
+drive at the head the maintainer's round 1 ruled gave 3 / 0 / 1 / 3 (two relay sockets churned inside phase B and absorbed two notices into
+whole frames: no patch, so no row, and the equality held at 7 / 7), as did one verifier drive at the pass-2 head
 whose hook was mutated for a red (its hub rows are real); and three builder drives gave 0 / 0 / 3 / 3 (the Outline's
 relay socket churned 0.7 s into phase A and its retry's whole frame absorbed all three notices: phase A 0 rows to 0
-patches, the drive 6 / 6 by rev): one at the round-3 head, RED there on the per-phase at-least-one-patch floors of the
+patches, the drive 6 / 6 by rev): one at the pass-3 head, RED there on the per-phase at-least-one-patch floors of the
 storm test and the phase-A drops test with the correspondence intact; one at the 30 s dwell on 2026-09-20, red on the
 margin pin with its floors green; and one at this code the same day, green (`r5/lab-head2.log`). Those are the data
 behind the churn-keyed allowance (_outline_caught_up_whole: an empty phase is excused only when one of its notice posts
@@ -100,7 +100,7 @@ the second and third, at 1.01 and 2.01 s, found no open socket, so the gap held 
 on the floors under it). The population is counted as of that last drive, since any later drive can add either shape: the
 builder's cache then held 18 old-hub records of the unmutated module (the builder's earlier drives at three pre-PR
 vintages among them, two with a hand-built old hub), 15 at 3 / 0 / 3 / 3 and those 3 at 0 / 0 / 3 / 3, and the
-reviewers' further drives at round 1's head gave 3 / 0 / 3 / 3 (the per-window table over the report JSONs outside the
+reviewers' further drives at the head the maintainer's round 1 ruled gave 3 / 0 / 3 / 3 (the per-window table over the report JSONs outside the
 repo, `python3 analyse.py <report.json>...`, with _rows_in's 1.5 s pad). ZERO while the link was down in every recorded
 drive. The storm
 is gated on remote patches arriving, which is gated on the link: with phase D due while the link was down, no row
@@ -204,7 +204,7 @@ DOWN_WINDOW_MARGIN = 2.0     # the while-down read comes this many of the drive'
 DOWN_READ_ROOM_MS = 2000     # the room down_dwell_ms holds past DOWN_WINDOW_MARGIN x wait_ms: a phase's delivery (seen.waitedMs) is stamped
 #                              AFTER visible()'s reads (waitVisible), so a wait that resolved at the cap's edge is stamped past the cap by the
 #                              reads' duration; without the room the margin pin could red on a drive whose link-up waits all resolved and
-#                              showed. A phase whose wait ran to its cap is refused by the margin leg itself (seen.expired, round 5), never
+#                              showed. A phase whose wait ran to its cap is refused by the margin leg itself (seen.expired, pass 6), never
 #                              measured against the room, so the room is for the reads after a wait that RESOLVED. The reads alone take
 #                              6 to 22 ms where the wait had nothing left to wait for (D.seenAfterReturn.waitedMs over 34 recorded drives
 #                              as of 2026-09-20, `python3 reads_census.py <report.json>...` outside the repo); over every unmutated recorded
@@ -547,7 +547,7 @@ const visible = async (ch) => {
   return v;
 };
 // the phase's visibles, waited for CONCURRENTLY (three pages, three waiters), so the point is bounded by ms, not three
-// times it, and each waiter's timeout draws on the budget. Each wait's OUTCOME is recorded, never swallowed (round 5): a
+// times it, and each waiter's timeout draws on the budget. Each wait's OUTCOME is recorded, never swallowed (pass 6): a
 // wait that expires names itself in v.expired and in out.timeouts with the phase, because waitedMs alone cannot tell a
 // delivery at the cap from a wait that ran to its cap with nothing delivered, and the gate legs read waitedMs as this
 // drive's delivery (_assert_the_down_window_outlasts_the_drives_slowest_delivery requires v.expired empty before it does)
@@ -595,7 +595,7 @@ try {
   out.provBefore = await provText();
   const chA = await phase("A");
   // (2) the link drops: the splice's listener and every spliced pair close. First the precondition the drop leg reads, made a
-  // designed guarantee (round 3): every page holds exactly ONE open relay socket. The old bundle's churn closes a page's socket
+  // designed guarantee (pass 5): every page holds exactly ONE open relay socket. The old bundle's churn closes a page's socket
   // for its 2 s retry every few seconds, and before this wait the drop landed 0.58 to 0.80 s after the pages' redials reopened
   // in ten of the sixteen recorded old-hub drives (`python3 held_census.py <report.json>...` outside the repo): the feed page's
   // redial-to-visible latency plus the settle against the retry, a coincidence and not a guarantee. `held` is the snapshot that
@@ -678,7 +678,7 @@ class _LinkDrop(unittest.TestCase):
     # ratio of it (the ratios run from 2.8x to over 600x), with driver_budget_ms as the binding bound (BUDGET_JS: every wait
     # draws on it). The spans are ONE derivation with the excuse and attach figures (`population_drive.py`, the tool
     # _outline_caught_up_whole's docstring names, which reads every counted record's marks, prints the sentence below whole and
-    # under --check reads this comment for it, the markers folded; round 6, after this paragraph and the delivery sentence below
+    # under --check reads this comment for it, the markers folded; pass 10, the maintainer's round 5 extra8-3, after this paragraph and the delivery sentence below
     # were hand-kept copies of a population dated one drive apart). A census over a growing record is dated by construction:
     # the 25-drive census quoted here before missed three bounds later drives moved (redialed2's maximum from 0.81 to 1.04 s,
     # rowDown's minimum from 4.6 to 4.3 s, closed's maximum from 0.030 to 0.27 s), so a later drive may move one again and the
@@ -691,7 +691,7 @@ class _LinkDrop(unittest.TestCase):
     # rowDown is the supervisor's silent-poll window, longest under the old bundle's churn; rowUp a quarter-second pass inside
     # the supervisor's fast window and its steady 15 s pass outside it; localUp the reopen alone (the restart itself, SIGTERM and
     # the 3 s held down, is the control door's and not this wait's). held, A1 -> drop (every page holding one open relay socket
-    # before the drop), is new in round 3 and has no recorded span before it: every drive since carries it (`out.phases.drop.held`
+    # before the drop), is new in pass 5 and has no recorded span before it: every drive since carries it (`out.phases.drop.held`
     # in the record), and its span is the snapshot's own time with every page already holding one socket; its cap is closed's,
     # a floor well above the mechanism's worst (a page lacks an open socket for the relay's 2 s retry plus the open, once per
     # churn of the old bundle's socket), not a fit to those spans.
@@ -706,12 +706,12 @@ class _LinkDrop(unittest.TestCase):
     #                            budget.leftMs in `r6-margin/lab-head1.log`'s reports, the builder's lab logs outside the repo; the old
     #                            bundle's frozen feed page shows a phase's cards only at the next churned socket's whole frame, so its
     #                            drives run longer). 225 s, not 240, so the worst case holds the 42 s dwell under DRIVER_TIMEOUT_S.
-    # The row stays down this long after phase D's post, and the gate DEPENDS on it (round 2's ruling): the while-down read of D
+    # The row stays down this long after phase D's post, and the gate DEPENDS on it (the maintainer's round 2's ruling): the while-down read of D
     # comes DOWN_WINDOW_MARGIN times the drive's own slowest link-up delivery after the post, asserted by both classes' gate legs
     # (_assert_the_down_window_outlasts_the_drives_slowest_delivery). The dwell is sized against the lab's own cap on that
     # delivery, not against the drives seen: a phase's delivery is seen.waitedMs, and waitVisible caps every wait it holds at
     # wait_ms and records each wait's outcome (seen.expired), so the margin leg itself refuses a phase whose wait ran to its cap
-    # (round 5), beside the visibility legs, and every delivery it measures is a wait that RESOLVED, before its cap; the dwell is
+    # (pass 6), beside the visibility legs, and every delivery it measures is a wait that RESOLVED, before its cap; the dwell is
     # DOWN_WINDOW_MARGIN x wait_ms plus DOWN_READ_ROOM_MS of room for the reads that follow the wait, so the pin holds for every
     # drive whose link-up waits all resolved and showed, the reads inside the room, and reds only for a window shorter than that
     # (tests/test_federated_linkdrop_driver_bound.py pins the relation). The old bundle's frozen feed page shows a change only at
@@ -743,7 +743,7 @@ class _LinkDrop(unittest.TestCase):
     def _knobs(cls):
         """Subclasses resolve their roots here; a missing knob skips the class. The base gates nothing: the new-bundle
         class needs nothing this checkout's served labs lack, so it runs wherever they run, CI's served job included
-        (round 1: a lab gated whole was the one served lab of 94 with no executing test in CI, and it guards PR 815)."""
+        (the maintainer's round 1: a lab gated whole was the one served lab of 94 with no executing test in CI, and it guards PR 815)."""
         return None
 
     @classmethod
@@ -806,7 +806,7 @@ class _LinkDrop(unittest.TestCase):
     def _asked(cls):
         """The knob that asked for the hub, when one did (ROMP_LINKDROP_OLD_HUB_BUILD=1 minting it, or the knob hub_knob records
         as naming hub_root), else None. A hub the runner asked for that cannot boot is an error carrying the cause, never a
-        skip: _boot's kernel check and _ready_dist share this one rule (round 1's tests-3; round 3 found the kernel check
+        skip: _boot's kernel check and _ready_dist share this one rule (the maintainer's round 1's tests-3; pass 5 found the kernel check
         outside it, so a mistyped root skipped the class green)."""
         return "ROMP_LINKDROP_OLD_HUB_BUILD=1" if cls.old_hub_build else cls.hub_knob
 
@@ -819,7 +819,7 @@ class _LinkDrop(unittest.TestCase):
         checkout's own bundle that skip stands, as in every other served lab. When a knob ASKED for the hub
         (ROMP_LINKDROP_OLD_HUB_BUILD=1 minting it, or ROMP_CORNER_OLD_HUB_ROOT or ROMP_LINKDROP_HUB_ROOT naming it:
         hub_knob) the same skip is re-raised as a RuntimeError carrying the build's words, because a mint that succeeds and
-        a build that fails otherwise skip the class and the run reports green (round 1's tests-3, ruled twice), while the
+        a build that fails otherwise skip the class and the run reports green (the maintainer's round 1's tests-3, ruled twice), while the
         mint's own failure raises by design; the WHOLE statement is wrapped, the constructor included, since DistBuild's
         default inputs can skip through esbuild_exports before copy_to runs. tests/test_federated_linkdrop_driver_bound.py
         pins both arms against a stub build, and the kernel check in _boot (a knob-named root with no
@@ -848,7 +848,7 @@ class _LinkDrop(unittest.TestCase):
         objects (git clone --shared --no-checkout writes an alternates file in the new clone and nothing under this
         clone's .git), then checks the sha out detached. Never a worktree of this clone, which every session on the box
         shares: a worktree add registers a record there, an interrupted add leaves that record locked where no remove
-        of ours may reach it, and a repo-wide clearing of stale records at teardown is not a test's to run (round 1).
+        of ours may reach it, and a repo-wide clearing of stale records at teardown is not a test's to run (the maintainer's round 1).
         Everything the mint makes lives under cls.lab, so teardown is the lab's rmtree, and no git command of this
         class names this clone as its -C target (tests/test_federated_linkdrop_mint.py pins that against a scratch
         repository). The checkout's vscode-extension/node_modules is a symlink to THIS checkout's (the old config's own
@@ -1107,7 +1107,7 @@ class _LinkDrop(unittest.TestCase):
         apart) therefore give overlapping windows; the down window's exact zero holds because phase() waits 1500 ms
         after the visibles before A1, so phase A's last row is stamped before the down window's padded start, a
         separation the numbers give rather than a designed guarantee. The residual no pad tuning removes: a row queued
-        while a page's local socket was down and flushed late lands anywhere in the down window (round 1, tests-6)."""
+        while a page's local socket was down and flushed late lands anywhere in the down window (the maintainer's round 1, tests-6)."""
         m = self._marks()
         t0, t1 = m[k0] / 1000.0 - slack_s, m[k1] / 1000.0 + slack_s
         return [r for r in self.hub_diag_rows if t0 <= float(r.get("t") or 0) <= t1]
@@ -1160,8 +1160,8 @@ class _LinkDrop(unittest.TestCase):
         later frame excuses the window). The mechanism excused: the old bundle's socket churn (its relay socket closes every
         few seconds, the 2 s retry redials, the remote serves the new socket a whole frame), whose whole frame absorbs the
         notices posted while the socket was down, so that phase's change crosses as no patch and files no row. The
-        distinguishing datum an empty window needs (round 2's ruling on correctness-1: the allowance is keyed on this EVENT,
-        read from the hook's frames, never a dropped requirement). Round 4 added the gap because the frame alone was no key:
+        distinguishing datum an empty window needs (the maintainer's round 2's ruling on correctness-1: the allowance is keyed on this EVENT,
+        read from the hook's frames, never a dropped requirement). Pass 8 added the gap (the maintainer's round 3, extra6-1) because the frame alone was no key:
         on the old bundle a routine redial produces a whole frame after the phase's notices were already delivered as
         patches, so the frame-only excuse was available in 49 of the 81 phase windows (A, B, C) over the 27 unmutated
         old-hub records in the builder's cache as of the drive at `r8/lab-ci6.log` (2026-09-20), load-bearing (a window with
@@ -1171,11 +1171,11 @@ class _LinkDrop(unittest.TestCase):
         miss (the phase's feed patches and rows removed, every frame kept) reds the floor in 76 and stays excused in 5: a
         real gating miss during a churn is indistinguishable from the churn in the record, the excuse's remaining hole and
         the price of excusing the churn at all. Every figure in this paragraph, the population, its drive and the counts, is
-        ONE derivation (round 5: a hand-kept pair of a count and a drive drifted apart twice, one drive behind each time):
-        `population_drive.py --check <tests_dir> <round-3 tests_dir>` in the builder's cache outside the repo lists the
+        ONE derivation (the maintainer's round 4: a hand-kept pair of a count and a drive drifted apart twice, one drive behind each time):
+        `population_drive.py --check <tests_dir> <pass-7 head tests_dir>` in the builder's cache outside the repo lists the
         records by `population6.py` and names the drive whose reports directory holds the NEWEST counted record by the
         record's own end mark, so the count and the date are one read of one listing and a complete record landing after the
-        named drive moves the date with it (round 6; round 5 dated by the newest log's header stamp, which a unit run logged
+        named drive moves the date with it (pass 10; pass 9 dated by the newest log's header stamp, which a unit run logged
         like a drive made unreachable). It refuses to print anything when the two can disagree: a complete unmutated record
         the listing does not hold; a newest record in a directory with no headered lab log; that log with no end line (a drive
         in flight); a record of the DATING drive ending more than a second after that drive's end stamp (the log's whole seconds
@@ -1185,7 +1185,7 @@ class _LinkDrop(unittest.TestCase):
         is skipped with a note). A counted record beside no headered lab log (a copy of an older record, a drive another script
         logged) is counted by the listing, dates nothing and is named to stderr, refused only when it is the newest: the count
         can hold records no drive dates while the date stays on the newest dated one. Then it runs this helper over each record's windows
-        (`excuse_census.py`, the round-3 module's copy for the frame-only key) and the floor over each window with the miss
+        (`excuse_census.py`, the pass-7 head's module's copy for the frame-only key) and the floor over each window with the miss
         planted (`census_module.py`), prints the figure-bearing spans of this paragraph (three, two of them in one sentence),
         of _minus_attach_rows' docstring and of the waits and delivery comments WHOLE, and under --check reads this module for
         them, whitespace and comment markers folded, so a retyped figure is its exit 3, not a paste; `--as-of <log>` re-derives
@@ -1196,7 +1196,7 @@ class _LinkDrop(unittest.TestCase):
         so it is not read here. The
         frame key is after the bundle's last notice, not in the window: the left edge is the later of the window's mark and
         the earliest the last notice's post could have started, because a frame before that carries at most the earlier
-        notices and cannot explain the later ones reaching the Outline as nothing (round 3: a frame anywhere in the window's
+        notices and cannot explain the later ones reaching the Outline as nothing (pass 5: a frame anywhere in the window's
         first two seconds excused a stripped phase). No pad on that edge, on purpose: the ready-time whole frame before A0
         must not excuse an empty phase A; the right pad is _rows_in's, for a retry's frame landing just past the settle. The
         phase's change record must exist (the window is a phase's), else this fails rather than widening."""
@@ -1223,7 +1223,7 @@ class _LinkDrop(unittest.TestCase):
         reaches into this window's right pad: a card-less feed-family patch at or after that mark is the connect push's
         ledgers attach, by design and with no card in it, and it and the row the old bundle files for it (matched to the
         ATTACH, _minus_attach_rows: at most one row per attach, naming the feed slot, carrying the attach's rev and stamped at or
-        after the attach's floored second with a second of slack; round 4: a rev is no identity, since the Outline's feed patch
+        after the attach's floored second with a second of slack; the maintainer's round 3: a rev is no identity, since the Outline's feed patch
         revs restart at 1 on every relay socket, and a set of revs let every row of a colliding rev through where this message
         promised one) are the return's, not this window's. Returns the row count, for the record."""
         stamped = self._outline_unapplied_stamped(self._rows_in(k0, k1) if k0 and k1 else None)
@@ -1339,7 +1339,7 @@ class _LinkDrop(unittest.TestCase):
         holds nothing to patch, so a patch first would be a patch onto a base the socket never held). A socket that
         opened and had received no feed-family frame when the record ended (a churned socket closing at once, the last
         socket at the drive's end) is counted, not judged. Derived: every page opened at least one socket that received
-        a frame (round 1, fresh-2)."""
+        a frame (the maintainer's round 1, fresh-2)."""
         for app in self.apps:
             opened = [s for s in self._relay_socks(app) if s["openAt"]]
             with_frame = [(s, self._first_feed_family(s)) for s in opened if self._first_feed_family(s) is not None]
@@ -1353,8 +1353,8 @@ class _LinkDrop(unittest.TestCase):
         relay socket per page holding a whole frame, the local sockets reopening; and every visibility wait, waitVisible:
         a phase's card, todo and provisional row, and phase D's after the return) was met inside its timeout. An
         expired wait means a phase ran on an unmet precondition and the record shows a partial drive that every other
-        assertion may still pass (round 1, fresh-3: a forced timeout gave 3 / 0 / 3 / 2 and five green tests). The
-        visibility waits' expiries were swallowed until round 5, so a phase whose cards never came left only a waitedMs
+        assertion may still pass (the maintainer's round 1, fresh-3: a forced timeout gave 3 / 0 / 3 / 2 and five green tests). The
+        visibility waits' expiries were swallowed until pass 6, so a phase whose cards never came left only a waitedMs
         at about the cap, which the gate legs read as a delivery; the driver now names each in out.timeouts with its
         phase and in the phase's seen.expired. The driver records quiet()'s give-ups separately and they are not fatal."""
         self._driver_ran()
@@ -1363,9 +1363,9 @@ class _LinkDrop(unittest.TestCase):
 
     def _assert_seen(self, seen, want_cards, todo=None, prompt=None, what="", waited=False):
         """The visibles a read found. With `waited` the record is one waitVisible produced (a phase's seen, D's seenAfterReturn)
-        and its expired list must be present and empty: the driver names there each visibility wait that ran to its cap (round
-        5), and a missing list is refused rather than read as empty, since an older driver's record cannot establish the
-        outcome. Scoped to the waited reads (round 4, tests-1: phase D's after-return read was the one waitVisible record no
+        and its expired list must be present and empty: the driver names there each visibility wait that ran to its cap (pass
+        6), and a missing list is refused rather than read as empty, since an older driver's record cannot establish the
+        outcome. Scoped to the waited reads (the maintainer's round 3, tests-1: phase D's after-return read was the one waitVisible record no
         reader checked, so a wait that expired with the read catching the cards and nothing in out.timeouts passed every test);
         a visible() record (seenWhileDown, seenA, seenB, seenD) records no wait and carries no such list."""
         if waited:
@@ -1392,7 +1392,7 @@ class _LinkDrop(unittest.TestCase):
         neither is the connect push's LEDGERS ATTACH, by design and with no card in it: the `ready`-time whole frame is
         the cached, ledger-less one and the push that follows sends the ledgers as a delta (kernel.py _send_feed_now), a
         feedDelta on a page that announced the cap, a feed slot patch on one that did not. The head drive's record holds
-        one, a second after the Waiting page's restart whole frame (round 2's review, finding 1)."""
+        one, a second after the Waiting page's restart whole frame (the author's pass 3, finding 1)."""
         if f["t"] == "feedDelta":
             return f.get("asks") is not None
         if f["t"] == "delta" and f["slot"] == "feed":
@@ -1403,9 +1403,9 @@ class _LinkDrop(unittest.TestCase):
         """One (rev, floored second) per card-less feed slot patch (the connect push's ledgers attach, _carries_cards) the Outline
         received from `since_ms` to phase B's first change, in order, read over the drive's record and not a window's: the
         kernel floors a row's stamp to the second, so the row the old bundle files for an attach can sit inside a window whose
-        patch pad the attach itself is past by tens of milliseconds (round 2, regression-3: a 40 ms gap on a recorded drive).
-        Every reader of an attach matches rows to it through _minus_attach_rows (the two down-window sites since round 4, the
-        return window since that round's fixer pass, when its own set of revs went); no reader keeps a set of revs."""
+        patch pad the attach itself is past by tens of milliseconds (the maintainer's round 2, regression-3: a 40 ms gap on a recorded drive).
+        Every reader of an attach matches rows to it through _minus_attach_rows (the two down-window sites since pass 8, the
+        return window since pass 8's fixer pass, when its own set of revs went); no reader keeps a set of revs."""
         m = self._marks()
         return sorted((int(f["rev"]), int(f["at"] // 1000)) for f in self._outline_feed_patches() if since_ms <= f["at"] < m["B0"] and not self._carries_cards(f))
 
@@ -1422,18 +1422,18 @@ class _LinkDrop(unittest.TestCase):
         reader's window is the attach's (the kernel stamps a row at the flush, and a row queued while the page's local socket
         was down lands late, _rows_in's flush-lag residual), so the match is closed a second below the floored second and
         open above it, to the window's end; the pin's return-late cell states the choice. A multiset difference matched to
-        the ATTACH, not a set of revs (round 4): the Outline's feed patch revs
+        the ATTACH, not a set of revs (pass 8): the Outline's feed patch revs
         restart at 1 on every relay socket, so a rev is no identity over a drive, and a set of revs let every row of a
         colliding rev through where the assertions' messages promise one row per attach. The exemption fires on no recorded
         drive: over the 71 unmutated records of both classes in the builder's cache as of the drive at `r8/lab-ci6.log`
         (2026-09-20) the down windows hold 0 rows and 0 attaches and the return window holds 0 rows, so 0 rows are exempted
-        at the storm site, 0 at the gate leg's read and 0 in the return window, by the set before round 4 and by this match
+        at the storm site, 0 at the gate leg's read and 0 in the return window, by the set before pass 8 and by this match
         after it; the pin over a synthetic record in tests/test_federated_linkdrop_driver_bound.py is where the match is
         exercised. The count and its drive are one derivation, `population_drive.py --check` in the builder's cache outside
-        the repo, whose population, dating rule and refusals are stated once in _outline_caught_up_whole's docstring (round 6:
+        the repo, whose population, dating rule and refusals are stated once in _outline_caught_up_whole's docstring (the maintainer's round 5, extra7-4:
         this docstring restated three of them and omitted the one that fired); over each record it runs these helpers
-        (`attach_census.py`), prints the sentence before this one whole and reads this docstring for it under --check (round 5:
-        the pair was retyped one drive behind, twice; the fixer pass found the tool printed fragments and the figures were
+        (`attach_census.py`), prints the sentence before this one whole and reads this docstring for it under --check (the maintainer's round 4:
+        the pair was retyped one drive behind, twice; pass 9's fixer pass found the tool printed fragments and the figures were
         transcribed). Returns the rows' data, _outline_unapplied's shape."""
         pool = list(self._attaches_since(since_ms))
         out = []
@@ -1451,7 +1451,7 @@ class _LinkDrop(unittest.TestCase):
         less one row per ledgers attach the Outline received from 1.5 s BEFORE the resume (the attach can sit in the window's
         right pad by the kernel's whole-second floor, and its own stamp before the mark's second); the storm test's site reads
         attaches from the mark itself. The read is a helper so the since it passes is the one the pin in
-        tests/test_federated_linkdrop_driver_bound.py reads (round 4's fixer pass: the leg's inline since was reached by no test,
+        tests/test_federated_linkdrop_driver_bound.py reads (pass 8's fixer pass: the leg's inline since was reached by no test,
         and a mutation moving it to the resume stayed green while the helpers were pinned at both values)."""
         return self._minus_attach_rows(self._outline_unapplied_stamped(self._rows_in("drop", "resume")), self._marks()["resume"] - 1500)
 
@@ -1460,7 +1460,7 @@ class _LinkDrop(unittest.TestCase):
         there: the outline/delta-unapplied rows stamped in [resume - 1.5 s, B0 - 1 s] (padded on the left as _rows_in pads, the
         kernel's whole-second floor; closed a second before B0, since phase B's first row is stamped at a floor no earlier than
         B0 - 1 s, B0 being marked before the change is posted) less one row per attach from 1.5 s before the resume, matched to
-        the attach as the down window's are (_minus_attach_rows). Round 4's fixer pass: this reader kept a set of revs after the
+        the attach as the down window's are (_minus_attach_rows). Pass 8's fixer pass: this reader kept a set of revs after the
         two down-window sites moved to the match, so two rows of one attach's rev both passed a filter whose message promised one
         per attach; the switch moves no recorded verdict, since the recorded population holds no row and no attach in this
         window (the census, its population and its drive are in _minus_attach_rows's docstring, one derivation, and are not
@@ -1474,18 +1474,18 @@ class _LinkDrop(unittest.TestCase):
         return ("A", "B", "C") if self.local_drop else ("A", "B")
 
     def _assert_the_down_window_outlasts_the_drives_slowest_delivery(self):
-        """The gate's control in TIME (round 2's ruling): the while-down read of phase D came at least DOWN_WINDOW_MARGIN times
+        """The gate's control in TIME (the maintainer's round 2's ruling): the while-down read of phase D came at least DOWN_WINDOW_MARGIN times
         this drive's own slowest link-up delivery after D's post ended. A phase's delivery is the driver's seen.waitedMs, from
         the change's post returning to the last of its visibles on the pages (waited for concurrently), taken over EVERY
         link-up phase (A, B and C with the local drop; which is slowest moves from drive to drive with the churn's timing against
         the notices, so no one phase stands for the rest), so the yardstick is this drive's
         and this bundle's: on the old bundle a change shows only at the next churned socket's whole frame, 6 to 19 s. Without
-        this pin the two temporal pins hold for a post at the END of the dwell (an 18 ms window, both round-2 voters), and
+        this pin the two temporal pins hold for a post at the END of the dwell (an 18 ms window, both of the maintainer's round-2 voters), and
         "absent while down" cannot be told from "no time passed". The span is read to `settled`, the mark the while-down read
         follows (resume is some 20 ms later). A phase's waitedMs is a delivery only when every wait behind it RESOLVED: a
         wait that ran to its cap leaves waitedMs at about wait_ms with the visible absent, and taking that as the yardstick
         makes this pin `dwell >= DOWN_WINDOW_MARGIN x cap`, true by the relation pin's arithmetic and saying nothing about the
-        drive (round 5: the driver swallowed those timeouts and the leg passed at 42 >= 40). So every phase read here must
+        drive (pass 6: the driver swallowed those timeouts and the leg passed at 42 >= 40). So every phase read here must
         record an empty seen.expired (the driver's per-wait outcomes; a record with none cannot establish them and is
         refused) and show the phase's visibles on every page, both classes, before its waitedMs is taken; a resolved wait
         ended before its cap, so a delivery at the cap is then impossible by construction and DOWN_READ_ROOM_MS covers the
@@ -1518,7 +1518,7 @@ class _LinkDrop(unittest.TestCase):
         return span_s, deliveries
 
     def _assert_change_due_while_down_crossed_nothing_and_the_return_carried_it_whole(self):
-        """The gate, established rather than exhibited (round 1): phase D's change bundle was posted to the remote's real
+        """The gate, established rather than exhibited (the maintainer's round 1): phase D's change bundle was posted to the remote's real
         port after the hub's row went down and before the dwell ended, so a patch was DUE with the link down, and the dwell
         after the post outlasted this drive's slowest link-up delivery by DOWN_WINDOW_MARGIN (the control in time). While down
         the change is absent from every page (the card, and on the new bundle the todo and the provisional row), no
@@ -1557,7 +1557,7 @@ class _LinkDrop(unittest.TestCase):
                                            "catch-up is one whole frame, never a replayed patch; a ledgers attach after the whole frame carries no card): %r" % (app, carrying))
             wholes = [f for s, f in window if f["t"] == "feed"]
             self.assertTrue(wholes, "…and a whole feed frame did reach the %s page in that window: %r" % (app, [self._kinds(s) for s in self._relay_socks(app, "resume", "B0")]))
-        # the rows, read over the return window itself (round 2's review, finding 2; the down window's zero above ends 1.5 s
+        # the rows, read over the return window itself (the author's pass 3, finding 2; the down window's zero above ends 1.5 s
         # after resume and reaches none of the return's whole frames, which arrive 1 to 5 s after it): no outline/
         # delta-unapplied row for the return's whole frame or for a replayed patch (_return_window_stray: the window's bounds,
         # and the one row allowed per ledgers attach the Outline received from 1.5 s before the resume, matched to the attach as
@@ -1679,8 +1679,8 @@ class LinkDropOldLocal(_LinkDrop):
     phase unless a notice post found the Outline without an open, served relay socket and a whole keyed feed frame then
     caught it up inside the phase after the bundle's last notice could have been posted (the old bundle's socket churn
     absorbing the phase's notices: no patch, so no row; the allowance is keyed on that gap and that frame,
-    _outline_caught_up_whole) and empty while the link was down. One drive's count on the bundle at 01d4fbe43 (2026-09-19, the round-2
-    head): 3 / 0 / 3 / 3 across phase A, the link down, phase B and phase C; a reviewer's drive at round 1's head gave
+    _outline_caught_up_whole) and empty while the link was down. One drive's count on the bundle at 01d4fbe43 (2026-09-19, the pass-2
+    head): 3 / 0 / 3 / 3 across phase A, the link down, phase B and phase C; a reviewer's drive at the head the maintainer's round 1 ruled gave
     3 / 0 / 1 / 3 when socket churn inside phase B absorbed two notices into whole frames (the module docstring gives
     the recorded population). A relay redial does not end the storm but restarts it, so with a link that comes and goes
     the storm looks intermittent and self-healing when it is neither; this class keeps that evidence beside the new
@@ -1695,7 +1695,7 @@ class LinkDropOldLocal(_LinkDrop):
     caps = False               # the old bundle dials no caps (read from the dial URL)
 
     # What a skip of this class leaves unexecuted, and what still runs in the same CI job: the skip reasons carry it, so a
-    # runner reading "skipped" knows which claim went untested (round 1, tests-4).
+    # runner reading "skipped" knows which claim went untested (the maintainer's round 1, tests-4).
     UNEXECUTED = ("the old bundle's storm evidence (one delta-unapplied row per feed slot patch the Outline received, none "
                   "with a change due while the link was down, restarted by each redial's whole frame) goes unexecuted; the "
                   "mechanisms PR 815 fixed are pinned in the same CI job by ui/webview/federation-remote-view-delta.test.ts, "
@@ -1731,7 +1731,7 @@ class LinkDropOldLocal(_LinkDrop):
         self._assert_redialed_once_and_served_whole("resume", "restart" if self.local_drop else "end", caps=False, exactly=False)
         if self.local_drop:
             # …and the local restart's redial the same: the first socket that opened between the restart and phase C's
-            # first change was served whole (round 1, fresh-3: a partial return in that window went unread)
+            # first change was served whole (the maintainer's round 1, fresh-3: a partial return in that window went unread)
             self._assert_redialed_once_and_served_whole("restart", "C0", caps=False, exactly=False)
 
     def test_every_wait_the_driver_placed_was_met(self):
@@ -1780,7 +1780,7 @@ class LinkDropOldLocal(_LinkDrop):
             self.assertEqual(self._sends(app, "relay", "needFullFeed"), [])
 
     def test_each_redials_whole_frame_caught_the_old_page_up(self):
-        """The catch-up half of the headline, asserted (round 1, extra7-3): the whole frame each redial is served shows the
+        """The catch-up half of the headline, asserted (the maintainer's round 1, extra7-3): the whole frame each redial is served shows the
         old feed page the cards, so the old page freezes on patches and is caught up by whole frames, not frozen for
         good. Phase B's own cards after the link's return redial, still there after the local restart's redial, and
         phase C's after that one (phase A's would have rendered before the drop, so they say nothing about a redial)."""
