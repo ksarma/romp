@@ -974,10 +974,10 @@ def _say_unlistable_once(d, exc, where, bell):
 def _listable_again(d):
     _UNLISTABLE_SAID.pop(str(d), None)
 
-_HOLD_SKIPPED_SAID = {}   # held file -> (the reason its skip was said with, whether the rest was served): a listing that
-#                           reads it, or no longer lists it, ends it. The fold road keys the directory itself, by its errno.
+_HOLD_SKIPPED_SAID = {}   # held file -> (the reason its skip was said with, whether that pass refused the store): a listing
+#                           that reads it, or no longer lists it, ends it. The fold road keys the directory itself, by its errno.
 
-def _say_hold_skipped_once(f, why, where, served):
+def _say_hold_skipped_once(f, why, where, refusing):
     """One _log line per (file, reason) per fault episode for a held record the bus's own readers of the directory
     (_held_records_bus, behind quarantine_list and _hold_rows) have to skip: unreadable, not JSON, not an object, a link
     with nothing behind it, or a record whose message id is missing, is not the file's name, or is one the bus cannot
@@ -986,21 +986,27 @@ def _say_hold_skipped_once(f, why, where, served):
     its log, never the record's text or its id, and leaves the file where it is. The episode ends when a listing no longer
     has to skip the file (it read, was moved aside by the kernel, or is gone: _held_records_bus prunes the registry), so a
     fault that returns is said again (review round 2, 2026-09-19). The name is rendered through _listed_name, so a name
-    carrying a line boundary forges no second line (2026-09-20). `served` is whether the walk served anything on this
-    pass, and the line's tail says so: `the rest is served` when it did, and the refusal's own tail (nothing there is
-    served until it can be read again, and nothing was moved or dropped) when it did not, because on the walk's `unread
-    and not out` road this line is the ONE the log carries for the refusal (the fold road logs the store's text itself),
-    and a fixed `the rest is served` there stated the opposite of what happened (the fork PR's correctness-3 with
-    extra6-1, 2026-09-20). The served-ness rides in the registry's value beside the reason, so a store that served on
-    one pass and nothing on the next says the transition, where a key on the reason alone stayed silent. A second key
-    for the refusal (a store-level key, or a per-file line of the refusal's text before the raise) is not taken: the
-    walk's prune drops every key not in its skipped set on each pass, so such a key would flood the log or re-say the
-    skip."""
-    if _HOLD_SKIPPED_SAID.get(str(f)) == (why, served):
+    carrying a line boundary forges no second line (2026-09-20). `refusing` is whether this pass refuses the store (the
+    walk's `unread and not out` road: nothing served and a listed record left unread), and the tail is chosen by that
+    alone, two ways: the refusal's own tail (nothing there is served until it can be read again, and nothing was moved
+    or dropped) on the pass about to refuse, because there this line is the ONE the log carries for the refusal (the fold
+    road logs the store's text itself), and `the rest is served` on every other pass, a pass that skipped only records it
+    READ (not JSON, not an object, a message id that is not the file's name, a link with nothing behind it) and served
+    nothing included, since such a pass refuses nothing and GET /quarantine answers 200 with nothing held. Review round 3
+    (its correctness-3 with extra6-1, 2026-09-20) put the tail on this line in place of a fixed `the rest is served`,
+    which had stated the opposite of what happened on the refusal, but chose it by whether anything was served, which put
+    the refusal's tail on that lone parse skip while nothing refused (round 4's extra8-1, 2026-09-20). The selector rides
+    in the registry's value beside the reason, the same one the tail is chosen by, so a transition into or out of the
+    refusal on an unchanged (file, reason) is said (a parse-skipped record joined by an unreadable one, or the unreadable
+    one leaving), where a key on the reason alone, or on served-ness under a tail that follows the refusal, stayed
+    silent. A second key for the refusal (a store-level key, or a per-file line of the refusal's text before the raise)
+    is not taken: the walk's prune drops every key not in its skipped set on each pass, so such a key would flood the
+    log or re-say the skip."""
+    if _HOLD_SKIPPED_SAID.get(str(f)) == (why, refusing):
         return
-    _HOLD_SKIPPED_SAID[str(f)] = (why, served)
-    tail = ("the rest is served" if served
-            else "nothing there is served until it can be read again, and nothing was moved or dropped")
+    _HOLD_SKIPPED_SAID[str(f)] = (why, refusing)
+    tail = ("nothing there is served until it can be read again, and nothing was moved or dropped" if refusing
+            else "the rest is served")
     _log("%s: %s is %s: skipped and left in place; %s" % (where, _listed_name(f.name), why, tail))
 
 def _mail_unreadable(f, sid, exc):
@@ -4797,7 +4803,7 @@ class QuarantineUnreadable(Exception):
     3). The bus says the refusal once per episode in its log, by a road per predicate: when two or more were listed and
     none read under one errno (the fold), the store's own text under the directory's key; when nothing was served for
     any other reason, the per-file skip line, whose tail is the refusal's (_say_hold_skipped_once, keyed on the file, the
-    reason and whether anything was served). The bell row is the kernel's, whose own reader of this directory files one
+    reason and whether the pass refuses). The bell row is the kernel's, whose own reader of this directory files one
     (_note_hold_dir_fault), so one fault is one row on the board (2026-09-19). `unread` is the walk's list of the records
     left unread on the pass that refused (name, errno, text), what the route carries beside the refusal."""
 
@@ -4845,7 +4851,8 @@ def _held_records_bus(with_unread=False):
     beside a record that could not be read, the store is not refused (a refusal over one record would take every other
     hold off every viewing machine) and the record is not dropped either: it is reported beside what was served, through
     the `unread` facts above, so no reader answers over it as if it were absent. The per-file skip line's tail says
-    whether the rest was served (_say_hold_skipped_once).
+    whether this pass refuses the store (_say_hold_skipped_once): the refusal's own on the pass that does, `the rest is
+    served` on any other, a pass that skipped only records it read and served nothing included.
     A file gone between the listing and the read was decided meanwhile (the bus removes it on
     Approve or Deny): the ordinary race, skipped in silence. Before review round 2 (2026-09-19) quarantine_list's try
     wrapped json.loads alone with `except (OSError, ValueError)`: a hold holding a JSON list or null raised
@@ -4911,8 +4918,9 @@ def _held_records_bus(with_unread=False):
             _HOLD_SKIPPED_SAID.pop(k, None)
         raise QuarantineUnreadable(text, entries)
     skipped = {str(f) for f, _why in skips}
+    refusing = bool(unread and not out)              # the raise below, on the same two facts; both are final once the walk is done
     for f, why in skips:
-        _say_hold_skipped_once(f, why, "held mail", bool(out))   # the tail from what this pass served: the say of the road below
+        _say_hold_skipped_once(f, why, "held mail", refusing)   # the tail from whether this pass refuses: the say of the road below
     # the episode end: a file under this directory the listing did not have to skip (it read, was moved aside, or is
     # gone) is forgotten, so a fault that returns on it is said again. The registry is read through a snapshot
     # (list(...), one step under the GIL), never iterated live: this walk runs on the exchange thread and on a GET
@@ -4927,8 +4935,8 @@ def _held_records_bus(with_unread=False):
         # a literal count of the unread against the listing would miss. The store is refused, the shape the fold above
         # has, never an empty list that GET /quarantine would answer as 200 with nothing held and every viewing machine
         # as a vanished section (the fork PR's correctness-2 with regression-3, 2026-09-20). The say is the per-file line
-        # already written above, keyed on the FILE, the reason and the served-ness (so the line's tail is the refusal's
-        # here and the transition from a served pass is said): this road claims no key of its own and never the
+        # already written above, keyed on the FILE, the reason and whether the pass refuses (so the line's tail is the
+        # refusal's here and a transition into or out of the refusal is said): this road claims no key of its own and never the
         # directory's, which is the fold's key, so the two roads never re-say one fault at each other; the episode ends
         # when a listing no longer has to skip the file, as for any skip. The text names the file through _listed_name,
         # the errno and its text, never the record's contents.
@@ -4959,9 +4967,9 @@ def _hold_sort_at(rec):
     (absent, null, 0, an empty string) sorts as 0, the oldest. The bus stamps an int at hold time, so only a hand-edited
     record or a peer's relay lands on the refused road; such a hold stays listed and decidable instead of raising
     TypeError out of the sort beside an int `at`, and out of GET /quarantine with it. The kernel's card reads the same
-    value by the same int() seam (an accepted value is the card's time on both daemons; a refused one takes the build's
-    clock there and 0 here). The except tuple is the kernel's `at` guard's: OverflowError is int()'s answer to a float
-    infinity (json's 1e400)."""
+    value by the same int() seam (a truthy accepted value is the card's time on both daemons; a refused or a falsy one
+    takes the build's clock there and 0 here). The except tuple is the kernel's `at` guard's: OverflowError is int()'s
+    answer to a float infinity (json's 1e400)."""
     try:
         return int(rec.get("at") or 0)
     except (TypeError, ValueError, OverflowError):
@@ -5083,9 +5091,9 @@ _APPROVE_FIELDS = {                                  # THE APPROVE ROAD'S FIELD 
     "to": ("text", "recipient name"),                #   (_approve_field_fault) holds it to and the words the refusal names
     "toId": ("text", "recipient id"),                #   it by. The table is the population the vet is applied over, written
     "frm": ("text", "sender name"),                  #   down so it can be checked: tests/test_postal_quarantine.py derives
-    "frmId": ("text", "sender id"),                  #   the keys the minter writes and the arm reads from the source and
-    "body": ("body", "message text"),                #   reds on a key this table does not classify, or an entry no source
-    "kind": ("text", "message kind"),                #   names, so a field added to either joins the vet by construction.
+    "frmId": ("text", "sender id"),                  #   the minter's literal keys and rec[...] writes and the arm's rec.get
+    "body": ("body", "message text"),                #   and rec[...] reads from the source and reds on a key this table does
+    "kind": ("text", "message kind"),                #   not classify, or an entry no source names; rec.pop is outside it.
     "origin": ("text", "sender host"),               #   text: present and not text is refused on both approve roads (a
     "via": ("text", "relay route"),                  #   list, a dict, a number, a bool: none is a name, an id, a host, a
     "at": ("not-read", "hold time"),                 #   marker); absent or null keeps its road (deliver writes the blank,

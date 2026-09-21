@@ -5504,9 +5504,10 @@ reading it proves the record absent, so the kernel moves the link itself aside
 by its own name, moving no message bytes, and the bus skips it. A record that
 parsed keeps its card and its listing whatever the types of its fields: a field
 that should be text and is not is named by its type, an `at` the reader cannot
-read as a whole number gives the card the build's time (the bus sorts such a
-record as the oldest), and one that reads as a whole number (a string of
-digits, a decimal number) is read as its value by both readers. A held record
+read as a whole number, or that is empty or zero, gives the card the build's
+time (the bus sorts such a record as the oldest), and any other value it reads
+as a whole number (a string of digits, a decimal number) is read as its value
+by both readers. A held record
 the kernel moved aside is named again by the error center each time its entry
 has left it, after a kernel restart or once forty later entries have pushed it
 out (several asides share one entry), until you deal with the file; the entry

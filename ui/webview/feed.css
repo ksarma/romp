@@ -1249,15 +1249,22 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
    (the view-menu icon · Session ▴ · Search) sit left; the ACTIONS (Clear all, then Undo) dock right. The split
    rides the actions' own wrapper (#feed-actions, minted by feed.ts ensureActions with both buttons inside it):
    margin-left:auto on the wrapper, PER LINE, so the pair wraps as one flex item and docks at the right edge of
-   whatever row the wrap puts it on, whether Clear all is offered or not, and whatever order the ensure* calls
-   appended the controls in. Two earlier homes for the margin failed: on Clear all itself, until the held-mail
+   whatever row the wrap puts it on, whether Clear all is offered or not. The wrapper carries its own flex order
+   too (order:10; the view controls sit at the default 0), which sorts it after them however the ensure* calls
+   appended the controls: feed.ts's off arm (a pane whose first feed frame is an off frame, the switch off at pane
+   open) calls ensureClearAll and returns before any renderBody, so the wrapper is minted as the FIRST child of an
+   empty footer and every later frame appends the view controls after it, and an auto margin on that first child
+   with no order pushed the whole bar right, Clear all and Undo standing left of View and Sessions for the life of
+   the page (the held-mail readers PR's review round 4). The buttons' own order:10 and order:11 bought that
+   immunity while the dock rode them directly; once the margin moved to the wrapper, the wrapper needed the
+   order. Two earlier homes for the margin failed: on Clear all itself, until the held-mail
    readers PR's review (2026-09-20) hid that button on a board of held messages or placeholders alone and Undo
    slid left beside Search; then margin-right:auto on the session box, which held on one line and failed on a
    bar that wraps, since a margin on the row above cannot dock a row below it. Two auto margins on one line
    would split the free space between them, so #feed-search carries none. On the empty board the left cluster
    is hidden and Undo stays at the left edge by state: renderBody marks the bar with .empty-board and the
-   wrapper's auto margin is off under it. Measured in feed-css-footer.test.ts on a one-line bar, a wrapped bar
-   and the empty board. */
+   wrapper's auto margin is off under it. Measured in feed-css-footer.test.ts on a one-line bar, a wrapped bar,
+   the empty board and the bar minted in the off arm's order, one line and wrapped. */
 #feed-foot { flex: 0 0 auto; z-index: 5;
   display: flex; align-items: center; gap: 8px; padding: 6px 12px;
   flex-wrap: wrap; row-gap: 5px;   /* a narrow pane folds buttons onto another row — never a horizontal scrollbar */
@@ -1267,7 +1274,7 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
      bar itself must sit on the same dark): the border-top hairline is the separator now. The old
      editorWidget token resolved to #252526 under the kernel's THEME_CSS. */
   background: var(--bg); }
-#feed-actions { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; }   /* the actions' wrapper: the footer's right dock, per line (the comment above) */
+#feed-actions { display: inline-flex; align-items: center; gap: 8px; order: 10; margin-left: auto; }   /* the actions' wrapper: the footer's right dock, per line, sorted after the view controls by its own order (the comment above) */
 #feed-foot.empty-board #feed-actions { margin-left: 0; }   /* the empty board: the lone Undo keeps the left edge by state (renderBody sets the class) */
 #feed-clearall { order: 10; }   /* accent hover like every action button; the pair's order inside #feed-actions, whatever order the buttons were minted in */
 #feed-undoclear { order: 11; }                     /* restorative — far right */

@@ -155,14 +155,19 @@ test("the footer's right-hand dock rides the two actions' own wrapper, per line;
   // now: feed.ts mints #feed-actions once and appends both buttons into it, so the pair wraps as one flex item and
   // carries margin-left:auto onto whatever row it lands on; renderBody marks the empty board on #feed-foot and the
   // sheet turns the margin off under that class, so the lone Undo's left edge is a stated rule and not an accident.
-  // feed-css-footer.test.ts measures all of it where a browser exists.
+  // Round 4: the wrapper carries its own flex order, since the round 3 sheet left the order on the two buttons INSIDE
+  // it and the footer's own children all sat at the default 0, so DOM order decided the bar; the off arm above mints the
+  // wrapper into an empty footer before any renderBody, and a first child with an auto margin and no order pushed the
+  // whole bar right. feed-css-footer.test.ts measures all of it, the off arm's order included, where a browser exists.
   assert.match(FEED, /function ensureActions\(\): HTMLElement \{\s*\n\s*let w = document\.getElementById\("feed-actions"\);\s*\n\s*if \(!w\) \{ w = el\("span", ""\); w\.id = "feed-actions"; \(document\.getElementById\("feed-foot"\) \|\| document\.body\)\.appendChild\(w\); \}/,
     "the wrapper, minted once into the footer");
   assert.match(FEED, /if \(!b\) \{ b = makeClearAllBtn\(\); ensureActions\(\)\.appendChild\(b\); \}/, "Clear all is appended into it");
   assert.match(FEED, /if \(!b\) \{ b = makeUndoClearBtn\(\); ensureActions\(\)\.appendChild\(b\); \}/, "and so is Undo");
   assert.doesNotMatch(FEED, /make(?:ClearAll|UndoClear)Btn\(\); \(document\.getElementById\("feed-foot"\)/, "neither action is appended to the bar directly any more");
   assert.match(footer, /if \(foot\) foot\.classList\.toggle\("empty-board", !showCA\);/, "the empty board is a state on the bar: set while no card is on it, cleared by a card");
-  assert.match(CSS, /#feed-actions \{ display: inline-flex; align-items: center; gap: 8px; margin-left: auto; \}/, "the dock is the wrapper's margin");
+  assert.match(CSS, /#feed-actions \{ display: inline-flex; align-items: center; gap: 8px; order: 10; margin-left: auto; \}/,
+    "the dock is the wrapper's margin, and the wrapper's own order sorts it after the view controls (the default 0), so the dock does not depend on the order the controls were minted in");
+  assert.match(CSS, /#feed-actions \{[^}]*\border: \d+;/, "the wrapper carries a flex order of its own (the property the exact text above spells): minted first by the off arm, it still sorts last");
   assert.match(CSS, /#feed-foot\.empty-board #feed-actions \{ margin-left: 0; \}/, "and it is off on the empty board");
   assert.match(CSS, /#feed-search \{ display: inline-flex; align-items: center; gap: 5px; position: relative; \}/, "the session box carries no auto margin: two on one line would split the free space between them");
   assert.match(CSS, /#feed-clearall \{ order: 10; \}/, "the pair's order inside the wrapper stands");

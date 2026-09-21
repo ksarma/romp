@@ -12,21 +12,30 @@ that link is moved aside by its own name, as the one labelled exception. These p
 it names the statement, carries no enumeration of the move-aside shapes, qualifies the read-fault state the way
 the statement does (a stat or read fault on bytes that exist), names the link as the exception, states the
 refusal of a store none of whose records could be served while one could not be read (one record alone
-included), and gives an `at` the reader cannot read as a whole number the build's time instead of a move aside.
+included), and gives an `at` the reader cannot read as a whole number, or that is empty or zero, the build's time
+instead of a move aside.
 The third review round (2026-09-20) added three properties: the clause says how a record left unread beside
 records that were read is reported on every reader of the held wire (the route, the summary peers see and the
 viewing panel), so the never-reported-absent sentence is true of the mixed case and not only of the refused
-store; its `at` sentence says what the reader keys on (a value it cannot read as a whole number takes the
-build's time, one it can is read as its value by both readers) instead of the false predicate `not an integer`,
-which a string of digits or a decimal number falsified; and its rename-back advice is the error center's for
-the record it names, carrying the road for an id the bus cannot decide, instead of the unconditional rename
-back or delete that looped on such a file.
+store; its `at` sentence says what the reader keys on (a value it cannot read as a whole number, or that is
+empty or zero, takes the build's time; any other value it reads as a whole number is read as its value by both
+readers) instead of the false predicate `not an integer`, which a string of digits or a decimal number
+falsified; and its rename-back advice is the error center's for the record it names, carrying the road for an
+id the bus cannot decide, instead of the unconditional rename back or delete that looped on such a file. The
+fourth review round (2026-09-20) widened the `at` sentence to the scope the third round's ruling had stated: a
+zero or empty `at` (0, 0.0, false, an empty string, none at all) takes the build's time on the kernel and the
+oldest place on the bus, the same as a value the reader cannot read, where the third round's sentence had read
+every value that reads as a whole number as its value; and the pin on that sentence keys on its properties (the
+two classes named before the build's time, the bus's oldest place, the read-as-its-value class qualified as any
+other value) rather than on its words, since the quoted literals it had carried went red on any rewording.
 
 Text only: this module reads docs/reference.md and kernel/kernel.py as text and loads no romp code, so it
 needs no hermetic-state preamble. Over a git archive of the reviewed head (085e08deb) it is red at the phrase
 pins the clause exists for (the citation absent, the enumeration present), never on a symbol or a signature;
 the three round-3 pins are red over a git archive of f418f75e9 at their own assertions (the mixed-case sentence
-absent, the `not an integer` predicate present, the unconditional rename-back present).
+absent, the `not an integer` predicate present, the unconditional rename-back present); the re-keyed `at` pin of
+the fourth round is red over a git archive of 806804242 at its empty-or-zero assertion (that head's sentence names
+one class before the build's time) and green here.
 """
 import os
 import re
@@ -123,17 +132,33 @@ class TheHeldMailClauseStatesTheRuleAndCitesIt(_Pins):
         self.assertQuoted("sees a fault row", clause, DOC, "the viewing machine sees the holder's fault, not a vanished section")
 
     def test_a_type_wrong_at_keeps_its_card_at_the_builds_time(self):
-        # the predicate is what the reader keys on: a value it cannot read as a whole number, in doc voice, never
-        # `not an integer` (a string of digits and a decimal number are not integers and both readers read them as
-        # their value, so that predicate was false of them) and never the Python builtin's name
+        # the property, not the spelling (the fourth round re-keyed this pin: its quoted literals went red on any
+        # rewording, and the sentence they quoted gave its value to EVERY `at` the reader reads as a whole number,
+        # false for zero, which reads as a whole number and takes the build's time on the kernel and the oldest place
+        # on the bus, as an empty one does). The sentence keyed on what the reader can read as a whole number names
+        # TWO classes before the disposition they share, a value the reader cannot read as a whole number and a value
+        # that is empty or zero, both taking the build's time; names the bus's oldest place for such a record; and
+        # qualifies the read-as-its-value class as any OTHER value the reader reads as a whole number. In doc voice:
+        # never `not an integer` (a string of digits and a decimal number are not integers and both readers read them
+        # as their value) and never the Python builtin's name. Never keyed on `reads as zero` either: the string "0"
+        # reads as zero and IS read as its value by both readers.
         clause = _clause()
         self.assertNotQuoted("`at` that is not an integer", clause, DOC,
                              "the false predicate: a digit string and a float are not integers and are read as their value")
-        self.assertQuoted("an `at` the reader cannot read as a whole number gives the card the build's time", clause, DOC,
-                          "a field's type never moves a record aside; the card takes the build's clock")
-        self.assertQuoted("the bus sorts such a record as the oldest", clause, DOC)
-        self.assertQuoted("reads as a whole number (a string of digits, a decimal number) is read as its value by both readers",
-                          clause, DOC, "an `at` the reader can read as a whole number is nothing apart: both readers take its value")
+        sentences = [s for s in re.split(r"(?<=\.) ", clause) if "whole number" in s]
+        self.assertTrue(sentences, "%s no longer keys the `at` handling on what the reader can read as a whole number" % DOC)
+        s = sentences[0]
+        m = re.search(r"cannot read as a whole number\b(.*?)the build's time", s)
+        self.assertIsNotNone(m, "%s: a value the reader cannot read as a whole number takes the build's time" % DOC)
+        self.assertRegex(m.group(1), r"\bempty\b.*\bzero\b|\bzero\b.*\bempty\b",
+                         "%s: a value written empty or zero takes the build's time too, named beside the value the reader "
+                         "cannot read (0, 0.0, false, an empty string and an absent `at` give the kernel's card the build's "
+                         "clock and the bus's sort the oldest place, exactly as a value the reader cannot read does); the "
+                         "third round's sentence gave every value that reads as a whole number its value" % DOC)
+        self.assertQuoted("the oldest", s, DOC, "the bus's place for such a record is named beside the kernel's")
+        self.assertIsNotNone(re.search(r"\bany other\b[^.;]*?\breads as a whole number\b[^.;]*?\bread as its value by both readers", s),
+                             "%s: the read-as-its-value class is qualified as any OTHER value the reader reads as a whole "
+                             "number, so zero, which reads as one, is not given its value" % DOC)
         self.assertNotQuoted("int()", clause, DOC, "doc voice: the reader's rule, not the builtin's name")
 
     def test_a_record_left_unread_beside_served_ones_is_named_on_every_reader_of_the_wire(self):

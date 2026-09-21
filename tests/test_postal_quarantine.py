@@ -644,6 +644,7 @@ class _HeldStore(unittest.TestCase):
         os.environ["ROMP_SESSIONS_FILE"] = _SESS
         ps.QUARANTINE.mkdir(parents=True, exist_ok=True)
         self._clear_store()
+        self._clear_mail()                           # the recipient's box too: the cases below assert it empty (review round 4)
         self._write(self.HOLD["mid"], json.dumps(self.HOLD))
         self._saved = (ps._log, ps._kernel_post)
         self.logged, self.told = [], []
@@ -664,6 +665,7 @@ class _HeldStore(unittest.TestCase):
             except OSError:
                 pass
         self._clear_store()
+        self._clear_mail()
         ps._log, ps._kernel_post = self._saved
         getattr(ps, "_HOLD_SKIPPED_SAID", {}).clear()
         getattr(ps, "_UNLISTABLE_SAID", {}).clear()
@@ -672,6 +674,16 @@ class _HeldStore(unittest.TestCase):
     def _clear_store(self):
         for f in ps.QUARANTINE.iterdir():
             f.unlink()
+
+    def _clear_mail(self):
+        # sess-web's box, the recipient every hold here names: the module's older gate and decide classes clear it at
+        # setUp only, so their last case leaves a delivered row behind, and a case here that asserts nothing was
+        # delivered without clearing first reds when an xdist worker runs it straight after one of them (round 4 saw
+        # it under -n 4 over thirteen modules; green alone, green serially, green with the module alone)
+        d = ps.MAILROOT / "sess-web" / "new"
+        if d.is_dir():
+            for f in d.iterdir():
+                f.unlink()
 
     def _write(self, mid, text):
         f = ps.QUARANTINE / (mid + ".json")
@@ -1458,11 +1470,13 @@ class ALoneUnreadableRecordRefusesTheStoreNeverNothingHeld(_HeldStore):
     an unreadable one stays served, and since round 3 (correctness-2) the unread one is reported beside it, on the route's
     `unread` list and as the summary's marker row, instead of being absent from the wire; the marker's own class is
     ARecordLeftUnreadBesideServedOnesIsReportedNeverDropped, and the mixed case here pins the two together with the
-    per-file say. The log's per-file skip line ends with what the pass served (round 3, correctness-3 with extra6-1): the
-    rest is served when a record was, the refusal's own tail when nothing was, since on this road that line is the one
-    the log carries for the refusal; the registry keys the file, the reason and the served-ness, so a store that served
-    on one pass and nothing on the next says the transition, where before the lone record's only line ended `the rest
-    is served` and the transition said nothing.
+    per-file say. The log's per-file skip line ends with the refusal's own tail on the pass that refuses (round 3,
+    correctness-3 with extra6-1), since on this road that line is the one the log carries for the refusal, and with
+    `the rest is served` on every other pass; the registry keys the file, the reason and whether the pass refuses, so a
+    store that served on one pass and refused on the next says the transition, where before round 3 the lone record's
+    only line ended `the rest is served` and the transition said nothing. Round 3 chose that tail by served-ness, which
+    put the refusal's tail on a lone parse skip that refused nothing; round 4 (extra8-1) keyed it on the refusal, pinned
+    in TheSkipLinesTailIsTheRefusalsOnlyOnThePassThatRefuses.
 
     Fails before over a git archive of 35fad278c (the archive that carries this fixture; the defect is older: the review
     proved the base bc88256e8 answers [] at one record too, and this module over that archive reds the same way):
@@ -1621,6 +1635,116 @@ class ALoneUnreadableRecordRefusesTheStoreNeverNothingHeld(_HeldStore):
         self.assertNotIn("none of its", text, "differing errnos are not one fact about the directory")
         self.assertEqual(len(self._said()), 2, "each file said on its own: %r" % (self.logged,))
         self.assertTrue(f2.is_file() and f3.is_file())
+
+
+class TheSkipLinesTailIsTheRefusalsOnlyOnThePassThatRefuses(_HeldStore):
+    """Round 3 (correctness-3 with extra6-1) gave the per-file skip line a tail, but chose it by whether the pass SERVED
+    anything: `the rest is served` when a record was read, the refusal's own tail when none was. Served-ness is not the
+    refusal. A pass that skipped only records it read (not JSON, not an object, a message id that is not the file's name,
+    a link with nothing behind it) and served nothing refuses nothing: quarantine_list answers [], `unread` is empty,
+    GET /quarantine answers 200 with nothing held, and yet its one line said `nothing there is served until it can be
+    read again, and nothing was moved or dropped`, the tail of a refusal that never happened, naming a read fault that
+    never occurred (review round 4, extra8-1, 2026-09-20). _say_hold_skipped_once now takes whether the pass refuses (the
+    walk's `unread and not out`, the raise's own predicate, computed once at the say loop where both facts are final) and
+    the tail follows it two ways: the refusal's own on the pass about to refuse, `the rest is served` on every other, the
+    lone parse skip included, the neutral tail the line carried before round 3. The registry's value carries the same
+    selector beside the reason, so a transition into or out of the refusal on an unchanged (file, reason) is said: a
+    parse-skipped record joined by an unreadable one turns the store refusing, and the parse-skipped file's line is said
+    again with the refusal's tail; the unreadable one leaving turns it back, and the line is said again with `the rest is
+    served`. Keyed on served-ness alone, False on both sides of each transition, neither was said.
+
+    Fails before over a git archive of 806804242 (the round 3 tree the tail arrived in) with this module copied in: the
+    lone case at its tail assertion (the line ends with the refusal's tail), the two transition cases at their said-again
+    assertion (2 lines where 3 are due: the parse-skipped file's registry value, (reason, served), is unchanged across the
+    transition, so it is not said again). The four tail assertions on read faults in
+    ALoneUnreadableRecordRefusesTheStoreNeverNothingHeld stand as they were. The transition cases stage a mode-000 file
+    and skip as root, who reads it; the lone case stages none and runs as any user. Synthetic: placeholder mids, invented
+    text."""
+
+    REFUSAL_TAIL = "; nothing there is served until it can be read again, and nothing was moved or dropped"
+
+    def _root_skip(self):
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            self.skipTest("root reads a mode-000 file; the fault cannot be staged")
+
+    def _listing(self):
+        try:
+            return ps.quarantine_list()
+        except Exception as e:                       # the refusal's type is asserted by name where one is due
+            return e
+
+    def _lines_naming(self, f):
+        return [l for l in self._said() if f.name in l]
+
+    def test_a_lone_unparseable_record_refuses_nothing_and_its_line_says_the_rest_is_served(self):
+        self._clear_store()
+        torn = self._write(self.M2, "{not json")
+        self.assertEqual(self._listing(), [], "a record the bus read and could not parse is skipped, never a refusal")
+        self.assertEqual(ps.quarantine_listing(), ([], []), "nothing served and nothing left unread")
+        self.assertEqual(ps._hold_rows(), [], "no marker row: nothing was left unread")
+        code, body = self._get(self._serve())
+        self.assertEqual((code, body["held"], body.get("unread")), (200, [], []), "the route refuses nothing: %r" % (body,))
+        said = self._said()
+        self.assertEqual(len(said), 1, "one line for the skip: %r" % (self.logged,))
+        self.assertIn(torn.name, said[0])
+        self.assertIn("not JSON (", said[0])
+        self.assertNotIn("until it can be read again", said[0],
+                         "the refusal's tail on a pass that refused nothing and left nothing unread: %r" % (said[0],))
+        self.assertTrue(said[0].endswith("; the rest is served"), "the neutral tail: %r" % (said[0],))
+        self.assertNotIn("not json", said[0], "never the record's text")
+        self.assertEqual(self._listing(), [])
+        ps._hold_rows()
+        self.assertEqual(len(self._said()), 1, "a second pass in the same state says nothing more")
+        self.assertTrue(torn.is_file(), "left in place")
+        self.assertEqual([p for p, _ in self.told], [], "no bell row from the bus: the kernel's reader files it")
+
+    def test_the_transition_into_the_refusal_on_an_unchanged_file_and_reason_is_said_again_with_the_refusals_tail(self):
+        self._root_skip()
+        self._clear_store()
+        torn = self._write(self.M2, "{not json")
+        self.assertEqual(self._listing(), [], "pass one: the parse skip alone, nothing refused")
+        self.assertEqual(len(self._said()), 1, self.logged)
+        locked = self._write(self.M3, json.dumps(dict(self.HOLD, mid=self.M3)))
+        os.chmod(locked, 0)                          # the store turns refusing; the parse-skipped file's reason is unchanged
+        answer = self._listing()
+        self.assertEqual(type(answer).__name__, "QuarantineUnreadable",
+                         "pass two: nothing served and a record unread: refused: %r" % (answer,))
+        said = self._said()
+        self.assertEqual(len(said), 3, "the parse-skipped file's line is said again on the way into the refusal, beside "
+                                       "the unread file's own: %r" % (self.logged,))
+        mine = self._lines_naming(torn)
+        self.assertEqual(len(mine), 2, self.logged)
+        self.assertIn("not JSON (", mine[1], "the reason unchanged")
+        self.assertTrue(mine[1].endswith(self.REFUSAL_TAIL), "the refusal's tail on the pass that refuses: %r" % (mine[1],))
+        theirs = self._lines_naming(locked)
+        self.assertEqual(len(theirs), 1, self.logged)
+        self.assertTrue(theirs[0].endswith(self.REFUSAL_TAIL), theirs[0])
+        self.assertEqual(type(self._listing()).__name__, "QuarantineUnreadable")
+        self.assertEqual(len(self._said()), 3, "a second refused pass says nothing more")
+        self.assertTrue(torn.is_file() and locked.is_file(), "left in place")
+
+    def test_the_transition_out_of_the_refusal_is_said_again_with_the_rest_is_served(self):
+        self._root_skip()
+        self._clear_store()
+        torn = self._write(self.M2, "{not json")
+        locked = self._write(self.M3, json.dumps(dict(self.HOLD, mid=self.M3)))
+        os.chmod(locked, 0)
+        self.assertEqual(type(self._listing()).__name__, "QuarantineUnreadable",
+                         "pass one: nothing served and a record unread: refused")
+        said = self._said()
+        self.assertEqual(len(said), 2, "each file said on its own: %r" % (self.logged,))
+        self.assertTrue(all(l.endswith(self.REFUSAL_TAIL) for l in said), "both with the refusal's tail: %r" % (said,))
+        locked.unlink()                              # decided meanwhile: still nothing served, nothing left unread, so nothing refuses
+        self.assertEqual(self._listing(), [], "pass two: the parse skip alone again, nothing refused")
+        said = self._said()
+        self.assertEqual(len(said), 3, "the parse-skipped file's line is said again on the way out of the refusal: %r"
+                                       % (self.logged,))
+        self.assertIn(torn.name, said[2])
+        self.assertIn("not JSON (", said[2], "the reason unchanged")
+        self.assertTrue(said[2].endswith("; the rest is served"), "the neutral tail once nothing refuses: %r" % (said[2],))
+        self.assertEqual(self._listing(), [])
+        self.assertEqual(len(self._said()), 3, "a second pass in the same state says nothing more")
+        self.assertNotIn(str(locked), getattr(ps, "_HOLD_SKIPPED_SAID", {}), "the gone file's episode ended: its key pruned")
 
 
 class ARecordLeftUnreadBesideServedOnesIsReportedNeverDropped(_HeldStore):
@@ -1828,8 +1952,10 @@ class AnApproveOverAFieldThatIsNotOfItsClassIsRefusedByTheOneVet(_HeldStore):
     type alone and what would work, on the bare and the edited-text road alike, the record untouched and still held,
     nothing delivered, the route a 400; keyed on type, never on depth; never coerced and never routed through _hold_text
     into a header. The body's and toId's refusals keep their words as arms of the vet. The census case derives the keys
-    the minter writes and the arm reads from the source and holds the table to them both ways, so a field added to
-    either joins the vet by construction or reds by name.
+    from the source, the minter's literal keys in any spelling and its `rec[...]` writes, the arm's `rec.get("...")` and
+    `rec["..."]` reads, and holds the table to them both ways, so a key added to the literal or a read added in those
+    spellings joins the vet by construction or reds by name; a read spelled otherwise (`rec.pop`) is outside the census,
+    and the census's own docstring says so.
 
     Fails before over a git archive of 35fad278c (the archive that carries this fixture; the deliver hand-off is
     byte-identical since the base bc88256e8 and the toWireId line since 2026-09-08, as the review proved at the base): the
@@ -2045,15 +2171,25 @@ class AnApproveOverAFieldThatIsNotOfItsClassIsRefusedByTheOneVet(_HeldStore):
     def test_every_key_the_minter_writes_and_the_approve_road_reads_is_classified_by_the_table(self):
         """The census: the population the one vet is applied over, derived from the source (the minter's literal and
         conditional keys; the approve arm's and the preamble's literal reads) and held equal to the table's keys both
-        ways, every class one of the named ones, the vet walking the table and the arm calling the vet. A write or read
-        shape the census does not read reds loudly; the derived set is floored at the fourteen keys the minter writes
-        today, so an empty read reds. Proved by mutation at the tree: a `rec.get("newField")` added to the arm reds
-        naming newField; a key added to the minter's literal reds naming it."""
+        ways, every class one of the named ones, the vet walking the table and the arm calling the vet. What the census
+        reads, exactly: every key of the minter's dict literal, whatever its spelling (review round 4 widened this read
+        from letters alone, under which a served key carrying a digit or an underscore was written unclassified while
+        the case stayed green, extra6-1); the minter's `rec[...]` writes and the arm's `rec.get("...")` and `rec["..."]`
+        reads by their literal keys, each behind a count assert that reds a key those spellings carry and the
+        letters-only class does not match (a `rec.get("at2")` reds at the count, not by name), so those reads need no
+        widening; and the write shapes it refuses by name. Outside the census, said plainly: a read spelled otherwise,
+        `rec.pop("x")` in the approve arm, is neither counted nor named and stays green today; round 4 did not close it.
+        The escape the widening closed was write-only and never on the approve road: a key the arm READS reds at the
+        arm's count assert whatever its spelling, so nothing reached deliver() unvetted and green, and the gap was in
+        the guard's stated reach, not in what the bus does. The derived set is floored at the fourteen keys the minter
+        writes today, so an empty read reds. Proved by mutation at the tree: a `rec.get("newField")` added to the arm
+        reds naming newField; a key added to the minter's literal reds naming it, `"at2": 1,` and `"from_host": "x",`
+        included since round 4 (green under the letters-only read, executed once to see it)."""
         table = ps._APPROVE_FIELDS
         minter = inspect.getsource(ps._quarantine_put)
         lit = minter[minter.index("rec = {"):]
         lit = lit[:lit.index("}") + 1]
-        written = set(re.findall(r'"([A-Za-z]+)":', lit))
+        written = set(re.findall(r'"([^"]+)"\s*:', lit))       # every key of the literal, in any spelling (round 4)
         keyed = re.findall(r'rec\["([A-Za-z]+)"\]', minter)   # every rec[...] after the literal: a conditional write, or a read of a written key
         self.assertEqual(minter.count("rec["), len(keyed), "every rec[...] in the minter carries a literal key the census reads")
         for shape in ("rec.update(", "setdefault(", "rec |=", "**"):

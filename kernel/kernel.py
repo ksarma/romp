@@ -6763,16 +6763,17 @@ def _note_read_fault_once(path, text, fold=None, fold_head="", name=""):
     the notices reader skips the row and says so. (3) A record that parsed whose FIELD has an unexpected type: a `body`,
     `frm`, `to`, `origin` or `toId` that is not text, or an `at` that is not an integer. The field is handled and the
     file is never moved or refused for it, on either daemon: a text field is named by its type alone and never
-    formatted (_hold_text), and an `at` int() REFUSES (a word, a container, a float infinity) is the one field the two
-    readers handle apart, while an `at` int() ACCEPTS that is not an integer (a JSON string of digits, a float, which
-    int() truncates) is read as its value by both readers with nothing apart about it; what a person sees of the
-    refused one is this: the kernel's card takes the build's clock, so the held message reads as just arrived, dated
-    the moment the feed was built and re-dated by every build, and sorts with the board's newest cards (at the top of
-    its column when the feed is sorted newest first), while the bus gives the same message 0 for its `at`
-    (postal_service._hold_sort_at, where an absent `at` lands too) and sorts it as the oldest of everything held, the
-    last row of its newest-first list on GET /quarantine and a 0 in the summary every peer's popover reads; one
-    message, dated now in one place and older than everything in the other. The bus's side is the one to change, a
-    follow-up recorded in the ledger entry upstream/2026-09-19-heldmail-readers.md under Recorded, not fixed.
+    formatted (_hold_text), and an `at` int() REFUSES (a word, a container or a float infinity) OR ONE THAT IS FALSY
+    (absent, null, 0, 0.0, false, an empty string) is the one field the two readers handle apart, while a TRUTHY `at`
+    int() ACCEPTS (an int, a JSON string of digits, a float, which int() truncates) is read as its value by both
+    readers with nothing apart about it; what a person sees of the apart one is this: the kernel's card takes the
+    build's clock, so the held message reads as just arrived, dated the moment the feed was built and re-dated by every
+    build, and sorts with the board's newest cards (at the top of its column when the feed is sorted newest first),
+    while the bus gives the same message 0 for its `at` (postal_service._hold_sort_at) and sorts it as the oldest of
+    everything held, the last row of its newest-first list on GET /quarantine and a 0 in the summary every peer's
+    popover reads; one message, dated now in one place and older than everything in the other. The bus's side is the
+    one to change, a follow-up recorded in the ledger entry upstream/2026-09-19-heldmail-readers.md under Recorded,
+    not fixed.
     Declaring a file corrupt is a judgement only a successful read supports: unreadable is not unparseable, and neither
     is corrupt.
 

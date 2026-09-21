@@ -6,9 +6,11 @@ the new API itself (the fit helper's name keyword, _clear_all's written out-list
 stated-once pin, the sweep guard's composition), each of which says so in its docstring, and passes here. The rule is the
 bundle's, sharpened by the round into three states a reader of a store meets, stated once at _note_read_fault_once and
 cited from here as from every kernel writer (the stated-once pin in ReadFaultLeavesTheFileInPlace, given the bus twin's
-mechanism in review round 3, holds every docstring of the kernel and this module's own to a citation and its own arms,
-never a restatement: not the statement's phrases in any spelling, not its labels in their defining form, not a
-twelve-word run of its state body). Beside the states: a reader that did
+mechanism in review round 3, holds every docstring of the kernel and this module's own to a citation and its own arms
+and reds every restatement it can see: one carrying any of the statement's three distinctive phrases in any case, any of
+its ten shouted forms, any of its nine labels in their defining form, or any twelve-word run of its live state body; a
+paraphrase carrying none of those is outside what a text pin sees, as the pin's docstring says since review round 4).
+Beside the states: a reader that did
 not read never reports absent, on the writer's side (post_notice, expire_notice, the sweep) and in the gesture layer (the
 notice card's action door, the footer's Clear all); every reader fault reaches the bell, the row-level notice fault
 included, and every skipped notice line is said before the sweep archives it; a directory-level fault is said once for
@@ -187,15 +189,19 @@ class ReadFaultLeavesTheFileInPlace(_MCase):
         self.assertEqual(len(self._asides("qc-torn")), 1, "read whole and not parsed: the rename is earned")
         self.assertIn("qc-torn.json could not be parsed (", log)
 
-    # The words a restatement of the statement would carry in the statement's own shouted spelling: its labels, its five
-    # phrases and its state-two enumeration. Kept as the label check beside the property-keyed checks below (review round
-    # 3): a citing writer's __doc__ carries none of them (its arms' code comments may name a state: the ban is on docstrings).
+    # The words a restatement of the statement would carry in the statement's own shouted spelling: its labels, its six
+    # phrases (`read and not PARSED` since review round 4, extra9-1: the spelling the bus twin bans by exact text and the
+    # bus's own docstring once used, banned here in no spelling until then) and its state-two enumeration. Kept as the
+    # exact-spelling check beside the lowercased checks below (review round 3): a citing writer's __doc__ carries none of
+    # them (its arms' code comments may name a state: the ban is on docstrings).
     RESTATEMENT = ("STATE ONE", "STATE TWO", "STATE THREE", "THE THREE STATES", "could not be READ", "could not be PARSED",
-                   "FIELD has an unexpected type", "not JSON, not UTF-8", "nested past")
+                   "read and not PARSED", "FIELD has an unexpected type", "not JSON, not UTF-8", "nested past")
     # The statement's distinctive phrases in ANY spelling (matched over the lowercased text: a restatement in lower case is
     # a restatement). Not the bare `could not be read` or `could not be parsed`, which every reader's own arm legitimately
     # says of a file, and not `read and not parsed`, which _held_records' parse arm says of the files it moves aside (the
-    # arm's own disposition, which the statement lets a citing reader add): those stay in RESTATEMENT's shouted forms.
+    # arm's own disposition, which the statement lets a citing reader add): each of those three is banned in its shouted
+    # spelling alone, through RESTATEMENT, whose `read and not PARSED` entry review round 4 added (until it, this comment
+    # said the shouted form was covered while no entry carried that spelling).
     STATEMENT_PHRASES = ("the three states", "field has an unexpected type", "unreadable is not unparseable")
     # The numbered labels in their DEFINING form only: a label followed by a colon, or the statement's own opening words,
     # so a bare cross-reference (_hold_text's `state three of the three at _note_read_fault_once`) stays legal.
@@ -249,25 +255,40 @@ class ReadFaultLeavesTheFileInPlace(_MCase):
         pin was satisfied by the restatements it was meant to forbid and the round 2 pin keyed on nine shouted spellings
         over the citing module-level docstrings alone, so a reworded restatement in lower case, one in a method's or the
         module's docstring, and even a 46-word run lifted word for word out of the statement all passed it. Three checks
-        now, keyed on the property and not the spelling, the bus pin's mechanism (tests/test_postal_quarantine.py
-        TheBusCitesTheStatementAndRestatesNothing, the same commit): the statement's distinctive phrases in any case
-        (STATEMENT_PHRASES) beside the shouted forms (RESTATEMENT); its numbered labels in their defining form only
-        (LABELS: a colon or the statement's opening words, so a bare cross-reference stays legal); and every RUN-word
-        window of the LIVE statement's state body, read from the kernel's source (_statement_runs), found in no other
-        docstring. The windows are built from the body alone (from `(1) Bytes` on) at RUN 12 because the whole
+        now, the bus pin's mechanism (tests/test_postal_quarantine.py TheBusCitesTheStatementAndRestatesNothing, the same
+        commit), and what they see is exactly this: the statement's three distinctive phrases in any case
+        (STATEMENT_PHRASES) beside its ten shouted forms (RESTATEMENT); its nine numbered labels in their defining form
+        only (LABELS: a colon or the statement's opening words, so a bare cross-reference stays legal); and every
+        RUN-word window of the LIVE statement's state body, read from the kernel's source (_statement_runs), found in no
+        other docstring. The windows are built from the body alone (from `(1) Bytes` on) at RUN 12 because the whole
         docstring and narrower runs false-red at this head on clauses citing docstrings legitimately share (the class
         constants say which). The bus is a separate program; its copy is the postal module's own case to pin, so nothing
         here claims the statement is made once across programs. The canonical statement itself names the dangling link
         as the labelled exception (extra9-3), says which reader owns the rename, says how each reader reports a record
         it left unread, the lone store and the mixed store alike (correctness-2, round 3), and says of a type-wrong `at`
-        what int() does with it (correctness-1, round 3): the refused value is the one the readers handle apart.
+        which population the two readers handle apart (correctness-1, round 3; widened to the falsy value in round 4,
+        kernel-3 with fresh-1): the value int() refuses and the falsy one, the truthy accepted value read alike by both.
 
-        The pin's own defect is blindness, so no archive reds it: its evidence is a MUTATION-RED AT HEAD, red under each
-        of these in a scratch copy of the tree and green over the clean tree: a lower-case reworded restatement planted
-        in a non-citing reader's docstring (_note_hold_dir_fault), the same in a method's docstring and in the kernel's
-        module docstring, and a 46-word run lifted verbatim from the state body pasted into _held_records' docstring.
-        Red over the 085e08deb archive too, whose docstrings restate the states (at the missing exception clause
-        first)."""
+        The pin's own defect is blindness, so no archive reds it: its evidence is a MUTATION-RED AT HEAD, re-derived by
+        execution in review round 4 (kernel-5: the record here had claimed a red under a lower-case reworded restatement
+        in a non-citing reader's docstring, and a member of that class is green), red under each of these planted in a
+        scratch copy of the tree and green over the clean tree: a restatement that reuses one of the statement's
+        distinctive phrases in any case (a lower-case restatement keeping `the three states`, in the non-citing reader
+        _note_hold_dir_fault's docstring: red at the STATEMENT_PHRASES check); a label in its defining form (`State one:`
+        or `(1) Bytes` in _corrupt_aside_name's docstring: red at the LABELS check); a run of the state body's words (a
+        twelve-word and a 46-word run pasted into the citing reader _held_records' docstring: red at the run check); and
+        a lone clause in the shouted spelling `read and not PARSED` in a non-citing reader's docstring (red at the
+        RESTATEMENT check since round 4 added that entry; green before it, when no entry carried the spelling). Red over
+        the 085e08deb archive too, whose docstrings restate the states (at the missing exception clause first). WHAT
+        THIS PIN CANNOT SEE, stated plainly: a fully reworded second statement of the states in lower case, carrying
+        none of the three phrases, none of the labels in their defining form and no twelve-word run of the live body,
+        stays GREEN wherever it is planted, in a non-citing reader's docstring and inside the citing _held_records'
+        alike, with or without the lower-case `read and not parsed` spliced into it (round 4 planted one and ran it: 1
+        passed each time), and the bus twin passes the same plant in _held_records_bus' docstring. That is the reach
+        of a text pin, and round 4 accepted it rather than widen the lists: a ban on the lower-case `read and not parsed`
+        reds _held_records' own parse arm, which says it legitimately, and a bare `three states` reds this module's own
+        docstring; the mechanism that would see a paraphrase, a citing reader's numbered enumeration of dispositions
+        checked against the statement, is a later round's item, not this pin's."""
         flat = lambda s: " ".join((s or "").split())   # a docstring's line breaks are not the statement's: every check reads it flat
         doc = flat(km._note_read_fault_once.__doc__)
         for phrase in ("THE THREE STATES", "could not be READ", "could not be PARSED", "FIELD has an unexpected type",
@@ -287,9 +308,26 @@ class ReadFaultLeavesTheFileInPlace(_MCase):
         self.assertIn("never rename", two, "and that the bus's readers do not")
         self.assertNotIn("`at`", two, "a type-wrong `at` is no longer a state-two refusal (extra9-1)...")
         self.assertIn("or an `at` that is not an integer", three, "...it is a field of state three (the membership list, true as written)")
-        self.assertIn("an `at` int() REFUSES", three, "the divergence clause keys on what int() does with the value (correctness-1)...")
-        self.assertIn("is read as its value by both readers with nothing apart about it", three,
-                      "...and says a value int() accepts is read alike by both")
+        # the divergence clause, keyed on its property and not its words (correctness-1 in round 3, widened in round 4 to
+        # the scope that ruling stated, kernel-3 with fresh-1): the population the two readers handle apart is the `at`
+        # int() refuses AND the falsy one (0, 0.0, false, an empty string, absent), since the kernel's card takes the
+        # build's clock for both and the bus sorts both as 0, and the population read alike by both is qualified as
+        # truthy; the round 3 rider that gave an accepted non-integer its value on both sides, false for 0.0 and false,
+        # is gone in any case (the check reads the lowercased text for that phrase: the reach of a text pin)
+        low3 = three.lower()
+        self.assertIn("handle apart", low3, "the divergence clause names the population the two readers handle apart")
+        apart, alike = low3.split("handle apart", 1)
+        self.assertIn("int() refuses", apart, "the clause keys on what int() does with the value: the refused value is handled apart...")
+        self.assertIn("falsy", apart, "...and so is a falsy one, which the kernel's `or now` and the bus's `or 0` take before "
+                      "int() sees it (0, 0.0 and false give the card the build's clock and the bus's oldest place; round 4, "
+                      "kernel-3 with fresh-1)")
+        for value in ("0.0", "false", "an empty string"):
+            self.assertIn(value, apart, "the falsy population names %s" % value)
+        self.assertIn("nothing apart about it", alike, "...and the clause says which population both readers read alike")
+        self.assertIn("truthy", alike.split("nothing apart about it", 1)[0],
+                      "the read-alike population is the TRUTHY value int() accepts: a falsy accepted value is not in it")
+        self.assertNotIn("accepts that is not an integer", low3,
+                         "the round 3 rider (an accepted non-integer read as its value by both): false for 0.0 and false")
         self.assertIn("_hold_sort_at", three, "with the one place the two readers' handling differs named")
         for fn in (km._held_records, km._say_hold_unreadable_once, km._hold_text, km._quarantine_cards):
             self.assertIn("_note_read_fault_once", fn.__doc__ or "", "%s cites the statement" % fn.__name__)
@@ -372,39 +410,52 @@ class ATypeWrongAtKeepsItsCard(_MCase):
     stands at the build's clock, nothing is moved, nothing is said, and the two readers classify the field in the same
     state (the seam that remains, the bus sorting such a record first where the kernel's card takes the build's clock,
     is stated at _note_read_fault_once). Fails before over the 085e08deb archive: the three records are moved aside
-    and only the good hold's card is built. Beside the three refused values stand two GUARDS (correctness-1, the
-    manager's round 3): an `at` int() ACCEPTS that is not an integer, a JSON string of digits and a float, is read as
-    its value (1758300000 and 1, as int() reads them) and the card stands with nothing moved or said; the reader
-    accepted those at every head this class names, so they are green over every archive and record the corrected
-    statement's truth, that only the value int() refuses is the one the two readers handle apart."""
+    and only the good hold's card is built. Beside the three refused values stand five GUARDS, green at every head this
+    class names and recording the corrected statement's scope (correctness-1 in the manager's round 3; kernel-3 with
+    fresh-1 in round 4): a TRUTHY `at` int() accepts, a JSON string of digits and a float, is read as its value
+    (1758300000 and 1, as int() reads them) and the card stands with nothing moved or said; a FALSY `at`, 0, 0.0 and
+    false, takes the build's clock exactly as an absent one does (the reader's `or now` takes it before int() sees
+    it), so it is in the population the two readers handle apart beside the refused values, where the round 3
+    statement had put it with the values read alike. The reader did both at every head this class names (verified
+    over the 085e08deb archive for a 0.0, a 0 and a false `at`: a card at the build's clock, nothing moved, nothing
+    said), so no archive reds the guards."""
 
     def test_three_type_wrong_at_records_build_cards_at_the_builds_clock_and_stay_decidable(self):
         self.r.write_hold("qc-good")
         self.r.write_hold("qc-str", at='"yesterday-at-noon"')
         self.r.write_hold("qc-list", at="[1, 2]")
         self.r.write_hold("qc-inf", at="1e400")
-        self.r.write_hold("qc-digits", at='"1758300000"')    # the two guards: int() accepts these, so both readers read the value
+        self.r.write_hold("qc-digits", at='"1758300000"')    # two guards: truthy values int() accepts, so both readers read the value
         self.r.write_hold("qc-float", at="1.5")
+        self.r.write_hold("qc-zero", at="0")                 # three guards: falsy values, handled apart beside the refused ones (round
+        self.r.write_hold("qc-fzero", at="0.0")              # 4): the kernel's card takes the build's clock and the bus sorts them as 0
+        self.r.write_hold("qc-false", at="false")
         listing = self._listing()
         feed, log = self._feed()
         held = {c["itemId"]: c for c in _asks(feed, "quarantine:")}
-        self.assertEqual(sorted(held), ["quarantine:qc-digits", "quarantine:qc-float", "quarantine:qc-good", "quarantine:qc-inf",
-                                        "quarantine:qc-list", "quarantine:qc-str"],
+        self.assertEqual(sorted(held), ["quarantine:qc-digits", "quarantine:qc-false", "quarantine:qc-float", "quarantine:qc-fzero",
+                                        "quarantine:qc-good", "quarantine:qc-inf", "quarantine:qc-list", "quarantine:qc-str",
+                                        "quarantine:qc-zero"],
                          "every card stands: a field's type is handled, never a refusal")
         self.assertEqual((log, _refused(), self._listing()), ("", [], listing), "nothing said, nothing moved aside")
         for mid in ("qc-str", "qc-list", "qc-inf"):
             self.assertEqual(held["quarantine:" + mid]["t"], self.now, "%s: the build's clock, as for an absent `at`" % mid)
+        for mid in ("qc-zero", "qc-fzero", "qc-false"):
+            self.assertEqual(held["quarantine:" + mid]["t"], self.now,
+                             "%s: a falsy `at` takes the build's clock as an absent one does, never 0 (a guard: the statement's apart "
+                             "population, which the round 3 clause had read alike)" % mid)
         self.assertEqual(held["quarantine:qc-good"]["t"], 1000, "a good `at` is the card's time")
         self.assertEqual(held["quarantine:qc-digits"]["t"], 1758300000, "a digit string int() accepts is read as its value (a guard)")
         self.assertEqual(held["quarantine:qc-float"]["t"], 1, "a float int() accepts is read truncated, as int() reads it (a guard)")
         self.assertNotIn("yesterday-at-noon", json.dumps(feed), "the value's text is nowhere")
         sent, acted = [], []
         with mock.patch.object(km, "_bus_quarantine_act", lambda body: (acted.append(body), (True, ""))[1]):
-            self._dispatch({"type": "quarantineDecision", "mid": "qc-str", "action": "approve", "sid": SID}, _client(sent))
-        self.assertEqual(([b["mid"] for b in acted], [m for m in sent if m.get("type") == "quarantineRefused"]), (["qc-str"], []),
-                         "Approve reaches the bus with the hold's id")
+            for mid in ("qc-str", "qc-fzero"):                # a refused `at` and a falsy one: each card decidable
+                self._dispatch({"type": "quarantineDecision", "mid": mid, "action": "approve", "sid": SID}, _client(sent))
+        self.assertEqual(([b["mid"] for b in acted], [m for m in sent if m.get("type") == "quarantineRefused"]),
+                         (["qc-str", "qc-fzero"], []), "Approve reaches the bus with the hold's id")
         feed, log = self._feed()
-        self.assertEqual((len(_asks(feed, "quarantine:")), log, _refused()), (6, "", []), "a second build: the same six, still quiet")
+        self.assertEqual((len(_asks(feed, "quarantine:")), log, _refused()), (9, "", []), "a second build: the same nine, still quiet")
 
 
 class NoticeRowFaultsReachTheBell(_MCase):
