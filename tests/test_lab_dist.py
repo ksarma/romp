@@ -1358,8 +1358,9 @@ module.exports = { x: { entryPoints: ["src/extension.ts", ...more, `${dir}/${nam
         whatever TMPDIR the run has: node's stderr starts with the headline and ends with the reader's line, and its
         stack and requireStack dump between them repeat the config's path eight times (nine under the preload), so
         the stream ran to 1038 + 8 x len(ext) chars and the 2000-char tail alone lost the headline once the ext path
-        passed about 121 chars. xdist nests the conftest's temp root one level deeper and a sweep's TMPDIR is longer
-        still, so the same-error and subpath tests above went red under `-n` at a TMPDIR of about 60 chars and alone
+        passed about 121 chars. xdist nested the conftest's temp root one level deeper (until 2026-09-21; a worker's
+        root sits beside the controller's now) and a sweep's TMPDIR is longer still, so the same-error and subpath
+        tests above went red under `-n` at a TMPDIR of about 60 chars and alone
         at about 80 while CI's /tmp stayed green: deterministic on path length, not on order or fan-out. The message
         now carries the head of the stream as well, so both the headline and the reader's line are in it at this
         length, as a head and a tail (the stream does not fit whole here), plain and under the stand-in."""
