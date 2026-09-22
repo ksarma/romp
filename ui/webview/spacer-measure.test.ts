@@ -1093,14 +1093,15 @@ test("every module the page bundles load, read with the compiler: the only write
   // (`.ts`, `.mts`, `.js`, `.mjs`, `.cjs` alike), so it reaches the two `.js` modules in ui/webview and the five modules outside it named
   // below, which tsconfig's file list (no allowJs; the test helpers under ui/ included) misses, and it leaves out the seven modules in the
   // directory no page loads, which a listing counts. The directory is read too, recursively, and the two are tied by EQUALITY both ways,
-  // never a floor: the directory's modules no page bundle loads are exactly the seven named below (each imported by tests alone), and the
-  // loaded modules outside the directory are exactly the five named below (the timeline panel's prebuilt bundle and four vendored
-  // track-changents modules, display.js reached from track-logic.js through the vendored package's own exports map), so a module that
-  // starts or stops being loaded, appears outside the directory or leaves it, is named here or reds, and a module in the directory that a
-  // page bundle loads but the listing's filter hides (a test, a `.d.ts`) reds too. The walk is the loaded set: a module no page runs mints
-  // nothing the kernel receives. The tests are excluded because a test's literal is not a minter the page runs (the bundles
-  // are built from the production modules alone), and because this census's own reverse plants and the fixture rows in this file would red
-  // it. WHAT IS KEYED ON: the PROPERTY NAME `view` written onto an object, in every form the field census above reads (writeSites) and two
+  // never a floor: the directory's modules no page bundle loads are exactly the seven named below (reached from tests, from one another and
+  // from the viewer bench under tools/, never from a page entry), and the loaded modules outside the directory are exactly the five named
+  // below (the timeline panel's prebuilt bundle and four vendored track-changents modules, display.js reached from track-logic.js through
+  // the vendored package's own exports map), so a module that starts or stops being loaded, appears outside the directory or leaves it, is
+  // named here or reds, and a module in the directory that a page bundle loads but the listing's filter hides (a test, a `.d.ts`) reds too.
+  // The walk is the loaded set: a module no page runs mints nothing the kernel receives. The tests are excluded because a test's literal is
+  // not a minter the page runs (the bundles are built from the production modules alone), and because this census's own reverse plants and
+  // the fixture rows in this file would red it.
+  // WHAT IS KEYED ON: the PROPERTY NAME `view` written onto an object, in every form the field census above reads (writeSites) and two
   // of a class's: a literal's member of any kind (a property, a shorthand, a method, an accessor) under an identifier, a string or a computed
   // string-literal name, a spread of a literal read through its literal; an assignment of any operator whose target names the property at
   // its end (`row.view = x`, `row["view"] = x`) or a destructuring pattern that does; a for-of or for-in target; ++/--; delete;
@@ -1125,11 +1126,11 @@ test("every module the page bundles load, read with the compiler: the only write
   const loaded = await bundledModules();
   const loadedSet = new Set(loaded);
   const listed = filesUnder(path.resolve(ROOT, "ui", "webview")).filter((f) => MODULE_SUFFIX.test(f) && !TEST_OR_TYPES.test(f));
-  const UNLOADED = [   // under ui/webview, loaded by no page bundle: each imported by tests alone
+  const UNLOADED = [   // under ui/webview, loaded by no page bundle: reached from tests, from one another and from the viewer bench under tools/, never from a page entry
     "ui/webview/feed-flip.ts",                   // the feed's FLIP-pass predicate, executed by feed-flip.test.ts
     "ui/webview/file-view-outline-fixture.ts",   // the Outline's synthetic fixture, shared by file-view-outline.test.ts and its browser leg
     "ui/webview/md-wiki.ts",                     // wikilink and callout extensions to the markdown grammar, executed by md-wiki.test.ts
-    "ui/webview/real-viewer-leg.ts",             // the real viewer mounted in a served page for the browser legs (*-browser.test.ts)
+    "ui/webview/real-viewer-leg.ts",             // the real viewer mounted in a served page for the browser legs (*-browser.test.ts), shell-drag-leg and the bench
     "ui/webview/scroll-journal-audit.ts",        // the scroll journal's reader, executed by scroll-journal-audit.test.ts
     "ui/webview/shell-drag-leg.ts",              // the dashboard shell's pane-row drag mounted in a page of its own, for its browser leg and the bench
     "ui/webview/writer-census.ts",               // the scroll-write census over a source's tree, executed by writer-census.test.ts and landing-settle.test.ts
@@ -1141,7 +1142,7 @@ test("every module the page bundles load, read with the compiler: the only write
     "vendor/track-changents/obsidian/src/track-cm.js",       // imported by editor-chunk.ts and track-decorations.ts
     "vendor/track-changents/obsidian/src/track-logic.js",    // imported by track-decorations.ts
   ];
-  assert.deepEqual(listed.filter((m) => !loadedSet.has(m)), UNLOADED, "the modules under ui/webview (recursive) that no page bundle loads are exactly the seven named, each imported by tests alone: a module that stops being loaded, or a named one that starts, or leaves the directory, is named here or reds (" + listed.length + " listed, " + loaded.length + " loaded)");
+  assert.deepEqual(listed.filter((m) => !loadedSet.has(m)), UNLOADED, "the modules under ui/webview (recursive) that no page bundle loads are exactly the seven named, reached from tests, from one another and from the viewer bench under tools/ and never from a page entry: a module that stops being loaded, or a named one that starts, or leaves the directory, is named here or reds (" + listed.length + " listed, " + loaded.length + " loaded)");
   assert.deepEqual(loaded.filter((m) => !m.startsWith("ui/webview/")), OUTSIDE, "the modules a page bundle loads from outside ui/webview are exactly the five named: a sixth, or one gone from the bundles, reds here");
   const listedSet = new Set(listed);
   assert.deepEqual(loaded.filter((m) => m.startsWith("ui/webview/") && !listedSet.has(m)), [], "a module under ui/webview that a page bundle loads and the listing's filter hides (a `.test.ts`, a `.d.ts`): the two equalities above compare the listed modules with the loaded ones, so a production import of a test module is named here or reds (the author's fixer pass over the pass after the maintainer's round 6, its verifier (a))");
