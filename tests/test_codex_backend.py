@@ -1506,6 +1506,11 @@ class Lifecycle(unittest.TestCase):
         be._registry_snapshot = gated_snapshot
         first = threading.Thread(target=be.set_model, args=(sid, "gpt-a"))
         second = threading.Thread(target=be.set_model, args=(sid, "gpt-b"))
+
+        def end():                          # on every exit path: release the gated snapshot, wait for both writers
+            release.set()
+            first.join(2); second.join(2)
+        self.addCleanup(end)
         first.start()
         self.assertTrue(snapshotted.wait(2))
         second.start()
@@ -1617,6 +1622,11 @@ class Lifecycle(unittest.TestCase):
         be._save_registry = gated_save
         first = threading.Thread(target=be.send, args=(sid, "first"))
         second = threading.Thread(target=be.send, args=(sid, "second"))
+
+        def end():                          # on every exit path: release the gated save, wait for both writers
+            release.set()
+            first.join(2); second.join(2)
+        self.addCleanup(end)
         first.start()
         self.assertTrue(entered.wait(2))
         second.start()
