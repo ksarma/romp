@@ -881,6 +881,112 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   assert.match(RENDER, /interface View \{[^\n]*measured\?: \{ avg\?: number; per\?: number \};/, "the parked figures live on the view");
 });
 
+// ── the `view` key's minters across ui/webview, by the PROPERTY (the maintainer's round 5 ruling, tests-1, adopting the census refuted extra7-2 proposed) ──
+
+test("ui/webview, every production module read with the compiler: the only write of a `view` property onto an object that reaches a clientDiag post is spacerRow's shorthand under a spread of a literal conditioned on equality with the one word, and every other write of a `view` property in the modules is enumerated with the object it writes and why no post reads it (the maintainer's round 5 ruling, tests-1; the owner 2026-09-21, who approved the field)", () => {
+  // WHAT IS READ: every production module under ui/webview (`.ts` and `.js`, less `.test.ts` and `.d.ts`), each parsed with the compiler, as
+  // the hover-class ownership census parses render.ts's bundle (compact-seam-exec.test.ts) and the censuses above parse render.ts. The
+  // directory and not the import closure, so a module the page's bundles do not load yet is read too; the tests are excluded because a
+  // test's literal is not a minter the page runs (the bundles are built from the production modules alone), and because this census's own
+  // reverse plants and the fixture rows in this file would red it. WHAT IS KEYED ON: the PROPERTY NAME `view` written onto an object, in
+  // every form the field census above reads (writeSites) and two of a class's: a literal's member of any kind (a property, a shorthand, a
+  // method, an accessor) under an identifier, a string or a computed string-literal name, a spread of a literal read through its literal;
+  // an assignment of any operator whose target names the property at its end (`row.view = x`, `row["view"] = x`) or a destructuring
+  // pattern that does; a for-of or for-in target; ++/--; delete; Object.defineProperty, Reflect.set, Reflect.defineProperty and
+  // Reflect.deleteProperty with the literal key (Object.assign's and Object.defineProperties' literal sources are literals, read by the
+  // first form); a class field and a constructor's parameter property named `view`. Not the string "view" as a VALUE (tailMutRow's
+  // `where: "view"` names where a tail mutation happened), not a parameter, a type member or a variable so named. Outside by construction,
+  // as for the field census: a computed key of a non-literal expression, a non-literal spread or source, a call through an alias of Object
+  // or Reflect. WHAT REACHES A POST, from every module's tree: the clientDiag posts (an object literal with `type: "clientDiag"`, its `data`
+  // member a literal, read directly, or a call of a named function, a builder) and scrollDiagRow's calls in render.ts (its data argument's
+  // literals and the named functions it calls, through a conditional, a parenthesis or an Object.assign); a write is in the diag population
+  // when its owner is a builder or it lies inside a post's or a call's data literal. Every write in the modules is then a closed multiset by
+  // (module, owner, form): the diag population holds exactly spacerRow's, and each other member is named below with the object it writes
+  // and why no post reads it, so a `view` written on any other row kind, by any form the tree reads, in any module, is named or reds.
+  const dir = path.resolve(process.cwd(), "..", "ui", "webview");
+  const modules = fs.readdirSync(dir).filter((f) => (f.endsWith(".ts") || f.endsWith(".js")) && !f.endsWith(".test.ts") && !f.endsWith(".d.ts")).sort();
+  assert.ok(modules.length > 150 && modules.includes("render.ts") && modules.includes("scroll-write.ts"), "the production modules under ui/webview (" + modules.length + ")");
+  const KEY = "view";
+  type Site = { module: string; owner: string; form: string; node: ts.Node; sf: ts.SourceFile };
+  const sites: Site[] = []; const builders = new Set<string>(); const dataLiterals: Array<{ sf: ts.SourceFile; node: ts.Node }> = []; let posts = 0, opaque = 0;
+  for (const f of modules) {
+    const sf = f === "render.ts" ? SF : ts.createSourceFile(f, fs.readFileSync(path.join(dir, f), "utf8"), ts.ScriptTarget.Latest, true, f.endsWith(".js") ? ts.ScriptKind.JS : ts.ScriptKind.TS);
+    const nameIn = (fn: ts.SignatureDeclaration): string | null => {
+      if (ts.isConstructorDeclaration(fn)) { const c = fn.parent; return "constructor of " + (ts.isClassLike(c) && c.name ? c.name.text : "<class>"); }
+      if ((ts.isFunctionDeclaration(fn) || ts.isMethodDeclaration(fn) || ts.isFunctionExpression(fn)) && fn.name) return ts.isIdentifier(fn.name) ? fn.name.text : fn.name.getText(sf);
+      const p = fn.parent;
+      if (p && ts.isVariableDeclaration(p) && ts.isIdentifier(p.name)) return p.name.text;
+      if (p && (ts.isPropertyAssignment(p) || ts.isPropertyDeclaration(p))) return p.name.getText(sf);
+      return null;
+    };
+    const ownerIn = (n: ts.Node): string => { for (let p: ts.Node | undefined = n.parent; p; p = p.parent) { if (ts.isFunctionLike(p)) { const nm = nameIn(p); if (nm) return nm; } if (ts.isClassLike(p) && p.name) return "class " + p.name.text; } return "<module>"; };
+    const memberKey = (n: ts.PropertyName | undefined): string | null => !n ? null : ts.isIdentifier(n) || ts.isStringLiteralLike(n) ? n.text : ts.isComputedPropertyName(n) && ts.isStringLiteralLike(n.expression) ? n.expression.text : null;
+    const namesKey = (e: ts.Node): boolean => (ts.isPropertyAccessExpression(e) && e.name.text === KEY) || (ts.isElementAccessExpression(e) && ts.isStringLiteralLike(e.argumentExpression) && e.argumentExpression.text === KEY);
+    const isAssign = (n: ts.Node): n is ts.BinaryExpression => ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && n.operatorToken.kind <= ts.SyntaxKind.LastAssignment;
+    const site = (node: ts.Node, form: string): void => { sites.push({ module: f, owner: ownerIn(node), form, node, sf }); };
+    const memberNamed = (o: ts.ObjectLiteralExpression, k: string): ts.ObjectLiteralElementLike | undefined => o.properties.find((p) => !ts.isSpreadAssignment(p) && memberKey(p.name) === k);
+    // a post's or a call's data: a literal is read directly (and its spreads' calls are builders), a named function called is a builder, a
+    // conditional's arms, a parenthesis and Object.assign's arguments are walked; anything else (an identifier bound elsewhere, a parameter)
+    // is outside the attributable population and inside the closed multiset
+    const dataOf = (e: ts.Node | undefined): void => {
+      if (!e) return;
+      if (ts.isParenthesizedExpression(e) || ts.isAsExpression(e)) return dataOf(e.expression);
+      if (ts.isConditionalExpression(e)) { dataOf(e.whenTrue); dataOf(e.whenFalse); return; }
+      if (ts.isObjectLiteralExpression(e)) { dataLiterals.push({ sf, node: e }); for (const p of e.properties) if (ts.isSpreadAssignment(p)) dataOf(p.expression); return; }
+      if (ts.isCallExpression(e) && ts.isIdentifier(e.expression)) { builders.add(e.expression.text); return; }
+      if (ts.isCallExpression(e) && ts.isPropertyAccessExpression(e.expression) && e.expression.getText(sf) === "Object.assign") { for (const a of e.arguments) dataOf(a); return; }
+      opaque++;
+    };
+    const go = (n: ts.Node): void => {
+      if (ts.isObjectLiteralElementLike(n) && !ts.isSpreadAssignment(n) && memberKey(n.name) === KEY) site(n, ts.isShorthandPropertyAssignment(n) ? "a literal shorthand" : ts.isPropertyAssignment(n) ? "a literal property" : ts.isMethodDeclaration(n) ? "a method" : "an accessor");
+      if (ts.isPropertyDeclaration(n) && memberKey(n.name) === KEY) site(n, "a class field");
+      if (ts.isParameter(n) && ts.isIdentifier(n.name) && n.name.text === KEY && (ts.getModifiers(n) || []).length > 0 && ts.isConstructorDeclaration(n.parent)) site(n, "a parameter property");
+      if (isAssign(n)) for (const t of targetsOf(n.left)) if (namesKey(t)) site(n, "an assignment");
+      if ((ts.isForOfStatement(n) || ts.isForInStatement(n)) && !ts.isVariableDeclarationList(n.initializer)) for (const t of targetsOf(n.initializer)) if (namesKey(t)) site(n, "a for target");
+      if ((ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) && (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken) && namesKey(n.operand)) site(n, "an increment");
+      if (ts.isDeleteExpression(n) && namesKey(n.expression)) site(n, "a delete");
+      if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && ts.isIdentifier(n.expression.expression)) {
+        const callee = n.expression.expression.text + "." + n.expression.name.text, k = n.arguments[1];
+        if (["Object.defineProperty", "Reflect.set", "Reflect.defineProperty", "Reflect.deleteProperty"].includes(callee) && k && ts.isStringLiteralLike(k) && k.text === KEY) site(n, callee);
+      }
+      if (ts.isObjectLiteralExpression(n)) {
+        const t = memberNamed(n, "type");
+        if (t && ts.isPropertyAssignment(t) && ts.isStringLiteralLike(t.initializer) && t.initializer.text === "clientDiag") { posts++; const d = memberNamed(n, "data"); if (d && ts.isPropertyAssignment(d)) dataOf(d.initializer); else opaque++; }
+      }
+      if (f === "render.ts" && ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "scrollDiagRow") dataOf(n.arguments[1]);
+      ts.forEachChild(n, go);
+    };
+    go(sf);
+  }
+  assert.ok(posts >= 20, "the clientDiag posts across the modules, from the trees (" + posts + "; " + opaque + " with a data the tree cannot attribute, inside the closed multiset below)");
+  for (const b of ["scrollWriteRow", "spacerRow", "tailChangeRow", "tailMutRow", "unitChangeRow"]) assert.ok(builders.has(b), "a builder scrollDiagRow is handed, by name from render.ts's tree: " + b + " (all: " + [...builders].sort().join(", ") + ")");
+  const describe = (s: Site): string => s.module + " " + s.owner + ": " + s.form;
+  const inLiteral = (s: Site): boolean => dataLiterals.some((d) => d.sf === s.sf && s.node.getStart(s.sf) >= d.node.getStart(d.sf) && s.node.getEnd() <= d.node.getEnd());
+  const diag = sites.filter((s) => builders.has(s.owner) || inLiteral(s));
+  assert.deepEqual(diag.map(describe), ["scroll-write.ts spacerRow: a literal shorthand"], "one write of a `view` property reaches a post, spacerRow's shorthand; a second minter (another row kind's literal, a builder's return, an Object.assign or a Reflect.set onto a row) is named here");
+  // the one mint's guard, on the tree: the shorthand's literal is the true arm of a conditional on the parameter's equality with the one
+  // word, spread into the row, and the false arm spreads nothing (the builder cell above executes the guard; this is its shape)
+  const m = diag[0], lit = m.node.parent;
+  assert.ok(ts.isObjectLiteralExpression(lit) && ts.isConditionalExpression(lit.parent) && lit.parent.whenTrue === lit, "the shorthand's literal is the true arm of a conditional: " + lit.parent.getText(m.sf));
+  let up: ts.Node = lit.parent.parent; while (ts.isParenthesizedExpression(up)) up = up.parent;   // the conditional is parenthesised under the spread
+  assert.ok(ts.isSpreadAssignment(up), "…spread into the row: " + up.getText(m.sf));
+  const cond = lit.parent as ts.ConditionalExpression, c = cond.condition;
+  assert.ok(ts.isBinaryExpression(c) && c.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken && ts.isIdentifier(c.left) && c.left.text === KEY && ts.isStringLiteral(c.right) && c.right.text === "inactive", "the spread is conditioned on `view === \"inactive\"`, the parameter's equality with the one word: " + c.getText(m.sf));
+  assert.ok(ts.isObjectLiteralExpression(cond.whenFalse) && cond.whenFalse.properties.length === 0, "…and spreads nothing otherwise");
+  // every write of the property in the modules, a closed multiset by (module, owner, form), each with the object it writes and why no post
+  // reads it: a new writer anywhere under ui/webview is named here or reds
+  assert.deepEqual(sites.map(describe).sort(), [
+    "federation.ts class FederationManager: a method",                       // the manager's reader of the tab order, a method on the class, not a row's key
+    "file-view.ts placeFromRemembered: a literal property",                  // the viewer's Place from a remembered one (view: rendered or raw, the pane the reader was in), kept in storage, never posted
+    "file-view.ts rememberedPlaceOf: a literal property",                    // the remembered place the viewer writes to storage
+    "files-recent.ts asPlace: a literal property",                           // the recent-files pane's copy of a remembered place
+    "preview.ts wirePinchZoom: a literal shorthand",                         // a pinch gesture's snapshot (the pinch-zoom view), no row
+    "reader-place.ts placeOf: a literal shorthand",                          // the reader's place in a document (view: rendered or raw)
+    "scroll-write.ts spacerRow: a literal shorthand",                        // THE mint: the spacer row's marker, guarded as pinned above
+    "track-decorations.ts constructor of PointerTracker: a parameter property",   // the editor view the pointer tracker listens on
+  ], "every write of a `view` property in ui/webview's production modules, by module, owner and form; one reaches a post (spacerRow's), the rest write the viewer's places, a gesture's snapshot, a class's method or field");
+});
+
 test("the reload restore's raw write of the persisted rs.top, on the tree: from the record's binding (wider than the window ruled, which runs from the site's own read of `rs.top` to the write, one expression today, so strictly stronger, the maintainer's round 4 ruling on ordering-3; the persisted top's first read is earlier, in landActive's `saved` computation, where takeReloadScroll admits the record to decide the take) to the write, in landActive's statements, no taker is called and no field of the take state (`measured`, `avgTurnH`, `pxPerTurn`: the fields the take and the untake assign and the parked figures are read from, derived from render.ts and stated once at module level) is written, in any form the tree can name. The site needs no take-back because its value was measured in the state it lands in (the take before it re-derives the pre-reload page's figures), not because the site is special, and that holds only while this window stays closed. The takers are half derived and half listed: DERIVED, every function that writes a take-state field, by owner from the tree in every form it can name (writesOf), and the closure over render.ts's named functions of everything that calls a taker, to a fixpoint; LISTED, the seed set of the two spacer redraws (SPACER_REDRAWS: sizeSpacers, redrawGapUnits), each checked to name a function declaration in render.ts; so a take through a helper the site calls is named here, a redraw under a new name is a taker only once it is listed or called by one, and a take through a callee the tree cannot name is caught by land-active-keep.test.ts's trace (the reviewer's answer to the author's tail-2 question, 2026-09-21). This half keys on taker CALLS by name and on take-state WRITES in the forms the tree can name, and on nothing else: a geometry change in the window (a height written on a row or the view element, a child inserted, moved or removed, a query the model does not resolve) is not visible to it and is held by land-active-keep.test.ts's model, which records it on the trace and fails closed on what it cannot represent (the maintainer's round 4 ruling, closure-6, keyed there because geometry is observable by execution and not on the tree). The site's binding is pinned too: `rs` is a const bound once from takeReloadScroll, assigned nowhere in landActive in any form the census names, and takeReloadScroll is called exactly twice in landActive (the saved computation's call and the binding's), so the record cannot be rebound to a later admission on the tree, as land-active-keep.test.ts counts the admissions on the trace (the closing lens over the author's fixer pass over pass 5: a site that re-admitted the record into its own binding after a change moved the window's start past it with both halves green)", () => {
   const sf = SF;
   const line = (n: ts.Node): number => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
