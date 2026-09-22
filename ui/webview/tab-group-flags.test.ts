@@ -72,8 +72,10 @@ test("executed: a resolved todo clears the flag on the next frame — the same f
   assert.equal(sectionTodoFlag([{ name: "tests", userTodos: [] }]), null);
   assert.equal(sectionTodoFlag([{ name: "tests", userTodos: null }]), null);
   assert.equal(sectionTodoFlag([{ name: "tests" }]), null, "a host too old to send the field contributes nothing");
-  // render.ts: the header reads the live store at render time (sessions.get), never a copy…
-  assert.match(FOLDED, /const flag = sectionTodoFlag\(hidden\.map\(\(id\) => sessions\.get\(id\)\)\);/,
+  // render.ts: the header reads the live store at render time, never a copy: the live session (liveSession, undefined for
+  // a skeleton, whose stale pre-outage entry must not speak for it), else the strip meta, whose userTodos is the roster's
+  // count (2026-09-22; the executed count cases are the last test in this file)…
+  assert.match(FOLDED, /const flag = sectionTodoFlag\(hidden\.map\(\(id\) => liveSession\(id\) \?\? tabMeta\.get\(id\)\)\);/,
     "…over the members the fold hides (a member pinned to show through carries its own glyph; tab-groups.test pins that)");
   // …and the chat delta that carries the field asks for the strip repaint in the same handler; the frame IS
   // the event. Since the 2026-09-07 fold the ask is upstream's scheduleRenderTabs (one rebuild per animation
