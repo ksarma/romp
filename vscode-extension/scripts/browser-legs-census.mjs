@@ -12,7 +12,9 @@
 // it derives:
 //   launcher:  the module imports ui/webview/real-viewer-leg.ts by RESOLVED path (relative to the module, .js read as .ts, the
 //              suffix added when absent) under any binding form (named, aliased, namespace, default, import-equals, require(),
-//              await import(), a createRequire-bound loader or the launcher's own exported requireCjs, declared or assigned,
+//              await import(), a createRequire-bound loader or the launcher's own exported requireCjs, by its named import, as a
+//              member of a whole-module or default launcher binding or of the launcher loaded where it stands, or destructured
+//              from a load of the launcher, declared or assigned,
 //              destructured or whole) and calls that module's inBrowser THROUGH the binding (an identifier bound to the
 //              export, or a literal inBrowser member of a namespace or default binding, or of the loader call's own result,
 //              `require("./real-viewer-leg").inBrowser(...)`; through parentheses, !, as, .call/.apply; .bind makes no call,
@@ -21,7 +23,8 @@
 //              recorded (typeOnly). The import without a call is recorded (launcherImported) and is not a leg. An ENGINE
 //              passed to inBrowser as its third argument (the launcher's engine parameter; .call passes it fourth, .apply in
 //              its array literal) is read into the engines the leg reaches: a literal, or a name FOLDED through the closed
-//              forms under `playwright` below; an argument outside them, or one naming no engine, is REFUSED with the line,
+//              forms under `playwright` below; an argument outside them, one naming no engine, or a spread element at or before
+//              the engine position (the list the walker cannot read may carry an engine), is REFUSED with the line,
 //              never read as no engine. A call with no third argument passes nothing and the record says nothing of it.
 //              A name is read at its USE SITE by lexical scope: a use reaches the innermost enclosing declaration of that name,
 //              so a destructured parameter, a catch variable or a local const of an inner scope that reuses the name is not
@@ -63,14 +66,21 @@
 //              from pieces is read; a piece the fold cannot take (a value from the environment) is the third residual below.
 //   REFUSALS:  a form the walker cannot classify refuses with file and line, never reports it absent: an import or loader
 //              specifier that is not a string literal and folds through no closed form; a computed member with a name it
-//              cannot fold on a playwright or launcher binding; the inBrowser binding used as a value, not called (an
+//              cannot fold on a playwright or launcher binding or load (`require("playwright")[k]` where k folds through no
+//              closed form, bound or where it stands); the inBrowser binding used as a value, not called (an
 //              initializer `const f = inBrowser` and a default value `{ x = inBrowser }` included; the exempt uses are the
 //              NAME position of a declaration or import specifier and an assignment's target); the launcher's whole-module or
 //              default binding handed on as a value (aliased, destructured, passed as an argument, read for inBrowser
 //              without a call, `.bind` included, handed to a promise callback through .then, .catch or .finally, read for a
 //              default member, or awaited into a name; reading another member off it is not a hand-on, and the refusal names
 //              the position the line holds); the launcher loaded where it stands and handed on through .then, .catch,
-//              .finally or .default; a local declaration
+//              .finally or .default; the launcher's requireCjs loader handed on as a value, not called (the named import
+//              aliased to a name, or the member read off a whole-module or default binding or off the load where it stands
+//              without a call: a load made through the alias elsewhere is unread); a playwright load or binding, or a load of
+//              the launcher, read through a conditional or logical expression (`cond ? require("playwright") : null`, `?? null`,
+//              `|| null`, `ok && require(...)`, as a binding's initializer, an assignment's right side or a member chain's root:
+//              the walker does not follow which branch the value takes, so the engines and launches read through it, or where
+//              inBrowser is called from, are unread); a local declaration
 //              shadowing a launcher or playwright binding; a parse diagnostic; a loaded module of the tree as the `loaded`
 //              clause states, or a relative specifier that names no file, or two; and THE INVARIANT's refusal, below. The CLI
 //              exits 2 on any refusal.
@@ -92,7 +102,14 @@
 // was resolved. The invariant compares two states of the parse (what it resolved, what it recorded), so no string trips it
 // and no module need cooperate: a module that names playwright or the launcher in a string, a test title, a regex or a file
 // read resolves nothing and is class none without a refusal; a resolution the parse never makes (the residuals below) is
-// outside it. Its plants under tests/fixtures/browser-legs-plants record the outcome of every road it closes, and the census
+// outside it. The bound of that comparison, stated: the invariant compares the loads the parse RESOLVED against what the record
+// carries, so it cannot see a load that never resolves (a callee the walker does not know as a loader), and a playwright load it
+// resolves is recorded in the same call, so clause 1 holds by construction whatever the walker then fails to read through the
+// value (a conditional or logical root, a computed member on the unbound load) or in the call's other arguments (a spread before
+// the engine). Those four forms are closed, each with a refusal by name, where the walker meets them instead: in loaderCall (the
+// launcher's requireCjs reached as a member callee), in pwChain, which bindLoaded and the call walk read every chain through (the
+// conditional or logical root, the computed member on a load), and in readEngineArg (the spread); their plants are the p89 to p120
+// rows of the census test. Its plants under tests/fixtures/browser-legs-plants record the outcome of every road it closes, and the census
 // test (ui/webview/ci-browser-legs-census.test.ts) runs one mutation of the walker per clause over them and holds the
 // invariant to refusing what the mutation silenced.
 // THE CENSUS RULE: a module is a browser leg when it calls the shared launcher through its binding, names a playwright
@@ -348,11 +365,24 @@ export function classify(ts, file, src, opts = {}) {
   /** Is `e` a loader call (require("x"), req("x"), import("x"), createRequire(...)("x"))? Returns the resolved spec or null;
    *  refuses a non-literal. A load of a playwright package is recorded HERE, wherever the call sits (bound or not), so an unbound
    *  `require("playwright").chromium.launch()` is a leg; a load of the launcher is recorded for the self-check. */
+  /** The launcher's exported requireCjs reached as a MEMBER: of a whole-module or default launcher binding (`leg.requireCjs(...)`),
+   *  or of the launcher loaded where it stands (`require(launcher).requireCjs(...)`, the load FOLLOWED and counted as an import):
+   *  a loader callee, as the named import is (the header lists the launcher's own exported requireCjs among the loader forms). The
+   *  local is `ld`, not `l`: the census test's mutation anchors read walk3's `const l = loaderCall(obj)` idiom once. */
+  const isLauncherRequireCjs = (c) => {
+    if (!(ts.isPropertyAccessExpression(c) || ts.isElementAccessExpression(c))) return false;
+    const names = memberNames(c);
+    if (names === null || !names.includes("requireCjs")) return false;
+    const obj = unwrap(c.expression);
+    if (ts.isIdentifier(obj)) { const b = bindingAt(obj); return b !== null && b.module === "launcher" && (b.member === null || b.member === "default"); }
+    if (ts.isCallExpression(obj)) { const ld = loaderCall(obj); if (ld && ld.kind === "launcher") { followed.add(obj); launcherImported.push(lineOf(c)); return true; } }
+    return false;
+  };
   const loaderCall = (e) => {
     e = unwrap(e);
     if (!ts.isCallExpression(e)) return null;
     const c = unwrap(e.expression);
-    const isLoader = (ts.isIdentifier(c) && loaders.has(c.text)) || c.kind === ts.SyntaxKind.ImportKeyword || isCreateRequireCall(c);
+    const isLoader = (ts.isIdentifier(c) && loaders.has(c.text)) || c.kind === ts.SyntaxKind.ImportKeyword || isCreateRequireCall(c) || isLauncherRequireCjs(c);
     if (!isLoader) return null;
     const arg = e.arguments[0];
     const spec = arg && literalName(unwrap(arg));
@@ -404,14 +434,48 @@ export function classify(ts, file, src, opts = {}) {
     if (hits.length !== 1) return undefined;
     return hits[0].initializer === undefined ? null : hits[0].initializer;
   };
-  /** Is `e` derived from playwright? Returns the chain of member names from the package root, or null. */
+  /** The branches of a ConditionalExpression or of a ??, || or && BinaryExpression, unwrapped and flattened through nested ones;
+   *  null for any other node. */
+  const isLogical = (e) => ts.isBinaryExpression(e) && [ts.SyntaxKind.QuestionQuestionToken, ts.SyntaxKind.BarBarToken, ts.SyntaxKind.AmpersandAmpersandToken].includes(e.operatorToken.kind);
+  const condBranches = (e) => {
+    e = unwrap(e);
+    if (!(ts.isConditionalExpression(e) || isLogical(e))) return null;
+    const out = [];
+    const add = (x) => { x = unwrap(x); const inner = condBranches(x); if (inner) out.push(...inner); else out.push(x); };
+    if (ts.isConditionalExpression(e)) { add(e.whenTrue); add(e.whenFalse); } else { add(e.left); add(e.right); }
+    return out;
+  };
+  /** A chain whose ROOT is a conditional or logical expression with a tracked branch (a playwright load, a playwright binding or
+   *  derived name, a chain on one, a load of the launcher): the walker does not follow which branch the value takes, so it REFUSES
+   *  by name, one site for every shape (a binding's initializer, an assignment's right side, a bound or unbound chain's root). A
+   *  launcher load in a branch is marked followed by the refusal, so THE INVARIANT does not refuse it a second time; a launcher
+   *  BINDING in a branch is left to the value-use arm, whose handedHow names the form. Returns true when it refused. */
+  const refuseCondRoot = (e) => {
+    const br = condBranches(e);
+    if (!br) return false;
+    let pw = false, launcher = null;
+    for (const b of br) {
+      const ld = ts.isCallExpression(b) ? loaderCall(b) : null;
+      if (ld && ld.kind === "playwright") pw = true;
+      else if (ld && ld.kind === "launcher") launcher = b;
+      else if (ts.isIdentifier(b) && (derivedAt(b) !== null || (bindingAt(b) !== null && bindingAt(b).module === "playwright"))) pw = true;
+      else if (!ld && !ts.isIdentifier(b)) { const c = pwChain(b); if (c && !c.refused) pw = true; }
+    }
+    if (pw) refuse(e, "a playwright load or binding read through a conditional or logical expression the walker does not follow (the engines and launches read through it are unread): bind the load in a statement of its own");
+    if (launcher) { followed.add(launcher); refuse(e, "the shared launcher loaded inside a conditional or logical expression the walker does not follow, so where inBrowser is called from is unread: bind the load in a statement of its own"); }
+    return pw || launcher !== null;
+  };
+  /** Is `e` derived from playwright? Returns the chain of member names from the package root, or null; { refused: true } when the
+   *  chain holds a form the walker refused by name (a conditional or logical root with a tracked branch, a computed member it
+   *  cannot fold on a tracked binding or a playwright load). */
   const pwChain = (e) => {
     e = unwrap(e);
     const chain = [];
     for (;;) {
+      if (condBranches(e)) { if (refuseCondRoot(e)) return { refused: true }; return null; }
       if (ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e)) {
         const names = memberNames(e);
-        if (names === null) { const r = rootOf(e); if (isTrackedRoot(r)) { refuse(e, "a computed member with a name the walker cannot fold on a playwright or launcher binding"); refusedRoots.add(r); return { refused: true }; } return null; }
+        if (names === null) { const r = rootOf(e); if (isTrackedRoot(r) || (loadRoot(e) || {}).kind === "playwright") { refuse(e, "a computed member with a name the walker cannot fold on a playwright or launcher binding or load"); refusedRoots.add(r); return { refused: true }; } return null; }
         chain.unshift(names); e = unwrap(e.expression); continue;
       }
       if (ts.isCallExpression(e)) { const l = loaderCall(e); if (l && l.kind === "playwright") return chain; if (l && l.kind === "refused") return { refused: true }; return null; }
@@ -426,6 +490,11 @@ export function classify(ts, file, src, opts = {}) {
     }
   };
   const refusedRoots = new Set();       // identifier nodes under a computed member the walker refused by name (the reference was read)
+  /** The loader call a member chain stands on (`require("playwright")[k]`: through property and element access to a call, never
+   *  through a non-loader call, the stated residual), resolved by loaderCall; null when the chain stands on no call. The playwright
+   *  kind alone reaches the computed-member refusal: a computed member on the launcher loaded where it stands leaves the load
+   *  unfollowed, and THE INVARIANT's clause 2 refuses it. */
+  const loadRoot = (x) => { x = unwrap(x); while (ts.isPropertyAccessExpression(x) || ts.isElementAccessExpression(x)) x = unwrap(x.expression); return ts.isCallExpression(x) ? loaderCall(x) : null; };
   const isTrackedRoot = (r) => { if (!ts.isIdentifier(r)) return false; const b = bindingAt(r); return (b !== null && ["playwright", "launcher"].includes(b.module)) || derivedAt(r) !== null; };
   const noteChain = (chain) => { for (const names of chain) for (const n of names) if (ENGINES.has(n)) engines.add(n); };
 
@@ -483,8 +552,6 @@ export function classify(ts, file, src, opts = {}) {
     ts.forEachChild(n, walk1);
   };
   walk1(sf);
-  // launcher's own requireCjs export, imported by a leg, is a loader too
-  for (const [, b] of bindings) if (b.module === "launcher" && b.member === "requireCjs") loaders.add(b.name);
 
   // pass 2: loader-bound variables and assignments (declaration or assignment), playwright-derived bindings; to a fixpoint
   const bindLoaded = (target, valueExpr, holder) => {
@@ -496,7 +563,9 @@ export function classify(ts, file, src, opts = {}) {
     if (l) followed.add(e);   // bound, or refused below: the walker read this load
     if (l && l.kind !== "refused") {
       if (l.kind === "launcher") launcherImported.push(lineOf(holder));
-      if (members === null) { refuse(holder, "a computed member with a name the walker cannot fold on a loaded module"); return true; }
+      // members is never null here: a computed member the walker cannot fold breaks the peel with e at the access node, so l is
+      // null and the value falls through to pwChain below, whose computed-member arm refuses it by name when the chain stands on
+      // a tracked binding or a playwright load
       const member = members.length ? members.map((m) => m.join("|")).join(".") : null;
       if (l.kind === "playwright") { for (const m of members) for (const x of m) if (ENGINES.has(x)) engines.add(x); }
       if (ts.isIdentifier(target)) { const k = keyOf(target); if (!bindings.has(k)) { track(bindings, k, { name: target.text, module: l.kind, member }); return true; } return false; }
@@ -526,6 +595,9 @@ export function classify(ts, file, src, opts = {}) {
       ts.forEachChild(n, walk2);
     };
     walk2(sf);
+    // the launcher's own requireCjs export, imported by a leg or destructured from a load of the launcher (a binding this pass
+    // made), is a loader too: it joins here, inside the fixpoint, so the next pass binds what is loaded through it
+    for (const [, b] of bindings) if (b.module === "launcher" && b.member === "requireCjs" && !loaders.has(b.name)) { loaders.add(b.name); changed = true; }
     if (pass === 7 && changed) refuse(sf, "the binding walk did not settle in 8 passes");
   }
   // the engines every playwright binding names by its member path (const { firefox } = require("playwright"))
@@ -555,10 +627,13 @@ export function classify(ts, file, src, opts = {}) {
    *  folded into `engines`; nothing when the call passes none; a refusal when the argument folds through no closed form, names no
    *  engine, or sits in an .apply list the walker cannot read. */
   const readEngineArg = (call, via) => {
+    // a spread element at or before the engine position: the fixed-index read below would pass the call as no engine while the
+    // spread may carry one, so the list is refused by name for each call form
+    const SPREAD = "a spread element at or before the engine position, an argument list the walker cannot read (an engine may be passed in it): spell each argument out";
     let arg;
-    if (!via) arg = call.arguments[2];
-    else if (via === "call") arg = call.arguments[3];
-    else { const list = call.arguments[1] && unwrap(call.arguments[1]); if (list && ts.isArrayLiteralExpression(list)) arg = list.elements[2]; else if (list) { refuse(call, "the shared launcher applied to an argument list the walker cannot read (an engine may be passed in it)"); return; } }
+    if (!via) { if (call.arguments.slice(0, 3).some((a) => ts.isSpreadElement(a))) { refuse(call, "the shared launcher called with " + SPREAD); return; } arg = call.arguments[2]; }
+    else if (via === "call") { if (call.arguments.slice(0, 4).some((a) => ts.isSpreadElement(a))) { refuse(call, "the shared launcher called through .call with " + SPREAD); return; } arg = call.arguments[3]; }
+    else { const list = call.arguments[1] && unwrap(call.arguments[1]); if (list && ts.isArrayLiteralExpression(list)) { if (list.elements.slice(0, 3).some((a) => ts.isSpreadElement(a))) { refuse(call, "the shared launcher applied to " + SPREAD); return; } arg = list.elements[2]; } else if (list) { refuse(call, "the shared launcher applied to an argument list the walker cannot read (an engine may be passed in it)"); return; } }
     if (!arg) return;
     const a = unwrap(arg);
     const lit = literalName(a);
@@ -576,9 +651,11 @@ export function classify(ts, file, src, opts = {}) {
       const names = memberNames(pp) || [];
       if (names.includes("default")) return "read for a default member, which is not an export of the launcher";
       if (names.some((x) => x === "then" || x === "catch" || x === "finally")) return "handed to a promise callback through ." + names.find((x) => x === "then" || x === "catch" || x === "finally") + ", where inBrowser is called from is unread: await the load where it is made and call inBrowser on the result";
+      if (names.includes("requireCjs")) return "read for requireCjs without a call, so a load made through it elsewhere is unread: call requireCjs where the load is made";
       return "read for inBrowser without a call" + (pp.parent && ts.isPropertyAccessExpression(pp.parent) && pp.parent.name.text === "bind" ? " (.bind makes no call)" : "");
     }
     if (ts.isAwaitExpression(pp)) return "awaited into a name the walker does not bind: await the import where it is loaded and call inBrowser on the result";
+    if (ts.isConditionalExpression(pp) || isLogical(pp)) return "read through a conditional or logical expression the walker does not follow: bind the module in a statement of its own";
     if (ts.isVariableDeclaration(pp) && pp.initializer === q) return ts.isIdentifier(pp.name) ? "aliased by a declaration" : "destructured";
     if (ts.isBinaryExpression(pp) && pp.right === q) return "aliased by an assignment";
     if (ts.isCallExpression(pp) || ts.isNewExpression(pp)) return "passed as an argument";
@@ -612,7 +689,7 @@ export function classify(ts, file, src, opts = {}) {
       } else if (ts.isPropertyAccessExpression(c) || ts.isElementAccessExpression(c)) {
         const names = memberNames(c);
         const obj = unwrap(c.expression);
-        if (names === null) { const r = rootOf(c); if (isTrackedRoot(r)) { refuse(c, "a computed member with a name the walker cannot fold on a playwright or launcher binding"); refusedRoots.add(r); } }
+        if (names === null) { const r = rootOf(c); if (isTrackedRoot(r) || (loadRoot(c) || {}).kind === "playwright") { refuse(c, "a computed member with a name the walker cannot fold on a playwright or launcher binding or load"); refusedRoots.add(r); } }
         else {
           if (names.some((x) => x === "skip" || x === "todo")) skipTodo.push({ line: lineOf(n), what: "." + names.join("|") + "(" });
           // launcher namespace or default binding: leg.inBrowser(...); or the loader call's own result: require(launcher).inBrowser(...)
@@ -635,11 +712,25 @@ export function classify(ts, file, src, opts = {}) {
       // a member read off the launcher loaded where it stands, not a call (`require(launcher).EXT`; the call form is above):
       // FOLLOWED as an import when the member is another export; a read of inBrowser without a call, of a promise member or
       // of a default member hands it on and stays unfollowed, so THE INVARIANT refuses it
-      if (!(n.parent && ts.isCallExpression(n.parent) && n.parent.expression === n)) { const obj = unwrap(n.expression); const l = !ts.isIdentifier(obj) && loaderCall(obj); if (l && l.kind === "launcher") { const names = memberNames(n); if (names !== null && !names.includes("inBrowser") && !names.some((x) => HANDOFF.has(x))) { followed.add(unwrap(obj)); launcherImported.push(lineOf(n)); } } }
+      // (a requireCjs member is a loader callee when called, through parentheses, ! and as too, read by loaderCall; read without a
+      // call it hands the loader on, and a load made through it elsewhere is unread: refused by name, the load followed by that refusal)
+      if (!(n.parent && ts.isCallExpression(n.parent) && n.parent.expression === n)) { const obj = unwrap(n.expression); const l = !ts.isIdentifier(obj) && loaderCall(obj); if (l && l.kind === "launcher") { const names = memberNames(n); let q = n; while (q.parent && (ts.isParenthesizedExpression(q.parent) || ts.isNonNullExpression(q.parent) || ts.isAsExpression(q.parent))) q = q.parent; const isCallee = q.parent && ts.isCallExpression(q.parent) && q.parent.expression === q; if (names !== null && names.includes("requireCjs")) { if (!isCallee) { followed.add(unwrap(obj)); refuse(n, "the launcher loaded where it stands and read for requireCjs without a call, so a load made through it elsewhere is unread: call requireCjs on the load where it is made"); } } else if (names !== null && !names.includes("inBrowser") && !names.some((x) => HANDOFF.has(x))) { followed.add(unwrap(obj)); launcherImported.push(lineOf(n)); } } }
     } else if (ts.isIdentifier(n)) {
       // a reference to a launcher binding (inBrowser, the whole module or its default) that the call arm did not resolve a call
       // through (calledThrough), and that is not a declaration name, a property name or an import clause: a value use, refused
       const b = bindingAt(n);
+      if (b !== null && b.module === "launcher" && b.member === "requireCjs") {
+        // the loader binding itself (the named import, or the member destructured from a load): read as a callee (loaderCall, through
+        // parentheses, ! and as) or in a name, property or type position; any other use hands the loader on (`const r = requireCjs`),
+        // and a load made through the alias is unread by the walker: refused by name
+        const p = n.parent;
+        let q = n; while (q.parent && (ts.isParenthesizedExpression(q.parent) || ts.isNonNullExpression(q.parent) || ts.isAsExpression(q.parent))) q = q.parent;
+        const called = q.parent && ts.isCallExpression(q.parent) && q.parent.expression === q;
+        const isDecl = p && (ts.isImportSpecifier(p) || (ts.isBindingElement(p) && (p.name === n || p.propertyName === n)) || (ts.isVariableDeclaration(p) && p.name === n) || (ts.isBinaryExpression(p) && p.left === n));
+        const isPropName = p && ((ts.isPropertyAccessExpression(p) && p.name === n) || (ts.isPropertyAssignment(p) && p.name === n));
+        const isType = p && (ts.isTypeQueryNode(p) || ts.isTypeReferenceNode(p));
+        if (!(called || isDecl || isPropName || isType)) refuse(n, "the launcher's requireCjs loader handed on as a value, not called (a load made through the alias is unread by the walker: call requireCjs where the load is made)");
+      }
       if (carriesInBrowser(b)) {
         const p = n.parent;
         // the NAME position of a declaration is exempt, never its initializer: `const f = inBrowser` and `const { x = inBrowser } = o`
@@ -657,7 +748,9 @@ export function classify(ts, file, src, opts = {}) {
           let q = n; while (q.parent && (ts.isParenthesizedExpression(q.parent) || ts.isNonNullExpression(q.parent) || ts.isAsExpression(q.parent))) q = q.parent;
           const pp = q.parent;
           let read = false, handed = true;
-          if (pp && (ts.isPropertyAccessExpression(pp) || ts.isElementAccessExpression(pp)) && pp.expression === q) { const names = memberNames(pp); if (names === null) { read = refusedRoots.has(n); handed = false; } else { read = !names.includes("inBrowser") && !names.some((x) => HANDOFF.has(x)); handed = !read; } }
+          // (a requireCjs member is read when called, through parentheses, ! and as, the loader callee loaderCall accepts; read without
+          // a call it hands the loader on, and handedHow names that form)
+          if (pp && (ts.isPropertyAccessExpression(pp) || ts.isElementAccessExpression(pp)) && pp.expression === q) { const names = memberNames(pp); if (names === null) { read = refusedRoots.has(n); handed = false; } else { let qq = pp; while (qq.parent && (ts.isParenthesizedExpression(qq.parent) || ts.isNonNullExpression(qq.parent) || ts.isAsExpression(qq.parent))) qq = qq.parent; const calledMember = qq.parent && ts.isCallExpression(qq.parent) && qq.parent.expression === qq; read = !names.includes("inBrowser") && !names.some((x) => HANDOFF.has(x)) && !(names.includes("requireCjs") && !calledMember); handed = !read; } }
           if (read) refRead.add(n);
           else if (handed) { refuse(n, "the launcher's module binding handed on as a value (" + handedHow(q, pp) + "), so the walker cannot follow where inBrowser is called from"); refRefused.add(n); }
           // a computed member no arm refused: left to THE INVARIANT below
