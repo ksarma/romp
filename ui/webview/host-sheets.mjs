@@ -8,11 +8,18 @@
 // _CHAT_MOBILE_CSS, string constants of kernel/kernel.py) that no listing of the directory reads.
 //
 // The derivation, each part read off the tree's own source so a change to the assembly moves the population:
-//   * the kernel's served pages are the `def _<name>_page(...)` functions of kernel/kernel.py, whatever their parameters (the
-//     chat, the feed, the sessions pane, the waiting pane, the Files pane, the settings page and the timeline, and the chat's
-//     history page and the too-large notice, which take arguments and load no sheet today; a read keyed on an empty signature
-//     had left those two outside the derivation with no failure to name it), each with the function's own text, its comment
-//     lines dropped so a sheet a comment mentions is not read as one the page loads; from each: every `/dist/<name>.css` it
+//   * the kernel's served pages are the `def _<name>_page(...)` functions of kernel/kernel.py whose `)` closes on `:` at the end
+//     of the def's line, whatever their parameters (a signature wrapped across lines included: the chat, the feed, the sessions
+//     pane, the waiting pane, the Files pane, the settings page and the timeline, and the chat's history page and the too-large
+//     notice, which take arguments and load no sheet today; a read keyed on an empty signature had left those two outside the
+//     derivation with no failure to name it), and a page def at column zero in any other shape (a return annotation, a `)`
+//     inside a default, a trailing comment after the colon, an async def) fails by name, since a page the read drops would take
+//     its sheets out of the population silently (the file review's round 11, correctness-1 with regression-1 and extra7-2: the
+//     annotated and the `)`-in-default shapes had left the read with no failure, and the header had said every page was read
+//     whatever its parameters); each with the function's own text, the lines up to the first statement at column zero outside a
+//     triple-quoted literal (a column-zero line inside one is the template's own text, so a constant the page names after it is
+//     read; the body had ended at that line whether or not a literal was open), its comment lines dropped so a sheet a comment
+//     mentions is not read as one the page loads; from each: every `/dist/<name>.css` it
 //     links, a bundle vscode-extension/esbuild.js builds from ui/webview/<name>.css (the entry list is read and a link with no
 //     entry fails); every `(UI / "webview" / "<name>.css").read_text()` it writes into a `<style>`; and every module-level
 //     `<NAME>_CSS` constant it names, whose text is read from kernel.py by its assignment (a triple-quoted literal, or a
@@ -65,15 +72,49 @@ export function pyStringConstant(src, name) {
   fail(name + ' is assigned in a form this reader has no rule for (a triple-quoted literal or a parenthesised run)');
 }
 
-/** The kernel's served pages: each `def _<name>_page(...)`, whatever its parameters (the pages that take none and the chat's
- *  history page and the too-large notice, which take arguments; a page read only when its signature is empty would leave a
- *  sheet inlined by a page with parameters outside the population, silently), with the function's own text (the indented, blank
- *  and comment lines after the def, up to the next statement at column zero), its comment lines dropped. */
+/** The lines of a function's body after its def head, `from` the index of the first line after it: indented, blank and
+ *  column-zero comment lines, and any line while a triple-quoted literal is open (an odd count of `"""` or of `'''` so far, each
+ *  delimiter counted on its own over the lines that are not comments, so a `"""` inside a `'''` literal or inside a one-line
+ *  string would miscount, shapes no page body has), up to the first column-zero non-comment line outside a literal. Comment lines
+ *  are dropped, except inside a literal, where a line opening with `#` is the template's own text (the file review's round 11,
+ *  correctness-1: the body had ended at the first column-zero line whether or not a literal was open, so a constant a page named
+ *  after a column-zero template line was not read, with no failure). */
+function defBody(lines, from) {
+  const body = [];
+  let dq = 0, sq = 0;
+  for (let i = from; i < lines.length; i++) {
+    const l = lines[i], inside = dq % 2 === 1 || sq % 2 === 1;
+    if (!inside && l !== '' && !/^[ \t#]/.test(l)) break;
+    if (inside || !/^\s*#/.test(l)) {
+      body.push(l);
+      dq += (l.match(/"""/g) ?? []).length; sq += (l.match(/'''/g) ?? []).length;
+    }
+  }
+  return body.join('\n') + '\n';
+}
+
+/** The kernel's served pages: each `def _<name>_page(...)` whose `)` closes on `:` at the end of its line, whatever its
+ *  parameters (a signature wrapped across lines included, and the pages that take arguments, the chat's history page and the
+ *  too-large notice: a page read only when its signature is empty would leave a sheet inlined by a page with parameters outside
+ *  the population, silently), with the function's own text (defBody: the indented, blank and comment lines after the def, and
+ *  every line while a triple-quoted literal is open, up to the next statement at column zero outside one), its comment lines
+ *  dropped. After the read, every `def _<name>_page` at column zero, `async def` included, is counted against the pages read, and
+ *  a page def in any other shape (a return annotation, a `)` inside a default, a trailing comment after the colon, an async def)
+ *  fails by name, since a page the read drops would take its sheets out of the population silently (the file review's round 11,
+ *  correctness-1 with regression-1 and extra7-2). */
 export function kernelPages(kernel) {
   const out = [];
-  const re = /^def (_\w+_page)\([^)]*\):\n((?:(?:[ \t]+[^\n]*|#[^\n]*)?\n)*)/gm;
+  const lines = kernel.split('\n');
+  const head = /^def (_\w+_page)\([^)]*\):\n/gm;
   let m;
-  while ((m = re.exec(kernel))) out.push({ name: m[1], body: m[2].split('\n').filter((l) => !/^\s*#/.test(l)).join('\n') });
+  while ((m = head.exec(kernel))) {
+    const from = kernel.slice(0, m.index + m[0].length).split('\n').length - 1;
+    out.push({ name: m[1], body: defBody(lines, from) });
+  }
+  const loose = kernel.match(/^(?:async )?def (_\w+_page)\b[^\n]*/gm) ?? [];
+  const seen = new Set(out.map((p) => p.name));
+  const missed = loose.filter((l) => !seen.has(/^(?:async )?def (_\w+_page)\b/.exec(l)[1]));
+  if (missed.length || loose.length !== out.length) fail('a page function this reader has no rule for (its `)` does not close on `:` at the end of the def line, or it is an async def), so a sheet it loads would be outside the population: ' + (missed.length ? missed : loose).map((l) => JSON.stringify(l)).join(', '));
   if (!out.length) fail('kernel.py declares no `def _<name>_page(...)` function');
   return out;
 }

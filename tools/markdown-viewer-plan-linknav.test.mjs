@@ -50,7 +50,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { cssRules, renderRule, stripCssComments, underScreen } from '../ui/webview/css-rules.mjs';
-import { hostSheets } from '../ui/webview/host-sheets.mjs';
+import { hostSheets, kernelPages } from '../ui/webview/host-sheets.mjs';
 import { execFileSync } from 'node:child_process';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -339,6 +339,42 @@ test('L3: the control\'s words are the viewer\'s literal, quoted by the section 
   // assembly, the pair carrying the dress, every other sheet none, and the three bounds stated, not read
   assert.ok(section.includes('every rule naming its class that reveals it under `screen`, so a print shows none of it and the print block carries no line for it (the set the two homes close is over the rules whose selector names the class, read as parsed rules with their enclosing at-rules, in every sheet a page of either host loads, a population derived from the page assembly and never typed or listed, the kernel\'s page functions\' linked bundles, live-read sheets and inlined constants and the extension\'s webview links, the chat\'s and the feed\'s sheets carrying the dress and every other sheet no rule naming the class; outside it, bounds the homes state and do not read: a rule whose selector would match the element without naming the class, katex\'s vendored sheet that both dress sheets import, and the style a template writes into its own page or a script adds after it is served;'), 'L3 states the guard, the population of the set that holds it, derived from the page assembly, and its bounds, in one sentence held whole');
   assert.ok(section.includes('a right float\'s at the top-LEFT corner (`fv-figopen-left`, `fv-figopen-right`'));
+});
+
+// The page read the closed set's population stands on (ui/webview/host-sheets.mjs kernelPages), over SYNTHETIC kernel source
+// (the file review's round 11, correctness-1 with regression-1 and extra7-2: the read had two silent holes against the module's
+// fail-loudly contract, a page def in a shape its signature read did not match, a return annotation or a `)` inside a default,
+// dropped out of the derivation with no failure, and a column-zero line inside a triple-quoted template ended the body read
+// there, so a constant the page named after that line was not read; the ruling named the async def as a third silent shape and
+// kept the column-zero boundary, taken only outside a triple-quoted literal, over a boundary at the next def, class, decorator
+// or assignment, which spills into module-level blocks). Each pin is a property pin over the reader's behaviour on the planted
+// source, red against the reader before the fix; the controls hold the shapes the reader read before and reads still.
+const pySrc = (...l) => l.join('\n') + '\n';
+test('kernelPages: a page def with a return annotation fails by name rather than leaving the read silently (the file review\'s round 11, correctness-1 with extra7-2; a property pin over synthetic source, red before the count cross-check)', () => {
+  assert.throws(() => kernelPages(pySrc('def _a_page() -> str:', '    return "a"', '', 'def _b_page():', '    return "b"')), /_a_page/, 'the annotated page is named in the failure');
+});
+test('kernelPages: a page def with a `)` inside a default fails by name (the file review\'s round 11, regression-1; a property pin over synthetic source, red before the count cross-check)', () => {
+  assert.throws(() => kernelPages(pySrc('def _c_page(q=")"):', '    return "c"', '', 'def _b_page():', '    return "b"')), /_c_page/, 'the page whose signature holds a `)` is named in the failure');
+});
+test('kernelPages: an async page def fails by name (the file review\'s round 11, correctness-1 with regression-1, the ruling\'s third shape; a property pin over synthetic source, red before the count cross-check)', () => {
+  assert.throws(() => kernelPages(pySrc('async def _e_page():', '    return "e"', '', 'def _b_page():', '    return "b"')), /_e_page/, 'the async page is named in the failure');
+});
+test('kernelPages control: a signature wrapped across lines and a parameterised page are read, as before (the file review\'s round 11, extra7-2, the refuter\'s narrowing; a property pin over synthetic source)', () => {
+  assert.deepEqual(kernelPages(pySrc('def _f_page(', '):', '    return "f"', '', 'def _h_page(sid, lo, hi, now, sess=None):', '    return "h"')).map((p) => p.name), ['_f_page', '_h_page']);
+});
+test('kernelPages: a column-zero line inside a triple-quoted template does not end the body, so the constant the page names after it is read, and a template line opening with # inside the literal is the page\'s text (the file review\'s round 11, correctness-1; a property pin over synthetic source, red before the literal-aware boundary)', () => {
+  const [p] = kernelPages(pySrc('_PROBE_CSS = """x"""', '', 'def _e_page():', '    return """<html>', '<style>%s</style>', '#pane{color:red}', '</html>""" % (_PROBE_CSS,)', '', 'def _f_page():', '    return "f"'));
+  assert.equal(p.name, '_e_page');
+  assert.match(p.body, /_PROBE_CSS/, 'the constant on the line after the column-zero template lines is in the body');
+  assert.match(p.body, /#pane\{color:red\}/, 'a template line opening with # inside the literal is the page\'s text, not a comment');
+});
+test('kernelPages control: an indented template is read as before (the file review\'s round 11, correctness-1; a property pin over synthetic source)', () => {
+  const [p] = kernelPages(pySrc('def _e_page():', '    return """<html>', '    <style>%s</style>', '    </html>""" % (_PROBE_CSS,)'));
+  assert.match(p.body, /_PROBE_CSS/);
+});
+test('kernelPages control: a module-level block after a page is not the page, so a constant named there is nobody\'s sheet (the file review\'s round 11, correctness-1: the boundary the refuter rejected would spill into it; a property pin over synthetic source)', () => {
+  const pages = kernelPages(pySrc('def _h_page():', '    return "h"', '', 'if True:', '    Y = _SPILL_CSS', '', 'def _i_page():', '    return "i"'));
+  assert.deepEqual(pages.map((p) => [p.name, /_SPILL_CSS/.test(p.body)]), [['_h_page', false], ['_i_page', false]]);
 });
 
 test('the rule reader the two homes of the closed set share (ui/webview/css-rules.mjs): a sheet is read as rules with their enclosing at-rules, not as lines, so a rule indented under an at-rule, a grouped selector wrapped across lines, a one-line at-rule block and a column-zero rule read alike; a statement at-rule, a declaration-only at-rule (its last declaration with or without a semicolon, styles.css\'s own @font-face blocks among them) and a comment yield no rule; a brace inside a string is text; whether a chain confines a rule to screens is a property of the whole query list; a nested block, an unbalanced brace, a lost open brace at the top level or under a rule-holding at-rule, a prelude the sheet ends inside, an open string and an open comment are refused, and the reader\'s header counts its refusals as the source has them (the file review\'s round 9, correctness-1 with tests-1 and ui-1, then its round 10, correctness-2 with extra7-2, and extra7-1)', () => {

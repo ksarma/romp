@@ -9,7 +9,9 @@ export interface HostSheet {
 }
 /** Every sheet a page of either host loads, derived from the page assembly under `root`, sorted by name. */
 export function hostSheets(root: string): HostSheet[];
-/** The kernel's served pages, each `def _<name>_page():` of kernel.py with the function's own text, comment lines dropped. */
+/** The kernel's served pages: each `def _<name>_page(...)` of kernel.py whose `)` closes on `:` at the end of its line, whatever its parameters (a signature
+ *  wrapped across lines included), with the function's own text up to the first column-zero statement outside a triple-quoted literal, comment lines dropped;
+ *  a page def in any other shape (a return annotation, a `)` inside a default, a trailing comment after the colon, an async def) fails by name. */
 export function kernelPages(kernel: string): Array<{ name: string; body: string }>;
 /** A module-level string constant of kernel.py by name, decoded as Python decodes it. */
 export function pyStringConstant(src: string, name: string): string;
