@@ -9,8 +9,8 @@
 // tests and the open points in that order; the trail module exists with the functions L1 names and the viewer calls it
 // where L1 and L2 say (the one tag read before the close guard, the move after the leave write, both exits ending the
 // trail, the reload keeping it, the delegate's push, the buttons' open with no target, the capture-phase chord
-// listener); the words quoted in the section and the guide are the sources' literals; both sheets carry L3's rules
-// under `screen` and the print block names the control nowhere; no history API call stands in the trail or the viewer
+// listener); the words quoted in the section and the guide are the sources' literals; the chat's and the feed's sheets carry L3's rules
+// under `screen`, no other sheet a page of either host loads names the control, and the print block names the control nowhere; no history API call stands in the trail or the viewer
 // (L5); the trail module imports nothing and fetches nothing, and the checks keyed on the delta (L6's two verifications, the
 // re-aimed count's comparison with it, and the browser legs' comparison with it, below) are run from the merge-base with origin/main where that base tells this
 // branch's delta from main's tip, behind a two-part gate read off git: the
@@ -50,6 +50,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { cssRules, renderRule, stripCssComments, underScreen } from '../ui/webview/css-rules.mjs';
+import { hostSheets } from '../ui/webview/host-sheets.mjs';
 import { execFileSync } from 'node:child_process';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -113,7 +114,11 @@ const guide = read('docs', 'guide.md');
 const trail = read('ui', 'webview', 'file-trail.ts');
 const viewer = read('ui', 'webview', 'file-view.ts');
 const icons = read('ui', 'webview', 'icons.ts');
-const sheets = { 'styles.css': read('ui', 'webview', 'styles.css'), 'feed.css': read('ui', 'webview', 'feed.css') };
+/** Every sheet a page of either host loads (ui/webview/host-sheets.mjs, derived from the page assembly, the derivation this home
+ *  shares with ui/webview/file-figure-open.test.ts), and the two among them the viewer's dress is written in (the file review's
+ *  round 10, correctness-1 with regression-5: a typed pair left the Files page's own sheet outside the closed set). */
+const SHEETS = hostSheets(REPO);
+const DRESSING = ['ui/webview/styles.css', 'ui/webview/feed.css'];
 
 // The section, hard wraps collapsed so an assertion survives a rewrap: from its heading to the next `## ` heading or
 // the end of the plan. It follows "## Out of scope" and appears once.
@@ -238,7 +243,7 @@ test('L2: two glyph buttons of the icon family stand first in the bar before the
 
 // ── L3: the figure control ─────────────────────────────────────────────────────────────────────────
 
-test('L3: the control\'s words are the viewer\'s literal, quoted by the section and the guide; the one decision puts a marked glyph button after the anchor and never a wrapper; the target is the model\'s join or a tab; the click listener yields as the section says; the walks skip it; both sheets carry the rules under screen and the print block names it nowhere', () => {
+test('L3: the control\'s words are the viewer\'s literal, quoted by the section and the guide; the one decision puts a marked glyph button after the anchor and never a wrapper; the target is the model\'s join or a tab; the click listener yields as the section says; the walks skip it; the chat\'s and the feed\'s sheets carry the rules under screen and the print block names it nowhere, and no other sheet a page of either host loads names the control', () => {
   const words = literalAfter(viewer, 'export const FIGURE_OPEN_TITLE = ');
   assert.equal(words, 'Open the picture');
   assert.ok(section.includes('wears an "' + words + '" control (file-view.ts `decideFigureControl`, the one place a control is added or removed, over the verdict `figureWantsControl`)'), 'L3 names the one decision and its verdict');
@@ -281,13 +286,16 @@ test('L3: the control\'s words are the viewer\'s literal, quoted by the section 
   // them). The entry's execution is md-config-figure-gate-place.test.ts's labelled scene, its count word file-figure-open.test.ts's
   // derived pin, and the structural exclusion file-view-place-blocks.test.ts's top-level figure.
   assert.ok(viewer.includes('const n = (figureControlAfter(anchor) || anchor).nextSibling;'), 'the label lookup steps past the control');
-  // the sheets: the same fv-figopen rules in both, read as RULES through ui/webview/css-rules.mjs (the reader this home shares with
-  // ui/webview/file-figure-open.test.ts: brace-matched over the comment-stripped sheet, each rule with the at-rules enclosing
-  // it), every rule naming the control's class that reveals it under screen, none in the print block; the population is the
-  // rules whose SELECTOR names the class, so a rule whose selector would match the control's element without naming the class
-  // (`.fileview-md img + button`, an attribute selector, a universal) is outside what the set closes, a bound stated here, in
-  // the messages, in L3 and in the reader's header rather than read (the author's closing pass after the file review's round 10,
-  // mechanism-2)
+  // the sheets: the same fv-figopen rules in the chat's and the feed's, read as RULES through ui/webview/css-rules.mjs (the reader
+  // this home shares with ui/webview/file-figure-open.test.ts: brace-matched over the comment-stripped sheet, each rule with the
+  // at-rules enclosing it), every rule naming the control's class that reveals it under screen, none in the print block, and no
+  // rule naming the control in any other sheet a page of either host loads (SHEETS, derived from the page assembly; the file
+  // review's round 10, correctness-1 with regression-5: the set had been closed over the typed pair while the Files page loads
+  // its own sheet after styles.css); the population is the rules whose SELECTOR names the class in those sheets, so a rule
+  // whose selector would match the control's element without naming the class (`.fileview-md img + button`, an attribute
+  // selector, a universal) is outside what the set closes, as are katex's vendored sheet and the style a template or a script
+  // writes into a page, bounds stated here, in the messages, in L3 and in the reader's header rather than read (the author's
+  // closing pass after the file review's round 10, mechanism-2, and the file review's round 10, regression-5)
   const REST = '.fileview-md .fv-figopen { position: relative; z-index: 1; vertical-align: top; margin: 0 6px 0 -28px; top: 6px; padding: 3px; background: var(--bg); opacity: 0; }';
   const REVEAL = '@media screen { .fileview-md :hover + .fv-figopen, .fileview-md .fv-figopen:hover, .fileview-md .fv-figopen:focus-visible { opacity: 1; } }';
   const NOHOVER = '@media screen and (hover: none) { .fileview-md .fv-figopen { opacity: 0.8; } }';
@@ -295,9 +303,18 @@ test('L3: the control\'s words are the viewer\'s literal, quoted by the section 
   const LEFT = '.fileview-md .fv-figopen-left { float: left; }', RIGHT = '.fileview-md .fv-figopen-right { float: right; margin: 0 -28px 0 6px; }';
   /** The sheet's rules naming the control, each rendered on one line with whether a screen-only at-rule encloses it. */
   const controlRules = (css) => cssRules(css).filter((r) => /fv-figopen/.test(r.selector)).map((r) => ({ text: renderRule(r), screen: underScreen(r.chain) }));
-  const rules = Object.fromEntries(Object.entries(sheets).map(([n, css]) => [n, controlRules(css)]));
-  assert.deepEqual(rules['styles.css'], rules['feed.css'], 'the control\'s rules are the same in both sheets');
-  for (const [name, css] of Object.entries(sheets)) {
+  /** The bounds of the set, stated in the messages (the author's closing pass after the file review's round 10, mechanism-2; the
+   *  file review's round 10, regression-5). */
+  const BOUND = ' (the population is the rules whose selector names the control\'s class in every sheet a page of either host loads, derived from the page assembly by ui/webview/host-sheets.mjs; outside what this set closes, bounds stated here and in the plan\'s L3, not read: a rule whose selector would match the control\'s element without naming the class, katex\'s vendored sheet that styles.css and feed.css import, and the style a template writes into its own page or a script adds after it is served)';
+  const rules = Object.fromEntries(SHEETS.map((s) => [s.name, controlRules(s.css)]));
+  for (const d of DRESSING) assert.ok(d in rules, d + ' is a sheet a page loads: the viewer\'s dress is written there');
+  assert.ok(SHEETS.some((s) => s.name.startsWith('kernel/kernel.py ')), 'the population is wider than a listing of ui/webview: the sheets the kernel inlines from its own source (THEME_CSS, into every page) are in it, so a rule written there is read; a derivation reading the directory alone passes this set with a reveal there (the file review\'s round 10, regression-5)');
+  assert.deepEqual(rules[DRESSING[0]], rules[DRESSING[1]], 'the control\'s rules are the same in both sheets');
+  for (const { name, css, loadedBy } of SHEETS) {
+    if (!DRESSING.includes(name)) {
+      assert.deepEqual(rules[name].map((r) => r.text), [], name + ' (loaded by ' + loadedBy.join(', ') + '): no rule naming the control, however the sheet writes it; the dress is written in the chat\'s and the feed\'s sheets alone, and a rule here would apply on the pages that load this sheet' + BOUND);
+      continue;
+    }
     assert.ok(css.includes('\n' + REST + '\n'), name + ': the rest');
     assert.ok(css.includes('\n' + LEFT + '\n' + RIGHT + '\n'), name + ': the float twins');
     assert.ok(css.includes('\n' + REVEAL + '\n'), name + ': the reveal under screen');
@@ -308,14 +325,16 @@ test('L3: the control\'s words are the viewer\'s literal, quoted by the section 
     // brace, so a reveal indented under an at-rule or on a grouped selector's continuation line stood outside it with every pin
     // green; the file review's round 8, fresh-4: the guard before the set matched two opacity spellings, so a reveal spelled any
     // other way outside screen passed it)
-    assert.deepEqual(rules[name].filter((r) => !r.screen).map((r) => r.text), [REST, HOVER_BG, LEFT, RIGHT], name + ': the rules naming the control outside a screen-only at-rule, however the sheet writes them, are exactly the rest, the hover background and the float twins; any other rule naming the class there is one a print would apply (the population is the rules whose selector names the control\'s class; a rule whose selector would match the control\'s element without naming the class is outside what this set closes, a bound stated here and in the plan\'s L3, not read)');
+    assert.deepEqual(rules[name].filter((r) => !r.screen).map((r) => r.text), [REST, HOVER_BG, LEFT, RIGHT], name + ': the rules naming the control outside a screen-only at-rule, however the sheet writes them, are exactly the rest, the hover background and the float twins; any other rule naming the class there is one a print would apply' + BOUND);
     assert.deepEqual(rules[name].filter((r) => r.screen).map((r) => r.text), [REVEAL, NOHOVER], name + ': the rules under a screen-only at-rule are the reveal and the no-hover rule');
     const printAt = css.indexOf('\n@media print {');
     assert.ok(printAt >= 0, name + ': the print block');
     assert.ok(!css.slice(printAt, css.indexOf('\n}', printAt)).includes('fv-figopen'), name + ': the print block names the control nowhere');
     assert.ok(css.includes('.fileview-btn.fileview-icon { display: inline-flex;'), name + ': the family\'s inline-flex box the section names');
   }
-  assert.ok(section.includes('every rule naming its class that reveals it under `screen`, so a print shows none of it and the print block carries no line for it (the set the two homes close is over the rules whose selector names the class'), 'L3 states the guard and the bound of the set that holds it');
+  // L3's sentence on the set's population and bounds, held whole (a reword moves it): the population derived from the page
+  // assembly, the pair carrying the dress, every other sheet none, and the three bounds stated, not read
+  assert.ok(section.includes('every rule naming its class that reveals it under `screen`, so a print shows none of it and the print block carries no line for it (the set the two homes close is over the rules whose selector names the class, read as parsed rules with their enclosing at-rules, in every sheet a page of either host loads, a population derived from the page assembly and never typed or listed, the kernel\'s page functions\' linked bundles, live-read sheets and inlined constants and the extension\'s webview links, the chat\'s and the feed\'s sheets carrying the dress and every other sheet no rule naming the class; outside it, bounds the homes state and do not read: a rule whose selector would match the element without naming the class, katex\'s vendored sheet that both dress sheets import, and the style a template writes into its own page or a script adds after it is served;'), 'L3 states the guard, the population of the set that holds it, derived from the page assembly, and its bounds, in one sentence held whole');
   assert.ok(section.includes('a right float\'s at the top-LEFT corner (`fv-figopen-left`, `fv-figopen-right`'));
 });
 

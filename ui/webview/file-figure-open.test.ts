@@ -5,20 +5,30 @@
 // for a file of the session, a tab for an http source, nothing for a `data:` one), where it is decided (mdBlock's file arm after
 // the anchors; the body's `load` and `error` capture pair for a figure the browser answers for later), how a click on it or on a bare figure is routed
 // (a listener of its own beside the links', with the guards for a link, a panel mark, the open panel and a drag-select), the
-// label lookup that steps past it, the two text walks that skip it, the glyph, and the sheets' rules under `screen`, read as rules through ui/webview/css-rules.mjs. Every pin
+// label lookup that steps past it, the two text walks that skip it, the glyph, and the sheets' rules under `screen`, read as rules through ui/webview/css-rules.mjs in every sheet a page of either host loads (ui/webview/host-sheets.mjs derives that set from the page assembly). Every pin
 // reads the tree's own source, so a rename here fails loudly. Synthetic values only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { cssRules, renderRule, underScreen } from "./css-rules.mjs";
+import { hostSheets } from "./host-sheets.mjs";
 
-const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
+const ROOT = path.resolve(process.cwd(), "..");
+const web = (f: string) => fs.readFileSync(path.join(ROOT, "ui", "webview", f), "utf8");
 const VIEW = web("file-view.ts");
 const ICONS = web("icons.ts");
 const ANCHOR = web("anchor-map.ts");
 const READER = web("reader-place.ts");
-const SHEETS: Array<[string, string]> = [["styles.css", web("styles.css")], ["feed.css", web("feed.css")]];
+/** Every sheet a page of either host loads, derived from the page assembly (ui/webview/host-sheets.mjs: the kernel's page
+ *  functions' linked bundles, live-read sheets and inlined constants, the extension's webview links), and the two among them the
+ *  viewer's dress is written in, byte-mirrored, the chat's and the feed's: the closed set's full expected value holds in each of
+ *  those two, and every other sheet holds no rule naming the control (the file review's round 10, correctness-1 with
+ *  regression-5: the set had been closed over the pair while the Files page loads files-pane.css after styles.css, so a reveal
+ *  written there stood outside it with every pin green, and a listing of ui/webview would not have read the sheets the kernel
+ *  inlines from its own source). */
+const SHEETS = hostSheets(ROOT);
+const DRESSING = ["ui/webview/styles.css", "ui/webview/feed.css"];
 /** The text from one anchor to the next, both present. */
 const between = (src: string, from: string, to: string): string => {
   const a = src.indexOf(from); assert.ok(a >= 0, from + " present");
@@ -134,12 +144,22 @@ test("SOURCE-TEXT pins of the two text-read control lists (anchor-map.ts's CONTR
   assert.ok(entries.includes('"fv-figopen"'), "the control's class is in reader-place.ts's text-read list, beside the label's (the list's contents; the labelled scene in md-config-figure-gate-place.test.ts is what executes it)");
 });
 
-/** The bound of the closed set over the control's sheet rules, stated in its assertion messages (the author's closing pass after the
- *  file review's round 10, mechanism-2). */
-const BOUND = " (the population is the rules whose selector names the control's class; a rule whose selector would match the control's element without naming the class is outside what this set closes, a bound stated here and in the plan's L3, not read";
+/** The bounds of the closed set over the control's sheet rules, stated in its assertion messages: the selector bound (the author's
+ *  closing pass after the file review's round 10, mechanism-2) and the sheet bounds beside it (the file review's round 10,
+ *  regression-5). */
+const BOUND = " (the population is the rules whose selector names the control's class in every sheet a page of either host loads, derived from the page assembly by ui/webview/host-sheets.mjs; outside what this set closes, bounds stated here and in the plan's L3, not read: a rule whose selector would match the control's element without naming the class, katex's vendored sheet that styles.css and feed.css import, and the style a template writes into its own page or a script adds after it is served";
 
-test("the sheets: the control rests transparent over the figure's corner with a zero-width margin box, positioned above the layer's overlay; every rule naming the control's class that reveals it (the pointer over the figure or the control, a keyboard focus, a device with no hover) is under screen, so print shows none of it and the print block carries no line for it; the population the set closes is the rules whose selector names the class, a bound stated, not read", () => {
-  for (const [name, css] of SHEETS) {
+test("the sheets: the control rests transparent over the figure's corner with a zero-width margin box, positioned above the layer's overlay; every rule naming the control's class that reveals it (the pointer over the figure or the control, a keyboard focus, a device with no hover) is under screen, so print shows none of it and the print block carries no line for it; the population the set closes is the rules whose selector names the class in every sheet a page of either host loads, the chat's and the feed's carrying the dress and every other sheet none, the sheets derived and the bounds stated, not read", () => {
+  for (const d of DRESSING) assert.ok(SHEETS.some((s) => s.name === d), d + " is a sheet a page loads: the viewer's dress is written there (a renamed or unlinked sheet fails here, never silently)");
+  assert.ok(SHEETS.some((s) => s.name.startsWith("kernel/kernel.py ")), "the population is wider than a listing of ui/webview: the sheets the kernel inlines from its own source (THEME_CSS, into every page) are in it, so a rule written there is read; a derivation reading the directory alone passes this set with a reveal there (the file review's round 10, regression-5)");
+  for (const { name, css, loadedBy } of SHEETS) {
+    if (!DRESSING.includes(name)) {
+      // the sheet dimension of the closed set (the file review's round 10, correctness-1 with regression-5): every sheet a page loads
+      // that is not one of the two the dress is written in holds no rule naming the control, the Files page's own sheet among them,
+      // read live into that page after styles.css so a rule there wins on order and applies in print
+      assert.deepEqual(cssRules(css).filter((r) => /fv-figopen/.test(r.selector)).map(renderRule), [], name + " (loaded by " + loadedBy.join(", ") + "): no rule naming the control, however the sheet writes it; the dress is written in the chat's and the feed's sheets alone, and a rule here would apply on the pages that load this sheet" + BOUND + ")");
+      continue;
+    }
     assert.match(css, /\n\.fileview-md \.fv-figopen \{ position: relative; z-index: 1; vertical-align: top; margin: 0 6px 0 -28px; top: 6px; padding: 3px; background: var\(--bg\); opacity: 0; \}\n/, name + ": the rest");
     assert.match(css, /\n\.fileview-md \.fv-figopen-left \{ float: left; \}\n\.fileview-md \.fv-figopen-right \{ float: right; margin: 0 -28px 0 6px; \}\n/, name + ": the float twins");
     assert.match(css, /\n@media screen \{ \.fileview-md :hover \+ \.fv-figopen, \.fileview-md \.fv-figopen:hover, \.fileview-md \.fv-figopen:focus-visible \{ opacity: 1; \} \}\n/, name + ": the reveal, screen only");

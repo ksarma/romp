@@ -21,6 +21,8 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { cssRules, renderRule } from "./css-rules.mjs";
+import { hostSheets } from "./host-sheets.mjs";
 
 const read = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const CHAT = read("styles.css");
@@ -164,12 +166,18 @@ test("the viewer's shared chrome and the document's type scale exist in BOTH she
 // The Outline button's open state (Slice 6 of plans/markdown-viewer.md, item 2) is the bar's selected dress, .fileview-btn.on,
 // which file-view.ts toggles beside aria-expanded, and no rule of the button's own: the build's
 // `.fileview-outline-btn[aria-expanded="true"]` rule was a near-twin of that dress without its 600 weight and its hover
-// inversion, so an open Outline computed unlike the pressed Rendered toggle beside it (the PR review's round 1). Heads are
+// inversion, so an open Outline computed unlike the pressed Rendered toggle beside it (the PR review's round 1). The census is
+// over parsed RULES through ui/webview/css-rules.mjs, each with the at-rules enclosing it, in every sheet a page of either host
+// loads (ui/webview/host-sheets.mjs, derived from the page assembly), so a rule indented inside an at-rule block or written
+// in the Files page's own sheet is in it (the file review's round 10, correctness-5: heads had been read at a line start over
+// the pair alone, so the twin indented inside `@media screen` passed, and a rule of the button's own in files-pane.css dresses
+// the button on that page as one in styles.css does); the dress it wears instead is read off the pair, where it is written. Heads are
 // read at a line start, as rulesOf reads them. Red over a git archive of 3e433ceee: one such head in each sheet.
-test("the Outline button wears the bar's selected dress and has no rule of its own: no head in either sheet names .fileview-outline-btn or aria-expanded", () => {
-  const heads = (css: string): string[] => css.split("\n").filter((l) => /^[.#:@a-zA-Z[][^{]*\{/.test(l)).map((l) => l.slice(0, l.indexOf("{")).trim());
+test("the Outline button wears the bar's selected dress and has no rule of its own: no rule in any sheet a page of either host loads names .fileview-outline-btn or aria-expanded, however the sheet writes it", () => {
+  for (const { name, css } of hostSheets(path.resolve(process.cwd(), ".."))) {
+    assert.deepEqual(cssRules(css).filter((r) => /\.fileview-outline-btn|aria-expanded/.test(r.selector)).map(renderRule), [], name + ": a rule of the button's own, however the sheet writes it (read as a parsed rule with its enclosing at-rules, not as a head at a line start)");
+  }
   for (const [sheet, css] of [["styles.css", CHAT], ["feed.css", FEED]] as const) {
-    assert.deepEqual(heads(css).filter((h) => h.includes(".fileview-outline-btn") || h.includes("aria-expanded")), [], sheet + ": a rule of the button's own");
     // the dress it wears instead, present (rulesOf fails on an absent head) and carrying what the twin lacked
     assert.match(rulesOf(css, ".fileview-btn.on {")[0], /font-weight: 600;/, sheet + ": the selected dress carries the weight");
     assert.match(rulesOf(css, ".fileview-btn.on:hover {")[0], /background: var\(--accent\); color: var\(--accent-fg\);/, sheet + ": ...and the hover inversion");

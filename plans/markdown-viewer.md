@@ -8331,9 +8331,13 @@ line's top, a zero-width margin box of a 28px negative left margin and a 6px rig
 transparent at rest, revealed by the pointer over the figure or over itself and by a keyboard focus, kept visible on a
 device with no hover, every rule naming its class that reveals it under `screen`, so a print shows none of it and the
 print block carries no line for it (the set the two homes close is over the rules whose selector names the class, read
-as parsed rules with their enclosing at-rules; a rule whose selector would match the element without naming the class
-is outside it, a bound the homes state and do not read; the print block is pinned whole, and the in-flight print
-follow-on adds lines inside it). A figure the author
+as parsed rules with their enclosing at-rules, in every sheet a page of either host loads, a population derived from the
+page assembly and never typed or listed, the kernel's page functions' linked bundles, live-read sheets and inlined
+constants and the extension's webview links, the chat's and the feed's sheets carrying the dress and every other sheet no
+rule naming the class; outside it, bounds the homes state and do not read: a rule whose selector would match the element
+without naming the class, katex's vendored sheet that both dress sheets import, and the style a template writes into its
+own page or a script adds after it is served; the print block is pinned whole, and the in-flight print follow-on adds
+lines inside it). A figure the author
 floated with `align` stacks sideways: the control floats with it, a left float's at the top-right corner as before, a
 right float's at the top-LEFT corner (`fv-figopen-left`, `fv-figopen-right`: a later right float sits left of the
 earlier one, and the far edge cannot be reached without the figure's width). The text walks skip it as a control
@@ -8608,7 +8612,7 @@ bypassed: no request reaches a host the gate still holds. The build's record her
 the contract said the same; the claim was false, and the follow-on is a privacy surface, landing on the owner's word
 (open point 11). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui/webview, docs, plans, tools,
-upstream or tests alone (45 files, the ledger entry's where line; run 2026-09-21 at the head that carries the author's
+upstream or tests alone (48 files, the ledger entry's where line; run 2026-09-21 at the head that carries the author's
 closing pass after the file review's round 10, where the merge-base is the fork's main the branch merged after the fixes for the
 file review's round 10, and the listing is the branch's whole delta over it; the run at the head that carries the
 fixes for the file review's round 8, where the merge-base was 5e5ee79ed, the fork's main merged into the branch before
@@ -8746,12 +8750,14 @@ that step in the vscode-extension job and the switch (ROMP_BROWSER_LEGS_REQUIRE,
 ui/webview/browser-legs-require.ts): where the tree carries none of the four it holds this sentence, where it carries all
 four it holds every leg to a roster line outside the exclusions and the roster's own tree test to exist, and a tree with
 some of the four it refuses, naming them (the file review's round 8, extra8-2: the legs were the feature's evidence and none of them ran where
-landing is gated, the gating run's log showing every browser scenario of theirs as SKIP). Sixteen standing suites were re-aimed, not undone:
+landing is gated, the gating run's log showing every browser scenario of theirs as SKIP). Seventeen standing suites were re-aimed, not undone:
 ui/webview/file-view-text-size.test.ts (its real-module bar leg at 380, 420, 480 and 600 px in the chat and feed modals
 reads the group hidden on a fresh open and, once a link is followed, measures the two glyphs among the actions, case 8), ui/webview/file-view.test.ts and ui/webview/file-view-links.test.ts
 (the delegate's open through openFromViewer; the model import), ui/webview/file-view-figure-error.test.ts and
 ui/webview/file-view-figure-error-browser.test.ts (the label readers step past the control),
-ui/webview/fileview-parity.test.ts (the control's rules byte-equal in both sheets),
+ui/webview/fileview-parity.test.ts (the control's rules byte-equal in both sheets, and in the file review's round 10,
+correctness-5, the Outline button's census on parsed rules over every sheet a page of either host loads) and
+ui/webview/file-view-outline.test.ts (the same census, in the file review's round 10, correctness-5),
 ui/webview/anchor-map-fallback-markup.test.ts (the stand-in's control list), and in the review
 ui/webview/file-view-notice.test.ts (its Escape cases run every keydown handler an open registers in the document's
 order, the capture phase first, since the trail's listener is an open's newest registration, and the close hooks'

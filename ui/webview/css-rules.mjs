@@ -27,10 +27,13 @@
 // `to`, `50%`) are rules under their at-rule, as the text has them. Whitespace inside a selector, a body or an at-rule
 // prelude is collapsed to one space and trimmed, so a rule renders the same however the sheet wrapped it.
 //
-// The reader returns every rule; each home chooses its population by the SELECTOR, the rules naming the control's class.
-// A rule whose selector would match the control's element without naming the class (`.fileview-md img + button`, an
-// attribute selector, a universal) is outside what the homes close, a bound they state rather than read, since reading it
-// means matching selectors against the element (the author's closing pass after the file review's round 10, mechanism-2).
+// The reader returns every rule; each home chooses its population by the SELECTOR, the rules naming the control's class,
+// over every sheet a page of either host loads (ui/webview/host-sheets.mjs derives that set from the page assembly; the file
+// review's round 10, correctness-1 with regression-5). A rule whose selector would match the control's element without naming
+// the class (`.fileview-md img + button`, an attribute selector, a universal) is outside what the homes close, a bound they
+// state rather than read, since reading it means matching selectors against the element (the author's closing pass after the
+// file review's round 10, mechanism-2), as are katex's vendored sheet and the style a template or a script writes into a page,
+// the sheet bounds host-sheets.mjs names.
 
 /** The sheet with every block comment removed. A comment opener inside a string is read as a comment: the sheets carry
  *  none, and a reader that honoured quotes at this level would have to parse every string in the sheet to find it. */

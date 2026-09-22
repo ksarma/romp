@@ -23,6 +23,8 @@ import { headingSlug, uniqueSlugs } from "./md-links";
 import { OUTLINE_NOTE, OUTLINE_HEADINGS, FOLD_HEADING, MATH_HEADING, CODE_HEADING, QUOTED_HEADING } from "./file-view-outline-fixture";
 import type { FileViewActionCtx, At } from "./file-view";
 import { setMdSanitizer } from "./md-sanitize";   // the sanitizer seam the node suites install a stand-in through (Slice 7 of plans/markdown-viewer.md)
+import { cssRules, renderRule } from "./css-rules.mjs";
+import { hostSheets } from "./host-sheets.mjs";
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const VIEW = web("file-view.ts");
@@ -737,8 +739,11 @@ test("file-view.ts and the two sheets: the button's label is the exported OUTLIN
 // near-twin of the bar's selected dress without its 600 weight and its hover inversion, and the open button wears `.on`, the
 // class the pressed Rendered toggle wears, which file-view.ts toggles beside aria-expanded (fileview-parity.test.ts holds the
 // twin gone from both sheets). Red over a git archive of 3e433ceee: the twin's head in both sheets, and no `on` class at the
-// open; the panel's own source is pinned so the hazard stays named.
-test("the open state's dress is the bar's selected dress and reaches the Outline button alone: no rule in either sheet names aria-expanded or the button's class, `.fileview-btn.on` matches the open Outline button and neither the panel's Show less nor its armed Reject all, which are .fileview-btn with aria-expanded too and never `on`", () => {
+// open; the panel's own source is pinned so the hazard stays named. The census here and in fileview-parity.test.ts is on parsed
+// rules through ui/webview/css-rules.mjs over every sheet a page of either host loads (ui/webview/host-sheets.mjs; the file
+// review's round 10, correctness-5: heads read at a line start over the pair alone passed the twin indented inside an at-rule
+// block, and a rule of the button's own in the Files page's sheet dresses the button there as one in styles.css does).
+test("the open state's dress is the bar's selected dress and reaches the Outline button alone: no rule in any sheet a page of either host loads names aria-expanded or the button's class, however the sheet writes it, `.fileview-btn.on` matches the open Outline button and neither the panel's Show less nor its armed Reject all, which are .fileview-btn with aria-expanded too and never `on`", () => {
   const FC = web("file-comments.ts");
   assert.match(FC, /function btn\(label: string, act: string, cls = "fileview-btn"\)/, "the panel's buttons take the bar button's class by default");
   assert.match(FC, /const b = btn\(open \? "Show less" : "Show more", "fcclip"\);[\s\S]{0,300}?b\.setAttribute\("aria-expanded", open \? "true" : "false"\);/, "the card foot's Show more/Show less carries aria-expanded");
@@ -754,11 +759,15 @@ test("the open state's dress is the bar's selected dress and reaches the Outline
   const rejectAll = aside.appendChild(new El("button")); rejectAll.className = "fileview-btn"; rejectAll.setAttribute("aria-expanded", "true");
   const showMore = clipRow.appendChild(new El("button")); showMore.className = "fileview-btn"; showMore.setAttribute("aria-expanded", "false");
   outline.classList.add("on");                                             // what file-view.ts adds at the open, beside aria-expanded
-  // every rule head, read at a line start as fileview-parity.test.ts reads heads: none names the attribute or the button's class
+  // every rule naming the attribute or the button's class, read as parsed rules with their enclosing at-rules in every sheet a
+  // page of either host loads: none (the twin; the PR review's round 1 dropped it for the shared dress)
+  for (const { name, css } of hostSheets(path.resolve(process.cwd(), ".."))) {
+    assert.deepEqual(cssRules(css).filter((r) => /aria-expanded|fileview-outline-btn/.test(r.selector)).map(renderRule), [], name + ": a rule of the button's own, however the sheet writes it (the twin; the PR review's round 1 dropped it for the shared dress)");
+  }
+  // the dress it wears instead, in the pair where it is written, read at a line start as fileview-parity.test.ts reads heads
   const heads = (css: string): string[] => css.split("\n").filter((l) => /^[.#:@a-zA-Z[][^{]*\{/.test(l)).map((l) => l.slice(0, l.indexOf("{")).trim());
   for (const [sheet, css] of [["styles.css", CHAT], ["feed.css", FEED]] as const) {
     const hs = heads(css);
-    assert.deepEqual(hs.filter((h) => /aria-expanded|fileview-outline-btn/.test(h)), [], sheet + ": a rule of the button's own (the twin; the PR review's round 1 dropped it for the shared dress)");
     const dress = hs.filter((h) => h === ".fileview-btn.on" || h === ".fileview-btn.on:hover");
     assert.deepEqual(dress, [".fileview-btn.on", ".fileview-btn.on:hover"], sheet + ": the bar's selected dress and its hover are there for it to wear: " + inspect(dress));
     assert.ok(outline.matches(".fileview-btn.on"), sheet + ": the open Outline button wears it");
