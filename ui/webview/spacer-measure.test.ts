@@ -1138,7 +1138,7 @@ test("every module the page bundles load, read with the compiler: the only write
   const OUTSIDE = [   // loaded by a page bundle from outside ui/webview
     "ui/romp-timeline-view.js",                              // the timeline panel's prebuilt bundle, required by timeline-main.ts
     "vendor/track-changents/display.js",                     // required by track-logic.js through the vendored package's exports map
-    "vendor/track-changents/engine.js",                      // imported by anchor-map.ts, editor-chunk.ts and track-decorations.ts
+    "vendor/track-changents/engine.js",                      // imported by anchor-map.ts, editor-chunk.ts and track-decorations.ts, and required by track-cm.js through the package's exports map
     "vendor/track-changents/obsidian/src/track-cm.js",       // imported by editor-chunk.ts and track-decorations.ts
     "vendor/track-changents/obsidian/src/track-logic.js",    // imported by track-decorations.ts
   ];
