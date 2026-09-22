@@ -15,7 +15,9 @@ Drives the real _push, _push_session_now and _confirm_close_now over the cold-ta
 four listed tabs, build_session stubbed and counted, a private state root per test; the roster's count is read from the
 store, never from a build). Synthetic only: the fixture's own invented sids under a per-test private state root,
 invented todo text, hostname TESTHOST, never the shared placeholder sid and never a real session."""
+import contextlib
 import inspect
+import io
 import os
 import tempfile
 import time
@@ -180,6 +182,68 @@ class UserTodosRoster(_ColdTabFixture):
             self.assertNotIn("_user_todo_session_ended(", src, "%s re-spells no ended gate" % fn.__name__)
         self.assertIn("return not _user_todo_session_ended(sid)", inspect.getsource(km._user_todos_shown),
                       "the gate is the corroborated ended read, negated: hidden, not cleared")
+
+    def test_a_malformed_death_marker_for_one_sid_reads_0_said_once_and_the_other_rows_ship(self):
+        # kernel-1 with fresh-2 (round 1): the ended gate runs inside _tab_meta, whose three senders wrap it differently
+        # (_push's cycle-level catch, _push_session_now's, _confirm_close_now's False); a raise for ONE sid must cost that
+        # sid's count alone, said once, and never the strip (the board-freeze lesson of 2026-09-06). The plant is a
+        # reg-less sid's death record whose time does not parse, the shape the gate raises on.
+        noted = getattr(km, "_TAB_META_GATE_NOTED", None)      # absent at a base without the containment: the red then
+        if noted is not None:                                   #  lands below, on the property, not here
+            noted.clear()
+            self.addCleanup(noted.clear)
+        km._add_user_todo(S2, "Need the staging port")
+        km._add_user_todo(S3, "Need the auth-scheme decision")
+        gone = km.jd.STATE / "gone"
+        gone.mkdir(exist_ok=True)
+        (gone / (S3 + ".json")).write_text('{"t": "not-a-time"}')
+        with self.assertRaises((TypeError, ValueError), msg="premise: the raw gate raises on the plant"):
+            km._user_todo_session_ended(S3)
+        c = self._skeleton_client()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            km._push([c])
+        self.assertTrue(self._frames(c, "tabOrder"), "the pusher's strip ships despite one sid's malformed marker")
+        self.assertEqual((_row(c, S2)["userTodos"], _row(c, S3)["userTodos"]), (1, 0),
+                         "the faulted sid reads 0; the other row carries its count")
+        self.assertNotIn("Traceback", err.getvalue(), "no cycle-level catch fired: the fault is contained in the helper")
+
+        def said():
+            return [ln for ln in err.getvalue().splitlines() if ln.startswith("user-todos:") and S3[:8] in ln]
+        self.assertEqual(len(said()), 1, "said once, naming the sid: %r" % err.getvalue())
+        self.assertIn("count reads 0", said()[0])
+        del c["_frames"][:]
+        c["sent"].pop(("taborder",), None)
+        with contextlib.redirect_stderr(err):
+            km._push_session_now(S2)
+        self.assertTrue(self._frames(c, "tabOrder"), "the per-session push's strip ships")
+        self.assertEqual((_row(c, S2)["userTodos"], _row(c, S3)["userTodos"]), (1, 0))
+        del c["_frames"][:]
+        c["sent"].pop(("taborder",), None)
+        without_s4 = [s for s in km._chat_tab_sessions(0, {}) if s["sid"] != S4]   # a set without the id: the honest True
+        with mock.patch.object(km, "_chat_tab_sessions", lambda now, live_map: list(without_s4)), \
+                contextlib.redirect_stderr(err):
+            took = km._confirm_close_now(S4)
+        self.assertTrue(took, "the close confirmation answers True (the fresh set is without the id): the fault did not turn it False")
+        self.assertTrue(self._frames(c, "tabOrder"), "the confirmation's strip ships")
+        self.assertEqual((_row(c, S2)["userTodos"], _row(c, S3)["userTodos"]), (1, 0))
+        self.assertEqual(len(said()), 1, "three senders, one line: said once per episode")
+        self.assertNotIn("Traceback", err.getvalue())
+        # the episode ends when the gate reads again: with the marker gone S3 counts its row, and a second fault is said again
+        (gone / (S3 + ".json")).unlink()
+        del c["_frames"][:]
+        c["sent"].pop(("taborder",), None)
+        km._push([c])
+        self.assertEqual(_row(c, S3)["userTodos"], 1, "the gate reads clean again: the row counts")
+        (gone / (S3 + ".json")).write_text('{"t": [1]}')                # the other malformed shape (a list: TypeError)
+        del c["_frames"][:]
+        c["sent"].pop(("taborder",), None)
+        err2 = io.StringIO()
+        with contextlib.redirect_stderr(err2):
+            km._push([c])
+        self.assertEqual(_row(c, S3)["userTodos"], 0)
+        self.assertEqual(sum(1 for ln in err2.getvalue().splitlines() if ln.startswith("user-todos:") and S3[:8] in ln), 1,
+                         "a new episode is said once more")
 
     def test_the_helper_reads_the_switch_and_the_store_once_and_gates_only_a_nonzero_count(self):
         km._add_user_todo(S3, "Need the auth-scheme decision")

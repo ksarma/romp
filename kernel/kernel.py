@@ -6647,6 +6647,9 @@ def _tab_order_frame(order, tabs, live, c=None):
     return fr
 
 
+_TAB_META_GATE_NOTED = set()        # sids whose ended gate raised inside _tab_meta (one stderr line per episode)
+
+
 def _tab_meta(chat_list):
     """The `tabs` rows of the tabOrder frame, one per listed session, for its three senders (_push, _push_session_now,
     _confirm_close_now): id, name, colour, emoji and `userTodos`, the count of the session's open user todos. The rule
@@ -6659,15 +6662,32 @@ def _tab_meta(chat_list):
     switch is read ONCE here, not per tab (_user_todos_on reads its file on every call), the store once (the
     mtime-cached dict), and the ended gate runs only for a sid with a nonzero count. Store values only, like every
     field of the row: the strip is deduped per client on content, so a filed, answered, dismissed or withdrawn todo
-    re-sends it on the _push_soon every store mutation ends in, and an unchanged roster costs nothing."""
+    re-sends it on the _push_soon every store mutation ends in, and an unchanged roster costs nothing. The ended gate is
+    CONTAINED per sid: a raise from it (a reg-less sid's malformed death marker or states
+    row) makes that sid's count read 0, said once on stderr per episode, and the other rows ship, in every sender;
+    uncontained, one bad marker aborted every client's whole push each cycle in _push, dropped _push_session_now's
+    per-session push and made _confirm_close_now answer False (the board-freeze lesson of 2026-09-06, which _push's
+    per-session catch around build_session already applies; tests/test_user_todos_roster.py drives all three senders)."""
     on = _user_todos_on()
     store = _user_todos() if on else {}
     rows = []
     for s in chat_list:
         sid = s["sid"]
         n = sum(1 for t in (store.get(sid) or []) if _user_todo_open(t)) if on else 0
-        if n and not _user_todos_shown(sid):
-            n = 0                                    # an ended session's todos are hidden, here as on every surface
+        if n:
+            try:
+                shown = _user_todos_shown(sid)       # the one ended gate, run for a sid with open rows alone
+            except Exception as e:
+                shown = False                        # contained per sid (the docstring): this row reads 0, the rest ship
+                if sid not in _TAB_META_GATE_NOTED:
+                    _TAB_META_GATE_NOTED.add(sid)
+                    sys.stderr.write("user-todos: the ended gate for %s raised inside the tab roster; its count reads 0 "
+                                     "until the read succeeds, and the other rows ship (said once per episode): %s: %s\n"
+                                     % (sid[:8], type(e).__name__, e))
+            else:
+                _TAB_META_GATE_NOTED.discard(sid)    # a gate that reads again ends the episode: a later fault speaks again
+            if not shown:
+                n = 0                                # an ended session's todos are hidden, here as on every surface
         rows.append({"id": sid, "name": s.get("name", ""), "color": _name_color(sid),
                      "emoji": _name_emoji(sid),      # the fork's session label (#246)
                      "userTodos": n})
