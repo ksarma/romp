@@ -3167,6 +3167,18 @@ def _ctor_module(unit, call):
     return unit.module.import_names.get(head.id, head.id).split(".")[0]
 
 
+def _ctor_class(unit, call):
+    """The class a receiver's construction names, through the unit's imports for a bare name (`Q()` under `from queue import
+    Queue as Q` is a Queue; `MpEvent()` under `from multiprocessing import Event as MpEvent` an Event): the attribute of a
+    dotted construction (threading.Event()), else the imported name's last part, else the name as written."""
+    f = call.func
+    if isinstance(f, ast.Attribute):
+        return f.attr
+    if isinstance(f, ast.Name):
+        return unit.module.import_names.get(f.id, f.id).split(".")[-1]
+    return None
+
+
 def _event_method_rule(name):
     """The checker for an Event's set / clear / is_set: bounded on a threading.Event() (the flag under a lock its own methods
     hold briefly; wait releases it while waiting; set's notify_all is a threading Condition's, no handshake) and on an
@@ -3176,7 +3188,7 @@ def _event_method_rule(name):
     name."""
     def rule(unit, ctor, call):
         mod = _ctor_module(unit, call) if call is not None else None
-        ctor_name = _callee_name(call) if call is not None else None
+        ctor_name = _ctor_class(unit, call) if call is not None else None
         if ctor_name == "Event" and mod == "threading":
             return "bounded", ("%s of a threading.Event() returns: the flag under a lock its own methods hold briefly (wait releases it while "
                                "waiting), set's notify_all a threading Condition's with no handshake" % name)
@@ -3201,7 +3213,7 @@ def _queue_method_rule(name):
     construction the walk cannot name."""
     def rule(unit, ctor, call):
         mod = _ctor_module(unit, call) if call is not None else None
-        ctor_name = _callee_name(call) if call is not None else None
+        ctor_name = _ctor_class(unit, call) if call is not None else None
         if mod == "queue" and ctor_name in ("Queue", "LifoQueue", "PriorityQueue", "SimpleQueue"):
             return "bounded", ("%s of a queue.%s() returns: Full or Empty raised at once, else the item, under a mutex every method holds "
                                "briefly (a blocking put or get waits on a Condition with it released)" % (name, ctor_name))
