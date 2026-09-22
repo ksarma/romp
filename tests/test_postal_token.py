@@ -36,6 +36,7 @@ import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from romp_load import load_source
+from tests.conftest import restore_env
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -46,7 +47,6 @@ os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 _SESS = os.path.join(os.environ["XDG_STATE_HOME"], "sessions.json")
 Path(_SESS).write_text("[]")
-os.environ["ROMP_SESSIONS_FILE"] = _SESS
 # An INVENTED token, assigned (not setdefault) for the load only: with the runner's own ROMP_SERVE_TOKEN
 # exported, TOK was that real token, and _PostalTokenFile._restore wrote it to disk under the test's
 # state dir (review find, 2026-09-08). Nothing real ever reaches this file now. The variable is put
@@ -78,7 +78,20 @@ def _code(port, path, headers=None, method="GET", data=None):
         return e.code
 
 
-class BusTokenGate(unittest.TestCase):
+class _Seam(unittest.TestCase):
+    """The sessions-file seam, per test (2026-09-22): the bus reads ROMP_SESSIONS_FILE at call time, and until now this
+    module wrote it at import, which held for every test in the process and for every child any test spawned (a real
+    bus started from another module's test inherited such a seam and, with one live row to count, never autostopped:
+    fork PR #813's CI). Set here for each test and put back by a cleanup registered right after the write
+    (tests/README.md; tests/test_hermetic_kernel_postal.py holds the repo-wide rule)."""
+
+    def setUp(self):
+        prior = os.environ.get("ROMP_SESSIONS_FILE")
+        os.environ["ROMP_SESSIONS_FILE"] = _SESS
+        self.addCleanup(restore_env, "ROMP_SESSIONS_FILE", prior)
+
+
+class BusTokenGate(_Seam):
     @classmethod
     def setUpClass(cls):
         cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), ps.Handler)
@@ -113,7 +126,7 @@ class BusTokenGate(unittest.TestCase):
         self.assertEqual(_code(self.port, "/peers?token=wrong"), 403)
 
 
-class PeerTokenPlumbing(unittest.TestCase):
+class PeerTokenPlumbing(_Seam):
     def test_peer_update_stores_token_and_down_notify_keeps_it(self):
         ps.peer_update({"host": "TESTHOST", "port": 45001, "up": True, "token": "peer-tok"})
         self.assertEqual(ps.PEERS["TESTHOST"]["token"], "peer-tok")
@@ -147,7 +160,7 @@ class PeerTokenPlumbing(unittest.TestCase):
         self.assertEqual(seen.get("path"), "/peer-exchange?token=peer-tok")
 
 
-class _BusServer(unittest.TestCase):
+class _BusServer(_Seam):
     """A live bus for the request-body classes below (no tests of its own): one server per class."""
 
     @classmethod
@@ -330,13 +343,14 @@ def _mode(p):
     return stat.S_IMODE(os.stat(p).st_mode)
 
 
-class _PostalTokenFile(unittest.TestCase):
+class _PostalTokenFile(_Seam):
     """Drives _load_serve_token against the file the kernel mints (STATE.parent / "serve-token").
     SERVE_TOKEN, the module constant the gate compares against, is the invented TOK from import and
     is not touched; each case ends by putting TOK back so the file and the constant agree again. The
     umask is 0 so only the loader's own modes protect what it writes."""
 
     def setUp(self):
+        super().setUp()
         self.f = ps.STATE.parent / "serve-token"
         self.lock = self.f.with_name("serve-token.lock")
         # The fixture owns its state directory (T274, 2026-09-08): the module's XDG_STATE_HOME is a fresh temp dir,
@@ -627,7 +641,7 @@ _RCP = "22222222-3333-4444-5555-666666666666"
 _SND = "11111111-2222-3333-4444-555555555555"
 
 
-class _LiveBus(unittest.TestCase):
+class _LiveBus(_Seam):
     """A real ThreadingHTTPServer on ps.Handler: the routes below are pinned by their HTTP answers,
     not by calling read_box / deliver directly — the defects were in what the socket saw."""
 
@@ -643,6 +657,7 @@ class _LiveBus(unittest.TestCase):
         cls.srv.server_close()
 
     def setUp(self):
+        super().setUp()
         self._saved = (ps.TLDIR, ps._log, ps.resolve_recipient)
         self.logged = []
         ps._log = lambda m: self.logged.append(m)

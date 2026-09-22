@@ -14,6 +14,7 @@ import os
 import re
 import sys
 import tempfile
+import threading
 import time
 import types
 import unittest
@@ -8551,22 +8552,44 @@ class PostalPeerTunnels(unittest.TestCase):
     def test_notify_bus_peer_is_guarded(self):
         saved = km.BUS_PORT
         km.BUS_PORT = 1                    # nothing listens here → refused instantly
-        # the refusal kicks the bus revive, which runs the postal service's ensure with THIS process's environment: for
-        # the call's duration the process is client-only with peers off and names a port nothing can bind, so no bus is
-        # ever started (2026-09-10: a hermetic bus reached the machine's fixed port from exactly this test while the real
-        # bus was down for a restart); restored after, whatever the outcome
+        # The refusal kicks the bus revive on a thread, which runs the postal service's ensure with THIS process's
+        # environment. Two guards, each enough on its own (the reviewer's ruling on fork PR #813's finding, 2026-09-22).
+        # The revive road is STUBBED: km.subprocess.run records the argv and starts nothing, and the test waits for the
+        # recorder (an Event the stub sets) before it asserts, so the child a real run would have started is known never
+        # to have been attempted, and a revive no longer attempted at all fails the argv assertion instead of passing by
+        # silence. Before this the thread raced the restore below and the restore won: the child inherited another
+        # module's module-level port (the run's own, so the bus's fixed-port belt licensed the bind) and client-only
+        # (inert with peers on) and started a real bus that outlived the run, writing into a shared state root every 30 s
+        # (the 3.10 cell of that PR's CI). And the trio: for the call's duration the process is client-only with peers
+        # off and names a port nothing can bind, so even an unstubbed ensure would start nothing (2026-09-10: a hermetic
+        # bus reached the machine's fixed port from exactly this test while the real bus was down for a restart);
+        # restored after, whatever the outcome.
         env_saved = {k: os.environ.get(k) for k in ("ROMP_POSTAL_CLIENT_ONLY", "ROMP_POSTAL_PEERS", "ROMP_POSTAL_PORT")}
         os.environ.update(ROMP_POSTAL_CLIENT_ONLY="1", ROMP_POSTAL_PEERS="0", ROMP_POSTAL_PORT="1")
+        revived = threading.Event()
+        argvs = []
+        real_run = km.subprocess.run
+
+        def fake_run(argv, **kw):
+            argvs.append([str(a) for a in argv])
+            revived.set()
+            return km.subprocess.CompletedProcess(argv, 0, "", "")
+        km.subprocess.run = fake_run
         try:
             self.assertFalse(km._notify_bus_peer("TESTHOST", 50002, True),
                              "postal down → False, never an exception (the supervisor must survive)")
+            self.assertTrue(revived.wait(10), "the refusal kicks the bus revive, which runs the postal service's ensure (stubbed here)")
         finally:
+            km.subprocess.run = real_run
             km.BUS_PORT = saved
-            for k, v in env_saved.items():
-                if v is None:
+            for k in ("ROMP_POSTAL_CLIENT_ONLY", "ROMP_POSTAL_PEERS", "ROMP_POSTAL_PORT"):
+                if env_saved[k] is None:
                     os.environ.pop(k, None)
                 else:
-                    os.environ[k] = v
+                    os.environ[k] = env_saved[k]
+        self.assertEqual(len(argvs), 1, "one ensure per refusal (the revive is single-flight): %r" % (argvs,))
+        self.assertTrue(argvs[0][1].endswith("bin/romp-postal-service"), "the revive runs the postal service by absolute path: %r" % (argvs[0],))
+        self.assertEqual(argvs[0][2], "ensure", argvs[0])
 
 
 class CheckinMechanics(unittest.TestCase):

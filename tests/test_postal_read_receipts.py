@@ -22,11 +22,9 @@ BIN = os.path.join(os.path.dirname(HERE), "bin")
 
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-os.environ["ROMP_POSTAL_HOST"] = "TESTHOST"
 _SESS = os.path.join(os.environ["XDG_STATE_HOME"], "sessions.json")
 Path(_SESS).write_text(json.dumps([{"id": "sess-web", "name": "web", "dir": "/tmp/notes-api",
                                     "state": "waiting", "working": ""}]))
-os.environ["ROMP_SESSIONS_FILE"] = _SESS
 ps = load_source("romp_postal_read_receipts", os.path.join(BIN, "romp-postal-service"))
 
 _MIDS = iter("px-%05d.mail.peerbox" % i for i in range(10000))
@@ -53,12 +51,25 @@ def _resp(host, **kw):
     return r
 
 
-class _Base(unittest.TestCase):
+class _Seam(unittest.TestCase):
+    """The sessions-file seam, per test (2026-09-22): the bus reads ROMP_SESSIONS_FILE at call time, and until now this
+    module wrote it at import, which held for every test in the process and for every child any test spawned (a real
+    bus started from another module's test inherited such a seam and, with one live row to count, never autostopped:
+    fork PR #813's CI). Set here for each test and put back by a cleanup registered right after the write
+    (tests/README.md; tests/test_hermetic_kernel_postal.py holds the repo-wide rule). ROMP_POSTAL_HOST, the bus's own name, is the same kind of seam and goes the same way."""
+
     def setUp(self):
-        # the sessions-file seam is read per call, so the import-time assignment above holds only until
-        # another module's test changes it: bind this module's file for the duration of each test
-        self._prior_seam = os.environ.get("ROMP_SESSIONS_FILE")
+        prior = os.environ.get("ROMP_SESSIONS_FILE")
         os.environ["ROMP_SESSIONS_FILE"] = _SESS
+        self.addCleanup(restore_env, "ROMP_SESSIONS_FILE", prior)
+        prior_host = os.environ.get("ROMP_POSTAL_HOST")
+        os.environ["ROMP_POSTAL_HOST"] = "TESTHOST"
+        self.addCleanup(restore_env, "ROMP_POSTAL_HOST", prior_host)
+
+
+class _Base(_Seam):
+    def setUp(self):
+        super().setUp()                              # the sessions-file seam and the bus's name, per test, put back by cleanups
         os.environ["ROMP_POSTAL_PEERS"] = "1"
         ps.PEERS.clear()
         ps.PEER_STATE.clear()
@@ -72,7 +83,6 @@ class _Base(unittest.TestCase):
 
     def tearDown(self):
         os.environ.pop("ROMP_POSTAL_PEERS", None)
-        restore_env("ROMP_SESSIONS_FILE", self._prior_seam)
 
     def _trusted_peer(self, host="boxalias"):
         ps.peer_update({"host": host, "port": 19999, "up": True, "trust": "trusted"})

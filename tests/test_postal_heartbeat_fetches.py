@@ -19,6 +19,7 @@ import threading
 import time
 import unittest
 from romp_load import load_source
+from tests.conftest import restore_env
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -37,21 +38,32 @@ Path(_SESS).write_text(json.dumps([
     {"id": API, "name": "api", "dir": "", "state": "idle", "working": "", "lastSid": ""},
     {"id": THREAD, "name": "web-t1", "dir": "", "state": "working", "working": "", "lastSid": "",
      "thread": True, "parent": WEB}]))
-os.environ["ROMP_SESSIONS_FILE"] = _SESS
 pm = load_source("romp_postal_hb_fetches", os.path.join(BIN, "romp-postal-service"))
 
 
-class Counting(unittest.TestCase):
+class _Seam(unittest.TestCase):
+    """The sessions-file seam, per test (2026-09-22): the bus reads ROMP_SESSIONS_FILE at call time, and until now this
+    module wrote it at import, which held for every test in the process and for every child any test spawned (a real
+    bus started from another module's test inherited such a seam and, with one live row to count, never autostopped:
+    fork PR #813's CI). Set here for each test and put back by a cleanup registered right after the write
+    (tests/README.md; tests/test_hermetic_kernel_postal.py holds the repo-wide rule)."""
+
+    def setUp(self):
+        prior = os.environ.get("ROMP_SESSIONS_FILE")
+        os.environ["ROMP_SESSIONS_FILE"] = _SESS
+        self.addCleanup(restore_env, "ROMP_SESSIONS_FILE", prior)
+
+
+class Counting(_Seam):
     """Every listing fetch is counted; the bus is stubbed at _http and answers what each test says."""
 
     def setUp(self):
-        # os.environ is process-wide: other modules in the same pytest worker pop or repoint the seam
-        # between tests, so pin both env halves here and put them back after (the self-identity test's idiom)
-        self._env = (os.environ.get("CLAUDE_CODE_SESSION_ID"), os.environ.get("ROMP_SESSIONS_FILE"),
-                     os.environ.get("ROMP_POSTAL_PEERS"), os.environ.get("CODEX_THREAD_ID"))
+        super().setUp()                                         # the sessions-file seam, put back by a cleanup
+        # os.environ is process-wide: other modules in the same pytest worker pop or repoint the identity names
+        # between tests, so pin them here and put them back after (the self-identity test's idiom)
+        self._env = (os.environ.get("CLAUDE_CODE_SESSION_ID"), os.environ.get("ROMP_POSTAL_PEERS"), os.environ.get("CODEX_THREAD_ID"))
         os.environ["CLAUDE_CODE_SESSION_ID"] = WEB
         os.environ.pop("CODEX_THREAD_ID", None)   # the second identity source (a Codex shell's variable): the no-identity cases below need both absent
-        os.environ["ROMP_SESSIONS_FILE"] = _SESS
         os.environ.pop("ROMP_POSTAL_PEERS", None)               # peer mode, the default; legacy tests set 0
         pm._LOCAL_CONFIRMED[0] = False                          # a fresh MCP process
         self._saved = (pm._kernel_sessions_checked, pm._http, pm.ensure)
@@ -67,8 +79,7 @@ class Counting(unittest.TestCase):
     def tearDown(self):
         pm._kernel_sessions_checked, pm._http, pm.ensure = self._saved
         pm._LOCAL_CONFIRMED[0] = False
-        for key, val in zip(("CLAUDE_CODE_SESSION_ID", "ROMP_SESSIONS_FILE", "ROMP_POSTAL_PEERS", "CODEX_THREAD_ID"),
-                            self._env):
+        for key, val in zip(("CLAUDE_CODE_SESSION_ID", "ROMP_POSTAL_PEERS", "CODEX_THREAD_ID"), self._env):
             if val is None:
                 os.environ.pop(key, None)
             else:

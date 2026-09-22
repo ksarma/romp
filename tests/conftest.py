@@ -6,11 +6,13 @@ test module, so this is a suite-wide floor; per-class _rebind_state/tempdir isol
 top exactly as before."""
 import atexit
 import importlib.util
+import json
 import os
 import re
 import shutil
 import sys
 import tempfile
+import time
 
 import pytest
 from _pytest._code.code import ReprExceptionInfo, ReprFileLocation, ReprTracebackNative
@@ -67,6 +69,166 @@ def _remove_run_dirs(report=False):
 atexit.register(_remove_run_dirs)
 
 
+# No process of the run outlives the run (2026-09-22, the reviewer's ruling on fork PR #813's finding). A test that
+# starts a process and does not stop it leaves one that holds the run's temp root: a real postal bus started from the
+# peer-notify guard test's revive road (a detached child, its own session, so the test's end never reached it) kept
+# writing into a shared state root every 30 s and turned another module's snapshot test red in one CI cell, and orphan
+# test kernels have outlived whole sweeps by days; the kernel's dead-root sweep reaps roots, never processes. So the
+# controller's session end reads /proc for every live process whose environment carries a value that is one of this
+# run's roots or a path under one (a ':'-joined value counted per component), or whose cwd is under one, and if any
+# remain the run is RED and each is named: pid, parent, command line, the names it holds the root through, and the
+# test that started it (PYTEST_CURRENT_TEST, inherited from the test process's environment at the spawn). Keyed on that
+# PROPERTY and never on a binary's name: a bus, a kernel, a session host, a mock ssh's sleep are all the same leak.
+# The roots are the controller's and every root a nested process minted beside it and listed in the controller's
+# `romp-tests-children` (an xdist worker, a nested pytest), read recursively, so a worker's leaked child is the
+# controller's finding; the workers themselves skip the check, and are gone when it runs (xdist's DSession tears its
+# nodes down in its own sessionfinish, which precedes this trylast one; a worker that lingered would be reported by its
+# command line, a visible red and not a silent miss). Events over heuristics: a child a test signalled and did
+# not wait for is legitimately EXITING at session end, so the check waits for the one event it can observe, the pid's
+# exit, and reports whatever still holds a root when the wait ends. A bound remains because a process that never exits
+# has no event to wait for; LEAK_EXIT_BOUND_S is longer than a signalled child takes to exit on the box (the leaked bus
+# of the reproduction was gone within a second of its SIGTERM) and costs a clean run nothing, since the wait starts only
+# when a holder is seen. The check never kills: the pid it names is the developer's to stop (a bus by its server.pid), and
+# a kill from here would be a destructive action on a report the developer has not read. Another user's process has an
+# unreadable environ and is counted, not judged; a platform without procfs says so once and runs no check.
+# tests/test_run_end_leaked_processes.py pins the scan, the wait, the roots and the red run end by execution.
+LEAK_EXIT_BOUND_S = 5.0
+
+
+def _run_roots(root=None, depth=3):
+    """This run's temp roots: `root` (the controller's by default) and, from `<root>/romp-tests-children`, every root a
+    nested process minted beside it, recursively to `depth`. A line that is not a record is passed over."""
+    root = root or _TMP_ROOT
+    roots = [root]
+    try:
+        with open(os.path.join(root, _tests.TEST_ROOT_CHILDREN), encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+    except OSError:
+        return roots
+    for line in lines:
+        try:
+            child = json.loads(line)["root"]
+        except (ValueError, KeyError, TypeError):
+            continue
+        if depth > 0 and isinstance(child, str) and child not in roots:
+            roots += [r for r in _run_roots(child, depth - 1) if r not in roots]
+    return roots
+
+
+def _under(path, roots):
+    return bool(path) and any(path == r or path.startswith(r + os.sep) for r in roots)
+
+
+def _processes_holding(roots, skip_pids=()):
+    """(holders, unreadable, procfs read): every live process (not this one, not a zombie, not in `skip_pids`) whose
+    environment carries a value that is one of `roots` or a path under one (a ':'-joined value counted per component),
+    or whose cwd is under one. Each holder is a dict: pid, ppid, cmd, via (the environment names, and "cwd"), cwd, test
+    (its PYTEST_CURRENT_TEST, or ""). The environment read is the one the process was STARTED with (/proc shows the
+    initial block, not later putenv calls), which is what a child inherits and so exactly the property judged.
+    `unreadable` counts the processes whose environ could not be read (another user's), which are counted and not
+    judged; the third value is False where there is no procfs to read."""
+    roots = [r.rstrip(os.sep) for r in roots if r]
+    me = os.getpid()
+    holders, unreadable = [], 0
+    try:
+        pids = [int(d) for d in os.listdir("/proc") if d.isdigit()]
+    except OSError:
+        return holders, unreadable, False
+    for pid in pids:
+        if pid == me or pid in skip_pids:
+            continue
+        try:
+            with open("/proc/%d/stat" % pid, "rb") as fh:
+                stat = fh.read()
+            tail = stat[stat.rindex(b")") + 1:].split()
+            state, ppid = tail[0].decode("ascii", "replace"), int(tail[1])
+            if state == "Z":
+                continue                    # exited, not yet reaped: holds nothing
+            with open("/proc/%d/environ" % pid, "rb") as fh:
+                raw = fh.read()
+        except PermissionError:
+            unreadable += 1
+            continue
+        except (OSError, ValueError, IndexError):
+            continue                        # gone between the listing and the read, or a kernel thread
+        env = {}
+        for item in raw.split(b"\0"):
+            k, sep, v = item.partition(b"=")
+            if sep:
+                env[k.decode("utf-8", "replace")] = v.decode("utf-8", "replace")
+        via = sorted(k for k, v in env.items() if any(_under(part, roots) for part in v.split(os.pathsep)))
+        try:
+            cwd = os.readlink("/proc/%d/cwd" % pid)
+        except OSError:
+            cwd = ""
+        if _under(cwd, roots):
+            via.append("cwd")
+        if not via:
+            continue
+        try:
+            with open("/proc/%d/cmdline" % pid, "rb") as fh:
+                cmd = fh.read().replace(b"\0", b" ").decode("utf-8", "replace").strip()
+        except OSError:
+            cmd = ""
+        holders.append({"pid": pid, "ppid": ppid, "cmd": cmd, "via": via, "cwd": cwd, "test": env.get("PYTEST_CURRENT_TEST", "")})
+    return holders, unreadable, True
+
+
+def _pid_present(pid):
+    try:
+        with open("/proc/%d/stat" % pid, "rb") as fh:
+            stat = fh.read()
+        return stat[stat.rindex(b")") + 1:].split()[0] != b"Z"
+    except (OSError, ValueError, IndexError):
+        return False
+
+
+def _leaked_run_processes(roots, bound_s=LEAK_EXIT_BOUND_S):
+    """(holders still present, unreadable, procfs read): the processes holding `roots` after every holder seen first has
+    been given until `bound_s` to exit (the event waited for is the pid's exit; the wait ends the moment the last one
+    is gone). Nothing waits when nothing holds."""
+    holders, unreadable, ok = _processes_holding(roots)
+    if not ok or not holders:
+        return holders, unreadable, ok
+    deadline = time.monotonic() + bound_s
+    pending = {h["pid"] for h in holders}
+    while pending and time.monotonic() < deadline:
+        pending = {pid for pid in pending if _pid_present(pid)}
+        if pending:
+            time.sleep(0.05)
+    return _processes_holding(roots)
+
+
+def _say_at_run_end(session, text):
+    tr = session.config.pluginmanager.get_plugin("terminalreporter")
+    if tr is not None:
+        tr.ensure_newline()
+        for line in text.splitlines():
+            tr.write_line(line)
+    else:
+        print(text, file=sys.stderr)
+
+
+def _report_leaked_run_processes(session):
+    """The controller's run-end check (the comment above LEAK_EXIT_BOUND_S): name every process of the run that still
+    holds one of its roots and make the run red."""
+    leaked, unreadable, ok = _leaked_run_processes(_run_roots())
+    if not ok:
+        _say_at_run_end(session, "[tests] the run-end process check reads /proc and did not run on this platform")
+        return
+    if not leaked:
+        return
+    lines = ["[tests] %d process(es) of this run still hold its temp root at run end, %.0f s after the run finished waiting for "
+             "them to exit: a test started them and did not stop them; the run is red. %d environment(s) of other users' "
+             "processes could not be read and were not judged." % (len(leaked), LEAK_EXIT_BOUND_S, unreadable)]
+    for h in leaked:
+        lines.append("[tests]   pid %d (parent %d): %s | holds the root through %s | started under %s" % (
+            h["pid"], h["ppid"], h["cmd"][:240] or "(no command line)", ", ".join(h["via"]),
+            h["test"] or "no test (PYTEST_CURRENT_TEST is not in its environment)"))
+    _say_at_run_end(session, "\n".join(lines))
+    session.exitstatus = max(int(session.exitstatus or 0), 1)
+
+
 @pytest.hookimpl(trylast=True)
 def pytest_sessionfinish(session, exitstatus):
     """The in-process half (tests/__init__.py): remove every directory this process made through
@@ -75,12 +237,15 @@ def pytest_sessionfinish(session, exitstatus):
     pytest's own runner sessionfinish has performed the deferred teardown an interrupted run leaves
     behind, so nothing is swept from under a fixture still closing. The package's atexit hook does the
     same at interpreter exit; both are idempotent, and pytest_unconfigure below takes the root itself
-    afterwards."""
+    afterwards. Then, in the controller alone (a worker's roots are among the controller's), the run-end
+    process check above: a process of the run that still holds one of its roots makes the run red."""
     try:
         from tests import remove_made_dirs
     except Exception:
         return
     remove_made_dirs()
+    if not hasattr(session.config, "workerinput"):
+        _report_leaked_run_processes(session)
 
 
 def pytest_unconfigure(config):
@@ -298,10 +463,15 @@ def _dead_manager_port():
     entire run phase, erasing the floor for every test after it. Re-assert per test: no
     module-level write can outlive collection against this. The kernel's port, both spellings, is
     re-asserted the same way; a test that needs a port of its own sets it in setUp or passes it
-    to the process it starts."""
+    to the process it starts. The postal bus port is re-asserted UNSET the same way (2026-09-22): the
+    import-time pop above held only until a module wrote the port at collection, and with the run's
+    marker beside it that name licensed a stray revive's child to bind a real bus from inside another
+    module's test (fork PR #813's CI); a test that wants a bus port of its own sets it in setUp, after
+    this, beside the kernel's BUS_PORT if it loaded the kernel in-process (tests/test_kernel_tunnels.py)."""
     os.environ["ROMP_MANAGER_PORT"] = "1"
     os.environ["ROMP_KERNEL_PORT"] = "1"
     os.environ["ROMP_SERVE_PORT"] = "1"
+    os.environ.pop("ROMP_POSTAL_PORT", None)
     yield
 
 

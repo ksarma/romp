@@ -16,6 +16,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from romp_load import load_source
+from tests.conftest import restore_env
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -27,11 +28,9 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-os.environ["ROMP_POSTAL_HOST"] = "TESTHOST"
 _SESS = os.path.join(os.environ["XDG_STATE_HOME"], "sessions.json")
 Path(_SESS).write_text(json.dumps([{"id": "sess-web", "name": "web", "dir": "/tmp/notes-api",
                                     "state": "waiting", "working": ""}]))
-os.environ["ROMP_SESSIONS_FILE"] = _SESS
 ps = load_source("romp_postal_tracked", os.path.join(BIN, "romp-postal-service"))
 jd = load_source("romp_judge_tracked", os.path.join(BIN, "romp-judge"))
 
@@ -61,7 +60,23 @@ def aline(t, text, uuid, parent):
                         "stop_reason": "end_turn"}}
 
 
-class PostalTrackedWire(unittest.TestCase):
+class _Seam(unittest.TestCase):
+    """The sessions-file seam, per test (2026-09-22): the bus reads ROMP_SESSIONS_FILE at call time, and until now this
+    module wrote it at import, which held for every test in the process and for every child any test spawned (a real
+    bus started from another module's test inherited such a seam and, with one live row to count, never autostopped:
+    fork PR #813's CI). Set here for each test and put back by a cleanup registered right after the write
+    (tests/README.md; tests/test_hermetic_kernel_postal.py holds the repo-wide rule). ROMP_POSTAL_HOST, the bus's own name, is the same kind of seam and goes the same way."""
+
+    def setUp(self):
+        prior = os.environ.get("ROMP_SESSIONS_FILE")
+        os.environ["ROMP_SESSIONS_FILE"] = _SESS
+        self.addCleanup(restore_env, "ROMP_SESSIONS_FILE", prior)
+        prior_host = os.environ.get("ROMP_POSTAL_HOST")
+        os.environ["ROMP_POSTAL_HOST"] = "TESTHOST"
+        self.addCleanup(restore_env, "ROMP_POSTAL_HOST", prior_host)
+
+
+class PostalTrackedWire(_Seam):
     """The flag's one durable record is the sent row — additive, delegate-only, prose-free."""
 
     def test_deliver_row_carries_tracked(self):
@@ -101,10 +116,11 @@ class PostalTrackedWire(unittest.TestCase):
         self.assertIn("--tracked is for delegations only", PSRC, "…and refuses non-delegate kinds loudly")
 
 
-class CourierTracked(unittest.TestCase):
+class CourierTracked(_Seam):
     """The courier marks both sides from the row — or neither, when demoted or non-local."""
 
     def setUp(self):
+        super().setUp()
         # chain-rooted minting (2026-08-25) gates recipient tops on a user-rooted sender chain —
         # ORTHOGONAL to this file's subject, so the gate is held open here; its own truth table
         # lives in tests/test_chain_rooted_minting.py
@@ -217,7 +233,7 @@ class CourierTracked(unittest.TestCase):
                         "the recipient's completion checks the tracked primary off — same event as ever")
 
 
-class FeedPayloadPins(unittest.TestCase):
+class FeedPayloadPins(_Seam):
     """build_feed's card shape, pinned at source (the build_feed internals idiom): the primary
     carries delegTracked identities, the satellite carries its mark, and BOTH ship only when
     present so untracked payloads (and the goldens over them) stay byte-identical."""
