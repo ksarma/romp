@@ -5839,7 +5839,9 @@ class ParseCacheRetention(unittest.TestCase):
     off, restored by the cleanup registered before it, not a speed measure. Every key a case derives is this class's own,
     never the census's, so these run in any worker and need no tree. The fifteenth pass (2026-09-22) added, from its
     verification's findings, the pin on THE RULE FOR A BUILD: the census's own build (_Tree) over a plant, built directly
-    with the collector off, leaves gc.collect() nothing to reclaim, since a cycle a build drops is frozen with its result."""
+    with the collector off, leaves gc.collect() nothing to reclaim, since a cycle a build drops is frozen with its result;
+    and the pin on the EXIT-STATE RULE's two corners for a build that switches the collector itself: found on, handed
+    back on whatever the build did; found off, left as the build left it, with no gc.enable() call by the helper."""
     KEY = ("tests/test_thread_stop_census.py", "a planted key of ParseCacheRetention")
 
     def _restore_collector(self):
@@ -6014,6 +6016,51 @@ class ParseCacheRetention(unittest.TestCase):
         self.assertEqual(during, [0], "a full collection ran inside the build (%d chunks; the same allocation outside triggered one): "
                                       "the helper did not hold the collector off" % (2 * k))
         self.assertEqual(len(value), 2 * k)
+
+    def test_a_build_that_switches_the_collector_is_handed_back_on_when_found_on_and_as_it_left_it_when_found_off(self):
+        """The exit-state rule's two corners (tests/parse_cache.py's docstring; the fifteenth pass's verification, 2026-09-22,
+        found the fourteenth's wording contradictory on both): a collector found ON is handed back on whatever the build did
+        to it; a collector found OFF is left as the build left it, the helper never calling gc.enable() for it. Found on: the
+        build calls gc.enable() then gc.disable() and returns with the collector off; after the call it is on (the finally's
+        re-enable reads the state found, not the build's). Found off (planted, the re-enable registered as a cleanup first):
+        the build calls gc.enable() and returns with it on; after the call it is on, and gc.enable ran ONCE in the call, the
+        build's own: gc.enable is counted through a wrapper installed for that call alone, its removal registered before
+        the swap (the helper reads gc.enable at call time). THE PLANT: a finally that hands back the state the build left
+        reds the first corner (off after); one that re-enables unconditionally reds the second (two gc.enable calls)."""
+        self.assertTrue(gc.isenabled(), "the case reads both corners from the on state pytest runs in")
+        self._restore_collector()
+        on_key = self.KEY + ("found on: the build enables, then disables",)
+        off_key = self.KEY + ("found off: the build enables",)
+        self.addCleanup(PC.clear, on_key, off_key)
+        seen = []
+
+        def enables_then_disables():
+            gc.enable()
+            gc.disable()
+            seen.append(gc.isenabled())
+            return object()
+        PC.derived(on_key, enables_then_disables)
+        self.assertEqual(seen, [False], "the build left the collector off")
+        self.assertTrue(gc.isenabled(), "found on: handed back on, whatever the build did to it")
+        gc.disable()                                              # the planted caller state, its restore registered above
+        real_enable, calls = gc.enable, []
+
+        def counting_enable():
+            calls.append(True)
+            real_enable()
+        self.addCleanup(setattr, gc, "enable", real_enable)      # BEFORE the swap
+
+        def enables():
+            gc.enable()
+            seen.append(gc.isenabled())
+            return object()
+        gc.enable = counting_enable
+        PC.derived(off_key, enables)
+        gc.enable = real_enable
+        self.assertEqual(seen, [False, True], "the build left the collector on")
+        self.assertTrue(gc.isenabled(), "found off: left as the build left it, on")
+        self.assertEqual(len(calls), 1, "gc.enable ran %d times in the call: the build's one and none by the helper, which enables no "
+                                        "collector it found off" % len(calls))
 
     def _planted_root(self):
         """A root of the census's shape under a fresh temporary directory (removed by a cleanup registered first): tests/ holds
