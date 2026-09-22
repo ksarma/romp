@@ -1096,8 +1096,9 @@ test("every module the page bundles load, read with the compiler: the only write
   // never a floor: the directory's modules no page bundle loads are exactly the seven named below (each imported by tests alone), and the
   // loaded modules outside the directory are exactly the five named below (the timeline panel's prebuilt bundle and four vendored
   // track-changents modules, display.js reached from track-logic.js through the vendored package's own exports map), so a module that
-  // starts or stops being loaded, appears outside the directory or leaves it, is named here or reds. The walk is the loaded set: a module no
-  // page runs mints nothing the kernel receives. The tests are excluded because a test's literal is not a minter the page runs (the bundles
+  // starts or stops being loaded, appears outside the directory or leaves it, is named here or reds, and a module in the directory that a
+  // page bundle loads but the listing's filter hides (a test, a `.d.ts`) reds too. The walk is the loaded set: a module no page runs mints
+  // nothing the kernel receives. The tests are excluded because a test's literal is not a minter the page runs (the bundles
   // are built from the production modules alone), and because this census's own reverse plants and the fixture rows in this file would red
   // it. WHAT IS KEYED ON: the PROPERTY NAME `view` written onto an object, in every form the field census above reads (writeSites) and two
   // of a class's: a literal's member of any kind (a property, a shorthand, a method, an accessor) under an identifier, a string or a computed
@@ -1142,6 +1143,8 @@ test("every module the page bundles load, read with the compiler: the only write
   ];
   assert.deepEqual(listed.filter((m) => !loadedSet.has(m)), UNLOADED, "the modules under ui/webview (recursive) that no page bundle loads are exactly the seven named, each imported by tests alone: a module that stops being loaded, or a named one that starts, or leaves the directory, is named here or reds (" + listed.length + " listed, " + loaded.length + " loaded)");
   assert.deepEqual(loaded.filter((m) => !m.startsWith("ui/webview/")), OUTSIDE, "the modules a page bundle loads from outside ui/webview are exactly the five named: a sixth, or one gone from the bundles, reds here");
+  const listedSet = new Set(listed);
+  assert.deepEqual(loaded.filter((m) => m.startsWith("ui/webview/") && !listedSet.has(m)), [], "a module under ui/webview that a page bundle loads and the listing's filter hides (a `.test.ts`, a `.d.ts`): the two equalities above compare the listed modules with the loaded ones, so a production import of a test module is named here or reds (the author's fixer pass over the pass after the maintainer's round 6, its verifier (a))");
   assert.ok(loadedSet.has("ui/webview/render.ts") && loadedSet.has("ui/webview/scroll-write.ts"), "render.ts and scroll-write.ts are among the loaded modules");
   const modules = loaded;   // the walk IS the derived set
   const c = newViewCensus();
