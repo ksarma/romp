@@ -24,7 +24,14 @@ the kernel's link state gates reachability too: a host whose link the kernel hol
 for absence, so it is unreachable from the down notify (which writes the mirror) until its next beat or
 exchange arrives with the link up; the writer computes `reachable` per row and the reader reads that
 flag, and the two cannot-determine reasons that turn on a source's state name the sources and what makes
-each unreachable (the fourth commit). The fixtures here write the bus's document shape (_bus_wrote) and every test that writes one
+each unreachable (the fourth commit). Since the fifth commit the rule is two-sided (the reviewer's ruling): a
+heard host that is not held down vouches for the PRESENCE of the sids it names (`reachable`, rule 4), and a
+host vouches for the ABSENCE of a sid it does not name (`vouchesAbsence`, rule 5's precondition) only when
+its link is KNOWN UP (a dialable PEERS row up and the host heard since the link last dropped; a legacy
+heartbeat within its TTL vouches as before, having no link), so a heard host with no link state (a host the
+kernel never notified, a far bus filed under the hostname it declares before this bus's own dial folds it
+under the alias the kernel dials) answers cannot-determine for a sid it does not name, as a down host does.
+The fixtures here write the bus's document shape (_bus_wrote) and every test that writes one
 asserts the ladder's verdict, the rule that answered and its reason, so a fixture at a path nothing
 reads turns its test red. SYNTHETIC fixtures only; private synthetic sids; hostname TESTHOST."""
 import contextlib
@@ -60,6 +67,8 @@ REMOTE2 = "a11f0001-1111-4222-8333-000000000004"  # a second remote session, on 
 HOST, HOST2 = "TESTHOST", "TESTHOST2"             # synthetic peer hosts (path-safe names, as the bus keys them)
 CARRIED = "a11f0001-1111-4222-8333-000000000005"  # the sid HOST last named before its bus restarted (a peer row)
 OTHER = "a11f0001-1111-4222-8333-000000000006"    # the sid HOST2 names: the first host the restarted bus hears
+FARSID = "a11f0001-1111-4222-8333-000000000007"   # the sid a far bus names when it dials us under its declared hostname
+ALIAS, DECLARED = "TESTHOST-alias", "TESTHOST-hostname"   # the name the kernel dials a far bus by, and the one it declares
 
 RULE_5 = (True, 5, "no-reachable-host-names-it")               # the ladder's verdicts, (closed, rule, why), as
 RULE_4 = (False, 4, "named-by-reachable-host")                 # _presumed_closed_verdict spells them; a fixture
@@ -70,16 +79,18 @@ UNPARSABLE = (False, None, "mirror-unparsable")
 def LOST(*sources):
     """The cannot-determine verdict for a sid named only by unreachable sources: the reason names each source
     that names it with what makes it unreachable, hand-spelled here as "<key> (<cause>[, <cause>])" with the
-    causes in the order not heard, expired, link down (round 2 of fork PR #897, the reviewer's ruling: the
-    reason names the down host). The expected text is this module's, not the reader's formatter."""
+    causes in the order not heard, expired, link down, no link state (round 2 of fork PR #897, the reviewer's
+    ruling: the reason names the down host). The expected text is this module's, not the reader's formatter."""
     return (False, None, "named-by-unreachable-host: " + ", ".join(sources))
 
 
-def NO_REACHABLE(*sources):
-    """The cannot-determine verdict when no source is reachable: the reason names every source in the mirror,
-    sorted by key, each with what makes it unreachable, in the same hand-spelled form; a mirror with no row
-    at all reads "no source" (spelled at that site)."""
-    return (False, None, "no-reachable-host: " + ", ".join(sources))
+def NO_VOUCH(*sources):
+    """The cannot-determine verdict when no source vouches for a sid's absence: the reason names every source in
+    the mirror, sorted by key, each with why it cannot vouch (not heard, expired, link down, or no link state: a
+    heard host the kernel never reported up, which vouches for presence alone), in the same hand-spelled form; a
+    mirror with no row at all reads "no source" (spelled at that site). Until the fifth commit of round 2 this
+    arm's token was no-reachable-host, which would lie when a reachable host exists whose link is unknown."""
+    return (False, None, "no-host-vouches-absence: " + ", ".join(sources))
 
 
 def _mirror():
@@ -97,15 +108,20 @@ def _mirror():
     return d / "remote-sids"
 
 
-def _row(sids, heard=True, expired=False, kind="peer", link_down=False):
+def _row(sids, heard=True, expired=False, kind="peer", link_down=False, link_up=False):
     """One presence-source row as the bus writes it: the roster it last reported, whether the bus heard
     it in its current process, whether its presence expired, whether the kernel holds its link down (or
-    has since it was heard), and `reachable`, the writer's flag the reader's verdict reads: heard and not
-    expired and not linkDown (postal_service.py _remote_sids_document computes it; a fixture row restates
-    the rule so the reader is held to reading the flag, not recomputing it: a heard, unexpired, link-down
-    row is unreachable)."""
+    has since it was heard), whether the kernel holds its link up and it was heard since the link last
+    dropped, and the writer's two flags the reader's verdict reads: `reachable`, heard and not expired and
+    not linkDown (it vouches for the presence of the sids it names), and `vouchesAbsence`, heard and not
+    expired and (linkUp, or a legacy heartbeat, which vouches by its TTL) (it vouches for the absence of a
+    sid it does not name). postal_service.py _remote_sids_document computes both; a fixture row restates
+    the rules so the reader is held to reading the flags, not recomputing them: a heard, unexpired,
+    link-down row is unreachable, and a heard, unexpired peer row with no link state (link_up False, the
+    default here: a host the kernel never reported up) is reachable and does not vouch for absence."""
     return {"kind": kind, "sids": sorted(sids), "heard": heard, "expired": expired, "linkDown": link_down,
-            "reachable": heard and not expired and not link_down, "seenAt": NOW - 5}
+            "linkUp": link_up, "reachable": heard and not expired and not link_down,
+            "vouchesAbsence": heard and not expired and (link_up or kind == "heartbeat"), "seenAt": NOW - 5}
 
 
 def _bus_wrote(hosts):
@@ -116,19 +132,21 @@ def _bus_wrote(hosts):
 
 
 def _bus_hears_nobody_remote():
-    """One reachable host naming no session: rule 5's premise (the bus has spoken and knows no remote sid)."""
-    _bus_wrote({HOST: _row([])})
+    """One host naming no session, heard with its link known up, so it vouches for absence: rule 5's premise
+    (the bus has spoken and knows no remote sid)."""
+    _bus_wrote({HOST: _row([], link_up=True)})
 
 
 def _bus_hears(*sids):
-    """One reachable host naming the sids: live on another host, rule 4."""
-    _bus_wrote({HOST: _row(sids)})
+    """One host naming the sids, heard with its link up: live on another host, rule 4."""
+    _bus_wrote({HOST: _row(sids, link_up=True)})
 
 
 def _bus_lost(*sids):
     """The host that last named the sids is unreachable (not heard since the bus started, or expired);
-    another host is reachable and names nobody, so the only reason for a False is the lost host's roster."""
-    _bus_wrote({HOST: _row(sids, heard=False), HOST2: _row([])})
+    another host, heard with its link up, names nobody and vouches for absence, so the only reason for a
+    False is the lost host's roster."""
+    _bus_wrote({HOST: _row(sids, heard=False), HOST2: _row([], link_up=True)})
 
 
 def _node(nid, text, parent, t=T0, **kw):
@@ -237,8 +255,8 @@ class DeadSenderSweep(World):
         jd.run_propagate(now=NOW)
         st = jd.load_goals(DEAD)
         self.assertTrue(st["nodes"][DEAD + ":g1"].get("nodeComplete"))
-        self.assertEqual(self._verdict(DEAD), NO_REACHABLE(HOST + " (not heard)", HOST2 + " (not heard)"),
-                         "no reachable host: cannot determine, every source named with why")
+        self.assertEqual(self._verdict(DEAD), NO_VOUCH(HOST + " (not heard)", HOST2 + " (not heard)"),
+                         "no host vouches for absence: cannot determine, every source named with why")
         self.assertNotEqual(st["status"].get(DEAD + ":g1"), "completed",
                             "a mirror written before the bus heard anyone settles nothing")
 
@@ -266,36 +284,49 @@ class PresumedClosed(World):
                          "a host the bus cannot reach protects the roster it last reported; the reason names it")
         self.assertEqual(self._verdict(REMOTE), RULE_5, "...and the reachable host settles a sid neither names")
         # the host that names it is heard but its beat expired (the legacy TTL): unreachable the same way
-        _bus_wrote({"heartbeat:" + DEAD: _row([DEAD], heard=True, expired=True, kind="heartbeat"), HOST2: _row([])})
+        _bus_wrote({"heartbeat:" + DEAD: _row([DEAD], heard=True, expired=True, kind="heartbeat"), HOST2: _row([], link_up=True)})
         self.assertEqual(self._verdict(DEAD), LOST("heartbeat:" + DEAD + " (expired)"), "an expired beat is unreachable, not absent")
         # the host that names it is heard, not expired, and the kernel holds its link down (round 2 of fork PR #897,
         # the reviewer's ruling): unreachable the same way; the reader reads the writer's `reachable`, not heard
-        _bus_wrote({HOST: _row([DEAD], link_down=True), HOST2: _row([])})
+        _bus_wrote({HOST: _row([DEAD], link_down=True), HOST2: _row([], link_up=True)})
         self.assertEqual(self._verdict(DEAD), LOST(HOST + " (link down)"),
                          "a host whose link the kernel holds down cannot vouch: its last word stands, and the reason "
                          "names the down host (a reader recomputing heard and not expired answers rule 4 here)")
-        self.assertEqual(self._verdict(REMOTE), RULE_5, "...and the reachable host settles a sid neither names")
+        self.assertEqual(self._verdict(REMOTE), RULE_5, "...and the host with its link up settles a sid neither names")
+        # a host heard with NO link state (the fifth commit, the reviewer's ruling: a source vouches for absence only
+        # when its link is known up): it vouches for the presence of the sid it names and for nothing else
+        _bus_wrote({HOST: _row([DEAD], heard=True, expired=False, link_down=False, link_up=False)})
+        self.assertEqual(self._verdict(DEAD), RULE_4, "heard and not held down: the sid it names is live on another host")
+        self.assertEqual(self._verdict(REMOTE), NO_VOUCH(HOST + " (no link state)"),
+                         "the only heard host has no link state (the kernel never reported it up: never notified, or a "
+                         "far bus filed under the hostname it declares before the fold): it does not vouch for absence, "
+                         "and the reason says so (a reader gating rule 5 on `reachable` answers rule 5 here, the road the "
+                         "fourth commit disclosed; the old token no-reachable-host would lie, a reachable host exists)")
+        _bus_wrote({HOST: _row([DEAD], link_up=False), HOST2: _row([], link_up=True)})
+        self.assertEqual(self._verdict(REMOTE), RULE_5, "...beside a host with its link known up, a sid neither names is "
+                         "rule 5's: the host with no link state is not a gate on the mirror")
+        self.assertEqual(self._verdict(DEAD), RULE_4, "...and the sid it names stays rule 4's")
         _bus_wrote({HOST: _row([DEAD], link_down=True)})
-        self.assertEqual(self._verdict(REMOTE), NO_REACHABLE(HOST + " (link down)"),
+        self.assertEqual(self._verdict(REMOTE), NO_VOUCH(HOST + " (link down)"),
                          "the only heard host is down: nothing can vouch for absence, and the reason names the down host "
                          "(a reader recomputing heard and not expired answers rule 5 here)")
         # a host carried from before the restart AND held down by the kernel (the notify for a host not heard yet):
         # both causes, in the reason's fixed order
         _bus_wrote({HOST: _row([DEAD], heard=False, link_down=True)})
         self.assertEqual(self._verdict(DEAD), LOST(HOST + " (not heard, link down)"), "every cause, not heard first")
-        _bus_wrote({HOST: _row([DEAD], heard=True, expired=False, link_down=False)})
-        self.assertEqual(self._verdict(REMOTE), RULE_5, "the same host with its link up: rule 5")
-        # no reachable host at all (a bus that has heard nobody since it started): cannot determine
+        _bus_wrote({HOST: _row([DEAD], heard=True, expired=False, link_down=False, link_up=True)})
+        self.assertEqual(self._verdict(REMOTE), RULE_5, "the same host with its link known up: rule 5")
+        # no host vouches for absence at all (a bus that has heard nobody since it started): cannot determine
         _bus_wrote({HOST: _row([], heard=False), HOST2: _row([REMOTE], heard=False)})
-        self.assertEqual(self._verdict(DEAD), NO_REACHABLE(HOST + " (not heard)", HOST2 + " (not heard)"))
+        self.assertEqual(self._verdict(DEAD), NO_VOUCH(HOST + " (not heard)", HOST2 + " (not heard)"))
         self.assertEqual(self._verdict(REMOTE), LOST(HOST2 + " (not heard)"))
         # the reason sorts the sources by key, not by the order the file lists them: the second-listed host first
         _bus_wrote({HOST2: _row([DEAD], heard=False), HOST: _row([], link_down=True)})
-        self.assertEqual(self._verdict(REMOTE), NO_REACHABLE(HOST + " (link down)", HOST2 + " (not heard)"),
+        self.assertEqual(self._verdict(REMOTE), NO_VOUCH(HOST + " (link down)", HOST2 + " (not heard)"),
                          "sorted by key (a reader taking the file's order names the second-listed host first)")
         self.assertEqual(self._verdict(DEAD), LOST(HOST2 + " (not heard)"), "only the sources that name the sid")
         _bus_wrote({})
-        self.assertEqual(self._verdict(DEAD), NO_REACHABLE("no source"), "a document with no host is not a host that "
+        self.assertEqual(self._verdict(DEAD), NO_VOUCH("no source"), "a document with no host is not a host that "
                          "names nobody; the reason says there is no source")
         # a mirror of another shape (the whitespace list a bus before 2026-09-22 wrote): not an empty roster
         _mirror().write_text("")
@@ -307,6 +338,10 @@ class PresumedClosed(World):
         _mirror().write_text(json.dumps({"hosts": {HOST: {"sids": [], "heard": True, "expired": False}}}))
         self.assertEqual(self._verdict(DEAD), UNPARSABLE, "a row without the link flags is not the shape the bus "
                          "writes since round 2's third commit: never read as reachable by heard alone")
+        _mirror().write_text(json.dumps({"hosts": {HOST: {"sids": [], "heard": True, "expired": False, "linkDown": False,
+                                                          "reachable": True}}}))
+        self.assertEqual(self._verdict(DEAD), UNPARSABLE, "a row without linkUp and vouchesAbsence is not the shape the "
+                         "bus writes since round 2's fifth commit: never read as vouching for absence by reachable alone")
         _mirror().write_text(json.dumps({"hosts": [DEAD]}))
         self.assertEqual(self._verdict(DEAD), UNPARSABLE)
         # no mirror file at all: cannot determine, conservative
@@ -378,7 +413,7 @@ class ReaderFollowsTheWriter(unittest.TestCase):
     reader (_presumed_closed) run in one fresh interpreter over one temp root, under each of the two
     root shapes the constants bind from (XDG_STATE_HOME, and ROMP_STATE_DIR, which outranks it), and the
     bus's document is read back and its rows asserted, so the fixtures' restatement of the shape
-    (_bus_wrote) is held to the writer here. Seven phases, in the order a bus lives them:
+    (_bus_wrote) is held to the writer here. Nine phases, in the order a bus lives them:
       first write   one live remote heartbeat; a sid nothing knows is presumed closed (rule 5), the
                     heartbeating one is not (rule 4);
       restart       a second bus process over the same root (a fresh module object: empty HEARTBEATS and
@@ -402,21 +437,40 @@ class ReaderFollowsTheWriter(unittest.TestCase):
                     composition in which the carry-forward changes the VERDICT rather than the file alone
                     (round 2 of fork PR #897, a verifier's finding): a writer that carried nothing leaves
                     A's sid to rule 5 here, True, a live session settled because its bus restarted, while
-                    every earlier phase's verdict pins hold under that writer;
-      link held down  the kernel's link state gates reachability (round 2 of fork PR #897, the reviewer's
-                    ruling: a session started on a host after its last heard roster is in no roster, so a
-                    host counted reachable while its link is down would let rule 5 presume it closed; a host
-                    that is down cannot vouch for absence). After a third restart host B's exchange makes it
-                    the one reachable source; the kernel's down notify for B, through the real handler
-                    (peer_update), writes the mirror itself: B's sid is cannot-determine by B's last word
-                    (not rule 4: a host the bus cannot vouch for makes no positive determination) and a sid
-                    nothing names is cannot-determine, no reachable host, where a gate on heard alone answers
-                    rule 5. The up notify alone changes nothing (B's roster is the one from before the drop);
-                    B's exchange arriving with the link up is the event: rule 4 and rule 5 answer again. Then
-                    B down beside host A heard, a host the kernel never notified (no link state: heard
-                    alone): A is reachable, B's sid stays protected, and a sid nothing names is rule 5's (the
-                    down host protects the sids it last named, it is not a gate on the mirror, as a carried
-                    host is not);
+                    every earlier phase's verdict pins hold under that writer. Since the fifth commit the
+                    kernel's up notify for a host precedes its exchange in this phase and the next, as in the
+                    real bus, where the kernel notifies a tunnel before the bus dials it: a host heard with no
+                    link state vouches for presence alone, so rule 5 needs a host the kernel holds up;
+      link held down  the kernel's link state decides what a source vouches for (round 2 of fork PR #897,
+                    the reviewer's ruling: a session started on a host after its last heard roster is in no
+                    roster, so a host counted as vouching for absence while its link is down would let rule
+                    5 presume it closed; a host that is down cannot vouch for absence). After a third restart
+                    the kernel's up notify for host B and B's exchange make it the one source vouching for
+                    absence; the kernel's down notify for B, through the real handler (peer_update), writes
+                    the mirror itself: B's sid is cannot-determine by B's last word (not rule 4: a host the
+                    bus cannot vouch for makes no positive determination) and a sid nothing names is
+                    cannot-determine, no host vouches for absence, where a gate on heard alone answers rule
+                    5. The up notify alone changes nothing (B's roster is the one from before the drop); B's
+                    exchange arriving with the link up is the event: rule 4 and rule 5 answer again. Then B
+                    down beside host A heard, a host the kernel never notified (no link state): A is
+                    reachable, so B's sid stays protected and A's own sids would be rule 4's, but A does not
+                    vouch for absence, so a sid nothing names is cannot-determine, the reason naming A with
+                    no link state and B with its link down (until the fifth commit this was rule 5's, heard
+                    alone making A vouch);
+      the alias road  a far bus filed under the hostname it DECLARES before this bus's own dial has folded
+                    it under the alias the kernel dials (the road the fourth commit disclosed, closed by the
+                    ruling). After a fourth restart the kernel notifies the alias up and the far bus dials us
+                    through the real handler (peer_exchange_handle), declaring its hostname and busId and
+                    naming its sid: the row is filed under the declared name, which has no link state, so
+                    the sid it names is rule 4's and a sid nothing names is cannot-determine, the reason
+                    naming the declared row with no link state beside the carried rows (a gate on
+                    `reachable` answers rule 5 here: the false settle). The alias's down notify changes
+                    neither verdict (the row has no link state of its own to withdraw). The fold, the alias
+                    notified up and this bus's own exchange landing under it with the busId
+                    (peer_exchange_apply), files the row under the alias: rule 5 and rule 4. The alias's down
+                    notify then holds both sids at cannot-determine (link down); the up notify alone changes
+                    nothing; the far bus's next dial, canonicalized under the alias with the link up, is the
+                    event: rule 5 and rule 4 again;
       legacy shape  the whitespace list a bus before 2026-09-22 wrote, at the bus's path: the reader
                     answers cannot-determine for the sid it does not name AND for the one it does, and
                     says once in the judge's log that the file is not the shape the bus writes; it is
@@ -471,7 +525,7 @@ class ReaderFollowsTheWriter(unittest.TestCase):
         # unaccounted (the sweep red of 2026-09-22).
         out = subprocess.run([sys.executable, "-c", r"""
 import contextlib, io, json, os, sys, time
-tests_dir, bin_dir, remote, remote2, dead, host_a, host_b, carried, other = sys.argv[1:10]
+tests_dir, bin_dir, remote, remote2, dead, host_a, host_b, carried, other, alias, declared, far_sid = sys.argv[1:13]
 sys.path.insert(0, tests_dir)
 from romp_load import load_source
 pm = load_source("romp_postal_oneroot", os.path.join(bin_dir, "romp-postal-service"))
@@ -523,39 +577,74 @@ def exchange(bus, host, sids):                     # one exchange landing: what 
     bus._write_remote_sids()
 exchange(pm2, host_a, [carried])                   # host A's exchange names its sid in the running bus
 out["peerHeard"] = peer_phase()
-pm3 = load_source("romp_postal_oneroot_restarted_twice", os.path.join(bin_dir, "romp-postal-service"))
-out["restartMemory2"] = {"heartbeats": len(pm3.HEARTBEATS), "peers": len(pm3.PEER_STATE), "freshObject": pm3 is not pm2}
-exchange(pm3, host_b, [other])                     # host B is heard FIRST: the new process's first write, nothing from A yet
+def notify(bus, host, up):                         # the kernel's /peer notify, through the real handler, which writes the mirror itself
+    return list(bus.peer_update({"host": host, "port": 50002, "up": up}))
+def restarted(name, previous):                     # a further bus process over the same root: a fresh module object, memory empty,
+    bus = load_source(name, os.path.join(bin_dir, "romp-postal-service"))   # PEERS empty (no notify has landed yet)
+    bus._peer_threads_reconcile = lambda host: None   # the notify's dialer bookkeeping is not under test (an up notify would dial a loopback port nothing listens on)
+    return bus, {"heartbeats": len(bus.HEARTBEATS), "peers": len(bus.PEER_STATE), "links": len(bus.PEERS), "freshObject": bus is not previous}
+pm3, out["restartMemory2"] = restarted("romp_postal_oneroot_restarted_twice", pm2)
+notify(pm3, host_b, True)                          # the kernel notifies B's tunnel up before the bus dials it (as in the real bus):
+exchange(pm3, host_b, [other])                     # B heard FIRST with its link known up, the new process's first write, nothing from A yet
 out["otherHeardFirst"] = peer_phase()
-exchange(pm3, host_a, [carried])                   # A's exchange arrives in the new process, its roster unchanged
+notify(pm3, host_a, True)                          # A's tunnel up, then A's exchange arrives in the new process, its roster unchanged
+exchange(pm3, host_a, [carried])
 out["carriedHeard"] = peer_phase()
 exchange(pm3, host_a, [])                          # A's next exchange no longer names the sid: it ended there
 out["carriedHostNamesNobody"] = peer_phase()
-def link_phase():                                  # the rows with their link flags, and the verdicts (the link held down phase)
+def link_phase(extra=None):                        # the rows with their six flags, and the verdicts (the link held down phase and the alias road)
     rows = None
     if bus_file.exists():
         text = bus_file.read_text()
         try:
-            rows = {k: [r["heard"], r["expired"], r["linkDown"], r["reachable"], r["sids"]] for k, r in json.loads(text)["hosts"].items()}
+            rows = {k: [r["heard"], r["expired"], r["linkDown"], r.get("linkUp"), r["reachable"], r.get("vouchesAbsence"), r["sids"]]
+                    for k, r in json.loads(text)["hosts"].items()}   # .get: a writer missing a flag fails a pin by None
         except (ValueError, KeyError, TypeError):
             rows = text
-    return {"hosts": rows, "other": verdict(other), "nobody": verdict(dead)}
-pm4 = load_source("romp_postal_oneroot_restarted_thrice", os.path.join(bin_dir, "romp-postal-service"))
-pm4._peer_threads_reconcile = lambda host: None    # the notify's dialer bookkeeping is not under test (an up notify would dial a loopback port nothing listens on)
-out["restartMemory3"] = {"heartbeats": len(pm4.HEARTBEATS), "peers": len(pm4.PEER_STATE), "links": len(pm4.PEERS), "freshObject": pm4 is not pm3}
-exchange(pm4, host_b, [other])                     # B heard: the one reachable source (every other row carried, unreachable)
+    got = {"hosts": rows, "other": verdict(other), "nobody": verdict(dead)}
+    if extra is not None:
+        got.update(extra)
+    return got
+pm4, out["restartMemory3"] = restarted("romp_postal_oneroot_restarted_thrice", pm3)
+notify(pm4, host_b, True)                          # B's tunnel up, then B heard: the one source vouching for absence
+exchange(pm4, host_b, [other])                     # (every other row carried, unreachable)
 out["linkHeard"] = link_phase()
-def notify(host, up):                              # the kernel's /peer notify, through the real handler, which writes the mirror itself
-    return list(pm4.peer_update({"host": host, "port": 50002, "up": up}))
-out["linkDownNotify"] = notify(host_b, False)
+out["linkDownNotify"] = notify(pm4, host_b, False)
 out["linkDown"] = link_phase()                     # nothing wrote between the notify and this read
-out["linkUpNotify"] = notify(host_b, True)
+out["linkUpNotify"] = notify(pm4, host_b, True)
 out["linkUpUnheard"] = link_phase()                # the link is back; B has not been heard since it dropped
 exchange(pm4, host_b, [other])                     # B's exchange with the link up: the event
 out["linkUpHeard"] = link_phase()
-notify(host_b, False)
+notify(pm4, host_b, False)
 exchange(pm4, host_a, [])                          # A heard beside the down host; the kernel never notified A: no link state
 out["heardBesideDown"] = link_phase()
+# THE ALIAS ROAD: a fourth restart; the kernel notifies the ALIAS it dials, the far bus dials us declaring its hostname
+pm5, out["restartMemory4"] = restarted("romp_postal_oneroot_restarted_fourth", pm4)
+listing = os.path.join(os.environ["HOME"], "sessions.json")   # the dialed side's handler gossips the local listing in its
+with open(listing, "w") as f:                                  # response: answered and empty, through the ROMP_SESSIONS_FILE seam
+    f.write("[]")
+os.environ["ROMP_SESSIONS_FILE"] = listing
+def far_dials_us(bus, sids):                       # the dialed side of one exchange, through the real handler
+    req = {"host": declared, "epoch": 1, "proto": bus.PEER_PROTO, "busId": "bus-x", "holds": [], "relays": [],
+           "acks": [], "bounces": [], "wait": False, "presence": [{"id": s, "name": "api"} for s in sids]}
+    resp, status = bus.peer_exchange_handle(req)
+    return status
+def alias_phase(bus):
+    return link_phase({"far": verdict(far_sid), "filed": sorted(bus.PEER_STATE)})
+out["aliasUpNotify"] = notify(pm5, alias, True)
+out["aliasDialStatus"] = far_dials_us(pm5, [far_sid])
+out["aliasDeclared"] = alias_phase(pm5)            # filed under the declared name: no link state
+notify(pm5, alias, False)
+out["aliasDownBeforeFold"] = alias_phase(pm5)      # the alias down does not reach the declared row
+notify(pm5, alias, True)
+pm5.peer_exchange_apply(alias, {}, {"presence": [{"id": far_sid, "name": "api"}], "epoch": 1, "holds": [], "busId": "bus-x"})
+out["aliasFolded"] = alias_phase(pm5)              # this bus's own dial landed under the alias: the fold
+notify(pm5, alias, False)
+out["aliasDownAfterFold"] = alias_phase(pm5)
+notify(pm5, alias, True)
+out["aliasUpUnheard"] = alias_phase(pm5)
+out["aliasRedialStatus"] = far_dials_us(pm5, [far_sid])   # the far bus dials again: canonicalized under the alias, the link up
+out["aliasUpHeard"] = alias_phase(pm5)
 bus_file.write_text(remote + "\n")                 # the shape a bus before 2026-09-22 wrote
 err = io.StringIO()
 with contextlib.redirect_stderr(err):
@@ -570,7 +659,7 @@ out["oldPath"] = str(old_path)
 out["oldPathText"] = old_path.read_text()
 out["controlOldPathOnly"] = ask(dead)
 print(json.dumps(out))
-""", HERE, BIN, REMOTE, REMOTE2, DEAD, HOST, HOST2, CARRIED, OTHER], capture_output=True, text=True, env=full,
+""", HERE, BIN, REMOTE, REMOTE2, DEAD, HOST, HOST2, CARRIED, OTHER, ALIAS, DECLARED, FARSID], capture_output=True, text=True, env=full,
                              cwd=str(home), timeout=120)
         assert out.returncode == 0, "%s child failed: %s" % (shape, out.stderr[-2000:])
         got = json.loads(out.stdout.strip().splitlines()[-1])
@@ -582,7 +671,7 @@ print(json.dumps(out))
     @staticmethod
     def _v(phase, key):
         """A recorded verdict, (closed, rule, why), as the RULE_5 and RULE_4 constants and the LOST and
-        NO_REACHABLE helpers spell them (the reason of the two cannot-determine arms names the sources)."""
+        NO_VOUCH helpers spell them (the reason of the two cannot-determine arms names the sources)."""
         return tuple(phase[key])
 
     def test_both_modules_bound_the_one_root_the_test_prepared(self):
@@ -598,9 +687,11 @@ print(json.dumps(out))
                 row = dict(got["firstRow"] or {})
                 self.assertIsInstance(row.pop("seenAt", None), int, "seenAt, the beat's time")
                 self.assertEqual(row, {"kind": "heartbeat", "sids": [REMOTE], "heard": True, "expired": False,
-                                       "linkDown": False, "reachable": True, "name": "web"},
-                                 "the row's fields as the writer spells them, the four flags among them: the fixtures' "
-                                 "_row restates every one, and the reader requires the four")
+                                       "linkDown": False, "linkUp": False, "reachable": True, "vouchesAbsence": True,
+                                       "name": "web"},
+                                 "the row's fields as the writer spells them, the six flags among them (a legacy heartbeat "
+                                 "has no link and vouches for absence by its TTL): the fixtures' _row restates every one, "
+                                 "and the reader requires the six")
 
     def test_rule_5_fires_for_a_sid_nothing_knows_once_the_bus_has_written(self):
         for shape, got in self.got.items():
@@ -664,8 +755,8 @@ print(json.dumps(out))
             with self.subTest(shape=shape):
                 self.assertEqual(self._v(got["peerHeard"], "carried"), RULE_4,
                                  "before the restart the peer host names its sid: live on another host")
-                self.assertEqual(got["restartMemory2"], {"heartbeats": 0, "peers": 0, "freshObject": True},
-                                 "the second restart is a fresh module object too, its memory empty")
+                self.assertEqual(got["restartMemory2"], {"heartbeats": 0, "peers": 0, "links": 0, "freshObject": True},
+                                 "the second restart is a fresh module object too, its memory and its link table empty")
                 first = got["otherHeardFirst"]
                 self.assertEqual(self._v(first, "carried"), LOST(HOST + " (not heard)"),
                                  "another host was heard first, reachable, naming its own sid alone; the host that last "
@@ -694,54 +785,133 @@ print(json.dumps(out))
                 self.assertEqual(gone["hosts"][HOST], [True, False, []], "heard, naming nobody")
 
     def test_a_host_the_kernel_holds_down_cannot_vouch_until_heard_with_the_link_up(self):
-        """Round 2 of fork PR #897, the reviewer's ruling: the kernel's link state gates reachability. The verdict and
-        its reason at every step, then the document, so a writer gating on heard alone reds at a verdict."""
-        L = lambda heard, expired, down, reach, sids: [heard, expired, down, reach, sids]
+        """Round 2 of fork PR #897, the reviewer's ruling: the kernel's link state decides what a source vouches for. The
+        verdict and its reason at every step, then the document, so a writer gating on heard alone reds at a verdict."""
+        L = lambda heard, expired, down, up, reach, vouch, sids: [heard, expired, down, up, reach, vouch, sids]
         for shape, got in self.got.items():
             with self.subTest(shape=shape):
                 self.assertEqual(got["restartMemory3"], {"heartbeats": 0, "peers": 0, "links": 0, "freshObject": True},
                                  "the third restart is a fresh module object, its memory and its link table empty")
                 heard = got["linkHeard"]
-                self.assertEqual(self._v(heard, "other"), RULE_4, "heard, its link never reported down: rule 4")
-                self.assertEqual(self._v(heard, "nobody"), RULE_5, "one reachable host names nobody unknown: rule 5")
+                self.assertEqual(self._v(heard, "other"), RULE_4, "notified up, then heard: rule 4")
+                self.assertEqual(self._v(heard, "nobody"), RULE_5, "one host with its link known up names nobody unknown: rule 5")
+                self.assertEqual(heard["hosts"][HOST2], L(True, False, False, True, True, True, [OTHER]),
+                                 "PEERS up and heard since: linkUp, reachable, vouching for absence")
                 self.assertEqual(got["linkDownNotify"], [{"ok": True, "up": 0}, 200], "the handler took the down notify")
                 down = got["linkDown"]
                 down_host = LOST(HOST2 + " (link down)")
                 # every row of the file at this point, sorted by key as the reason sorts them: the two peer hosts
                 # carried from the second restart's process, then the two heartbeats carried since the first
-                none_reachable = NO_REACHABLE(HOST + " (not heard)", HOST2 + " (link down)",
-                                              self.HB + REMOTE + " (not heard, expired)", self.HB + REMOTE2 + " (not heard)")
+                none_vouches = NO_VOUCH(HOST + " (not heard)", HOST2 + " (link down)",
+                                        self.HB + REMOTE + " (not heard, expired)", self.HB + REMOTE2 + " (not heard)")
                 self.assertEqual(self._v(down, "other"), down_host,
                                  "the host that names it is heard but the kernel holds its link down: its last word "
                                  "stands and rule 4 does not fire (a host the bus cannot vouch for makes no positive "
                                  "determination), and the reason names the down host; a gate on heard alone answers "
                                  "rule 4 here")
-                self.assertEqual(self._v(down, "nobody"), none_reachable,
+                self.assertEqual(self._v(down, "nobody"), none_vouches,
                                  "the only heard host is down: nothing can vouch for absence, cannot-determine, the "
-                                 "reason naming every source and what makes each unreachable; a gate on heard alone "
+                                 "reason naming every source and why it cannot vouch; a gate on heard alone "
                                  "presumes a session started there since the drop closed, rule 5")
-                self.assertEqual(down["hosts"][HOST2], L(True, False, True, False, [OTHER]),
+                self.assertEqual(down["hosts"][HOST2], L(True, False, True, False, False, False, [OTHER]),
                                  "marked link-down by the notify's own write, nothing else having written: unreachable, "
                                  "roster kept (a writer waiting for the next tick leaves the row reachable here)")
                 unheard = got["linkUpUnheard"]
                 self.assertEqual(got["linkUpNotify"], [{"ok": True, "up": 1}, 200])
-                self.assertEqual((self._v(unheard, "other"), self._v(unheard, "nobody")), (down_host, none_reachable),
+                self.assertEqual((self._v(unheard, "other"), self._v(unheard, "nobody")), (down_host, none_vouches),
                                  "the up notify alone is not the event: the roster is the one heard before the link "
                                  "dropped and says nothing about a session started there since")
-                self.assertEqual(unheard["hosts"][HOST2], L(True, False, True, False, [OTHER]))
+                self.assertEqual(unheard["hosts"][HOST2], L(True, False, True, False, False, False, [OTHER]),
+                                 "PEERS says up and the mark stands: neither linkUp nor vouching (a writer reading PEERS "
+                                 "alone for linkUp says True here)")
                 up = got["linkUpHeard"]
                 self.assertEqual((self._v(up, "other"), self._v(up, "nobody")), (RULE_4, RULE_5),
                                  "its exchange arriving with the link up is the event: reachable, rule 4 and rule 5 again")
-                self.assertEqual(up["hosts"][HOST2], L(True, False, False, True, [OTHER]))
+                self.assertEqual(up["hosts"][HOST2], L(True, False, False, True, True, True, [OTHER]))
+
+    def test_a_heard_host_with_no_link_state_beside_a_down_host_vouches_for_presence_alone(self):
+        """The fifth commit's flip of the link phase's last step (the reviewer's ruling: a source vouches for absence only
+        when its link is known up). Host B down, host A heard beside it, a host the kernel never notified: A is reachable,
+        so its own sids would be rule 4's and B's sid stays held by B's last word, but A does not vouch for absence, so a
+        sid nothing names is cannot-determine, the reason naming A with no link state and B with its link down. Until
+        this commit heard alone made A vouch and the sid was rule 5's. The verdict pins first, the document after."""
+        L = lambda heard, expired, down, up, reach, vouch, sids: [heard, expired, down, up, reach, vouch, sids]
+        for shape, got in self.got.items():
+            with self.subTest(shape=shape):
                 beside = got["heardBesideDown"]
-                self.assertEqual(self._v(beside, "other"), down_host, "the down host's last word still protects its sid")
-                self.assertEqual(self._v(beside, "nobody"), RULE_5,
-                                 "a host the kernel never notified is heard beside the down one: reachable on heard alone, "
-                                 "and a sid nothing names is rule 5's (the down host protects the sids it last named; it "
-                                 "is not a gate on the mirror, as a carried host is not)")
+                self.assertEqual(self._v(beside, "nobody"),
+                                 NO_VOUCH(HOST + " (no link state)", HOST2 + " (link down)",
+                                          self.HB + REMOTE + " (not heard, expired)", self.HB + REMOTE2 + " (not heard)"),
+                                 "a host the kernel never notified is heard beside the down one: reachable, so its own sids "
+                                 "would be rule 4's, but with no link state it does not vouch for absence, and a sid nothing "
+                                 "names is cannot-determine, the reason naming it with no link state and the down host "
+                                 "(until the fifth commit heard alone made it vouch and this was rule 5's; a reader gating "
+                                 "rule 5 on `reachable` answers rule 5 here)")
+                self.assertEqual(self._v(beside, "other"), LOST(HOST2 + " (link down)"),
+                                 "the down host's last word still protects its sid")
                 self.assertEqual((beside["hosts"][HOST], beside["hosts"][HOST2]),
-                                 (L(True, False, False, True, []), L(True, False, True, False, [OTHER])),
-                                 "no link state for the never-notified host; the down host's row as the notify left it")
+                                 (L(True, False, False, False, True, False, []), L(True, False, True, False, False, False, [OTHER])),
+                                 "no link state for the never-notified host: reachable, not vouching; the down host's row "
+                                 "as the notify left it")
+
+    def test_a_far_bus_under_its_declared_name_vouches_for_presence_alone_until_the_fold(self):
+        """The alias road (the fourth commit's disclosed residual, closed by the reviewer's ruling: a source vouches for
+        a sid's absence only when its link is known up). The kernel notifies the ALIAS it dials; the far bus dials us
+        declaring its hostname and busId, and the handler files it under the declared name, which has no link state,
+        until this bus's own dial folds it under the alias (_canon_peer_name). The verdict and its reason at every
+        step, then the document, so a reader gating rule 5 on `reachable` reds at the first verdict pin: the false
+        settle, rule 5 True for a sid nothing names with the declared row as the only reachable one."""
+        L = lambda heard, expired, down, up, reach, vouch, sids: [heard, expired, down, up, reach, vouch, sids]
+        # every row of the file on this road, sorted by key as the reason sorts them: the peer hosts carried from the
+        # third restart's process, the far bus's row under the name it is filed under, then the two carried heartbeats
+        carried = (self.HB + REMOTE + " (not heard, expired)", self.HB + REMOTE2 + " (not heard)")
+        declared_only = NO_VOUCH(HOST + " (not heard)", DECLARED + " (no link state)", HOST2 + " (not heard)", *carried)
+        alias_down = NO_VOUCH(HOST + " (not heard)", ALIAS + " (link down)", HOST2 + " (not heard)", *carried)
+        for shape, got in self.got.items():
+            with self.subTest(shape=shape):
+                self.assertEqual(got["restartMemory4"], {"heartbeats": 0, "peers": 0, "links": 0, "freshObject": True},
+                                 "the fourth restart is a fresh module object, its memory and its link table empty")
+                self.assertEqual((got["aliasUpNotify"], got["aliasDialStatus"]), ([{"ok": True, "up": 1}, 200], 200),
+                                 "the kernel's up notify for the alias landed, and the far bus's dial was answered")
+                first = got["aliasDeclared"]
+                self.assertEqual(first["filed"], [DECLARED], "no row under a dialable name carries the busId: filed as declared")
+                self.assertEqual(self._v(first, "far"), RULE_4,
+                                 "the far bus is heard and not held down: the sid it names is live on another host")
+                self.assertEqual(self._v(first, "nobody"), declared_only,
+                                 "THE RULE: the declared row has no link state (the kernel dials the alias, not this name), "
+                                 "so it vouches for presence alone and a sid nothing names is cannot-determine, the reason "
+                                 "naming it with no link state beside the carried rows (a reader gating rule 5 on `reachable` "
+                                 "answers rule 5 here, the false settle the fourth commit disclosed)")
+                self.assertEqual(first["hosts"][DECLARED], L(True, False, False, False, True, False, [FARSID]),
+                                 "heard, not held down, no link state: reachable and not vouching")
+                self.assertNotIn(ALIAS, first["hosts"], "the alias has a PEERS row and no exchange: not a source")
+                before = got["aliasDownBeforeFold"]
+                self.assertEqual((self._v(before, "far"), self._v(before, "nobody")), (RULE_4, declared_only),
+                                 "the alias's down notify does not reach a row filed under another name, and has nothing to "
+                                 "withdraw from it: the sid it names stays protected, a sid it does not name stays unsettled")
+                self.assertEqual(before["hosts"][DECLARED], L(True, False, False, False, True, False, [FARSID]))
+                folded = got["aliasFolded"]
+                self.assertEqual(folded["filed"], [ALIAS], "the fold: this bus's own dial landed under the alias with the "
+                                 "busId, and the declared row is the same bus, dropped")
+                self.assertEqual((self._v(folded, "far"), self._v(folded, "nobody")), (RULE_4, RULE_5),
+                                 "under the alias the kernel holds up, heard on the fold's own exchange: it vouches for "
+                                 "absence, and a sid nothing names is rule 5's")
+                self.assertEqual(folded["hosts"][ALIAS], L(True, False, False, True, True, True, [FARSID]))
+                self.assertNotIn(DECLARED, folded["hosts"], "one row per bus on the fold's own write")
+                down = got["aliasDownAfterFold"]
+                self.assertEqual((self._v(down, "far"), self._v(down, "nobody")), (LOST(ALIAS + " (link down)"), alias_down),
+                                 "folded under the alias, the row follows the alias's link: down, so its sid is held by its "
+                                 "last word and a sid nothing names is cannot-determine, the reason naming the down alias")
+                self.assertEqual(down["hosts"][ALIAS], L(True, False, True, False, False, False, [FARSID]))
+                unheard = got["aliasUpUnheard"]
+                self.assertEqual((self._v(unheard, "far"), self._v(unheard, "nobody")), (LOST(ALIAS + " (link down)"), alias_down),
+                                 "the up notify alone is not the event")
+                self.assertEqual(got["aliasRedialStatus"], 200)
+                again = got["aliasUpHeard"]
+                self.assertEqual(again["filed"], [ALIAS], "the far bus's next dial is canonicalized under the alias")
+                self.assertEqual((self._v(again, "far"), self._v(again, "nobody")), (RULE_4, RULE_5),
+                                 "heard with the link up: the event; rule 4 and rule 5 again")
+                self.assertEqual(again["hosts"][ALIAS], L(True, False, False, True, True, True, [FARSID]))
 
     def test_a_mirror_of_the_legacy_shape_is_cannot_determine_and_said_once(self):
         for shape, got in self.got.items():

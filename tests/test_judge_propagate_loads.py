@@ -120,15 +120,18 @@ def _mirror():
 
 
 def _bus_hears_nobody_remote():
-    """The bus has spoken and knows no remote session: one REACHABLE host (heard in the bus's current
-    process, its presence not expired, its link not held down by the kernel; `reachable` is the writer's
-    flag the reader reads) naming nobody, in the document shape the bus writes (its
-    _remote_sids_document; the restatement is held to the writer by ReaderFollowsTheWriter's frame pin).
-    Until fork PR #897's round 2 this fixture was an empty file, which the reader now answers
-    cannot-determine for (a whitespace list is the shape of a bus before 2026-09-22)."""
+    """The bus has spoken and knows no remote session: one host naming nobody that VOUCHES FOR ABSENCE (heard
+    in the bus's current process, its presence not expired, and its link known up: a dialable PEERS row the
+    kernel holds up and the host heard since the link last dropped; `reachable` and `vouchesAbsence` are the
+    writer's flags the reader reads, the first for the presence of the sids a host names, the second for the
+    absence of one it does not), in the document shape the bus writes (its _remote_sids_document, six
+    booleans per row; the restatement is held to the writer by ReaderFollowsTheWriter's frame pin). Until fork
+    PR #897's round 2 this fixture was an empty file, which the reader now answers cannot-determine for (a
+    whitespace list is the shape of a bus before 2026-09-22); since the round's fifth commit a heard host with
+    no link state vouches for presence alone, so rule 5 needs the link up."""
     _mirror().write_text(json.dumps({"v": 2, "busStarted": T - 100, "writtenAt": T, "hosts": {
-        "TESTHOST": {"kind": "peer", "sids": [], "heard": True, "expired": False, "linkDown": False,
-                     "reachable": True, "seenAt": T}}}) + "\n")
+        "TESTHOST": {"kind": "peer", "sids": [], "heard": True, "expired": False, "linkDown": False, "linkUp": True,
+                     "reachable": True, "vouchesAbsence": True, "seenAt": T}}}) + "\n")
 
 
 def _verdict(sid, now):

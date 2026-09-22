@@ -3884,10 +3884,20 @@ def _link_down(host):
     nothing heard since the drop leaves the mark (the roster it reported before the drop says nothing about
     a session started there since); an exchange heard while the kernel holds the link down (the far side
     dialing us) clears the mark and PEERS still says down, so the host is reachable on the up notify's own
-    write. A host with no dialable PEERS row has no link state and is gated by heard and the TTL alone: the
-    kernel never notified it (the row is absent), or its row is origin-only (no port: a tier for a host
-    this machine has no tunnel to, so there is no link to be down). A source with no link state has no
-    down event either: it stays reachable on its last roster until its next exchange.
+    write. A host with no dialable PEERS row has no link state: the kernel never notified it (the row is
+    absent), its row is origin-only (no port: a tier for a host this machine has no tunnel to, so there is
+    no link to be down), or it is filed under a name the kernel does not dial (below). A source with no
+    link state has no down event either: it stays reachable on its last roster until its next exchange.
+
+    A link is in one of THREE states at a write: down (this function), up (_link_up: a dialable row with up
+    True and no mark), or unknown (neither); the first two never both hold. The state decides what a source
+    vouches for (round 2 of fork PR #897, the reviewer's ruling, the fifth commit): a heard source that is
+    not held down vouches for the PRESENCE of every sid it names (`reachable`, rule 4), whatever its link
+    state; a source vouches for the ABSENCE of a sid it does not name (`vouchesAbsence`, rule 5's
+    precondition) only when its link is KNOWN UP, so a heard source with no link state answers
+    cannot-determine for a sid it does not name, as a down host does. The events: the kernel's up notify
+    plus the host heard since the link last dropped make a source vouch for absence; the down notify ends
+    it at once (_remote_sids_document has the flags).
 
     The gate reaches a peer's row under the NAME THE ROW IS FILED UNDER, and the kernel's notify names the
     ALIAS it dials. The dialer's fold (peer_exchange_apply) files under that alias; the dialed side's
@@ -3895,31 +3905,61 @@ def _link_down(host):
     a dialable name already carries its busId (_canon_peer_name). So until this bus process's own dial has
     folded a peer (a restarted bus whose seeded row has no token yet, or whose dial the far side refuses
     while its dial to us lands), a far bus heard only through its own dials to us sits under its declared
-    hostname, which has no PEERS row and so no link state: heard alone gates it, and the alias's down
-    notify does not reach it. No event ties the two names before the fold (the far bus's exchange carries
-    its hostname and busId, the kernel's notify the alias and port, and PEERS never learns a busId), so
-    this is a disclosed residual of fork PR #897's round 2, not a closure: witnessed by execution in
-    tests/test_postal_remote_sids_mirror.py (the test named for the alias's link and the declared name),
-    which pins the road and the fold that ends it, so a closure or a widening turns it red."""
+    hostname, which has no PEERS row and so no link state: it vouches for the presence of the sids it
+    names and for nothing else, so the alias's down notify, which does not reach it, has nothing to
+    withdraw (until the fifth commit it vouched for absence by heard alone, and a sid nothing named would
+    have been rule 5's with that host as the only reachable one: the road the fourth commit disclosed,
+    closed by the rule above). The fold, this bus's own exchange landing under the alias with the busId,
+    is the event that files the row where the alias's link state reaches it. Both roads are executed in
+    tests/test_postal_remote_sids_mirror.py (the declared-name test) and
+    tests/test_dead_session_staleness.py (ReaderFollowsTheWriter, the alias road)."""
     p = PEERS.get(host) or {}
     if p.get("port") and not p.get("up"):
         return True
     return bool((PEER_STATE.get(host) or {}).get("linkDown"))
 
 
+def _link_up(host):
+    """True when the kernel holds `host`'s tunnel UP and this bus has heard the host since the link last dropped:
+    PEERS[host] is a DIALABLE row (has a port) with up True, and _link_down does not hold (the mark the down
+    notify set on PEER_STATE[host] keeps this False until the host's next exchange replaces the row, so the up
+    notify alone never makes a source vouch for absence: its roster is the one from before the drop). The
+    third state, neither down nor up, is a host with no link state: no PEERS row (never notified), an
+    origin-only row (no port), or a name the kernel does not dial (a far bus under the hostname it declares
+    before the fold). Such a source vouches for presence alone (_remote_sids_document, `vouchesAbsence`)."""
+    p = PEERS.get(host) or {}
+    return bool(p.get("port") and p.get("up")) and not _link_down(host)
+
+
 def _source_link_down(key, row):
-    """The link state that gates one mirror row: a peer host's own (_link_down of its key, the name the row is
-    filed under, which is the alias the kernel dials once this bus's dial has folded the peer there and its
-    declared hostname before that: _link_down has the residual); for a far host gossiped through a hub (kind
-    via) the HUB's, since the far host is reached through it and a hub the kernel
-    holds down cannot carry fresh word about anyone (the hub the row names in `via`; a second hub gossiping
-    the same far host does not lift it, the conservative side); none for a legacy heartbeat or the legacy
-    list, whose keys carry a colon no PEERS row can match (heard and the TTL alone)."""
+    """The held-down link that makes one mirror row unreachable: a peer host's own (_link_down of its key, the
+    name the row is filed under, which is the alias the kernel dials once this bus's dial has folded the peer
+    there and its declared hostname before that, a name with no link state: _link_down has the two-sided
+    rule); for a far host gossiped through a hub (kind via) the HUB's, since the far host is reached through
+    it and a hub the kernel holds down cannot carry fresh word about anyone (the hub the row names in `via`;
+    a second hub gossiping the same far host does not lift it, the conservative side); none for a legacy
+    heartbeat or the legacy list, whose keys carry a colon no PEERS row can match (heard and the TTL alone)."""
     kind = row.get("kind")
     if kind == "via":
         return _link_down(str(row.get("via") or ""))
     if kind == "peer":
         return _link_down(str(key))
+    return False
+
+
+def _source_link_up(key, row):
+    """The known-up link that lets one mirror row vouch for a sid's ABSENCE (_link_up, the same link per kind as
+    _source_link_down): a peer host's own under the name the row is filed under (the alias the kernel dials once
+    this bus's dial has folded the peer there; its declared hostname before that, which the kernel does not
+    dial, so False); for a far host gossiped through a hub (kind via) the HUB's, since a hub the kernel holds up
+    and has heard since carries fresh word about everyone it gossips, and a hub with no link state does not;
+    False for a legacy heartbeat or the legacy list, which have no link at all (the heartbeat vouches by its own
+    TTL instead: _remote_sids_document, `vouchesAbsence`)."""
+    kind = row.get("kind")
+    if kind == "via":
+        return _link_up(str(row.get("via") or ""))
+    if kind == "peer":
+        return _link_up(str(key))
     return False
 
 
@@ -3934,22 +3974,34 @@ def _remote_sids_document(now, previous):
                age is shown to the user as staleness and its roster stands until the next exchange
       linkDown the kernel holds its link down, or has since it was last heard (_source_link_down: a peer
                host's own link under the name its row is filed under, a far host's hub's; a legacy heartbeat
-               has no link state, and neither has a far bus filed under the hostname it declares before this
-               bus's own dial folds it under the alias the kernel notifies: _link_down's disclosed residual)
-      reachable  heard and not expired and not linkDown: computed HERE, the one home of the gate, and the
-               one flag the reader's verdict reads
+               has no link state)
+      linkUp   the kernel holds its link up AND it was heard since the link last dropped (_source_link_up, the
+               same link per kind; never both linkDown and linkUp; both False for a source with NO LINK STATE:
+               a host the kernel never notified, an origin-only row, a legacy key, or a far bus filed under
+               the hostname it declares before this bus's own dial folds it under the alias the kernel
+               notifies)
+      reachable  heard and not expired and not linkDown: the source vouches for the PRESENCE of every sid it
+               names (rule 4); computed HERE, the one home of the gate
+      vouchesAbsence  heard and not expired and (linkUp, or a legacy heartbeat, which has no link and vouches by
+               its own TTL as before): the source vouches for the ABSENCE of a sid it does not name (rule 5's
+               precondition). A heard source with no link state is reachable and does not vouch for absence:
+               it answers cannot-determine for a sid it does not name, as a down host does (round 2 of fork PR
+               #897, the reviewer's ruling: a source vouches for absence only when its link is known up)
       seenAt   the last heartbeat or exchange time, kept across processes
-    The reader (kernel/judge.py _presumed_closed_verdict) reads `reachable` per row: a sid a reachable
-    source names is live on another host (rule 4); a sid no source names is presumed closed only when a
-    reachable source exists (rule 5); a sid only an unreachable source names, or a mirror with no reachable
-    source, is cannot-determine. The kernel's link state gates reachability too (round 2 of fork PR #897,
-    the reviewer's ruling): a session started on a host after its last heard roster is in no roster, so a
-    host counted reachable while its link is down would let rule 5 presume that session closed; a host
-    that is down cannot vouch for absence. The down notify (peer_update) makes the source unreachable at
-    once, that write included, its last roster kept, and the source is reachable again on its first
-    heartbeat or exchange heard with the link up, not on the up notify (_link_down). Two roads to a false
-    settle, both shown in fork PR #897's round 1 by the reviewer's refuters, are closed here rather than by
-    the reader alone:
+    The reader (kernel/judge.py _presumed_closed_verdict) reads `reachable` and `vouchesAbsence` per row: a
+    sid a reachable source names is live on another host (rule 4); a sid no source names is presumed closed
+    only when a source vouches for absence (rule 5); a sid only an unreachable source names, or a mirror in
+    which no source vouches for absence, is cannot-determine. The kernel's link state decides both (round 2 of
+    fork PR #897, the reviewer's ruling): a session started on a host after its last heard roster is in no
+    roster, so a host counted as vouching for absence while its link is down, or while the kernel has never
+    reported it up, would let rule 5 presume that session closed; a host that is down cannot vouch for
+    absence, and neither can one whose link is unknown. The events: the down notify (peer_update) makes the
+    source unreachable at once, that write included, its last roster kept; the source is reachable again on
+    its first heartbeat or exchange heard with the link up, not on the up notify (_link_down), and from that
+    exchange, PEERS up and heard since, it vouches for absence (_link_up); for a far bus under its declared
+    name the fold, this bus's own dial landing under the alias with the busId (peer_exchange_apply), files
+    the row where the alias's link state reaches it. Two roads to a false settle, both shown in fork PR
+    #897's round 1 by the reviewer's refuters, are closed here rather than by the reader alone:
       (1) a bus restarted from empty memory wrote its first mirror from that memory, so until its first
           exchange every sid live on another host was absent from the file: every key the previous file
           named that this process has not heard is CARRIED FORWARD with its last roster and heard=false,
@@ -4010,7 +4062,10 @@ def _remote_sids_document(now, previous):
     for key, row in hosts.items():
         row["sids"] = sorted({str(s) for s in row["sids"]})
         row["linkDown"] = _source_link_down(key, row)         # the link state at THIS write, heard or carried
-        row["reachable"] = bool(row["heard"] and not row["expired"] and not row["linkDown"])
+        row["linkUp"] = _source_link_up(key, row)             # ...known up, and the host heard since it last dropped
+        row["reachable"] = bool(row["heard"] and not row["expired"] and not row["linkDown"])   # vouches for presence
+        row["vouchesAbsence"] = bool(row["heard"] and not row["expired"]                        # ...and for absence only
+                                     and (row["linkUp"] or row["kind"] == "heartbeat"))         # with the link known up
     return {"v": 2, "busStarted": BUS_EPOCH, "writtenAt": int(now), "hosts": hosts}
 
 
@@ -4020,12 +4075,18 @@ def _write_remote_sids():
     roster it reported and whether this bus process has heard it (_remote_sids_document has the shape and
     the reasons). A sid absent from the local registry but named by a reachable source is a live REMOTE
     session whose local mirror store must never be presumed closed; a sid no source names is presumed
-    closed only when a reachable source exists. Reachable is computed here, per row (`reachable`: heard,
-    not expired, and its link not held down by the kernel), and the reader reads that flag. The FILE alone
-    no longer means the bus has spoken: a bus restarted from empty memory writes a first mirror whose
-    hosts are all unreachable (carried from the previous file) until their heartbeats and exchanges
-    arrive; a host whose link the kernel reports down is unreachable from that notify until its next
-    heartbeat or exchange arrives with the link up (round 2 of fork PR #897, the reviewer's ruling). This
+    closed only when a source vouches for its absence. Two flags are computed here, per row, and the reader
+    reads them: `reachable` (heard, not expired, its link not held down by the kernel: the source vouches
+    for the PRESENCE of the sids it names) and `vouchesAbsence` (heard, not expired, and its link KNOWN UP,
+    a dialable PEERS row up and the host heard since the link last dropped, or a legacy heartbeat within
+    its TTL: the source vouches for the ABSENCE of a sid it does not name). A heard source with no link
+    state, a host the kernel never notified or a far bus under the hostname it declares before this bus's
+    own dial has folded it under the alias the kernel notifies, vouches for presence alone (round 2 of fork
+    PR #897, the reviewer's ruling). The FILE alone no longer means the bus has spoken: a bus restarted from
+    empty memory writes a first mirror whose hosts are all unreachable (carried from the previous file)
+    until their heartbeats and exchanges arrive; a host whose link the kernel reports down is unreachable
+    from that notify until its next heartbeat or exchange arrives with the link up, and vouches for absence
+    from that exchange (the up notify plus the host heard since). This
     module's STATE is the romp state root plus `postal`, so the file's one home is
     <state root>/postal/remote-sids; the bus owns that home and the shape, and its reader
     (kernel/judge.py _presumed_closed_verdict, rules 4 and 5) reads it there,
