@@ -7,6 +7,8 @@ kernel's /version reports the switch off, the feed pane's frame carries the off 
 in place of its list, a fresh /feed page renders the notice unhidden, the judge rows and the pane toggles wear rs-off with
 the one tooltip and their inputs are disabled, the Automation rows show their waiting note, and /perf's tierStarts stays flat
 across the wait while it grew before and grows again after. Flipped back, the buttons return, /version reads on and the notice hides.
+The kernel's switch is polled from the driver after each flip, past five stale /version answers the driver serves the page first (the
+pinned Playwright does not poll an async waitForFunction predicate, so the wait that stood here gated nothing).
 Round two: the Outline pane is turned on first so its page is loaded, and after the flip both panes show the notice ON TOP with
 the romp loader gone within seconds, not at its 30 s failsafe (the outline's _keepLoader used to re-assert it forever); a write
 the kernel refuses (a directory where the file goes) leaves the switch, the shell and the kernel on and draws the stale toast
@@ -72,16 +74,28 @@ const kernel = async () => { const v = await page.evaluate(async (u) => (await f
   return { taskTracking: v.taskTracking, settingsTaskTracking: v.settings && v.settings.taskTracking, tierStarts: p.judge ? p.judge.tierStarts : null, feedNoticeShown: /id=tt-off class=tt-off style=/.test(feedPage), feedNoticeHidden: /class=tt-off hidden/.test(feedPage) }; };
 // THE KERNEL'S SWITCH, POLLED FROM THE DRIVER. The pinned Playwright (vscode-extension/package-lock.json) does not poll an ASYNC
 // waitForFunction predicate: the first call returns a promise, a truthy value, and the wait resolves on it whatever it resolves to, so
-// a wait handed `async (u) => (await fetch(u)...).taskTracking === false` returned at once (about 50 ms against its 10 s bound,
+// a wait handed `async (u) => (await fetch(u)...).taskTracking === false` returned at once (7 to 50 ms against its 10 s bound,
 // measured) and the reads after it raced the kernel's write (a finding on the project PR 2031; fork PR #862 and fork PR #899 in CI).
 // A bounded loop over the same read, a short pause between polls; the elapsed time and a timeout ride in `out`, so a kernel that never
 // wrote is named in the failing pin's table rather than read as a stale value
 const readSwitch = () => page.evaluate(async (u) => (await (await fetch(u, { cache: "no-store" })).json()).taskTracking, cfg.version);
+// THE STALE ANSWERS THAT MAKE THE POLL SHOW ITS WAIT. In this lab the poll's first read already holds the new value (one fetch round
+// trip, 5 to 48 ms: the kernel writes the switch before it echoes the gear, and the class wait above covers that echo), so a poll cut to
+// one read, or to no bound, would stay green here; the race is a slower kernel's. So the first five /version answers the page receives
+// after each flip are the PRE-FLIP value (a route on cfg.version, count-keyed, then route.fallback() to the kernel): a poll that outlasts
+// them reads the kernel, and one that gives up times out, or hands the reads below the stale value, with staleServed in the pin's table
+let stale = null;   // { value, left, served } from the arm until five answers are served; null passes every request to the kernel
+await page.route((u) => u.href === cfg.version, async (route) => {
+  if (!stale || stale.left <= 0) return route.fallback();
+  stale.left -= 1; stale.served += 1;
+  await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ taskTracking: stale.value, settings: { taskTracking: stale.value }, staleAnswer: true }) });
+});
+const armStale = (preFlip) => { stale = { value: preFlip, left: 5, served: 0 }; };
 const pollKernelSwitch = async (want, boundMs = 10000) => {
   const t0 = Date.now();
   let value = await readSwitch();
   while (value !== want && Date.now() - t0 < boundMs) { await page.waitForTimeout(50); value = await readSwitch(); }
-  return { want, value, ms: Date.now() - t0, timedOut: value !== want };
+  return { want, value, ms: Date.now() - t0, timedOut: value !== want, staleServed: stale ? stale.served : 0 };
 };
 const feedPane = () => feedF ? feedF.evaluate(() => { const o = document.getElementById("tt-off"), l = document.getElementById("feed-list"); return { present: !!o, noticeShown: !!o && !o.hidden, listHidden: !!l && l.hidden }; }) : Promise.resolve(null);
 const out = {};
@@ -118,6 +132,7 @@ if (!(await setF.evaluate(() => document.getElementById("rs-tasktrack").checked)
 if (feedF) await feedF.evaluate(() => localStorage.setItem("romp:cardNotified", JSON.stringify(["n|seed-1", "w|seed-2|1700000000|judge", "sync|seed-3"])));
 // THE FLIP, in the gear: a real click on the switch
 const flipAt = Date.now();
+armStale(true);   // on is the value before this flip: the page's first five /version answers after the click say so
 await setF.click("#rs-tasktrack");
 await page.waitForFunction(() => document.body.classList.contains("no-task-tracking"), null, { timeout: 10000 }).catch(() => {});
 const offWait = await pollKernelSwitch(false);   // the kernel's own state, not the shell's class: /version must read off before the reads below
@@ -177,6 +192,7 @@ await p2.close();
 await page.waitForTimeout(4000);   // several producer passes' worth of wall time while off: the counter must not move
 out.afterWait = await kernel();
 // BACK ON
+armStale(false);   // off is the value before this flip
 await setF.click("#rs-tasktrack");
 await page.waitForFunction(() => !document.body.classList.contains("no-task-tracking"), null, { timeout: 10000 }).catch(() => {});
 const onWait = await pollKernelSwitch(true);
@@ -332,13 +348,19 @@ class ServedTaskTrackingSwitch(QueuedLab):
 
     def test_the_driver_polled_the_kernels_switch_to_each_value_within_its_bound(self):
         # the flip's wait on the kernel is a poll from the driver (pollKernelSwitch in DRIVER): the pinned Playwright does not poll an
-        # async waitForFunction predicate, and the old wait, handed `async (u) => ... fetch ...`, returned at once with the kernel unread
+        # async waitForFunction predicate, and the old wait, handed `async (u) => ... fetch ...`, returned at once with the kernel unread.
+        # The driver answers the page's first five /version reads after each click with the pre-flip value before the kernel's own (this
+        # lab's kernel writes before the gear echoes, so an unpolled read would hold the new value already): a poll that read the kernel
+        # outlasted all five; one cut to a single read, or to a shorter bound, reads a stale answer and times out here; a seam never armed
+        # served none, and such a run proves nothing about the poll
         r = self._result()
         for scene, want in (("off", False), ("on", True)):
             w = r[scene].get("kernelWait"); table = "\n  " + scene + ": " + json.dumps(w)
             self.assertIsNotNone(w, scene + ": the driver recorded its poll of the switch" + table)
             self.assertEqual(w["want"], want, table)
             self.assertFalse(w["timedOut"], scene + ": /version read %s within the poll's bound (%s ms)" % (json.dumps(want), w["ms"]) + table)
+            self.assertEqual(w.get("staleServed"), 5, scene + ": the poll read past the five stale answers the driver served after the click "
+                             "(fewer: it stopped before it reached the kernel; 0: the stale answers were never armed)" + table)
             self.assertEqual(w["value"], want, table)
 
     def test_back_on_restores_the_buttons_the_controls_and_the_panes(self):

@@ -11,22 +11,32 @@ CI reds on fork PR #862 and fork PR #899. The remedy is a poll from the driver (
 pause between polls, the elapsed time recorded: pollKernelSwitch in tests/test_task_tracking_switch_browser.py), or a
 synchronous predicate over state the page already holds.
 
-The pin is a text rule over every file that can drive a browser: the Python labs and the node scripts under tests/, the
-webview's tests and helpers under ui/webview/, and the extension's sources under vscode-extension/src/. Its bound, stated
-so a reader never takes it for more: (1) the first argument of a `waitForFunction(` call, read with brackets and string
-literals balanced, that begins with the `async` keyword (an async arrow or an async function expression); (2) a first
-argument that is a bare name bound in the same file to an async function (`const p = async () =>`, `async function p`);
-(3) a call through a wrapper whose parameter is that first argument (`const waitFn = (fn, ...) => page.waitForFunction(fn,
-...)`), when a caller in the same file hands the wrapper an `async` literal. Comment lines (`//`, `#`, `*`) are skipped, so
-a comment naming the shape is no offender and a pin in a comment is no cover. Out of its reach, by design: a predicate
-built in another file, a name rebound between its definition and the call, a regex literal holding an unbalanced bracket.
-The census that fixed the tree (2026-09-22) read every identifier-passed and wrapper-passed predicate by hand and found each
-synchronous; this rule holds that state. This file plants the shapes it refuses in its own tests, so the walk leaves it out
-by name. Reads the tree only: no kernel, no browser, no romp code loaded.
+The pin is a text rule over the files that can drive a browser. Its population is a list of directories (population()):
+the Python labs and the node scripts under tests/, the webview's tests and helpers under ui/webview/ and the browser tests
+beside them at ui/'s top, the extension's sources under vscode-extension/src/, and the lab loops and benches under tools/
+and tools/romp-lab/. A census holds that list to the tree: every tracked file that holds the call, prose aside, must be in
+it, so a call site in a directory the list does not name fails by path rather than going unread (six tracked files stood
+outside the first list on 2026-09-22). Its bound, stated so a reader never takes it for more:
+(1) the first argument of a `waitForFunction(` call, read with brackets and string literals balanced, that begins with the
+`async` keyword (an async arrow or an async function expression); (2) a first argument that is a bare name bound in the
+same file to an async function (`const p = async () =>`, `async function p`); (3) a call through a wrapper, a function
+defined earlier in the same file whose parameter is that first argument, when a caller in the same file hands the wrapper,
+in that parameter's position, an async literal or a name bound to an async function. The wrapper definitions rule (3) reads,
+each with its parameter list read balanced (a typed parameter such as `pred: () => boolean` or a defaulted one is read
+whole): an arrow bound by const, let or var with a parenthesized list or one bare parameter, a function expression bound
+the same way, and a function declaration; the form table is a test of this file. Comment lines (`//`, `#`, `*`) are
+skipped, so a comment naming the shape is no offender and a pin in a comment is no cover. Out of its reach, by design: a
+class or object-literal method used as the wrapper, a wrapper defined after its caller in the text, a predicate or wrapper
+built in another file, a predicate produced by a call (`waitForFunction(make())`), a name rebound between its definition
+and the call, a regex literal holding an unbalanced bracket. The census that fixed the tree (2026-09-22) read every
+identifier-passed and wrapper-passed predicate by hand and found each synchronous; this rule holds that state. This file
+plants the shapes it refuses in its own tests, so the walk leaves it out by name. Reads the tree only: no kernel, no
+browser, no romp code loaded; the census asks git for the tracked list.
 """
 import glob
 import os
 import re
+import subprocess
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -34,28 +44,55 @@ ROOT = os.path.dirname(HERE)
 SELF = os.path.basename(__file__)
 CALL = "waitForFunction("
 _LEAD = re.compile(r"^\s*(//|#|\*|/\*)")
-_DEF = re.compile(r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\(([^()]*)\)\s*=>|(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(([^()]*)\)")
+_NAME = r"[A-Za-z_$][\w$]*"
+# the heads of the wrapper definitions rule (3) reads; the named group that matched says which form. An arrow's or a function
+# expression's list opens at the match's last character and is read balanced from there; the bare-parameter arrow carries its
+# one name in the match
+_DEF = re.compile(r"(?:const|let|var)\s+(?P<bound>%(n)s)\s*=\s*(?:async\s+)?(?:(?P<fexpr>function)\s*\(|\(|(?P<bare>%(n)s)\s*=>)"
+                  r"|(?:async\s+)?function\s+(?P<decl>%(n)s)\s*\(" % {"n": _NAME})
+_ARROW = re.compile(r"\s*=>")
+# files that may quote the call and drive nothing
+PROSE = (".md", ".txt", ".rst")
 
 
 def population():
-    """Every file that can drive a browser, by path: the labs and node scripts under tests/, the webview's tests and
-    helpers, the extension's sources. Sorted, repo-relative; this pin's own file left out."""
-    pats = [os.path.join(HERE, "*.py"), os.path.join(HERE, "*.js"), os.path.join(HERE, "*.mjs"),
-            os.path.join(ROOT, "ui", "webview", "*.ts"), os.path.join(ROOT, "ui", "webview", "*.js"),
-            os.path.join(ROOT, "vscode-extension", "src", "*.ts"), os.path.join(ROOT, "vscode-extension", "src", "*.js")]
+    """Every file that can drive a browser, by path: the labs and node scripts under tests/, the webview's tests and helpers
+    under ui/webview/ and the browser tests at ui/'s top, the extension's sources, the lab loops and benches under tools/ and
+    tools/romp-lab/. Sorted, repo-relative; this pin's own file left out. The census test holds this list to the tree."""
+    dirs = [HERE, os.path.join(ROOT, "ui"), os.path.join(ROOT, "ui", "webview"), os.path.join(ROOT, "vscode-extension", "src"),
+            os.path.join(ROOT, "tools"), os.path.join(ROOT, "tools", "romp-lab")]
     out = set()
-    for pat in pats:
-        for path in glob.glob(pat):
-            if os.path.basename(path) != SELF:
-                out.add(os.path.relpath(path, ROOT))
+    for d in dirs:
+        for ext in (".py", ".js", ".mjs", ".cjs", ".ts"):
+            for path in glob.glob(os.path.join(d, "*" + ext)):
+                if os.path.basename(path) != SELF:
+                    out.add(os.path.relpath(path, ROOT))
     return sorted(out)
 
 
-def first_argument(text, start):
-    """The text of the first argument of the call whose opening paren is at `start`: brackets balanced, string and
-    template literals skipped (their brackets do not count), up to the first top-level comma or the closing paren."""
+def tracked_files():
+    """Every path git tracks in this checkout, repo-relative. The road when git cannot answer is the precedent's
+    (tests/test_entrypoints_executable.py): a loud skip when git is not installed or the tree is no checkout, an error for
+    any other exit, so the census never reads an empty list as a clean tree."""
+    try:
+        proc = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, text=True, timeout=60)
+    except FileNotFoundError:
+        raise unittest.SkipTest("git is not installed; the census over the tracked files cannot run")
+    if proc.returncode != 0:
+        if "not a git repository" in proc.stderr:
+            raise unittest.SkipTest("not a git checkout (git ls-files exited %d): the census over the tracked files cannot run" % proc.returncode)
+        raise AssertionError("git ls-files exited %d in %s, so the census over the tracked files would be disarmed; fix the checkout "
+                             "rather than skipping:\n%s" % (proc.returncode, ROOT, proc.stderr.strip()))
+    return [p for p in proc.stdout.split("\0") if p]
+
+
+def _segments(text, open_pos):
+    """The top-level, comma-separated segments between the bracket at `open_pos` and its match, and the match's position:
+    brackets balanced, string and template literals skipped (their brackets and commas do not count). An unclosed list
+    yields its tail and None."""
+    segs = []
     depth = 0
-    i = start + 1
+    i = seg = open_pos + 1
     n = len(text)
     while i < n:
         c = text[i]
@@ -68,12 +105,51 @@ def first_argument(text, start):
             depth += 1
         elif c in ")]}":
             if depth == 0:
-                return text[start + 1:i]
+                segs.append(text[seg:i])
+                return segs, i
             depth -= 1
         elif c == "," and depth == 0:
-            return text[start + 1:i]
+            segs.append(text[seg:i])
+            seg = i + 1
         i += 1
-    return text[start + 1:]
+    segs.append(text[seg:])
+    return segs, None
+
+
+def arguments_of(text, start):
+    """The arguments of the call whose opening paren is at `start`, as texts, brackets and string literals balanced."""
+    return _segments(text, start)[0]
+
+
+def first_argument(text, start):
+    return arguments_of(text, start)[0]
+
+
+def _param_name(segment):
+    """The name a parameter segment binds: its leading identifier (`pred: () => boolean` binds pred, `ms = bound(1)` binds
+    ms); None for a rest or destructured parameter, which no bare argument name can equal."""
+    m = re.match(r"\s*(%s)" % _NAME, segment)
+    return m.group(1) if m else None
+
+
+def wrapper_defs(text):
+    """Every function definition rule (3) reads, in text order, as (name, parameter names, end of its head). The forms:
+    `const w = [async] (a, b: T = d()) =>`, `const w = [async] a =>`, `const w = [async] function (a, b)`, and
+    `[async] function w(a, b)`; let and var like const. A parenthesized expression that is no arrow (`const x = (a + b)`)
+    is passed over."""
+    out = []
+    for m in _DEF.finditer(text):
+        name = m.group("bound") or m.group("decl")
+        if m.group("bare"):
+            out.append((name, [m.group("bare")], m.end()))
+            continue
+        segs, close = _segments(text, m.end() - 1)
+        if close is None:
+            continue
+        if m.group("bound") and not m.group("fexpr") and not _ARROW.match(text, close + 1):
+            continue
+        out.append((name, [_param_name(s) for s in segs], close + 1))
+    return out
 
 
 def _is_comment_line(text, pos):
@@ -81,11 +157,17 @@ def _is_comment_line(text, pos):
     return bool(_LEAD.match(text[line_start:pos + 1]))
 
 
+def _bound_to_async(text, name):
+    """Rule (2)'s test: `name` is bound somewhere in `text` to an async function."""
+    return re.search(r"(?:const|let|var)\s+%s\s*=\s*async\b|async\s+function\s+%s\b" % (re.escape(name), re.escape(name)), text) is not None
+
+
 def offenders(text, name="<text>"):
     """Every waitForFunction call in `text` whose first argument is asynchronous under the three rules of the module
     docstring, as "<name>:<line>: <reason>" strings. Pure over its input, so a planted shape is tested without a file."""
     out = []
-    wrappers = {}   # parameter name of a wrapper -> the wrapper's name, for rule (3)
+    defs = wrapper_defs(text)
+    wrappers = {}   # wrapper name -> (the parameter it hands waitForFunction, that parameter's index), for rule (3)
     for m in re.finditer(re.escape(CALL), text):
         pos = m.end() - 1
         if _is_comment_line(text, pos):
@@ -95,25 +177,28 @@ def offenders(text, name="<text>"):
         if re.match(r"async\b", arg):
             out.append("%s:%d: waitForFunction is handed an async predicate literal" % (name, line))
             continue
-        if re.fullmatch(r"[A-Za-z_$][\w$]*", arg):
-            if re.search(r"(?:const|let|var)\s+%s\s*=\s*async\b|async\s+function\s+%s\b" % (re.escape(arg), re.escape(arg)), text):
+        if re.fullmatch(_NAME, arg):
+            if _bound_to_async(text, arg):
                 out.append("%s:%d: waitForFunction is handed %s, a name bound to an async function" % (name, line, arg))
                 continue
             # rule (3): the last function defined before the call whose parameter list names the argument is its wrapper
-            for wm in reversed(list(_DEF.finditer(text[:pos]))):
-                wname = wm.group(1) or wm.group(3)
-                params = [p.split(":")[0].split("=")[0].strip() for p in (wm.group(2) or wm.group(4) or "").split(",")]
-                if arg in params:
-                    wrappers[wname] = arg
+            for wname, params, end in reversed(defs):
+                if end <= pos and arg in params:
+                    wrappers[wname] = (arg, params.index(arg))
                     break
-    for wname, param in wrappers.items():
+    for wname, (param, k) in wrappers.items():
         for cm in re.finditer(r"\b%s\(" % re.escape(wname), text):
             if _is_comment_line(text, cm.end() - 1):
                 continue
-            arg = first_argument(text, cm.end() - 1).strip()
-            if re.match(r"async\b", arg):
-                line = text.count("\n", 0, cm.start()) + 1
+            args = arguments_of(text, cm.end() - 1)
+            if k >= len(args):
+                continue
+            handed = args[k].strip()
+            line = text.count("\n", 0, cm.start()) + 1
+            if re.match(r"async\b", handed):
                 out.append("%s:%d: %s hands waitForFunction its parameter %s, and this call passes an async predicate literal" % (name, line, wname, param))
+            elif re.fullmatch(_NAME, handed) and _bound_to_async(text, handed):
+                out.append("%s:%d: %s hands waitForFunction its parameter %s, and this call passes %s, a name bound to an async function" % (name, line, wname, param, handed))
     return out
 
 
@@ -157,12 +242,46 @@ class WaitForFunctionPredicatesAreSynchronous(unittest.TestCase):
         self.assertGreater(files, 100, "the walk found waitForFunction in %d files" % files)
         self.assertGreater(sites, 500, "the walk found %d waitForFunction calls" % sites)
 
-    def test_the_population_holds_the_lab_the_finding_came_from_and_the_three_trees(self):
+    def test_the_population_holds_the_lab_the_finding_came_from_and_the_named_trees(self):
         pop = population()
         self.assertIn(os.path.join("tests", "test_task_tracking_switch_browser.py"), pop)
         self.assertNotIn(os.path.join("tests", SELF), pop, "this file plants the shape; the walk leaves it out by name")
-        for tree in (os.path.join("tests", ""), os.path.join("ui", "webview", ""), os.path.join("vscode-extension", "src", "")):
+        for tree in (os.path.join("tests", ""), os.path.join("ui", "webview", ""), os.path.join("vscode-extension", "src", ""),
+                     os.path.join("tools", "romp-lab", "")):
             self.assertTrue(any(p.startswith(tree) for p in pop), tree)
+        # the six files the first list missed (2026-09-22): one of each directory the list gained
+        for rel in (os.path.join("ui", "timeline-tags-scale-browser.test.ts"), os.path.join("tools", "viewer-resize-bench.ts"),
+                    os.path.join("tools", "romp-lab", "todos-loop.mjs")):
+            self.assertIn(rel, pop)
+
+    def test_every_tracked_file_holding_the_call_is_in_the_population(self):
+        # the population is a list of directories, and a call site in a directory the list does not name is a call site the
+        # rule never reads: six tracked files stood outside the first list (a browser test at ui/'s top, four lab loops and a
+        # bench under tools/). Prose may quote the call and drives nothing; every other tracked file that holds it is read
+        pop = set(population())
+        outside = []
+        unread = []
+        holding = 0
+        for rel in tracked_files():
+            if rel.endswith(PROSE) or os.path.basename(rel) == SELF:
+                continue
+            path = os.path.join(ROOT, rel)
+            if os.path.isdir(path):   # a tracked symlink to a directory holds no text of its own
+                continue
+            try:
+                with open(path, "rb") as f:
+                    data = f.read()
+            except OSError as e:
+                unread.append("%s (%s)" % (rel, e.strerror))
+                continue
+            if CALL.encode() in data:
+                holding += 1
+                if rel not in pop:
+                    outside.append(rel)
+        self.assertEqual(unread, [], "tracked files the census could not read, so their call sites are unknown:\n  " + "\n  ".join(unread))
+        self.assertEqual(outside, [], "tracked files holding waitForFunction( in a directory population() does not name; add the directory, "
+                         "or name the file under PROSE's reasoning if it drives no browser:\n  " + "\n  ".join(outside))
+        self.assertGreater(holding, 100, "the census found %d tracked files holding the call" % holding)
 
     def test_a_planted_async_arrow_reds(self):
         planted = 'await page.waitForFunction(async (u) => (await (await fetch(u, { cache: "no-store" })).json()).on === false, cfg.v, { timeout: 10000 });\n'
@@ -183,6 +302,45 @@ class WaitForFunctionPredicatesAreSynchronous(unittest.TestCase):
         self.assertEqual(offenders(planted, "x.py"),
                          ["x.py:3: waitFn hands waitForFunction its parameter fn, and this call passes an async predicate literal"])
 
+    def test_a_planted_wrapper_call_with_a_name_bound_to_an_async_function_reds(self):
+        planted = ('const waitFn = async (fn, arg, why) => page.waitForFunction(fn, arg, { timeout: T });\n'
+                   'const ready = async () => (await fetch("/v")).ok;\n'
+                   'await waitFn(ready, null, "the async one by name");\n')
+        self.assertEqual(offenders(planted, "x.py"),
+                         ["x.py:3: waitFn hands waitForFunction its parameter fn, and this call passes ready, a name bound to an async function"])
+
+    def test_the_wrapper_forms_the_third_rule_reads_and_the_two_it_does_not(self):
+        # the form table (each definition form, the predicate's position, a caller handing an async literal there): the rule
+        # must name the wrapper and its parameter. The first form's list once had to be free of parentheses, so the webview's
+        # own `async function waitFor(page: any, pred: () => boolean, what: string)` went unread and its callers unjudged
+        read = [
+            ("an arrow with a parenthesized list", 'const waitFn = async (fn, arg, why) => page.waitForFunction(fn, arg, { timeout: T });\n', "waitFn", "fn", 'await waitFn(async () => true, null, "x");\n'),
+            ("an arrow with one bare parameter", "const until = fn => page.waitForFunction(fn, null, { timeout: 5 });\n", "until", "fn", "await until(async () => true);\n"),
+            ("an arrow with typed and defaulted parameters", "const waitFor = async (page: any, pred: () => boolean, ms = bound(1)) => page.waitForFunction(pred, null, { timeout: ms });\n", "waitFor", "pred", 'await waitFor(page, async () => true, 50);\n'),
+            ("a function declaration with typed parameters", 'async function waitFor(page: any, pred: () => boolean, what: string): Promise<void> {\n  try { await page.waitForFunction(pred, null, { timeout: 5000 }); }\n  catch (e) { throw new Error(what); }\n}\n', "waitFor", "pred", 'await waitFor(page, async () => String(getSelection()) === "x", "the async one");\n'),
+            ("a function expression bound to a name", "const w = function (fn) { return page.waitForFunction(fn); };\n", "w", "fn", "await w(async () => true);\n"),
+            ("a let-bound arrow", "let w = (fn) => page.waitForFunction(fn);\n", "w", "fn", "await w(async () => true);\n"),
+        ]
+        for form, definition, wname, param, caller in read:
+            names = [d[0] for d in wrapper_defs(definition)]
+            self.assertIn(wname, names, form + ": the definition is read as a wrapper form; read: %r" % names)
+            found = offenders(definition + caller, "x.ts")
+            line = definition.count("\n") + 1
+            self.assertEqual(found, ["x.ts:%d: %s hands waitForFunction its parameter %s, and this call passes an async predicate literal" % (line, wname, param)],
+                             form + ": the caller's async literal in the predicate's position is refused")
+            self.assertEqual(offenders(definition + caller.replace("async () =>", "() =>").replace("async () => String(getSelection()) === \"x\"", "() => true"), "x.ts"), [],
+                             form + ": the same caller with a synchronous arrow is clean")
+        # the predicate's POSITION is the parameter's: an async literal in another slot of the same wrapper is not the predicate
+        self.assertEqual(offenders("const waitFor = (page, pred, what) => page.waitForFunction(pred);\nawait waitFor(page, () => true, async () => 1);\n", "x.ts"), [])
+        # out of reach, as the module docstring says: a method wrapper (class or object literal) is not read, and a caller
+        # handing it an async literal is not refused; a reader that gains these forms moves them into the table above
+        for form, text in (("a class method", "class Driver {\n  async until(fn) { await this.page.waitForFunction(fn); }\n}\nawait d.until(async () => true);\n"),
+                           ("an object-literal method", "const d = {\n  until(fn) { return page.waitForFunction(fn); },\n};\nawait d.until(async () => true);\n")):
+            self.assertEqual(wrapper_defs(text), [], form + ": not a form the rule reads")
+            self.assertEqual(offenders(text, "x.ts"), [], form + ": stated out of reach in the docstring, so no offender here")
+        # a parenthesized expression that is no arrow is passed over, not read as a wrapper of nothing
+        self.assertEqual(wrapper_defs("const total = (a + b) * 2;\nconst w = (fn) => page.waitForFunction(fn);\n"), [("w", ["fn"], len("const total = (a + b) * 2;\nconst w = (fn)"))])
+
     def test_the_synchronous_shapes_and_the_commented_shape_are_clean(self):
         clean = ('await page.waitForFunction(() => document.body.classList.contains("settings-open"), null, { timeout: 20000 });\n'
                  'await setF.waitForFunction((want) => document.getElementById("rs-tasktrack").checked === want, true, { timeout: 10000 });\n'
@@ -198,8 +356,12 @@ class WaitForFunctionPredicatesAreSynchronous(unittest.TestCase):
     def test_first_argument_balances_brackets_and_skips_strings(self):
         text = 'waitForFunction((a, b) => f(a, "x,y)", [b, {c: 1}]), null)'
         self.assertEqual(first_argument(text, len("waitForFunction")), '(a, b) => f(a, "x,y)", [b, {c: 1}])')
+        self.assertEqual(arguments_of(text, len("waitForFunction")), ['(a, b) => f(a, "x,y)", [b, {c: 1}])', ' null'])
         text = 'waitForFunction(pred)'
         self.assertEqual(first_argument(text, len("waitForFunction")), "pred")
+        # a template literal's brackets and commas do not count either; an unclosed call yields its tail
+        self.assertEqual(arguments_of("f(`a, ${b(1)}`, c)", 1), ["`a, ${b(1)}`", " c"])
+        self.assertEqual(arguments_of("f(a, b", 1), ["a", " b"])
 
 
 if __name__ == "__main__":
