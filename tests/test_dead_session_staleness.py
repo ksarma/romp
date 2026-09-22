@@ -23,7 +23,8 @@ list from an older bus) answers cannot-determine, as the dead rule did. Since ro
 the kernel's link state gates reachability too: a host whose link the kernel holds down cannot vouch
 for absence, so it is unreachable from the down notify (which writes the mirror) until its next beat or
 exchange arrives with the link up; the writer computes `reachable` per row and the reader reads that
-flag. The fixtures here write the bus's document shape (_bus_wrote) and every test that writes one
+flag, and the two cannot-determine reasons that turn on a source's state name the sources and what makes
+each unreachable (the fourth commit). The fixtures here write the bus's document shape (_bus_wrote) and every test that writes one
 asserts the ladder's verdict, the rule that answered and its reason, so a fixture at a path nothing
 reads turns its test red. SYNTHETIC fixtures only; private synthetic sids; hostname TESTHOST."""
 import contextlib
@@ -62,10 +63,23 @@ OTHER = "a11f0001-1111-4222-8333-000000000006"    # the sid HOST2 names: the fir
 
 RULE_5 = (True, 5, "no-reachable-host-names-it")               # the ladder's verdicts, (closed, rule, why), as
 RULE_4 = (False, 4, "named-by-reachable-host")                 # _presumed_closed_verdict spells them; a fixture
-LOST = (False, None, "named-by-unreachable-host")              # written at a path nothing reads answers NO_MIRROR
-NO_REACHABLE = (False, None, "no-reachable-host")
-NO_MIRROR = (False, None, "no-mirror")
+NO_MIRROR = (False, None, "no-mirror")                         # written at a path nothing reads answers NO_MIRROR
 UNPARSABLE = (False, None, "mirror-unparsable")
+
+
+def LOST(*sources):
+    """The cannot-determine verdict for a sid named only by unreachable sources: the reason names each source
+    that names it with what makes it unreachable, hand-spelled here as "<key> (<cause>[, <cause>])" with the
+    causes in the order not heard, expired, link down (round 2 of fork PR #897, the reviewer's ruling: the
+    reason names the down host). The expected text is this module's, not the reader's formatter."""
+    return (False, None, "named-by-unreachable-host: " + ", ".join(sources))
+
+
+def NO_REACHABLE(*sources):
+    """The cannot-determine verdict when no source is reachable: the reason names every source in the mirror,
+    sorted by key, each with what makes it unreachable, in the same hand-spelled form; a mirror with no row
+    at all reads "no source" (spelled at that site)."""
+    return (False, None, "no-reachable-host: " + ", ".join(sources))
 
 
 def _mirror():
@@ -210,7 +224,8 @@ class DeadSenderSweep(World):
         jd.run_propagate(now=NOW)
         st = jd.load_goals(DEAD)
         self.assertTrue(st["nodes"][DEAD + ":g1"].get("nodeComplete"), "the reply still closes the tracker")
-        self.assertEqual(self._verdict(DEAD), LOST, "named only by an unreachable host: cannot determine")
+        self.assertEqual(self._verdict(DEAD), LOST(HOST + " (not heard)"),
+                         "named only by an unreachable host: cannot determine, the reason naming the host and why")
         self.assertNotEqual(st["status"].get(DEAD + ":g1"), "completed",
                             "a sid its host last named is never presumed closed while that host is unreachable")
 
@@ -222,7 +237,8 @@ class DeadSenderSweep(World):
         jd.run_propagate(now=NOW)
         st = jd.load_goals(DEAD)
         self.assertTrue(st["nodes"][DEAD + ":g1"].get("nodeComplete"))
-        self.assertEqual(self._verdict(DEAD), NO_REACHABLE, "no reachable host: cannot determine")
+        self.assertEqual(self._verdict(DEAD), NO_REACHABLE(HOST + " (not heard)", HOST2 + " (not heard)"),
+                         "no reachable host: cannot determine, every source named with why")
         self.assertNotEqual(st["status"].get(DEAD + ":g1"), "completed",
                             "a mirror written before the bus heard anyone settles nothing")
 
@@ -246,28 +262,41 @@ class PresumedClosed(World):
         self.assertEqual(self._verdict(DEAD), RULE_4)
         # only an unreachable host names it (not heard since the bus started): its last word stands
         _bus_lost(DEAD)
-        self.assertEqual(self._verdict(DEAD), LOST, "a host the bus cannot reach protects the roster it last reported")
+        self.assertEqual(self._verdict(DEAD), LOST(HOST + " (not heard)"),
+                         "a host the bus cannot reach protects the roster it last reported; the reason names it")
         self.assertEqual(self._verdict(REMOTE), RULE_5, "...and the reachable host settles a sid neither names")
         # the host that names it is heard but its beat expired (the legacy TTL): unreachable the same way
         _bus_wrote({"heartbeat:" + DEAD: _row([DEAD], heard=True, expired=True, kind="heartbeat"), HOST2: _row([])})
-        self.assertEqual(self._verdict(DEAD), LOST, "an expired beat is unreachable, not absent")
+        self.assertEqual(self._verdict(DEAD), LOST("heartbeat:" + DEAD + " (expired)"), "an expired beat is unreachable, not absent")
         # the host that names it is heard, not expired, and the kernel holds its link down (round 2 of fork PR #897,
         # the reviewer's ruling): unreachable the same way; the reader reads the writer's `reachable`, not heard
         _bus_wrote({HOST: _row([DEAD], link_down=True), HOST2: _row([])})
-        self.assertEqual(self._verdict(DEAD), LOST, "a host whose link the kernel holds down cannot vouch: its last "
-                         "word stands (a reader recomputing heard and not expired answers rule 4 here)")
+        self.assertEqual(self._verdict(DEAD), LOST(HOST + " (link down)"),
+                         "a host whose link the kernel holds down cannot vouch: its last word stands, and the reason "
+                         "names the down host (a reader recomputing heard and not expired answers rule 4 here)")
         self.assertEqual(self._verdict(REMOTE), RULE_5, "...and the reachable host settles a sid neither names")
         _bus_wrote({HOST: _row([DEAD], link_down=True)})
-        self.assertEqual(self._verdict(REMOTE), NO_REACHABLE, "the only heard host is down: nothing can vouch for "
-                         "absence (a reader recomputing heard and not expired answers rule 5 here)")
+        self.assertEqual(self._verdict(REMOTE), NO_REACHABLE(HOST + " (link down)"),
+                         "the only heard host is down: nothing can vouch for absence, and the reason names the down host "
+                         "(a reader recomputing heard and not expired answers rule 5 here)")
+        # a host carried from before the restart AND held down by the kernel (the notify for a host not heard yet):
+        # both causes, in the reason's fixed order
+        _bus_wrote({HOST: _row([DEAD], heard=False, link_down=True)})
+        self.assertEqual(self._verdict(DEAD), LOST(HOST + " (not heard, link down)"), "every cause, not heard first")
         _bus_wrote({HOST: _row([DEAD], heard=True, expired=False, link_down=False)})
         self.assertEqual(self._verdict(REMOTE), RULE_5, "the same host with its link up: rule 5")
         # no reachable host at all (a bus that has heard nobody since it started): cannot determine
         _bus_wrote({HOST: _row([], heard=False), HOST2: _row([REMOTE], heard=False)})
-        self.assertEqual(self._verdict(DEAD), NO_REACHABLE)
-        self.assertEqual(self._verdict(REMOTE), LOST)
+        self.assertEqual(self._verdict(DEAD), NO_REACHABLE(HOST + " (not heard)", HOST2 + " (not heard)"))
+        self.assertEqual(self._verdict(REMOTE), LOST(HOST2 + " (not heard)"))
+        # the reason sorts the sources by key, not by the order the file lists them: the second-listed host first
+        _bus_wrote({HOST2: _row([DEAD], heard=False), HOST: _row([], link_down=True)})
+        self.assertEqual(self._verdict(REMOTE), NO_REACHABLE(HOST + " (link down)", HOST2 + " (not heard)"),
+                         "sorted by key (a reader taking the file's order names the second-listed host first)")
+        self.assertEqual(self._verdict(DEAD), LOST(HOST2 + " (not heard)"), "only the sources that name the sid")
         _bus_wrote({})
-        self.assertEqual(self._verdict(DEAD), NO_REACHABLE, "a document with no host is not a host that names nobody")
+        self.assertEqual(self._verdict(DEAD), NO_REACHABLE("no source"), "a document with no host is not a host that "
+                         "names nobody; the reason says there is no source")
         # a mirror of another shape (the whitespace list a bus before 2026-09-22 wrote): not an empty roster
         _mirror().write_text("")
         self.assertEqual(self._verdict(DEAD), UNPARSABLE)
@@ -552,7 +581,8 @@ print(json.dumps(out))
 
     @staticmethod
     def _v(phase, key):
-        """A recorded verdict, (closed, rule, why), as the RULE_5 / RULE_4 / LOST constants spell them."""
+        """A recorded verdict, (closed, rule, why), as the RULE_5 and RULE_4 constants and the LOST and
+        NO_REACHABLE helpers spell them (the reason of the two cannot-determine arms names the sources)."""
         return tuple(phase[key])
 
     def test_both_modules_bound_the_one_root_the_test_prepared(self):
@@ -637,7 +667,7 @@ print(json.dumps(out))
                 self.assertEqual(got["restartMemory2"], {"heartbeats": 0, "peers": 0, "freshObject": True},
                                  "the second restart is a fresh module object too, its memory empty")
                 first = got["otherHeardFirst"]
-                self.assertEqual(self._v(first, "carried"), LOST,
+                self.assertEqual(self._v(first, "carried"), LOST(HOST + " (not heard)"),
                                  "another host was heard first, reachable, naming its own sid alone; the host that last "
                                  "named this sid has not been heard by the new process, so its carried word stands: "
                                  "cannot-determine (a writer carrying nothing leaves this sid to rule 5, True, a live "
@@ -676,19 +706,26 @@ print(json.dumps(out))
                 self.assertEqual(self._v(heard, "nobody"), RULE_5, "one reachable host names nobody unknown: rule 5")
                 self.assertEqual(got["linkDownNotify"], [{"ok": True, "up": 0}, 200], "the handler took the down notify")
                 down = got["linkDown"]
-                self.assertEqual(self._v(down, "other"), LOST,
+                down_host = LOST(HOST2 + " (link down)")
+                # every row of the file at this point, sorted by key as the reason sorts them: the two peer hosts
+                # carried from the second restart's process, then the two heartbeats carried since the first
+                none_reachable = NO_REACHABLE(HOST + " (not heard)", HOST2 + " (link down)",
+                                              self.HB + REMOTE + " (not heard, expired)", self.HB + REMOTE2 + " (not heard)")
+                self.assertEqual(self._v(down, "other"), down_host,
                                  "the host that names it is heard but the kernel holds its link down: its last word "
                                  "stands and rule 4 does not fire (a host the bus cannot vouch for makes no positive "
-                                 "determination); a gate on heard alone answers rule 4 here")
-                self.assertEqual(self._v(down, "nobody"), NO_REACHABLE,
-                                 "the only heard host is down: nothing can vouch for absence, cannot-determine; a gate "
-                                 "on heard alone presumes a session started there since the drop closed, rule 5")
+                                 "determination), and the reason names the down host; a gate on heard alone answers "
+                                 "rule 4 here")
+                self.assertEqual(self._v(down, "nobody"), none_reachable,
+                                 "the only heard host is down: nothing can vouch for absence, cannot-determine, the "
+                                 "reason naming every source and what makes each unreachable; a gate on heard alone "
+                                 "presumes a session started there since the drop closed, rule 5")
                 self.assertEqual(down["hosts"][HOST2], L(True, False, True, False, [OTHER]),
                                  "marked link-down by the notify's own write, nothing else having written: unreachable, "
                                  "roster kept (a writer waiting for the next tick leaves the row reachable here)")
                 unheard = got["linkUpUnheard"]
                 self.assertEqual(got["linkUpNotify"], [{"ok": True, "up": 1}, 200])
-                self.assertEqual((self._v(unheard, "other"), self._v(unheard, "nobody")), (LOST, NO_REACHABLE),
+                self.assertEqual((self._v(unheard, "other"), self._v(unheard, "nobody")), (down_host, none_reachable),
                                  "the up notify alone is not the event: the roster is the one heard before the link "
                                  "dropped and says nothing about a session started there since")
                 self.assertEqual(unheard["hosts"][HOST2], L(True, False, True, False, [OTHER]))
@@ -697,7 +734,7 @@ print(json.dumps(out))
                                  "its exchange arriving with the link up is the event: reachable, rule 4 and rule 5 again")
                 self.assertEqual(up["hosts"][HOST2], L(True, False, False, True, [OTHER]))
                 beside = got["heardBesideDown"]
-                self.assertEqual(self._v(beside, "other"), LOST, "the down host's last word still protects its sid")
+                self.assertEqual(self._v(beside, "other"), down_host, "the down host's last word still protects its sid")
                 self.assertEqual(self._v(beside, "nobody"), RULE_5,
                                  "a host the kernel never notified is heard beside the down one: reachable on heard alone, "
                                  "and a sid nothing names is rule 5's (the down host protects the sids it last named; it "

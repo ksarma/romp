@@ -20,7 +20,16 @@ with its roster kept; the host is reachable again on its first heartbeat or exch
 up, not on the up notify (the exchange replaces the PEER_STATE row and with it the mark the down notify
 set: _link_down). A far host gossiped through a hub is gated by the hub's link; a source the kernel never
 notified (no dialable PEERS row: never notified, or an origin-only trust row, or a legacy heartbeat) has
-no link state and is gated by heard and the TTL alone.
+no link state and is gated by heard and the TTL alone. The gate reaches a peer's row under the name it is
+filed under, and the kernel notifies the ALIAS it dials: the dialer's fold files there, the dialed side's
+handler files a far bus under the name it DECLARES until a row under a dialable name carries its busId
+(_canon_peer_name), so before this bus's own dial has folded the peer, a far bus heard only through its
+dials to us has no link state and the alias's down notify does not reach it. That is a DISCLOSED RESIDUAL
+of round 2 (a verifier's probe; no event ties the two names before the fold), and its witness is the test
+named for the alias's link and the declared name below: it pins the road by execution, the fold that ends
+it, and the restart at which the road is reached again, so a closure or a widening turns it red. Both
+recorders write the mirror after the busId fold (the fourth commit), so the fold's own write has one row
+per bus.
 Pinned here, by writing through the real writer and reading the file back: the document's shape; one
 source per heartbeat with its own TTL; a peer's own rows under its name and its gossip under the far host
 it speaks for, with gossip about a directly held host folded (the direct row speaks); a PEER_STATE row no
@@ -28,7 +37,8 @@ exchange produced is not a source; the carry-forward across a restart and its re
 of a carried row for a bus heard under its other name; the whitespace list of the shape until 2026-09-22
 carried as one legacy source and pruned as heard sources name its sids; a file of neither shape carrying
 nothing; a write failure said once in the bus log; the link gate at the notify and at the two exchange
-recorders, the hub's link for a far host, and the sources with no link state.
+recorders, the hub's link for a far host, the sources with no link state, and the declared-name road with
+the fold that ends it.
 tests/test_dead_session_staleness.py ReaderFollowsTheWriter
 runs this writer and the judge's reader together over one root; tests/test_postal_bus_lifetime.py
 MonitorTick pins the poll's write. SYNTHETIC fixtures only: private synthetic sids, hostname TESTHOST."""
@@ -120,6 +130,21 @@ class Mirror(unittest.TestCase):
     def _restart(self):
         """A restarted bus process's memory: nothing heard yet, the file still on disk."""
         pm.HEARTBEATS.clear(); pm.PEER_STATE.clear()
+
+    def _local_listing_answered_empty(self):
+        """The local sessions listing the dialed side's handler gossips in its response presence, answered and
+        empty, through the ROMP_SESSIONS_FILE seam; put back as found."""
+        seam = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+        seam.write("[]"); seam.close()
+        self.addCleanup(os.unlink, seam.name)
+        self.addCleanup(restore_env, "ROMP_SESSIONS_FILE", os.environ.get("ROMP_SESSIONS_FILE"))
+        os.environ["ROMP_SESSIONS_FILE"] = seam.name
+
+    def _far_dials_us(self, declared, presence, bus_id):
+        """The dialed side of one exchange, through the real handler: the far bus declares `declared` and `bus_id`."""
+        req = dict(self._exchange_request(declared, presence), busId=bus_id)
+        resp, status = pm.peer_exchange_handle(req)
+        self.assertEqual(status, 200, resp)
 
     def test_the_document_shape(self):
         pm.HEARTBEATS[A] = ("web", self.now)
@@ -263,11 +288,7 @@ class Mirror(unittest.TestCase):
                          "the dialer's fold replaced the row (the mark with it) and wrote: reachable")
         self._notify(HOST, up=False)
         self.assertEqual(self._reach()[HOST], (True, False, True, False, [B]))
-        seam = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
-        seam.write("[]"); seam.close()                    # the local listing the handler's response gossips: answered, empty
-        self.addCleanup(os.unlink, seam.name)
-        self.addCleanup(restore_env, "ROMP_SESSIONS_FILE", os.environ.get("ROMP_SESSIONS_FILE"))   # put back as found
-        os.environ["ROMP_SESSIONS_FILE"] = seam.name
+        self._local_listing_answered_empty()
         resp, status = pm.peer_exchange_handle(self._exchange_request(HOST, [{"id": B, "name": "api"}, {"id": D, "name": "web"}]))
         self.assertEqual(status, 200, resp)
         self.assertEqual(self._reach()[HOST], (True, False, True, False, [B, D]),
@@ -276,6 +297,64 @@ class Mirror(unittest.TestCase):
         self._notify(HOST, up=True)
         self.assertEqual(self._reach()[HOST], (True, False, False, True, [B, D]),
                          "the link is up and the host was heard since it dropped: reachable on the up notify's own write")
+
+    def test_the_alias_link_does_not_reach_a_row_a_far_bus_filed_under_its_declared_name_before_the_fold(self):
+        """The WITNESS of a disclosed residual (round 2 of fork PR #897, a verifier's probe), pinned as the road stands so
+        a closure or a widening turns it red and retires the disclosure with it. The kernel notifies the ALIAS it dials
+        (PEERS[alias]); the dialed side's handler files a far bus under the name it DECLARES unless a PEER_STATE row
+        under a dialable name already carries its busId (_canon_peer_name). Before this bus's own dial has folded the
+        peer under the alias (a restarted bus whose seeded row has no token yet; a dial the far side refuses while its
+        dial to us lands), the far bus's row sits under its declared hostname, which has no PEERS row and no link
+        state: heard alone gates it, so the alias's down notify leaves it reachable, and a sid nothing names would be
+        rule 5's with this host as the only reachable one. No event ties the two names before the fold: the far bus's
+        exchange carries its hostname and busId, the kernel's notify the alias and port, and PEERS never learns a
+        busId. The fold (peer_exchange_apply under the alias with the busId) is the event that brings the row under
+        the gate, and its own write already has one row per bus (both recorders write after the fold, the fourth
+        commit). The road is reached again at every bus restart the far side dials into first: the carried alias row
+        is the same bus by busId and gives way to the heard row under the declared name."""
+        alias, declared = "TESTHOST-c-alias", "TESTHOST-c-hostname"   # the kernel dials the alias; the far bus declares its hostname
+        self._local_listing_answered_empty()
+        self._notify(alias, up=True)                        # the kernel's link is up; this bus has not dialed yet
+        self._far_dials_us(declared, [{"id": B, "name": "api"}], "bus-c")
+        self.assertEqual(sorted(pm.PEER_STATE), [declared], "no row under a dialable name carries the busId: filed as declared")
+        self.assertEqual(self._reach(), {declared: (True, False, False, True, [B])})
+        self._notify(alias, up=False)
+        self.assertEqual((pm.PEERS[alias]["up"], (pm.PEER_STATE.get(declared) or {}).get("linkDown")), (False, None),
+                         "the kernel holds the alias down; the declared row carries no mark (the notify marks PEER_STATE[alias])")
+        self.assertEqual(self._reach(), {declared: (True, False, False, True, [B])},
+                         "THE RESIDUAL, as disclosed: the row under the declared name has no link state, so the alias's "
+                         "down notify does not reach it and it stays reachable (a closure of this road, or a writer "
+                         "gating a heard row on some other alias's link, turns this pin red: retire the disclosure with it)")
+        # the fold: this bus's own dial lands under the alias with the busId, the event that brings the row under the gate
+        self._notify(alias, up=True)
+        pm.peer_exchange_apply(alias, {}, {"presence": [{"id": B, "name": "api"}], "epoch": 1, "holds": [], "busId": "bus-c"})
+        self.assertEqual(sorted(pm.PEER_STATE), [alias], "the declared row is the same bus (busId), dropped by the fold")
+        self.assertEqual(self._reach(), {alias: (True, False, False, True, [B])},
+                         "the fold's own write has one row per bus, under the alias: the recorder writes AFTER the busId "
+                         "fold (a recorder writing before it leaves the declared row in the file, heard and reachable, "
+                         "until the next write)")
+        self._far_dials_us(declared, [{"id": B, "name": "api"}, {"id": C, "name": "tests"}], "bus-c")
+        self.assertEqual(sorted(pm.PEER_STATE), [alias], "canonicalized: a row under a dialable name carries the busId now")
+        self._notify(alias, up=False)
+        self.assertEqual(self._reach(), {alias: (True, False, True, False, [B, C])},
+                         "the control: folded under the alias, the row is gated by the alias's link")
+        # the road again at a restart: empty memory, the file carrying the alias row, the kernel seeding the alias down
+        # (a tunnel down at start), the far side dialing in before this bus's own dial (which a down link never makes)
+        self._restart()
+        pm.PEERS.clear()
+        self._notify(alias, up=False)
+        self.assertEqual(self._reach(), {alias: (False, False, True, False, [B, C])},
+                         "carried from the previous file, not heard, the seeded link down: unreachable")
+        self._far_dials_us(declared, [{"id": B, "name": "api"}, {"id": C, "name": "tests"}], "bus-c")
+        self.assertEqual(sorted(pm.PEER_STATE), [declared], "memory empty: nothing to canonicalize to, filed as declared")
+        self.assertEqual(self._reach(), {declared: (True, False, False, True, [B, C])},
+                         "the same road at the restart: the carried alias row gives way to the heard row (same busId), "
+                         "which has no link state while the kernel holds the alias down; this bus's dial, when the link "
+                         "comes up and the token arrives, folds it back under the alias")
+        self._notify(alias, up=True)
+        pm.peer_exchange_apply(alias, {}, {"presence": [{"id": B, "name": "api"}, {"id": C, "name": "tests"}], "epoch": 1,
+                                           "holds": [], "busId": "bus-c"})
+        self.assertEqual(self._reach(), {alias: (True, False, False, True, [B, C])}, "folded again: one row, under the alias")
 
     def test_a_far_host_gossiped_through_a_hub_is_gated_by_the_hubs_link(self):
         self._notify(HUB, up=True)

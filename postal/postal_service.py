@@ -3879,12 +3879,28 @@ def _link_down(host):
     either sufficient: PEERS[host]["up"] is False on a DIALABLE row (a row with a port; the kernel's /peer
     notify writes it through peer_update, transitions being the events, and _peer_loop exits on it), or
     PEER_STATE[host] carries the mark the down notify set, which the next exchange from the host clears by
-    replacing the row (peer_exchange_handle, peer_exchange_apply). So a host is out of link-down from its
-    first exchange heard with the link up, never from the up notify alone: the roster it reported before
-    the link dropped says nothing about a session started there since. A host with no dialable PEERS row
-    has no link state and is gated by heard and the TTL alone: the kernel never notified it (the row is
-    absent), or its row is origin-only (no port: a tier for a host this machine has no tunnel to, so
-    there is no link to be down)."""
+    replacing the row (peer_exchange_handle, peer_exchange_apply). So a host is out of link-down once BOTH
+    hold, the link up and the host heard since the link dropped, and neither alone: the up notify with
+    nothing heard since the drop leaves the mark (the roster it reported before the drop says nothing about
+    a session started there since); an exchange heard while the kernel holds the link down (the far side
+    dialing us) clears the mark and PEERS still says down, so the host is reachable on the up notify's own
+    write. A host with no dialable PEERS row has no link state and is gated by heard and the TTL alone: the
+    kernel never notified it (the row is absent), or its row is origin-only (no port: a tier for a host
+    this machine has no tunnel to, so there is no link to be down). A source with no link state has no
+    down event either: it stays reachable on its last roster until its next exchange.
+
+    The gate reaches a peer's row under the NAME THE ROW IS FILED UNDER, and the kernel's notify names the
+    ALIAS it dials. The dialer's fold (peer_exchange_apply) files under that alias; the dialed side's
+    handler (peer_exchange_handle) files a far bus under the name it DECLARES unless a PEER_STATE row under
+    a dialable name already carries its busId (_canon_peer_name). So until this bus process's own dial has
+    folded a peer (a restarted bus whose seeded row has no token yet, or whose dial the far side refuses
+    while its dial to us lands), a far bus heard only through its own dials to us sits under its declared
+    hostname, which has no PEERS row and so no link state: heard alone gates it, and the alias's down
+    notify does not reach it. No event ties the two names before the fold (the far bus's exchange carries
+    its hostname and busId, the kernel's notify the alias and port, and PEERS never learns a busId), so
+    this is a disclosed residual of fork PR #897's round 2, not a closure: witnessed by execution in
+    tests/test_postal_remote_sids_mirror.py (the test named for the alias's link and the declared name),
+    which pins the road and the fold that ends it, so a closure or a widening turns it red."""
     p = PEERS.get(host) or {}
     if p.get("port") and not p.get("up"):
         return True
@@ -3892,8 +3908,10 @@ def _link_down(host):
 
 
 def _source_link_down(key, row):
-    """The link state that gates one mirror row: a peer host's own (_link_down of its key); for a far host
-    gossiped through a hub (kind via) the HUB's, since the far host is reached through it and a hub the kernel
+    """The link state that gates one mirror row: a peer host's own (_link_down of its key, the name the row is
+    filed under, which is the alias the kernel dials once this bus's dial has folded the peer there and its
+    declared hostname before that: _link_down has the residual); for a far host gossiped through a hub (kind
+    via) the HUB's, since the far host is reached through it and a hub the kernel
     holds down cannot carry fresh word about anyone (the hub the row names in `via`; a second hub gossiping
     the same far host does not lift it, the conservative side); none for a legacy heartbeat or the legacy
     list, whose keys carry a colon no PEERS row can match (heard and the TTL alone)."""
@@ -3915,7 +3933,9 @@ def _remote_sids_document(now, previous):
       expired  its presence is past HEARTBEAT_TTL; legacy heartbeats only: a peer's presence has no TTL, its
                age is shown to the user as staleness and its roster stands until the next exchange
       linkDown the kernel holds its link down, or has since it was last heard (_source_link_down: a peer
-               host's own link, a far host's hub's; a legacy heartbeat has no link state)
+               host's own link under the name its row is filed under, a far host's hub's; a legacy heartbeat
+               has no link state, and neither has a far bus filed under the hostname it declares before this
+               bus's own dial folds it under the alias the kernel notifies: _link_down's disclosed residual)
       reachable  heard and not expired and not linkDown: computed HERE, the one home of the gate, and the
                one flag the reader's verdict reads
       seenAt   the last heartbeat or exchange time, kept across processes
@@ -5121,10 +5141,12 @@ def peer_exchange_handle(data, flight=None):
                          "hostname (or set ROMP_POSTAL_HOST) and redial" % host}, 400
     PEER_STATE[host] = {"presence": data.get("presence") or [], "epoch": data.get("epoch"),
                         "holds": data.get("holds") or [], "seenAt": int(time.time())}
-    _write_remote_sids()                           # presence changed → refresh the deadness mirror
     if bus_id:
         PEER_STATE[host]["busId"] = bus_id
         _drop_peer_name_dupes(host, bus_id)
+    _write_remote_sids()                           # presence changed: refresh the deadness mirror, AFTER the busId
+    #                                                fold, so this write already has one row per bus (the stale
+    #                                                name's row gone with it, not one write later)
     if data.get("tier"):                             # the dialer's declared tier-of-us (additive; older peers omit it)
         PEER_STATE[host]["theirTier"] = str(data["tier"])
     for mid in data.get("acks") or []:               # the dialer confirmed relays landed — end-to-end:
@@ -5218,11 +5240,13 @@ def peer_exchange_apply(host, req_sent, resp, flight=None):
         readbox_del(host, r)
     PEER_STATE[host] = {"presence": resp.get("presence") or [], "epoch": resp.get("epoch"),
                         "holds": resp.get("holds") or [], "seenAt": int(time.time())}
-    _write_remote_sids()                           # presence changed → refresh the deadness mirror
     bus_id = str(resp.get("busId") or "")
     if bus_id:                                       # the dialed alias is canonical for this bus: fold any
         PEER_STATE[host]["busId"] = bus_id           # row it left under its self-declared hostname
         _drop_peer_name_dupes(host, bus_id)
+    _write_remote_sids()                           # presence changed: refresh the deadness mirror, after the fold
+    #                                                (the write reads PEER_STATE, so the folded name's row is
+    #                                                gone from this write; the writer drops the carried one by busId)
     if resp.get("tier"):                             # the dialed side's declared tier-of-us
         PEER_STATE[host]["theirTier"] = str(resp["tier"])
     for mid in resp.get("acks") or []:

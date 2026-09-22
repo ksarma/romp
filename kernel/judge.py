@@ -19412,7 +19412,24 @@ Deadness = collections.namedtuple("Deadness", "closed rule why")
 #           named-by-reachable-host (4); no-reachable-host-names-it (5); and the cannot-determine arms
 #           no-mirror, mirror-unparsable, named-by-unreachable-host, no-reachable-host. Unreachable is one
 #           arm whatever made the source so (not heard since the bus started, expired, its link held down
-#           by the kernel): the row's flags say which, where the bus wrote them
+#           by the kernel), and the two arms that turn on a source's state NAME the sources after the
+#           token, each with what makes it unreachable (_unreachable_sources: "named-by-unreachable-host:
+#           <key> (link down)"; "no-reachable-host: <key> (not heard), <key> (expired)"; a mirror with no
+#           row at all, "no-reachable-host: no source"), so the reason says which host cannot vouch and
+#           why (round 2 of fork PR #897, the reviewer's ruling)
+
+
+def _unreachable_sources(rows):
+    """The sources of `rows` (key to row, as the bus wrote them) for a cannot-determine reason: each key with what
+    makes it unreachable in parentheses (not heard since the bus's current process started; expired, a legacy
+    heartbeat past its TTL; link down, the kernel's word), sorted by key; "no source" for an empty table."""
+    parts = []
+    for key in sorted(rows):
+        row = rows[key]
+        causes = [w for w, on in (("not heard", not row["heard"]), ("expired", row["expired"]),
+                                  ("link down", row["linkDown"])) if on]
+        parts.append(str(key) + (" (%s)" % ", ".join(causes) if causes else ""))
+    return ", ".join(parts) or "no source"
 
 
 def _presumed_closed_verdict(sid, now):
@@ -19441,7 +19458,9 @@ def _presumed_closed_verdict(sid, now):
     reachable host at all (a bus that has heard nobody since it started, a mirror carried from before, or
     every heard host expired or held down). Unreachable is one arm whatever made the host so: rule 4 is a
     positive determination, live on another host, that only a host the bus can vouch for makes, and the
-    closed field is False either way. The link-down gate is round 2's ruling by the reviewer (fork PR
+    closed field is False either way; the reason of each of those two arms names the sources it turns on
+    and what makes each unreachable (_unreachable_sources), so a reader of the verdict sees which host
+    cannot vouch, and why, without the mirror in hand. The link-down gate is round 2's ruling by the reviewer (fork PR
     #897): a session started on a host after its last heard roster is in no roster, so a host counted
     reachable while the kernel holds its link down would let rule 5 presume that session closed; a host
     that is down cannot vouch for absence. Event-keyed at both ends: the down notify makes the host
@@ -19486,13 +19505,14 @@ def _presumed_closed_verdict(sid, now):
     if hosts is None:
         return Deadness(False, None, why)               # the bus has not spoken in a shape this reader knows
     sid = str(sid)
-    reachable = [row for row in hosts.values() if row["reachable"]]      # the writer's flag: one home for the gate
-    if any(sid in row["sids"] for row in reachable):
+    reachable = {k: row for k, row in hosts.items() if row["reachable"]}   # the writer's flag: one home for the gate
+    naming = {k: row for k, row in hosts.items() if sid in row["sids"]}
+    if any(k in reachable for k in naming):
         return Deadness(False, 4, "named-by-reachable-host")
-    if any(sid in row["sids"] for row in hosts.values()):
-        return Deadness(False, None, "named-by-unreachable-host")   # its host's last word stands until heard again
-    if not reachable:
-        return Deadness(False, None, "no-reachable-host")           # none heard since start, or every heard host expired or held down
+    if naming:                                                           # its host's last word stands until heard again
+        return Deadness(False, None, "named-by-unreachable-host: " + _unreachable_sources(naming))
+    if not reachable:                                                    # none heard since start, or every heard host expired or held down
+        return Deadness(False, None, "no-reachable-host: " + _unreachable_sources(hosts))
     return Deadness(True, 5, "no-reachable-host-names-it")
 
 
