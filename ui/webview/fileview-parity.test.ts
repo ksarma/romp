@@ -171,7 +171,7 @@ test("the viewer's shared chrome and the document's type scale exist in BOTH she
 // inversion, so an open Outline computed unlike the pressed Rendered toggle beside it (the PR review's round 1). The census is
 // over parsed RULES through ui/webview/css-rules.mjs, each with the at-rules enclosing it, in every sheet a page of either host
 // loads (ui/webview/host-sheets.mjs, derived from the page assembly), so a rule indented inside an at-rule block or written
-// in the Files page's own sheet is in it (the file review's round 11, correctness-5: heads had been read at a line start over
+// in the Files page's own sheet is in it (the file review's round 10, correctness-5: heads had been read at a line start over
 // the pair alone, so the twin indented inside `@media screen` passed, and a rule of the button's own in files-pane.css dresses
 // the button on that page as one in styles.css does); the dress it wears instead is read off the pair, where it is written. Heads are
 // read at a line start, as rulesOf reads them. Red over a git archive of 3e433ceee: one such head in each sheet.

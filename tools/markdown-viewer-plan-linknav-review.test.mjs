@@ -271,7 +271,7 @@ test('the file review: L3 and L6 record the remote picture\'s tab as the one new
   /** The clause of `text` in which the three gestures open the tab, from the plain click on a loaded remote picture to "open a
    *  top-level tab": it names the control and the Cmd/Ctrl-click, and carries the condition beside them, the control at any time
    *  and the two clicks on the picture where the press reaches it, the Comments panel closed or the pointer coarse. Keyed on the
-   *  property and not the bytes (the file review's round 10, regression-1: the pins on L6 and open point 11 held the unconditioned
+   *  property and not the bytes (the file review's round 9, regression-1: the pins on L6 and open point 11 held the unconditioned
    *  phrases by text, so the condition round 8's fresh-1 put in every other home could never be red in these two). */
   const gesturesConditioned = (text, home) => {
     const at = text.indexOf('a plain click on a loaded remote picture');

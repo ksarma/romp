@@ -116,7 +116,7 @@ const viewer = read('ui', 'webview', 'file-view.ts');
 const icons = read('ui', 'webview', 'icons.ts');
 /** Every sheet a page of either host loads (ui/webview/host-sheets.mjs, derived from the page assembly, the derivation this home
  *  shares with ui/webview/file-figure-open.test.ts), and the two among them the viewer's dress is written in (the file review's
- *  round 11, correctness-1 with regression-5: a typed pair left the Files page's own sheet outside the closed set). */
+ *  round 10, correctness-1 with regression-5: a typed pair left the Files page's own sheet outside the closed set). */
 const SHEETS = hostSheets(REPO);
 const DRESSING = ['ui/webview/styles.css', 'ui/webview/feed.css'];
 
@@ -292,12 +292,12 @@ test('L3: the control\'s words are the viewer\'s literal, quoted by the section 
   // this home shares with ui/webview/file-figure-open.test.ts: brace-matched over the comment-stripped sheet, each rule with the
   // at-rules enclosing it), every rule naming the control's class that reveals it under screen, none in the print block, and no
   // rule naming the control in any other sheet a page of either host loads (SHEETS, derived from the page assembly; the file
-  // review's round 11, correctness-1 with regression-5: the set had been closed over the typed pair while the Files page loads
+  // review's round 10, correctness-1 with regression-5: the set had been closed over the typed pair while the Files page loads
   // its own sheet after styles.css); the population is the rules whose SELECTOR names the class in those sheets, so a rule
   // whose selector would match the control's element without naming the class (`.fileview-md img + button`, an attribute
   // selector, a universal) is outside what the set closes, as are katex's vendored sheet and the style a template or a script
   // writes into a page, bounds stated here, in the messages, in L3 and in the reader's header rather than read (the author's
-  // closing pass after the file review's round 10, mechanism-2, and the file review's round 11, regression-5)
+  // closing pass after the file review's round 10, mechanism-2, and the file review's round 10, regression-5)
   const REST = '.fileview-md .fv-figopen { position: relative; z-index: 1; vertical-align: top; margin: 0 6px 0 -28px; top: 6px; padding: 3px; background: var(--bg); opacity: 0; }';
   const REVEAL = '@media screen { .fileview-md :hover + .fv-figopen, .fileview-md .fv-figopen:hover, .fileview-md .fv-figopen:focus-visible { opacity: 1; } }';
   const NOHOVER = '@media screen and (hover: none) { .fileview-md .fv-figopen { opacity: 0.8; } }';
@@ -307,11 +307,11 @@ test('L3: the control\'s words are the viewer\'s literal, quoted by the section 
   /** The sheet's rules naming the control, each rendered on one line with whether a screen-only at-rule encloses it. */
   const controlRules = (css) => cssRules(css).filter((r) => /fv-figopen/.test(r.selector)).map((r) => ({ text: renderRule(r), screen: underScreen(r.chain) }));
   /** The bounds of the set, stated in the messages (the author's closing pass after the file review's round 10, mechanism-2; the
-   *  file review's round 11, regression-5). */
+   *  file review's round 10, regression-5). */
   const BOUND = ' (the population is the rules whose selector names the control\'s class in every sheet a page of either host loads, derived from the page assembly by ui/webview/host-sheets.mjs; outside what this set closes, bounds stated here and in the plan\'s L3, not read: a rule whose selector would match the control\'s element without naming the class, katex\'s vendored sheet that styles.css and feed.css import, and the style a template writes into its own page or a script adds after it is served)';
   const rules = Object.fromEntries(SHEETS.map((s) => [s.name, controlRules(s.css)]));
   for (const d of DRESSING) assert.ok(d in rules, d + ' is a sheet a page loads: the viewer\'s dress is written there');
-  assert.ok(SHEETS.some((s) => s.name.startsWith('kernel/kernel.py ')), 'the population is wider than a listing of ui/webview: the sheets the kernel inlines from its own source (THEME_CSS, into every page) are in it, so a rule written there is read; a derivation reading the directory alone passes this set with a reveal there (the file review\'s round 11, regression-5)');
+  assert.ok(SHEETS.some((s) => s.name.startsWith('kernel/kernel.py ')), 'the population is wider than a listing of ui/webview: the sheets the kernel inlines from its own source (THEME_CSS, into every page) are in it, so a rule written there is read; a derivation reading the directory alone passes this set with a reveal there (the file review\'s round 10, regression-5)');
   assert.deepEqual(rules[DRESSING[0]], rules[DRESSING[1]], 'the control\'s rules are the same in both sheets');
   for (const { name, css, loadedBy } of SHEETS) {
     if (!DRESSING.includes(name)) {
@@ -324,7 +324,7 @@ test('L3: the control\'s words are the viewer\'s literal, quoted by the section 
     assert.ok(css.includes('\n' + NOHOVER), name + ': no hover keeps it visible, under screen');
     // the closed set over the parsed rules: outside a screen-only at-rule exactly the rest, the hover background and the float
     // twins, none a reveal, and every other rule naming the control under one, however the sheet writes it (the file review's
-    // round 10, correctness-1 with tests-1 and ui-1: the set had been keyed on lines at column zero carrying the class and a
+    // round 9, correctness-1 with tests-1 and ui-1: the set had been keyed on lines at column zero carrying the class and a
     // brace, so a reveal indented under an at-rule or on a grouped selector's continuation line stood outside it with every pin
     // green; the file review's round 8, fresh-4: the guard before the set matched two opacity spellings, so a reveal spelled any
     // other way outside screen passed it)
@@ -341,7 +341,7 @@ test('L3: the control\'s words are the viewer\'s literal, quoted by the section 
   assert.ok(section.includes('a right float\'s at the top-LEFT corner (`fv-figopen-left`, `fv-figopen-right`'));
 });
 
-test('the rule reader the two homes of the closed set share (ui/webview/css-rules.mjs): a sheet is read as rules with their enclosing at-rules, not as lines, so a rule indented under an at-rule, a grouped selector wrapped across lines, a one-line at-rule block and a column-zero rule read alike; a statement at-rule, a declaration-only at-rule (its last declaration with or without a semicolon, styles.css\'s own @font-face blocks among them) and a comment yield no rule; a brace inside a string is text; whether a chain confines a rule to screens is a property of the whole query list; a nested block, an unbalanced brace, a lost open brace at the top level or under a rule-holding at-rule, a prelude the sheet ends inside, an open string and an open comment are refused, and the reader\'s header counts its refusals as the source has them (the file review\'s round 10, correctness-1 with tests-1 and ui-1, then its round 11, correctness-2 with extra7-2, and extra7-1)', () => {
+test('the rule reader the two homes of the closed set share (ui/webview/css-rules.mjs): a sheet is read as rules with their enclosing at-rules, not as lines, so a rule indented under an at-rule, a grouped selector wrapped across lines, a one-line at-rule block and a column-zero rule read alike; a statement at-rule, a declaration-only at-rule (its last declaration with or without a semicolon, styles.css\'s own @font-face blocks among them) and a comment yield no rule; a brace inside a string is text; whether a chain confines a rule to screens is a property of the whole query list; a nested block, an unbalanced brace, a lost open brace at the top level or under a rule-holding at-rule, a prelude the sheet ends inside, an open string and an open comment are refused, and the reader\'s header counts its refusals as the source has them (the file review\'s round 9, correctness-1 with tests-1 and ui-1, then its round 10, correctness-2 with extra7-2, and extra7-1)', () => {
   const sheet = [
     '/* a comment naming .fv-figopen { */',
     '.fileview-md .fv-figopen { opacity: 0; }',
@@ -367,7 +367,7 @@ test('the rule reader the two homes of the closed set share (ui/webview/css-rule
   assert.deepEqual(cssRules('.a::after { content: "{"; }\n.b[data-x="}"] { top: 0; }').map(renderRule), ['.a::after { content: "{"; }', '.b[data-x="}"] { top: 0; }'], 'a brace inside a string is text');
   assert.deepEqual(cssRules('@import "x.css";\n@font-face { font-family: F; src: url(f.woff2); }\n@keyframes k { from { opacity: 0; } to { opacity: 1; } }').map(renderRule), ['@keyframes k { from { opacity: 0; } }', '@keyframes k { to { opacity: 1; } }'], 'a statement at-rule and a declaration-only at-rule yield no rule; a keyframes step is a rule under its at-rule');
   // the no-semicolon spelling of a declaration-only at-rule, valid CSS and the one every minifier writes (the file review's round
-  // 11, correctness-2 with extra7-2: the reader had refused it as a close brace inside a prelude, an unbalanced-brace message on a
+  // 10, correctness-2 with extra7-2: the reader had refused it as a close brace inside a prelude, an unbalanced-brace message on a
   // balanced sheet, while the with-semicolon spelling above parsed; the acceptance keys on the innermost enclosing at-rule's NAME,
   // the set css-rules.mjs's DECLARATION_AT_RULE names, never on depth alone, so a lost open brace stays refused below)
   assert.deepEqual(cssRules('@font-face { font-family: F; src: url(f.woff2) }\n.a { top: 0 }').map(renderRule), ['.a { top: 0 }'], 'a declaration-only at-rule whose last declaration ends at the block\'s own brace with no semicolon yields no rule, and the rule after it is read');
@@ -385,7 +385,7 @@ test('the rule reader the two homes of the closed set share (ui/webview/css-rule
   assert.notEqual(unterminated, styles, 'the sheet carries a @font-face block ending in a semicolon, so the removal landed');
   assert.equal(cssRules(unterminated).length, cssRules(styles).length, 'styles.css reads to the same rule count with or without the final semicolons of its @font-face blocks');
   assert.deepEqual(cssRules('.a,\n  .b\n{\n  top: 0;\n  left: 0;\n}').map(renderRule), ['.a, .b { top: 0; left: 0; }'], 'whitespace inside a selector list and a body is collapsed, so a rule renders the same however the sheet wrapped it');
-  // one pin per refusal path of the reader, each pattern a phrase only its path emits (the file review's round 11, extra7-1:
+  // one pin per refusal path of the reader, each pattern a phrase only its path emits (the file review's round 10, extra7-1:
   // three of the eight had no pin, so neutralising any one left both homes green, and /never closes/ on the open string is also
   // met by the rule's own end-of-sheet refusal once the string path is neutralised, so that pattern held nothing); the census
   // below holds this table to the source's refusal sites, one pin per site by the phrase each thrown message opens with
@@ -607,7 +607,7 @@ test('the re-aimed sentence: its count is the number of pre-existing test module
  *  being a second definition, so once that census lands it is the one definition and this derivation stays a name. The plan's
  *  disclosure says so and names the modules of the follow-on's diff the property reaches and the name does not,
  *  ui/webview/file-trail.test.ts and ui/webview/file-view-text-size.test.ts, which nothing here holds (the file review's round
- *  10, extra6-1 and extra6-2). Two derivations must agree: the Tests paragraph's list of browser modules is the same set. */
+ *  9, extra6-1 and extra6-2). Two derivations must agree: the Tests paragraph's list of browser modules is the same set. */
 const browserLegs = () => claimants(['ui', 'webview'], /-browser\.test\.ts$/);
 /** A leg's source with its comments removed by their line shape, for the route checks below: a line whose text starts with `//`
  *  goes, and a block comment opened at a line's start goes through the line that closes it. The tools job runs this module with
@@ -631,17 +631,17 @@ const codeLines = (src) => {
  *  statement at a line's start, calls launch on nothing, and stands itself down nowhere. A launch under any access spelling (a
  *  property access, an optional chain, a bracket holding a string literal) followed by a call is refused; a launch reached
  *  through a name computed at run time (`pw.chromium["la" + "unch"]()`) is outside this read, and a `launch` key in an object is
- *  no call and passes. A stand-down is the pair's other half (the file review's round 10, tests-2: the guard had refused the
+ *  no call and passes. A stand-down is the pair's other half (the file review's round 9, tests-2: the guard had refused the
  *  launch alone), and this half is keyed on nine spellings of the leg's own comment-stripped source, never on the property
  *  of standing itself down, one entry of STAND_DOWN_SPELLINGS below per spelling, from which the regex and the number word
- *  are built (the file review's round 11, extra6-1 with correctness-3 and tests-4: the word had been typed in every home and
+ *  are built (the file review's round 10, extra6-1 with correctness-3 and tests-4: the word had been typed in every home and
  *  derived in none, and it had counted the two brace forms as two spellings where one arm reads both): a `skip` or `todo`
  *  call through a property (`t.skip(`, `test.skip(`, `it.skip(`, `.todo(`), through an optional chain (`t?.skip(`) or
  *  through a bracketed literal (`t["skip"](`); the `skip:` or `todo:` option with its value written out, its key bare or
  *  quoted (`{ skip: true }`, `{ "skip": true }`); the option under a computed string-literal key (`{ ["skip"]: true }`); the
  *  option assigned onto an options object through a bracketed literal (`opts["skip"] = true`) or through a dot
  *  (`opts.skip = true`) before the object is handed to the test, a lone equals sign and never a comparison's (`t.skip === x`
- *  passes) (the file review's round 11, extra6-2: the quoted key and
+ *  passes) (the file review's round 10, extra6-2: the quoted key and
  *  the three assignment and computed forms had passed the read, and each stands a leg down with its body never run, measured
  *  under node 22); a `skip` or `todo` standing between braces, whether node:test's shorthand option (`test(name, { skip }, fn)`,
  *  the value declared under the option's own name) or the destructuring `const { skip } = t` that takes the method off the
@@ -660,7 +660,7 @@ const codeLines = (src) => {
  *  method bound to a name of its own and called by that name is in that class, the call spelling only the name: the unbound
  *  alias (`const s = t.skip; s(...)`) throws a TypeError under node:test and fails the leg loudly rather than skipping, while
  *  the family is live through `.bind(t)` or an aliased `test.skip` (`const s = test.skip; s(name, fn)`), each of which skips
- *  with the body never run and passes this read (the file review's round 11, extra6-3; every form named here is planted in
+ *  with the body never run and passes this read (the file review's round 10, extra6-3; every form named here is planted in
  *  the test below). What refuses that class is execution, not a read of the source: the step PR 887 brings to the
  *  vscode-extension job, directly after its Chromium install, runs the rostered legs with a browser and reads the run's
  *  record, and a test skipped there is red naming the test, its reason and the switch's state, whatever spelled the skip;
@@ -824,7 +824,7 @@ function legsCount(sentence) {
 }
 /** The Tests paragraph's disclosure, state B's sentence: its opening words, and the clauses it must carry. */
 const DISCLOSURE = 'The browser legs named here skip at launch in the Test step of the job that gates a landing';
-/** The clauses on the derivation's key (the file review's round 10, extra6-1 and extra6-2): that the legs are derived by the
+/** The clauses on the derivation's key (the file review's round 9, extra6-1 and extra6-2): that the legs are derived by the
  *  file name and not the property, PR 887's census as the property's one definition to come, and the two modules of the
  *  follow-on's diff the property reaches and the name does not (each held to exist on disk by the module-existence pin above,
  *  as every test module the section names is). Held here since the author's closing pass after the file review's round 10,
@@ -876,14 +876,14 @@ test('the follow-on\'s browser legs and the job that gates a landing, a two-stat
   }
   assert.equal(offRoute(codeLines('import { inBrowser } from "./real-viewer-leg";\nconst b = 1; // pw.chromium.launch()\n')), 'a launch outside the helper: .launch(', 'a launch quoted in a comment after code reds too: the stripper reads line shapes, and this is its safe side');
   // the pair's other half: a stand-down of the leg's own, under the launch spellings and node:test's option form (the file review's
-  // round 10, tests-2)
+  // round 9, tests-2)
   const armsHit = new Set();
   for (const [spelling, want] of [['test("y", (t) => { t.skip("no browser here"); });', '.skip('], ['t?.skip("no browser here");', '?.skip('], ['t["skip"]("no browser here");', '["skip"]('], ["t['todo']('later');", "['todo']("], ['test.todo("later");', '.todo('], ['test("y", { skip: !pw }, () => {});', 'skip:'], ['test("y", { todo: true }, () => {});', 'todo:'],
     // the shorthand property and the destructured call (the author's closing pass after the file review's round 10, mechanism-1:
     // both had passed the option read, which needed the colon)
     ['const skip = !process.env.PW;\ntest("y", { skip }, () => {});', '{ skip }'], ['test("y", { only: false, todo }, () => {});', ', todo }'], ['test("y", {skip,only: false}, () => {});', '{skip,'], ['const { skip } = t;\nskip("no browser here");', '{ skip }'], ['skip("no browser here");', 'skip('], ['todo ("later");', 'todo ('],
     // the quoted option key, the computed string-literal key and the option assigned onto an options object through a bracketed
-    // literal or a dot (the file review's round 11, extra6-2: each had passed the read, and each stands a leg down with its body
+    // literal or a dot (the file review's round 10, extra6-2: each had passed the read, and each stands a leg down with its body
     // never run, measured under node 22)
     ['test("y", { "skip": true }, () => {});', '"skip":'], ["test('y', { 'todo': true }, () => {});", "'todo':"], ['test("y", { ["skip"]: true }, () => {});', '["skip"]:'],
     ['const opts = {}; opts["skip"] = true; test("y", opts, () => {});', '["skip"] ='], ['const opts = {}; opts.skip = true; test("y", opts, () => {});', '.skip =']]) {
@@ -899,13 +899,13 @@ test('the follow-on\'s browser legs and the job that gates a landing, a two-stat
   // the bound the refusal states, each side by execution (the maintainer's reading of the author's closing pass after the file
   // review's round 10): witnesses of the class outside the spellings pass this read (a stand-down that never spells skip or todo
   // in the leg's own source: the method bound to a name of its own and called by that name, unbound, bound with .bind(t) or an
-  // aliased test.skip (the file review's round 11, extra6-3: the unbound alias throws a TypeError under node:test and fails the
+  // aliased test.skip (the file review's round 10, extra6-3: the unbound alias throws a TypeError under node:test and fails the
   // leg loudly, the other two skip with the body never run), a computed member, a helper module's skip), and the conditional
   // call is within it
   for (const outside of ['const s = t.skip; s("no browser here");', 'const s = t.skip.bind(t); s("no browser here");', 'const s = test.skip; s("y", () => {});', 'const name = process.env.STAND_DOWN as string; (t as any)[name]("no browser here");', 'import { standDown } from "./figure-state-stand-down";\nstandDown(t);']) {
     assert.equal(offRoute(codeLines('import { inBrowser } from "./real-viewer-leg";\n' + outside + '\n')), null, 'outside the ' + STAND_DOWN_COUNT + ' spellings: this read passes it, the docstring states the class it is in, and the step PR 887 brings refuses it by execution (a test skipped in its run is red): ' + outside);
   }
-  // the stated bound is derived (the file review's round 11, extra6-1 with correctness-3 and tests-4): the count word in every
+  // the stated bound is derived (the file review's round 10, extra6-1 with correctness-3 and tests-4): the count word in every
   // home that states it, parsed out and held to STAND_DOWN_SPELLINGS's length, so a home that keeps an old count when an entry is
   // added or dropped reds by name. The module's docstrings are read by path, since this module's comments are its prose.
   const ownProse = read(...THIS_MODULE.split('/')).replace(/\n \*  /g, ' ');
@@ -920,7 +920,7 @@ test('the follow-on\'s browser legs and the job that gates a landing, a two-stat
     assert.ok(m, home + ' states the count of stand-down spellings in the sentence this pin parses');
     assert.equal(NUMBER_WORDS[m[1]], STAND_DOWN_SPELLINGS.length, home + ' says ' + m[1] + ' spellings; STAND_DOWN_SPELLINGS has ' + STAND_DOWN_SPELLINGS.length + ' (' + STAND_DOWN_COUNT + ')');
   }
-  // the alias family's two halves, a sentence held in both homes (the file review's round 11, extra6-3: the plants above hold the
+  // the alias family's two halves, a sentence held in both homes (the file review's round 10, extra6-3: the plants above hold the
   // property, that the read passes the family, and the sentence stating why that is safe had no pin, so a reword of either home
   // to say the unbound alias skips stayed green)
   // read within offRoute's docstring alone: the whole source also carries this pin's own literal, which would satisfy it
@@ -969,7 +969,7 @@ test('the follow-on\'s browser legs and the job that gates a landing, a two-stat
   for (const counted of ['the eight browser legs skip', 'derives the eight legs from the tree', 'the legs, eight of them, skip', '8 Chromium legs', 'the two pytest modules it added', 'the modules, two of them,']) assert.ok(legsCount(counted), 'a count of the legs: ' + counted);
   for (const fine of ['one compiled bundle path per line', 'the legs skip at launch', 'no leg runs there', 'the roster of browser legs, vscode-extension/ci-browser-legs.txt, one compiled bundle path per line', 'three runs of the legs', "the file review's round 8, extra8-2: the legs were the feature's evidence", 'in 3 runs the legs passed', 'one of the modules the section names', 'two of the legs']) assert.equal(legsCount(fine), null, 'no count of the legs (a partitive of a subset is none, a label is none): ' + fine);
   // the clause read, driven: a synthetic disclosure carrying every clause lacks none, and the same sentence with the file review's round 9's
-  // wording of the derivation in place of the name-keyed clauses (the wording the file review's round 10, extra6-2, called false) lacks
+  // wording of the derivation in place of the name-keyed clauses (the wording the file review's round 9, extra6-2, called false) lacks
   // exactly those (the author's closing pass after the file review's round 10, mechanism-3)
   const synthetic = DISCLOSURE + ', ' + DISCLOSURE_CLAUSES.map(([clause]) => clause).join(', ') + ' as SKIP).';
   assert.deepEqual(missingClauses(synthetic), [], 'a disclosure carrying every clause lacks none');

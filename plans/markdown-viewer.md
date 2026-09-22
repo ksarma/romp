@@ -8163,15 +8163,22 @@ with the build's deliberate departures from that contract recorded as the decisi
 rule on. The file review's rounds are numbered by the maintainer, and a record names one by its number: the file review's rounds 1,
 2, 3, 4, 5, 6, 7, 8, 9, 10 and 11 are the rounds the convention enumerates, this list the one home of the enumeration
 (ui/webview/linknav-records-attribution.test.ts reads its allowed set from this list and faults a numbered round the list
-lacks, so a round the maintainer rules next is added here first; the fixlists and rulings are kept outside the repo in the
-maintainer's notes). In that numbering rounds 1 to 6 are the delta rounds, each reading what changed since the round before
+lacks, so a round the maintainer rules next is added here first, and with it the ids its fixlist filed, in the roster
+paragraph after this one; the fixlists and rulings themselves are kept outside the repo in the maintainer's notes). In that numbering rounds 1 to 6 are the delta rounds, each reading what changed since the round before
 (the records here cite rounds 1 to 5 among them); round 7 read the whole PR at one head before landing and is also named the
 file review's landing round, its fixlist carrying its own ids (fresh-N, rules-N, regression-N, tests-N and extra-N with a
 digit before the hyphen), none of the author's family; round 8 read the whole PR again at the head that carried the fixes
 for round 7 and the author's verification of them, the landing round's second read, and its fixlist shares several ids with
 round 7's (fresh-1, fresh-2, tests-1, tests-2, regression-1, extra6-1, extra7-1, extra8-1, extra8-2 and extra8-3
-stand in both), so a record cites such a finding by its round's number and never as the landing round's alone; round 9 is
-the round after it, which reads the fixes for round 8, round 10 the round after that, which reads the fixes for round 9, and round 11 the round after that, which reads the fixes for round 10 and the whole PR at one head. The author's own verification after a round's fixes, by a verifier of the
+stand in both), and ids recur across the fixlists of every round (the roster in the paragraph after this one), so a record
+cites a finding of the file review by the round whose fixlist filed it, whatever the round, never as the landing round's alone
+and never by the round that read its fix (the file review's round 11, fresh-1: the fixes for round 10 had cited that round's
+findings under round 11, the round that read them, and the fixes for round 9 had cited round 9's under round 10, thirty-four
+and twenty-three sites); round 9 is the round after the second read, which reads the fixes for round 8, round 10 the round
+after that, which reads the fixes for round 9, and round 11 the round after that, which reads the fixes for round 10 and the
+whole PR at one head. The commits' subjects from the file review's round 9 on, and the author's closing pass after each of
+those rounds, sit on the other axis, named by the round that reads the fixes they carry, one higher than the round whose
+fixlist holds the findings they fix, and stand as pushed. The author's own verification after a round's fixes, by a verifier of the
 author's, is named the author's closing pass after that round, never a round of either review, and its findings carry the
 ids behaviour-N, records-N, coverage-N, guards-N, attribution-and-gates-N, reader-N, tree-N and mechanism-N, which no fixlist of the file
 review holds; the passes after the file review's rounds 7 and 8 kept their ids (census-N, and records-N of the family
@@ -8182,6 +8189,35 @@ over every unit of the files the branch created and over every unit in the tree 
 author's closing pass, or carries an id of the author's family, a phrase outside the created files judged where the review
 named nearest before it is the file review or the author's pass; the file review's round 5, extra5-2: the sentence had claimed every record the branch wrote,
 which held only on a road that read the diff, and that road runs in no CI checkout).
+
+The file review's fixlists by round, the ids each filed, as the maintainer's notes hold them (the roster
+ui/webview/linknav-records-attribution.test.ts reads beside the enumeration above, so a record citing a finding under a round
+whose fixlist did not file its id is faulted in every checkout, the fault naming the site and the rounds that filed the id;
+an id two fixlists share is told from its namesake by content alone, which no pin reads, so a census against the fixlists is
+the check for those; and a round the maintainer rules next joins here with its ids, a roster that skips an enumerated round
+or names one outside the enumeration failing the module's parse; the file review's round 11, fresh-1: fifty-seven sites had
+cited findings under the round that read their fixes with the module green, thirty-seven of them naming an id the labelled
+round never filed): round 1 filed correctness-1, correctness-2, tests-1, regression-1, ui-1, extra5-1, extra7-1, extra7-2,
+extra8-1, extra8-2, extra8-3, tests-2, extra6-1, rules-1, fresh-2, regression-2, regression-3, fresh-1, ui-2 and extra5-2;
+round 2 filed correctness-1, tests-1, regression-1, regression-3, ui-1, ui-4, extra6-1, extra8-4, fresh-2, correctness-2,
+regression-2, ui-2, extra8-3, tests-2, extra7-1, tests-3, extra5-3, extra5-4, extra8-1, extra8-2, fresh-3, ui-3, extra5-1,
+extra5-2 and fresh-1; round 3 filed correctness-1, tests-1, regression-2, extra8-1, tests-2, tests-3, tests-4, rules-1,
+regression-1, ui-1, regression-3 and extra8-2; round 4 filed correctness-1, correctness-3, correctness-4, rules-1, extra7-1,
+extra7-3, correctness-2, regression-3, ui-1, extra7-2, tests-1, regression-2, extra6-1, tests-2, tests-4, extra8-1,
+regression-1, extra8-2, ui-2, extra5-1, extra8-3 and tests-3; round 5 filed correctness-1, correctness-2, correctness-7,
+tests-2, tests-3, tests-4, extra6-1, extra6-3, extra7-1, extra7-2, correctness-3, correctness-4, correctness-5,
+correctness-6, tests-1, tests-6, tests-7, tests-5, regression-1, regression-2, extra5-1, extra6-2, extra8-4, rules-1,
+extra5-2, regression-3, regression-4 and extra5-3; round 6 filed none; round 7 filed tests-1, tests-3, rules-1, regression-1,
+regression-2, extra6-1, extra8-1, extra8-4, fresh-2, tests-2, rules-2, extra8-3, extra7-1, extra8-2 and fresh-1; round 8
+filed correctness-1, correctness-2, tests-1, regression-1, extra5-1, extra7-1, extra7-2, tests-2, extra5-2, extra6-1,
+extra6-2, extra8-1, extra8-2, extra10-2, fresh-2, extra6-3, extra8-3, extra9-1, extra10-1, fresh-1 and fresh-4; round 9 filed
+correctness-1, tests-1, ui-1, tests-2, extra6-1, rules-1, rules-2, regression-1, extra6-2, regression-2, ui-2, extra8-1,
+extra8-2, extra9-1, extra9-2, extra9-3 and fresh-1; round 10 filed correctness-1, regression-5, correctness-2, extra7-2,
+correctness-3, tests-4, extra6-1, extra6-2, extra6-3, extra7-1, correctness-4, correctness-5, tests-1, tests-2, rules-3,
+regression-1, regression-2, regression-3, extra5-1, extra5-2, extra5-4, extra5-5, extra5-6, extra5-7, extra8-4, extra8-5,
+tests-3, regression-6, regression-7, extra5-3, extra8-1, extra8-2, extra7-3, regression-4, ui-1 and extra8-3; round 11 filed
+correctness-1, regression-1, kernel-1, extra6-1, extra7-1, extra7-2, tests-1, tests-2, ui-1, extra8-1, ui-2, extra8-2,
+fresh-1, fresh-3, fresh-2 and fresh-4.
 
 **What existed.** A link in a rendered file to another file (`[x](other.md)`, `other.md:7`, `other.md#section`, a
 picture or PDF path, a wikilink, an embed chip) opened that file in the SAME viewer card: re-opening replaced whatever
@@ -8227,20 +8263,20 @@ contract named no such case. Held by file-trail.test.ts (the pure cases, the thr
 Reload file driven in Chromium at the module's end: a link push, Edit, a change, a Save refused as changed on disk,
 Reload file, the fresh card's Back still titled with the report's name, then Back to the report with the reloaded file
 ahead) and file-trail-browser.test.ts (the Files page: a link followed, a Recent row and the relay rooting the trail,
-the section link, the web address, the same-file target, the close, and since the file review's round 10 (ui-2) the
+the section link, the web address, the same-file target, the close, and since the file review's round 9 (ui-2) the
 same-origin .md URL followed by a plain click, which on the Files page opens a tab and leaves the trail standing, that
 page's document having no opener that takes such a page in place; the chat modal: the default opener; and the chat page
 under its document-level opener, over the chat's own bundle and skeleton: the same URL followed by a plain click inside a
 file reached over the trail, the URL view replacing the viewer in place and the trail ending, with no tab, no window.open
 and no navigation of the page). The replace itself, under the chat's document-level opener (render.ts, the one caller of
 openUrlView), is held by file-trail.test.ts's wiring pin, the trail's end after openUrlView's guard, and driven in Chromium
-by file-trail-browser.test.ts's case 9, launched through the shared helper (the file review's round 11, tests-3: the road
+by file-trail-browser.test.ts's case 9, launched through the shared helper (the file review's round 10, tests-3: the road
 the guide's trail sentence leads with had been driven by no leg in the tree, its named witness that wiring pin, which holds
 the trail's end inside openUrlView and not that a link inside the shown file reaches it; for round 10 it had been driven
 once in a scratch copy, a file reached over the trail linking a .md page at the page's own origin, the click replacing the
 viewer with the URL view, no tab, the trail empty and the bar without the pair, in a harness with a private launcher that
 this follow-on's convention pin refuses in a module it touches, so the case was recorded and not landed; the guide's trail
-sentence names the road and its boundary since round 10, ui-2).
+sentence names the road and its boundary since round 9, ui-2).
 
 L2. **Back and Forward.** Two glyph buttons in the icon family (icons.ts `ICON_BACK`, `ICON_FORWARD`: an arrow left and
 an arrow right), the bar's first group (`.fileview-group.fileview-nav`), before the pane's "‹ Files" link, which keeps
@@ -8604,7 +8640,7 @@ route: a Back or Forward open fetches the file through the same `/file` route th
 the viewer fetches the picture through it as the report's paint did, and the trail lives in the page. One request is
 new (the file review's HIGH 1): a plain click on a loaded remote picture, its Open the picture control, and a
 Cmd/Ctrl-click on it (the control at any time, and the two clicks on the picture where the press reaches it, the Comments
-panel closed or the pointer coarse; L3, and the file review's round 10, regression-1, which found this home and open
+panel closed or the pointer coarse; L3, and the file review's round 9, regression-1, which found this home and open
 point 11 without the condition round 8's fresh-1 put in every other) open a top-level tab at the picture's address (L3,
 `openUrlTab`), a second, differently kinded,
 credentialed request: a request of type document to a host the page had requested the image from, carrying cookie
@@ -8622,12 +8658,12 @@ the file review's round 10, where the merge-base is 53f9f4aa3, the fork's main t
 11, and the listing is the branch's whole delta over it; the run at the head that carries the author's closing pass after the
 file review's round 10, from the merge-base 65f1895f6, the fork's main the branch merged for the file review's round 10,
 listed 45, before ui/webview/host-sheets.mjs, ui/webview/host-sheets.d.mts
-and ui/webview/file-view-outline.test.ts joined the delta in those fixes (the file review's round 11, correctness-1 with
+and ui/webview/file-view-outline.test.ts joined the delta in those fixes (the file review's round 10, correctness-1 with
 regression-5 and correctness-5: every sheet a page of either host loads, derived from the page assembly, and the Outline
 button's census over them); the run at the head that carries the
 fixes for the file review's round 8, where the merge-base was 5e5ee79ed, the fork's main merged into the branch before
 landing, listed 43, before ui/webview/css-rules.mjs and ui/webview/css-rules.d.mts, the rule reader the closed set over the
-control's sheet rules stands on, joined the delta in the fixes for the file review's round 10 (under tools/ there; the
+control's sheet rules stands on, joined the delta in the fixes for the file review's round 9 (under tools/ there; the
 author's closing pass after the file review's round 10 moved the pair under ui/, the tree the bundles read, since a ui
 test may not import from tools/, hooks/ or tests/, which tests/test_lab_dist.py's derivation pin holds); the run at 7f8684caf, the
 head the file review's round 8 took, one commit after the merge of 5e5ee79ed, listed 42 from that merge-base, before ui/webview/file-view-place-blocks.test.ts joined the
@@ -8729,17 +8765,17 @@ in that job alone, and a spelling read in the Shell job would be a second defini
 diff that the property reaches and the name does not, which this pin therefore holds to nothing, are
 ui/webview/file-trail.test.ts, whose Reload case launches through the shared helper, and
 ui/webview/file-view-text-size.test.ts, whose bar case launches through a harness of its own; the file review's round
-10, extra6-1 and extra6-2: the disclosure had said the legs were derived from the tree as the browser modules naming
+9, extra6-1 and extra6-2: the disclosure had said the legs were derived from the tree as the browser modules naming
 the follow-on, which was the name's set and not the property's), holds each to a launch through real-viewer-leg.ts's
 inBrowser, the shared helper a roster's switch reaches, and to no stand-down of its own (a skip or a todo, which defeats
-that switch as a private launch does; the file review's round 10, tests-2), the stand-down read as nine spellings of the
+that switch as a private launch does; the file review's round 9, tests-2), the stand-down read as nine spellings of the
 leg's own comment-stripped source and not as the property of standing itself down, the regex and the count built from
 one named list with one entry per spelling (a skip or todo call on the test context, on test or on it, through a
 property, through an optional chain or through a bracketed literal, the option with its value written out under a bare
 or a quoted key, the option under a computed string-literal key, the option assigned onto an options object through a
 bracketed literal or through a dot before the object is handed to the test, a skip or todo standing between braces,
 whether the shorthand option or the destructuring that takes the method off the context, and the bare call of it; the
-file review's round 11, extra6-2 with extra6-1, correctness-3 and tests-4: the quoted key and the assigned and computed
+file review's round 10, extra6-2 with extra6-1, correctness-3 and tests-4: the quoted key and the assigned and computed
 forms had passed the read while each stands a leg down with its body never run, and the count had been typed in every
 home, derived in none, and had counted the two brace forms as two where one arm reads both), so its
 green says that no leg carries one of the nine and not that no leg stands itself down: a conditional call is within that
@@ -8747,7 +8783,7 @@ read, since the spelling stands whatever the condition, and outside it is a stan
 the leg's own source (a computed member name, a value built from parts, an options object built elsewhere), a class no
 read of spellings closes, the method bound to a name of its own and called by that name among it (the unbound alias
 throws under node:test and fails the leg loudly, and the family is live through .bind(t) or an aliased test.skip, each
-skipping with the body never run and passing the pin; the file review's round 11, extra6-3), every form named here
+skipping with the body never run and passing the pin; the file review's round 10, extra6-3), every form named here
 planted in the pin's own cases; what refuses that class is execution and not a read of the source: the step PR 887
 brings to that job, directly after its Chromium install, runs the rostered legs with a browser and reads the run's
 record, and a test skipped there is red naming the test, its reason and the switch's state, whatever spelled the skip,
@@ -8765,9 +8801,9 @@ ui/webview/file-view-text-size.test.ts (its real-module bar leg at 380, 420, 480
 reads the group hidden on a fresh open and, once a link is followed, measures the two glyphs among the actions, case 8), ui/webview/file-view.test.ts and ui/webview/file-view-links.test.ts
 (the delegate's open through openFromViewer; the model import), ui/webview/file-view-figure-error.test.ts and
 ui/webview/file-view-figure-error-browser.test.ts (the label readers step past the control),
-ui/webview/fileview-parity.test.ts (the control's rules byte-equal in both sheets, and in the file review's round 11,
+ui/webview/fileview-parity.test.ts (the control's rules byte-equal in both sheets, and in the file review's round 10,
 correctness-5, the Outline button's census on parsed rules over every sheet a page of either host loads) and
-ui/webview/file-view-outline.test.ts (the same census, in the file review's round 11, correctness-5),
+ui/webview/file-view-outline.test.ts (the same census, in the file review's round 10, correctness-5),
 ui/webview/anchor-map-fallback-markup.test.ts (the stand-in's control list), and in the review
 ui/webview/file-view-notice.test.ts (its Escape cases run every keydown handler an open registers in the document's
 order, the capture phase first, since the trail's listener is an open's newest registration, and the close hooks'
@@ -8858,7 +8894,9 @@ this section's opening paragraph (the file review's round 3, tests-2, re-ruled o
 rules-1, after a pin keyed on one string missed the misattribution in the commits that built it: a round belongs to the
 review named nearest before it in its unit of text and is one the convention enumerates for that review; a pass of the
 author's has no rounds; an id of the author's family stands only where the review named nearest before it is the author's
-pass; a round with no review named fails), reading in every checkout, as a rule over the tree, every file git lists at the repo root, tracked or untracked
+pass; a round with no review named fails; and, since the fixes for the file review's round 11, fresh-1, a finding cited under a
+round of the file review is one that round's fixlist filed, held to the roster the opening paragraph's companion carries, while
+an id two fixlists share is told apart by content, which no pin reads), reading in every checkout, as a rule over the tree, every file git lists at the repo root, tracked or untracked
 and not ignored, whose text names the file review, names the author's closing pass, or carries an id of the author's
 family, together with the files the branch created (an existence roster, each judged in full, every unit of it) and this
 section, the guide's paragraph and

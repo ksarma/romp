@@ -1,7 +1,7 @@
 // Every stylesheet a page of either host loads, DERIVED from the page assembly rather than typed as a pair or listed off a
 // directory: the population of the closed set over the figure control's sheet rules (ui/webview/file-figure-open.test.ts and
 // tools/markdown-viewer-plan-linknav.test.mjs) and of the Outline button's census (ui/webview/fileview-parity.test.ts,
-// ui/webview/file-view-outline.test.ts). The file review's round 11, correctness-1 with regression-5 and correctness-5: the set
+// ui/webview/file-view-outline.test.ts). The file review's round 10, correctness-1 with regression-5 and correctness-5: the set
 // was closed over styles.css and feed.css while the Files page loads ui/webview/files-pane.css third, after styles.css, so a
 // reveal planted there left every home green and the control painting in print; and a flat listing of ui/webview is a wider
 // typed bound, not the population, since the kernel inlines two sheets of its own into every page (THEME_CSS and the chat's

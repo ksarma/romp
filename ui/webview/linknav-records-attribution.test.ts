@@ -115,6 +115,17 @@
 // committed one (the same pass, guards-3: a diff against HEAD read no added line for an uncommitted planted phrase, a false
 // green for a verifier who edits a copy without committing); an uncommitted NEW file is road 1's, through the population's
 // untracked paths, since no diff lists it. Synthetic values only.
+// The roster road (the file review's round 11, fresh-1): the convention's companion paragraph in the plan lists, round by
+// round, the ids each fixlist of the file review filed, and a record citing a finding under a round of the file review (the
+// round's digits, then a comma, a colon, a possessive or an open bracket, then a chain of the file review's ids joined by
+// commas, with, and or or, the shapes the census reads) is held to that round's roster: an id the round did not file faults,
+// the fault naming the rounds that did. The road holds what a roster can hold and no more: at the head round 11 read,
+// fifty-seven sites cited round 10's findings under round 11, the round that read their fixes, or round 9's under round 10,
+// with this module green, since it held the enumeration alone; thirty-seven of those name an id the labelled round never
+// filed and red here, the other twenty an id two fixlists share, told apart by content alone, which no pin reads, so the
+// census against the fixlists in the maintainer's notes stays the check for those. The families the road reads ids by are
+// the roster's, derived, never typed; a roster that skips an enumerated round, names one outside the enumeration or files a
+// round twice fails the parse loudly.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -167,11 +178,12 @@ const sectionLine = plan.slice(0, sectionStart).split("\n").length;
  *  a fault in the section was charged to a line about seven thousand short of the plan's). */
 const sectionUnits = (): Unit[] => proseUnits(sectionText).map((u) => ({ ...u, line: u.line + sectionLine - 1, endLine: u.endLine + sectionLine - 1, starts: u.starts.map((s) => ({ line: s.line + sectionLine - 1, at: s.at })) }));
 
-export type Reviews = { branch: Set<number>; file: Set<number>; ids: string[]; fileIds: string[] };
+export type Reviews = { branch: Set<number>; file: Set<number>; ids: string[]; fileIds: string[]; filed: Map<number, Set<string>> };
 /** What the convention paragraph gives each review: the branch's review "round 1 and round 2", the file review the rounds
  *  the paragraph lists by number ("rounds 1, 2 and 3 are the rounds the convention enumerates", the maintainer's numbering, the
  *  one home of the allowed set), the id family of the author's passes, and the file review's own id families (the landing
- *  round's fixlist parenthetical). Asserts the paragraph states all four and names the pass as never a round. */
+ *  round's fixlist parenthetical), and the roster: the ids each round's fixlist filed, read off the convention's companion
+ *  paragraph (the file review's round 11, fresh-1). Asserts the paragraph states all five and names the pass as never a round. */
 export function conventionOf(paragraph: string): Reviews {
   const branch = /named below as the review's round 1 and round 2;/.exec(paragraph);
   assert.ok(branch, "the convention names the branch's review's two rounds");
@@ -192,7 +204,19 @@ export function conventionOf(paragraph: string): Reviews {
   const own = /its fixlist carrying its own ids \(((?:[a-z]+-N, )*[a-z]+-N and [a-z]+-N)\s+with a digit before the hyphen\)/.exec(paragraph);
   assert.ok(own, "the convention lists the file review's own id families, as \"its fixlist carrying its own ids (fresh-N, rules-N and extra-N with a digit before the hyphen)\"; the paragraph carries no such list, so the landing-round label cannot be judged");
   const fileIds = Array.from(own![1].matchAll(/([a-z]+)-N/g), (m) => m[1]);
-  return { branch: new Set([1, 2]), file: new Set(listed), ids: family, fileIds };
+  // the roster (the file review's round 11, fresh-1): the ids each fixlist of the file review filed, round by round, read off the
+  // convention's companion paragraph ("the file review's fixlists by round ...: round 1 filed a-1, b-2 and c-3; round 2 filed
+  // none"), every enumerated round once and none outside it, so a citation is held to the round that filed its id; the list
+  // may wrap, so any whitespace stands between its words
+  assert.ok(/\bfixlists by round\b/.test(paragraph), "the convention carries the file review's roster, as \"the file review's fixlists by round: round 1 filed a-1 and b-2; round 2 filed none\"; the paragraph carries no roster, so a citation cannot be held to the round that filed its id");
+  const filed = new Map<number, Set<string>>();
+  for (const m of paragraph.matchAll(/\bround\s+(\d+)\s+filed\s+((?:[a-z]+\d*-\d+(?:,\s+|\s+and\s+))*[a-z]+\d*-\d+|none)/g)) {
+    const n = Number(m[1]);
+    assert.ok(!filed.has(n), "the roster files round " + n + " once");
+    filed.set(n, new Set(m[2] === "none" ? [] : m[2].split(/,\s+|\s+and\s+/)));
+  }
+  assert.deepEqual([...filed.keys()].sort((a, b) => a - b), listed, "the roster names every enumerated round once and no other: rounds " + [...filed.keys()].join(", ") + " in the roster against " + file![1] + " enumerated");
+  return { branch: new Set([1, 2]), file: new Set(listed), ids: family, fileIds, filed };
 }
 
 type Who = "file" | "branch" | "other" | "pass";
@@ -290,6 +314,31 @@ export function judgeUnit(text: string, reviews: Reviews, keyed = false, left?: 
     return JSON.stringify((at > 0 ? "..." : "") + text.slice(at, m.index! + m[0].length + 30));
   };
   const fileMax = Math.max(...reviews.file);
+  // the roster road (the file review's round 11, fresh-1): the chain of the file review's ids a citation hangs on a round (the
+  // digits, then a comma, a colon, a possessive or an open bracket, then ids joined by commas, with, and or or, the shapes the
+  // census reads), each id held to the roster of every round the phrase names; an id whose review named nearest before it is a
+  // pass named by the round it followed is the pass's and no citation. The families are the roster's, derived, so a family no
+  // fixlist of the file review filed is not read here (the id road reads the author's).
+  const families = new Set<string>();
+  for (const s of reviews.filed.values()) for (const id of s) families.add(id.slice(0, id.lastIndexOf("-")));
+  const FILE_ID = families.size ? "\\b(?:" + [...families].join("|") + ")-\\d+\\b" : null;
+  const citeRe = FILE_ID ? new RegExp("^(?:,|'s|:|\\s*\\()\\s*(?:(?:the|its)\\s+)?(" + FILE_ID + "(?:(?:,\\s*(?:and\\s+)?|\\s+(?:with|and|or)\\s+)" + FILE_ID + ")*)") : null;
+  const cited = (m: RegExpMatchArray, ns: number[]): void => {
+    if (!citeRe) return;
+    const start = m.index! + m[0].length;
+    const c = citeRe.exec(text.slice(start));
+    if (!c) return;
+    const chainAt = start + c[0].length - c[1].length;
+    const before = nearest(chainAt, forIds);
+    if (before && before.who === "pass") return;
+    for (const idm of c[1].matchAll(new RegExp(FILE_ID!, "g"))) {
+      const id = idm[0];
+      const missing = ns.filter((n) => !(reviews.filed.get(n) ?? new Set<string>()).has(id));
+      if (!missing.length) continue;
+      const by = [...reviews.filed].filter(([, s]) => s.has(id)).map(([n]) => n);
+      faults.push({ at: chainAt + idm.index!, fault: quoteAt(m) + ": cites " + id + " as a finding of the file review's round " + missing.join(" and ") + ", whose fixlist did not file it (" + (by.length ? "filed in round " + by.join(", ") + " by the roster the convention carries" : "no round's fixlist in the roster files it") + "); a record cites a finding by the round whose fixlist filed it, never by the round that read its fix" });
+    }
+  };
   for (const m of text.matchAll(ROUND_RE)) {
     const ns = roundsOf(m);
     const list = ns.join(", ");
@@ -300,6 +349,7 @@ export function judgeUnit(text: string, reviews: Reviews, keyed = false, left?: 
     else if (near.who === "file") {
       const bad = ns.filter((n) => !reviews.file.has(n));
       if (bad.length) faults.push({ at: m.index!, fault: quoteAt(m) + ": the file review's round " + bad.join(" and ") + " is not one the convention enumerates (its last is round " + fileMax + "); a round the maintainer has ruled is named in the convention first" });
+      else cited(m, ns);
     } else if (near.who === "branch") {
       const bad = ns.filter((n) => !reviews.branch.has(n));
       if (bad.length) faults.push({ at: m.index!, fault: quoteAt(m) + ": the branch's review ran rounds 1 and 2 alone; a later round is the file review's (write the file review's round " + bad.join(" and ") + ") or the author's closing pass" });
@@ -423,9 +473,12 @@ export function roadTwo(repo: string, reviews: Reviews, module: string): RoadTwo
 }
 
 const convention = (): Reviews => {
-  const para = sectionUnits().find((u) => u.text.includes("named below as the review's round 1 and round 2"));
+  const units = sectionUnits();
+  const para = units.find((u) => u.text.includes("named below as the review's round 1 and round 2"));
   assert.ok(para, "the section's opening paragraph carries the naming convention");
-  return conventionOf(para!.text);
+  const roster = units.find((u) => u.text.includes("The file review's fixlists by round"));
+  assert.ok(roster, "the paragraph after the convention carries the file review's roster, round by round (the file review's round 11, fresh-1)");
+  return conventionOf(para!.text + "\n\n" + roster!.text);
 };
 
 test("the reader (source-units.ts): a string the program sees as one value is one unit with that value whatever the quoting, the escape, a + between literals or a hole in a template; a run of line comments and a block comment are one unit each with wrapped lines joined; an offset maps back to the source line that carries it through a starts map built from source positions; a Python paragraph has its literals cooked as Python cooks them", () => {
@@ -519,7 +572,7 @@ test("the reader (source-units.ts): a string the program sees as one value is on
   assert.ok(SCRIPT_SUFFIXES.includes(".cts") && SCRIPT_SUFFIXES.includes(".tsx") && SCRIPT_SUFFIXES.includes(".jsx") && !PROSE_SUFFIXES.some((s) => SCRIPT_SUFFIXES.includes(s)), "the two suffix lists are disjoint and the script list carries the three the round found missing");
 });
 
-test("the convention: the branch's review has rounds 1 and 2, the file review's rounds are enumerated, the author's passes are never rounds and own an id family; the rule reads a unit's nearest review and refuses a round the convention does not give it, a pass with a round, an id of the pass's family with no pass named, and a round with no review named", () => {
+test("the convention: the branch's review has rounds 1 and 2, the file review's rounds are enumerated with the ids each round's fixlist filed, the author's passes are never rounds and own an id family; the rule reads a unit's nearest review and refuses a round the convention does not give it, a pass with a round, an id of the pass's family with no pass named, a round with no review named, and a finding cited under a round whose fixlist did not file it", () => {
   const r = convention();
   assert.deepEqual([...r.branch], [1, 2]);
   assert.ok(r.file.size >= 4 && r.file.has(1) && r.file.has(r.file.size), "the file review's rounds 1 to " + r.file.size);
@@ -536,14 +589,26 @@ test("the convention: the branch's review has rounds 1 and 2, the file review's 
   // probes' digits stand behind a call, since this module reads its own literals on road 1)
   const d = (k: number): number => k;
   const listOf = (ks: number[]): string => ks.slice(0, -1).join(", ") + " and " + ks[ks.length - 1];
-  const paragraphOf = (list: string): string => "named below as the review's round 1 and round 2; the file review's rounds " + list + " are the rounds the convention enumerates; is named the author's closing pass after that round, never a round of either review, and its findings carry the ids behaviour-N and records-N, which; its fixlist carrying its own ids (fresh-N, tests-N and extra-N with a digit before the hyphen)";
-  assert.deepEqual([...conventionOf(paragraphOf(listOf([d(1), d(2), d(3)]))).file], [1, 2, 3], "three rounds listed: three allowed");
-  assert.deepEqual([...conventionOf(paragraphOf(listOf([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map(d)))).file], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], "eleven listed: eleven allowed, no ceiling typed here");
-  assert.throws(() => conventionOf(paragraphOf(listOf([d(2), d(3)]))), /starts at the first round/, "a list that skips the first round is refused");
-  assert.throws(() => conventionOf(paragraphOf(listOf([d(1), d(3), d(2)]))), /is ascending, each round once/, "a list out of order is refused");
-  assert.throws(() => conventionOf(paragraphOf(listOf([d(1), d(2), d(2)]))), /is ascending, each round once/, "a repeated round is refused");
-  assert.throws(() => conventionOf(paragraphOf("one to nine")), /carries no such list/, "a paragraph without the numbered list fails loudly");
-  const two: Reviews = { branch: new Set([1, 2]), file: new Set([1, 2, 3, 4]), ids: ["behaviour", "records", "coverage"], fileIds: ["fresh", "tests", "extra"] };
+  const rosterOf = (ks: number[]): string => ks.map((k) => "round " + k + " filed none").join("; ");
+  const paragraphOf = (list: string, roster: string | null): string => "named below as the review's round 1 and round 2; the file review's rounds " + list + " are the rounds the convention enumerates; is named the author's closing pass after that round, never a round of either review, and its findings carry the ids behaviour-N and records-N, which; its fixlist carrying its own ids (fresh-N, tests-N and extra-N with a digit before the hyphen)" + (roster === null ? "" : "; the file review's fixlists by round: " + roster + ".");
+  const three = [d(1), d(2), d(3)];
+  assert.deepEqual([...conventionOf(paragraphOf(listOf(three), rosterOf(three))).file], [1, 2, 3], "three rounds listed: three allowed");
+  const eleven = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map(d);
+  assert.deepEqual([...conventionOf(paragraphOf(listOf(eleven), rosterOf(eleven))).file], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], "eleven listed: eleven allowed, no ceiling typed here");
+  assert.throws(() => conventionOf(paragraphOf(listOf([d(2), d(3)]), null)), /starts at the first round/, "a list that skips the first round is refused");
+  assert.throws(() => conventionOf(paragraphOf(listOf([d(1), d(3), d(2)]), null)), /is ascending, each round once/, "a list out of order is refused");
+  assert.throws(() => conventionOf(paragraphOf(listOf([d(1), d(2), d(2)]), null)), /is ascending, each round once/, "a repeated round is refused");
+  assert.throws(() => conventionOf(paragraphOf("one to nine", null)), /carries no such list/, "a paragraph without the numbered list fails loudly");
+  // the roster (the file review's round 11, fresh-1): read off the companion paragraph, every enumerated round once with the ids
+  // as it files them, and a paragraph without it, or with a roster that skips a round, names one outside the enumeration or
+  // files a round twice, fails loudly (the probes' ids are of no family the tree cites)
+  const filed = conventionOf(paragraphOf(listOf(three), "round " + d(1) + " filed alpha-1, beta-2 and gamma-3; round " + d(2) + " filed none; round " + d(3) + " filed alpha-2")).filed;
+  assert.deepEqual([...filed].map(([k, s]) => [k, [...s]]), [[1, ["alpha-1", "beta-2", "gamma-3"]], [2, []], [3, ["alpha-2"]]], "the roster: three rounds, their ids as the paragraph files them, none for a round that filed none");
+  assert.throws(() => conventionOf(paragraphOf(listOf(three), null)), /carries no roster/, "a paragraph without the roster fails loudly");
+  assert.throws(() => conventionOf(paragraphOf(listOf(three), rosterOf([d(1), d(2)]))), /names every enumerated round once and no other/, "a roster that skips an enumerated round is refused");
+  assert.throws(() => conventionOf(paragraphOf(listOf(three), rosterOf([d(1), d(2), d(3), d(4)]))), /names every enumerated round once and no other/, "a roster naming a round outside the enumeration is refused");
+  assert.throws(() => conventionOf(paragraphOf(listOf(three), rosterOf([d(1), d(2), d(3), d(3)]))), /files round \d+ once/, "a round filed twice is refused");
+  const two: Reviews = { branch: new Set([1, 2]), file: new Set([1, 2, 3, 4]), ids: ["behaviour", "records", "coverage"], fileIds: ["fresh", "tests", "extra"], filed: new Map([[1, new Set<string>()], [2, new Set<string>()], [3, new Set(["tests-2"])], [4, new Set(["rules-1"])]]) };
   // a phrase in the section is charged to the plan line that carries it: the section's last paragraph's last word stands at
   // the end of the plan line lineAt names (the starts follow the section's offset; the author's closing pass after the file
   // review's round 4, attribution-and-gates-4, found them section-relative)
@@ -577,6 +642,26 @@ test("the convention: the branch's review has rounds 1 and 2, the file review's 
   assert.equal(roundFaults(P + "after " + F + 7 + " (records-" + 1 + ") measured it", two).length, 1, "the round inside the pass's name is judged against the file review's enumeration");
   assert.equal(roundFaults("recorded by " + F + 4 + " (rules-" + 1 + ")", two).length, 0, "the maintainer's own ids are not the family's");
   assert.deepEqual(roundFaults("the review ran two rounds; the pin holds a round-trip", two), [], "no round number, no claim");
+  // the roster road (the file review's round 11, fresh-1): a citation is held to the round that filed its id in every shape the
+  // census reads, against the synthetic roster (the digits behind a call or after an identifier, as above)
+  const R3 = F + n(3), R4 = F + n(4);
+  assert.deepEqual(roundFaults(R3 + " (tests-" + n(2) + ") pinned it; " + R3 + ", tests-" + n(2) + "; " + R3 + ": tests-" + n(2) + "; " + R3 + "'s tests-" + n(2) + "; " + R3 + " (the tests-" + n(2) + ")", two), [], "an id under the round that filed it stands after a comma, a colon, a possessive or an open bracket, and after the or its (a property pin over the roster)");
+  const wrong = roundFaults(R3 + ", rules-" + n(1) + " found it", two);
+  assert.equal(wrong.length, 1, "an id under a round of the file review whose fixlist did not file it is faulted (a property pin over the roster)");
+  assert.match(wrong[0].fault, new RegExp("cites rules-" + n(1) + " as a finding of the file review's round " + n(3) + ", whose fixlist did not file it \\(filed in round " + n(4) + " by the roster"), "the fault names the id, the round cited and the round that filed it");
+  assert.equal(roundFaults(R4 + ", rules-" + n(1) + " with tests-" + n(2) + " and behaviour-" + n(9), two).filter((f) => /did not file/.test(f.fault)).length, 1, "in a chain the id the round filed stands and the one it did not faults, one fault per id; the author's family ends the chain and is the id road's");
+  assert.equal(roundFaults("the file review's rounds " + n(3) + " and " + n(4) + ", tests-" + n(2), two).length, 1, "a plural names every round it lists, and an id one of them did not file faults");
+  assert.deepEqual(roundFaults(P + "after " + R4 + ", tests-" + n(2) + " settled it", two), [], "an id after a pass named by the round it followed is the pass's, no citation of the round inside the name");
+  assert.deepEqual(judgeUnit("the Slice 7 review's round " + n(3) + ", rules-" + n(1) + " found it", two, true), { faults: [], judged: 0, foreign: 1, unanchored: 0 }, "another review's citation is left alone under the key");
+  assert.deepEqual(roundFaults(R3 + ", extra9-" + n(1) + " found it", two), [], "a family no round of the roster filed is not read as the file review's id");
+  // and against the REAL derived roster: an id one enumerated round filed and another did not, both read off the plan, so the
+  // case holds whatever the maintainer files next (a property pin over the derived roster)
+  assert.equal(r.filed.size, r.file.size, "a roster entry for every enumerated round");
+  const rounds = [...r.filed.keys()].sort((a, b) => a - b);
+  const pick = rounds.flatMap((a) => [...r.filed.get(a)!].flatMap((id) => rounds.filter((b) => b !== a && !r.filed.get(b)!.has(id)).slice(0, 1).map((b) => ({ a, id, b })))).find(() => true);
+  assert.ok(pick, "the roster holds an id one round filed and another did not: " + JSON.stringify([...r.filed].map(([k, s]) => [k, s.size])));
+  assert.deepEqual(roundFaults("the file review's round " + pick!.a + ", " + pick!.id + " found it", r), [], "the id under the round that filed it stands: " + JSON.stringify(pick));
+  assert.equal(roundFaults("the file review's round " + pick!.b + ", " + pick!.id + " found it", r).length, 1, "the same id under a round whose fixlist did not file it is faulted against the real roster: " + JSON.stringify(pick));
   // the digits after any whitespace (a literal's escaped newline, now a character of its value) or Markdown markers (the file
   // review's round 5, extra6-2: one space or hyphen alone was read)
   assert.equal(roundFaults(F.trimEnd() + "\n" + n(9) + " found it", two).length, 1, "a line break between the word and its digits");

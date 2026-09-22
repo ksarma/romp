@@ -1,7 +1,7 @@
 // A sheet's rules read as RULES, not as lines: each style rule's selector list, its declarations and the chain of at-rules
 // enclosing it, found by matching braces over the sheet's text with its comments stripped. One reader for the two homes of
 // the figure control's screen-only guard, ui/webview/file-figure-open.test.ts and tools/markdown-viewer-plan-linknav.test.mjs
-// (the file review's round 10, correctness-1 with tests-1 and ui-1: both homes had keyed the closed set over the control's
+// (the file review's round 9, correctness-1 with tests-1 and ui-1: both homes had keyed the closed set over the control's
 // rules on LINES at column zero carrying the class and a brace, so a rule written the way the sheets already write them, an
 // indented rule inside an at-rule block or a grouped selector wrapped across lines, was outside the population the set
 // closed). A plain module with no dependency, so CI's Shell job, which runs tools/*.test.mjs with no npm ci, loads it as the
@@ -17,11 +17,11 @@
 // left open, a string left open, a block left open at the end of the sheet, a close brace with no block open, a close brace
 // inside a prelude (a lost `{`), a prelude the sheet ends inside, a
 // block opened inside a style rule's declarations (CSS nesting, which the sheets do not use; a reader with no rule for a
-// form names it) and a style rule left open (the file review's round 11, extra7-1: three of the eight had no pin, the open
+// form names it) and a style rule left open (the file review's round 10, extra7-1: three of the eight had no pin, the open
 // string among them, so neutralising any one left both homes green). A statement at-rule (`@import ...;`, `@charset ...;`)
 // declares no rule and is passed over. A block at-rule whose body holds declarations and no rules (`@font-face` and the
 // others DECLARATION_AT_RULE names) yields no rule, its last declaration with or without a semicolon (the file review's
-// round 11, correctness-2 with extra7-2: the reader had refused the no-semicolon spelling, valid CSS one edit away in the
+// round 10, correctness-2 with extra7-2: the reader had refused the no-semicolon spelling, valid CSS one edit away in the
 // tree's own `@font-face` blocks, as a close brace inside a prelude, an unbalanced-brace message on a balanced sheet). The
 // one read that acceptance leaves silent: inside a declaration-only at-rule a selector-shaped prelude ended by `}`
 // (`@font-face { .a top: 0 }`) is read as a declaration and yields no rule, with no refusal. `@keyframes` steps (`from`,
@@ -30,7 +30,7 @@
 //
 // The reader returns every rule; each home chooses its population by the SELECTOR, the rules naming the control's class,
 // over every sheet a page of either host loads (ui/webview/host-sheets.mjs derives that set from the page assembly; the file
-// review's round 11, correctness-1 with regression-5). A rule whose selector would match the control's element without naming
+// review's round 10, correctness-1 with regression-5). A rule whose selector would match the control's element without naming
 // the class (`.fileview-md img + button`, an attribute selector, a universal) is outside what the homes close, a bound they
 // state rather than read, since reading it means matching selectors against the element (the author's closing pass after the
 // file review's round 10, mechanism-2), as are katex's vendored sheet and the style a template or a script writes into a page,
