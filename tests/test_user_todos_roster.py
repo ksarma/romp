@@ -154,9 +154,13 @@ class UserTodosRoster(_ColdTabFixture):
         self.assertIn("_user_todos_shown(", meta)
         self.assertNotIn('"resolved"', meta, "the helper does not re-spell the open row")
         self.assertNotIn("_user_todo_session_ended", meta, "...nor the ended gate")
-        for fn in (km._open_user_todos, km._user_todos_off_boot_notice):
+        # every reader of "is this row open" outside the store's mutators (the predicate's docstring names those): the rows,
+        # the boot notice and the answer-lost verdict, whose "open" is the same claim. The check keys on the stamp read,
+        # `.get("resolved")`, whatever the row variable is called.
+        for fn in (km._open_user_todos, km._user_todos_off_boot_notice, km._user_todo_answer_lost):
             self.assertIn("_user_todo_open(", inspect.getsource(fn), "%s asks the one predicate" % fn.__name__)
-            self.assertNotIn('t.get("resolved")', inspect.getsource(fn), "%s re-spells no open row" % fn.__name__)
+            self.assertNotIn('.get("resolved")', inspect.getsource(fn),
+                             "%s re-spells no open row: the stamp read belongs to the predicate" % fn.__name__)
         real_build = self._saved[3]                    # the fixture stubs build_session for the pushes: the saved original is the source
         for fn, arg in ((real_build, "sid"), (km._feed_session_key, "fsid")):
             src = inspect.getsource(fn)

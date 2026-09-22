@@ -10391,12 +10391,13 @@ def _reopen_user_todo(sid, tid):
 
 
 def _user_todo_open(t):
-    """The ONE spelling of "an open user todo" for every surface that shows or counts one: a record (a dict) with an
-    id and no clearing stamp (`resolved`). _open_user_todos (the rows the chat payload ships), the boot notice
-    (_user_todos_off_boot_notice) and the tab roster's count (_tab_meta) all ask this, so a loaded tab's rows and a
-    skeleton tab's count can never disagree on what counts as open (the fix brief of 2026-09-22, requirement 1). The
-    store's mutators are not display surfaces and keep their own lookups: _resolve_user_todo finds a row by id, and
-    _prune_user_todos keeps every unstamped row, id or not."""
+    """The ONE spelling of "an open user todo" for every reader that shows, counts or rules on one: a record (a dict)
+    with an id and no clearing stamp (`resolved`). _open_user_todos (the rows the chat payload ships), the boot notice
+    (_user_todos_off_boot_notice), the tab roster's count (_tab_meta) and the answer-lost verdict
+    (_user_todo_answer_lost, whose "open" is this claim about the row it found) all ask this, so a loaded tab's rows
+    and a skeleton tab's count can never disagree on what counts as open (the fix brief of 2026-09-22, requirement 1).
+    The store's mutators keep their own lookups: _resolve_user_todo finds a row by id, and _prune_user_todos keeps
+    every unstamped row, id or not (tests/test_user_todos_roster.py holds the census over the readers)."""
     return isinstance(t, dict) and bool(t.get("id")) and not t.get("resolved")
 
 
@@ -11011,7 +11012,7 @@ def _user_todo_answer_lost(sid, tid, text, wait=False, nonce=None):
         else:
             row = next((t for t in (_user_todos().get(sid) or [])
                         if isinstance(t, dict) and t.get("id") == tid), None)
-            verdict = "open" if row is not None and not row.get("resolved") else "stale"
+            verdict = "open" if _user_todo_open(row) else "stale"   # the one predicate; no row (evicted) is not open
     if verdict == "reopened":
         # the reopened ask is NEWS again (round 2, 2026-08-22): the same id going back under the
         # floor would be eaten by the push latch's set dedup, and this re-floor is the one signal
