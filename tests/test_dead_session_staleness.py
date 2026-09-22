@@ -181,16 +181,66 @@ class OriginMidJoin(World):
         self.assertIn("dismissed", nd.get("doneWhy") or "")
 
 
-# The child a ReaderFollowsTheWriter case runs: the bus and the judge loaded into ONE fresh interpreter
-# under the root shape the parent set, so both STATE constants bind at import exactly as in production
-# (a `-c` program: romp_load's direct-run floor does not arm, so the parent's environment is the whole
-# of it). The bus's writer is given one live remote heartbeat and called; the judge's reader is asked
-# about a sid nothing knows (rule 5) and about the heartbeating one (rule 4), before and after the
-# write; then the control, isolated: the bus's file removed, the writer's line for that sid put at the
-# judge's read path until 2026-09-22 (STATE/remote-sids), and the reader asked again, so the answer can
-# come from nothing but that old path. A missing bus file is reported, not raised, so a moved writer
-# fails the pins by their own messages.
-_ONE_ROOT_CHILD = r"""
+class ReaderFollowsTheWriter(unittest.TestCase):
+    """Rule 5's read and the bus's write meet on ONE file (2026-09-22). The bus writes the deadness
+    mirror at its STATE, the romp state root plus `postal`; the judge's STATE is the root itself, and
+    from the ladder's birth (2026-08-28) its read was STATE/remote-sids, a path nothing wrote: the
+    read raised OSError on every call, rule 5 never fired, every sid reaching it answered
+    cannot-determine. Conservative, so nothing settled early; a dead sender's card only took longer
+    to settle. Pinned by EXECUTION, not by spelling: the real writer (_write_remote_sids) and the
+    real reader (_presumed_closed) run in one fresh interpreter over one temp root, under each of
+    the two root shapes the constants bind from (XDG_STATE_HOME, and ROMP_STATE_DIR, which outranks
+    it), and a sid nothing knows is presumed closed once the bus has written. The control isolates
+    the old path: with the bus's file removed and the same line at STATE/remote-sids, the judge's
+    read path until 2026-09-22, the reader answers cannot-determine, so the read MOVED to the bus's
+    file rather than widening to both, and a reverted read fails this pin by its own message. The
+    proof that the rule itself was sound, and only its path dead, is the same control run at the
+    base: there the bytes at the old path answered True, the only way rule 5 could fire then. That
+    run is recorded in the fix-up's red-before log for this change (the fire and rule-4 pins red
+    under both root shapes, this control red on `True is not false`, the frame green); it is not
+    asserted here, where it can no longer hold. The bus's file is removed FIRST: this control's
+    first form left it in place and asserted True, which held because the bus's file was read, not
+    the old path's (a pin true for a reason other than its message; the fix-up of 2026-09-22). The
+    root carries `session-hosts` off, the repo rule for a test that mints its own state root, and
+    the child reads that file back through the judge's STATE, so the root the test prepared is the
+    root both modules bound."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.got = {shape: cls._over_one_root(shape) for shape in ("XDG_STATE_HOME", "ROMP_STATE_DIR")}
+
+    @classmethod
+    def _over_one_root(cls, shape):
+        td = tempfile.mkdtemp()
+        cls.addClassCleanup(shutil.rmtree, td, ignore_errors=True)
+        home = Path(td) / "home"
+        home.mkdir()
+        if shape == "XDG_STATE_HOME":
+            env = {"XDG_STATE_HOME": str(Path(td) / "xdg")}
+            root = Path(td) / "xdg" / "romp"
+        else:
+            env = {"ROMP_STATE_DIR": str(Path(td) / "state")}
+            root = Path(td) / "state"
+        root.mkdir(parents=True)
+        (root / "session-hosts").write_text("off\n")
+        # built from a rule, never the inherited environment: a live kernel exports ROMP_STATE_DIR to its
+        # sessions and hundreds of test modules rebind XDG_STATE_HOME at import (tests/README.md)
+        full = {"PATH": os.environ.get("PATH", ""), "HOME": str(home), "TMPDIR": str(home),
+                "ROMP_KERNEL_NO_OPEN": "1", "PYTHONDONTWRITEBYTECODE": "1", **env}
+        # The child: the bus and the judge loaded into ONE fresh interpreter under the root shape set above, so
+        # both STATE constants bind at import exactly as in production (a `-c` program: romp_load's direct-run
+        # floor does not arm, so the environment above is the whole of it). The bus's writer is given one live
+        # remote heartbeat and called; the judge's reader is asked about a sid nothing knows (rule 5) and about
+        # the heartbeating one (rule 4), before and after the write; then the control, isolated: the bus's file
+        # removed, the writer's line for that sid put at the judge's read path until 2026-09-22
+        # (STATE/remote-sids), and the reader asked again, so the answer can come from nothing but that old
+        # path. A missing bus file is reported, not raised, so a moved writer fails the pins by their own
+        # messages. The source sits as a literal in the argv slot after "-c": the shape the hosts-on census
+        # (tests/test_tempdir_hygiene.py, HarnessSocketBudget's ledger) reads as a child Python's source, parsing
+        # the literal as a nested module, where the child's read of the session-hosts toggle is a read; a
+        # module-level name bound to the same text is not followed into the child, and the whole text stood
+        # unaccounted (the sweep red of 2026-09-22).
+        out = subprocess.run([sys.executable, "-c", r"""
 import json, os, sys, time
 tests_dir, bin_dir, remote, dead = sys.argv[1:5]
 sys.path.insert(0, tests_dir)
@@ -218,56 +268,7 @@ out["oldPath"] = str(old_path)
 out["oldPathText"] = old_path.read_text()
 out["controlOldPathOnly"] = jd._presumed_closed(dead, now)
 print(json.dumps(out))
-"""
-
-
-class ReaderFollowsTheWriter(unittest.TestCase):
-    """Rule 5's read and the bus's write meet on ONE file (2026-09-22). The bus writes the deadness
-    mirror at its STATE, the romp state root plus `postal`; the judge's STATE is the root itself, and
-    from the ladder's birth (2026-08-28) its read was STATE/remote-sids, a path nothing wrote: the
-    read raised OSError on every call, rule 5 never fired, every sid reaching it answered
-    cannot-determine. Conservative, so nothing settled early; a dead sender's card only took longer
-    to settle. Pinned by EXECUTION, not by spelling: the real writer (_write_remote_sids) and the
-    real reader (_presumed_closed) run in one fresh interpreter over one temp root, under each of
-    the two root shapes the constants bind from (XDG_STATE_HOME, and ROMP_STATE_DIR, which outranks
-    it), and a sid nothing knows is presumed closed once the bus has written. The control isolates
-    the old path: with the bus's file removed and the same line at STATE/remote-sids, the judge's
-    read path until 2026-09-22, the reader answers cannot-determine, so the read MOVED to the bus's
-    file rather than widening to both, and a reverted read fails this pin by its own message. The
-    proof that the rule itself was sound, and only its path dead, is the same control run at the
-    base: there the bytes at the old path answered True, the only way rule 5 could fire then. That
-    run is recorded in the review round's red-before log for this change (the fire and rule-4 pins
-    red under both root shapes, the control and the frame green); it is not asserted here, where it
-    can no longer hold. The bus's file is removed FIRST: this control's first form left it in place
-    and asserted True, which held because the bus's file was read, not the old path's (a pin true
-    for a reason other than its message; the fix-up of 2026-09-22). The root carries `session-hosts`
-    off, the repo rule for a test that mints its own state root, and the child reads that file back
-    through the judge's STATE, so the root the test prepared is the root both modules bound."""
-
-    @classmethod
-    def setUpClass(cls):
-        cls.got = {shape: cls._over_one_root(shape) for shape in ("XDG_STATE_HOME", "ROMP_STATE_DIR")}
-
-    @classmethod
-    def _over_one_root(cls, shape):
-        td = tempfile.mkdtemp()
-        cls.addClassCleanup(shutil.rmtree, td, ignore_errors=True)
-        home = Path(td) / "home"
-        home.mkdir()
-        if shape == "XDG_STATE_HOME":
-            env = {"XDG_STATE_HOME": str(Path(td) / "xdg")}
-            root = Path(td) / "xdg" / "romp"
-        else:
-            env = {"ROMP_STATE_DIR": str(Path(td) / "state")}
-            root = Path(td) / "state"
-        root.mkdir(parents=True)
-        (root / "session-hosts").write_text("off\n")
-        # built from a rule, never the inherited environment: a live kernel exports ROMP_STATE_DIR to its
-        # sessions and hundreds of test modules rebind XDG_STATE_HOME at import (tests/README.md)
-        full = {"PATH": os.environ.get("PATH", ""), "HOME": str(home), "TMPDIR": str(home),
-                "ROMP_KERNEL_NO_OPEN": "1", "PYTHONDONTWRITEBYTECODE": "1", **env}
-        out = subprocess.run([sys.executable, "-c", _ONE_ROOT_CHILD, HERE, BIN, REMOTE, DEAD],
-                             capture_output=True, text=True, env=full, cwd=str(home), timeout=120)
+""", HERE, BIN, REMOTE, DEAD], capture_output=True, text=True, env=full, cwd=str(home), timeout=120)
         assert out.returncode == 0, "%s child failed: %s" % (shape, out.stderr[-2000:])
         got = json.loads(out.stdout.strip().splitlines()[-1])
         got["root"] = str(root)
