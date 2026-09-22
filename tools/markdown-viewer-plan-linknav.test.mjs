@@ -73,8 +73,8 @@ export function gateOf(base, main, added, module) {
   return { ran: true, held: null };
 }
 const NOWHERE = '; the checks keyed on the delta run in no CI job and in none after the merge (the plan\'s Tests paragraph)';
-/** What the diagnostic says for each part of the gate that held a check off, naming the check (the file review's landing
- *  round, extra6-1: the re-aimed count's stand-down had reused L6's message, so it was reported as L6's). */
+/** What the diagnostic says for each part of the gate that held a check off, naming the check (the file review's round 8,
+ *  extra6-1: the re-aimed count's stand-down had reused L6's message, so it was reported as L6's). */
 const HELD = {
   'no origin/main': (name) => name + ' did not run: origin/main is not known in this checkout (CI\'s default-depth checkout); the prose alone holds it here' + NOWHERE,
   'the merge-base is origin/main': (name) => name + ' did not run: the merge-base with origin/main is origin/main itself (main itself, a branch or a batch head cut from main\'s tip, or this branch just after merging origin/main), so the diff since it is the whole history over main\'s tip and not this follow-on\'s delta; it runs on the open PR branch once main has moved past the branch\'s last merge of it' + NOWHERE,
@@ -578,7 +578,7 @@ test('every test module that names the follow-on in its own text is named in the
   for (const f of py) assert.ok(tests.includes('tests/' + f), 'tests/' + f + ' names the follow-on and is named in the Tests paragraph');
 });
 
-test('the re-aimed sentence: its count is the number of pre-existing test modules the diff since the merge-base modifies, each named in it (behind L6\'s two-part gate, since the count is a claim about the branch\'s delta; the file review\'s landing round, tests-3: the text-keyed rule cannot see a module whose own text does not name the follow-on)', (t) => {
+test('the re-aimed sentence: its count is the number of pre-existing test modules the diff since the merge-base modifies, each named in it (behind L6\'s two-part gate, since the count is a claim about the branch\'s delta; the file review\'s round 7, tests-3: the text-keyed rule cannot see a module whose own text does not name the follow-on)', (t) => {
   const m = /(?:^| )(\w+) standing suites were re-aimed, not undone:/.exec(section);   // `section` is flat: one space where the line broke
   assert.ok(m, 'the Tests paragraph counts the re-aimed suites');
   const count = NUMBER_WORDS[m[1].toLowerCase()] ?? Number(m[1]);

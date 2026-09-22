@@ -1672,7 +1672,7 @@ test("no re-parse after the adoption: mdBlock's post-adoption region and every m
   // a local callee's own bare calls are followed too, transitively: to other local functions (so a write two levels down is read:
   // the figure control's decision sat one call below addFigureControls and wrote its glyph through innerHTML onto a button placed
   // under the box; the node scene caught it at the merge, and this walk reads it now), to imported functions (whose modules join
-  // the set: the file review's landing round, fresh-1 with fresh-2) and to the language's globals (pinned, so a new one is judged)
+  // the set: the file review's round 7, fresh-1 with fresh-2) and to the language's globals (pinned, so a new one is judged)
   const localBody = (l: string): string => codeOnly(VIEW.split("function " + l + "(")[1].split("\n}\n")[0]);
   const reached = [...locals]; const importedCallees: Record<string, string> = {}; const globals = new Set<string>();
   for (let i = 0; i < reached.length; i++) {

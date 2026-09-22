@@ -122,10 +122,10 @@ const LOCAL = "figs/missing.png";
  *  among the controls noteText skips; for this glyph-only control the entry is inert (a control with no text node contributes
  *  nothing to the walk whether it is listed or not: its title and aria-label are attributes, which no text walk reads), so the
  *  glyph-only scenes below hold the pairing and the place with the control beside the img and cannot red on the entry (the file
- *  review's landing round, tests-2), and the entry itself is executed by the labelled variant (figopenLabelled, below). */
+ *  review's round 7, tests-2), and the entry itself is executed by the labelled variant (figopenLabelled, below). */
 const figopen = (): FakeElement => el("button", { class: "fileview-btn fileview-icon fv-figopen", "data-fv-figopen": "", type: "button", title: "Open the picture" }, [el("svg", { viewBox: "0 0 16 16" }, [])]);
 /** The same control carrying a text node of its own ("Open"): the label-bearing variant the reader-place.ts entry keeps out of the text
- *  read. The real control has none; this is what the entry is for, and what reds on its removal (the file review's landing round,
+ *  read. The real control has none; this is what the entry is for, and what reds on its removal (the file review's round 8,
  *  extra9-1). */
 const figopenLabelled = (): FakeElement => { const b = figopen(); b.appendChild(txt("Open")); return b; };
 const LOADED = "figs/plot.png";

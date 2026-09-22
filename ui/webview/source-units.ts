@@ -26,7 +26,7 @@
  *  one boundary: a TEMPLATE literal standing inside a tagged template's substitution hole (tag`${`\xq`}`) counts as tagged,
  *  since isTagged climbs from the hole's span to the tag, and is read as its raw body like the tag's own spans, its words and
  *  source offsets kept, so it can hide no misattribution; that road needs a file that does not compile and the code is left as
- *  it is (the file review's landing round, extra7-1); a plain string in such a hole still throws. Before the throw the
+ *  it is (the file review's round 7, extra7-1); a plain string in such a hole still throws. Before the throw the
  *  erroneous token was read silently. Markdown, which
  *  the compiler does not read, is read as paragraphs as it stands (unitsOf routes on the suffix: the compiler for .ts, .mts,
  *  .cts, .tsx, .js, .mjs, .cjs and .jsx, each with its script kind; prose for the suffixes it lists and for a file with none;

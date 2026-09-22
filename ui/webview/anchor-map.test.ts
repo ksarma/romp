@@ -1234,7 +1234,7 @@ function figureOpenControl(img: FakeElement, label?: string): FakeElement {
   return b;
 }
 
-test("Rendered: a figure's Open the picture control (button.fv-figopen, the img's next sibling, a glyph with no text) at the box's TOP level is no block's node, as the failed figure's label is: the img's html block owns its img alone, or the panel's wrap around it, the control answers no block, the paragraph after pairs and paints, the README shape owns its img and its div with the control between, and beside prose the caption still maps (the file review's landing round, tests-2: this had a source-text pin alone under a name claiming the executed property)", () => {
+test("Rendered: a figure's Open the picture control (button.fv-figopen, the img's next sibling, a glyph with no text) at the box's TOP level is no block's node, as the failed figure's label is: the img's html block owns its img alone, or the panel's wrap around it, the control answers no block, the paragraph after pairs and paints, the README shape owns its img and its div with the control between, and beside prose the caption still maps (the file review's round 7, tests-2: this had a source-text pin alone under a name claiming the executed property)", () => {
   const tags = (els: Element[]): string[] => els.map((e) => ((e as unknown as FakeElement).getAttribute("class") || "").split(" ").includes("fc-imgwrap") ? "IMG" : e.tagName);
   const wrapImg = (img: FakeElement): FakeElement => {
     const doc = img.ownerDocument, parent = img.parentNode as FakeElement;

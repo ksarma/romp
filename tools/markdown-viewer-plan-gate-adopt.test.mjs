@@ -21,8 +21,8 @@
 // those modules' count, the module count and list, the two sums of matching lines and of modules holding one, and
 // file-view.ts's whole-file count with the part of it outside mdBlock) are not copied here: the held text carries a hole for
 // each, filled from the literal file-view-seam.test.ts pins for it, so the figure has one home and a plan word that drifts from
-// the code's pin is red here (the file review's landing round of the link-navigation follow-on, fresh-1 with fresh-2 and
-// regression-2, 2026-09-21: the copy held here had restated a nine-module list and a conclusion the widened walk falsified).
+// the code's pin is red here (the file review's round 7, fresh-1 with fresh-2 and regression-2,
+// 2026-09-21: the copy held here had restated a nine-module list and a conclusion the widened walk falsified).
 // The per-module breakdown of the judged sites is stated nowhere in the paragraph, which points at JUDGED_SITES, and the
 // held text is asserted to carry no per-module count and no count of the imported callees' modules typed beside the holes
 // (the file review's round 8, extra8-1 with extra5-2, extra6-2, extra10-2 and tests-2: six per-module counts and the
@@ -63,7 +63,7 @@ const TENS = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 
 const numberWord = (n) => { assert.ok(Number.isInteger(n) && n >= 0 && n < 100, 'a count under a hundred: ' + n); return n < 20 ? ONES[n] : TENS[Math.floor(n / 10)] + (n % 10 ? '-' + ONES[n % 10] : ''); };
 /** The figures the re-parse paragraph derives from file-view-seam.test.ts's census, each read from the literal that test pins
  *  (the whole-file count had stood in the plan as twelve beside its own fourteen, and this pin held both; the file review's
- *  landing round, rules-1 with regression-1, tests-1, extra8-1 and extra8-2). */
+ *  round 7, rules-1 with regression-1, tests-1, extra8-1 and extra8-2). */
 const derived = (() => {
   const called = JSON.parse(seamLiteral(/assert\.deepEqual\(called, (\[[^\]]*\]),/, "the post-adoption region's callees"));
   const modules = JSON.parse(seamLiteral(/const REACHED_MODULES = (\[[^\]]*\]);/, 'the modules the walk reaches'));

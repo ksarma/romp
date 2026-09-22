@@ -167,11 +167,11 @@ const sectionLine = plan.slice(0, sectionStart).split("\n").length;
  *  a fault in the section was charged to a line about seven thousand short of the plan's). */
 const sectionUnits = (): Unit[] => proseUnits(sectionText).map((u) => ({ ...u, line: u.line + sectionLine - 1, endLine: u.endLine + sectionLine - 1, starts: u.starts.map((s) => ({ line: s.line + sectionLine - 1, at: s.at })) }));
 
-export type Reviews = { branch: Set<number>; file: Set<number>; ids: string[] };
+export type Reviews = { branch: Set<number>; file: Set<number>; ids: string[]; fileIds: string[] };
 /** What the convention paragraph gives each review: the branch's review "round 1 and round 2", the file review the rounds
  *  the paragraph lists by number ("rounds 1, 2 and 3 are the rounds the convention enumerates", the maintainer's numbering, the
- *  one home of the allowed set), and the id family of the author's passes. Asserts the paragraph states all three and names
- *  the pass as never a round. */
+ *  one home of the allowed set), the id family of the author's passes, and the file review's own id families (the landing
+ *  round's fixlist parenthetical). Asserts the paragraph states all four and names the pass as never a round. */
 export function conventionOf(paragraph: string): Reviews {
   const branch = /named below as the review's round 1 and round 2;/.exec(paragraph);
   assert.ok(branch, "the convention names the branch's review's two rounds");
@@ -186,7 +186,13 @@ export function conventionOf(paragraph: string): Reviews {
   assert.ok(ids, "the convention names the author's passes as passes, never rounds, with their id family");
   const family = Array.from(ids![1].matchAll(/([a-z]+(?:-[a-z]+)*)-N/g), (m) => m[1]);
   assert.ok(family.length >= 1, "the id family: " + JSON.stringify(family));
-  return { branch: new Set([1, 2]), file: new Set(listed), ids: family };
+  // the file review's own id families, read off the paragraph's parenthetical for the landing round's fixlist ("its fixlist
+  // carrying its own ids (fresh-N, rules-N, ... and extra-N with a digit before the hyphen)"): the ids a record may cite only by
+  // a round's number, never as the landing round's alone, since the landing round and its second read share ids
+  const own = /its fixlist carrying its own ids \(((?:[a-z]+-N, )*[a-z]+-N and [a-z]+-N)\s+with a digit before the hyphen\)/.exec(paragraph);
+  assert.ok(own, "the convention lists the file review's own id families, as \"its fixlist carrying its own ids (fresh-N, rules-N and extra-N with a digit before the hyphen)\"; the paragraph carries no such list, so the landing-round label cannot be judged");
+  const fileIds = Array.from(own![1].matchAll(/([a-z]+)-N/g), (m) => m[1]);
+  return { branch: new Set([1, 2]), file: new Set(listed), ids: family, fileIds };
 }
 
 type Who = "file" | "branch" | "other" | "pass";
@@ -305,6 +311,16 @@ export function judgeUnit(text: string, reviews: Reviews, keyed = false, left?: 
     const near = nearest(m.index!, forIds);
     if (!ours(near, m.index!)) continue;
     if (!near || near.who !== "pass") faults.push({ at: m.index!, fault: quoteAt(m) + ": an id of the author's family (" + reviews.ids.map((p) => p + "-N").join(", ") + ") where the review named nearest before it is " + (near ? named[near.who] : "no review") + "; the finding is the author's closing pass's, never a round's of the file review, and the pass is named nearest before its id (the author's closing pass after the file review's round M, the id)" });
+  }
+  // a finding cited as the landing round's alone (the label followed, with or without a phrase between, by one of the file
+  // review's own ids) names no round's digits, so ROUND_RE never reads it, and the landing round and its second read share
+  // ids, so the label names two findings (the file review's round 11, tests-2). A companion of ROUND_RE, keyed on the family
+  // list conventionOf derives, judged under the same nearest-review rule: a property, the shape faulted wherever it stands.
+  // The window stops at a sentence or clause end and at a bracket.
+  const landingRe = new RegExp("\\blanding\\s+round\\b[^.;:()]{0,80}?\\b(?:" + reviews.fileIds.join("|") + ")\\d*-\\d+\\b", "gi");
+  for (const m of text.matchAll(landingRe)) {
+    if (!ours(nearest(m.index!, kept), m.index!)) continue;
+    faults.push({ at: m.index!, fault: quoteAt(m) + ": cites a finding as the landing round's alone, a label with no round's digits that the landing round and its second read share; write the file review's round by its number, with the id kept" });
   }
   return { faults, judged, foreign, unanchored };
 }
@@ -520,14 +536,14 @@ test("the convention: the branch's review has rounds 1 and 2, the file review's 
   // probes' digits stand behind a call, since this module reads its own literals on road 1)
   const d = (k: number): number => k;
   const listOf = (ks: number[]): string => ks.slice(0, -1).join(", ") + " and " + ks[ks.length - 1];
-  const paragraphOf = (list: string): string => "named below as the review's round 1 and round 2; the file review's rounds " + list + " are the rounds the convention enumerates; is named the author's closing pass after that round, never a round of either review, and its findings carry the ids behaviour-N and records-N, which";
+  const paragraphOf = (list: string): string => "named below as the review's round 1 and round 2; the file review's rounds " + list + " are the rounds the convention enumerates; is named the author's closing pass after that round, never a round of either review, and its findings carry the ids behaviour-N and records-N, which; its fixlist carrying its own ids (fresh-N, tests-N and extra-N with a digit before the hyphen)";
   assert.deepEqual([...conventionOf(paragraphOf(listOf([d(1), d(2), d(3)]))).file], [1, 2, 3], "three rounds listed: three allowed");
   assert.deepEqual([...conventionOf(paragraphOf(listOf([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map(d)))).file], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], "eleven listed: eleven allowed, no ceiling typed here");
   assert.throws(() => conventionOf(paragraphOf(listOf([d(2), d(3)]))), /starts at the first round/, "a list that skips the first round is refused");
   assert.throws(() => conventionOf(paragraphOf(listOf([d(1), d(3), d(2)]))), /is ascending, each round once/, "a list out of order is refused");
   assert.throws(() => conventionOf(paragraphOf(listOf([d(1), d(2), d(2)]))), /is ascending, each round once/, "a repeated round is refused");
   assert.throws(() => conventionOf(paragraphOf("one to nine")), /carries no such list/, "a paragraph without the numbered list fails loudly");
-  const two: Reviews = { branch: new Set([1, 2]), file: new Set([1, 2, 3, 4]), ids: ["behaviour", "records", "coverage"] };
+  const two: Reviews = { branch: new Set([1, 2]), file: new Set([1, 2, 3, 4]), ids: ["behaviour", "records", "coverage"], fileIds: ["fresh", "tests", "extra"] };
   // a phrase in the section is charged to the plan line that carries it: the section's last paragraph's last word stands at
   // the end of the plan line lineAt names (the starts follow the section's offset; the author's closing pass after the file
   // review's round 4, attribution-and-gates-4, found them section-relative)
