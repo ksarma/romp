@@ -57,20 +57,39 @@ trees cost the test phase nothing in that order. And after pytest's clock had st
 whose full collections walk every tracked object, took about twice main's, with about twice main's tracked objects alive,
 a cost that lands in every run whatever the order. So derived() does two things around a build when it finds the
 collector enabled: it disables the collector before the build and re-enables it in a finally, on the returning road and
-on the raising road alike, never touching a collector the caller had disabled, and handing back the state it found (a
-build that switches the collector itself is handed back as the build left it); and after a build that RETURNED and
-passed the after-check it calls gc.freeze() once, BEFORE the re-enable, which moves every object then tracked into the
-permanent generation, which no later collection walks, automatic, explicit or the finalization's. The freeze comes
-before the re-enable because the first allocation after a re-enable triggers a young collection over everything the
-build allocated (a fifth of a second over six million objects in the probe, and nothing once they were frozen first; on
-the interpreters with a GIL the freeze itself is a list splice, microseconds whatever the count, and the free-threaded
-build's walks its heaps to mark them, milliseconds per million objects). The freeze is PROCESS-GLOBAL: every object
-alive at that moment leaves the collector's generations for the rest of the process, the cache's trees and everything
-else alive, each build freezing what is alive then, a hit on the memo freezing nothing, and gc.unfreeze is never called;
-the count gc.get_freeze_count() reads is live, growing with each build here and dropping when a frozen object dies by
-reference count, and reading it WALKS the permanent generation's list, a tenth of a second to a second per call once
-the trees are frozen, so nothing in this module reads it and a pin reads it at most twice. Acceptable in a test process
-because the process is a test run and
+on the raising road alike, never touching a collector the caller had disabled; and after a build that RETURNED and
+passed the after-check it calls gc.freeze() once, before it returns, which moves every object then tracked into the
+permanent generation, which no later collection walks, automatic, explicit or the finalization's. THE COLLECTOR'S EXIT
+STATE, in one rule: a collector found on is handed back on, whatever the build did to it (a build that disabled it and
+left it off is handed back on by the finally); a collector found off is left as the build left it (a build that enabled
+it leaves it on, and the helper calls gc.enable() for no collector it found off). The census's pins hold the four
+corners (ParseCacheRetention; the fifteenth pass's verification, 2026-09-22, found the fourteenth's wording of this rule
+contradictory). The freeze runs before derived() returns, so no allocation after the build is collected over the build's
+objects: the first allocation after a re-enable triggers a young collection over everything the build allocated (a
+fifth of a second over six million objects in the probe, and nothing once they were frozen first; on the interpreters
+with a GIL the freeze itself is a list splice, microseconds whatever the count, and the free-threaded build's walks its
+heaps to mark them, milliseconds per million objects). The freeze is PROCESS-GLOBAL: every object TRACKED at that moment
+leaves the collector's generations for the rest of the process, the cache's trees and everything else tracked, each
+build freezing what is tracked then, a hit on the memo freezing nothing, and gc.unfreeze is never called. Tracked, not
+alive, and that is THE RULE FOR A BUILD: the collector is off for the whole build, so a cycle the build drops before
+returning is still in the generations at the freeze and is frozen with the result, never reclaimed; a build must break
+its own cycles before it returns, so that reference counting frees what it drops. The rule was found by measurement
+(the fifteenth pass): the thread-stop census's build kept its modules index as a local, whose _Module/_Unit graph is
+cyclic, and the derivation froze about 780 thousand dead objects with the trees (a tenth of what it froze; about 150 MB
+by sys.getsizeof and 2.7 million allocator blocks the process never reused, per deriving process), until the census's
+build released them (tests/test_thread_stop_census.py, _Tree; its ParseCacheRetention pin builds the census's _Tree over
+a plant with the collector off and asserts gc.collect() finds nothing). A collection in derived() before the freeze was
+the other road, refused: it walks every tracked object, about 4 s at the census's heap on 3.10 and 3.12, a third of what
+the shape saves. The count gc.get_freeze_count() reads is live, growing with each build here and dropping when a frozen
+object dies by reference count, and reading it WALKS the permanent generation's list: a tenth of a second per read over
+the eight million objects the census freezes, up to a second once a collection has scattered the heap, so nothing in
+this module reads it and a pin reads it at most twice. EVERY READER PAYS THAT after a derivation, not this module's pins
+alone: kernel/kernel.py's perf snapshot (_PerfStats.snapshot) reads gc.get_freeze_count() on every call, so a test that
+reads the snapshot after the census in the same process runs 2 to 60 times slower per read, about 2 s over a serial CI
+cell (four snapshot-reading modules sort after the census) and 18 to 25 s for an xdist worker that runs the census
+before tests/test_kernel_delta_send.py (measured by the fifteenth pass's verification on 3.10 and 3.12; no test outcome
+changed). The kernel side (a memoised count behind a cheap check) is a follow-up for the kernel's perf owner, not this
+tests-only change. Acceptable in a test process because the process is a test run and
 ends with it: an object alive at a freeze that later falls into an unreachable cycle is never reclaimed by the collector
 (a cycle made after the freeze is, as before), gc.get_objects() no longer lists what is frozen, and a full collection
 over a frozen heap costs microseconds on the interpreters with a GIL; the free-threaded build's collector, which has one
@@ -258,12 +277,13 @@ def derived(key, build):
     writer is raised `from` the build's exception (its __cause__), else the build's exception is re-raised as it was; the
     module docstring. THE RETENTION SHAPE (the module docstring's paragraph of that name): when the collector is enabled
     on entry it is disabled for the build and re-enabled in a finally, on both roads, so no automatic collection walks the
-    trees while the build allocates them; a collector the caller had disabled is never touched, and the state found is
-    handed back (a build that switches the collector itself is handed back as it left it). After a build that returned
-    and passed the after-check, and after the memo, gc.freeze() runs once,
-    while the collector is still off: every object alive then, the trees this build read among them, leaves the
-    collector's generations for the rest of the process. A build that raised, or that the after-check refused, freezes
-    nothing; a hit freezes nothing; nothing here unfreezes."""
+    trees while the build allocates them; a collector the caller had disabled is never touched. The exit state in one
+    rule: a collector found on is handed back on whatever the build did to it; a collector found off is left as the build
+    left it (never enabled here). After a build that returned and passed the after-check, and after the memo, gc.freeze()
+    runs once, before this call returns: every object TRACKED then, the trees this build read among them and any cycle
+    the build dropped without breaking it (the rule for a build, in the module docstring), leaves the collector's
+    generations for the rest of the process. A build that raised, or that the after-check refused, freezes nothing; a hit
+    freezes nothing; nothing here unfreezes."""
     with _LOCK:
         if key in _DERIVED:
             _STATS["derived_hits"] += 1
@@ -286,7 +306,7 @@ def derived(key, build):
                 raise
             check_singletons("after the build of %r (parse_cache.derived): the build itself wrote them, or a thread beside it" % (key,))
             _DERIVED[key] = value
-            gc.freeze()                      # THE RETENTION SHAPE: what is alive now leaves the collector's generations for good, before the re-enable
+            gc.freeze()                      # THE RETENTION SHAPE: what is tracked now leaves the collector's generations for good, before this call returns
         finally:
             if collecting:
                 gc.enable()                  # the state found, on the returning road and on the raising road
