@@ -24,13 +24,17 @@ fully UNPATCHED judge loop (the with-block's eleven patches were undone on the w
 its hold) ran for the rest of the worker's life. The T282 census in tearDown named the leftover thread (the "1 error"
 beside the "1 failed") but could not stop it.
 
-THE BLAST RADIUS, proven by romp-manager's probe: the leaked loop runs _compact_goal_stores() on its 3 s backstop,
-globbing jd.GOALDIR and rewriting any store whose mtime moved; km.jd is the ONE process-wide sys.modules["romp_judge"]
-(kernel.py loads it by that name; tests/conftest.py's shared-judge note), and later modules jd._rebind_state() it onto
-their own roots, so the leaked loop archives stores it never owned (a store saved under a private sid with a cleared
-root was archived 7.5 s later by the leaked thread); 13 modules save stores with cleared roots and 18 assert on the
-archive, so the leak can produce a SPURIOUS PASS as well as a spurious failure in a module that did nothing wrong.
-NOT DETERMINED, carried and not dropped: whether the leaked loop produced flakes in earlier sweeps. The SdkBackend
+THE BLAST RADIUS, proven by romp-manager's probe, has TWO FIGURES with different meanings. REACH: the leaked loop runs
+_compact_goal_stores() on its 3 s backstop (_producer_wake.wait(3)), globbing jd.GOALDIR and rewriting any store whose
+mtime moved; km.jd is the ONE process-wide judge module (kernel/kernel.py:52, jd = load_source("romp_judge", ...): one
+object per interpreter; tests/conftest.py's shared-judge note), and 141 test modules call jd._rebind_state(), so the
+leaked loop follows jd.GOALDIR to wherever the LATEST rebind put it: any of those 141 scheduled after the failure in the
+same worker (a store saved under a private sid with a cleared root was archived 7.5 s later by the leaked thread).
+VISIBLE SET: 13 modules save stores with cleared roots and 18 assert on the archive; that is where a wrong result would
+surface, a SPURIOUS PASS as well as a spurious failure in a module that did nothing wrong, and the spurious pass is the
+dangerous direction. 13 is not the exposure; 141 is the reach. NOT DETERMINED, carried and not dropped: whether the
+leaked loop produced flakes in earlier sweeps. The contamination disclosure is CONDITIONAL: a sweep carried the leaked
+loop only if the target's failure line is in that sweep's pytest log. The SdkBackend
 side-effect build is benign on its own (its orphan reap is gated on its own empty registry; sweep_dead_test_roots
 removes only romp-tests-* roots whose marker names a dead pid).
 

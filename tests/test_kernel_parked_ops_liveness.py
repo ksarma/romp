@@ -29,10 +29,15 @@ test starts km._producer against judge tiers stuck on a gate. Two things went wr
      assertion skipped them, the with-block's eleven patches were undone on the way out while the producer was still in
      its hold, and a live, fully unpatched judge loop ran for the rest of the worker's life; tearDown only CLEARED the
      stop flag, and only once the producer was already dead. The T282 census named the leaked thread (the ERROR beside
-     the FAILED) but could not stop it. The leaked loop's _compact_goal_stores() runs every 3 s over jd.GOALDIR, and
-     km.jd is the one process-wide judge module that later test modules _rebind_state() onto their own roots, so the
-     loop archived stores it never owned: a spurious pass or a spurious failure in a module that did nothing wrong
-     (romp-manager's probe, 2026-09-21). Whether it produced flakes in earlier sweeps was not determined.
+     the FAILED) but could not stop it. The blast radius has TWO FIGURES with different meanings (romp-manager's probe,
+     2026-09-21). REACH: the leaked loop's 3 s backstop (_producer_wake.wait(3)) runs _compact_goal_stores() over
+     jd.GOALDIR, and km.jd is the ONE process-wide judge module (kernel/kernel.py:52, jd = load_source("romp_judge",
+     ...): one object per interpreter) that 141 test modules jd._rebind_state() onto their own roots, so the loop follows
+     jd.GOALDIR to wherever the LATEST rebind put it: any of those 141 scheduled after the failure in the same worker.
+     VISIBLE SET: 13 modules save stores with cleared roots and 18 assert on the archive; that is where a wrong result
+     would surface, a spurious pass or a spurious failure in a module that did nothing wrong, and the spurious pass is
+     the dangerous direction. 13 is not the exposure; 141 is the reach. Whether the leaked loop produced flakes in
+     earlier sweeps was not determined.
      Now everything a failed assertion must not skip is a CLEANUP registered BEFORE the producer starts: the stop (the
      seam first, the gate second, a bounded join), then the pass's stubs, then the census; unittest runs cleanups after
      tearDown, LIFO, on every exit path, so the producer ends under its stubs and the census reads the threads last.
