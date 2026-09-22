@@ -104,6 +104,17 @@ def _rev(sid):
     return int(json.loads((jd.GOALDIR / (sid + ".json")).read_text()).get("rev") or 0)
 
 
+def _mirror():
+    """The deadness mirror where the BUS writes it (postal_service.py _write_remote_sids: the bus's
+    STATE is the judge's plus `postal`), the path _presumed_closed reads since 2026-09-22. Until then
+    this fixture wrote jd.STATE / "remote-sids", the judge's dead read path, and restated the defect;
+    tests/test_dead_session_staleness.py ReaderFollowsTheWriter holds this spelling to the writer's
+    by execution."""
+    d = jd.STATE / "postal"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / "remote-sids"
+
+
 class World(unittest.TestCase):
     def setUp(self):
         self._state = jd.STATE
@@ -553,7 +564,7 @@ class LoadOncePerPass(World):
         self.assertEqual(got["status"][DEAD2 + ":t1"], "working", "no mirror: not determinable, not settled")
         self.assertIn(DEAD2 + ":t1", got.get("confirming") or [])
         _focused_tracker(DEAD, MID)
-        (jd.STATE / "remote-sids").write_text("")
+        _mirror().write_text("")
         self.assertEqual(jd.run_propagate(now=T + 901), 1)
         got = jd.load_goals(DEAD)
         self.assertTrue(got["nodes"][DEAD + ":t1"]["nodeComplete"])
@@ -638,7 +649,7 @@ class LoadOncePerPass(World):
             self.assertTrue(got["nodes"][sid + ":t1"]["nodeComplete"])
             self.assertEqual(got["status"][sid + ":t1"], "working", "no mirror: not determinable, not settled")
             self.assertIn(sid + ":t1", got.get("confirming") or [])
-        (jd.STATE / "remote-sids").write_text("")          # the bus has spoken: no live session anywhere by the sid
+        _mirror().write_text("")          # the bus has spoken: no live session anywhere by the sid
         mid7 = "msg-propagate-0007"
         _focused(DEAD, 2, mid7)
         g7 = _complete(RECIP, 7, origin={"peer": DEAD, "goalId": DEAD + ":t2", "msgId": mid7})

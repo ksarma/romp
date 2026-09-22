@@ -19379,11 +19379,20 @@ def _presumed_closed(sid, now):
       2. absent from the window but the transcript exists → windowless lookup + parse — a dead
          LOCAL session's own record says it closed;
       3. an ext: pseudo-sid → closed by construction (a one-shot mailer, no session behind it);
-      4. a sid the postal bus reports LIVE ON ANOTHER HOST (STATE/remote-sids, the federated
+      4. a sid the postal bus reports LIVE ON ANOTHER HOST (STATE/postal/remote-sids, the federated
          presence mirror) → NOT closed — a live remote session's local mirror store must never be
          presumed settled (the premature-settle flicker the gate exists to prevent);
       5. nothing anywhere knows it AND the bus has spoken (the mirror file exists) → a dead
-         determination, True; no mirror file at all → conservative False (cannot determine)."""
+         determination, True; no mirror file at all → conservative False (cannot determine).
+    The mirror is read where the bus writes it: postal_service.py's _write_remote_sids puts it at the
+    BUS's state root, which is this module's STATE plus `postal` (its STATE binding carries that
+    suffix), so the file is STATE/postal/remote-sids here. The writer owns the file's home and the
+    reader follows it. From the ladder's birth (2026-08-28) until 2026-09-22 this read was
+    STATE/remote-sids, a path nothing wrote: it raised OSError on every call, rule 5 never fired,
+    and every sid reaching it answered cannot-determine (the conservative side: nothing settled
+    early, a dead sender's card only took longer to settle). tests/test_dead_session_staleness.py
+    (ReaderFollowsTheWriter) runs the bus writer and this reader over one root, under both root
+    shapes, and holds the two paths together by execution."""
     for f, p, _a, _n in discover(now):
         if f == sid:
             try:
@@ -19399,7 +19408,7 @@ def _presumed_closed(sid, now):
     if str(sid).startswith("ext:"):
         return True
     try:
-        remote = set((STATE / "remote-sids").read_text().split())
+        remote = set((STATE / "postal" / "remote-sids").read_text().split())
     except OSError:
         return False                                   # the bus has not spoken → cannot determine
     return sid not in remote

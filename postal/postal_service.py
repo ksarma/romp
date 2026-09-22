@@ -3840,7 +3840,12 @@ def _write_remote_sids():
     kernel/judge DEADNESS rule (2026-08-28, the dead-session round): a sid absent from the local
     registry but present here is a live REMOTE session whose local mirror store must never be
     presumed closed. The FILE's existence means the bus has spoken; readers treat a missing file
-    as "cannot determine" and stay conservative.
+    as "cannot determine" and stay conservative. This module's STATE is the romp state root plus
+    `postal`, so the file's one home is <state root>/postal/remote-sids; the bus owns that home,
+    and its reader (kernel/judge.py _presumed_closed, rules 4 and 5) reads it there, as its own
+    STATE / "postal" / "remote-sids". Until 2026-09-22 the judge read <state root>/remote-sids, a
+    path nothing wrote, so its rule 5 never fired (tests/test_dead_session_staleness.py
+    ReaderFollowsTheWriter runs this writer and that reader over one root).
 
     The TTL is applied at WRITE time, so an expired heartbeat leaves the file only when something
     writes it: every recorded heartbeat, every peer exchange, and (since 2026-09-06) every _monitor

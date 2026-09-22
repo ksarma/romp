@@ -10,9 +10,16 @@ remote-sids mirror), with a LIVE REMOTE session's mirror store never presumed se
 mail minted DIFFERENT ids on the two sides, so the delegation link never formed — deliver() stamps
 the sender-side originMid on the receiving row and every join seam accepts either id. Plus the
 plant-time dedupe of byte-identical same-peer mirrors (the ext mailer's same-minute twins).
+Since 2026-09-22 also the mirror's ONE home: rule 5's read and the bus's write meet on the same
+file over one state root (ReaderFollowsTheWriter, by execution, under both root shapes). From the
+ladder's birth the judge read STATE/remote-sids while the bus wrote STATE/postal/remote-sids, so
+rule 5 never fired; the fixtures here wrote the judge's dead path themselves and hid it.
 SYNTHETIC fixtures only; private synthetic sids; hostname TESTHOST."""
 import json
 import os
+import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 from romp_load import load_source
@@ -34,6 +41,19 @@ DEAD = "a11f0001-1111-4222-8333-000000000001"   # private synthetic sids — nev
 RCP = "a11f0001-1111-4222-8333-000000000002"
 EXT = "ext:vault-warning-mailer"
 MID = "1788299000.000001_1.TESTHOST"
+REMOTE = "a11f0001-1111-4222-8333-000000000003"   # a sid live on ANOTHER host: the bus hears its heartbeat
+
+
+def _mirror():
+    """The deadness mirror where the BUS writes it: the bus's STATE is the judge's plus `postal`
+    (postal_service.py _write_remote_sids), and _presumed_closed reads it there. Until 2026-09-22
+    these fixtures wrote jd.STATE / "remote-sids", the judge's own read path, which nothing in the
+    product wrote; the ladder tests passed against a restatement of the dead path. This spelling is
+    held to the writer's by ReaderFollowsTheWriter below, which runs the real writer and the real
+    reader over one root; the helper exists so the fixtures have one spelling to hold."""
+    d = jd.STATE / "postal"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / "remote-sids"
 
 
 def _node(nid, text, parent, t=T0, **kw):
@@ -67,7 +87,7 @@ class World(unittest.TestCase):
             except OSError:
                 pass
         try:
-            (jd.STATE / "remote-sids").unlink()
+            _mirror().unlink()
         except OSError:
             pass
         self.td.cleanup()
@@ -89,7 +109,7 @@ class World(unittest.TestCase):
 
 class DeadSenderSweep(World):
     def test_a_dead_senders_quiet_tracker_closes_on_the_reply_and_settles(self):
-        (jd.STATE / "remote-sids").write_text("")     # the bus has spoken: no remote sessions
+        _mirror().write_text("")     # the bus has spoken: no remote sessions
         self._dead_sender()
         self._reply(T0 + 500)
         jd.run_propagate(now=NOW)
@@ -100,7 +120,7 @@ class DeadSenderSweep(World):
                          "a dead determination settles the top — the card leaves Working")
 
     def test_a_live_remote_mirror_closes_but_never_presumes_settled(self):
-        (jd.STATE / "remote-sids").write_text(DEAD + "\n")   # the bus says: alive on another host
+        _mirror().write_text(DEAD + "\n")   # the bus says: alive on another host
         self._dead_sender()
         self._reply(T0 + 500)
         jd.run_propagate(now=NOW)
@@ -110,7 +130,7 @@ class DeadSenderSweep(World):
                             "a live remote session's mirror store is never premature-settled")
 
     def test_no_reply_leaves_the_tracker_open(self):
-        (jd.STATE / "remote-sids").write_text("")
+        _mirror().write_text("")
         self._dead_sender()
         jd.run_propagate(now=NOW)
         self.assertFalse(jd.load_goals(DEAD)["nodes"][DEAD + ":g1"].get("nodeComplete"),
@@ -121,13 +141,13 @@ class PresumedClosed(World):
     def test_the_deadness_ladder(self):
         self.assertTrue(jd._presumed_closed(EXT, NOW), "ext: is closed by construction")
         # absent everywhere + the bus has spoken (empty mirror) → dead
-        (jd.STATE / "remote-sids").write_text("")
+        _mirror().write_text("")
         self.assertTrue(jd._presumed_closed(DEAD, NOW))
         # the bus lists it as remote-live → not closed
-        (jd.STATE / "remote-sids").write_text(DEAD + "\n")
+        _mirror().write_text(DEAD + "\n")
         self.assertFalse(jd._presumed_closed(DEAD, NOW))
         # no mirror file at all → cannot determine → conservative
-        (jd.STATE / "remote-sids").unlink()
+        _mirror().unlink()
         self.assertFalse(jd._presumed_closed(DEAD, NOW))
 
 
@@ -154,11 +174,118 @@ class OriginMidJoin(World):
         jd.save_goals(RCP, {"rompUuid": RCP, "nodes": {RCP + ":g5": rn},
                             "placements": {}, "status": {}})
         self._reply(T0 + 500)
-        (jd.STATE / "remote-sids").write_text("")
+        _mirror().write_text("")
         jd.run_propagate(now=NOW)
         nd = jd.load_goals(DEAD)["nodes"][DEAD + ":g1"]
         self.assertTrue(nd.get("nodeComplete"), "the join formed across the relay's re-stamped id")
         self.assertIn("dismissed", nd.get("doneWhy") or "")
+
+
+# The child a ReaderFollowsTheWriter case runs: the bus and the judge loaded into ONE fresh interpreter
+# under the root shape the parent set, so both STATE constants bind at import exactly as in production
+# (a `-c` program: romp_load's direct-run floor does not arm, so the parent's environment is the whole
+# of it). The bus's writer is given one live remote heartbeat and called; the judge's reader is asked
+# about a sid nothing knows (rule 5) and about the heartbeating one (rule 4), before and after the
+# write; then the control: the writer's line for that sid put at the judge's read path until 2026-09-22.
+# A missing bus file is reported, not raised, so a moved writer fails the pins by their own messages.
+_ONE_ROOT_CHILD = r"""
+import json, os, sys, time
+tests_dir, bin_dir, remote, dead = sys.argv[1:5]
+sys.path.insert(0, tests_dir)
+from romp_load import load_source
+pm = load_source("romp_postal_oneroot", os.path.join(bin_dir, "romp-postal-service"))
+jd = load_source("romp_judge_oneroot", os.path.join(bin_dir, "romp-judge"))
+now = time.time()
+out = {"busState": str(pm.STATE), "judgeState": str(jd.STATE),
+       "hostsOff": (jd.STATE / "session-hosts").read_text().strip(),
+       "discovered": len(jd.discover(now)) + len(jd.discover(now, window=now)),
+       "beforeWrite": jd._presumed_closed(dead, now)}
+pm.STATE.mkdir(parents=True, exist_ok=True)
+pm.HEARTBEATS[remote] = ("web", now)
+pm._write_remote_sids()
+bus_file = pm.STATE / "remote-sids"
+out["busFile"] = str(bus_file)
+out["busFileText"] = bus_file.read_text() if bus_file.exists() else None
+out["fire"] = jd._presumed_closed(dead, now)
+out["named"] = jd._presumed_closed(remote, now)
+(jd.STATE / "remote-sids").write_text(remote + "\n")
+out["controlOldPath"] = jd._presumed_closed(dead, now)
+print(json.dumps(out))
+"""
+
+
+class ReaderFollowsTheWriter(unittest.TestCase):
+    """Rule 5's read and the bus's write meet on ONE file (2026-09-22). The bus writes the deadness
+    mirror at its STATE, the romp state root plus `postal`; the judge's STATE is the root itself, and
+    from the ladder's birth (2026-08-28) its read was STATE/remote-sids, a path nothing wrote: the
+    read raised OSError on every call, rule 5 never fired, every sid reaching it answered
+    cannot-determine. Conservative, so nothing settled early; a dead sender's card only took longer
+    to settle. Pinned by EXECUTION, not by spelling: the real writer (_write_remote_sids) and the
+    real reader (_presumed_closed) run in one fresh interpreter over one temp root, under each of
+    the two root shapes the constants bind from (XDG_STATE_HOME, and ROMP_STATE_DIR, which outranks
+    it), and a sid nothing knows is presumed closed once the bus has written. The control keeps the
+    proof that the rule itself was sound: the same bytes at the judge's old read path also answer
+    True (at the base that was the only way rule 5 could fire). The root carries `session-hosts`
+    off, the repo rule for a test that mints its own state root, and the child reads that file back
+    through the judge's STATE, so the root the test prepared is the root both modules bound."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.got = {shape: cls._over_one_root(shape) for shape in ("XDG_STATE_HOME", "ROMP_STATE_DIR")}
+
+    @classmethod
+    def _over_one_root(cls, shape):
+        td = tempfile.mkdtemp()
+        cls.addClassCleanup(shutil.rmtree, td, ignore_errors=True)
+        home = Path(td) / "home"
+        home.mkdir()
+        if shape == "XDG_STATE_HOME":
+            env = {"XDG_STATE_HOME": str(Path(td) / "xdg")}
+            root = Path(td) / "xdg" / "romp"
+        else:
+            env = {"ROMP_STATE_DIR": str(Path(td) / "state")}
+            root = Path(td) / "state"
+        root.mkdir(parents=True)
+        (root / "session-hosts").write_text("off\n")
+        # built from a rule, never the inherited environment: a live kernel exports ROMP_STATE_DIR to its
+        # sessions and hundreds of test modules rebind XDG_STATE_HOME at import (tests/README.md)
+        full = {"PATH": os.environ.get("PATH", ""), "HOME": str(home), "TMPDIR": str(home),
+                "ROMP_KERNEL_NO_OPEN": "1", "PYTHONDONTWRITEBYTECODE": "1", **env}
+        out = subprocess.run([sys.executable, "-c", _ONE_ROOT_CHILD, HERE, BIN, REMOTE, DEAD],
+                             capture_output=True, text=True, env=full, cwd=str(home), timeout=120)
+        assert out.returncode == 0, "%s child failed: %s" % (shape, out.stderr[-2000:])
+        got = json.loads(out.stdout.strip().splitlines()[-1])
+        got["root"] = str(root)
+        return got
+
+    def test_both_modules_bound_the_one_root_the_test_prepared(self):
+        for shape, got in self.got.items():
+            with self.subTest(shape=shape):
+                self.assertEqual(got["judgeState"], got["root"], "the judge's STATE is the root")
+                self.assertEqual(got["busState"], got["root"] + "/postal", "the bus's STATE is the root plus postal")
+                self.assertEqual(got["hostsOff"], "off", "the child read the session-hosts file the test wrote")
+                self.assertEqual(got["discovered"], 0, "an empty HOME: rules 1 and 2 have no session to answer for")
+                self.assertEqual(got["busFileText"], REMOTE + "\n", "the writer wrote the heartbeating sid")
+
+    def test_rule_5_fires_for_a_sid_nothing_knows_once_the_bus_has_written(self):
+        for shape, got in self.got.items():
+            with self.subTest(shape=shape):
+                self.assertFalse(got["beforeWrite"], "no mirror file yet: cannot determine, conservative")
+                self.assertTrue(got["fire"], "the bus wrote %s; the judge's read must be that file: rule 5 "
+                                "presumes a sid nothing knows closed" % got["busFile"])
+
+    def test_rule_4_holds_the_sid_the_bus_names_open(self):
+        for shape, got in self.got.items():
+            with self.subTest(shape=shape):
+                self.assertTrue(got["fire"], "rule 5 fired in this run, so the False below is rule 4's, "
+                                "not cannot-determine's")
+                self.assertFalse(got["named"], "live on another host: never presumed settled")
+
+    def test_the_control_the_rule_was_sound_at_the_judges_old_path(self):
+        for shape, got in self.got.items():
+            with self.subTest(shape=shape):
+                self.assertTrue(got["controlOldPath"], "the same bytes at the judge's read path until "
+                                "2026-09-22 answer True: the rule was sound, only its path was dead")
 
 
 class PlantDedupe(unittest.TestCase):
