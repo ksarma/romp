@@ -59,9 +59,10 @@ const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
 // anchoring; the compact stream lab runs under both). The legal set is the module's three browser types, stated here: a name outside
 // it exits 1, a failure, whether a misspelling or one of the module's other exports (devices, errors, selectors, request are truthy
 // objects; _electron is a launcher whose launch throws with no app). Exit 3 is the harness's "no playwright browser on this box", a
-// skip unless ROMP_SERVED_TESTS_REQUIRE=1: a misspelled engine once turned the whole lab into that silent skip (the maintainer's round
-// 1 addendum), and a guard on the export's truthiness then let a non-browser export through to a launch that threw into the same exit
-// (the maintainer's round 5 ruling, fresh-1); a launch of a browser that fails keeps 3 (the browser is missing, which is what 3 says)
+// skip unless ROMP_SERVED_TESTS_REQUIRE=1: a misspelled engine once turned the whole lab into that silent skip
+// (the maintainer's round 1 addendum), and a guard on the export's truthiness then let a non-browser export through to a launch that
+// threw into the same exit (the maintainer's round 5 ruling, fresh-1); a launch of a browser that fails keeps 3 (the browser is missing,
+// which is what 3 says)
 const engineName = process.env.ROMP_LAB_ENGINE || "chromium";
 const BROWSERS = ["chromium", "firefox", "webkit"];
 if (!BROWSERS.includes(engineName)) { console.error("unknown ROMP_LAB_ENGINE: " + engineName + " (one of " + BROWSERS.join(", ") + ")"); process.exit(1); }
