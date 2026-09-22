@@ -53,7 +53,7 @@ test("the roster row's count lands on the strip meta: applyTabOrder parses it IN
   // inline, not a helper: chat-split-exec.test.ts lifts applyTabOrder by source into a stub world where a new import would
   // be undefined; a number or nothing: an older kernel's row has no key, and the builders paint nothing for it
   assert.match(apply, /tabMeta\.set\(t\.id, \{[^}]*userTodos: typeof t\.userTodos === "number" \? t\.userTodos : undefined/,
-    "the parse is the set literal's own expression (executed over the lifted function: chat-split-exec.test.ts)");
+    "the parse is the set literal's own expression (executed: chat-split-exec.test.ts drives the lifted applyTabOrder with rows of 2, 0, no key and a string, and reads the entries' counts)");
   assert.match(RENDER, /^const tabMeta = new Map<string, \{ name: string; color: Color \| null; emoji\?: string; userTodos\?: number \}>\(\);/m,
     "the entry type names the count (tab-close-optimistic.test.ts holds this declaration within 900 characters of closingTabs)");
   assert.match(META, /export interface TabSessionMeta \{ name: string; color: TabColor \| null; emoji\?: string; userTodos\?: number \| ReadonlyArray<unknown> \| null \}/,
