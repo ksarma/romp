@@ -6647,6 +6647,33 @@ def _tab_order_frame(order, tabs, live, c=None):
     return fr
 
 
+def _tab_meta(chat_list):
+    """The `tabs` rows of the tabOrder frame, one per listed session, for its three senders (_push, _push_session_now,
+    _confirm_close_now): id, name, colour, emoji and `userTodos`, the count of the session's open user todos. The rule
+    (the user 2026-09-22, after todos went unseen on tabs the page had not loaded): a todo's presence is strip metadata
+    beside the name, the colour and the emoji, and its text is session content that loads with the tab. The count is
+    what a tab a client holds as a skeleton or a placeholder paints its flag from (the skeleton diet and the cold-tab
+    gate withhold its session payload); a loaded tab paints from the payload's rows, and both derive from the one
+    predicate (_user_todo_open) and the one ended gate (_user_todos_shown, build_session's), so the two inputs cannot
+    disagree. Built once per push, and only where a chat client exists (the strip goes to chat clients alone): the
+    switch is read ONCE here, not per tab (_user_todos_on reads its file on every call), the store once (the
+    mtime-cached dict), and the ended gate runs only for a sid with a nonzero count. Store values only, like every
+    field of the row: the strip is deduped per client on content, so a filed, answered, dismissed or withdrawn todo
+    re-sends it on the _push_soon every store mutation ends in, and an unchanged roster costs nothing."""
+    on = _user_todos_on()
+    store = _user_todos() if on else {}
+    rows = []
+    for s in chat_list:
+        sid = s["sid"]
+        n = sum(1 for t in (store.get(sid) or []) if _user_todo_open(t)) if on else 0
+        if n and not _user_todos_shown(sid):
+            n = 0                                    # an ended session's todos are hidden, here as on every surface
+        rows.append({"id": sid, "name": s.get("name", ""), "color": _name_color(sid),
+                     "emoji": _name_emoji(sid),      # the fork's session label (#246)
+                     "userTodos": n})
+    return rows
+
+
 def _alive_sessions(now, live_map):
     """The sessions shown on EVERY surface (feed / timeline / chat tabs): only those alive on a backend
     right now. The hard liveness filter (the user 2026-06-15) — ignore everything that isn't a living
@@ -61185,9 +61212,10 @@ def _push(targets, connect=False, live_map=None):
         if want_chat or want_fleet:   # the fleet needs every session's ledger slice (built below, attached to feed)
             # TABS-FIRST (the user 2026-06-26): ship name+color per tab so the client can paint the WHOLE strip
             # as placeholders up front (no tab popping in one-by-one as each build_session lands). The full
-            # session fills the placeholder in when it arrives below.
-            tab_meta = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"]),
-                             "emoji": _name_emoji(s["sid"])} for s in chat_list]   # emoji: the fork's session label (PR 246)
+            # session fills the placeholder in when it arrives below. The rows come from _tab_meta (the emoji and,
+            # since 2026-09-22, the count of open user todos ride them), built only when a chat client is among the
+            # targets: the strip below goes to chat clients alone, and an Outline-only push has no use for it.
+            tab_meta = _tab_meta(chat_list) if chat_clients else []
             for c in chat_clients:                       # tab strip first → the shell paints before any build
                 _send_client(c, ("globalRetryPaused",), {"type": "globalRetryPaused", "value": _retry_paused_on(),
                                                          "resumeAt": _retry_resume_at(),   # limit reset epoch → the card counts down to the real retry
@@ -61841,8 +61869,7 @@ def _push_session_now(sid):
         if not any(s["sid"] == sid for s in chat_list):
             return                                   # hidden / raced a teardown — the periodic pusher owns the rest
         tab_order = [s["sid"] for s in chat_list]
-        tab_meta = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"]),
-                             "emoji": _name_emoji(s["sid"])} for s in chat_list]   # emoji: the fork's session label (PR 246)
+        tab_meta = _tab_meta(chat_list)                  # the rows every strip sender ships (targets are chat clients)
         # The cold-tab gate (2026-09-14; see _held_as_skeleton_by_all): at a boot with a browser connected, each of the
         # 27 attach handshakes ran this push, a cold build per session, for tabs the page holds as skeletons; a full
         # here would also release the skeleton and hand the page a tab it did not ask for. Not built: the click or the
@@ -61984,14 +62011,13 @@ def _confirm_close_now(sid):
         live_map = _live_map()
         chat_list = _chat_tab_sessions(now, live_map)
         tab_order = [s["sid"] for s in chat_list]
-        tab_meta = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"]),
-                             "emoji": _name_emoji(s["sid"])} for s in chat_list]
         with _clients_lock:
             # alive and ready, as _push_session_now filters: a chat page that announced READY_GATE_CAP is
             # held until its bundle says `ready` (_client_ready) — every other tabOrder sender filters on
             # it, and this one sent to every chat client, so a page still behind the gate received a frame
             # before its bundle had asked for one
             targets = [c for c in _clients if c["app"] == "chat" and c.get("alive", True) and _client_ready(c)]
+        tab_meta = _tab_meta(chat_list) if targets else []   # the rows every strip sender ships, for a chat client alone
         for c in targets:
             try:
                 redialed = _resolve_reconnect(c, chat_list)   # a confirmation may be the FIRST strip a redialing page sees
