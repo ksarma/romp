@@ -195,7 +195,10 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         # foreign values are derived from it or are of another type, so the cell cannot drift from the set it drives. A refusal takes the
         # unknown key's shape: the row is stored without the key, and one stderr line names the key and the reason, never the value (the
         # latch is per surface and key, so it is cleared between the values here: each is its own kernel for the line's purpose). The long
-        # string is compared as posted, whole, before the scrub cuts strings at CLIENT_DIAG_STR_MAX.
+        # string is a value outside the set, refused whole or cut: the kernel compares the value as posted, before the scrub, but under the
+        # current scrub (strings cut at CLIENT_DIAG_STR_MAX, longer than the word) no value's scrubbed form equals the word unless the value
+        # did, so no cell distinguishes that ordering and this one does not claim to (the closing lens over the author's fixer pass over the
+        # pass after the maintainer's round 5, CL-3: the sentence here had said the long string exercised it).
         word, = km.CLIENT_DIAG_VALUES[("chat", "view")]
         base = {"sid": WID, "top": [40, 48], "bot": [0, 0], "dTop": 8, "dBot": 0, "sh": None, "ch": None}
         self.assertEqual(self.post("chat", "spacer", dict(base, view=word)), "", "the word passes whole, nothing said")
