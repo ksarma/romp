@@ -29,8 +29,12 @@ setup() {
         # and sets the switch, so a skip there would report a broken install as ten green
         # skips (the stance ROMP_SERVED_TESTS_REQUIRE takes in tests/conftest.py). Without
         # the switch the file skips, and a clone that never wanted the scanner stays green.
-        if [ -n "$GL" ]; then why="ROMP_GITLEAKS names $GL, which is not executable"
-        else why="gitleaks is not on PATH and ROMP_GITLEAKS is unset or empty"; fi
+        # The reason names the property the test above keyed on: [ ! -x ] is true for a path
+        # that is absent as well as for one that exists without the execute bit, and the two
+        # have different remedies (a typo in ROMP_GITLEAKS, a chmod), so they are told apart.
+        if [ -z "$GL" ]; then why="gitleaks is not on PATH and ROMP_GITLEAKS is unset or empty"
+        elif [ ! -e "$GL" ]; then why="ROMP_GITLEAKS names $GL, which does not exist"
+        else why="ROMP_GITLEAKS names $GL, which is not executable"; fi
         if [ "${ROMP_GITLEAKS_REQUIRE:-}" = "1" ]; then
             echo "ROMP_GITLEAKS_REQUIRE=1: $why, and this runner must have it: the arbiter runner" \
                 "installs the pinned gitleaks before bats, so its absence here is a broken install," \
