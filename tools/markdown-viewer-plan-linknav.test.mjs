@@ -50,7 +50,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { cssRules, renderRule, stripCssComments, underScreen } from '../ui/webview/css-rules.mjs';
-import { hostSheets, kernelPages } from '../ui/webview/host-sheets.mjs';
+import { hostSheets, kernelPages, pyStringConstant } from '../ui/webview/host-sheets.mjs';
 import { execFileSync } from 'node:child_process';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -114,9 +114,11 @@ const guide = read('docs', 'guide.md');
 const trail = read('ui', 'webview', 'file-trail.ts');
 const viewer = read('ui', 'webview', 'file-view.ts');
 const icons = read('ui', 'webview', 'icons.ts');
-/** Every sheet a page of either host loads (ui/webview/host-sheets.mjs, derived from the page assembly, the derivation this home
- *  shares with ui/webview/file-figure-open.test.ts), and the two among them the viewer's dress is written in (the file review's
- *  round 10, correctness-1 with regression-5: a typed pair left the Files page's own sheet outside the closed set). */
+/** Every sheet a page of either host loads (ui/webview/host-sheets.mjs, derived from the page assembly: the kernel's page functions'
+ *  linked bundles, live-read sheets, inlined constants and the style blocks the helpers they call write into their HTML at serve
+ *  time, and the extension's webview links; the derivation this home shares with ui/webview/file-figure-open.test.ts), and the two
+ *  among them the viewer's dress is written in (the file review's round 10, correctness-1 with regression-5: a typed pair left the
+ *  Files page's own sheet outside the closed set). */
 const SHEETS = hostSheets(REPO);
 const DRESSING = ['ui/webview/styles.css', 'ui/webview/feed.css'];
 
@@ -307,11 +309,13 @@ test('L3: the control\'s words are the viewer\'s literal, quoted by the section 
   /** The sheet's rules naming the control, each rendered on one line with whether a screen-only at-rule encloses it. */
   const controlRules = (css) => cssRules(css).filter((r) => /fv-figopen/.test(r.selector)).map((r) => ({ text: renderRule(r), screen: underScreen(r.chain) }));
   /** The bounds of the set, stated in the messages (the author's closing pass after the file review's round 10, mechanism-2; the
-   *  file review's round 10, regression-5). */
-  const BOUND = ' (the population is the rules whose selector names the control\'s class in every sheet a page of either host loads, derived from the page assembly by ui/webview/host-sheets.mjs; outside what this set closes, bounds stated here and in the plan\'s L3, not read: a rule whose selector would match the control\'s element without naming the class, katex\'s vendored sheet that styles.css and feed.css import, and the style a template writes into its own page or a script adds after it is served)';
+   *  file review's round 10, regression-5; restated to name only what is truly outside the read since the fixes for the file
+   *  review's round 11, extra7-1 with tests-1, kernel-1 and extra6-1: the pane spinner's block, served with its pages, had been
+   *  excused as one added after serving). */
+  const BOUND = ' (the population is the rules whose selector names the control\'s class in every sheet a page of either host loads, derived from the page assembly by ui/webview/host-sheets.mjs, the pages\' linked bundles, live-read sheets, inlined constants and the style blocks the helpers they call write into their HTML at serve time, and the extension\'s webview links; outside what this set closes, bounds stated here and in the plan\'s L3, not read: a rule whose selector would match the control\'s element without naming the class, katex\'s vendored sheet that styles.css and feed.css import, the rules a template writes into its own page (the settings page\'s transparent background, the too-large notice\'s body rule, the extension\'s zoom rule), and the style element a script creates after the page is served (palette.ts\'s and shortcuts-modal.ts\'s elements, the shim\'s notices\' cssText))';
   const rules = Object.fromEntries(SHEETS.map((s) => [s.name, controlRules(s.css)]));
   for (const d of DRESSING) assert.ok(d in rules, d + ' is a sheet a page loads: the viewer\'s dress is written there');
-  assert.ok(SHEETS.some((s) => s.name.startsWith('kernel/kernel.py ')), 'the population is wider than a listing of ui/webview: the sheets the kernel inlines from its own source (THEME_CSS, into every page) are in it, so a rule written there is read; a derivation reading the directory alone passes this set with a reveal there (the file review\'s round 10, regression-5)');
+  assert.ok(SHEETS.some((s) => s.name.startsWith('kernel/kernel.py ')), 'the population is wider than a listing of ui/webview: the sheets the kernel inlines from its own source (THEME_CSS, into every page that takes no arguments, and the pane spinner\'s block, _pane_spin\'s with _LOADER_CSS, into the four pages that call it) are in it, so a rule written there is read; a derivation reading the directory alone passes this set with a reveal there (the file review\'s round 10, regression-5)');
   assert.deepEqual(rules[DRESSING[0]], rules[DRESSING[1]], 'the control\'s rules are the same in both sheets');
   for (const { name, css, loadedBy } of SHEETS) {
     if (!DRESSING.includes(name)) {
@@ -337,7 +341,7 @@ test('L3: the control\'s words are the viewer\'s literal, quoted by the section 
   }
   // L3's sentence on the set's population and bounds, held whole (a reword moves it): the population derived from the page
   // assembly, the pair carrying the dress, every other sheet none, and the three bounds stated, not read
-  assert.ok(section.includes('every rule naming its class that reveals it under `screen`, so a print shows none of it and the print block carries no line for it (the set the two homes close is over the rules whose selector names the class, read as parsed rules with their enclosing at-rules, in every sheet a page of either host loads, a population derived from the page assembly and never typed or listed, the kernel\'s page functions\' linked bundles, live-read sheets and inlined constants and the extension\'s webview links, the chat\'s and the feed\'s sheets carrying the dress and every other sheet no rule naming the class; outside it, bounds the homes state and do not read: a rule whose selector would match the element without naming the class, katex\'s vendored sheet that both dress sheets import, and the style a template writes into its own page or a script adds after it is served;'), 'L3 states the guard, the population of the set that holds it, derived from the page assembly, and its bounds, in one sentence held whole');
+  assert.ok(section.includes('every rule naming its class that reveals it under `screen`, so a print shows none of it and the print block carries no line for it (the set the two homes close is over the rules whose selector names the class, read as parsed rules with their enclosing at-rules, in every sheet a page of either host loads, a population derived from the page assembly and never typed or listed, the kernel\'s page functions\' linked bundles, live-read sheets and inlined constants, the style blocks the helpers they call write into their HTML at serve time (the pane spinner\'s, carrying _LOADER_CSS, on the chat, feed, sessions and waiting pages, followed one level since the fixes for the file review\'s round 11, extra6-1 with extra7-1, kernel-1 and tests-1: the block had been outside the read and excused as one added after serving) and the extension\'s webview links, the chat\'s and the feed\'s sheets carrying the dress and every other sheet no rule naming the class; outside it, bounds the homes state and do not read: a rule whose selector would match the element without naming the class, katex\'s vendored sheet that both dress sheets import, the rules a template writes into its own page (the settings page\'s transparent background, the too-large notice\'s body rule, the extension\'s zoom rule), and the style element a script creates after the page is served (palette.ts\'s and shortcuts-modal.ts\'s elements, the shim\'s notices\' cssText);'), 'L3 states the guard, the population of the set that holds it, derived from the page assembly, the helper blocks followed since the fixes for the file review\'s round 11 among it, and its bounds, in one sentence held whole (a sentence pin)');
   assert.ok(section.includes('a right float\'s at the top-LEFT corner (`fv-figopen-left`, `fv-figopen-right`'));
 });
 
@@ -375,6 +379,52 @@ test('kernelPages control: an indented template is read as before (the file revi
 test('kernelPages control: a module-level block after a page is not the page, so a constant named there is nobody\'s sheet (the file review\'s round 11, correctness-1: the boundary the refuter rejected would spill into it; a property pin over synthetic source)', () => {
   const pages = kernelPages(pySrc('def _h_page():', '    return "h"', '', 'if True:', '    Y = _SPILL_CSS', '', 'def _i_page():', '    return "i"'));
   assert.deepEqual(pages.map((p) => [p.name, /_SPILL_CSS/.test(p.body)]), [['_h_page', false], ['_i_page', false]]);
+});
+
+// The constant reader and the helper follow (ui/webview/host-sheets.mjs pyStringConstant and hostSheets), over SYNTHETIC kernel
+// source and a temp tree (the file review's round 11, extra6-1 with extra7-1, kernel-1 and tests-1: the pane spinner's style
+// block, which _pane_spin writes into the served HTML of the chat, feed, sessions and waiting pages with _LOADER_CSS folded in,
+// was outside the population with every pin green, and the bound sentence excusing it as a block added after serving was
+// false; pyStringConstant threw on _LOADER_CSS's run, closed by a `)` on its last literal's line, before any follow could reach
+// it; round 10 of the same review had ruled derive, not restate, and this was the same defect one helper later). Property pins
+// over the planted source, red against the reader before the fix, the controls holding the shapes it read before; the two
+// plants into kernel.py itself (a reveal in _LOADER_CSS's first literal and in _pane_spin's own literal, two decode paths) are
+// the round record's red-first witness through both closed-set homes, run and logged, never committed.
+const tempTree = (kernel) => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'linknav-host-sheets-'));
+  fs.mkdirSync(path.join(d, 'kernel')); fs.mkdirSync(path.join(d, 'vscode-extension', 'src'), { recursive: true }); fs.mkdirSync(path.join(d, 'ui', 'webview'), { recursive: true });
+  fs.writeFileSync(path.join(d, 'kernel', 'kernel.py'), kernel);
+  fs.writeFileSync(path.join(d, 'vscode-extension', 'esbuild.js'), '');
+  fs.writeFileSync(path.join(d, 'vscode-extension', 'src', 'extension.ts'), '');
+  return d;
+};
+test('pyStringConstant: a parenthesised run closed by a `)` on the last literal\'s line decodes, the form five of kernel.py\'s six runs take (the file review\'s round 11, extra6-1 with extra7-1, the refuter\'s correction; a property pin over synthetic source, red before the widened arm)', () => {
+  assert.equal(pyStringConstant(pySrc('X = 1', '_T_CSS = (', '    "a{b:c}"', '    # a comment between', '    "d{e:f}")', '', 'Y = 2'), '_T_CSS'), 'a{b:c}d{e:f}');
+});
+test('pyStringConstant control: a run closed by a lone `)` at column zero decodes as before (a property pin over synthetic source)', () => {
+  assert.equal(pyStringConstant(pySrc('X = 1', '_T_CSS = (', '    "a{b:c}"', '    "d{e:f}"', ')', 'Y = 2'), '_T_CSS'), 'a{b:c}d{e:f}');
+});
+test('pyStringConstant control: a run that never closes fails by name (a property pin over synthetic source)', () => {
+  assert.throws(() => pyStringConstant(pySrc('X = 1', '_T_CSS = (', '    "a{b:c}"', '    "d{e:f}"'), '_T_CSS'), /_T_CSS/);
+});
+test('hostSheets: a helper a page body calls whose def writes a <style> run joins the population under the helper\'s name, loaded by the calling page, its literals and the constant it names folded in served order (the file review\'s round 11, extra6-1 with extra7-1 and tests-1; a property pin over a synthetic tree, red before the one-level follow)', () => {
+  const d = tempTree(pySrc('# a kernel', '_X_CSS = (', '    "b{c:d}")', '', 'def _spin(cid):', '    return ("<style>a{b:c}"', '            "e{f:g}" + _X_CSS +', '            "h{i:j}</style>"', '            "<div id=x></div>")', '', 'def _a_page():', '    return "<html><body>%s</body></html>" % (_spin("x"),)', '', 'def _b_page():', '    return "<html></html>"'));
+  try {
+    assert.deepEqual(hostSheets(d).map((x) => [x.name, x.loadedBy, x.css]), [['kernel/kernel.py _spin', ['_a_page'], 'a{b:c}e{f:g}b{c:d}h{i:j}']]);
+  } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});
+test('hostSheets: a helper <style> run the reader cannot decode fails by name rather than falling outside the read (the file review\'s round 11, extra7-1; a property pin over a synthetic tree, red before the follow)', () => {
+  const d = tempTree(pySrc('def _spin(cid):', '    return "<style>" + cid + "</style>"', '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
+  try { assert.throws(() => hostSheets(d), /_spin/); } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});
+test('hostSheets, the real tree: the pane spinner\'s block is a sheet of the population under the helper\'s name, loaded by exactly the pages whose bodies call _pane_spin (the chat, the feed, the sessions pane and the waiting pane, four), and the population is eleven sheets, the eleventh that block (the file review\'s round 11, extra6-1 with extra7-1, kernel-1 and tests-1; a property pin over the tree, red before the follow: ten sheets and no entry for the helper)', () => {
+  const callers = kernelPages(read('kernel', 'kernel.py')).filter((p) => /(?<![.\w])_pane_spin\(/.test(p.body)).map((p) => p.name).sort();
+  assert.equal(callers.length, 4, 'four page bodies call _pane_spin: ' + callers.join(', '));
+  for (const p of ['_chat_page', '_feed_page', '_waiting_page']) assert.ok(callers.includes(p), p + ' calls _pane_spin');
+  const spin = SHEETS.find((s) => s.name === 'kernel/kernel.py _pane_spin');
+  assert.ok(spin, 'kernel/kernel.py _pane_spin is a sheet of the population: the style block the helper writes into the served HTML of the pages that call it, _LOADER_CSS folded in served order (before the follow the block was outside the read with every pin green)');
+  assert.deepEqual(spin.loadedBy, callers, 'the block is loaded by exactly the pages whose bodies call the helper');
+  assert.equal(SHEETS.length, 11, 'eleven sheets: the .css files under ui/webview, the two constants the kernel inlines from its own source and the pane spinner\'s block; a twelfth or a tenth is a change to the page assembly to be read here, and a separate entry for _LOADER_CSS would count the same served text twice');
 });
 
 test('the rule reader the two homes of the closed set share (ui/webview/css-rules.mjs): a sheet is read as rules with their enclosing at-rules, not as lines, so a rule indented under an at-rule, a grouped selector wrapped across lines, a one-line at-rule block and a column-zero rule read alike; a statement at-rule, a declaration-only at-rule (its last declaration with or without a semicolon, styles.css\'s own @font-face blocks among them) and a comment yield no rule; a brace inside a string is text; whether a chain confines a rule to screens is a property of the whole query list; a nested block, an unbalanced brace, a lost open brace at the top level or under a rule-holding at-rule, a prelude the sheet ends inside, an open string and an open comment are refused, and the reader\'s header counts its refusals as the source has them (the file review\'s round 9, correctness-1 with tests-1 and ui-1, then its round 10, correctness-2 with extra7-2, and extra7-1)', () => {

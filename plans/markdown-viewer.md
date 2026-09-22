@@ -8374,10 +8374,15 @@ device with no hover, every rule naming its class that reveals it under `screen`
 print block carries no line for it (the set the two homes close is over the rules whose selector names the class, read
 as parsed rules with their enclosing at-rules, in every sheet a page of either host loads, a population derived from the
 page assembly and never typed or listed, the kernel's page functions' linked bundles, live-read sheets and inlined
-constants and the extension's webview links, the chat's and the feed's sheets carrying the dress and every other sheet no
+constants, the style blocks the helpers they call write into their HTML at serve time (the pane spinner's, carrying
+_LOADER_CSS, on the chat, feed, sessions and waiting pages, followed one level since the fixes for the file review's
+round 11, extra6-1 with extra7-1, kernel-1 and tests-1: the block had been outside the read and excused as one added after
+serving) and the extension's webview links, the chat's and the feed's sheets carrying the dress and every other sheet no
 rule naming the class; outside it, bounds the homes state and do not read: a rule whose selector would match the element
-without naming the class, katex's vendored sheet that both dress sheets import, and the style a template writes into its
-own page or a script adds after it is served; the print block is pinned whole, and the in-flight print follow-on adds
+without naming the class, katex's vendored sheet that both dress sheets import, the rules a template writes into its own
+page (the settings page's transparent background, the too-large notice's body rule, the extension's zoom rule), and the
+style element a script creates after the page is served (palette.ts's and shortcuts-modal.ts's elements, the shim's
+notices' cssText); the print block is pinned whole, and the in-flight print follow-on adds
 lines inside it). A figure the author
 floated with `align` stacks sideways: the control floats with it, a left float's at the top-right corner as before, a
 right float's at the top-LEFT corner (`fv-figopen-left`, `fv-figopen-right`: a later right float sits left of the

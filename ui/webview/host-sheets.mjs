@@ -4,8 +4,12 @@
 // ui/webview/file-view-outline.test.ts). The file review's round 10, correctness-1 with regression-5 and correctness-5: the set
 // was closed over styles.css and feed.css while the Files page loads ui/webview/files-pane.css third, after styles.css, so a
 // reveal planted there left every home green and the control painting in print; and a flat listing of ui/webview is a wider
-// typed bound, not the population, since the kernel inlines two sheets of its own into every page (THEME_CSS and the chat's
-// _CHAT_MOBILE_CSS, string constants of kernel/kernel.py) that no listing of the directory reads.
+// typed bound, not the population, since the kernel inlines three blocks of its own that no listing of the directory reads: two
+// constants the pages name (THEME_CSS, into every page that takes no arguments, and the chat's _CHAT_MOBILE_CSS, string constants
+// of kernel/kernel.py) and the style block the pane spinner helper writes into the served HTML of the chat, feed, sessions and
+// waiting pages (_pane_spin, carrying _LOADER_CSS; the file review's round 11, kernel-1 with extra6-1, extra7-1 and tests-1:
+// the block had stood outside the read with every pin green, excused by this header as one a helper adds after the page is
+// served, which is false, since the kernel writes it into the response body).
 //
 // The derivation, each part read off the tree's own source so a change to the assembly moves the population:
 //   * the kernel's served pages are the `def _<name>_page(...)` functions of kernel/kernel.py whose `)` closes on `:` at the end
@@ -24,16 +28,24 @@
 //     entry fails); every `(UI / "webview" / "<name>.css").read_text()` it writes into a `<style>`; and every module-level
 //     `<NAME>_CSS` constant it names, whose text is read from kernel.py by its assignment (a triple-quoted literal, or a
 //     parenthesised run of double-quoted literals with comment lines between them, decoded as Python decodes them);
+//   * the helpers a page body calls are followed one level: for each `_<name>(` in the body whose `def _<name>(...)` writes a
+//     `<style>`, the run of literals from `"<style>` to `</style>"` and every `<NAME>_CSS` constant it concatenates are read into
+//     the page's sheets under `kernel/kernel.py _<name>`, in served order, and a run this reader cannot decode fails by name
+//     (the pane spinner's block, `_pane_spin` with _LOADER_CSS folded in, on the chat, feed, sessions and waiting pages; the
+//     file review's round 11, extra6-1 with extra7-1, kernel-1 and tests-1: the block was served with the page and outside the
+//     read, so a reveal planted in _LOADER_CSS or in the helper's own literal left every home green);
 //   * the VS Code host's webviews are built in vscode-extension/src/extension.ts, and every `Uri.joinPath(extUri, "dist",
 //     "<name>.css")` there is a link to the same bundle;
 //   * every other `.css` a page body or the extension names must be one of those (a link from anywhere else fails loudly rather
 //     than falling outside the read), and every `.css` under ui/webview must be loaded by some page (a sheet no page loads by a
 //     form this reader knows fails naming the sheet, so the listing, the wider bound, is covered and never silently exceeded).
 // Outside the read, a bound the homes state and do not read: katex's vendored sheet (`@import "katex/dist/katex.min.css"` in
-// styles.css and feed.css, inlined into the bundles by esbuild; third-party, under node_modules, outside the tree), the style
-// a template writes into its own HTML (the settings page's transparent background, the extension's zoom rule) or a helper or
-// a script adds after the page is served (the pane spinner's block, the shim's notices), and the landing shell (`_landing`,
-// not a page function: it links no sheet, and the panes it frames are documents of their own).
+// styles.css and feed.css, inlined into the bundles by esbuild; third-party, under node_modules, outside the tree), the rules a
+// template writes into its own HTML (the settings page's transparent background, the too-large notice's body rule, the
+// extension's zoom rule), the style element a script creates after the page is served (palette.ts's and shortcuts-modal.ts's
+// elements, the shim's notices set through style.cssText), and the landing shell (`_landing`, not a page function: its boot
+// splash and notice blocks inline _LOADER_CSS, _STALE_CSS, _UPD_CSS and _RDRIFT_CSS, and the panes it frames are documents of
+// their own).
 // A plain module with no dependency beyond node's fs and path, imported by the .ts tests through the webview test bundle
 // (ui/webview/host-sheets.d.mts types it) and by tools/*.test.mjs directly; it lives under ui/ for the reason
 // ui/webview/css-rules.mjs states in its header.
@@ -44,7 +56,10 @@ const fail = (why) => { throw new Error('host-sheets: ' + why); };
 
 /** A module-level string constant of kernel.py by name, as Python reads it: `NAME = """..."""` (taken raw, and a backslash in
  *  it fails, since this reader decodes no escape in that form) or `NAME = (` followed by lines each holding one double-quoted
- *  literal with an optional trailing comment, blank and comment lines between, up to a `)` at column zero. */
+ *  literal with an optional trailing comment, blank and comment lines between, closed by a `)` at column zero or by a `)` at the
+ *  end of the last literal's line (kernel.py writes five of its six parenthesised runs the second way, _LOADER_CSS among them,
+ *  and the reader had failed on every one of them; the file review's round 11, extra6-1 with extra7-1), any other line failing
+ *  by name and a run that never closes failing too. */
 export function pyStringConstant(src, name) {
   const at = src.indexOf('\n' + name + ' = ');
   if (at < 0) fail(name + ' is not assigned at column zero of kernel.py');
@@ -57,17 +72,17 @@ export function pyStringConstant(src, name) {
     return text;
   }
   if (src[start] === '(') {
-    const end = src.indexOf('\n)', start);
-    if (end < 0) fail(name + "'s parenthesised run never closes");
     let out = '';
-    for (const line of src.slice(start + 1, end).split('\n')) {
+    for (const line of src.slice(start + 1).split('\n')) {
       const t = line.trim();
       if (t === '' || t.startsWith('#')) continue;
-      const lit = /^("(?:[^"\\]|\\.)*")\s*(?:#.*)?$/.exec(t);
+      if (/^\)\s*(?:#.*)?$/.test(line)) return out;                                   // a lone `)` at column zero
+      const lit = /^("(?:[^"\\]|\\.)*")\s*(\))?\s*(?:#.*)?$/.exec(t);
       if (!lit) fail(name + ' holds a line this reader has no rule for: ' + JSON.stringify(t.slice(0, 60)));
       out += JSON.parse(lit[1].replace(/\\'/g, "'"));
+      if (lit[2]) return out;                                                          // `)` on the last literal's line
     }
-    return out;
+    fail(name + "'s parenthesised run never closes");
   }
   fail(name + ' is assigned in a form this reader has no rule for (a triple-quoted literal or a parenthesised run)');
 }
@@ -122,15 +137,46 @@ export function kernelPages(kernel) {
 const LINK = /\/dist\/([\w-]+)\.css\b/g;                                   // a linked bundle
 const LIVE = /\(UI \/ "webview" \/ "([\w-]+\.css)"\)\.read_text\(\)/g;    // a sheet read live into a <style>
 const INLINE = /\b(_?[A-Z][A-Z0-9_]*_CSS)\b/g;                            // a module-level constant inlined into a <style>
+const HELPER = /(?<![.\w])(_[a-z]\w*)\(/g;                                 // a module-level helper a page body calls
 const JOIN = /Uri\.joinPath\(extUri, "dist", "([\w-]+)\.css"\)/g;         // the extension's link to a bundle
 const ANY_CSS = /([\w-]+)\.css\b/g;                                        // every sheet a text names, by base name
 const all = (re, text) => { const out = []; let m; re.lastIndex = 0; while ((m = re.exec(text))) out.push(m[1]); return out; };
 
+/** The `<style>` block a helper writes into the HTML it returns, or null when its text writes none: the run from the literal
+ *  opening `"<style>` to the literal closing `</style>"`, each double-quoted literal decoded and each `<NAME>_CSS` constant it
+ *  concatenates read by pyStringConstant, in the order the served HTML has them; a helper with no def in the strict shape, a
+ *  `<style` outside such a run, any other token in the run and a run that does not decode to one block fail by name (the file
+ *  review's round 11, extra6-1 with extra7-1, kernel-1 and tests-1: the pane spinner's block, `_pane_spin`'s with _LOADER_CSS
+ *  folded in, served with the chat, feed, sessions and waiting pages, had been outside the read with every pin green). */
+function helperStyle(kernel, lines, name) {
+  const head = new RegExp('^def ' + name + '\\([^)]*\\):\\n', 'm').exec(kernel);
+  if (!head) fail(name + ' is called by a page body and is no module-level def this reader has a rule for');
+  const text = defBody(lines, kernel.slice(0, head.index + head[0].length).split('\n').length - 1);
+  if (!text.includes('<style')) return null;
+  const open = text.indexOf('"<style>'), close = text.indexOf('</style>"');
+  if (open < 0 || close < 0 || close < open) fail(name + ' writes a <style> in a form this reader has no rule for (not a run of literals from "<style> to </style>")');
+  const run = text.slice(open, close + '</style>"'.length);
+  let out = '';
+  const tok = /\s+|("(?:[^"\\]|\\.)*")|\+|\b(_?[A-Z][A-Z0-9_]*_CSS)\b|#[^\n]*/y;
+  for (let i = 0; i < run.length;) {
+    tok.lastIndex = i;
+    const m = tok.exec(run);
+    if (!m) fail(name + "'s <style> run holds a token this reader has no rule for: " + JSON.stringify(run.slice(i, i + 40)));
+    if (m[1]) out += JSON.parse(m[1].replace(/\\'/g, "'"));
+    else if (m[2]) out += pyStringConstant(kernel, m[2]);
+    i = tok.lastIndex;
+  }
+  if (!out.startsWith('<style>') || !out.endsWith('</style>')) fail(name + "'s <style> run did not decode to one <style> block");
+  return out.slice('<style>'.length, -'</style>'.length);
+}
+
 /** Every sheet a page of either host loads, sorted by name: `{ name, css, loadedBy }`, `name` the sheet's path in the tree
- *  (`ui/webview/<file>.css`) or, for a kernel constant, `kernel/kernel.py <NAME>`, `loadedBy` the pages that load it. */
+ *  (`ui/webview/<file>.css`), `kernel/kernel.py <NAME>` for a kernel constant, or `kernel/kernel.py _<helper>` for the block a
+ *  helper the page calls writes into its HTML; `loadedBy` the pages that load it. */
 export function hostSheets(root) {
   const read = (...p) => fs.readFileSync(path.join(root, ...p), 'utf8');
   const kernel = read('kernel', 'kernel.py');
+  const lines = kernel.split('\n');
   const esbuild = read('vscode-extension', 'esbuild.js');
   const extension = read('vscode-extension', 'src', 'extension.ts').split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
   const sheets = new Map();
@@ -149,11 +195,18 @@ export function hostSheets(root) {
       if (!names.has(base + '.css')) fail(page + ' names ' + base + '.css in a form this derivation does not read (a link outside /dist, a read outside ui/webview)');
     }
   };
+  const helperCss = new Map();
   for (const { name: page, body } of kernelPages(kernel)) {
     const names = new Set();
     for (const n of all(LINK, body)) { bundle(n, page); names.add(n + '.css'); }
     for (const f of all(LIVE, body)) { add('ui/webview/' + f, read('ui', 'webview', f), page); names.add(f); }
     for (const c of all(INLINE, body)) add('kernel/kernel.py ' + c, pyStringConstant(kernel, c), page);
+    // the helpers the body calls, followed one level: a helper whose def writes a <style> is a sheet of every page that calls it
+    for (const h of new Set(all(HELPER, body))) {
+      if (/_page$/.test(h)) continue;
+      if (!helperCss.has(h)) helperCss.set(h, helperStyle(kernel, lines, h));
+      if (helperCss.get(h) !== null) add('kernel/kernel.py ' + h, helperCss.get(h), page);
+    }
     complete(body, 'kernel/kernel.py ' + page, names);
   }
   const ext = 'vscode-extension/src/extension.ts';

@@ -1,6 +1,7 @@
 // The types of ui/webview/host-sheets.mjs for the webview tests that import it (the typecheck reads this file beside the module).
 export interface HostSheet {
-  /** The sheet's path in the tree (`ui/webview/<file>.css`), or `kernel/kernel.py <NAME>` for a constant the kernel inlines. */
+  /** The sheet's path in the tree (`ui/webview/<file>.css`), `kernel/kernel.py <NAME>` for a constant the kernel inlines, or `kernel/kernel.py _<helper>` for the
+   *  block a helper the page calls writes into its HTML at serve time. */
   name: string;
   /** The sheet's text as the page loads it. */
   css: string;

@@ -33,8 +33,10 @@
 // review's round 10, correctness-1 with regression-5). A rule whose selector would match the control's element without naming
 // the class (`.fileview-md img + button`, an attribute selector, a universal) is outside what the homes close, a bound they
 // state rather than read, since reading it means matching selectors against the element (the author's closing pass after the
-// file review's round 10, mechanism-2), as are katex's vendored sheet and the style a template or a script writes into a page,
-// the sheet bounds host-sheets.mjs names.
+// file review's round 10, mechanism-2), as are katex's vendored sheet, the rules a template writes into its own page and the
+// style element a script creates after the page is served, the sheet bounds host-sheets.mjs names (a block a helper the page
+// calls writes into the served HTML, the pane spinner's, is in the population since the fixes for the file review's round 11,
+// extra6-1 with extra7-1, kernel-1 and tests-1, followed one level by the derivation).
 
 /** The sheet with every block comment removed. A comment opener inside a string is read as a comment: the sheets carry
  *  none, and a reader that honoured quotes at this level would have to parse every string in the sheet to find it. */

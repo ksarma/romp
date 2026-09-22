@@ -21,7 +21,8 @@ const ICONS = web("icons.ts");
 const ANCHOR = web("anchor-map.ts");
 const READER = web("reader-place.ts");
 /** Every sheet a page of either host loads, derived from the page assembly (ui/webview/host-sheets.mjs: the kernel's page
- *  functions' linked bundles, live-read sheets and inlined constants, the extension's webview links), and the two among them the
+ *  functions' linked bundles, live-read sheets and inlined constants, the style blocks the helpers they call write into their
+ *  HTML at serve time, and the extension's webview links), and the two among them the
  *  viewer's dress is written in, byte-mirrored, the chat's and the feed's: the closed set's full expected value holds in each of
  *  those two, and every other sheet holds no rule naming the control (the file review's round 10, correctness-1 with
  *  regression-5: the set had been closed over the pair while the Files page loads files-pane.css after styles.css, so a reveal
@@ -162,12 +163,16 @@ test("SOURCE-TEXT pins of the two text-read control lists (anchor-map.ts's CONTR
 
 /** The bounds of the closed set over the control's sheet rules, stated in its assertion messages: the selector bound (the author's
  *  closing pass after the file review's round 10, mechanism-2) and the sheet bounds beside it (the file review's round 10,
- *  regression-5). */
-const BOUND = " (the population is the rules whose selector names the control's class in every sheet a page of either host loads, derived from the page assembly by ui/webview/host-sheets.mjs; outside what this set closes, bounds stated here and in the plan's L3, not read: a rule whose selector would match the control's element without naming the class, katex's vendored sheet that styles.css and feed.css import, and the style a template writes into its own page or a script adds after it is served";
+ *  regression-5; restated to name only what is truly outside the read since the fixes for the file review's round 11, extra7-1
+ *  with tests-1, kernel-1 and extra6-1: the pane spinner's block, served with its pages, had been excused as one added after
+ *  serving). */
+const BOUND = " (the population is the rules whose selector names the control's class in every sheet a page of either host loads, derived from the page assembly by ui/webview/host-sheets.mjs, the pages' linked bundles, live-read sheets, inlined constants and the style blocks the helpers they call write into their HTML at serve time, and the extension's webview links; outside what this set closes, bounds stated here and in the plan's L3, not read: a rule whose selector would match the control's element without naming the class, katex's vendored sheet that styles.css and feed.css import, the rules a template writes into its own page (the settings page's transparent background, the too-large notice's body rule, the extension's zoom rule), and the style element a script creates after the page is served (palette.ts's and shortcuts-modal.ts's elements, the shim's notices' cssText)";
 
 test("the sheets: the control rests transparent over the figure's corner with a zero-width margin box, positioned above the layer's overlay; every rule naming the control's class that reveals it (the pointer over the figure or the control, a keyboard focus, a device with no hover) is under screen, so print shows none of it and the print block carries no line for it; the population the set closes is the rules whose selector names the class in every sheet a page of either host loads, the chat's and the feed's carrying the dress and every other sheet none, the sheets derived and the bounds stated, not read", () => {
   for (const d of DRESSING) assert.ok(SHEETS.some((s) => s.name === d), d + " is a sheet a page loads: the viewer's dress is written there (a renamed or unlinked sheet fails here, never silently)");
-  assert.ok(SHEETS.some((s) => s.name.startsWith("kernel/kernel.py ")), "the population is wider than a listing of ui/webview: the sheets the kernel inlines from its own source (THEME_CSS, into every page) are in it, so a rule written there is read; a derivation reading the directory alone passes this set with a reveal there (the file review's round 10, regression-5)");
+  assert.ok(SHEETS.some((s) => s.name.startsWith("kernel/kernel.py ")), "the population is wider than a listing of ui/webview: the sheets the kernel inlines from its own source (THEME_CSS, into every page that takes no arguments, and the pane spinner's block, _pane_spin's with _LOADER_CSS, into the four pages that call it) are in it, so a rule written there is read; a derivation reading the directory alone passes this set with a reveal there (the file review's round 10, regression-5)");
+  assert.ok(SHEETS.some((s) => s.name === "kernel/kernel.py _pane_spin"), "the pane spinner's block is a sheet of the population: the style block the helper _pane_spin writes into the served HTML of the pages that call it (the chat, the feed, the sessions pane and the waiting pane), _LOADER_CSS folded in served order (the file review's round 11, extra6-1 with extra7-1, kernel-1 and tests-1: the block had stood outside the read with every pin green, excused by a bound sentence that called it one added after serving; a property pin over the derivation)");
+  assert.equal(SHEETS.length, 11, "eleven sheets: the .css files under ui/webview, the two constants the kernel inlines from its own source and the pane spinner's block, the eleventh (a property pin over the derivation's count: a twelfth or a tenth is a change to the page assembly to be read here, and a separate entry for _LOADER_CSS would count the same served text twice)");
   for (const { name, css, loadedBy } of SHEETS) {
     if (!DRESSING.includes(name)) {
       // the sheet dimension of the closed set (the file review's round 10, correctness-1 with regression-5): every sheet a page loads
