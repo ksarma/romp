@@ -8229,13 +8229,18 @@ Reload file, the fresh card's Back still titled with the report's name, then Bac
 ahead) and file-trail-browser.test.ts (the Files page: a link followed, a Recent row and the relay rooting the trail,
 the section link, the web address, the same-file target, the close, and since the file review's round 10 (ui-2) the
 same-origin .md URL followed by a plain click, which on the Files page opens a tab and leaves the trail standing, that
-page's document having no opener that takes such a page in place; the chat modal: the default opener). The replace
-itself, under the chat's document-level opener (render.ts, the one caller of openUrlView), is held by file-trail.test.ts's
-wiring pin alone in the tree, the trail's end after openUrlView's guard; for round 10 it was driven once in Chromium in a
-scratch copy, a file reached over the trail linking a .md page at the page's own origin, the click replacing the viewer
-with the URL view, no tab, the trail empty and the bar without the pair, in a harness with a private launcher that this
-follow-on's convention pin refuses in a module it touches, so the case is recorded and not landed (the guide's trail
-sentence names the road and its boundary since that round).
+page's document having no opener that takes such a page in place; the chat modal: the default opener; and the chat page
+under its document-level opener, over the chat's own bundle and skeleton: the same URL followed by a plain click inside a
+file reached over the trail, the URL view replacing the viewer in place and the trail ending, with no tab, no window.open
+and no navigation of the page). The replace itself, under the chat's document-level opener (render.ts, the one caller of
+openUrlView), is held by file-trail.test.ts's wiring pin, the trail's end after openUrlView's guard, and driven in Chromium
+by file-trail-browser.test.ts's case 9, launched through the shared helper (the file review's round 10, tests-3: the road
+the guide's trail sentence leads with had been driven by no leg in the tree, its named witness that wiring pin, which holds
+the trail's end inside openUrlView and not that a link inside the shown file reaches it; for round 10 it had been driven
+once in a scratch copy, a file reached over the trail linking a .md page at the page's own origin, the click replacing the
+viewer with the URL view, no tab, the trail empty and the bar without the pair, in a harness with a private launcher that
+this follow-on's convention pin refuses in a module it touches, so the case was recorded and not landed; the guide's trail
+sentence names the road and its boundary since round 10, ui-2).
 
 L2. **Back and Forward.** Two glyph buttons in the icon family (icons.ts `ICON_BACK`, `ICON_FORWARD`: an arrow left and
 an arrow right), the bar's first group (`.fileview-group.fileview-nav`), before the pane's "‹ Files" link, which keeps

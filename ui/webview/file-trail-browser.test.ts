@@ -11,13 +11,14 @@
 // unchanged viewer at the first Back assertion (no Back button existed); (2) Forward after Back; (3) an open from
 // outside, the Recent row and the shell's relay, starts the trail over; (4) the chords, with and without a text field
 // holding the keyboard, and a key another listener prevented; (5) a section link, a web address and a same-file line
-// target push nothing; (7) closing the viewer ends the trail; (8) the boundary of the road L1 names beyond the contract: on the Files page a link to a .md page at the page's own origin, written as a full address, opens a tab and the trail stands, there being no opener here that takes such a page in place (under the chat's document-level opener the URL view replaces the viewer and the trail ends; that replace is held in the tree by file-trail.test.ts's wiring pin, the trail's end after openUrlView's guard, and was driven in Chromium for the file review's round 10 in a scratch copy only, in a harness with a launcher of its own that this follow-on's convention pin refuses in a module it names, so no leg in the tree drives it; the guide's trail sentence names that road since the file review's round 10, ui-2, and its plan record, L1, says where the replace is held). Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there; the launch is real-viewer-leg.ts's inBrowser, the shared helper). Synthetic values only: the notes-api world, a placeholder session id, example.invalid addresses.
+// target push nothing; (7) closing the viewer ends the trail; (8) the boundary of the road L1 names beyond the contract: on the Files page a link to a .md page at the page's own origin, written as a full address, opens a tab and the trail stands, there being no opener here that takes such a page in place (under the chat's document-level opener the URL view replaces the viewer and the trail ends, which case 9 drives here; file-trail.test.ts's wiring pin holds the trail's end after openUrlView's guard in the tree, the guide's trail sentence names that road since the file review's round 10, ui-2, and its plan record, L1, says where the replace is held and where it is driven); (9) the chat page under its document-level opener (render.ts, the one caller of openUrlView), over the chat's own bundle and skeleton: the same link, followed by a plain click inside a file reached over the trail, replaces the viewer with the URL view in place and ends the trail, with no tab, no window.open and no navigation of the page (the file review's round 10, tests-3: the road the guide's sentence leads with had been driven by no leg in the tree, its named witness a source pin holding only the trail's end inside openUrlView and not that a link inside the shown file reaches it; for round 10 it was driven in a scratch copy in a harness with a launcher of its own, which this follow-on's convention pin refuses, and here the launch is the shared helper's). Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there; the launch is real-viewer-leg.ts's inBrowser, the shared helper). Synthetic values only: the notes-api world, a placeholder session id, example.invalid addresses.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 import { inBrowser } from "./real-viewer-leg";
+import { chatBody, ATTACH_TITLE_WEB } from "../../vscode-extension/src/page-skeleton";   // the chat page's skeleton, for the render host (case 9)
 
 const EXT = process.cwd();                                        // npm test runs in vscode-extension
 const requireCjs = createRequire(path.join(EXT, "package.json"));
@@ -50,11 +51,17 @@ const MT = "1757145600000000001";
 
 const BUILD = { bundle: true, write: false, format: "iife", platform: "browser", target: "es2020",
   nodePaths: [path.join(EXT, "node_modules")], external: ["*.png", "*.svg", "*.woff", "*.ttf", "../media/*.woff2"], logLevel: "silent" };
-/** The Files page's bundle with a probe reading the trail's live state, or the viewer alone (the chat modal's default opener) as FV. */
-function bundle(host: "files" | "chat"): string {
+/** The three hosts a case runs the viewer in: the Files page (files.ts), the viewer alone as the chat modal's default opener (FV),
+ *  and the chat page itself (render.ts, whose document-level link delegate is the one caller of openUrlView; case 9). */
+type Host = "files" | "chat" | "render";
+/** The Files page's bundle with a probe reading the trail's live state, the viewer alone (the chat modal's default opener) as FV,
+ *  or the chat page's bundle with openFileView handed to the page beside the probe. */
+function bundle(host: Host): string {
   const contents = host === "files"
     ? 'import "./files";\nimport { liveTrail } from "./file-trail";\n(window as any).__trail = liveTrail;\n'
-    : 'export { initFileView, openFileView, closeFileView } from "./file-view";\nimport { liveTrail } from "./file-trail";\n(window as any).__trail = liveTrail;\n';
+    : host === "chat"
+      ? 'export { initFileView, openFileView, closeFileView } from "./file-view";\nimport { liveTrail } from "./file-trail";\n(window as any).__trail = liveTrail;\n'
+      : 'import "./render";\nimport { openFileView } from "./file-view";\nimport { liveTrail } from "./file-trail";\n(window as any).__trail = liveTrail;\n(window as any).__rompProbe = { openFileView };\n';
   const r = requireCjs("esbuild").buildSync({ ...BUILD, stdin: { contents, resolveDir: UI, loader: "ts", sourcefile: "trail-probe.ts" }, globalName: host === "chat" ? "FV" : undefined });
   return r.outputFiles[0].text;
 }
@@ -79,7 +86,16 @@ window.nav = function () {
 };
 window.trailShape = function () { var s = window.__trail(); var n = function (e) { return e.path.slice(e.path.lastIndexOf("/") + 1) + (e.view ? "@" + e.view : ""); }; return { back: s.back.map(n), current: s.current ? n(s.current) : null, forward: s.forward.map(n) }; };
 `;
-const PAGE = (host: "files" | "chat") => `<!DOCTYPE html><html><head><meta charset=utf-8><style>
+// the chat page as the web dashboard serves it (md-sanitize-viewer-links-browser.test.ts's chat arm): the shared skeleton, the
+// chat's sheet, window.open recorded instead of opened (what the delegate hands it is the evidence), the Navigation API's
+// `navigate` event recorded (a navigation of the chat document, the defect case 9 guards against), then the chat bundle
+const RENDER_PAGE = `<!DOCTYPE html><html lang=en><head><meta charset=utf-8><style>${fs.readFileSync(path.join(UI, "styles.css"), "utf8")}</style></head><body>
+${chatBody(ATTACH_TITLE_WEB)}
+<script>window.__opens=[];window.open=function(u,t,f){window.__opens.push([u,t,f]);return null;};
+window.__navStarts=[];navigation.addEventListener("navigate",function(e){window.__navStarts.push(e.destination.url);});
+window.__posts=[];window.acquireVsCodeApi=function(){return{postMessage:function(m){window.__posts.push(m);}}};${READERS}</script>
+<script src=/dist/render.js></script></body></html>`;
+const PAGE = (host: Host) => host === "render" ? RENDER_PAGE : `<!DOCTYPE html><html><head><meta charset=utf-8><style>
 ${fs.readFileSync(path.join(UI, "styles.css"), "utf8")}
 ${host === "files" ? fs.readFileSync(path.join(UI, "files-pane.css"), "utf8") : ""}
 </style></head><body class="${host === "files" ? "fileview-pane" : ""}">${host === "files" ? "<div id=files-empty></div>" : ""}
@@ -91,6 +107,8 @@ type Nav = { back: any; forward: any };
 type Shape = { back: string[]; current: string | null; forward: string[] };
 type H = {
   page: any; ctx: any; errors: string[];
+  popups: string[];                                                       // the pages the context opened after the case's own (a tab a click opened)
+  urlFetches: string[];                                                   // the fetches of EVIDENCE_URL, the .md page at the page's own origin (a URL document's read, or a tab's load)
   open: (p: string, at?: Record<string, unknown> | null) => Promise<void>;   // an open from OUTSIDE: the shell's relay (files) or openFileView (chat)
   follow: (text: string, base: string, raw?: boolean) => Promise<void>;     // a click on the link with that text, awaited on the named file's paint
   painted: (base: string, raw?: boolean) => Promise<void>;
@@ -99,19 +117,22 @@ type H = {
 };
 /** This leg's harness over the shared launch (real-viewer-leg.ts inBrowser: the skip on either road,
  *  the close), so one home carries the stand-down; the page here is the leg's own, not the shared module's. */
-async function inViewer(t: any, host: "files" | "chat", body: (h: H) => Promise<void>): Promise<void> {
+async function inViewer(t: any, host: Host, body: (h: H) => Promise<void>): Promise<void> {
   await inBrowser(t, async (browser: any) => {
     const errors: string[] = [];
+    const popups: string[] = [];
+    const urlFetches: string[] = [];
     const js = bundle(host);
     const ctx = await browser.newContext({ viewport: { width: 900, height: 520 } });
     const page = await ctx.newPage();
+    ctx.on("page", (p: any) => { popups.push(p.url()); });
     page.on("pageerror", (e: Error) => { errors.push(e.message); });
     await ctx.route("https://example.invalid/**", (route: any) => route.fulfill({ status: 200, contentType: "text/html", body: "<title>elsewhere</title>" }));
     await ctx.route("http://romp.test/**", async (route: any) => {
       const u = new URL(route.request().url());
       if (u.pathname === "/files" || u.pathname === "/chat") return route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: PAGE(host) });
       if (u.pathname === "/dist/" + host + ".js") return route.fulfill({ status: 200, contentType: "application/javascript", body: js });
-      if (u.href === EVIDENCE_URL) return route.fulfill({ status: 200, contentType: "text/markdown; charset=utf-8", body: EVIDENCE_TEXT });   // the page a tab opens at the address
+      if (u.href === EVIDENCE_URL) { urlFetches.push(u.href); return route.fulfill({ status: 200, contentType: "text/markdown; charset=utf-8", body: EVIDENCE_TEXT }); }   // the page a tab opens at the address, or the URL document's read
       if (u.pathname === "/file") {
         const p = u.searchParams.get("path") || "";
         const text = DOCS[p];
@@ -124,7 +145,8 @@ async function inViewer(t: any, host: "files" | "chat", body: (h: H) => Promise<
     });
     await page.goto("http://romp.test/" + (host === "files" ? "files" : "chat"));
     if (host === "files") await page.waitForFunction(() => (window as any).__posts.some((m: any) => m && m.type === "ready"));
-    else await page.waitForFunction(() => typeof (window as any).FV === "object" && typeof (window as any).__trail === "function");
+    else if (host === "chat") await page.waitForFunction(() => typeof (window as any).FV === "object" && typeof (window as any).__trail === "function");
+    else await page.waitForFunction(() => !!(window as any).__rompProbe && typeof (window as any).__trail === "function");
     const frames = (n = 2) => page.evaluate((k: number) => new Promise<null>((r) => { const f = () => (k-- <= 0 ? r(null) : requestAnimationFrame(f)); f(); }), n);
     const painted = async (base: string, raw = false) => {
       await page.locator("#romp-fileview .fileview-base", { hasText: base }).waitFor({ timeout: 10000 });
@@ -134,7 +156,8 @@ async function inViewer(t: any, host: "files" | "chat", body: (h: H) => Promise<
     };
     const open = async (p: string, at: Record<string, unknown> | null = null) => {
       if (host === "files") await page.evaluate(([p, sid, at]: [string, string, unknown]) => { window.postMessage({ romp: "viewFile", path: p, sid, at }, "*"); }, [p, SID, at]);
-      else await page.evaluate(([p, sid, at]: [string, string, unknown]) => { (window as any).FV.openFileView(p, sid, { at }); }, [p, SID, at]);
+      else if (host === "chat") await page.evaluate(([p, sid, at]: [string, string, unknown]) => { (window as any).FV.openFileView(p, sid, { at }); }, [p, SID, at]);
+      else await page.evaluate(([p, sid, at]: [string, string, unknown]) => { (window as any).__rompProbe.openFileView(p, sid, { at }); }, [p, SID, at]);
       await painted(p.slice(p.lastIndexOf("/") + 1), at !== null && typeof (at as any).line === "number");
     };
     const follow = async (text: string, base: string, raw = false) => {
@@ -147,7 +170,7 @@ async function inViewer(t: any, host: "files" | "chat", body: (h: H) => Promise<
     const putAtTop = async (t: string) => { await page.evaluate((t: string) => (window as any).putAtTop(t), t); await frames(1); };
     const base = () => page.locator("#romp-fileview .fileview-base").textContent();
     const fmt = () => page.evaluate(() => localStorage.getItem("romp:fileviewFmt"));
-    await body({ page, ctx, errors, open, follow, painted, nav, shape, top, putAtTop, base, frames, fmt });
+    await body({ page, ctx, errors, popups, urlFetches, open, follow, painted, nav, shape, top, putAtTop, base, frames, fmt });
     assert.deepEqual(errors, [], "no page errors");
     await ctx.close();
   });
@@ -270,7 +293,7 @@ test("in a browser, the Files page: a wikilink pushes like any path link; an ope
   });
 });
 
-test("in a browser, the Files page: a plain click on a link to a .md page at the page's own origin, written as a full address, opens a tab as any web address does and the trail stands, since the Files pane's document has no opener taking such a page in place (the chat's document-level opener does, and the replace with the trail's end is held in the tree by file-trail.test.ts's wiring pin, not by a browser leg: the chat harness that drove it for the file review's round 10 stayed in a scratch copy); case 8, the boundary of the road the guide's trail sentence names since the file review's round 10, ui-2", async (t) => {
+test("in a browser, the Files page: a plain click on a link to a .md page at the page's own origin, written as a full address, opens a tab as any web address does and the trail stands, since the Files pane's document has no opener taking such a page in place (the chat's document-level opener does: case 9 drives that replace, the URL view in the viewer's place and the trail's end, over the chat page's own bundle, and file-trail.test.ts's wiring pin holds the trail's end inside openUrlView in source); case 8, the boundary of the road the guide's trail sentence names since the file review's round 10, ui-2", async (t) => {
   await inViewer(t, "files", async (h) => {
     await h.open(REPORT);
     await h.follow("the notes", "notes.md");
@@ -284,6 +307,29 @@ test("in a browser, the Files page: a plain click on a link to a .md page at the
     assert.equal(await h.base(), "notes.md", "the viewer still shows the notes");
     assert.deepEqual(await h.shape(), s1, "the trail stands");
     enabledTo((await h.nav()).back, "Back to report.md", "Back is still live");
+  });
+});
+
+test("in a browser, the chat page under its document-level opener (render.ts, the one caller of openUrlView): a plain click on a link INSIDE a file reached over the trail to a .md page at the page's own origin, written as a full address, replaces the viewer with the URL view in place and ends the trail, with no tab, no window.open and no navigation of the page; case 9, the road the guide's trail sentence leads with, driven in the tree (the file review's round 10, tests-3: its named witness had been file-trail.test.ts's wiring pin, which holds the trail's end inside openUrlView and not that a link inside the shown file reaches it)", async (t) => {
+  await inViewer(t, "render", async (h) => {
+    const START = h.page.url();
+    await h.open(REPORT);
+    await h.follow("the notes", "notes.md");
+    const s1 = await h.shape();
+    assert.deepEqual(s1, { back: ["report.md@rendered"], current: "notes.md", forward: [] }, "a trail stands before the URL link is followed");
+    const popups0 = h.popups.length;
+    await h.page.locator("#romp-fileview .fileview-body a", { hasText: "the evidence" }).first().click();
+    // the delegate's choice is on record when the click is answered (render.ts cancels the click and either opens the viewer or
+    // hands the address to window.open): a link the module stamped for a tab goes to window.open, and this line reds first
+    assert.deepEqual(await h.page.evaluate(() => (window as any).__opens), [], "the chat's delegate took the page's own .md into the viewer, not to window.open");
+    await h.page.locator("#romp-fileview .fileview-md h1", { hasText: "Evidence" }).waitFor({ timeout: 10000 });
+    assert.deepEqual(h.urlFetches, [EVIDENCE_URL], "the viewer read the page as a URL document, from the page's own origin");
+    assert.deepEqual(await h.shape(), { back: [], current: null, forward: [] }, "the URL document replacing the viewer ended the trail, as a close does (L1)");
+    assert.deepEqual(await h.page.evaluate(() => (window as any).__navStarts), [], "no navigation of the chat document started");
+    assert.equal(h.page.url(), START, "location.href is unchanged");
+    assert.equal(h.popups.length, popups0, "no new tab");
+    const n = await h.nav();
+    assert.equal(n.back.present || n.forward.present, false, "the URL view's bar carries no Back or Forward: the trail is over, and a URL document is no entry of it: " + JSON.stringify(n));
   });
 });
 
