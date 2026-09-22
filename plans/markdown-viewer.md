@@ -8173,7 +8173,7 @@ round 7's (fresh-1, fresh-2, tests-1, tests-2, regression-1, extra6-1, extra7-1,
 stand in both), so a record cites such a finding by its round's number and never as the landing round's alone; round 9 is
 the round after it, which reads the fixes for round 8, round 10 the round after that, which reads the fixes for round 9, and round 11 the round after that, which reads the fixes for round 10 and the whole PR at one head. The author's own verification after a round's fixes, by a verifier of the
 author's, is named the author's closing pass after that round, never a round of either review, and its findings carry the
-ids behaviour-N, records-N, coverage-N, guards-N, attribution-and-gates-N, reader-N and tree-N, which no fixlist of the file
+ids behaviour-N, records-N, coverage-N, guards-N, attribution-and-gates-N, reader-N, tree-N and mechanism-N, which no fixlist of the file
 review holds; the passes after the file review's rounds 7 and 8 kept their ids (census-N, and records-N of the family
 above) in their commits and in the notes outside the repo, and the records here name each of those passes by the round it
 followed. A record naming a

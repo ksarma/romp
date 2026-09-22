@@ -507,7 +507,15 @@ test("the convention: the branch's review has rounds 1 and 2, the file review's 
   const r = convention();
   assert.deepEqual([...r.branch], [1, 2]);
   assert.ok(r.file.size >= 4 && r.file.has(1) && r.file.has(r.file.size), "the file review's rounds 1 to " + r.file.size);
-  assert.deepEqual(r.ids, ["behaviour", "records", "coverage", "guards", "attribution-and-gates", "reader", "tree"]);
+  assert.deepEqual(r.ids, ["behaviour", "records", "coverage", "guards", "attribution-and-gates", "reader", "tree", "mechanism"], "the paragraph's family list, eight since mechanism-N joined it (a sentence pin on the list's spelling; the armed case below is the property)");
+  // an id of a family the tree cites beside a round with no pass named is judged against the REAL derived convention, not a
+  // synthetic Reviews, so the case reds again if the paragraph ever drops the family (the file review's round 11, fresh-3: the
+  // paragraph and the pin above had listed seven families while the passes after rounds 9 and 10 minted mechanism-N). A property
+  // pin over the derived list: the digits stand behind a call, since this module reads its own literals on road 1.
+  const k = (x: number): number => x;
+  const F10 = "the file review's round " + k(10);
+  assert.equal(roundFaults(F10 + ", mechanism-" + k(2), r).length, 1, "a mechanism-N beside a round with no pass named is faulted against the file review (a property pin over the derived family list)");
+  assert.deepEqual(roundFaults("the author's closing pass after " + F10 + ", mechanism-" + k(2), r), [], "and stands where its pass is named (a property pin)");
   // the allowed set is the paragraph's list, whatever its length, and a paragraph the reader cannot parse fails loudly (the
   // probes' digits stand behind a call, since this module reads its own literals on road 1)
   const d = (k: number): number => k;
