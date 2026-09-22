@@ -516,7 +516,19 @@ test("scope equals walk, by execution: the entry points esbuild.js testBuild com
   assert.deepEqual(scopeDiff(four, new Set(four.keys())), { builtNotRead: null, readNotBuilt: null }, "equal sets: neither sentence");
 });
 
-test("every grandfather row's source existed at the commit the exclusions header binds the reason to: the header holds one bound line; the commit is fetched at depth 1 when the checkout lacks it, and a fetch or object read that fails is a red hold-off naming the reason, never a pass; a source absent at that commit is refused with the remedy; the bound line says it reads the file's age, not what the file did there", async (t) => {
+/** The verdict on one grandfather row's history read, git's `cat-file -e <sha>:<rel>` result: null when the source is in the tree at
+ *  the bound (exit 0); the remedy sentence naming the row when git says the path is not in that commit (exit 128 with either of
+ *  git's two wordings, "does not exist in" for a path not on disk and "exists on disk, but not in" for a source added later); the
+ *  hold-off sentence, a red never a pass, for any other result (the commit unreadable, another status). The one writer of that
+ *  verdict: the loop over the real rows calls it, and the same test drives it over synthetic results and over two real git reads at
+ *  the bound, since every real row passes and a verdict asserted over real rows alone could be gutted with the test green. */
+function boundVerdict(where: string, sha: string, rel: string, r: { status: number | null; stderr: string }): string | null {
+  if (r.status === 0) return null;
+  if (r.status === 128 && /does not exist in|exists on disk, but not in/.test(r.stderr)) return where + ": the grandfather reason is bound to commit " + sha + " and " + rel + " is not in the tree at that commit, so the reason does not apply to this leg: run it in the step and add its bundle to " + ROSTER + " with the step's measured seconds, or, when the source reaches Firefox or WebKit or drives playwright from a string, write the engine form or the embedded-driver sentence";
+  return where + ": the grandfather check could not read " + sha + ":" + rel + " (git cat-file -e exit " + r.status + ": " + r.stderr.trim() + "); a red hold-off, not a pass";
+}
+
+test("every grandfather row's source existed at the commit the exclusions header binds the reason to: the header holds one bound line; the commit is fetched at depth 1 when the checkout lacks it, and a fetch or object read that fails is a red hold-off naming the reason, never a pass; a source absent at that commit is refused with the remedy; the bound line says it reads the file's age, not what the file did there; the per-row verdict is one function, boundVerdict, driven here over synthetic git results (exit 0, 128 with each of git's two wordings, 128 with another message, another status) and over two reads through git itself at the bound (a path never in the tree, a source added after the bound)", async (t) => {
   const { ENGINE_PHRASE, EMBEDDED_PHRASE } = await load();
   const text = read(path.join(EXT, EXCLUDED));
   const { sentence, sha, embedded } = headerOf(text);
@@ -538,13 +550,33 @@ test("every grandfather row's source existed at the commit the exclusions header
   assert.ok(rows.length > 0, "the exclusions hold grandfather rows (" + rows.length + "); zero means the sentence stopped matching, not that the rows left");
   for (const e of rows) {
     const rel = path.relative(REPO, sourceOf(e.bundle));
-    const r = git(["cat-file", "-e", sha + ":" + rel]);
-    if (r.status === 0) continue;
-    const where = EXCLUDED + " line " + e.n + " (" + e.bundle + ")";
-    if (r.status === 128 && /does not exist in|exists on disk, but not in/.test(r.stderr)) assert.fail(where + ": the grandfather reason is bound to commit " + sha + " and " + rel + " is not in the tree at that commit, so the reason does not apply to this leg: run it in the step and add its bundle to " + ROSTER + " with the step's measured seconds, or, when the source reaches Firefox or WebKit or drives playwright from a string, write the engine form or the embedded-driver sentence");
-    assert.fail(where + ": the grandfather check could not read " + sha + ":" + rel + " (git cat-file -e exit " + r.status + ": " + r.stderr.trim() + "); a red hold-off, not a pass");
+    const v = boundVerdict(EXCLUDED + " line " + e.n + " (" + e.bundle + ")", sha, rel, git(["cat-file", "-e", sha + ":" + rel]));
+    if (v !== null) assert.fail(v);
   }
   t.diagnostic(rows.length + " grandfather rows bound to " + sha + ", every source in the tree at that commit");
+  // boundVerdict driven over synthetic results (every real row above passes, so without these the verdict could be gutted with the
+  // test green and the diagnostic false): exit 0 passes; 128 with either of git's wordings for a path the commit lacks is the remedy
+  // naming the row, the bound and the source; 128 with another message, or another status, is the hold-off, never a pass
+  const AT = EXCLUDED + " line 999 (out-tests/ui/webview/zz-synthetic.test.js)";
+  const REL = "ui/webview/zz-synthetic.test.ts";
+  assert.equal(boundVerdict(AT, sha, REL, { status: 0, stderr: "" }), null, "a source in the tree at the bound (git exit 0): no verdict");
+  const remedy = boundVerdict(AT, sha, REL, { status: 128, stderr: "fatal: path '" + REL + "' does not exist in '" + sha + "'" });
+  assert.ok(remedy !== null && remedy.startsWith(AT + ": the grandfather reason is bound to commit " + sha + " and " + REL + " is not in the tree at that commit") && remedy.includes("add its bundle to " + ROSTER), "git's 'does not exist in' wording: the remedy sentence naming the row, the bound and the source, with the roster remedy (holds the sentence's opening and the remedy's words): " + remedy);
+  assert.equal(boundVerdict(AT, sha, REL, { status: 128, stderr: "fatal: path '" + REL + "' exists on disk, but not in '" + sha + "'" }), remedy, "git's 'exists on disk, but not in' wording (a source added after the bound): the same remedy sentence");
+  const unreadable = boundVerdict(AT, sha, REL, { status: 128, stderr: "fatal: Not a valid object name " + sha });
+  assert.ok(unreadable !== null && unreadable.startsWith(AT + ": the grandfather check could not read " + sha + ":" + REL) && unreadable.endsWith("a red hold-off, not a pass"), "128 with another message (the commit unreadable): the hold-off naming the read, never a pass: " + unreadable);
+  const other = boundVerdict(AT, sha, REL, { status: 1, stderr: "" });
+  assert.ok(other !== null && other.includes("git cat-file -e exit 1") && other.endsWith("a red hold-off, not a pass"), "another status: the hold-off naming the status, never a pass: " + other);
+  // and through git itself, so the wording the remedy keys on is held to git's, not to the strings above: a path not on disk and
+  // absent at the bound ("does not exist in"), and a source on disk that was added after the bound ("exists on disk, but not in")
+  const never = git(["cat-file", "-e", sha + ":ui/webview/zz-never.test.ts"]);
+  assert.ok(never.status === 128 && /does not exist in/.test(never.stderr), "git at the bound over a path not on disk: exit 128 with 'does not exist in', the wording the remedy keys on (a git whose wording moved reds here, by name, not in the loop above): exit " + never.status + ": " + never.stderr.trim());
+  const neverVerdict = boundVerdict(AT, sha, "ui/webview/zz-never.test.ts", never);
+  assert.ok(neverVerdict !== null && neverVerdict.includes("ui/webview/zz-never.test.ts is not in the tree at that commit"), "a path absent at the bound, through git itself: the remedy: " + neverVerdict);
+  const later = git(["cat-file", "-e", sha + ":ui/webview/real-viewer-leg-switch.test.ts"]);
+  assert.ok(later.status === 128 && /exists on disk, but not in/.test(later.stderr), "git at the bound over ui/webview/real-viewer-leg-switch.test.ts, a source on disk that was added after the bound (a witness of a newer source: the bound the header names, " + sha.slice(0, 9) + ", predates that test, so a bound moved past its addition reds this assertion for a fixture reason, not a defect; pick a source newer than the bound then): exit 128 with 'exists on disk, but not in': exit " + later.status + ": " + later.stderr.trim());
+  const laterVerdict = boundVerdict(AT, sha, "ui/webview/real-viewer-leg-switch.test.ts", later);
+  assert.ok(laterVerdict !== null && laterVerdict.includes("ui/webview/real-viewer-leg-switch.test.ts is not in the tree at that commit"), "a source added after the bound, through git itself: the remedy naming that source: " + laterVerdict);
 });
 
 test("an exclusions reason is exactly one of four closed forms: the grandfather sentence as quoted, an engine reason with the phrase (a tail allowed), the embedded-driver sentence, a pending line; every variant of the exemption (a letter, a punctuation mark, a space, the word grandfather, an inflection, a paraphrase) is refused by name, and a reason that reads as one form while carrying another's phrase, or an engine reason whose tail names a second engine, is refused as ambiguous", async () => {
