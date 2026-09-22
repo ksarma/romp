@@ -89,55 +89,55 @@ and terminators) empty, the line count kept.
 Over the 46 suites (the population is the glob CI's shell job hands bats, `tests/*.bats`, read off .github/workflows/ci.yml by the
 reading tests/test_ci_bats_bound.py pins that step with, and a glob naming no file raises rather than passing an empty corpus as
 clean: suite_files; BatsSuites lists a file's candidates and judges none; BatsCorpus has bats decide them; the 46 files, the 12
-candidates and their 12 verdicts below hold at this head, fork PR #871's round 2, fourteenth commit, by its run, and every TIMING
-carries the commit whose run it is, since a timing is one loaded box's figure and a re-measurement gives another): 232 `!` words
-file-wide, 191 of them `[ !`, 24 inside comments and strings (the word rule takes a `!` next to a backtick, a `)` or a `>`), 5 at
-file scope, and 12 candidates in test bodies (bootstrap-sh.bats 184; install-optional-deps.bats 505; install-sh.bats 329, 400,
-411; pr-orphans.bats 125; romp-serve.bats 117, 309, 334, 382; romp-service.bats 683; romp-sessions.bats 84), listed with the
-extents in 6.78 s at the tenth commit and 7.30 s at the fourteenth (one `bash -n` per `}` word of a test's lines through its close
-since the sixth commit, 7.02 s there, 7.52 s at the seventh commit, 7.35 s at the eighth and 6.73 s at the ninth, and one per `}`
-word of the close line for its column; the fifth commit asked every brace, 8.36 s, and the head before it 6.89 s). bats reads all
-12 (BatsCorpus, under 1.10.0 and 1.11.1): the nine at line start are `not ok` on their own line under `! true` and `ok` under `!
-false`; the three condition heads of romp-serve.bats (309, 334 and 382, `if ! _dead "$pid"; then kill ...; return 1; fi`) the
-reverse, `ok` under `! true` and `not ok` on their own line under `! false`, so they are read only through the second rewrite; 0
-inert, 0 undecided. Each rewrite runs twice (REPEATS) and four candidates are decided at a time (CORPUS_WORKERS): at the tenth
-commit 158.65 s of runs in 74.82 s on this box under 1.10.0 (74.37 s under 1.11.1), 113.04 s of the runs the three heads' probe
-tests, the slowest side of that run romp-serve.bats 334 under `! false`, 26.45 s for its two runs (which side is slowest is a
-run's property, not the head's: another run of the thirteenth commit had the same candidate's `! true` side slowest, two figures
-of two runs and no flip); at the fourteenth commit, under LANG fixed to `C`, `46 files: 12 candidates, 12 read, 0 inert, 0
-undecided, in 64.20 s`; against those RUN_TIMEOUT stands at 60 s a run. The 5 file-scope `!` words sit in helpers and a setup
-(bats-state-isolation.bats 125, 126 and 129 twice; romp-postal.bats 47): outside the subject, since a `!` there has no enclosing
-test to run alone, and so is one in the text after a test's close, on its close line or on the lines a construct opened there runs
-on to: a helper defined there, a list joined to the definition, a case, a group, a subshell, an if, a while or a here-document
-(I_close_then_* and I_one_liner_then_arming in the register: no candidate, and the next test, which calls the helper or reads what
-that text armed, runs it as written). Two classes this instrument does not see: that file scope, and a negation inside a string
-another shell runs (`eval "! true; true"`, `bash -c "! true; true"`), which is text to the predicate by bash's reading of the
-test's own text (G_eval_string_mid and G_bash_c_string_mid, declared in the register). The classes it reports without deciding, by
-construction, each with the case that pins it (the register cannot hold them: record_under_bats runs its directory whole, so a
-shape that never ends would take every verdict with it and a file bash does not parse loads no test; the pins are BatsRoad's, on
-synthetic suites down the corpus's own road, and decide's synthetic runs): a rewrite that does not terminate, a loop whose
-condition is the negation (`while ! cmd; do sleep 1; done` never ends under one rewrite), ended at RUN_TIMEOUT and reported
-undecided, its row's head printed before its runs so a run an outer bound ends is attributable too (the poll case of the
-synthetic-suite test); a test whose runs under one rewrite disagree, a failure nondeterministic for a reason unrelated to the
-negation, reported undecided with the disagreement named rather than read from a pair that happened to differ (the alternating
-case); a test that skips (bats gives no verdict: `skipped`, the TAP reader's case); two tests of one name in a file, which bats
-refuses whole (`Error: Duplicate test name(s) in file`, no TAP: the TAP reader's duplicate case); a file bats could not load, a
-failure at file scope (`did not load`: `not ok N setup_file failed` under 1.10.0, `bats-gather-tests` under 1.11.1; the TAP
-reader's unloadable case); a test failing under both rewrites, and one whose failure is blamed outside the test (the later-failure
-and read-in-teardown cases); a `not ok` bats prints no frame under (decide's synthetic no-line case; bats prints one for every
-failure it traces); and a pipeline or a here-document body running off the end of the text (Candidates' continuation-past-the-text
-case, and a test bash cannot close is refused before any candidate of it is read). Four more roads end undecided with no case at
-this head, kept as backstops and named so the list above is not read as exhaustive: more than one test line for the filter (`N
-tests`) and none (`no such test`), since bats's `-f` is matched here against the literal name as written, the text this module
-reads as bats does (measured: `-f` filters on the raw name, a `$HOME` or a `$( )` in it unexpanded, while `bats -t` prints the
-expanded description), so the filter finds exactly the test it names or the file loads none; a run with no test line and no `1..0`
-plan for any other reason (`no TAP`, the duplicate-name refusal's outcome, its detail bats's stderr, or `(bats printed nothing;
-exit N)` when there was none: a bats that ended before its plan, by a signal or a failure of its own); and a rewritten file bash
-does not parse (decide's synthetic case), since the walker ends a pipeline only where bash read the text so far as complete
-(before the third commit of round 2 an escaped blank at a line's end reached it: the close blanked). A negated compound command is
-not among them since fork PR #871's round 2, second commit: its operators are inside what bash reads whole, so the extent runs to
-its close and bats decides it (the group case of the synthetic-suite test, undecided before). None in the tree today, by the 12
-rows.
+candidates and their 12 verdicts below are the corpus's at fork PR #871's round 2, fourteenth commit, by its run, and BatsSuites
+lists and BatsCorpus decides them afresh at every run; every TIMING carries the commit whose run it is, since a timing is one
+loaded box's figure and a re-measurement gives another): 232 `!` words file-wide, 191 of them `[ !`, 24 inside comments and
+strings (the word rule takes a `!` next to a backtick, a `)` or a `>`), 5 at file scope, and 12 candidates in test bodies
+(bootstrap-sh.bats 184; install-optional-deps.bats 505; install-sh.bats 329, 400, 411; pr-orphans.bats 125; romp-serve.bats 117,
+309, 334, 382; romp-service.bats 683; romp-sessions.bats 84), listed with the extents in 6.78 s at the tenth commit and 7.30 s at
+the fourteenth (one `bash -n` per `}` word of a test's lines through its close since the sixth commit, 7.02 s there, 7.52 s at the
+seventh commit, 7.35 s at the eighth and 6.73 s at the ninth, and one per `}` word of the close line for its column; the fifth
+commit asked every brace, 8.36 s, and the head before it 6.89 s). bats reads all 12 (BatsCorpus, under 1.10.0 and 1.11.1): the
+nine at line start are `not ok` on their own line under `! true` and `ok` under `! false`; the three condition heads of
+romp-serve.bats (309, 334 and 382, `if ! _dead "$pid"; then kill ...; return 1; fi`) the reverse, `ok` under `! true` and `not ok`
+on their own line under `! false`, so they are read only through the second rewrite; 0 inert, 0 undecided. Each rewrite runs twice
+(REPEATS) and four candidates are decided at a time (CORPUS_WORKERS): at the tenth commit 158.65 s of runs in 74.82 s on this box
+under 1.10.0 (74.37 s under 1.11.1), 113.04 s of the runs the three heads' probe tests, the slowest side of that run
+romp-serve.bats 334 under `! false`, 26.45 s for its two runs (which side is slowest is a run's property, not the head's: another
+run of the thirteenth commit had the same candidate's `! true` side slowest, two figures of two runs and no flip); at the
+fourteenth commit, under LANG fixed to `C`, `46 files: 12 candidates, 12 read, 0 inert, 0 undecided, in 64.20 s`; against those
+RUN_TIMEOUT stands at 60 s a run. The 5 file-scope `!` words sit in helpers and a setup (bats-state-isolation.bats 125, 126 and
+129 twice; romp-postal.bats 47): outside the subject, since a `!` there has no enclosing test to run alone, and so is one in the
+text after a test's close, on its close line or on the lines a construct opened there runs on to: a helper defined there, a list
+joined to the definition, a case, a group, a subshell, an if, a while or a here-document (I_close_then_* and
+I_one_liner_then_arming in the register: no candidate, and the next test, which calls the helper or reads what that text armed,
+runs it as written). Two classes this instrument does not see: that file scope, and a negation inside a string another shell runs
+(`eval "! true; true"`, `bash -c "! true; true"`), which is text to the predicate by bash's reading of the test's own text
+(G_eval_string_mid and G_bash_c_string_mid, declared in the register). The classes it reports without deciding, by construction,
+each with the case that pins it (the register cannot hold them: record_under_bats runs its directory whole, so a shape that never
+ends would take every verdict with it and a file bash does not parse loads no test; the pins are BatsRoad's, on synthetic suites
+down the corpus's own road, and decide's synthetic runs): a rewrite that does not terminate, a loop whose condition is the
+negation (`while ! cmd; do sleep 1; done` never ends under one rewrite), ended at RUN_TIMEOUT and reported undecided, its row's
+head printed before its runs so a run an outer bound ends is attributable too (the poll case of the synthetic-suite test); a test
+whose runs under one rewrite disagree, a failure nondeterministic for a reason unrelated to the negation, reported undecided with
+the disagreement named rather than read from a pair that happened to differ (the alternating case); a test that skips (bats gives
+no verdict: `skipped`, the TAP reader's case); two tests of one name in a file, which bats refuses whole (`Error: Duplicate test
+name(s) in file`, no TAP: the TAP reader's duplicate case); a file bats could not load, a failure at file scope (`did not load`:
+`not ok N setup_file failed` under 1.10.0, `bats-gather-tests` under 1.11.1; the TAP reader's unloadable case); a test failing
+under both rewrites, and one whose failure is blamed outside the test (the later-failure and read-in-teardown cases); a `not ok`
+bats prints no frame under (decide's synthetic no-line case; bats prints one for every failure it traces); and a pipeline or a
+here-document body running off the end of the text (Candidates' continuation-past-the-text case, and a test bash cannot close is
+refused before any candidate of it is read). Four more roads end undecided with no case at this head, kept as backstops and named
+so the list above is not read as exhaustive: more than one test line for the filter (`N tests`) and none (`no such test`), since
+bats's `-f` is matched here against the literal name as written, the text this module reads as bats does (measured: `-f` filters
+on the raw name, a `$HOME` or a `$( )` in it unexpanded, while `bats -t` prints the expanded description), so the filter finds
+exactly the test it names or the file loads none; a run with no test line and no `1..0` plan for any other reason (`no TAP`, the
+duplicate-name refusal's outcome, its detail bats's stderr, or `(bats printed nothing; exit N)` when there was none: a bats that
+ended before its plan, by a signal or a failure of its own); and a rewritten file bash does not parse (decide's synthetic case),
+since the walker ends a pipeline only where bash read the text so far as complete (before the third commit of round 2 an escaped
+blank at a line's end reached it: the close blanked). A negated compound command is not among them since fork PR #871's round 2,
+second commit: its operators are inside what bash reads whole, so the extent runs to its close and bats decides it (the group case
+of the synthetic-suite test, undecided before). None in the tree today, by the 12 rows.
 
 The register (ground_truth_shapes, BatsGroundTruth) is the gate on the three things the instrument still asserts. Recall: every `!`
 character of a shape's tests is a candidate unless NOT_A_NEGATION declares it text or an operator, and a test recorded `ok` with no
@@ -230,11 +230,11 @@ followed by `.setdefault("ROMP_SERVE_TOKEN"`, by `["ROMP_SERVE_TOKEN"] =`, by `[
 or, the pop figure's, by `.pop("ROMP_STATE_DIR"`, and the module count the files that glob names; the same greps give the same six
 figures at the fourteenth commit. The six were MEASURED at those heads and are NOT ENFORCED: nothing executed here re-derives
 them, and the instrument that would is the module-level environment walker of tests/test_hermetic_kernel_postal.py
-(_module_level_env_writes, which reads every shape such a write takes, a subscript, setdefault, update, pop or putenv through
-os.environ under any name), which a sibling change extends to a census; no walker is built here. Two figures over every .py under
-tests/ that stood here through the eleventh commit are dropped, since the grep behind each counted this docstring's own lines). A
-column-0 write runs when pytest COLLECTS the module, before any test runs and whether or not one of the module's tests is
-selected, in every process that collects it (each xdist worker collects), so a subprocess started with a pass-through of the
+(_module_level_env_writes, which reads every shape such a write takes, a subscript, setdefault, update, pop or putenv
+through os.environ under any name), which a sibling change extends to a census; no walker is built here. Two figures over every
+.py under tests/ that stood here through the eleventh commit are dropped, since the grep behind each counted this docstring's own
+lines). A column-0 write runs when pytest COLLECTS the module, before any test runs and whether or not one of the module's tests
+is selected, in every process that collects it (each xdist worker collects), so a subprocess started with a pass-through of the
 process's environment sees the union of those writes. bats saw ROMP_SERVE_TOKEN, which bin/romp reads over the state file (its
 _romp_token), and romp-sessions.bats's serve-token test, whose grep wants the token its setup wrote to the state file, failed
 under both rewrites: the corpus reported it undecided in every full-suite shape (-n 4 and one process alike) while the same run
@@ -1242,11 +1242,9 @@ def _bats_env(scratch):
     the corpus's scratch and the candidate's directory (_run_dir: the suite's path, line, column, rewrite, repeat and arm), up to
     88 bytes over the run's at this head: under a 17-byte run TMPDIR (the sweep's) the longest suite name,
     bats-bare-negation-shell-job.bats, would put the inner TMPDIR at 105 bytes (it holds no candidate, so no run of it is made)
-    and the longest with a candidate, install-optional-deps.bats, puts it at 98, the column and the arm suffix 10 of them since
-    the fourteenth commit; a suite's AF_UNIX socket under it must fit sun_path (108 bytes), so the run's TMPDIR stays short (one
-    nested root more under -n)."""
-
-
+    and the longest with a candidate, install-optional-deps.bats, puts it at 98, 10 of them the fourteenth commit's (the suite's
+    directory in the name, 6, its column, 2, and the arm suffix, 2); a suite's AF_UNIX socket under it must fit sun_path (108
+    bytes), so the run's TMPDIR stays short (one nested root more under -n)."""
     return {k: d.build(scratch) for k, d in BATS_ENV.items()}
 
 
@@ -1576,11 +1574,11 @@ CORPUS_WORKERS = 4
 # round 2: nearly doubling the wall time there)
 CONTROL_BUDGET = 60
 # what the per-run copy of the checkout leaves out (_copy_tree): the repository's .git, python's caches, and the extension's
-# dependencies and build outputs, node_modules, dist (vscode-extension/tsconfig.json's outDir, esbuild.js's outfile and outdir)
-# and out-tests (esbuild.js's test bundle), which no suite reads and a developer's tree carries built (1.2 GB of out-tests and
-# 50 MB of dist beside a tree of about 94 MB, copied REPEATS times per rewrite into a tmpfs before the fourteenth commit: fresh-1
-# of fork PR #871's round 2). The rule that makes a list of names safe: NO TRACKED PATH of the checkout has a component named
-# here (derived by `git ls-files` over the checkout and pinned,
+# dependencies and build outputs, node_modules, dist (vscode-extension/tsconfig.json's outDir and the outfile and outdir of the
+# extension's bundler script) and out-tests (that script's test bundle), which no suite reads and a developer's tree carries built
+# (1.2 GB of out-tests and 50 MB of dist beside a tree of about 94 MB, copied REPEATS times per rewrite into a tmpfs before the
+# fourteenth commit: fresh-1 of fork PR #871's round 2). The rule that makes a list of names safe: NO TRACKED PATH of the checkout
+# has a component named here (derived by `git ls-files` over the checkout and pinned,
 # BatsCorpus.test_the_per_run_copy_leaves_out_the_build_outputs_and_keeps_every_tracked_file), so the copy keeps every file a
 # suite can read from the checkout; every name here is one git ignores (.gitignore, vscode-extension/.gitignore)
 COPY_EXCLUDES = (".git", "node_modules", "__pycache__", ".pytest_cache", "dist", "out-tests")
@@ -4174,17 +4172,17 @@ class BatsCorpus(unittest.TestCase):
         self.assertEqual(made, (True, True))
 
     def test_the_environment_handed_to_bats_holds_exactly_the_allowed_keys_and_nothing_else_of_the_process(self):
-        # the rule (BATS_ENV_KEYS) held by EQUALITY on the built environment's keys against a literal of this test's own, never by
-        # membership and never against the tuple: _bats_env builds from the tuple, so a pin reading the tuple restates the
-        # mechanism, and a key added there (FOO, a name no route reads, built and listed) was green on it, fork PR #871's round 2,
-        # eleventh commit. A token, a state root by both of its names and an arbitrary name are planted in os.environ around the
-        # call (the writes 423 test modules make at import, and one no census names), and none reaches the output; then every
-        # value is pinned to its source, PATH the process's (less a libexec directory, the test above), LANG the fixed `C` whatever
-        # the process holds (C.UTF-8 planted: before the fourteenth commit the process's LANG passed through, and this pin asserted
-        # it), HOME and TMPDIR the scratch's, so no value but PATH's comes from os.environ (the statement pin below holds that
-        # split by tag). A pass-through added to _bats_env reds the first assertion whatever its key, added through the mapping
-        # or after the comprehension; a key that is to reach bats is added to the mapping with its derivation and reason and to
-        # the literal here
+        # the rule (BATS_ENV, its keys BATS_ENV_KEYS) held by EQUALITY on the built environment's keys against a literal of this
+        # test's own, never by membership and never against the mapping's keys: _bats_env builds from the mapping, so a pin
+        # reading it restates the mechanism, and a key added there (FOO, a name no route reads, built and listed) was green on
+        # such a pin, fork PR #871's round 2, eleventh commit, the rule a tuple then. A token, a state root by both of its names
+        # and an arbitrary name are planted in os.environ around the call (the writes 423 test modules make at import, and one no
+        # census names), and none reaches the output; then every value is pinned to its source, PATH the process's (less a libexec
+        # directory, the test above), LANG the fixed `C` whatever the process holds (C.UTF-8 planted: before the fourteenth commit
+        # the process's LANG passed through, and this pin asserted it), HOME and TMPDIR the scratch's, so no value but PATH's
+        # comes from os.environ (the statement pin below holds that split by tag). A pass-through added to _bats_env reds the
+        # first assertion whatever its key, added through the mapping or after the comprehension; a key that is to reach bats is
+        # added to the mapping with its derivation and reason and to the literal here
         path = os.environ.get("PATH", os.defpath)
         with tempfile.TemporaryDirectory() as d:
             root = os.path.join(d, "state")
@@ -4258,7 +4256,11 @@ class BatsCorpus(unittest.TestCase):
         # tracked path of the checkout has a component named in COPY_EXCLUDES (`git ls-files -z` over the checkout, through
         # _run_bats like every child here), so the copy keeps every file a suite can read from the checkout; a listing that comes
         # back empty, or without this module, proves nothing and fails. Then the behaviour on a scratch root: a file planted
-        # under each excluded name is not copied, a tracked-like file beside them is, and symlinks stay symlinks
+        # under each name of EXCLUDED, this test's own literal and never COPY_EXCLUDES (a plant read off the list under test
+        # cannot notice a name dropped from it: with dist dropped from COPY_EXCLUDES this pin stayed green, fork PR #871's round
+        # 2, fifteenth commit), is not copied, a tracked-like file beside them is, and symlinks stay symlinks; last, COPY_EXCLUDES
+        # is held to the literal, so a name added or dropped is named here and its derivation above runs over the new set
+        EXCLUDED = (".git", "node_modules", "__pycache__", ".pytest_cache", "dist", "out-tests")
         with tempfile.TemporaryDirectory() as d:
             out, err, ended, status, _ = _run_bats(["git", "ls-files", "-z"], ROOT, _bats_env(d), RUN_TIMEOUT)
             self.assertEqual((ended, status), (False, 0), "git ls-files did not list the checkout: %s" % err[-500:])
@@ -4267,7 +4269,7 @@ class BatsCorpus(unittest.TestCase):
             offending = [p for p in tracked if set(p.split("/")) & set(COPY_EXCLUDES)]
             self.assertEqual(offending, [], "tracked paths under a name the per-run copy leaves out: the copy would lose them")
             root, tree = os.path.join(d, "root"), os.path.join(d, "tree")
-            for name in COPY_EXCLUDES:
+            for name in EXCLUDED:
                 os.makedirs(os.path.join(root, "vscode-extension", name, "deep"))
                 with open(os.path.join(root, "vscode-extension", name, "deep", "big.js"), "w", encoding="utf-8") as f:
                     f.write("x" * 4096)
@@ -4277,8 +4279,10 @@ class BatsCorpus(unittest.TestCase):
             os.symlink("x.bats", os.path.join(root, "tests", "link.bats"))
             _copy_tree(root, tree)
             copied = sorted(os.path.relpath(os.path.join(r, f), tree) for r, _, fs in os.walk(tree) for f in fs)
-            self.assertEqual(copied, ["tests/link.bats", "tests/x.bats"])
+            self.assertEqual(copied, ["tests/link.bats", "tests/x.bats"], "the copy carried a file under a name it leaves out")
             self.assertTrue(os.path.islink(os.path.join(tree, "tests", "link.bats")))
+        self.assertEqual(COPY_EXCLUDES, EXCLUDED,
+                         "COPY_EXCLUDES changed: name the set in this literal too, once the derivation above is green over it")
 
     def test_a_token_and_a_state_root_written_into_the_process_environment_reach_no_suite(self):
         # the routes the finding took, planted in this process and closed by _bats_env, in seconds: (A) ROMP_SERVE_TOKEN, which
