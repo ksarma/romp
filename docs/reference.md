@@ -240,11 +240,18 @@ on which half of the rule it matched. Another provider's `_API_KEY` or
 session's Claude process (the boot line described under
 [Service environment and credentials](#service-environment-and-credentials)
 names those variables), or a session's own shells load it from a secret
-manager themselves. The three Claude names and the retired provider names
-never go in `service.env` (the boot check refuses them, as that section says),
-and neither do 1Password's `OP_*` names: romp no longer runs `op`, so a helper
-that needs one reads it from a file of its own, or the session's shells load
-it. A session's credential is Claude Code's own resolution, the `apiKeyHelper`
+manager themselves. The retired provider names (`ROMP_API_KEY_CMD`,
+`ROMP_API_KEY_REF` and `ANTHROPIC_API_KEY`) and 1Password's `OP_*` names never
+go in `service.env`: the boot check refuses them, as that section says, reading
+each name as spelled (`op`'s upper-case spellings; a lower-case `OP_*` spelling
+is refused at this door, which folds case, and not at boot). The other two
+Claude names, `ANTHROPIC_AUTH_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN`, are not
+refused at boot: found in the kernel's own environment they are claimed at boot
+and handed to login-billed launches ([the login](#the-login)), and a pick
+naming either is refused at this door for its own reason. romp no longer runs
+`op`, so a helper that needs a 1Password token reads it from a file of its own,
+or the session's shells load it. A session's credential is Claude Code's own
+resolution, the `apiKeyHelper`
 in its settings for a key and the login otherwise. An env stored before this
 rule keeps launching as it was and is named once per session in the problem
 ring, names only: the session launches with the variable, and its value sits

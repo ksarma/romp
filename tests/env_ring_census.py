@@ -135,7 +135,12 @@ by resolution and not by name:
      and a reflected read under a COMPUTED name (`getattr(x, name)`) is read as no attribute at all, which is why the
      spelled forms are the followed ones and a source's name in any other string fails. `_options`' return is opaque
      (the whole options dict; its env overlay is a source of its own), and reads of the kernel's _pending_ops carry no
-     value taint (a mixed container of every parked op kind).
+     value taint (a mixed container of every parked op kind). A fourth bound, the call graph's (round 9 of fork PR
+     #781's review, fresh-1): an attribute call on a receiver the walk cannot type (neither self nor a class name) whose
+     name is a stdlib method name (COMMON_METHODS) resolves to no callee unless the name is one of the door's handles
+     (door_names, derived: the writer's bare name and every parameter name a door expression is passed under by
+     keyword), so a conduit or feeder spelled that way would be unseen through such a receiver; the census fails loudly
+     on one (conduit-name-common) instead of passing over its sites.
   7. REDUCTION. Every door call's message is reduced to its literal head(s): a string constant, an f-string's leading
      text, the left side of a `%` or `+`, a `str()` wrap, a local followed to every assignment (a tuple unpacking to
      its position), a module-level string constant by name, a helper followed into its returns (a return that is a
@@ -243,6 +248,12 @@ DEFAULT_SOURCES = {
 # Method names of the builtin and stdlib types the three files use: an attribute call `x.<name>(...)` on a receiver
 # other than self is NOT resolved to a def of the same bare name in our files when the name is one of these (a
 # `reg.get(...)` is a dict's get, not _SharedParseView.get). Self-calls resolve through the class first regardless.
+# The door's HANDLE names are exempt, derived per census and never spelled here (Census.door_names: the writer's bare
+# name and every parameter name a door expression is passed under; round 9 of fork PR #781's review, fresh-1: a
+# `COMMON_METHODS.discard("_log")` here rescued one spelling by name, and `log`, the parameter road's own handle and a
+# logging.Logger method too, stayed filtered, so a conduit spelled `log` and called on an untyped receiver had its sites
+# dropped with no failure row). A conduit or feeder whose bare name is in this set and is no handle is a census failure
+# (conduit-name-common), since its sites through an untyped receiver would be unseen.
 COMMON_METHODS = set()
 for _t in (str, bytes, dict, list, set, frozenset, tuple, int, float, bool, object, pathlib.Path, threading.Thread,
            threading.Event, type(threading.Lock()), type(threading.RLock()), asyncio.Task, asyncio.Future,
@@ -251,7 +262,6 @@ for _t in (str, bytes, dict, list, set, frozenset, tuple, int, float, bool, obje
            collections.OrderedDict, queue.Queue, logging.Logger, datetime.datetime, datetime.timedelta,
            concurrent.futures.Future, concurrent.futures.ThreadPoolExecutor, json, os, sys, re, io, subprocess):
     COMMON_METHODS.update(n for n in dir(_t) if not n.startswith("__"))
-COMMON_METHODS.discard("_log")   # logging.Logger has one; the door's own name is never filtered
 
 # The parse cache: realpath -> (source, tree), for the census's canonical inputs ALONE, parsed once per process. The
 # retention rule (fork PR #781, the reviewer's ruling of 2026-09-20): a path in retained_paths() is kept for the
@@ -626,8 +636,9 @@ class Census:
         self._source_idents = set(sources["attr"]) | {q.split(".")[-1] for _b, q in sources["func"]} | {n for _b, n in sources["name"]}
         for f in self.files:
             self._index(f)
+        self._find_writer()                              # before the call graph (round 9 of fork PR #781's review, fresh-1): the
+        self.door_names = self._door_handle_names()      # door's handle names exempt attribute calls from COMMON_METHODS
         self._resolve_all_calls()
-        self._find_writer()
         self._scope_aliases()
         self._door_calls()
         self._follow_door_values()
@@ -1093,8 +1104,8 @@ class Census:
                         out.append((c.methods[attr], "class"))
                 if out:
                     return out
-            if attr in COMMON_METHODS:
-                return []
+            if attr in COMMON_METHODS and attr not in self.door_names:
+                return []                    # a stdlib method's name, and no handle of the door (door_names): a dict's get, a socket's send
             out = []
             for d in self.defs_by_name.get(attr, []):
                 if d.kind != "lambda" and d.parent is None:
@@ -1310,6 +1321,23 @@ class Census:
                         if isinstance(st, ast.AugAssign) and isinstance(st.target, ast.Name) and st.target.id in lists:
                             self.feeder_appends.append((f2, st, st.target.id))
                             self.feeders[f2] = st
+
+    def _door_handle_names(self):
+        """The names an attribute call may carry the door under, DERIVED from the trees before the call graph is resolved
+        (round 9 of fork PR #781's review, fresh-1): the writer's bare name (`_log`), and the name of every parameter a
+        door expression `<x>.<door>` is passed under by keyword at any call in the files (`log`, problem_row's and the
+        other log= functions'). resolve_callee exempts these from the COMMON_METHODS filter, so `<untyped>._log(...)` and
+        `<untyped>.log(...)` resolve to the defs of that name where `<untyped>.get(...)` does not. Keyed on what the trees
+        say, never on a spelling written here: until this round `COMMON_METHODS.discard("_log")` rescued the writer's name
+        alone, and `log`, a logging.Logger method too, stayed filtered. A door passed positionally is still followed as a
+        door value (_follow_door_values); its parameter's name is not a handle here, a bound stated as such."""
+        names = {self.door}
+        for fn in self.all_fns:
+            for call in fn.calls:
+                for kw in call.keywords:
+                    if kw.arg and isinstance(kw.value, ast.Attribute) and kw.value.attr == self.door:
+                        names.add(kw.arg)
+        return frozenset(names)
 
     # ------------------------------------------------------------------ door expressions and door calls
     def _scope_aliases(self):
@@ -1818,6 +1846,17 @@ class Census:
                 dc.lexical = bool(caller.lexical.get(id(call)))
                 self.feeder_site_calls.append(dc)
         self.door_calls = list(self.calls_reaching) + list(self.feeder_calls) + list(self.conduit_calls) + list(self.feeder_site_calls)
+        # a conduit or feeder whose bare name is a stdlib method name and no handle of the door is UNSEEN through an untyped
+        # receiver (resolve_callee filters the call, so its callers table has no edge for such a site and the site files no
+        # door call and no failure): said loudly, by the function, not passed over (round 9 of fork PR #781's review, fresh-1;
+        # the module's own fail-loudly rule). Exact and free at this head: no conduit or feeder of the tree collides.
+        for fn in sorted(set(self.conduits) | set(self.feeders), key=lambda f: (f.base, f.node.lineno)):
+            if fn.name in COMMON_METHODS and fn.name not in self.door_names:
+                self._fail("conduit-name-common", fn.base, fn.node.lineno,
+                           "%s is a %s whose bare name %r is a stdlib method name and no handle of the door (door_names %s): an "
+                           "attribute call on a receiver the walk cannot type resolves to no callee, so its sites through one are "
+                           "unseen; rename it, or pass the door to it under that name"
+                           % (fn.qual, "conduit" if fn in self.conduits else "feeder", fn.name, sorted(self.door_names)))
 
     def _param_of(self, expr, fn):
         """The parameter name an expression reduces to when it is (a wrap of) one parameter of fn, else None."""
@@ -3479,6 +3518,7 @@ class Census:
         out["log_param_fns"] = sorted(f.qual for f in self.log_param_fns)
         out["door_value_sites"] = sorted((b, ln, how) for b, ln, how, _fn in self.door_value_sites)
         out["conduits"] = {fn.qual: [(inner.lineno, p) for inner, p in lst] for fn, lst in self.conduits.items()}
+        out["door_names"] = sorted(self.door_names)
         out["feeders"] = sorted((fn.qual, call.lineno, lst) for fn, call, lst in self.feeder_appends)
         out["merge_reads"] = list(self.merge_reads)
         out["writer"] = (self.writer.qual, self.writer.node.lineno, self.append_call.lineno)
@@ -3510,9 +3550,13 @@ class Census:
 # reader's question from a filled table and never by a write. Outside the freeze: the trees (above) and Mod.src, a str.
 # unfrozen_parts() is the audit of the rule: it walks the same structures and names anything still mutable, and the
 # immutability pin asserts it finds nothing. census_digest() is what a reader compares across time: a digest of what
-# the pins read (summary() and the tables outside it), taken by the door once the census is frozen (digest_at_birth,
-# the door's one write, before the census is handed to anyone) and again by the class-end pin, so a change by any pin,
-# in any order, is red at the end of the class even where every direct write was refused.
+# the pins read (summary(), the tables outside it and the structural rosters a population pin reads: its docstring
+# lists them and names what is outside), taken by the door once the census is frozen (digest_at_birth, the door's one
+# write, before the census is handed to anyone) and again by the class-end pin, so a change to any of those by any
+# pin, in any order, is red at the end of the class even where every direct write was refused; a slot outside the
+# digest (a function's assigns or returns, the reader tables) is held by the freeze's refusals alone, and no pin reads
+# one (round 9 of fork PR #781's review, extra7-1: the digest had covered summary() and the tables while this sentence
+# covered every pin, and Mod.fns, what a population pin reads, was outside it).
 
 
 def _refuse_write(self, *_args):
@@ -3535,7 +3579,8 @@ class FrozenList(list):
     """A list whose mutators refuse (the block comment above says why a list and not a tuple): equal to a list of the
     same items, unhashable like one, iterated, indexed and sliced like one (a slice is a fresh plain list), and
     read-only through every ordinary route. The base class's method called on the instance by name is a deliberate
-    act, not a reader's slip, and the class-end digest (census_digest) is what catches it."""
+    act, not a reader's slip, and the class-end digest (census_digest) is what catches it on the structures the digest
+    covers (its docstring lists them and names the slots outside it)."""
     __slots__ = ()
     append = extend = insert = remove = pop = clear = sort = reverse = _refuse_mutation
     __setitem__ = __delitem__ = __iadd__ = __imul__ = _refuse_mutation
@@ -3672,10 +3717,29 @@ def unfrozen_parts(c, limit=20):
 def census_digest(c):
     """A digest of what the pins read off a census: summary() and the tables outside it (the taint tables by attribute
     and by function, the alias tables, the ring references, the source identifiers, the function roster, the
-    failures). Two reads of an unchanged census digest the same; the door takes it once the census is frozen
-    (digest_at_birth) and the class-end pin takes it again."""
+    failures) and, since round 9 of fork PR #781's review (extra7-1), the STRUCTURAL ROSTERS a population pin reads,
+    each by value: every module's function roster (Mod.fns), every function's call list (Fn.calls), the call graph both
+    ways (callees, callers) and the identifier constants (ident_consts); a node by its source position, a function by
+    its qualified name and line, a call's resolution by callee and via, so an element added, dropped or replaced on a
+    frozen list by a base-class call changes the digest (until round 9 the digest covered summary() and the tables
+    while the claim covered every pin, and Mod.fns, what a population pin reads for a module's function count, was
+    outside it). OUTSIDE the digest, stated as such: a function's assigns, returns and lexical table and the two reader
+    tables (attr_readers, global_readers), which no pin reads; those slots are held by the freeze's refusals alone.
+    Two reads of an unchanged census digest the same; the door takes it once the census is frozen (digest_at_birth)
+    and the class-end pin takes it again. Cost on the three-file census: 0.215 s measured at round 9 (8 ms before the
+    rosters), taken twice per door census, so under a second on the module's run."""
     by_fn = lambda table: {"%s@%d" % (fn.qual, fn.node.lineno): {str(k): sorted(v) for k, v in m.items()} for fn, m in table.items()}
+    fn_key = lambda fn: "%s@%d" % (fn.qual, fn.node.lineno)
+    pos = lambda node: (getattr(node, "lineno", None), getattr(node, "col_offset", None),
+                        getattr(node, "end_lineno", None), getattr(node, "end_col_offset", None))
     views = {
+        "door_names": sorted(c.door_names),
+        "mod_fns": {mod.path: [fn_key(fn) for fn in mod.fns] for mod in c.mods.values()},
+        "fn_calls": {fn_key(fn): [pos(call) for call in fn.calls] for fn in c.all_fns},
+        "callees": {fn_key(fn): [(pos(call), [(fn_key(callee), via) for callee, via in c.callees.get(id(call), [])])
+                                 for call in fn.calls] for fn in c.all_fns},
+        "callers": {fn_key(fn): sorted((pos(call), fn_key(caller), via) for call, caller, via in lst) for fn, lst in c.callers.items()},
+        "ident_consts": [(mod.path, pos(node), fn_key(fn) if fn else None) for mod, node, fn in c.ident_consts],
         "summary": c.summary(),
         "attr_taint": {k: sorted(v) for k, v in c.attr_taint.items()},
         "attr_whole": {k: sorted(v) for k, v in c.attr_whole.items()},

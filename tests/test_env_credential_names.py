@@ -327,6 +327,56 @@ class ReferenceEnvPassage(unittest.TestCase):
             self.assertNotIn(word, rest, "a promise of removal is back in the passage: %r" % (word,))
 
 
+class ReferenceBootRefusalClaims(unittest.TestCase):
+    """docs/reference.md's `--env` passage states which names the boot check refuses and which it does not, and every such
+    claim is EXECUTED against check_boot_environment here (round 9 of fork PR #781's review, fresh-2, under correctness-1's
+    rule: every refusal sentence on this credential path names the spelling and the condition the check refuses, and where
+    the door and the boot check disagree it says so). Until round 9 the passage said the three Claude names never go in
+    service.env because the boot check refuses them; check_boot_environment refuses ANTHROPIC_API_KEY of the three and not
+    the two login tokens, which romp claims out of its own environment at boot for login-billed launches, so an operator
+    who took the sentence at its word could drop a login the box relies on. Precedent: test_session_env's advice pin, which
+    runs the boot check beside the door's sentence so the two cannot drift. Names only; the values are placeholders."""
+
+    def test_the_names_the_passage_says_the_boot_check_refuses_are_refused_and_the_two_it_says_are_not_are_not(self):
+        cred = sb._cred
+        flat = ReferenceEnvPassage._passage()
+        absent = os.path.join(tempfile.mkdtemp(), "absent.env")
+
+        def boots(name):
+            try:
+                cred.check_boot_environment(path=absent, environ={name: "x"})
+            except RuntimeError:
+                return False
+            return True
+        # the executed fact first, so the red names the defect: the two login tokens boot
+        booting = [n for n in cred.LOGIN_TOKEN_VARS if boots(n)]
+        self.assertEqual(booting, list(cred.LOGIN_TOKEN_VARS), "check_boot_environment returns for the login tokens")
+        self.assertNotRegex(flat, r"The three Claude names.{0,120}the boot check refuses them",
+                            "the passage says the boot check refuses the three Claude names, and check_boot_environment "
+                            "returned for %s (executed here): a false refusal claim on a credential path" % ", ".join(booting))
+        m = re.search(r"The retired provider names \((.*?)\) and 1Password's `OP_\*` names never go in `service\.env`: "
+                      r"the boot check refuses them", flat)
+        self.assertTrue(m, "the passage's boot-refusal sentence names the retired provider names in backticks, where this test reads them")
+        refused = re.findall(r"`([A-Z_]+)`", m.group(1))
+        self.assertEqual(refused, list(cred.RETIRED_VARS), "the names the passage says the boot check refuses are RETIRED_VARS, in order")
+        for n in refused + list(cred.OP_ENV_NAMES) + [cred.OP_ENV_PREFIX + "TESTACCT"]:
+            self.assertFalse(boots(n), "%s is refused at boot, as the passage says" % n)
+        m2 = re.search(r"The other two Claude names, `([A-Z_]+)` and `([A-Z_]+)`, are not refused at boot", flat)
+        self.assertTrue(m2, "the passage says which Claude names the boot check does NOT refuse")
+        self.assertEqual(sorted(m2.groups()), sorted(cred.LOGIN_TOKEN_VARS))
+        for n in m2.groups():
+            self.assertTrue(boots(n), "%s boots, as the passage says" % n)
+            self.assertIn(n, sb.AUTH_ENV_NAMES)
+            self.assertIn("Claude Code's own", sb.env_request_error({n: "x"}), "and this door refuses it for its own reason")
+        self.assertIn("[the login](#the-login)", flat, "the passage points at the login section for the claim at boot")
+        self.assertIn("\n#### The login\n", (ROOT / "docs" / "reference.md").read_text(encoding="utf-8"), "which exists under that heading")
+        # the spelling: the boot check reads a name as `op` spells it, this door folds case, and the passage says so
+        self.assertIn("a lower-case `OP_*` spelling is refused at this door, which folds case, and not at boot", flat)
+        for folded in (n.lower() for n in cred.OP_ENV_NAMES + (cred.OP_ENV_PREFIX + "TESTACCT",)):
+            self.assertTrue(boots(folded), "%s boots: the boot check reads the spelling as written" % folded)
+            self.assertTrue(sb.env_request_error({folded: "x"}), "and this door refuses it")
+
+
 class BootNoticeMethod(unittest.TestCase):
     """The method in isolation: __new__ skips __init__, so no thread, no state dir, no kernel."""
 

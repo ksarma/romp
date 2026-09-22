@@ -24517,6 +24517,14 @@ class _UnownedBackend(sb.SessionBackend):
     def set_fast(self, sid, value):
         return False
 
+    def set_env(self, sid, value):
+        # the per-session env pick, refused like the other setters (round 9 of fork PR #781's review, kernel-1 and
+        # extra9-1): set_env is not on the ABC (SdkBackend alone takes a per-session env), so without this the
+        # parked-op drain's env arm reached an attribute this class lacked, and its blanket handler dropped the sid's
+        # whole parked queue; the drain guards the call too, and this makes the refusal UNIFORM with set_effort and
+        # set_fast, so the next arm added to that loop inherits the behaviour instead of needing its own guard
+        return False
+
     def spawn(self, name, cwd, bg="", fg="", sid=None, *a, **kw):
         return None
 
@@ -41478,8 +41486,16 @@ def _apply_pending_ops(now=None):
                         # the verdict is READ here too (review round 1 of the env-pick door, 2026-09-18): a parked
                         # pick the door refuses at replay (a queue mirrored before the credential-shape rule and
                         # drained after a restart) retired its chip as if it had landed, with no line and no frame,
-                        # while the effort and fast arms had been changed to read theirs for exactly that reason
-                        refused = be.set_env(sid, op[1]) is False
+                        # while the effort and fast arms had been changed to read theirs for exactly that reason.
+                        # GUARDED like the /new door's env leg (round 9 of the review, kernel-1 and extra9-1): set_env
+                        # is SdkBackend's alone, so on a sid Sessions.backend_for routes to _UNOWNED (a queue parked
+                        # before the session died, or restored after a restart for a session no backend owns) or to
+                        # the Codex backend the unguarded call raised AttributeError, the handler below popped the
+                        # sid's WHOLE queue, and a send parked behind the pick was dropped with no frame and no line,
+                        # where the effort and fast arms answer settingRefused and still hand the send over. A backend
+                        # without set_env is a refusal here; _UnownedBackend answers set_env False itself since the
+                        # same round, so this guard is for a backend outside the kernel's own (Codex; a stand-in)
+                        refused = (be.set_env(sid, op[1]) is False) if hasattr(be, "set_env") else True
                     # (an unknown op kind gets no call: it is popped below and dropped — never wedge the queue)
                     with _pending_ops_lock:               # POP the head — only if it is still the op the backend got
                         _inflight_ops.pop(sid, None)      # (a no-op for a cwd op, which was never recorded)

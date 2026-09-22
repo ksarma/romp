@@ -295,15 +295,19 @@ COUNTS = {
     "door_value_sites": 21,        # call sites passing a door as an argument: 14 problem_row (one in kernel.py, through getattr),
     #                                ApiHealth, cli_scope_supported, cli_scope_limits, sweep_dead_test_roots, flag_settings_path,
     #                                helper_fast_org_env, relocate_transcripts
-    "problem_row_sites": 14,       # main's two refused-launch sites and the directory-refused row's call problem_row without log=,
-    #                                so they are sites of it and
-    #                                not door-as-argument sites
+    "problem_row_sites": 14,       # the problem_row calls that pass log= (13 in sdk_backend.py, 1 in kernel.py through getattr): the
+    #                                same 14 the door_value_sites entry credits to problem_row. 17 problem_row calls in the three files;
+    #                                the 3 that pass no log= (main's two refused-launch sites and the directory-refused row's) bind the
+    #                                conduit's door to None and are sites of NEITHER count (env_ring_census's rule: such a site files
+    #                                nothing through the conduit and is no site of it), so both entries read 14 = 17 - 3 (round 9)
     "sdk_problem_sites": 8,
     "feeder_appends": 2,           # _SDK_BOOT_PROBLEMS in _sdk_problem, _WS_DROPS in _note_ws_drop
     "merge_reads": 3,              # _sdk_problem_rows reads the two lists and be.problems()
     "content_rows": 12,            # the ENV ROWS line's rows; content_identities() == ROWS holds them exactly, so this entry
     #                                carries no tension of its own and is here so the block is truthful
-    "functions": 3245,             # every def and lambda of the three files, nested ones included
+    "functions": 3246,             # every def and lambda of the three files, nested ones included: 3245 at the second merge of main,
+    #                                re-derived at round 9's commit as 3246 (_UnownedBackend.set_env, the one def the round added;
+    #                                no other entry moved)
 }
 CALLS_BY_KIND = {"self": 202, "typed": 109, "bound-self": 7, "param": 35, "alias": 5}   # the 358's derivation, an equality each
 EXISTENCE_ROWS = 20      # the existence rows (tag "pick" alone, a fixed vocabulary plus names): derived at round 8's commit and
@@ -1228,13 +1232,20 @@ class EnvRowsPopulation(unittest.TestCase):
     def setUpClass(cls):
         cls.c = census(CENSUS_FILES)
 
-    def _assert_pin(self, c):
+    def _assert_pin(self, c, expected=None):
         """The pin's first assertions, shared with the planted-module tests: a failure of the derivation itself refuses
-        before anything is compared, and the content rows are ROWS's, by identity (eleven at round 7's head, nine at round 6)."""
+        before anything is compared, and the content rows are `expected`'s, by identity: the tree's ROWS by default (eleven
+        at round 7's head, nine at round 6, twelve since the round-8 merge of main), or what a plant arm expects, the control
+        census's identities plus the planted row (round 9 of the review, tests-2: the arms had asserted that this pin REFUSES
+        a planted census over the small module, which it did for any census there, plant or no plant, since no small-module
+        census equals the tree's ROWS; now the ONE identity equality is executed by the population pin and by every arm,
+        which takes the plant as the added row under the control's identities plus it and refuses it under the control's
+        alone, so weakening the equality to a membership or subset test reds the arms)."""
+        expected = ROWS if expected is None else list(expected)
         self.assertEqual(c.failures, [], "the derivation failed (a door value the walk could not follow, or a writer it "
                          "could not resolve): %r" % (c.failures,))
         self.assertEqual((c.writer.qual, c.door, c.msg_param), ("SdkBackend._log", "_log", "m"), "the one appender to self._problems")
-        self.assertEqual(c.content_identities(), ROWS,
+        self.assertEqual(c.content_identities(), expected,
                          "the content rows (env-tainted, problem=True) by identity; the census found %d at lines %s. A new row "
                          "needs a module-level format for its ring_text, a worst case in CredentialShapedNamesEndToEnd's table, "
                          "and the ENV ROWS line re-derived" % (len(c.content_rows), c.sites(c.content_rows)))
@@ -1389,6 +1400,81 @@ class EnvRowsPopulation(unittest.TestCase):
                          "merge of main; a different count "
                          "is a file the walk did not read whole, or growth to re-derive deliberately")
 
+    def test_problem_rows_sites_are_its_log_passing_calls_and_the_three_without_log_are_sites_of_neither_count(self):
+        """extra10-1 (round 9 of the review): the COUNTS block's derivation comment for problem_row_sites said the three
+        problem_row calls that pass no log= were sites of it and not door-as-argument sites, when the census counts them in
+        NEITHER entry (a log=None binding files nothing through the conduit and is no site of it); the round-8 re-derivation
+        moved the number from 12 to 14 and carried the clause forward, widened from two sites to three, after round 7's
+        refuter had named it wrong. The prose explaining a derived figure is part of the derivation, so it is held to the
+        census here BY EXECUTION: every problem_row call in the three files by AST (a bare or attribute call by that name, or
+        `getattr(x, "problem_row")(...)`), split by whether it passes log=; the conduit's sites are exactly the log=-passing
+        calls, the door-value entry credits problem_row with exactly them (by the log= keyword's own line), the calls without
+        log= are in neither table; then the comment's arithmetic (the total, the log=-passing count, the count without and
+        its split by file, and the word neither) is read off the block and held to the figures derived here, never spelled."""
+        c = self.c
+        calls = []      # (base, the call's line, the log= keyword value's line or None)
+        for path in CENSUS_FILES:
+            mod = c.mods[os.path.realpath(path)]
+            for node in ast.walk(mod.tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                f = node.func
+                named = ((isinstance(f, ast.Name) and f.id == "problem_row") or (isinstance(f, ast.Attribute) and f.attr == "problem_row")
+                         or (isinstance(f, ast.Call) and isinstance(f.func, ast.Name) and f.func.id == "getattr" and len(f.args) > 1
+                             and isinstance(f.args[1], ast.Constant) and f.args[1].value == "problem_row"))
+                if not named:
+                    continue
+                log = [kw for kw in node.keywords if kw.arg == "log" and not (isinstance(kw.value, ast.Constant) and kw.value.value is None)]
+                calls.append((mod.base, node.lineno, log[0].value.lineno if log else None))
+        with_log = [(b, ln, kl) for b, ln, kl in calls if kl is not None]
+        without = [(b, ln) for b, ln, kl in calls if kl is None]
+        per_file = collections.Counter(b for b, _ln, _kl in with_log)
+        self.assertEqual((len(calls), len(with_log), len(without)), (17, 14, 3), "17 problem_row calls, 14 passing log=, 3 not: %r" % (calls,))
+        self.assertEqual(per_file, {"sdk_backend.py": 13, "kernel.py": 1})
+        self.assertEqual({b for b, _ln in without}, {"sdk_backend.py"}, "the three without log= are sdk_backend.py's: %r" % (without,))
+        sites = sorted((dc.base, dc.lineno) for dc in c.conduit_calls if dc.kind == "conduit:problem_row")
+        self.assertEqual(sites, sorted((b, ln) for b, ln, _kl in with_log), "the conduit's sites are exactly the log=-passing calls")
+        self.assertEqual(len(sites), c.counts["conduit_sites"]["conduit:problem_row"])
+        self.assertEqual(len(sites), COUNTS["problem_row_sites"])
+        door_value = sorted((b, ln) for b, ln, how, _f in c.door_value_sites if how == "parameter log of problem_row")
+        self.assertEqual(door_value, sorted((b, kl) for b, _ln, kl in with_log),
+                         "the door-value entry credits problem_row with the same 14 calls, by the log= keyword's line")
+        for b, ln in without:
+            self.assertNotIn((b, ln), sites, "a call without log= is no site of the conduit")
+            self.assertNotIn((b, ln), door_value, "and no door-as-argument site")
+        src = Path(__file__).read_text(encoding="utf-8").splitlines()
+        i = next(k for k, ln in enumerate(src) if ln.startswith('    "problem_row_sites": '))
+        block = [src[i]]
+        for ln in src[i + 1:]:
+            if not ln.startswith("    #"):
+                break
+            block.append(ln)
+        text = " ".join(ln.split("#", 1)[1].strip() for ln in block)
+        numbers = {int(n) for n in re.findall(r"\b\d+\b", text)}
+        self.assertLessEqual({len(calls), len(with_log), len(without)} | set(per_file.values()), numbers,
+                             "the comment states the arithmetic the census derives: %r" % text)
+        self.assertIn("neither", text.lower(), "the comment says the three are sites of NEITHER count: %r" % text)
+        self.assertNotIn("sites of it and", text, "the round-7 clause (sites of it and not door-as-argument sites) is gone")
+
+    def test_the_doors_handle_names_are_derived_from_the_writer_and_the_parameters_a_door_is_passed_under(self):
+        """fresh-1 (round 9 of the review): the census's COMMON_METHODS filter (an attribute call on an untyped receiver whose
+        name is a stdlib method's resolves to no callee) exempts the door's HANDLE names, derived per census from the trees
+        (Census.door_names: the writer's bare name and every parameter name a door expression is passed under by keyword),
+        where round 8 rescued one spelling by name (`COMMON_METHODS.discard("_log")`) and left `log`, the parameter road's
+        own handle and a logging.Logger method too, filtered. At this head the handles are the writer's name and the one
+        parameter name every door pass uses; both are stdlib method names, which is what the rescue is for; no conduit or
+        feeder of the tree collides, so the loud failure (conduit-name-common, planted in EnvRowsCensusBlindSpots) has no
+        row here. A third handle is growth to re-derive deliberately."""
+        c = self.c
+        self.assertEqual(sorted(c.door_names), ["_log", "log"], "the writer's name and the door-bound parameter name")
+        self.assertEqual(sorted(erc.COMMON_METHODS & set(c.door_names)), ["_log", "log"],
+                         "both handles are stdlib method names (logging.Logger's): without the exemption an untyped receiver's call resolves to nothing")
+        self.assertEqual({how.split(" ")[1] for _b, _ln, how, _f in c.door_value_sites if how.startswith("parameter ")}, {"log"},
+                         "every parameter a door is passed under at this head is spelled log")
+        self.assertEqual([f for f in c.failures if f[0] == "conduit-name-common"], [], "no conduit or feeder of the tree collides")
+        names = sorted({fn.name for fn in list(c.conduits) + list(c.feeders)})
+        self.assertEqual([n for n in names if n in erc.COMMON_METHODS], [], "none of their bare names is a stdlib method name: %r" % (names,))
+
     def test_the_derivation_equals_its_committed_tables(self):
         """The census's counts EQUAL the tables committed at the round-8 merge of main (COUNTS, CALLS_BY_KIND). Fewer is a blind
         walk; more is growth nobody has re-derived; either reds, and the author re-derives the tables deliberately, naming
@@ -1464,8 +1550,9 @@ class EnvRowsPopulation(unittest.TestCase):
         self.assertEqual([(dc.lineno, dc.kind, dc.owner, sorted(dc.taint), dc.heads) for dc in found],
                          [(3, "param", "planted", ["env"], ["env (%s): planted %s"])])
         self.assertIn(("plant.py", 5, "parameter log of planted"), [(b, ln, how) for b, ln, how, _f in c.door_value_sites])
+        self._assert_pin(c, expected=[("planted", "FMT", False)])       # the plant is the one content row, and the pin takes it as such
         with self.assertRaises(AssertionError) as cm:
-            self._assert_pin(c)
+            self._assert_pin(c, expected=[])                              # under the control's expectation (the small module: no row) it refuses the plant by name
         self.assertIn("planted", str(cm.exception))
         c2 = Census(small + (self._plant("plant.py", self.PLANT.replace("@DECL@", "")),), DEFAULT_SOURCES)
         self.assertEqual([(dc.base, dc.lineno, why) for dc, why in c2.explicit_violations if dc.base == "plant.py"],
@@ -1528,8 +1615,9 @@ class EnvRowsPopulation(unittest.TestCase):
                       "as main's two rows did at the merged head; the violation is what says it is not bounded")
         self.assertEqual(c.content_identities(), [("through", "UNBOUNDED:env (%s): planted %s", False), ("beside", "FMT", False)],
                          "the two planted rows, in line order, are the only content rows over the small module")
+        self._assert_pin(c, expected=[("through", "UNBOUNDED:env (%s): planted %s", False), ("beside", "FMT", False)])   # taken as the two added rows
         with self.assertRaises(AssertionError) as cm:
-            self._assert_pin(c)
+            self._assert_pin(c, expected=[])
         self.assertIn("through", str(cm.exception), "the identity pin reds, naming the first differing row (unittest elides the rest)")
 
     def test_a_door_whose_binding_the_walk_cannot_follow_fails_loudly(self):
@@ -1622,18 +1710,31 @@ class EnvRowsPopulation(unittest.TestCase):
                          "the conduit's problem=True callers at round 7's head, none passing ring_text (the reason's 'each rings its whole line')")
         # The conduit's keyed sentence is a contract over its problem=True callers (round 8 of the review, 2026-09-21, kernel-2
         # and extra7-2: round 7 had weakened it to "should count" to fit five unkeyed sites; the sentence is restored and
-        # the five sites keyed, by site label, session and exception class). Every True caller passes a key= tuple whose
-        # first element is a fixed label, read off the bound arguments; the execution half (twelve calls, one ring row) is
-        # LogQuietlyAtRuntime's.
-        label = lambda b: (b["key"].elts[0].value if isinstance(b.get("key"), ast.Tuple) and b["key"].elts
-                           and isinstance(b["key"].elts[0], ast.Constant) else None)
-        self.assertEqual(sorted((caller.name, label(b)) for caller, _call, b in rows if _true_road(b.get("problem"))),
-                         [("_arm_after_relaunch_slot", "relaunch-slot-wait-failed"), ("_note_unknown_bg_type", "bg-type-unknown"),
-                          ("_note_unreadable_bg_list", "bg-list-unreadable"), ("_reconcile_seeded_with_report", "bg-mirror-write-failed"),
-                          ("_reconcile_seeded_with_report", "report-reconcile-failed"), ("_reconcile_seeded_work", "seeded-reconcile-failed"),
-                          ("_served_by_connect", "reconnect-reg-flag-clear-failed")],
-                         "every problem=True caller of the conduit passes key=(a fixed site label, ...): the conduit's rule, keyed so a "
-                         "recurring shape counts on one ring row")
+        # the five sites keyed, by site label, session and exception class). Every True caller passes key= as its WHOLE
+        # declared shape, read off the bound arguments as source text (round 9, extra10-2: round 8 read the label alone, so a
+        # sid or an exception class dropped from a key changed what the ring does, two sessions' failures folding onto one
+        # row, and reds nothing; and regression-1: a missing key read as None and sorted beside strings, so the defect the
+        # pin guards failed with a TypeError inside sorted() instead of naming the site): the five failure reports (label,
+        # self.sid, type(e).__name__), the two bounded-value rows (label, value). The label is TOTAL: a site with no key=
+        # reads "<no key=>" and one whose key the census bound to nothing it can unparse reads "<key the census cannot
+        # read>", strings both, so the diff names the drifted site. The execution half (twelve calls, one ring row keyed
+        # by the triple) is LogQuietlyAtRuntime's.
+        def _key_shape(b):
+            v = b.get("key")
+            if v is None or (isinstance(v, ast.Constant) and v.value is None):
+                return "<no key=>"
+            return ast.unparse(v) if isinstance(v, ast.AST) else "<key the census cannot read>"
+        self.assertEqual(sorted((caller.name, _key_shape(b)) for caller, _call, b in rows if _true_road(b.get("problem"))),
+                         [("_arm_after_relaunch_slot", "('relaunch-slot-wait-failed', self.sid, type(e).__name__)"),
+                          ("_note_unknown_bg_type", "('bg-type-unknown', text)"),
+                          ("_note_unreadable_bg_list", "('bg-list-unreadable', shape)"),
+                          ("_reconcile_seeded_with_report", "('bg-mirror-write-failed', self.sid, type(e).__name__)"),
+                          ("_reconcile_seeded_with_report", "('report-reconcile-failed', self.sid, type(e).__name__)"),
+                          ("_reconcile_seeded_work", "('seeded-reconcile-failed', self.sid, type(e).__name__)"),
+                          ("_served_by_connect", "('reconnect-reg-flag-clear-failed', self.sid, type(e).__name__)")],
+                         "every problem=True caller of the conduit passes key= as its whole declared shape: the five failure reports "
+                         "keyed (label, self.sid, type(e).__name__) so a recurring shape counts on one ring row PER SESSION and per "
+                         "exception class, the two bounded-value rows (label, value)")
         for dc in filed:
             i, block = dc.lineno - 2, []
             while i >= 0 and lines[i].strip().startswith("#"):
@@ -1794,6 +1895,38 @@ except BaseException as e:
 print("wedged", type(exc).__name__)
 """
 
+# The class-end driver (round 9 of the review, correctness-2 and extra10-3): a pool of the class's shape holding a worker
+# that never returns and whose future NO test read (a test that failed mid-batch leaves its remaining futures unread), then
+# tearDownClass as the class ships it. With `pool.shutdown(wait=True)` there the call never returned (the driver printed its
+# "calling tearDownClass" line and nothing more until the test killed its process group at the wall-clock limit); with the
+# drop it returns at once and the workers read back as killed.
+WEDGED_TEARDOWN_DRIVER = r"""
+import json, sys, time
+sys.path.insert(0, %(here)r)
+import test_session_env as m
+cls = m.EnvRowsCensusBlindSpots
+pool = cls._new_pool()
+cls._pool = pool
+manager = pool._executor_manager_thread                   # read before shutdown() nulls it
+wedged = pool.submit(time.sleep, %(sleep)r)               # never read: the unread future a failed test leaves behind
+time.sleep(0.5)                                            # the executor spawns a worker for the submit; read the table settled
+procs = list(pool._processes.values())
+print("calling tearDownClass", flush=True)
+t0 = time.monotonic()
+cls.tearDownClass()
+print("teardown returned in", round(time.monotonic() - t0, 1), "s")
+for p in procs:
+    p.join(%(join)r)
+manager.join(%(join)r)
+print("workers", json.dumps([[p.pid, p.exitcode] for p in procs]))
+print("manager alive", manager.is_alive())
+try:
+    exc = wedged.exception(timeout=%(join)r)
+except BaseException as e:
+    exc = e
+print("wedged", type(exc).__name__)
+"""
+
 
 class EnvRowsCensusBlindSpots(unittest.TestCase):
     """The round-6 blind-pin lens planted a tenth env-carrying ring row 69 ways and the census passed 13 of them at its
@@ -1841,7 +1974,15 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
     def tearDownClass(cls):
         pool, cls._pool = cls._pool, None
         if pool is not None:
-            pool.shutdown(wait=True)
+            # the DROP, never a join (round 9 of the review, correctness-2 and extra10-3): round 7's rule that the drop must not
+            # join reached _pool_lost and _new_pool's start arm and not this site, so a worker wedged on a batch result no test
+            # read (a test that failed mid-batch leaves the rest of its futures unread) held the pytest process open at the
+            # class's end; pytest-timeout's per-test timer is cancelled by the very failure that leaves the future unread, so
+            # CI's 600 s bound never fired and the job ran to its 25-minute ceiling as cancelled, not red. Nothing is lost by
+            # the kill: a construction is recorded in this process when its result is READ (_take absorbs the worker's records
+            # at unpickle), so an unread future contributes no record on either road and the two checks below read the same.
+            # Every join on this class's pool is bounded or a drop (WEDGED_TEARDOWN_DRIVER pins this one).
+            cls._drop_pool(pool)
         problems = []
         for check in (cls._assert_each_unchanged_census_was_computed_once_and_reads_as_built,
                       cls._assert_constructions_equal_distinct_inputs_plus_declared_comparisons):
@@ -1863,8 +2004,9 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         number exactly ONE where anything in this process read the input and zero where nothing did; a subclass's
         construction (Sweeping's over the real pair) is a different computation and is counted under its own class, and
         every sabotaged copy and synthetic plant is a different input, counted under its own identity; (2) every census
-        the door holds digests as it did when the door froze and handed it out, so no pin changed it, in whatever order
-        the pins ran. Runs here, in tearDownClass, which unittest and pytest alike run after the class's last test in this
+        the door holds digests as it did when the door froze and handed it out, over what census_digest covers (summary(),
+        the tables outside it and the structural rosters a population pin reads; its docstring lists them and names the
+        slots outside), so no pin changed one of those, in whatever order the pins ran. Runs here, in tearDownClass, which unittest and pytest alike run after the class's last test in this
         process: under pytest serial the whole class; under pytest-xdist (-n 3, the sweep's shape), where a class may
         split across workers, once per worker for that worker's share, so the property there is at most one construction
         per worker per input and exactly one where that worker read it, which is what `reads` makes the expectation say.
@@ -2231,18 +2373,24 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
     def _census(self, *paths):
         return self._take(self._censuses([self._spec(*paths)])[0])
 
-    def _assert_tenth_found(self, c, kind, expect_failures=()):
-        """The planted row is a CONTENT row (found, env-tainted, its head read) and the pin's identity assertion
-        refuses on it by name."""
-        self.assertEqual([f[:3] for f in c.failures], list(expect_failures))
+    def _assert_tenth_found(self, c, kind):
+        """The planted row is a CONTENT row (found, env-tainted, its head read) and the population pin's ONE identity
+        equality is sensitive to it as an ADDED row (round 9 of the review, tests-2): the pin takes the census under the
+        control's identities plus the planted row, and refuses it by name under the control's identities alone. Until round 9
+        the closing arm asserted a refusal under the tree's ROWS, which every small-module census earns, plant or no plant, so
+        the loudness proof the 22 plants share held for the wrong reason (round 8's small-input move). `expect_failures`
+        went with it: no arm passed one, and the pin's own first assertion is that the derivation had none."""
+        self.assertEqual(list(c.failures), [])
         self.assertIn(self.TENTH_ID, c.content_identities())
         self.assertEqual(len(c.content_rows), self.BASE + 1)
         found = [dc for dc in c.door_calls if dc.owner == "_tenth"]
         self.assertEqual([(dc.kind, sorted(dc.taint), dc.heads, dc.ring_formats) for dc in found],
                          [(kind, ["env"], ["env (%s): tenth %s"], ["TENTH_RING"])])
         self.assertEqual([w for dc, w in c.explicit_violations if dc.owner == "_tenth"], [])
+        control = list(self.small.content_identities())                                  # the small module's own rows: none
+        EnvRowsPopulation._assert_pin(self, c, expected=control + [self.TENTH_ID])        # the plant is the one ADDED row, and the pin takes it
         with self.assertRaises(AssertionError) as cm:
-            EnvRowsPopulation._assert_pin(self, c)
+            EnvRowsPopulation._assert_pin(self, c, expected=control)                      # under the control's expectation it refuses the added row by name
         self.assertIn("_tenth", str(cm.exception))
 
     def test_a_door_aliased_at_module_scope_is_found_and_an_uncalled_one_is_a_failure(self):
@@ -3703,7 +3851,7 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         self._pool_or_fail()
         spec = self._pool_specs()[0]
         pool = cls._new_pool()
-        self.addCleanup(pool.shutdown, wait=True)          # after the drop: joins a manager thread that has finished
+        self.addCleanup(type(self)._drop_pool, pool)       # the DROP (round 9): a join here waited out the sleeper if anything between the submit and the drop raised
         wedged = pool.submit(time.sleep, 900.0)             # past the bound by far; the drop kills it, nothing waits for it
         time.sleep(0.5)                                     # the executor spawns a worker for the submit; read the table settled
         workers = list(pool._processes.values())
@@ -3788,7 +3936,13 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         a pool broken under a batch) the pin FAILS naming the reason; with the pool lost for the declared environment
         limitation, the stdlib's NotImplementedError from _check_system_limits in either of its two spellings, it skips
         naming that; a reason spelled like the limitation but not about semaphores is no limitation and fails. With the
-        pool up, the pool is returned. Red at round 7's head: every lost pool skipped."""
+        pool up, the pool is returned. The exception is CAPTURED inside the patch context and judged after it (round 9 of
+        the review, tests-1): with `assertRaises(AssertionError)` a SkipTest raised by a `_pool_or_fail` that skipped on
+        every reason escaped the assertRaises, the enclosing subTest recorded a SKIP, and the run exited 0, so the guard
+        over the very decision it guards reported success; a skipping pin is worse than a missing one. Red with the skip put
+        back on every reason (the condition in `_pool_or_fail` replaced by `if True:`): 4 failed, 1 passed, 2 subtests
+        passed; with the limitation widened (the semaphore conjunct dropped): 1 failed, 1 passed, 5 subtests passed; the
+        round-8 shape passed both (1 passed, 4 skipped; 1 passed, 1 skipped)."""
         cls = type(self)
         real = ["the census pool could not start: RuntimeError: planted: a start failure the pool's own failures do not name",
                 "the census pool failed under a batch of 2: BrokenProcessPool: planted: every worker is gone",
@@ -3796,11 +3950,16 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
                 "the census pool could not start: NotImplementedError: planted: a refusal that is not the stdlib's"]
         for reason in real:
             with self.subTest(fails=reason[:60]):
+                raised = None
                 with mock.patch.object(cls, "_pool", None), mock.patch.object(cls, "_pool_reason", reason):
-                    with self.assertRaises(AssertionError) as cm:
+                    try:
                         self._pool_or_fail()
-                self.assertNotIsInstance(cm.exception, unittest.SkipTest)
-                self.assertIn(reason, str(cm.exception), "the failure names the reason")
+                    except Exception as e:      # captured here: an escaping SkipTest marks the subtest SKIPPED, which reports as success
+                        raised = e
+                self.assertIsInstance(raised, AssertionError,
+                                      "the pin FAILS on a pool lost for this reason (never skips, never returns): %r" % (raised,))
+                self.assertNotIsInstance(raised, unittest.SkipTest)   # implied by the line above; the statement of what round 8's shape let through
+                self.assertIn(reason, str(raised), "the failure names the reason")
         limitation = ["the census pool could not start: NotImplementedError: This Python build lacks multiprocessing.synchronize, "
                       "usually due to named semaphores being unavailable on this platform.",
                       "the census pool could not start: NotImplementedError: system provides too few semaphores (32 available, 256 necessary)"]
@@ -3861,6 +4020,87 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
                                  # one worker's start, a 0.5 s bound, one census built here, a 15 s join at most); the
                                  # planted sleep is 900 s, so an exit within the limit means the drop did not wait for it
 
+    def test_the_class_end_digest_covers_the_structural_rosters_a_population_pin_reads(self):
+        """extra7-1 (round 9 of the review): the freeze's class-end backstop claimed that a change by any pin, in any order,
+        is red at the end of the class, while census_digest covered summary() and the tables outside it and NOT the
+        structural rosters: Mod.fns (what the population pin reads for CREDENTIALS_FNS), Fn.calls, callees, callers and
+        ident_consts, so a base-class `list.append` on one of them (the deliberate act FrozenList's docstring names) changed
+        what the next pin read and the class-end check reported nothing. The digest covers the five by value now, and its
+        docstring and the three claims name what is outside it. Executed on a frozen census over a fresh copy of the small
+        module (a distinct input, read through the census() door so it is frozen and carries digest_at_birth, as the door's
+        censuses do): each roster is a FrozenList whose own append refuses; a base-class append on it changes the digest,
+        and the pop restores it. Red at the round-8 head: the digest was byte-identical across all five."""
+        path = self._copy(lambda src: src + "\n# a copy for the digest pin\n")
+        c = erc.census((path,))
+        self.assertIsInstance(c, erc.FrozenCensus)
+        d0 = c.digest_at_birth
+        self.assertEqual(erc.census_digest(c), d0, "two reads of an unchanged census digest the same")
+        mod = c.mods[os.path.realpath(path)]
+        fn = c.writer
+        some_call = next(call for f in c.all_fns for call in f.calls)
+        self.assertIn(id(some_call), c.callees)
+        self.assertIn(fn, c.callers, "the writer has callers in the small module")
+        self.assertTrue(c.ident_consts, "the small module spells identifiers as strings")
+        rosters = {"Mod.fns": (mod.fns, fn), "Fn.calls": (fn.calls, some_call), "callees": (c.callees[id(some_call)], (fn, "self")),
+                   "callers": (c.callers[fn], (some_call, fn, "self")), "ident_consts": (c.ident_consts, c.ident_consts[0])}
+        for label, (roster, item) in rosters.items():
+            with self.subTest(roster=label):
+                self.assertIsInstance(roster, erc.FrozenList, "%s is a frozen list: its own append refuses, so the base-class call is the deliberate act" % label)
+                with self.assertRaises(TypeError):
+                    roster.append(item)
+                list.append(roster, item)
+                try:
+                    self.assertNotEqual(erc.census_digest(c), d0, "%s: a base-class append on the frozen roster changes the class-end digest" % label)
+                finally:
+                    list.pop(roster)
+                self.assertEqual(erc.census_digest(c), d0, "%s: restored, the digest is the birth digest again" % label)
+
+    RING_WRITER_NAMED_LOG = ("class Ring:\n"
+                             "    def __init__(self):\n"
+                             "        self._problems = []\n"
+                             "    def log(self, m, problem=None, key=None, ring_text=None):\n"
+                             "        self._problems.append({'text': m})\n"
+                             "    def problems(self):\n"
+                             "        return list(self._problems)\n"
+                             "def relay(rec, sess):\n"
+                             "    rec.log('env (%s): relayed %s' % (sess.name, ', '.join(sess.env_vars)), problem=True)\n")
+    COLLIDING_CONDUIT = ("class Recorder:\n"
+                         "    def %s(self, m, problem=None, ring_text=None):\n"
+                         "        BACKEND._log(m, problem=problem, ring_text=ring_text)\n"
+                         "def caller(rec, sess):\n"
+                         "    rec.%s('env (%%s): planted %%s' %% (sess.name, ', '.join(sess.env_vars)), problem=True)\n")
+
+    def test_a_door_spelled_like_a_stdlib_method_is_rescued_by_its_name_and_a_colliding_conduit_is_loud(self):
+        """fresh-1 (round 9 of the review): the COMMON_METHODS filter drops the call edges of a CONDUIT whose bare name is a
+        stdlib method's and which is called on a receiver the walk cannot type: the site files no door call, the inner
+        call loses its taint, no failure row. Round 8 rescued the writer's spelling by name (`COMMON_METHODS.discard("_log")`)
+        and left `log`, a logging.Logger method and the parameter road's own handle, filtered. Two pins on synthetic inputs:
+        (1) the rescue is DERIVED from the door names the census knows, so a ring writer named `log` called on an untyped
+        receiver resolves (the writer's own name is a handle); (2) a conduit whose bare name collides and is no handle is a
+        census FAILURE naming it (conduit-name-common), where the same conduit under a plain name is followed with its
+        taint. Red at the round-8 head: (1) the untyped call resolved to nothing (callers of the writer: none); (2) failures
+        [] and the colliding conduit's site absent, silently."""
+        c = Census((self._plant("ring_log.py", self.RING_WRITER_NAMED_LOG),), DEFAULT_SOURCES)
+        self.assertEqual((c.door, sorted(c.door_names)), ("log", ["log"]), "the door's own name is its handle, derived")
+        self.assertIn("log", erc.COMMON_METHODS, "and it is a stdlib method name, which is what the rescue is for")
+        self.assertEqual(sorted(caller.qual for _call, caller, _via in c.callers.get(c.writer, [])), ["relay"],
+                         "the untyped receiver's call resolves to the door: its name is a handle, so COMMON_METHODS does not filter it")
+        self.assertEqual([(dc.owner, dc.kind) for dc in c.door_calls], [("relay", "typed")])
+        self.assertEqual(list(c.failures), [])
+        small = small_module_files()
+        loud = Census(small + (self._plant("plant_common.py", self.COLLIDING_CONDUIT % ("log", "log")),), DEFAULT_SOURCES)
+        self.assertEqual(sorted(loud.door_names), ["_log"], "the small module's handles: the writer's name alone (no parameter of it takes the door)")
+        self.assertEqual([(k, b, ln) for k, b, ln, _t in loud.failures], [("conduit-name-common", "plant_common.py", 2)],
+                         "the colliding conduit is named as a failure, by site")
+        self.assertIn("Recorder.log is a conduit whose bare name 'log' is a stdlib method name", loud.failures[0][3])
+        self.assertEqual([dc.lineno for dc in loud.door_calls if dc.base == "plant_common.py" and dc.owner == "caller"], [],
+                         "the colliding conduit's site is unseen, which is why the failure must be loud")
+        plain = Census(small + (self._plant("plant_plain.py", self.COLLIDING_CONDUIT % ("noted", "noted")),), DEFAULT_SOURCES)
+        self.assertEqual(list(plain.failures), [])
+        self.assertEqual([(dc.lineno, dc.owner, dc.kind, sorted(dc.taint)) for dc in plain.door_calls if dc.base == "plant_plain.py"],
+                         [(3, "noted", "typed", ["env"]), (5, "caller", "conduit:Recorder.noted", ["env"])],
+                         "the same conduit under a plain name: its inner door call and its site, both env-tainted")
+
     def test_a_worker_that_never_returns_does_not_hold_the_interpreters_exit_once_the_pool_is_dropped(self):
         """The bound BOUNDS (round 8 of the review, 2026-09-21, extra6-1): a worker that never returns within the run, a
         read that gives up at the bound, the pool dropped, and then the interpreter's EXIT, which is where the round-7
@@ -3899,6 +4139,46 @@ class EnvRowsCensusBlindSpots(unittest.TestCase):
         self.assertIn("manager alive False", lines, "the executor's manager thread finished: the reaping is done, the exit has nothing to join")
         self.assertIn("wedged BrokenProcessPool", lines, "the sleeper's future ended broken, never with a result")
         self.assertIn("RuntimeWarning", err, "the degradation announced itself in the driver too")
+        self.assertLess(elapsed, self.WEDGED_EXIT_LIMIT)
+
+    def test_a_worker_wedged_on_a_result_no_test_read_does_not_hold_the_class_end(self):
+        """The third join (round 9 of the review, correctness-2 and extra10-3): round 7's drop rule reached _pool_lost and
+        _new_pool's start arm, and tearDownClass still joined the pool with wait=True, so a worker wedged on a batch result
+        no test read (a test that failed mid-batch leaves the rest of its futures unread; batches are read lazily) held the
+        pytest process open at the class's end, and pytest-timeout's per-test timer, cancelled by the failure that left the
+        future unread, never bounded it. Run as a driver in a subprocess with a wall-clock limit (WEDGED_TEARDOWN_DRIVER:
+        a pool of this class's shape, a worker sleeping 900 s never read, then tearDownClass as the class ships it).
+        Asserted: the driver exits within WEDGED_EXIT_LIMIT with status 0; tearDownClass returned; every worker's exit
+        code reads back as SIGKILL's; the manager thread finished; the sleeper's future ended broken. Red at the round-8
+        head: the driver printed "calling tearDownClass" and did not exit; this test killed its process group and failed.
+        The population of joins on this class's pool, every one bounded or a drop: _new_pool's probe read
+        (POOL_START_TIMEOUT), _take's result read (POOL_READ_TIMEOUT), the sleeper pin's manager and worker joins and its
+        future read (30 s each), both drivers' joins (their `join` parameter), _drop_pool's shutdown(wait=False) at
+        _pool_lost, _new_pool's start arm, the sleeper pin's cleanup and here."""
+        self._pool_or_fail()
+        driver = WEDGED_TEARDOWN_DRIVER % {"here": HERE, "sleep": 900.0, "join": 15.0}
+        t0 = time.monotonic()
+        proc = subprocess.Popen([sys.executable, "-c", driver], cwd=HERE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True, start_new_session=True)
+        try:
+            out, err = proc.communicate(timeout=self.WEDGED_EXIT_LIMIT)
+        except subprocess.TimeoutExpired:
+            os.killpg(proc.pid, signal.SIGKILL)     # the driver's own session: it and the spawn workers it started, nothing else
+            out, err = proc.communicate()
+            self.fail("the driver did not exit within %g s: tearDownClass still joins the wedged worker\nstdout: %s\nstderr: %s"
+                      % (self.WEDGED_EXIT_LIMIT, out[-2000:], err[-2000:]))
+        elapsed = time.monotonic() - t0
+        self.assertEqual(proc.returncode, 0, "the driver exited cleanly: %s" % err[-3000:])
+        lines = out.splitlines()
+        self.assertIn("calling tearDownClass", lines, out)
+        returned = [ln for ln in lines if ln.startswith("teardown returned in ")]
+        self.assertEqual(len(returned), 1, "tearDownClass returned: %s" % out)
+        workers = json.loads([ln for ln in lines if ln.startswith("workers ")][0][len("workers "):])
+        self.assertTrue(workers, "the pool had a worker for the sleeper")
+        self.assertEqual({code for _pid, code in workers}, {-signal.SIGKILL},
+                         "every worker was killed (SIGKILL) and reaped (its exit code read back): %r" % (workers,))
+        self.assertIn("manager alive False", lines, "the executor's manager thread finished: the exit has nothing to join")
+        self.assertIn("wedged BrokenProcessPool", lines, "the sleeper's future ended broken, never with a result")
         self.assertLess(elapsed, self.WEDGED_EXIT_LIMIT)
 
 
@@ -4414,9 +4694,13 @@ class DrivePlumbing(unittest.TestCase):
         self.assertIn("def _set_env_or_park(be, sid, value):", src)
         self.assertIn('_gate_or_park(sid, ("env", value))', src)   # parks on the gate, or hands over (2026-09-05)
         self.assertIn('elif op[0] == "env":', src)
-        self.assertIn("refused = be.set_env(sid, op[1]) is False", src,
-                      "the drain reads the verdict (review round 1 of the env-pick door, 2026-09-18); the refusal "
-                      "itself is pinned by execution in tests/test_kernel_meta_command_gate.py")
+        self.assertIn('refused = (be.set_env(sid, op[1]) is False) if hasattr(be, "set_env") else True', src,
+                      "the drain reads the verdict (review round 1 of the env-pick door, 2026-09-18) and a backend without "
+                      "set_env is a refusal, never a raise (round 9, kernel-1 and extra9-1); a source pin on where the arm "
+                      "lives: the refusal, the frame and the queue surviving behind the pick are pinned by execution in "
+                      "tests/test_kernel_meta_command_gate.py (RefusalReachesTheClient's env pins)")
+        self.assertIn("    def set_env(self, sid, value):\n", src.split("class _UnownedBackend(sb.SessionBackend):", 1)[1],
+                      "_UnownedBackend answers set_env beside its other setters (round 9); its verdict is pinned by execution there too")
         self.assertIn('("model", "effort", "fast", "env", "cwd")', src,
                        "a repeat env pick REPLACES the earlier parked one in place, like model/effort (and a move)")
 
@@ -4802,6 +5086,21 @@ class CredentialShapedNamesAtTheDoor(unittest.TestCase):
         with self.assertRaises(RuntimeError, msg="the boot check refuses the road the first wording advised"):
             sb._cred.check_boot_environment(path=absent, environ={"OP_ACCOUNT": "acct"})
         sb._cred.check_boot_environment(path=absent, environ={"NOTES_API_TOKEN": "x"})   # a suffix name boots
+        # The boot refusal each road names is for the spelling 1Password uses; this door folds case and the boot check does
+        # not (is_op_env_name is exact), and every road that names the refusal says so (round 9 of the review,
+        # correctness-1: the op road told a user whose pick spelled a 1Password name in lower case that romp refuses it at
+        # boot, which for that spelling it does not). Executed: the folded spellings this door refuses BOOT.
+        for road, where in ((op, "the op road"), (mixed, "the mixed road")):
+            self.assertIn("as 1Password spells it", road, "%s names the spelling the boot check refuses" % where)
+            self.assertIn("this door folds case, the boot check does not", road, "%s says where the two checks differ" % where)
+        for k in ("op", "mixed"):
+            self.assertIn("as op spells", sb._cred.CREDENTIAL_RING_ROADS[k], "the %s ring road names the spelling" % k)
+            self.assertIn("door folds case", sb._cred.CREDENTIAL_RING_ROADS[k], "the %s ring road says the two checks differ" % k)
+        for folded in ("op_account", "Op_Session_Notes", "op_service_account_token"):
+            sb._cred.check_boot_environment(path=absent, environ={folded: "x"})     # returns: not refused at boot
+            self.assertTrue(sb.env_request_error({**PLAIN, folded: _secret_value("v")}), "%s is refused at this door" % folded)
+            self.assertTrue(sb._cred.is_credential_env_name(folded))
+            self.assertFalse(sb._cred.is_op_env_name(folded), "the boot check's classifier reads %s as spelled" % folded)
 
 
 class CredentialShapedNamesEndToEnd(_OptionsBackend):

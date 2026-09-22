@@ -193,8 +193,11 @@ def credential_env_refusal(names) -> str:
 
     Where the value belongs is said by HALF (review round 2 of the env-pick door, 2026-09-19): the first wording
     sent every refused name to the process environment romp's service starts with, and for the 1Password half
-    that road is the one check_boot_environment refuses at startup (romp-manager exits 1 on it), so an operator
-    following the printed advice for an OP_* name took the deployment down. A suffix name's value goes in that
+    that road is the one check_boot_environment refuses at startup for a name as 1Password spells it (the manager
+    exits 1 on it), so an operator following the printed advice for an OP_* name took the deployment down. The two
+    checks differ on spelling (this door folds case, the boot check does not), so a road that names the boot refusal
+    names that spelling and says so (round 9 of fork PR #781's review, correctness-1: the op road told a user whose
+    pick spelled a 1Password name in lower case that romp refuses it at boot, which for that spelling it does not). A suffix name's value goes in that
     environment, or a secret manager in the session's shells; a 1Password name's value goes where the boot
     check's own message sends it, a file of the helper's own, or the session's shells; a mixed pick hears
     both, each scoped to its half (_env_roads)."""
@@ -207,17 +210,22 @@ def credential_env_refusal(names) -> str:
 def _env_roads(names) -> str:
     """Where a refused pick's values belong, scoped to the half of the shape rule each name matched (review round
     2 of the env-pick door, 2026-09-19): the process-environment road is named for the suffix half only, since
-    check_boot_environment refuses 1Password's names there at startup."""
+    check_boot_environment refuses 1Password's names there at startup, as 1Password spells them (is_op_env_name is
+    exact) while this door folds case, so a road that names the boot refusal names that spelling and says the two
+    checks differ (round 9 of fork PR #781's review, correctness-1); a folded spelling this door refuses would boot,
+    and the road does not tell its user otherwise."""
     op = any(is_op_env_name(str(n).upper()) for n in names)
     suffix = any(not is_op_env_name(str(n).upper()) for n in names)
     if op and suffix:
         # both halves named, so the fold clause rides here too (closing review of the env-pick door, 2026-09-19: this
         # was the one statement of the rule naming both halves without it)
-        return ("A _API_KEY or _TOKEN value goes in romp's process environment; a 1Password name is refused there at "
-                "boot and a helper reads it from its own file, or a shell loads it; either shape is matched in any letter case")
+        return ("A _API_KEY or _TOKEN value goes in romp's process environment; a 1Password name is refused there at boot as "
+                "1Password spells it (this door folds case, the boot check does not) and a helper reads it from its own file, "
+                "or a shell loads it; either shape is matched in any letter case")
     if op:
-        return ("romp refuses a 1Password name in its process environment at boot (it no longer runs op): a helper "
-                "reads the value from its own file, or the session's shells load it from a secret manager")
+        return ("romp refuses a 1Password name in its process environment at boot as 1Password spells it (this door folds "
+                "case, the boot check does not; it no longer runs op): a helper reads the value from its own file, or the "
+                "session's shells load it from a secret manager")
     return ("Put such a value in the process environment romp's service starts with, which every session inherits, "
             "or load it from a secret manager in the session's shells")
 
@@ -285,8 +293,8 @@ def first_and_count(names, budget: int) -> str:
 # The refusal's error-centre form: the named variable and the count, is/are, and the road for the half matched.
 CREDENTIAL_RING_FORMAT = "%s %s credential-shaped: the pick was not saved. %s"
 CREDENTIAL_RING_ROADS = {
-    "mixed": "Suffix values go in the process environment; a 1Password name is refused there at boot, a helper's file holds it",
-    "op": "A 1Password name is refused in the process environment at boot too; a helper reads it from its own file",
+    "mixed": "Suffix values go in the process environment; OP_* names (as op spells them) are refused at boot; door folds case",
+    "op": "An OP_* name (as op spells it) is refused in the process environment at boot; door folds case; a helper's file",
     "suffix": "Such a value belongs in the process environment, not in a per-session env",
 }
 
@@ -302,7 +310,10 @@ def credential_env_ring_text(names) -> str:
     head with the session name cut to its own budget (sdk_backend.REFUSAL_RING_HEAD); tests/test_session_env.py
     computes the worst case from those pieces. The full sentence, every name whole, stays in the kernel log. Scoped
     by half like the sentence (review round 2, 2026-09-19): a 1Password name is not sent to the process environment,
-    which refuses it at boot."""
+    which refuses it at boot as 1Password spells it (the door folds case, the boot check does not, and the road says
+    so; round 9 of fork PR #781's review). The mixed road has one character of headroom under the cap (the worst-case
+    pin computes it), so it says the spelling and the disagreement and leaves the helper's file to the op road and the
+    kernel log's whole sentence."""
     names = sorted(names)
     op = any(is_op_env_name(str(n).upper()) for n in names)
     suffix = any(not is_op_env_name(str(n).upper()) for n in names)
