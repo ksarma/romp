@@ -832,7 +832,14 @@ function pyNormalise(src: string, firstLine: number): { text: string; inStr: boo
 // each is NAMED, counted over the body and asserted absent, the way tests/test_card_boards.py's _other_card_forms
 // enumerates what its card census cannot read (review round 3, 2026-09-21: both refuters defeated a wider regex with a
 // named constant, `c["app"] in NOTE_APPS`, which no pattern over literals can read; the enumeration turns it red instead of
-// invisible). Keyed on the KEY, whatever expression reads it, so a renamed loop variable is still read.
+// invisible). Keyed on the KEY written as a string literal, however spaced or wrapped (a subscript or a .get with any
+// whitespace around the literal; a subscript wrapped over a line, which pyNormalise folds to the spaced form), so a
+// renamed loop variable is still read. A key held in a NAME (a subscript by a constant, `c[APP_KEY]`; a .get of a
+// variable, `c.get(key)`) is outside this census and disclosed, not detected (review round 5, 2026-09-21: a detector
+// keyed on any name would fire on every read of _push's other keys, and quieting it takes a spelling allowlist, the
+// class this fold was ruled on); the one road to that shape from inside the body, a local name bound to the literal
+// (`KEY = "app"`), is scanned for below and asserted absent, while a key passed in as a parameter or held in a dict
+// stays disclosed.
 const READ_TUPLE = "a tuple of string literals (the audience, read)";
 const READ_SINGLE = "a singleton, == a string literal (the audience, read)";
 const READ_TEXT = "a value formatted into text (a % format's operand, a .format argument, a field inside a string literal): no audience";
@@ -846,15 +853,15 @@ const OTHER_FORMS = [
   "the read bound to a name (an assignment or a walrus)",
   "a read in any other position (a call's argument, a returned value, a comparison's right operand, a yield): not followed",
 ] as const;
-type Audiences = { tuples: string[][]; singles: string[]; text: string[]; other: Map<string, string[]>; reads: number };
+type Audiences = { tuples: string[][]; singles: string[]; text: string[]; other: Map<string, string[]>; reads: number; bound: string[] };
 function pushAudiences(kernel: string): Audiences {
   const at = kernel.indexOf("\ndef _push(targets");
   assert.ok(at >= 0, "kernel.py's _push(targets, ...) is the pusher's send loop");
   const body = kernel.slice(at + 1, kernel.indexOf("\ndef ", at + 1));   // _push's own body, up to the next top-level def
   const { text, inStr, encl, line } = pyNormalise(body, kernel.slice(0, at + 1).split("\n").length);
-  const a: Audiences = { tuples: [], singles: [], text: [], other: new Map(OTHER_FORMS.map((f) => [f, []])), reads: 0 };
+  const a: Audiences = { tuples: [], singles: [], text: [], other: new Map(OTHER_FORMS.map((f) => [f, []])), reads: 0, bound: [] };
   const lit = /(["'])([^"'\\]*)\1/g;
-  for (const m of text.matchAll(/\[(["'])app\1\]|\.get\((["'])app\2/g)) {   // the KEY, whatever reads it
+  for (const m of text.matchAll(/\[\s*(["'])app\1\s*\]|\.get\(\s*(["'])app\2/g)) {   // the KEY as a literal, however spaced (a wrapped subscript is one space here)
     const p = m.index!;
     let e = p + m[0].length;
     a.reads++;
@@ -893,10 +900,20 @@ function pushAudiences(kernel: string): Audiences {
     if (enc >= 0 && text[enc] === "(" && /(?:(["'])\s*%|\.format)\s*$/.test(text.slice(0, enc))) { a.text.push(where); continue; }
     other(OTHER_FORMS[7]);
   }
+  // the one road from inside the body to a key held in a name: a local name bound to the literal (an assignment, an
+  // annotated assignment, a walrus, a parameter default), listed with its statement so the census case can assert none.
+  // A comparison (`== "app"`) has no name before its `=`; a literal inside a string (a docstring's prose) is skipped.
+  for (const m of text.matchAll(/(?:^|[\s(,])[A-Za-z_]\w*\s*(?::\s*[\w\[\], .]+)?\s*:?=\s*(["'])app\1/gm)) {
+    const p = m.index! + m[0].search(/[A-Za-z_]/);
+    if (inStr[p]) continue;
+    const ls = text.lastIndexOf("\n", p) + 1;
+    const le = text.indexOf("\n", p);
+    a.bound.push("kernel.py:" + line[p] + " " + text.slice(ls, le < 0 ? text.length : le).trim().slice(0, 120));
+  }
   return a;
 }
 
-test("every app the kernel's _push addresses is a pushed-channel pane here, on the channel its audience names: the roster is derived from every read of the app key in _push's body (a tuple of string literals however wrapped or spaced, a singleton of any name, or a value formatted into text), every other form is named and asserted absent, so a pane added to any of _push's audiences in any spelling reads red here, in the roster or as a named form, and a member _push never addresses reads red (review rounds 1 to 3, 2026-09-21)", async () => {
+test("every app the kernel's _push addresses is a pushed-channel pane here, on the channel its audience names: the roster is derived from every read of the app key written as a string literal in _push's body, however spaced or wrapped (a tuple of string literals however wrapped or spaced, a singleton of any name, or a value formatted into text), every other form is named and asserted absent, and no local name is bound to the literal, so a pane added to any of _push's audiences in any spelling of the key as a literal reads red here, in the roster or as a named form, a key held in a name is disclosed as outside, and a member _push never addresses reads red (review rounds 1 to 5, 2026-09-21)", async () => {
   // Keyed on the PRODUCER, not on the compliant sites: a set that names the panes it knows cannot see the one it misses,
   // and the project's four-name set missed this fork's fifth. Round 1 read the first `if c["app"] in (...):` alone, the
   // feed branch, so a pane added to the timeline's or the chat's audience (a `==` widened to a tuple) took no verdict.
@@ -918,11 +935,16 @@ test("every app the kernel's _push addresses is a pushed-channel pane here, on t
   // SCOPE: this census reads _push's body, the pusher's send loop. Senders outside it test the app key on their own
   // (_feed_first's cold first feed frame, _send_feed_now's ready-time frame, the tab strips of _push_session_now and
   // _confirm_close_now), each addressing a pane _push also addresses; none is read here, so a pane pushed ONLY by a route
-  // outside _push's body is outside this case's claim.
+  // outside _push's body is outside this case's claim. And the key is read as a STRING LITERAL, however spaced or wrapped:
+  // a read of the key held in a name (a subscript by a constant, c[APP_KEY]; a .get of a variable, c.get(key)) is outside
+  // it too, disclosed rather than detected (review round 5, 2026-09-21; the OTHER_FORMS comment says why no detector
+  // closes it); the one road to that shape from inside the body, a local name bound to the literal, is asserted absent here.
   const kernel = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
-  const { tuples, singles, other } = pushAudiences(kernel);
+  const { tuples, singles, other, bound } = pushAudiences(kernel);
   assert.deepEqual([...other].filter(([, hits]) => hits.length), [],
     "a read of the app key in _push's body the census cannot read, as [form, [kernel.py:line statement]]: write the audience as a tuple of string literals or a singleton, or teach pushAudiences the form and say what it reads");
+  assert.deepEqual(bound, [],
+    "a local name bound to the app literal in _push's body, as kernel.py:line statement: a read of the key through that name is one this census cannot see, so read the key as a literal, or name the shape in the SCOPE note above");
   assert.ok(tuples.length >= 1, "the send loop's `c[\"app\"] in (...)` feed branch is an audience");
   const union = new Set<string>([...tuples.flat(), ...singles]);
   assert.ok(union.has("feed") && union.has("waiting"), "the feed audience carries the feed pane and this fork's Waiting-on-you pane (" + [...union].sort().join(", ") + ")");
@@ -972,7 +994,7 @@ test("every app the kernel's _push addresses is a pushed-channel pane here, on t
   }
 });
 
-test("the census's premise, shown to hold for a reason: on a planted _push every named form the census cannot read fires exactly where planted, the roster reads the wrapped, unspaced, hyphenated, digit-carrying and continued spellings, a formatted value and a docstring's prose read as text, and every read lands in exactly one form (review round 3, 2026-09-21)", () => {
+test("the census's premise, shown to hold for a reason: on a planted _push every named form the census cannot read fires exactly where planted, the roster reads the wrapped, unspaced, hyphenated, digit-carrying and continued spellings and the key spaced inside its subscript or its .get call or wrapped over a line, a formatted value and a docstring's prose read as text, no binding is listed, and every read lands in exactly one form (review rounds 3 and 5, 2026-09-21)", () => {
   // the synthetic body, one read per tagged line: T a tuple the roster reads, S a singleton, X text, a number the
   // OTHER_FORMS index that must fire there, null a line with no read of its own (a wrapped tuple's continuation lines)
   const T = READ_TUPLE, S = READ_SINGLE, X = READ_TEXT;
@@ -988,6 +1010,12 @@ test("the census's premise, shown to hold for a reason: on a planted _push every
     ['    ok = any(c["app"] \\', S],
     ['             == "chat" for c in targets)', null],
     ["    tl = [t for t in targets if t.get('app') == 'timeline']", S],
+    ["    if c[ 'app' ] in (\"chat\", \"spaced\"):", T],           // the key spaced inside its subscript (review round 5)
+    ["        pass", null],
+    ['    sp = [t for t in targets if t.get( "app" ) == "feed"]', S],   // the key spaced inside its .get call
+    ["    if c[", T],                                              // the key wrapped over a line inside its subscript:
+    ['        "app"] in ("timeline", "wrapped"):', null],           // pyNormalise folds the newline to one space
+    ["        pass", null],
     ['    sys.stderr.write("push send %s (%s)\\n" % ("feed", c.get("app")))', X],
     ["    log(f\"push {c['app']}\")", X],
     ['    if c["app"] in NOTE_APPS:', 0],
@@ -1014,8 +1042,9 @@ test("the census's premise, shown to hold for a reason: on a planted _push every
   const a = pushAudiences(src);
   const lineOf = (w: string) => parseInt(w.slice("kernel.py:".length), 10);
   const linesTagged = (tag: string | number) => plant.flatMap(([, t], i) => (t === tag ? [i + 2] : []));   // the leading newline: plant[0] is line 2
-  assert.deepEqual(a.tuples, [["feed", "outline", "waiting-2", "x9"], ["timeline", "notes"]], T);
-  assert.deepEqual(a.singles, ["chat", "timeline"], S);
+  assert.deepEqual(a.tuples, [["feed", "outline", "waiting-2", "x9"], ["timeline", "notes"], ["chat", "spaced"], ["timeline", "wrapped"]], T);
+  assert.deepEqual(a.singles, ["chat", "timeline", "feed"], S);
+  assert.deepEqual(a.bound, [], "the plant binds no local name to the literal: OTHER_FORMS[6]'s `app = c[\"app\"]` binds a name to the READ, not to the key");
   assert.deepEqual(a.text.map(lineOf), linesTagged(X), X);
   OTHER_FORMS.forEach((form, k) => {
     assert.ok(linesTagged(k).length >= 1, form + ": planted at least once, so the detector is known to fire");
@@ -1026,6 +1055,35 @@ test("the census's premise, shown to hold for a reason: on a planted _push every
   assert.equal(a.reads, plant.filter(([, t]) => t !== null).length, "and the plant's reads were all seen");
   // the message a red carries names the form, the line and the statement
   assert.match(a.other.get(OTHER_FORMS[0])![0], /^kernel\.py:\d+ if c\["app"\] in NOTE_APPS:$/);
+});
+
+test("a local name bound to the app literal in _push's body is listed with its statement, in each binding form (an assignment, an annotated one, a walrus, a parameter default) and never from a docstring's prose, another literal or a comparison, and the read through such a name is no read the census sees: the road to a key held in a name starts red at the binding (review round 5, 2026-09-21)", () => {
+  const src = [
+    "",
+    "def _push(targets, connect=False, live_map=None):",
+    '    """prose saying KEY = "app" is text, not a binding"""',
+    '    KEY = "app"',
+    '    if c[KEY] in ("feed", "outline"):',
+    "        pass",
+    "    key2: str = 'app'",
+    '    if (k3 := "app") and c.get(k3) == "chat":',
+    "        pass",
+    '    def inner(k4="app"):',
+    "        return c.get(k4)",
+    '    tag = "app-2"',
+    '    if c["app"] == "app":',
+    "        pass",
+    "",
+    "def _next():",
+    "    pass",
+    "",
+  ].join("\n");
+  const a = pushAudiences(src);
+  const lineOf = (w: string) => parseInt(w.slice("kernel.py:".length), 10);
+  assert.deepEqual(a.bound.map(lineOf), [4, 7, 8, 10], "the four bindings, and neither the docstring's prose, the other literal nor the comparison");
+  assert.match(a.bound[0], /^kernel\.py:4 KEY = "app"$/);
+  assert.equal(a.reads, 1, "c[KEY], c.get(k3) and c.get(k4) are no reads the census sees; the literal read is the one");
+  assert.deepEqual(a.singles, ["app"]);
 });
 
 test("a pane's FIRST publish posts even an empty list, so a reloaded pane replaces the list its predecessor left (2026-09-18)", async () => {

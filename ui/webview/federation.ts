@@ -1004,17 +1004,21 @@ const UNKNOWN_SLOT_CUT = 32;
 // `if c["app"] in (...)` feed branch; waiting.ts reads feed.userTodoRows). A roster taken from the project is a roster over
 // the project's panes: at a fold, take this set from the kernel's push audiences (the feed branch, plus the chat's tab list
 // and the timeline's lanes) rather than from the project's line, and keep "waiting" in it. That derivation is a test, not
-// a reading (review rounds 2 and 3, 2026-09-21): federation-reconnect.test.ts's census case accounts for every read of the
-// "app" key in kernel.py _push's body, as a tuple of string literals however wrapped or spaced (the feed branch, its twin
-// in the except arm and the warm gate's pair), a singleton of any name (the chat and the timeline), or a value formatted
-// into text (the send log line), names every other form (a named constant, a list, a non-literal member, a negated test,
-// a bound read, a call's argument) and asserts none occurs, asserts the union of the read apps IS this set, and drives
-// each member through the manager on the channel its audience names (a tuple naming feed is the feed payload's, one
-// naming chat the tab list's, one naming timeline the lanes'), with the other two channels' frames leaving it pending.
-// So a pane the kernel adds to any of _push's audiences, in any spelling, reads red there (in the roster, or as a named
-// form the census cannot read), a member here the kernel never pushes to reads red, and a non-feed member that
-// pendingFor's selector below would fall to the per-host feed reads red; a pane pushed only by a sender outside _push's
-// body is outside that census. Exported for that census. Kept an ALLOWLIST on purpose: a denylist of settings and files
+// a reading (review rounds 2 to 5, 2026-09-21): federation-reconnect.test.ts's census case accounts for every read of the
+// "app" key written as a string literal in kernel.py _push's body, however spaced or wrapped, as a tuple of string
+// literals however wrapped or spaced (the feed branch, its twin in the except arm and the warm gate's pair), a singleton
+// of any name (the chat and the timeline), or a value formatted into text (the send log line), names every other form (a
+// named constant, a list, a non-literal member, a negated test, a bound read, a call's argument) and asserts none occurs,
+// asserts no local name in the body is bound to the "app" literal, asserts the union of the read apps IS this set, and
+// drives each member through the manager on the channel its audience names (a tuple naming feed is the feed payload's,
+// one naming chat the tab list's, one naming timeline the lanes'), with the other two channels' frames leaving it pending.
+// So a pane the kernel adds to any of _push's audiences, in any spelling of the key as a literal, reads red there (in the
+// roster, or as a named form the census cannot read), a member here the kernel never pushes to reads red, and a non-feed
+// member that pendingFor's selector below would fall to the per-host feed reads red. Two shapes are outside that census
+// and disclosed rather than detected: a read of the key held in a name (a subscript by a constant, `c[APP_KEY]`; a .get
+// of a variable, `c.get(key)`), which no pattern over literals reads and which a detector keyed on any name would confuse
+// with every read of _push's other keys, and a pane pushed only by a sender outside _push's body. Exported for that
+// census. Kept an ALLOWLIST on purpose: a denylist of settings and files
 // would pend every host forever again for the next app added to the fan-out with no pushed view (the class the project's
 // change closed).
 export const PANE_CHANNELS = new Set(["chat", "feed", "fleet", "timeline", "waiting"]);
