@@ -69,7 +69,8 @@ start handed on.
 
 THE KIND of a thread, read from its target: what it does if the test never stops it. THE RULE: EVERY CASE THE WALK
 CANNOT READ FALLS TO THE RESTRICTED SIDE, NEVER TO EXCUSED. `bounded` comes ONLY from a body the walk READ and found free
-of loops and untimed waits, or from a method of the stdlib the STDLIB_RETURNS table says returns WHATEVER ITS ARGUMENTS
+of loops, of untimed waits and of calls of a parameter it has not in hand (the third arm, below), or from a method of the
+stdlib the STDLIB_RETURNS table says returns WHATEVER ITS ARGUMENTS
 AND ON ANY STDLIB RECEIVER (Event.set, Lock.release: each entry's reason says so in those words, UNCONDITIONAL_WORDS, and
 a table-shaped test holds every entry to them; a name that cannot say it is CONDITIONED instead, STDLIB_CONDITIONED,
 checked at the call: time.sleep is bounded only when args= carries a literal number at or under BOUND_S, 5 s;
@@ -80,8 +81,8 @@ a Timer is bounded only for a literal interval at or under the same bound, whate
 UNREADABLE); the name rules (serve_forever, an untimed wait, a read) classify the other way, to loop or
 waits; a target the walk cannot read is UNREADABLE, never bounded, and its tail-only stop is listed with the unreadable
 receivers (the pin asserts that bucket empty; ALLOW may excuse one by name with its reason). A structural test hands
-_kind a table of unknown targets and asserts none reads bounded; another asserts every bounded row of the tree carries
-a read-body reason. The bodies the walk reads: a function of the test module (a def of the body, a module function, a
+_kind a table of unknown targets, and of bodies whose work is a call of a parameter, and asserts none reads bounded;
+another asserts every bounded row of the tree carries a read-body reason. The bodies the walk reads: a function of the test module (a def of the body, a module function, a
 lambda, a name bound to one, a for-target over a tuple of them: each read, joined on the restricted side); a METHOD of
 a class of the test module, reached through an instance (`f.run`, `self.fake.run`, `_Fake().run`, an element of a list
 of fakes: `for f in fakes`, `fakes[0].run`, `self.fakes[0].run`; the `as` name of a `with` over one whose __enter__
@@ -103,9 +104,37 @@ its file, else every product function of that name, each read in its own module'
 side (any loop is a loop, else any waits, else bounded: read). A body read is read for its own whiles, iter(f, sentinel)
 loops, untimed waits, reads and serve_forever calls and, one level down, for the bodies of the fakes' methods, the
 class's own methods, the module's and the body's functions and the product functions it calls; a call it does not
-resolve (a parameter's, a library's) is not followed. A parameter target of a helper (`_build_on(self, runner)`) is
+resolve (a library's) is not followed. A parameter target of a helper (`_build_on(self, runner)`) is
 read at each CALLER from the argument handed in, in the caller's unit (a lambda's body, a def), and is unreadable in
-the helper's own row.
+the helper's own row. THE THIRD ARM (romp-manager's ruling, 2026-09-22: the rule named unknown TARGETS; the property is
+an unknown DECIDER, wherever it sits): a body the walk read whose WORK is a call of a parameter, of a callable attribute
+of one or through a parameter's method (`fn()`, `fn(*a)`, `obj.frob()`, `obj.a.b()`: _opaque_calls, the parameters of the
+def or lambda read, of the defs nested in it and of the helper it closes over; self and cls are not parameters here) is
+UNREADABLE in that row, never bounded, and READ where the argument is in hand (`given`, a HAND: the argument, the unit it
+is written in and where it was handed): at the caller of the helper (`_run(fn)` starting `go`, whose `fn(*a)` is the
+caller's `km._retry_parked_creates`, a product function read in its module; `park(self, fn)`; `_race(self, loop_side,
+kernel_side)`), at the construction (`Thread(target=run, args=(km._dismiss_lane, SID4))` for a `run(fn, arg)` that calls
+fn; a method's self and an unbound method's instance are not parameters' values), or at the call of a function whose body
+the walk reads (a def of the body, a module function, a fake's method, a product function: `jd._run_tier(build, ...)`
+calls its fn), through a chain of such hands (`_build_on`'s caller lambda `lambda build: jd._run_tier(build, ...)`
+receives the construction's `lambda: la[0]` as build, which _run_tier calls as fn: read to its end). The argument in hand
+is read as a target is (a lambda's or a def's body, an attribute as a fake's method, a product function or a stdlib
+method: _attribute_kind); a constant (`before=None`, a default) is no callable to run, the call, if it happens, raises
+at once and the thread ends; the row's reason carries each hand after ` | ` (`fn of _run is `_once` handed in by the
+caller`). A METHOD called on a parameter (`s._connect_landed()`, `e.stat()`, `p.read_text()`) is read on the hand, the
+attribute over the argument as written: a fake's method by its body, a product object's method in its module, a stdlib
+object's by the tables, and UNREADABLE for an object the walk does not read (a dict, a path, a scandir entry: `e.stat`
+is a method of a scandir() the walk has no rule for). The scan reads what RUNS when the body runs: a def or a lambda the
+body only defines is read where it is called (a def or a name-bound lambda the body itself calls, with that call's
+hands; a returned one where its caller runs it: a decorator factory's wrapper, _stage_marked's `marked`, calls its fn
+when the decorated function is called; a helper's returned `go` runs on the thread its caller starts), and one handed to
+a library call (`sorted(rows, key=lambda r: r.get("t"))`) is inside a call the walk does not follow, a stated limit. A
+helper whose caller is itself a helper (`_hammer(fn)` calling `_run(lambda: [fn() ...])`), when the row at that
+caller is tail-only and of a pinned or unreadable kind, is classed at the caller's own callers with both levels' hands
+(two levels, no further). Among the verdicts of one body a loop or a waits outranks an unreadable (both restricted: the more specific
+one names the row). What no hand supplies (a parameter of the caller itself beyond those two levels, an argument behind
+a *, a nested def's parameter the body itself calls) stays UNREADABLE and is listed when its stop is tail-only. A hand
+supplied at the caller is read in the caller's row only: the helper's own row keeps the unreadable kind.
   loop:    it runs until told: serve_forever / run_forever by name; a body with a `while` (a `while` bounded by a clock
            reading, in its test or by an `if <clock>: break` in its body, is not one; a `while True` that searches local
            data IS one to the walk, which cannot tell it from a spin on a flag: tests/test_view_deltas.py's _py_maps
@@ -126,7 +155,8 @@ the helper's own row.
            or through the construction's args= / kwargs=, and the spellings Python reads the same way (a nonzero number
            as the block flag: q.get(1), lk.acquire(1); an acquire's timeout=-1; arguments the walk cannot read, *a /
            **kw); a name or a number as the TIMEOUT is a timeout to the walk (ev.wait(deadline) reads timed).
-  bounded: a body the walk read with no loop and only timed waits, a stdlib call the table says returns, a Thread with
+  bounded: a body the walk read with no loop, only timed waits and no call of a parameter the walk has not in hand (a
+           hand read bounded is one), a stdlib call the table says returns, a Thread with
            no target (the default run() does nothing). Such a thread ends on its own whatever the test does, within its
            own bound, so its join is a convenience of the body and not the stop; the shape rule BOUNDED excuses it, with
            this as the reason. What the read does not see: a body that blocks in a lock (`with lock:`), in a call the
@@ -137,7 +167,8 @@ the helper's own row.
            test_heartbeat_thread, test_kernel_parked_ops_liveness, test_kernel_remote_ws_proxy, test_model_live_midturn;
            this module's only mention is this sentence), a figure the census derives from the imports and calls
            (census's extras["oracle"]), the table prints and a tree test holds this sentence to.
-  unreadable: a target the walk cannot read: a parameter in the helper's own row, a function of a module it does not
+  unreadable: a target the walk cannot read: a parameter in the helper's own row, a body whose work is a call of a
+           parameter no hand supplies (the third arm), a function of a module it does not
            read (a third-party import), a stdlib function or method with no STDLIB_RETURNS entry (a shutdown blocks until
            the serve loop ends; a put can block on a full queue) or whose CONDITIONED check fails at the call
            (time.sleep(3600), server_close of a ThreadingTCPServer, a Timer(3600, ...)), a method run on an instance it
@@ -322,7 +353,12 @@ def _text(node, module):
     spaces (a target spanning lines reads as one line). Every target text the census DISPLAYS, keys an ALLOW entry on or
     compares in a plant comes from here and never from ast.unparse, a renderer whose spelling differs between
     interpreters (Python 3.10 writes `lambda : f()`, 3.12 `lambda: f()`): with the source segment the difference is
-    impossible by construction. A node with no segment (none should reach here) reads as its type and position."""
+    impossible by construction. A node the walk SYNTHESISED over a hand (`s._do_set_mode`, the method a body calls on a
+    parameter, written over the argument as the caller wrote it: _given_kind) carries its text as `_shown`, the hand's
+    segment and the chain. A node with no segment (none should reach here) reads as its type and position."""
+    shown = getattr(node, "_shown", None)
+    if shown is not None:
+        return shown
     seg = ast.get_source_segment(module.src, node) if module is not None and getattr(module, "src", None) else None
     if seg is None:
         return "<%s at %s:%s>" % (type(node).__name__, getattr(node, "lineno", "?"), getattr(node, "col_offset", "?"))
@@ -1848,23 +1884,33 @@ class _Start:
             self.target = _text(self.target_expr, ctor_unit.module) if self.target_expr is not None else "?"
         self.line = call.lineno
         self._words = {}
+        self.given = {}                 # the HANDS a caller supplies for the helper's parameters (at_caller): none in the start's own row
         self.kind, self.why = ("?", "") if ctor is None else _kind(self)
         self.indirect = _indirect(self.kind, self.why)
 
-    def at_caller(self, unit, call):
-        """This start as read at a caller of its helper: when the target is a PARAMETER of the helper, the kind is read
-        from the argument the caller hands in (`self._build_on(lambda build: ...)`: the lambda's body), in the caller's
-        unit; the same start otherwise. A copy: the start's own row keeps its own kind."""
+    def at_caller(self, unit, call, outer=None):
+        """This start as read at a caller of its helper, with the arguments the caller hands the helper's parameters in
+        hand (the HANDS, `given`; `outer` the caller's own hands when the caller is itself a helper classed at ITS callers).
+        Two roads: the target itself is a PARAMETER of the helper (`self._build_on(lambda build: ...)`: the lambda's body,
+        read in the caller's unit, with the construction's args= as its own arguments), or the start's own kind is
+        UNREADABLE and the hands may decide it (a body whose work is a call of a parameter: the third arm, re-read by _kind
+        with the hands in place). A copy: the start's own row keeps its own kind. The same start when the caller hands
+        nothing the walk can place (a * argument) or the kind does not turn on the arguments."""
+        helper = self.unit.fn
+        given = _given_from(helper, call, unit, self.unit, outer, "handed in by the caller")
         expr = self.target_expr
-        if not (isinstance(expr, ast.Name) and expr.id in self.unit.params):
+        if isinstance(expr, ast.Name) and (expr.id, id(helper)) in given:      # the target IS the parameter
+            arg, u, _outer, where, label = given[(expr.id, id(helper))]
+            view = copy.copy(self)
+            view._words, view.given = {}, given
+            k, why = _expr_kind(u, arg, call.lineno, 0, self.ctor, self.ctor_unit, given)
+            view.kind, view.why = k, "%s | %s of %s is `%s` %s" % (why, expr.id, label, _text(arg, u.module), where)
+        elif self.kind == KIND_UNREAD and given:
+            view = copy.copy(self)
+            view._words, view.given = {}, given
+            view.kind, view.why = _kind(view)
+        else:
             return self
-        arg = _argument_for(self.unit.fn, expr.id, call)
-        if arg is None:
-            return self
-        view = copy.copy(self)
-        view._words = {}
-        view.kind, view.why = _expr_kind(unit, arg, call.lineno, 0, self.ctor)
-        view.why = "%s, handed in by the caller" % view.why
         view.indirect = _indirect(view.kind, view.why)
         return view
 
@@ -2064,13 +2110,18 @@ def _calls_oracle(tree):
 
 # ── the kind of a thread ────────────────────────────────────────────────────────────────────────────────
 
-def _body_kind(unit, fn_body_nodes, loops, depth):
-    """The kind a function body gives its thread: loop, waits or bounded, with the reason. The body is READ: its own
-    whiles (not those a clock bounds), iter(f, sentinel) loops, untimed waits, reads and serve_forever calls, and, one
+def _body_kind(unit, fn_body_nodes, loops, depth, given=None):
+    """The kind a function body gives its thread: loop, waits, bounded or UNREADABLE, with the reason. The body is READ: its
+    own whiles (not those a clock bounds), iter(f, sentinel) loops, untimed waits, reads and serve_forever calls, and, one
     level down, the bodies of the fakes' methods it calls, of the class's own methods (self.x() in a method read in its
-    class's unit), of the module's and the body's functions, and of the product functions it calls (read in the
-    product sources). A call the walk does not resolve (a parameter's, a library's) is not followed: bounded then says
-    the body itself, and what the walk followed, has no loop and no untimed wait."""
+    class's unit), of the module's functions (each in its own unit: its parameters and bindings are its own) and the
+    body's, and of the product functions it calls (read in the product sources). A call of a PARAMETER, or through one (`fn()`, `fn(*a)`, `obj.frob()`: _opaque_calls), is work the
+    walk cannot see: the body is UNREADABLE (the third arm, romp-manager's ruling of 2026-09-22) unless the argument is in
+    hand (`given`: (parameter, its function) -> (the argument, the unit it is written in, that unit's own hands, where it
+    was handed, whose parameter), filled at the caller of a helper, at the construction from args= / kwargs=, or at the call
+    of a function whose body is read), when the argument is read as a target is and decides the kind; the reason carries
+    each hand after ` | `. A library call the walk does not resolve is not followed: bounded then says the body itself,
+    and what the walk followed, has no loop and no untimed wait."""
     for sub in fn_body_nodes:
         if isinstance(sub, ast.While):
             if CLOCK.search(ast.unparse(sub.test)) or _clock_break(sub):
@@ -2086,6 +2137,7 @@ def _body_kind(unit, fn_body_nodes, loops, depth):
                 return "waits", "a read of .%s()" % sub.func.attr
             if sub.func.attr in FOREVER:
                 return "loop", sub.func.attr
+    hands, unread = [], None          # a loop or a waits found anywhere is the verdict; else the first unreadable callee or hand; else bounded
     if depth < 2:
         for sub in fn_body_nodes:
             if isinstance(sub, ast.Call):
@@ -2093,32 +2145,318 @@ def _body_kind(unit, fn_body_nodes, loops, depth):
                 methods = _method_calls_in(unit, [sub], sub.lineno)              # f.run(), where f is a fake of the module
                 if methods:
                     for m, _owner in methods:
-                        k, why = _body_kind(_reader(unit, m), list(ast.walk(m)), loops, depth + 1)
-                        if k != "bounded":
+                        r = _reader(unit, m)
+                        k, why = _body_kind(r, list(ast.walk(m)), loops, depth + 1,
+                                            _call_given(m, sub, unit, r, given, unbound=_through_class(unit, sub.func, m)))
+                        if k in ("loop", "waits"):
                             return k, "calls %s, %s" % (_text(sub.func, unit.module), why)
+                        if k == KIND_UNREAD:
+                            unread = unread or (k, "calls %s, %s" % (_text(sub.func, unit.module), why))
+                        else:
+                            hands += why.split(" | ")[1:]
                     continue
                 own = _own_method(unit, sub)                                     # self._serve(), in a method read in its class
                 if own is not None:
-                    k, why = _body_kind(_reader(unit, own), list(ast.walk(own)), loops, depth + 1)
-                    if k != "bounded":
+                    r = _reader(unit, own)
+                    k, why = _body_kind(r, list(ast.walk(own)), loops, depth + 1, _call_given(own, sub, unit, r, given))
+                    if k in ("loop", "waits"):
                         return k, "calls %s, %s" % (_text(sub.func, unit.module), why)
+                    if k == KIND_UNREAD:
+                        unread = unread or (k, "calls %s, %s" % (_text(sub.func, unit.module), why))
+                    else:
+                        hands += why.split(" | ")[1:]
                     continue
                 fn = unit.local_defs.get(nm) or (unit.parent.local_defs.get(nm) if unit.parent is not None else None)
-                if fn is not None:
-                    k, why = _body_kind(unit, list(ast.walk(fn)), loops, depth + 1)
-                    if k != "bounded":
-                        return k, "calls %s, %s" % (nm, why)
-                elif nm in unit.module.functions:
-                    k, why = _body_kind(unit, list(ast.walk(unit.module.functions[nm])), loops, depth + 1)
-                    if k != "bounded":
-                        return k, "calls %s, %s" % (nm, why)
+                bound = unit.binding_at(nm, sub.lineno) if nm is not None and fn is None else None
+                r = None
+                if fn is not None:                                               # a def of the body: a closure over the same hands
+                    r = _body_kind(unit, list(ast.walk(fn)), loops, depth + 1, {**(given or {}), **_call_given(fn, sub, unit, unit, given)})
+                elif isinstance(sub.func, ast.Lambda) or (bound is not None and isinstance(bound[1], ast.Lambda)):
+                    lam = sub.func if isinstance(sub.func, ast.Lambda) else bound[1]     # (lambda: fn())(); worker = lambda: fn(); worker()
+                    r = _body_kind(unit, list(ast.walk(lam)), loops, depth + 1, {**(given or {}), **_call_given(lam, sub, unit, unit, given)})
+                    nm = nm or "a lambda"
+                elif nm in unit.module.functions:                                # a module function: read in its own unit
+                    fn = unit.module.functions[nm]
+                    fu = unit.module.unit_for(fn)
+                    r = _body_kind(fu, list(ast.walk(fn)), loops, depth + 1, _call_given(fn, sub, unit, fu, given))
                 elif nm in loops and nm not in BUILTIN_METHODS and _module_call(unit, sub):
                     return "loop", "calls %s, a product function with a while loop" % nm
                 elif nm not in BUILTIN_METHODS and _product_call(unit, sub):    # km.x(): the product function, read
-                    r = _product_kind(unit, sub.func, sub.lineno, depth + 1)
-                    if r is not None and r[0] in ("loop", "waits"):
-                        return r[0], "calls %s, %s" % (nm, r[1])
-    return "bounded", "no loop, no untimed wait"
+                    r = _product_kind(unit, sub.func, sub.lineno, depth + 1, call=sub, given=given)
+                    if r is not None and r[0] == KIND_UNREAD and OPAQUE_MARK not in r[1]:
+                        r = None            # a product callee unreadable for another reason is not followed, as before; one whose
+                if r is None:               # work is a parameter no hand supplies is opaque work, carried up
+                    continue
+                k, why = r
+                if k in ("loop", "waits"):
+                    return k, "calls %s, %s" % (nm, why)
+                if k == KIND_UNREAD:
+                    unread = unread or (k, "calls %s, %s" % (nm, why))
+                else:
+                    hands += why.split(" | ")[1:]
+    for name, owner, chain, call in _opaque_calls(unit, fn_body_nodes):
+        r = _given_kind(given, name, depth, owner, chain, call)
+        if r is None:
+            unread = unread or (KIND_UNREAD, "calls %s%s, %s%s %s: what the caller hands in is not read here"
+                                % (name, "".join("." + a for a in chain), (name + " ") if chain else "", OPAQUE_MARK, _fn_label(owner)))
+            continue
+        k, why, hand = r
+        if k in ("loop", "waits"):
+            return k, "%s | %s" % (why, hand)
+        if k == KIND_UNREAD:
+            unread = unread or (k, "%s | %s" % (why, hand))
+        else:
+            hands += [hand] + why.split(" | ")[1:]
+    if unread is not None:
+        return unread
+    return "bounded", " | ".join(["no loop, no untimed wait"] + hands)
+
+
+OPAQUE_MARK = "a parameter of"      # the words of the third arm's reason: a product callee's such verdict is carried up
+
+
+def _fn_label(fn):
+    """A function's name for a reason: a def's own, `a lambda` for a lambda."""
+    return "a lambda" if isinstance(fn, ast.Lambda) else fn.name
+
+
+def _own_params(fn):
+    """The parameter names of a def or a lambda (positional, keyword-only), self and cls excluded: the instance is the
+    class's, read by its methods, not a value a hand supplies."""
+    a = fn.args
+    return [x.arg for x in a.posonlyargs + a.args + a.kwonlyargs if x.arg not in ("self", "cls")]
+
+
+def _rebinds(fn, name):
+    """The function's OWN body (not a nested def's) rebinds `name`: an assignment, a for / with / walrus / except target, a
+    def, class or import of that name. A parameter so rebound is shadowed there: a call of the name is not the parameter's."""
+    if isinstance(fn, ast.Lambda):
+        return False
+    for st in fn.body:
+        for n in _run_nodes(st):
+            if isinstance(n, ast.Name) and n.id == name and isinstance(n.ctx, ast.Store):
+                return True
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and n.name == name:
+                return True
+            if isinstance(n, ast.ExceptHandler) and n.name == name:
+                return True
+            if isinstance(n, (ast.Import, ast.ImportFrom)) and any((al.asname or al.name.split(".")[0]) == name for al in n.names):
+                return True
+    return False
+
+
+def _opaque_calls(unit, nodes):
+    """The calls that RUN when a read body runs whose callee is a PARAMETER or is reached through one (`fn()`, `fn(*a)`,
+    `obj.frob()`, `obj.a.b()`): [(the parameter's name, the def or lambda whose parameter it is, the attributes between
+    the parameter and the call: () for `fn()`, ("frob",) for `obj.frob()`, the call)], each (name, owner, chain) once,
+    in source order. `nodes` is ast.walk of the body's def or lambda; the parameters in scope are its own and those of
+    the unit's function and its parent's (a def of a helper's body calls the helper's parameter through its closure); a
+    name the body rebinds is not the parameter (_rebinds); self and cls are not parameters here. The defs and lambdas the
+    body only DEFINES are not entered (the census's rule for what runs, _run_nodes): a def or a name-bound lambda the body
+    calls is read at that call with the call's hands (_body_kind's callee loop), a returned one where its caller runs it
+    (_call_target), one handed to a library call (`sorted(rows, key=lambda r: r.get("t"))`) is inside a call the walk does
+    not follow, and a thread target inside a product spawn-helper is that thread's, counted as a product-start row."""
+    root = nodes[0] if nodes else None
+    params = {}
+    for scope in (unit.parent, unit):
+        if scope is not None:
+            for p_ in scope.params:
+                if p_ not in ("self", "cls") and not _rebinds(scope.fn, p_):
+                    params[p_] = scope.fn
+    if isinstance(root, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+        params = {p_: o for p_, o in params.items() if not _rebinds(root, p_)}
+        params.update((p_, root) for p_ in _own_params(root) if not _rebinds(root, p_))
+    out, seen = [], set()
+    stack = [root] if root is not None else []
+    while stack:
+        n = stack.pop()
+        if isinstance(n, ast.Call):
+            head, chain = n.func, []
+            while isinstance(head, ast.Attribute):
+                chain.append(head.attr)
+                head = head.value
+            if isinstance(head, ast.Name) and head.id in params:
+                key = (head.id, id(params[head.id]), tuple(reversed(chain)))
+                if key not in seen:
+                    seen.add(key)
+                    out.append((head.id, params[head.id], key[2], n))
+        for c in ast.iter_child_nodes(n):
+            if c is not root and isinstance(c, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
+                continue                            # defined here, run elsewhere (or at a call of it, read there)
+            stack.append(c)
+    out.sort(key=lambda r: (getattr(r[3], "lineno", 0), getattr(r[3], "col_offset", 0)))
+    return out
+
+
+def _given_from(fn, call, unit, callee_unit, given, where):
+    """{(parameter, id(fn)): (the argument, the unit it is written in, that unit's own hands, `where`, fn's label)} for the
+    parameters of `fn` a call hands values to (_argument_for: by keyword, by position with a method's self excluded,
+    else the parameter's default, read in the callee's own unit as `its default`); nothing for a parameter the walk cannot
+    place (behind a * or ** argument, or a required one not handed)."""
+    out, label = {}, _fn_label(fn)
+    defaults = fn.args.defaults + [d for d in fn.args.kw_defaults if d is not None]
+    for p_ in _own_params(fn):
+        arg = _argument_for(fn, p_, call)
+        if arg is None:
+            continue
+        if any(d is arg for d in defaults):
+            out[(p_, id(fn))] = (arg, callee_unit, None, "its default", label)
+        else:
+            out[(p_, id(fn))] = (arg, unit, given, where, label)
+    return out
+
+
+def _call_given(fn, call, unit, callee_unit, given=None, unbound=False):
+    """The hands a CALL in a body the walk reads supplies for the callee's parameters (`_until(lambda: ...)`, `f.run(x)`,
+    `jd._run_tier(build, ...)`): the arguments are written in `unit` under its hands `given`; `unbound` drops the instance
+    handed first to a method reached through its class (`_Child._pump(child)`)."""
+    if unbound:
+        call = ast.Call(func=call.func, args=list(call.args[1:]), keywords=list(call.keywords))
+    return _given_from(fn, call, unit, callee_unit, given, "handed in at the call")
+
+
+def _ctor_given(fn, ctor, ctor_unit, given=None, unbound=False):
+    """The hands a CONSTRUCTION supplies through args= / kwargs= for the parameters of the def or lambda it runs
+    (`Thread(target=run, args=(km._dismiss_lane, SID4))`), written in the construction's unit under its hands `given`;
+    nothing when the walk cannot read them (_handed_args None); `unbound` drops the instance handed first to a method
+    reached through its class."""
+    handed = _handed_args(ctor, ctor_unit) if ctor is not None and fn is not None else None
+    if handed is None:
+        return {}
+    pos, kws = handed
+    call = ast.Call(func=ast.Name(id="_", ctx=ast.Load()), args=list(pos[1:] if unbound else pos),
+                    keywords=[ast.keyword(arg=k, value=v) for k, v in kws])
+    return _given_from(fn, call, ctor_unit, ctor_unit, given, "handed in at the construction")
+
+
+def _through_class(unit, func, fn):
+    """The call `func(...)` reaches the method `fn` through its CLASS by name (`_Child._pump(child)`), so the first argument
+    is the instance: not for a staticmethod or a classmethod."""
+    return isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and unit.class_named(func.value.id) is not None \
+        and not _decorated(fn, "staticmethod") and not _decorated(fn, "classmethod")
+
+
+_LITERALS = (ast.Dict, ast.List, ast.Set, ast.Tuple, ast.Constant, ast.JoinedStr, ast.ListComp, ast.SetComp, ast.DictComp)
+
+
+def _data_of(unit, node, line, depth=0):
+    """The LITERAL an expression is, or is bound to: a dict, list, set, tuple, constant, f-string or comprehension written
+    in the source, through a name's binding, a module global (a product module's `_cache = {}` in its own unit), an
+    attribute on self bound across the class, or a subscript's holder; None for anything else (a call, a parameter, a
+    for-target)."""
+    if depth > 8 or node is None:
+        return None
+    if isinstance(node, _LITERALS):
+        return node
+    if isinstance(node, ast.Subscript):
+        return _data_of(unit, node.value, line, depth + 1)
+    if isinstance(node, ast.Name):
+        b = unit.binding_at(node.id, line)
+        if b is not None:
+            return None if isinstance(b[1], tuple) else _data_of(unit, b[1], b[0], depth + 1)
+        g = unit.module.globals.get(node.id)
+        return _data_of(unit, g, g.lineno, depth + 1) if g is not None else None
+    if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id in ("self", "cls"):
+        for v in unit.class_bindings(node.attr):
+            r = _data_of(unit, v, v.lineno, depth + 1)
+            if r is not None:
+                return r
+    return None
+
+
+def _given_kind(given, name, depth, owner=None, chain=(), call=None):
+    """(kind, reason, the hand as text) for the argument a parameter was given (`given`, keyed (name, id(owner)); by name
+    alone when `owner` is None: a Name in a body read under those hands); None when no hand supplies it. A constant is no
+    callable to run (a call of it raises at once, and the thread ends): bounded. The parameter CALLED (`fn()`, chain ())
+    is read as a target is, in the unit it is written in and under that unit's own hands (_expr_kind); a METHOD called on
+    it (`s.frob()`, chain ("frob",), `call` the call) is read on the hand: a hand that is itself a parameter of the unit
+    it is written in follows that unit's own hands (`_land(s)` handed the test's s); a LITERAL hand (a dict, a list, a
+    string, a constant: _data_of) is data, whose methods return at once (a dict's get is not a Queue's); any other is the
+    attribute over the argument as written (_attribute_kind: a fake's method by its body, a product object's method in
+    its module, a stdlib object's by the tables, the call's own arguments deciding an untimed wait; UNREADABLE for an
+    object the walk does not read: a scandir entry, a client dict a product function built)."""
+    if not given:
+        return None
+    if owner is not None:
+        g = given.get((name, id(owner)))
+    else:
+        g = next((v for (n, _o), v in given.items() if n == name), None)
+    if g is None:
+        return None
+    node, u, outer, where, label = g
+    dotted = "".join("." + a for a in chain)
+    hand = "%s%s of %s is `%s`%s %s" % (name, dotted, label, _text(node, u.module), dotted, where)
+    if isinstance(node, ast.Constant) and not chain:
+        return "bounded", "a constant `%s`, not a callable: a call of it raises at once and the thread ends" % _text(node, u.module), hand
+    if chain:
+        if isinstance(node, ast.Name) and (node.id in u.params or (u.parent is not None and node.id in u.parent.params)):
+            inner = _given_kind(outer, node.id, depth + 1, None, chain, call)     # the hand is a parameter: its own hand
+            if inner is not None:
+                return inner[0], "%s | %s" % (inner[1], inner[2]), hand
+        lit = _data_of(u, node, getattr(node, "lineno", 0))
+        if lit is not None:
+            return "bounded", "a literal %s handed in: its .%s returns at once (a dict's get is not a Queue's; an attribute it lacks raises)" % (type(lit).__name__.lower(), ".".join(chain)), hand
+        expr, shown = node, _text(node, u.module)
+        for attr in chain:
+            expr = ast.copy_location(ast.Attribute(value=expr, attr=attr, ctx=ast.Load()), node)
+            shown = "%s.%s" % (shown, attr)
+            expr._shown = shown
+        k, why = _attribute_kind(u, expr, getattr(node, "lineno", 0), None, None, outer, call)
+        return k, why, hand
+    k, why = _expr_kind(u, node, getattr(node, "lineno", 0), depth + 1, None, None, outer)
+    return k, why, hand
+
+
+def _unbound_target(start, fn):
+    """The start's target reaches the method `fn` through its class by name (`_Child._pump` with the instance first in
+    args=): not for a staticmethod or a classmethod."""
+    expr = start.target_expr
+    return isinstance(expr, ast.Attribute) and isinstance(expr.value, ast.Name) and start.ctor_unit.class_named(expr.value.id) is not None \
+        and not _decorated(fn, "staticmethod") and not _decorated(fn, "classmethod")
+
+
+def _attribute_kind(unit, node, line, ctor=None, ctor_unit=None, given=None, call=None):
+    """(kind, reason) for an attribute in hand as a callable (an argument at a caller, at a construction or at a call:
+    km._push_all, self.be.move, f.run, self.dispatch, ev.set, srv.serve_forever), read as a target is (_target_kind's
+    roads; the construction's args= apply when `ctor` is the construction that runs it): a method of a class of the
+    module (or of the unit's own class) by its body, then the name rules (serve_forever; an untimed wait, read from the
+    call's own arguments when `call` is the call of the method on the hand, from args= when a construction runs it, and
+    untimed to the walk with neither; a read), a product function in its module, a stdlib method by the tables;
+    UNREADABLE otherwise (a method of a parameter no hand supplies)."""
+    loops = unit.module.loops
+    fn, _owner = _method_call(unit, node, [], line)
+    if fn is None and isinstance(node.value, ast.Name) and node.value.id in ("self", "cls") and unit.cls is not None:
+        ms = unit.module.methods_of(unit.cls, node.attr)
+        fn = ms[0] if ms else None
+    body = None
+    if fn is not None:
+        unbound = isinstance(node.value, ast.Name) and unit.class_named(node.value.id) is not None \
+            and not _decorated(fn, "staticmethod") and not _decorated(fn, "classmethod")
+        body = _body_kind(_reader(unit, fn), list(ast.walk(fn)), loops, 0, _ctor_given(fn, ctor, ctor_unit or unit, given, unbound=unbound))
+        if body[0] != "bounded":
+            return body
+    if node.attr in FOREVER:
+        return "loop", node.attr
+    if node.attr in BLOCKING:
+        if call is not None:
+            untimed = _untimed_call(node.attr, list(call.args), [(k.arg, k.value) for k in call.keywords])
+        else:
+            untimed = ctor is None or _handed_untimed(ctor, node.attr, ctor_unit or unit)
+        if untimed:
+            return "waits", "the target is an untimed .%s" % node.attr
+    if node.attr in READS:
+        return "waits", "the target is a read"
+    if body is not None:
+        return body
+    if node.attr in loops and node.attr not in BUILTIN_METHODS:
+        return "loop", "a product function with a while loop"
+    prod = _product_kind(unit, node, line, 0, ctor=ctor, ctor_unit=ctor_unit, given=given)
+    if prod is not None:
+        return prod
+    lib = _library_kind(unit, node, line, ctor)
+    if lib is not None:
+        return lib
+    return KIND_UNREAD, _unread_reason(unit, node, line)
 
 
 def _own_method(unit, call):
@@ -2447,15 +2785,17 @@ def _target_kind(start):
     """(kind, reason) for the thread: loop, waits, bounded or UNREADABLE. THE RULE: every case the walk cannot read falls
     to the restricted side. `bounded` comes ONLY from a body the walk read (_body_kind: a function of the test module, a
     fake's method, a helper's returned def, a Thread subclass's run(), a product function found in the product sources
-    and read in its own module) and found free of loops and untimed waits, or from a stdlib call STDLIB_RETURNS says
-    returns whatever its arguments (or whose STDLIB_CONDITIONED check passes at the call), each with its reason; the
-    name rules (FOREVER, BLOCKING, READS) classify the other way, to loop or waits,
+    and read in its own module) and found free of loops, untimed waits and calls of a parameter no hand supplies, or from
+    a stdlib call STDLIB_RETURNS says returns whatever its arguments (or whose STDLIB_CONDITIONED check passes at the
+    call), each with its reason; the name rules (FOREVER, BLOCKING, READS) classify the other way, to loop or waits,
     and apply when the body the walk read says bounded (a body it cannot see through: asyncio.run(self._main()),
     self.fut.result()); a target it cannot resolve (a parameter, a function of a module it does not read, a stdlib
     method with no rule, a method run on an instance it cannot name, a call or an expression it does not read) is
-    UNREADABLE, never bounded."""
+    UNREADABLE, never bounded. The HANDS in force: the caller's (start.given, when read at a caller) for a body that
+    closes over the helper's parameters (a lambda, a def of the body), and the construction's args= / kwargs= for the
+    parameters of the def, lambda or method it runs (_ctor_given)."""
     unit, expr, ctor = start.ctor_unit, start.target_expr, start.ctor
-    loops = unit.module.loops
+    loops, given = unit.module.loops, start.given
     if expr is None:
         if any(kw.arg is None for kw in ctor.keywords) or any(isinstance(a, ast.Starred) for a in ctor.args):
             return KIND_UNREAD, "the target is hidden in a * or ** argument of the construction"
@@ -2463,15 +2803,17 @@ def _target_kind(start):
     if isinstance(expr, (ast.FunctionDef, ast.AsyncFunctionDef)):          # a Thread subclass: what its run() does
         return _body_kind(_reader(unit, expr), list(ast.walk(expr)), loops, 0)
     if isinstance(expr, ast.Lambda):
-        return _body_kind(unit, list(ast.walk(expr.body)), loops, 0)
+        return _body_kind(unit, list(ast.walk(expr)), loops, 0, {**given, **_ctor_given(expr, ctor, unit, given)})
     if isinstance(expr, ast.Attribute):
         bad = _unwritable_instance(start)
         if bad is not None:
             return KIND_UNREAD, "a method reached through the class on `%s`, an instance the walk cannot name" % _text(bad, unit.module)
         fn = _target_fn(start)                     # a method of a class of the module (f.run, self.fake.run, _Fake().run,
-        body = _body_kind(_reader(unit, fn), list(ast.walk(fn)), loops, 0) if fn is not None else None   # _Child._pump, self.x)
-        if body is not None and body[0] != "bounded":   # its body is what the thread does, whatever the method is called
-            return body
+        body = None                                # _Child._pump, self.x): its body is what the thread does, whatever the method is called
+        if fn is not None:
+            body = _body_kind(_reader(unit, fn), list(ast.walk(fn)), loops, 0, _ctor_given(fn, ctor, unit, given, unbound=_unbound_target(start, fn)))
+            if body[0] != "bounded":
+                return body
         if expr.attr in FOREVER:
             return "loop", expr.attr
         if expr.attr in BLOCKING and _handed_untimed(ctor, expr.attr, unit):
@@ -2482,7 +2824,7 @@ def _target_kind(start):
             return body
         if expr.attr in loops and expr.attr not in BUILTIN_METHODS:
             return "loop", "a product function with a while loop"
-        prod = _product_kind(unit, expr, ctor.lineno, 0)
+        prod = _product_kind(unit, expr, ctor.lineno, 0, ctor=ctor, ctor_unit=unit, given=given)
         if prod is not None:
             return prod
         lib = _library_kind(unit, expr, ctor.lineno, ctor)
@@ -2493,53 +2835,66 @@ def _target_kind(start):
         return _name_kind(start, expr, ctor.lineno, 0)
     if isinstance(expr, ast.Call):
         built = _call_target(unit, expr, ctor.lineno)
-        if built is not None:
+        if built is not None:                       # wrap(i, fn): the def or lambda the helper returns, under the call's hands
             fn, u = built
-            return _body_kind(u, list(ast.walk(fn.body if isinstance(fn, ast.Lambda) else fn)), loops, 0)
+            callee = unit.callee_of(expr, ctor.lineno)
+            g = _call_given(callee[0], expr, unit, u, given) if callee is not None else {}
+            return _body_kind(u, list(ast.walk(fn)), loops, 0, {**g, **_ctor_given(fn, ctor, unit, given)})
         return KIND_UNREAD, "a callable built by %s(), a call the walk does not read" % _text(expr.func, unit.module)
     return KIND_UNREAD, "a target expression the walk does not read (%s)" % _text(expr, unit.module)
 
 
 def _name_kind(start, node, line, depth):
-    return _expr_kind(start.ctor_unit, node, line, depth, start.ctor)
+    return _expr_kind(start.ctor_unit, node, line, depth, start.ctor, start.ctor_unit, start.given)
 
 
-def _expr_kind(unit, node, line, depth, ctor=None):
-    """The kind of a Name target (or of an argument a caller hands a helper's parameter): a function of the body or the
-    module or a lambda bound to the name is read; a for-target over a tuple of such (`for target in (a, b, c)`) is each
-    of them, joined on the restricted side; a product function imported by name is read in the product sources; a
-    stdlib function is looked up in STDLIB_RETURNS; a parameter, a function of a module the walk does not read, or
-    anything else is UNREADABLE."""
+def _expr_kind(unit, node, line, depth, ctor=None, ctor_unit=None, given=None):
+    """The kind of a Name target, of an argument a caller hands a helper's parameter, or of a hand a body's parameter was
+    given: a function of the body or the module or a lambda bound to the name is read (with the construction's args= /
+    kwargs= as its own arguments when `ctor`, in `ctor_unit`, is the construction that runs it, and under the hands
+    `given` of the scope it closes over); a for-target over a tuple of such (`for target in (a, b, c)`) is each of them,
+    joined on the restricted side; an attribute is read as a target is (_attribute_kind); a product function imported by
+    name is read in the product sources; a stdlib function is looked up in STDLIB_RETURNS; a parameter a hand supplies is
+    that hand's argument; a parameter otherwise, a function of a module the walk does not read, or anything else is
+    UNREADABLE."""
     loops = unit.module.loops
     if depth > 8:
         return KIND_UNREAD, "a name bound too deep to follow"
     if isinstance(node, ast.Lambda):
-        return _body_kind(unit, list(ast.walk(node.body)), loops, 0)
+        return _body_kind(unit, list(ast.walk(node)), loops, 0, {**(given or {}), **_ctor_given(node, ctor, ctor_unit or unit, given)})
     if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
-        return _join_kind_answers([_expr_kind(unit, e, line, depth + 1, ctor) for e in node.elts])
+        return _join_kind_answers([_expr_kind(unit, e, line, depth + 1, ctor, ctor_unit, given) for e in node.elts])
+    if isinstance(node, ast.Attribute):
+        return _attribute_kind(unit, node, line, ctor, ctor_unit, given)
     if not isinstance(node, ast.Name):
         return KIND_UNREAD, "a target the walk does not read as a callable (%s)" % _text(node, unit.module)
-    fn = unit.local_defs.get(node.id) or (unit.parent.local_defs.get(node.id) if unit.parent is not None else None) \
-        or unit.module.functions.get(node.id)
-    if fn is not None:
-        return _body_kind(unit, list(ast.walk(fn)), loops, 0)
+    fn = unit.local_defs.get(node.id) or (unit.parent.local_defs.get(node.id) if unit.parent is not None else None)
+    if fn is not None:                                  # a def of the body: a closure over the same hands
+        return _body_kind(unit, list(ast.walk(fn)), loops, 0, {**(given or {}), **_ctor_given(fn, ctor, ctor_unit or unit, given)})
+    fn = unit.module.functions.get(node.id)
+    if fn is not None:                                  # a module function: read in its own unit
+        return _body_kind(unit.module.unit_for(fn), list(ast.walk(fn)), loops, 0, _ctor_given(fn, ctor, ctor_unit or unit, given))
     b = unit.binding_at(node.id, line)
     if b is not None:
         v = b[1]
         if isinstance(v, tuple):
             if v[0] == "for":
-                return _expr_kind(unit, v[1], b[0], depth + 1, ctor)
+                return _expr_kind(unit, v[1], b[0], depth + 1, ctor, ctor_unit, given)
             return KIND_UNREAD, "a name bound by a %s the walk does not read as a callable" % v[0]
         if isinstance(v, (ast.Lambda, ast.Name, ast.Tuple, ast.List, ast.Set)):
-            return _expr_kind(unit, v, b[0], depth + 1, ctor)
+            return _expr_kind(unit, v, b[0], depth + 1, ctor, ctor_unit, given)
         return KIND_UNREAD, "a name bound to `%s`, which the walk does not read as a callable" % _text(v, unit.module)
+    r = _given_kind(given, node.id, depth)
+    if r is not None:                                   # a parameter a hand supplies: the hand's argument, read where it is written
+        k, why, hand = r
+        return k, "%s | %s" % (why, hand)
     if node.id in loops:
         return "loop", "a product function with a while loop"
     if node.id in unit.params or (unit.parent is not None and node.id in unit.parent.params):
         return KIND_UNREAD, "a parameter (%s): what the caller hands in is not read here" % node.id
     if node.id in unit.module.imports:
         if unit.module.is_product_alias(node.id):
-            prod = _product_kind(unit, node, line, 0)
+            prod = _product_kind(unit, node, line, 0, ctor=ctor, ctor_unit=ctor_unit, given=given)
             if prod is not None:
                 return prod
         if unit.module.is_stdlib_alias(node.id):
@@ -2560,13 +2915,15 @@ def _join_kind_answers(answers):
     return "bounded", answers[0][1] if len(answers) == 1 else "each of %d read: no loop, no untimed wait" % len(answers)
 
 
-def _product_kind(unit, expr, line, depth):
+def _product_kind(unit, expr, line, depth, ctor=None, ctor_unit=None, call=None, given=None):
     """(kind, reason) for a target or a callee that is a PRODUCT function, read in the product sources (_Product): an
     attribute of a product module alias (km._push_all: the module-level functions of that name), or a method of a
     product object (be._boot_reconcile, be built by sb.SdkBackend(...) or by a helper returning one: the method of that
     class in its file, else every product function of that name), each read in its own module's unit and joined on the
     restricted side. None when the receiver is not a product module or object; UNREADABLE when it is one but no product
-    function of that name exists (an attribute that is not a function)."""
+    function of that name exists (an attribute that is not a function). `ctor` (in `ctor_unit`) is the construction that
+    runs the function, `call` the call of it in a body the walk reads: either hands the function's parameters their
+    arguments (_ctor_given, _call_given), read when the body calls one (the third arm)."""
     prod = unit.module.product
     if prod is None:
         return None
@@ -2588,12 +2945,20 @@ def _product_kind(unit, expr, line, depth):
     answers = []
     for p, c, f in heads:
         m = prod.module(p, unit.module)
-        answers.append(_body_kind(m.unit_for(f, c), list(ast.walk(f)), unit.module.loops, depth))
+        pu = m.unit_for(f, c)
+        g = {}
+        if ctor is not None:
+            g.update(_ctor_given(f, ctor, ctor_unit or unit, given))
+        if call is not None:
+            g.update(_call_given(f, call, unit, pu, given))
+        answers.append(_body_kind(pu, list(ast.walk(f)), unit.module.loops, depth, g))
     k, why = _join_kind_answers(answers)
     if k == "loop":
         return k, "a product function with a while loop" if why == "a while loop" else "a product function: %s" % why
     if k == "bounded":
-        return k, "a product function read in %d definition%s: no loop, no untimed wait" % (len(answers), "" if len(answers) == 1 else "s")
+        if len(answers) == 1:
+            return k, "a product function read in 1 definition: %s" % why
+        return k, "a product function read in %d definitions: no loop, no untimed wait" % len(answers)
     return k, "a product function: %s" % why
 
 
@@ -3236,20 +3601,34 @@ def census(paths, loops=None, thread_classes=None, helpers=None, product=None, e
                     out.append((st, shape, u.qualname))
                     continue
                 for (cu, call, s, block, i, stack) in callers:
-                    view = st.at_caller(cu, call)                # a parameter target: its kind from the caller's argument
-                    out.append((view, classify(view, at=(cu, s, stack, call.lineno)), cu.qualname))
+                    view = st.at_caller(cu, call)                # the caller's hands: a parameter target, a parameter called
+                    shape = classify(view, at=(cu, s, stack, call.lineno))
+                    if shape == "tail-only" and view.kind in KINDS_PINNED + (KIND_UNREAD,) and not (cu.fn.name.startswith("test_") or cu.fn.name in HOOK_NAMES):
+                        callers2 = cu.callers()                  # a helper's helper (`_hammer(fn)` calling `_run(lambda: fn())`):
+                        if callers2:                             # classed at ITS callers, with both levels' hands
+                            for (cu2, call2, s2, _b2, _i2, stack2) in callers2:
+                                outer = _given_from(cu.fn, call2, cu2, cu, None, "handed in by the caller")
+                                view2 = st.at_caller(cu, call, outer=outer)
+                                out.append((view2, classify(view2, at=(cu2, s2, stack2, call2.lineno)), cu2.qualname))
+                            continue
+                    out.append((view, shape, cu.qualname))
     return out
 
 
+_HAND = re.compile(r"^\S+ of .+? is `.*`(?:\.[\w.]+)? (handed in by the caller|handed in at the construction|handed in at the call|its default)$")
+
+
 def bounded_reason_is_read(why):
-    """The reason of a bounded row says a body was READ (or a stdlib call is in the table): _body_kind's own verdict, a
-    tuple's elements each read, a product function read, a Thread with no target, a STDLIB_RETURNS entry; at a caller,
-    the same with the caller's suffix."""
-    suffix = ", handed in by the caller"
-    base = why[:-len(suffix)] if why.endswith(suffix) else why
-    return base in ("no loop, no untimed wait", "no target: the default run() does nothing") \
-        or base.startswith(("each of ", "a product function read in ", "time.sleep(", "server_close of a ")) \
-        or base in STDLIB_RETURNS.values()
+    """The reason of a bounded row says a body was READ (or a stdlib call is in the table): its HEAD is _body_kind's own
+    verdict, a tuple's elements each read, a product function read, a Thread with no target, a constant in hand for a
+    callable, a STDLIB_RETURNS entry or a conditioned rule's verdict, and every further segment (after ` | `) is a HAND:
+    the argument a parameter was given and where (`fn of _run is `_once` handed in by the caller`), whose own verdict
+    was read in turn (a hand read loop or waits makes the row that, never bounded)."""
+    head, *hands = why.split(" | ")
+    ok = head in ("no loop, no untimed wait", "no target: the default run() does nothing") \
+        or head.startswith(("each of ", "a product function read in ", "time.sleep(", "server_close of a ", "a constant `", "a literal ")) \
+        or head in STDLIB_RETURNS.values()
+    return ok and all(_HAND.match(h) for h in hands)
 
 
 def stdlib_table_problems(table):
@@ -4724,9 +5103,12 @@ class PlantedShapes(unittest.TestCase):
         parameter and a method of one, a function of a module the walk does not read, a stdlib function with no
         STDLIB_RETURNS entry, a method reached through the class on an instance it cannot name (`*kids`, a literal, a
         lambda: the syntheses that used to raise SyntaxError out of the census), a callable built by a call it does not
-        read (a parameter's, functools.partial), an element of a list, a stdlib method with no rule, and a shape nobody
-        anticipated (a conditional expression, getattr(...)). Every row is kind UNREADABLE, none bounded, none crashes
-        the census, and with a tail-only stop each is listed in the unreadable bucket."""
+        read (a parameter's, functools.partial), an element of a list, a stdlib method with no rule, a shape nobody
+        anticipated (a conditional expression, getattr(...)), and the THIRD ARM (romp-manager's ruling, 2026-09-22): a body
+        the walk read whose work is a call of a parameter (`lambda: param()`, a def calling one), of a callable attribute
+        of one (`obj.frob()`), through a parameter's attribute (`obj.a.b(1)`), or of the def's own parameter no hand
+        supplies (`own(cb)` started with no args=). Every row is kind UNREADABLE, none bounded, none crashes the census,
+        and with a tail-only stop each is listed in the unreadable bucket."""
         rows, (tails, unread, stale, bounded), _p = self._census(
             "    def test_x(self, param=None, obj=None, factory=None):\n"
             "        kids = [_Child(), _Child()]\n"
@@ -4745,10 +5127,17 @@ class PlantedShapes(unittest.TestCase):
             "        threading.Thread(target=ev.wait, args=(1,)).start()\n"
             "        threading.Thread(target=(param or _once)).start()\n"
             "        threading.Thread(target=getattr(km, 'x')).start()\n"
+            "        threading.Thread(target=lambda: param()).start()\n"
+            "        threading.Thread(target=lambda: obj.frob()).start()\n"
+            "        threading.Thread(target=lambda: obj.a.b(1)).start()\n"
+            "        def via_def():\n            return param(1)\n"
+            "        threading.Thread(target=via_def).start()\n"
+            "        def own(cb):\n            cb()\n"
+            "        threading.Thread(target=own).start()\n"
             "        self.assertTrue(False)\n",
             head=self.HEAD_FAKES.replace("import unittest\n", "import unittest\nimport os\nimport functools\nimport somelib\n"
                                          "km = __import__('types').ModuleType('km')\n"))
-        self.assertEqual(len(rows), 13, [(s.target, s.kind, sh) for s, sh, w in rows])
+        self.assertEqual(len(rows), 18, [(s.target, s.kind, sh) for s, sh, w in rows])
         self.assertEqual({s.kind for s, _sh, _w in rows}, {KIND_UNREAD}, [(s.target, s.kind, s.why) for s, _sh, _w in rows])
         self.assertEqual({sh for _s, sh, _w in rows}, {"tail-only"})
         self.assertEqual((tails, bounded, stale), ([], [], []))
@@ -4764,6 +5153,115 @@ class PlantedShapes(unittest.TestCase):
                          sorted("a method reached through the class on `%s`, an instance the walk cannot name" % h for h in ("*kids", "0", "lambda: 1")))
         self.assertIn("factory", reasons["factory()"][0])
         self.assertIn("Event", reasons["ev.wait"][0])
+        # the third arm: a body the walk read whose work is a call of a parameter, or through one, no hand supplies
+        self.assertEqual(reasons["lambda: param()"], ["calls param, a parameter of test_x: what the caller hands in is not read here"])
+        self.assertEqual(reasons["lambda: obj.frob()"], ["calls obj.frob, obj a parameter of test_x: what the caller hands in is not read here"])
+        self.assertEqual(reasons["lambda: obj.a.b(1)"], ["calls obj.a.b, obj a parameter of test_x: what the caller hands in is not read here"])
+        self.assertEqual(reasons["via_def"], ["calls param, a parameter of test_x: what the caller hands in is not read here"])
+        self.assertEqual(reasons["own"], ["calls cb, a parameter of own: what the caller hands in is not read here"])
+
+    def test_a_body_whose_work_is_a_call_of_a_parameter_is_read_where_the_argument_is_in_hand(self):
+        """The third arm's other side (romp-manager's ruling, 2026-09-22): a body whose work is a call of a parameter is
+        UNREADABLE in the helper's own row and READ where the argument is in hand. At the CALLER of a helper (`_run(fn, *a)`
+        starting `go`, whose `fn(*a)` is the caller's argument): a module function (bounded, excused on the tail), a
+        looping one (pinned), a lambda calling a product loop (a loop by indirect evidence, pinned), a product function
+        (bounded), a fake's method with an untimed wait (waits, pinned), a parameter of the caller itself (unreadable,
+        listed), a loop joined untimed before the assertion (its stop). At the CONSTRUCTION (`Thread(target=run,
+        args=(_loop,))` for a `run(fn)` that calls fn): the args= element, a kwargs= entry, none (unreadable). At the CALL
+        (`_until(lambda: ...)`, a module function called in the body with a lambda): the lambda read to its end. Each row's
+        reason names the hand."""
+        product = "import threading\ndef spin():\n    while True:\n        pass\ndef once():\n    return 1\n"
+        head = self.HEAD_FAKES.replace("class T(", "km = load_source('fake_kernel', 'fake_kernel.py')\n"
+                                                  "def _until(fn):\n    if fn():\n        return 1\n"
+                                                  "def _run(fn, *a):\n    def go():\n        fn(*a)\n"
+                                                  "    t = threading.Thread(target=go)\n    t.start()\n    return t\n"
+                                                  "class T(")
+        rows, (tails, unread, stale, bounded), _p = self._census(
+            "    def test_once(self):\n        t = _run(_once)\n        self.assertTrue(False)\n        t.join()\n"
+            "    def test_loop(self):\n        t = _run(_loop)\n        self.assertTrue(False)\n        t.join()\n"
+            "    def test_lambda(self):\n        t = _run(lambda: km.spin())\n        self.assertTrue(False)\n"
+            "    def test_product(self):\n        t = _run(km.once, 1)\n        self.assertTrue(False)\n"
+            "    def test_fake(self):\n        t = _run(self.fake.block)\n        self.assertTrue(False)\n"
+            "    def test_param(self, cb=None):\n        t = _run(cb)\n        self.assertTrue(False)\n"
+            "    def test_joined(self):\n        t = _run(_loop)\n        t.join()\n        self.assertTrue(False)\n"
+            "    def test_ctor(self):\n"
+            "        def run(fn):\n            fn()\n"
+            "        threading.Thread(target=run, args=(_loop,)).start()\n"
+            "        threading.Thread(target=run, args=(_once,)).start()\n"
+            "        threading.Thread(target=run, kwargs={'fn': self.fake.block}).start()\n"
+            "        threading.Thread(target=run).start()\n"
+            "        self.assertTrue(False)\n"
+            "    def test_call(self):\n"
+            "        threading.Thread(target=lambda: _until(lambda: _loop())).start()\n"
+            "        threading.Thread(target=lambda: _until(_once)).start()\n"
+            "        self.assertTrue(False)\n"
+            "    def test_method(self):\n"
+            "        q = queue.Queue()\n"
+            "        d = {'k': 1}\n"
+            "        be = km.Be()\n"
+            "        threading.Thread(target=lambda: _poke(q)).start()\n"
+            "        threading.Thread(target=lambda: _poke(d)).start()\n"
+            "        threading.Thread(target=lambda: _poke(self.fake)).start()\n"
+            "        threading.Thread(target=lambda: _poke(be)).start()\n"
+            "        threading.Thread(target=lambda: _pop(q)).start()\n"
+            "        threading.Thread(target=lambda: _hand(self.fake)).start()\n"
+            "        threading.Thread(target=lambda: _sorted(d)).start()\n"
+            "        threading.Thread(target=lambda: _bound(_loop)).start()\n"
+            "        self.assertTrue(False)\n",
+            head=head.replace("import unittest\n", "import unittest\nimport queue\n")
+                     .replace("class T(", "def _poke(x):\n    return x.get('k')\n"
+                                          "def _pop(x):\n    return x.get()\n"
+                                          "def _hand(f):\n    return _poke(f)\n"
+                                          "def _sorted(rows):\n    return sorted(rows, key=lambda r: r.get('t'))\n"
+                                          "def _bound(fn):\n    worker = lambda: fn()\n    return worker()\n"
+                                          "class T("),
+            product={"fake_kernel": product + "class Be:\n    def get(self, k):\n        while True:\n            pass\n"})
+        by = {}
+        for st, sh, w in rows:
+            by.setdefault(w, []).append((st.target, st.kind, st.why, sh))
+        self.assertNotIn("_run", by, "the helper's own row is tail-only and unreadable: classed at its callers")
+        self.assertEqual(by["T.test_once"], [("go", "bounded", "no loop, no untimed wait | fn of _run is `_once` handed in by the caller", "tail-only")])
+        self.assertEqual(by["T.test_loop"], [("go", "loop", "a while loop | fn of _run is `_loop` handed in by the caller", "tail-only")])
+        self.assertEqual(by["T.test_lambda"], [("go", "loop", "calls spin, a product function with a while loop | fn of _run is `lambda: km.spin()` handed in by the caller", "tail-only")])
+        self.assertEqual(by["T.test_product"], [("go", "bounded", "no loop, no untimed wait | fn of _run is `km.once` handed in by the caller", "tail-only")])
+        self.assertEqual(by["T.test_fake"], [("go", "waits", "an untimed .wait() | fn of _run is `self.fake.block` handed in by the caller", "tail-only")])
+        self.assertEqual(by["T.test_param"], [("go", KIND_UNREAD, "a parameter (cb): what the caller hands in is not read here | fn of _run is `cb` handed in by the caller", "tail-only")])
+        self.assertEqual(by["T.test_joined"], [("go", "loop", "a while loop | fn of _run is `_loop` handed in by the caller", "stop-before-first-assertion")])
+        self.assertEqual([r[1:] for r in by["T.test_ctor"]], [
+            ("loop", "a while loop | fn of run is `_loop` handed in at the construction", "tail-only"),
+            ("bounded", "no loop, no untimed wait | fn of run is `_once` handed in at the construction", "tail-only"),
+            ("waits", "an untimed .wait() | fn of run is `self.fake.block` handed in at the construction", "tail-only"),
+            (KIND_UNREAD, "calls fn, a parameter of run: what the caller hands in is not read here", "tail-only")])
+        self.assertEqual([r[1:] for r in by["T.test_call"]], [
+            ("loop", "calls _until, calls _loop, a while loop | fn of _until is `lambda: _loop()` handed in at the call", "tail-only"),
+            ("bounded", "no loop, no untimed wait | fn of _until is `_once` handed in at the call", "tail-only")])
+        # a METHOD called on the parameter is read on the hand, with the call's own arguments: x.get('k') on a Queue is a
+        # method the table has no rule for (unreadable), on a dict literal a literal's (bounded), on a fake the walk does not
+        # read (unreadable), on a product object its method in its module (a while: loop); x.get() with no arguments is the
+        # body's own untimed wait, whatever x is (the name rule, first); a hand that is a parameter follows its own hand
+        # (_hand(f) -> _poke(x): the fake, the innermost hand first); a lambda handed to sorted() is inside a call the walk does not follow (bounded,
+        # the stated limit); a name-bound lambda the body calls is read with the call's hands (a loop)
+        self.assertEqual([r[1:] for r in by["T.test_method"]], [
+            (KIND_UNREAD, "calls _poke, q.get: a method of a Queue() the walk has no rule for | x.get of _poke is `q`.get handed in at the call", "tail-only"),
+            ("bounded", "no loop, no untimed wait | x.get of _poke is `d`.get handed in at the call", "tail-only"),
+            (KIND_UNREAD, "calls _poke, a method of `self.fake`, an object the walk does not read | x.get of _poke is `self.fake`.get handed in at the call", "tail-only"),
+            ("loop", "calls _poke, a product function with a while loop | x.get of _poke is `be`.get handed in at the call", "tail-only"),
+            ("waits", "calls _pop, an untimed .get()", "tail-only"),
+            (KIND_UNREAD, "calls _hand, calls _poke, a method of `self.fake`, an object the walk does not read | f.get of _hand is `self.fake`.get handed in at the call | x.get of _poke is `f`.get handed in at the call", "tail-only"),
+            ("bounded", "no loop, no untimed wait", "tail-only"),
+            ("loop", "calls _bound, calls worker, calls _loop, a while loop | fn of _bound is `_loop` handed in at the call", "tail-only")])
+        self.assertEqual(self._tails(tails), sorted([("go", "T.test_loop"), ("go", "T.test_lambda"), ("go", "T.test_fake"),
+                                                     ("run", "T.test_ctor"), ("run", "T.test_ctor"), ("lambda: _until(lambda: _loop())", "T.test_call"),
+                                                     ("lambda: _pop(q)", "T.test_method"), ("lambda: _poke(be)", "T.test_method"),
+                                                     ("lambda: _bound(_loop)", "T.test_method")]))
+        self.assertEqual(sorted((s_.target, w) for s_, w in unread), [("go", "T.test_param"), ("lambda: _hand(self.fake)", "T.test_method"),
+                                                                       ("lambda: _poke(q)", "T.test_method"), ("lambda: _poke(self.fake)", "T.test_method"),
+                                                                       ("run", "T.test_ctor")])
+        self.assertEqual(sorted((s_.target, w) for s_, w in bounded), sorted([("go", "T.test_once"), ("go", "T.test_product"), ("run", "T.test_ctor"),
+                                                                              ("lambda: _until(_once)", "T.test_call"),
+                                                                              ("lambda: _poke(d)", "T.test_method"), ("lambda: _sorted(d)", "T.test_method")]))
+        self.assertTrue(all(bounded_reason_is_read(s_.why) for s_, w in bounded), [s_.why for s_, w in bounded])
+        self.assertFalse(bounded_reason_is_read("no loop, no untimed wait | fn is `x`"), "a segment that is not a hand is not read")
 
     def test_a_product_function_is_read_in_its_own_module_and_an_attribute_no_function_defines_is_unreadable(self):
         """The product road: a product module alias (km = load_source(...)), a local bound to one through a helper
