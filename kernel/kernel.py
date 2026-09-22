@@ -10429,8 +10429,11 @@ def _user_todo_open(t):
     predicate or to a NAMED exemption: the store's mutators (_resolve_user_todo, _reopen_user_todo, _withdraw_user_todo,
     _prune_user_todos), the log replay (_user_todos_from_log), the boot pass's answered filter
     (_user_todo_loss_boot_pass) and the settled-phrase reader (_settled_todo_phrase), which read a stamp's kind or
-    presence for their own step and rule on no row's openness; a new function that spells the read itself is named in
-    that test's red."""
+    presence for their own step and rule on no row's openness. The walk's bound is the key's literal: every other
+    "resolved" literal in this file is held, with the function around it, to the five file-comments functions where
+    the word is a status value, so a function that holds the literal any other way (in a name, a tuple, a .get's
+    default, a conditional's arm, an equality over the keys) is named in that test's red as well; only a key spelled
+    without the literal, a string built at run time, is outside it."""
     return isinstance(t, dict) and bool(t.get("id")) and not t.get("resolved")
 
 

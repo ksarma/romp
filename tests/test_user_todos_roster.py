@@ -55,12 +55,15 @@ def _count(row):
 
 def _stamp_key_reach(text):
     """The census's population, DERIVED (extra6-1, round 1): over the kernel's source, the innermost function around every
-    access to the stamp key "resolved" (a .get or .pop call with it as the first argument, a subscript by it in any
-    context, a `"resolved" in x` or `not in` test), as a set of names; and the parent shape of EVERY "resolved" literal
-    in the file, key access or not, as a set of shape names, so the walk's bound (it keys on the literal) is checked by
-    execution: a spelling it would not read is a new shape."""
+    access to the stamp key "resolved" (a .get or .pop call with it as the FIRST argument, a subscript by it in any
+    context, a `"resolved" in x` or `not in` test), as a set of names; and, for EVERY other "resolved" literal in the
+    file, the pair (innermost function, parent shape), so the walk's bound (it keys on the literal) is checked by
+    execution and NAMED: a literal the walk does not read as a key access is either a status VALUE inside one of the
+    file-comments functions the test lists, or a reader spelled some other way (the key held in a name or a tuple, a
+    .get whose literal is a default, a conditional's arm, an equality over the keys), which reds there under its
+    function's name."""
     tree = ast.parse(text)
-    readers, shapes = set(), set()
+    readers, values = set(), set()
 
     def shape_of(parent):
         if isinstance(parent, ast.Call) and isinstance(parent.func, ast.Attribute):
@@ -75,16 +78,17 @@ def _stamp_key_reach(text):
         for ch in ast.iter_child_nodes(node):
             if isinstance(ch, ast.Constant) and ch.value == "resolved":
                 shape = shape_of(node)
-                shapes.add(shape)
                 key_access = ((shape in ("Call.get", "Call.pop") and node.args and node.args[0] is ch)
                               or (isinstance(node, ast.Subscript) and node.slice is ch)
                               or (isinstance(node, ast.Compare) and node.left is ch
                                   and all(isinstance(op, (ast.In, ast.NotIn)) for op in node.ops)))
                 if key_access:
                     readers.add(enclosing or "<module>")
+                else:
+                    values.add((enclosing or "<module>", shape))
             visit(ch, enclosing)
     visit(tree, None)
-    return readers, shapes
+    return readers, values
 
 
 class UserTodosRoster(_ColdTabFixture):
@@ -219,12 +223,16 @@ class UserTodosRoster(_ColdTabFixture):
         # the innermost function around each, so a new function that spells the open check itself is named in this red
         # instead of passing unseen. The set is held to the predicate and the NAMED exemptions, each of which reads a
         # stamp's presence or kind for its own step and rules on no row's openness for a surface (_user_todo_open's
-        # docstring says the same). The bound: the walk keys on the key's literal spelling; the second assertion holds
-        # every "resolved" literal in the file to a shape the walk reads or to the file-comments code's status VALUE
-        # (an equality, a tuple member, a keyword argument, a conditional's arm), so the key held in a variable, which
-        # the walk could not follow, is a new shape and reds there, named.
+        # docstring says the same). THE BOUND, stated and executed: the walk keys on the key's literal spelling, so the
+        # second and third assertions take every OTHER "resolved" literal in the file with the function around it and
+        # hold the functions to the five file-comments functions, where the word is a status VALUE, and the shapes to
+        # the four those functions spell (an equality, a tuple member, a keyword value, a conditional's arm). A literal
+        # in any other function, whatever its shape (the key held in a name or in a tuple the loop unpacks, a .get whose
+        # literal is the default and not the key, a conditional expression choosing the key, an equality over the keys),
+        # reds the function assertion under that function's name (the plants below prove it). Outside the bound: a key
+        # spelled without the literal, a string built at run time.
         ksrc = open(km.__file__).read()
-        readers, shapes = _stamp_key_reach(ksrc)
+        readers, values = _stamp_key_reach(ksrc)
         self.assertEqual(readers, {
             "_user_todo_open",             # the predicate itself
             "_resolve_user_todo",          # a mutator: the lookup by id, the stamp write, the history cap's sort
@@ -235,9 +243,13 @@ class UserTodosRoster(_ColdTabFixture):
             "_user_todo_loss_boot_pass",   # the boot backstop: rows still 'answered', the reopen's own filter
             "_settled_todo_phrase",        # the warning's clause: how a settled todo was cleared, never whether one is open
         }, "every function reaching the stamp key is the predicate or a named exemption: a new one spells the open check itself")
-        self.assertEqual(shapes - {"Call.get", "Call.pop", "Subscript", "Compare.In", "Compare.NotIn",
-                                   "Compare.Eq", "Tuple", "keyword", "IfExp"}, set(),
-                         "every \"resolved\" literal in the kernel is a key access the walk reads, or a comment-status value")
+        comment_status = {"_comment_markers", "_comment_merge", "_comment_promote_inner", "_comment_resolve", "_comment_status_refusal"}
+        self.assertEqual({f for f, _ in values}, comment_status,
+                         "every \"resolved\" literal the walk does not read as a key access is a file-comment's status value, inside "
+                         "one of these five functions: a literal in any other function is a reader the walk cannot follow "
+                         "(the key held in a name or a tuple, a .get's default, a conditional's arm, an equality), named here")
+        self.assertEqual({s for _, s in values}, {"Compare.Eq", "Tuple", "keyword", "IfExp"},
+                         "...and in the value shapes the file-comments code spells: a new shape there is read as a new way to hold the key")
         # the walk lists a plant, proved here by execution over the source plus three hand-rolled readers, one per shape
         planted = ksrc + (
             '\n\ndef _probe_reader_by_get(sid):\n'
@@ -246,6 +258,20 @@ class UserTodosRoster(_ColdTabFixture):
             '\n\nclass _Probe:\n    def reader_by_subscript(self, t):\n        return t["resolved"] is None\n')
         self.assertLessEqual({"_probe_reader_by_get", "_probe_reader_by_in", "reader_by_subscript"}, _stamp_key_reach(planted)[0],
                              "the walk names a planted reader of each shape, a method included")
+        # ...and the BOUND names a plant of each shape the walk does not read as a key access (the round-1 verifiers' five:
+        # an equality over the keys, dict.get with the literal as the default, a conditional choosing the key, a one-tuple
+        # the loop unpacks, the key held in a name), under its function, so none of them passes as a comment-status value
+        planted_values = ksrc + (
+            '\n\ndef _probe_reader_by_key_equality(t):\n    return isinstance(t, dict) and not any(k == "resolved" for k in t)\n'
+            '\n\ndef _probe_reader_by_dict_get(t):\n    return isinstance(t, dict) and not dict.get(t, "resolved")\n'
+            '\n\ndef _probe_reader_by_ifexp_key(t, stamp=True):\n    return isinstance(t, dict) and not t.get("resolved" if stamp else "id")\n'
+            '\n\ndef _probe_reader_tuple_key(t):\n    for k in ("resolved",):\n        return t.get(k) is None\n'
+            '\n\ndef _probe_reader_by_name(t):\n    key = "resolved"\n    return t.get(key) is None\n')
+        named = {f for f, _ in _stamp_key_reach(planted_values)[1]} - comment_status
+        self.assertEqual(named, {"_probe_reader_by_key_equality", "_probe_reader_by_dict_get", "_probe_reader_by_ifexp_key",
+                                 "_probe_reader_tuple_key", "_probe_reader_by_name"},
+                         "the bound names a planted reader of each shape the walk does not read as a key access")
+        self.assertEqual(_stamp_key_reach(planted_values)[0], readers, "...and lists none of them as a key access: the bound is what catches them")
         real_build = self._saved[3]                    # the fixture stubs build_session for the pushes: the saved original is the source
         for fn, arg in ((real_build, "sid"), (km._feed_session_key, "fsid")):
             src = inspect.getsource(fn)
