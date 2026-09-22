@@ -329,8 +329,9 @@ function frame(w: World, label: string, mutate: (events: Ev[]) => Ev[], expect: 
     if (u0 < total) assert.ok(fresh > 0, label + ": the units from u0 were re-rendered"); else assert.equal(fresh, 0, label + ": u0 is the unit count: nothing re-rendered");
   };
   if (!w.compact) {
-    // normal mode: no plan on its road (the seam is compact mode's); the exact tail trims from the first changed event (unit === event, so u0
-    // is that event, bounded below by the window's start), the fast path replaces no node, and a stale view takes the rebuild
+    // normal mode: no plan on its road (the seam is compact mode's); the exact tail trims from the first changed event's UNIT, its index in the
+    // list past any gap (unitOfEvent: under a head gap every event's unit is its index plus one), bounded below by the window's start; the
+    // fast path replaces no node, and a stale view takes the rebuild (the maintainer's round 5 ruling, regression-1)
     assert.equal(asked.length, 0, label + ": normal mode asks no plan: " + JSON.stringify(asked));
     const total = w.items().length;
     if (expect === "append") executed(Math.max(unitOfEvent(w.items(), from), w.v.winStart ?? 0), total, "normal mode's trim from the first changed event's unit (its index in the list, past any gap)");

@@ -40,14 +40,11 @@ class FakeEl {
 type Call = any[];
 const SENTINEL = 424242;   // the reference railChainBefore hands back, so the seed appendItem receives is traceable to it
 
-function liftSeam(sessions: Map<string, any>, views: Map<string, any>, itemsOf: (s: any) => DisplayItem[], calls: Call[], compact = true) {
-  const js = liftBetween("function syncViewInner(", "function patchWorkedFooters(");
-  // itemFirstEvent is LIFTED with the seam, never hand-copied (the author's verifier pass over pass 1b): a copy re-creates the drift the
-  // next time production's first-event rule moves, and the seam's footer `from` (the first re-rendered unit's first event) would then be
-  // modelled against a stale map while the harness stayed green. The seam's one call cannot see a gap (the plan rebuilds when a gap
-  // stands at or past u0), so the lift is proven by a production mutation of the run case, which a hand copy would have hidden.
-  const first = liftBetween("function itemFirstEvent(", "// The display-unit index");
-  const prelude = `
+/** The seam's prelude: every collaborator syncViewInner reaches, stubbed to record what it is handed. Module-level so the names it stubs
+ *  are pinned against render.ts's module-level declarations by a cell below (a stub of a name the renderer no longer has is a red here,
+ *  not a dead line: the maintainer's round 6 ruling, regression-2, found dayWalkBeforeEvent stubbed after the author's pass after
+ *  the maintainer's round 5 ruling removed it, and nothing stubbed for gapElement, which normal mode's block calls). */
+const SEAM_PRELUDE = `
     const H = HOOKS;
     let renderingSid = null, renderingOwnerSid = null;
     const subParts = () => null;
@@ -70,12 +67,22 @@ function liftSeam(sessions: Map<string, any>, views: Map<string, any>, itemsOf: 
     const appendItem = (v, s, items, u, prevEpoch) => { H.calls.push(["appendItem", u, prevEpoch]); return prevEpoch; };
     const evictCompactTop = (v, ws) => { H.calls.push(["evict", ws]); if (ws <= (v.winStart ?? 0)) return false; v.winStart = ws; return true; };   // the real one's answer: whether it evicted
     const reseedWindowHead = (v, s, items) => { H.calls.push(["reseed", v.winStart, items.length]); };
-    // normal mode's names: reached in a normal-mode world alone (the renderer records the event it drew)
-    const dayWalkBeforeEvent = () => new H.DayWalk(); const prevTimedEpoch = () => null; const eventEpoch = () => null; const dayDividerFor = () => null;
+    // normal mode's names: reached in a normal-mode world alone (the renderer records the event it drew; gapElement records the gap it drew, which
+    // the block reaches for a gap item at or past the first changed event's unit on the exact-tail path: the maintainer's round 6 ruling, regression-2)
+    const prevTimedEpoch = () => null; const eventEpoch = () => null; const dayDividerFor = () => null;
+    const gapElement = (s, it, v) => { H.calls.push(["gapElement", it.lo, it.hi]); return new H.FakeEl("div", "tx-gap"); };
     const renderEvent = (ev) => { H.calls.push(["renderEvent", ev.uuid]); return new H.FakeEl("div", "turn"); }; const turnWorkedSecs = () => null; const stampWalkDay = () => {};
     const HTMLElement = H.FakeEl; const el = (t, c) => new H.FakeEl(t, c || "");
   `;
-  return new Function("HOOKS", prelude + first + js + "\nreturn syncViewInner;")({ sessions, views, itemsOf, calls, compactTailPlan, DayWalk, FakeEl, SENTINEL, compact }) as (id: string, atBottom?: boolean, anchored?: boolean) => any;
+
+function liftSeam(sessions: Map<string, any>, views: Map<string, any>, itemsOf: (s: any) => DisplayItem[], calls: Call[], compact = true) {
+  const js = liftBetween("function syncViewInner(", "function patchWorkedFooters(");
+  // itemFirstEvent is LIFTED with the seam, never hand-copied (the author's verifier pass over pass 1b): a copy re-creates the drift the
+  // next time production's first-event rule moves, and the seam's footer `from` (the first re-rendered unit's first event) would then be
+  // modelled against a stale map while the harness stayed green. The seam's one call cannot see a gap (the plan rebuilds when a gap
+  // stands at or past u0), so the lift is proven by a production mutation of the run case, which a hand copy would have hidden.
+  const first = liftBetween("function itemFirstEvent(", "// The display-unit index");
+  return new Function("HOOKS", SEAM_PRELUDE + first + js + "\nreturn syncViewInner;")({ sessions, views, itemsOf, calls, compactTailPlan, DayWalk, FakeEl, SENTINEL, compact }) as (id: string, atBottom?: boolean, anchored?: boolean) => any;
 }
 /** renderWindowItems lifted alone (its own gate on the flag) over a recording applyMeasure and stubs for what it appends. */
 function liftBuild(calls: Call[]) {
@@ -410,4 +417,43 @@ test("renderWindowItems takes a parked figure only when its caller says it ancho
     assert.equal(v.winStart, 0); assert.equal(v.winEnd, 2); assert.equal(v.rendered, 2);
     assert.deepEqual(calls[calls.length - 1], ["sizeSpacers"], "…and sized its spacers last");
   }
+});
+
+test("normal mode's exact tail with a GAP at or past the first changed event's unit: the block draws the gap through gapElement (recorded), tagged by its unit, between the events around it, and patches the footers from the change with the list (the maintainer's round 6 ruling, regression-2: the harness stubbed a removed name and nothing for gapElement, so this world threw a ReferenceError at the head that round ruled on)", () => {
+  // the reply at event 1 edited (from = 1), a gap standing before event 2 in a three-event view: units e0, e1, gap, e2. v.rendered 1, not 0 (a
+  // first build takes the rebuild path and never reaches this block); a gap below `from` is untouched, so the trigger is a gap at or past it
+  const gap: DisplayItem = { kind: "gap", lo: 10, hi: 12, before: 2 };
+  const w = world(["user", "assistant", "user"], [ev(0), ev(1), gap, ev(2)], [ev(0), ev(1), gap, ev(2)], 1, 0, true, false);
+  w.sync("A", true);
+  assert.deepEqual(w.calls.filter((c) => c[0] === "trim"), [["trim", 1]], "one trim, from the changed event's unit");
+  assert.deepEqual(w.calls.filter((c) => c[0] === "renderEvent" || c[0] === "gapElement"), [["renderEvent", "e1"], ["gapElement", 10, 12], ["renderEvent", "e2"]], "the gap drawn between the events around it, through gapElement, as appendItem draws it (no divider, no epoch)");
+  const g = w.v.el.children.find((c: FakeEl) => c.className === "tx-gap");
+  assert.ok(g, "the gap node stands in the view"); assert.equal(g!.dataset.unit, "2", "…tagged by its unit, the list's index");
+  assert.deepEqual(w.calls.filter((c) => c[0] === "patchWorkedFooters"), [["patchWorkedFooters", 1, true, 4]], "the footers patched from the change (v.rendered), with the unit list (four items, the gap among them)");
+  assert.deepEqual(w.calls.filter((c) => c[0] === "appendItem" || c[0] === "renderWindowItems" || c[0] === "evict" || c[0] === "reseed"), [], "no compact helper, no rebuild");
+  assert.equal(w.v.rendered, 3); assert.equal(w.v.winEnd, 4);
+});
+
+test("every name the seam's prelude stubs is one render.ts declares at module level (a function, a class, a variable or an import binding), read off both trees, so a stub of a name the renderer no longer has reds here instead of standing as a dead line; two names are the harness's own and exempt by name, H (the hooks object) and HTMLElement (a DOM global the renderer never declares) (the maintainer's round 6 ruling, regression-2)", () => {
+  const bind = (n: ts.BindingName, into: string[]): void => { if (ts.isIdentifier(n)) into.push(n.text); else for (const e of n.elements) if (!ts.isOmittedExpression(e)) bind(e.name, into); };
+  const prelude = ts.createSourceFile("prelude.js", SEAM_PRELUDE, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const stubbed: string[] = [];
+  for (const st of prelude.statements) { if (ts.isVariableStatement(st)) for (const d of st.declarationList.declarations) bind(d.name, stubbed); else if (ts.isFunctionDeclaration(st) && st.name) stubbed.push(st.name.text); }
+  assert.ok(stubbed.length >= 30 && stubbed.includes("gapElement") && stubbed.includes("appendItem"), "the prelude's stubbed names, read off its own tree (" + stubbed.length + "): " + stubbed.join(", "));
+  const sf = ts.createSourceFile("render.ts", RENDER, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const declared: string[] = [];
+  for (const st of sf.statements) {
+    if ((ts.isFunctionDeclaration(st) || ts.isClassDeclaration(st)) && st.name) declared.push(st.name.text);
+    else if (ts.isVariableStatement(st)) for (const d of st.declarationList.declarations) bind(d.name, declared);
+    else if (ts.isImportDeclaration(st) && st.importClause) {
+      const c = st.importClause; if (c.name) declared.push(c.name.text);
+      const nb = c.namedBindings; if (nb) { if (ts.isNamespaceImport(nb)) declared.push(nb.name.text); else for (const e of nb.elements) declared.push(e.name.text); }
+    }
+  }
+  const has = new Set(declared);
+  const EXEMPT: Record<string, string> = { H: "the harness's hooks object", HTMLElement: "a DOM global the renderer never declares" };
+  const missing = stubbed.filter((n) => !(n in EXEMPT) && !has.has(n));
+  assert.deepEqual(missing, [], "a name the prelude stubs that render.ts declares nowhere at module level: a stub of a removed function is dead, and the harness no longer models the renderer it lifts");
+  for (const n of Object.keys(EXEMPT)) assert.ok(stubbed.includes(n) && !has.has(n), n + " is exempt because it is " + EXEMPT[n] + ", and render.ts indeed declares it nowhere");
+  assert.ok(has.has("gapElement") && has.has("appendItem") && has.has("dayWalkBefore"), "the renderer declares the block's collaborators the prelude stubs");
 });

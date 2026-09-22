@@ -192,7 +192,9 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         # The value bound (the maintainer's round 5 ruling, tests-1): the owner approved the `view` key carrying ONE FIXED WORD and no host
         # name, and a key-only allowlist admitted any text under it (each value below was stored as posted at the head that round ruled on,
         # nothing said). The set is stated once, in the kernel (CLIENT_DIAG_VALUES), and read here: the word is not spelled in this cell, the
-        # foreign values are derived from it or are of another type, so the cell cannot drift from the set it drives. A refusal takes the
+        # foreign values are derived from it (a case variant, a second word one character longer, a long string) or are of another type (a
+        # number, null, an object), so the cell cannot drift from the set it drives and no case can pass for the wrong reason (a literal second
+        # word would be admitted, not refused, by a kernel that adopted it: the maintainer's round 6 ruling, extra7-1). A refusal takes the
         # unknown key's shape: the row is stored without the key, and one stderr line names the key and the reason, never the value (the
         # latch is per surface and key, so it is cleared between the values here: each is its own kernel for the line's purpose). The long
         # string is a value outside the set, refused whole or cut: the kernel compares the value as posted, before the scrub, but under the
@@ -205,17 +207,20 @@ class ClientDiagAllowlistTest(unittest.TestCase):
         self.assertEqual(self.rows()[-1]["data"], dict(base, view=word), "the marked row stored whole, the word as posted")
         variant = word[:1].upper() + word[1:]
         self.assertNotEqual(variant, word, "a case variant of the word, derived from it")
+        other = word + "x"
+        self.assertNotEqual(other, word, "a second word, derived from the word (one character longer; well under CLIENT_DIAG_STR_MAX, so distinct from the long string below)")
+        self.assertLessEqual(len(other), km.CLIENT_DIAG_STR_MAX, "the second word is not a string the scrub would cut")
         long = word + "x" * (4 * km.CLIENT_DIAG_STR_MAX)
         self.assertGreater(len(long), km.CLIENT_DIAG_STR_MAX, "a string the scrub would cut")
         line = "[client-diag] dropping a key whose value is outside the set the kernel admits for it: surface 'chat', key 'view'"
-        for label, value in (("a case variant", variant), ("another word", "away"), ("a number", 7), ("null", None),
+        for label, value in (("a case variant", variant), ("another word", other), ("a number", 7), ("null", None),
                              ("an object", {"host": "TESTHOST"}), ("a long string", long)):
             km._client_diag_said.clear()
             err = self.post("chat", "spacer", dict(base, view=value))
             self.assertEqual(err.splitlines(), [line], "%s: refused with the kernel's line naming the key and the reason, never the value" % label)
             self.assertEqual(self.rows()[-1]["data"], base, "%s: the row is stored without the key, the other keys whole" % label)
         # said once per kernel, as an unknown key is: the same refusal again, nothing said
-        self.assertEqual(self.post("chat", "spacer", dict(base, view="away")), "")
+        self.assertEqual(self.post("chat", "spacer", dict(base, view=other)), "", "the same refusal again, nothing said (the derived word, so a kernel that adopted a literal could not pass this for the wrong reason)")
 
     def test_every_surface_in_the_table_admits_every_key_it_names(self):
         for surface, keys in sorted(km.CLIENT_DIAG_KEYS.items()):

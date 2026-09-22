@@ -18,7 +18,7 @@ test("the tail path starts at the exact first changed event; the trailing re-che
   assert.doesNotMatch(RENDER, /len - TAIL_RECHECK/);
   const sync = RENDER.slice(RENDER.indexOf("function syncViewInner("), RENDER.indexOf("function patchWorkedFooters("));
   assert.match(sync, /const from = Math\.max\(u0, winStart\);/, "the tail starts at the first changed event's UNIT, bounded below by the window's start (the maintainer's round 5 ruling, regression-1: the list's unit, not the event index)");
-  assert.match(sync, /patchWorkedFooters\(v, s, Math\.min\(v\.rendered, from < total \? itemFirstEvent\(items\[from\]\) : len\), working, items\);\s*\n\s*v\.winEnd = total;/, "the footers are reconciled after the exact re-render, before the bookkeeping, with the unit list");
+  assert.match(sync, /patchWorkedFooters\(v, s, v\.rendered, working, items\);\s*\n\s*v\.winEnd = total;/, "the footers are reconciled after the exact re-render, before the bookkeeping, from the first changed event (v.rendered, handed directly: this mode's units are single events, so compact mode's earlier-of expression is always v.rendered here, the maintainer's round 6 ruling, extra6-3) with the unit list");
 });
 
 test("reconcileRewind delegates to the pure pass and marks the view stale on its signal, on every path", () => {
@@ -154,9 +154,11 @@ const NORMAL_MODE_BLOCK = [
   "    walk.pass(ep);",
   "    stampWalkDay(node, walk);",
   "  }",
-  "  // the footer patch names the last reply BEFORE the first changed event, or before the first re-rendered unit's first event when that is",
-  "  // earlier (the change above the window: nothing re-rendered below it), with the list, as compact mode's append does",
-  "  patchWorkedFooters(v, s, Math.min(v.rendered, from < total ? itemFirstEvent(items[from]) : len), working, items);",
+  "  // the footer patch names the last reply BEFORE the first changed event (v.rendered, still the pre-append value here), with the list.",
+  "  // Compact mode's append takes the earlier of that and its first re-rendered unit's first event, because a folded run's first event can",
+  "  // lie below v.rendered; this mode's units are single events and the list is monotone, so that earlier value is always v.rendered here",
+  "  // and the patch is handed it directly (the maintainer's round 6 ruling, extra6-3)",
+  "  patchWorkedFooters(v, s, v.rendered, working, items);",
   "  v.winEnd = total; v.spacerCount = v.winStart ?? 0; v.spacerCountBot = 0; v.unitTotal = total; v.rendered = len;",
   "  return v;",
   "}"

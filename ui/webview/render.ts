@@ -13726,9 +13726,11 @@ function syncViewInner(id: string, atBottom?: boolean, anchored: boolean = atBot
     walk.pass(ep);
     stampWalkDay(node, walk);
   }
-  // the footer patch names the last reply BEFORE the first changed event, or before the first re-rendered unit's first event when that is
-  // earlier (the change above the window: nothing re-rendered below it), with the list, as compact mode's append does
-  patchWorkedFooters(v, s, Math.min(v.rendered, from < total ? itemFirstEvent(items[from]) : len), working, items);
+  // the footer patch names the last reply BEFORE the first changed event (v.rendered, still the pre-append value here), with the list.
+  // Compact mode's append takes the earlier of that and its first re-rendered unit's first event, because a folded run's first event can
+  // lie below v.rendered; this mode's units are single events and the list is monotone, so that earlier value is always v.rendered here
+  // and the patch is handed it directly (the maintainer's round 6 ruling, extra6-3)
+  patchWorkedFooters(v, s, v.rendered, working, items);
   v.winEnd = total; v.spacerCount = v.winStart ?? 0; v.spacerCountBot = 0; v.unitTotal = total; v.rendered = len;
   return v;
 }
