@@ -23,7 +23,7 @@ import { literalizeUnclosedTags } from "./md-literal-tags";   // an inline start
 import { gateRemoteFigures, gateOf, loadGatedHost, figureRefs, parseSrcset, serializeSrcset, GATE_ACT } from "./figure-gate";   // decision 8: a figure on an unlisted host loads on a click (figure-gate.ts)
 import { hostOf, bareId, hostNameNodes } from "./host-prefix";
 import { fileUrl } from "./preview";
-import { ICON_DOWNLOAD, ICON_COPY, ICON_EDIT, ICON_ZOOM, ICON_CHECK, ICON_CROSS, ICON_BACK, ICON_FORWARD, ICON_EXPAND } from "./icons";   // the bar's glyphs (T367); the trail's two arrows (L2); the figure control's arrows out of the corners (L3)
+import { ICON_DOWNLOAD, ICON_COPY, ICON_EDIT, ICON_ZOOM, ICON_CHECK, ICON_CROSS, ICON_BACK, ICON_FORWARD, ICON_EXPAND, ICON_OUTBOUND } from "./icons";   // the bar's glyphs (T367); the trail's two arrows (L2); the figure control's arrows out of the corners (L3), and its outbound glyph for a picture from the web (the file review's round 11, ui-1)
 import { openPdfTab, wantsOwnTab } from "./preview";   // a PDF's own tab, and the gesture that asks for it
 import { openFileTab, canPreview } from "./preview";   // any file's own tab, for the links inside a shown file, and the web-vs-webview test
 import { headVerdict, mtimeMoved, ABSENT, figurePath } from "./file-comments-model";   // the panel's reading of a HEAD /file answer, shared by the changed-on-disk probe (Slice 6, item 5); ABSENT: a 404, the bar's deletion words; figurePath: where a figure's source points on the session's disk, the join the poll's HEAD and rewriteFigureSrcs agree on (file-comments-model-figures.test.ts), read by the figure's "Open the picture" (L3)
@@ -4715,8 +4715,34 @@ const FIGOPEN_MARK = "data-fv-figopen";
 /** The control's class, for the sheets alone (`.fileview-md .fv-figopen`); with `-left` or `-right` after it, the float of a
  *  figure the author aligned, which the control follows (the sheets' two float rules). */
 const FIGOPEN_CLASS = "fv-figopen";
-/** The control's words, its title and aria-label. */
+/** The control's words, its title and aria-label, for a picture of the session's disk. */
 export const FIGURE_OPEN_TITLE = "Open the picture";
+/** The control's class for a picture from the web, beside FIGOPEN_CLASS (`.fileview-md .fv-figopen-web`, the sheets' dress for a
+ *  control whose open leaves for another host), keyed on figureTarget's kind and re-decided with the control (dressFigureControl;
+ *  the file review's round 11, ui-1 with extra8-1: the owner's decision of 2026-09-22 kept every gesture that opens a web picture's
+ *  address in a tab and asked that the case show before the click, where a remote and a local picture had presented one surface). */
+const FIGOPEN_WEB_CLASS = FIGOPEN_CLASS + "-web";
+/** The control's words for a picture from the web: the open is a new tab at the address's host. The host alone, never the address
+ *  with whatever credentials an author wrote into it, in words a hover and a screen reader both read. */
+export function figureOpenWebTitle(host: string): string { return "Open the picture in a new tab at " + host; }
+/** The line the picture itself carries in its title for a web target, for the two gestures that have no control to carry words (the
+ *  plain click and the Cmd/Ctrl-click on the picture where the press reaches it): the address the open leaves for. An author's own
+ *  title stands before it on its own line (dressFigureTitle). */
+export function figureWebTitleLine(address: string): string { return "Opens in a new tab: " + address; }
+/** The mark on a picture whose title the viewer composed (dressFigureTitle): it holds the author's own title, "" for none, so a
+ *  decision that finds the picture's candidate local again restores that title and takes the mark off. Found by the mark, never
+ *  by the title's text: the sanitizer keeps an author's `title` and lets no data-* attribute through. */
+const FIGTITLE_MARK = "data-fv-figtitle";
+/** The host the control's words name for a web target: the address's host (with its port when one is written), never its
+ *  credentials or its path; the address as written when it does not parse. */
+function targetHost(href: string): string {
+  try { return new URL(href).host; } catch { return href; }
+}
+/** The address as the picture's title shows it: the target's href with any credentials taken out (a `user:pass@` an author wrote
+ *  into a source would otherwise stand in a tooltip); as written when it does not parse. */
+function shownAddress(href: string): string {
+  try { const u = new URL(href); u.username = ""; u.password = ""; return u.href; } catch { return href; }
+}
 /** The element the label follows: the img, or the outermost of the wrappers standing between it and its block that the label
  *  must not go inside, climbed while one stands: a `<picture>` (a span is not a picture's content), the regions layer's
  *  `span.fc-imgwrap` (file-comments-regions.ts wraps THE img while the Comments panel is open, before the error fires, and its
@@ -5088,28 +5114,68 @@ function decideFigureControl(img: Element, filePath: string): void {
   const anchor = figureAnchor(img);
   const standing = figureControlAfter(anchor);
   const want = figureWantsControl(img, anchor, filePath);
-  if (standing) { if (!want) removeFigureControl(standing); return; }
+  const target = figureTarget(img, filePath);   // the kind the dress is keyed on, read at every decision (a standing control's included), as the click reads it
+  dressFigureTitle(img, anchor, target);
+  if (standing) { if (!want) removeFigureControl(standing); else dressFigureControl(standing, target); return; }
   if (!want) return;
   const b = el("button", "fileview-btn fileview-icon " + FIGOPEN_CLASS) as HTMLButtonElement;
-  b.type = "button"; const glyph = figureControlGlyph(); if (glyph) b.appendChild(glyph); b.dataset.icon = "1";
+  b.type = "button"; b.dataset.icon = "1";
   b.setAttribute(FIGOPEN_MARK, "");
-  b.title = FIGURE_OPEN_TITLE; b.setAttribute("aria-label", FIGURE_OPEN_TITLE);
+  dressFigureControl(b, target);
   const align = (img.getAttribute("align") || "").toLowerCase();
   if (align === "left" || align === "right") b.classList.add(FIGOPEN_CLASS + "-" + align);   // the figure floats that way (the sanitizer keeps `align`); the control floats with it
   const parent = anchor.parentNode;
   if (parent) parent.insertBefore(b, anchor.nextSibling);
 }
-/** The control's glyph (ICON_EXPAND, the bar's family), parsed ONCE onto a holder that enters no document and cloned into each
- *  control. The control is placed under the Rendered box during the render, and a write of innerHTML on a live-document
+/** The control's dress, keyed on the target's kind and applied at every decision, to a control just made and to one standing (a
+ *  `<picture>` re-selecting between a local and a remote candidate at a media change flips the kind with no add or remove, and a
+ *  control dressed once at its add kept stale words; the file review's round 11, ui-1 with extra8-1): for a picture from the web
+ *  the words name the host and the new tab (figureOpenWebTitle), the class FIGOPEN_WEB_CLASS carries the sheets' dress, and the
+ *  glyph is the outbound one (ICON_OUTBOUND); for a file of the session the one word set, no web class and the corner arrows.
+ *  The glyph is swapped only when the kind it was drawn for differs (the web class on the control is that record) or none stands
+ *  yet, so a decision that changes nothing writes nothing. */
+function dressFigureControl(b: HTMLElement, target: FigureTarget | null): void {
+  const web = target !== null && target.kind === "web";
+  const words = target !== null && target.kind === "web" ? figureOpenWebTitle(targetHost(target.href)) : FIGURE_OPEN_TITLE;
+  if (b.title !== words) { b.title = words; b.setAttribute("aria-label", words); }
+  const drawn = b.firstElementChild;
+  if (!drawn || b.classList.contains(FIGOPEN_WEB_CLASS) !== web) { const glyph = figureControlGlyph(web); if (drawn) drawn.remove(); if (glyph) b.appendChild(glyph); }
+  b.classList.toggle(FIGOPEN_WEB_CLASS, web);
+}
+/** The picture's own title, for the two gestures that have no control to carry words (the plain click and the Cmd/Ctrl-click on the
+ *  picture, where the press reaches it): for a web target whose click is the figure's own (no link holds the figure; inside one the
+ *  click is the link's whatever the picture's source, and the control after a link holding the figure alone carries its own words)
+ *  the outbound address on a line of its own after the author's title when one stands (figureWebTitleLine, shownAddress); for a
+ *  file, or nothing to open, the author's title alone or none. The author's title is kept under FIGTITLE_MARK while the viewer's
+ *  line stands, so the next decision restores it when the candidate is local again (a `<picture>` at a media change) and a
+ *  decision never appends the line twice. Whatever the control's verdict: a remote picture under the floor wears no control and
+ *  its plain click still opens the tab (the guide's sentence), so its title says so too. Cursor unchanged. */
+function dressFigureTitle(img: Element, anchor: Element, target: FigureTarget | null): void {
+  const web = target !== null && target.kind === "web" && anchor.closest('a, [data-act="openpath"]') === null;
+  const held = img.getAttribute(FIGTITLE_MARK);
+  if (web) {
+    const author = held !== null ? held : img.getAttribute("title") || "";
+    const title = (author ? author + "\n" : "") + figureWebTitleLine(shownAddress((target as { href: string }).href));
+    if (held === null) img.setAttribute(FIGTITLE_MARK, author);
+    if (img.getAttribute("title") !== title) img.setAttribute("title", title);
+  } else if (held !== null) {
+    if (held) img.setAttribute("title", held); else img.removeAttribute("title");
+    img.removeAttribute(FIGTITLE_MARK);
+  }
+}
+/** The control's glyph (ICON_EXPAND, the bar's family, and ICON_OUTBOUND for a picture from the web), the two drawings parsed ONCE
+ *  in one write onto a holder that enters no document and cloned into each control. The control is placed under the Rendered box during the render, and a write of innerHTML on a live-document
  *  element that ends up under the box is a re-parse the gate-before-adoption scene records and refuses
  *  (file-view-figures-gate-adopt.test.ts, its Reparse record; the author's closing pass after the file review's round 5,
  *  records-1: the control had written its glyph through innerHTML, two live re-parses under the box per render of that
  *  scene's file, red at the merge of the fork's main). The bar's glyphs keep the write: the bar stands outside the box. A
  *  stand-in document that parses no markup yields no glyph, and the control stands bare there, as it did. */
 let figureGlyph: Element | null = null;
-function figureControlGlyph(): Node | null {
-  if (!figureGlyph) { const holder = el("span"); holder.innerHTML = ICON_EXPAND; figureGlyph = holder.firstElementChild ?? null; }
-  return figureGlyph ? figureGlyph.cloneNode(true) : null;
+let figureWebGlyph: Element | null = null;
+function figureControlGlyph(web = false): Node | null {
+  if (!figureGlyph) { const holder = el("span"); holder.innerHTML = ICON_EXPAND + ICON_OUTBOUND; figureGlyph = holder.children[0] ?? null; figureWebGlyph = holder.children[1] ?? null; }
+  const drawing = web ? figureWebGlyph : figureGlyph;
+  return drawing ? drawing.cloneNode(true) : null;
 }
 /** Per open, the viewer body's takeKeyboard (openFileView), for a control removed while it holds the keyboard: the decision is
  *  module-level and the hand-over is the open's, so the open registers it against its body and removeFigureControl finds it

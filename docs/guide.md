@@ -552,7 +552,11 @@ on the picture on a mouse or trackpad, and a drag draws a rectangle unless it st
 the button, which takes the press), a Cmd-click (Ctrl on Windows and Linux) on the picture
 while the panel is closed, or on the button at any time, opens the picture in a browser
 tab, and a picture from the web opens its address in a new tab, as a link to that site
-does; a figure waiting behind its host's box gets its button once it has loaded, as does
+does, and the button and the picture both show that before the click: the button's
+tooltip says it opens a new tab at the address's host, its border is dashed and its glyph
+is an arrow leaving a box, and the picture's own tooltip shows the address, on a line
+after the author's title when there is one; a figure waiting behind its host's box gets
+its button once it has loaded, as does
 one still on its way (a click on it before then opens nothing), and once the browser has
 answered for a picture, four kinds have none: a picture that failed to load, which opens
 nothing either; a `data:` picture, whose bytes are written into the file itself and which

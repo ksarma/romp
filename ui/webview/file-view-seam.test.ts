@@ -1452,7 +1452,7 @@ test("the inertness premise, held where CI runs: MD_PURIFY is its six-key litera
 const RE_PARSE = /\b(?:innerHTML|outerHTML)\b|insertAdjacentHTML|createContextualFragment|DOMParser|document\.write\b|insertAdjacentElement|\bsetHTML\w*\s*\(|parseHTMLUnsafe|createElement\(\s*[^)]*template|\bel\(\s*[^)]*template/;
 /** The local functions of file-view.ts a post-adoption pass reaches, transitively over bare calls (derived below; a new one
  *  widens this list first and is judged against RE_PARSE with the rest). */
-const REACHED_LOCALS = ["keepVideoShape", "addFigureControls", "pxDimension", "decideFigureControl", "figureAnchor", "figureControlAfter", "figureWantsControl", "removeFigureControl", "el", "figureControlGlyph", "oneImg", "linkAround", "figureState", "figureHasPicture", "figureTooSmall", "figureTarget", "linkAbove", "ringOf", "figureBox", "chosenSource", "absUrl"];
+const REACHED_LOCALS = ["keepVideoShape", "addFigureControls", "pxDimension", "decideFigureControl", "figureAnchor", "figureControlAfter", "figureWantsControl", "figureTarget", "dressFigureTitle", "removeFigureControl", "dressFigureControl", "el", "oneImg", "linkAround", "figureState", "figureHasPicture", "figureTooSmall", "linkAbove", "chosenSource", "absUrl", "figureWebTitleLine", "shownAddress", "ringOf", "figureOpenWebTitle", "targetHost", "figureControlGlyph", "figureBox"];   // the file review's round 11, ui-1 with extra8-1: the dress (dressFigureControl, dressFigureTitle) and its word, host and address helpers joined the walk, and figureTarget is reached from the decision itself
 /** The imported functions a reached local calls, each to the module file-view.ts imports it from (derived below; a new one
  *  widens the module set first). One line with quoted keys: tools/markdown-viewer-plan-gate-adopt.test.mjs reads it as JSON
  *  and fills the plan's re-parse paragraph from it, so the names and their modules' count have this one home. */
@@ -1690,15 +1690,15 @@ test("no re-parse after the adoption: mdBlock's post-adoption region and every m
     else globals.add(n);
     }
   }
-  assert.deepEqual(reached, REACHED_LOCALS, "the local functions a post-adoption pass reaches, transitively over bare calls (a new one widens this list first)");
+  assert.deepEqual(reached, REACHED_LOCALS, "the local functions a post-adoption pass reaches, transitively over bare calls (a new one widens this list first; the property, derived by the walk, against its expected list)");
   assert.deepEqual(importedCallees, IMPORTED_CALLEES, "the imported functions a reached local calls, each to its module (a new one widens the module set first)");
   assert.deepEqual([...globals].sort(), [...GLOBAL_CALLS].sort(), "the globals a reached local calls (a new one is judged here first)");
   for (const l of reached) assert.deepEqual(methodCallsIn(localBody(l), "signature"), [], "no method call on an imported binding in the reached local " + l + " (the compiler's tree, under any access spelling): a pass in that form would hide from the walk");
-  const GLYPH_HOLDER = 'if (!figureGlyph) { const holder = el("span"); holder.innerHTML = ICON_EXPAND; figureGlyph = holder.firstElementChild ?? null; }';
-  assert.deepEqual(reached.flatMap((l) => localBody(l).split("\n").filter((x) => RE_PARSE.test(x)).map((x) => l + ": " + x.trim())), ["figureControlGlyph: " + GLYPH_HOLDER], "the one re-parse a reached local holds is the glyph's holder (figureControlGlyph), judged: parsed once, cloned into each control");
+  const GLYPH_HOLDER = 'if (!figureGlyph) { const holder = el("span"); holder.innerHTML = ICON_EXPAND + ICON_OUTBOUND; figureGlyph = holder.children[0] ?? null; figureWebGlyph = holder.children[1] ?? null; }';
+  assert.deepEqual(reached.flatMap((l) => localBody(l).split("\n").filter((x) => RE_PARSE.test(x)).map((x) => l + ": " + x.trim())), ["figureControlGlyph: " + GLYPH_HOLDER], "the one re-parse a reached local holds is the glyph's holder (figureControlGlyph), judged: parsed once, both drawings in one write, cloned into each control (the holder line's spelling, a sentence pin, inside the derived count)");
   const glyphBody = localBody("figureControlGlyph");
   assert.equal(glyphBody.split("\n").filter((x) => /\bholder\b/.test(x)).length, 1, "the holder lives on that one line: it is inserted nowhere, so it enters no document");
-  assert.match(glyphBody, /return figureGlyph \? figureGlyph\.cloneNode\(true\) : null;/, "and the control takes a clone");
+  assert.match(glyphBody, /return drawing \? drawing\.cloneNode\(true\) : null;/, "and the control takes a clone (a sentence pin)");
   // the module closure: the region's imported callees' modules and the reached locals' imported callees' modules, then every
   // module those name, transitively, under every import form; the packages kept apart and pinned
   for (const m of Object.values(importedCallees)) modules.add(m);

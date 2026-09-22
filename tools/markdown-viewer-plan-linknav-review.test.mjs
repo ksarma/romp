@@ -96,7 +96,7 @@ test('L3 opens on the exceptions it names, and names the floor by the source\'s 
   const want = between(viewer, 'function figureWantsControl(img: Element, anchor: Element, filePath: string): boolean {', 'function decideFigureControl(');
   inOrder(want, ['if (!figureHasPicture(state)) return false;', 'if (figureTooSmall(img)) return false;', 'if (figureTarget(img, filePath) === null) return false;', 'return linkAbove(anchor) === null;'], 'figureWantsControl: the state (by the one rule), the floor, the target, the link');
   const build = between(viewer, 'function decideFigureControl(img: Element, filePath: string): void {', 'function addFigureControls(');
-  inOrder(build, ['const anchor = figureAnchor(img);', 'if (standing) { if (!want) removeFigureControl(standing); return; }', 'parent.insertBefore(b, anchor.nextSibling);'], 'decideFigureControl: the one place a control is added or removed, the removal handing the keyboard on');
+  inOrder(build, ['const anchor = figureAnchor(img);', 'if (standing) { if (!want) removeFigureControl(standing); else dressFigureControl(standing, target); return; }', 'parent.insertBefore(b, anchor.nextSibling);'], 'decideFigureControl: the one place a control is added or removed, the removal handing the keyboard on, a standing control re-dressed (sentence pins, in order)');
   const small = between(viewer, 'function figureTooSmall(img: Element): boolean {', '\n}\n');
   assert.ok(small.includes('b.w < FIGOPEN_MIN_PX || b.h < FIGOPEN_MIN_PX'), 'under the floor on either side, as L3 says');
   const arm = between(viewer, 'function armFigureControls(body: HTMLElement, filePath: string): () => void {', '\n}\n');

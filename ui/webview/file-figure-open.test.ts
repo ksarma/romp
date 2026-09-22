@@ -36,26 +36,42 @@ const between = (src: string, from: string, to: string): string => {
   return src.slice(a, b);
 };
 
-test("the control: one decision (decideFigureControl) puts a button of the bar's glyph dress after figureAnchor's climb, marked, titled Open the picture, never inside a gate's placeholder, never twice, and only for a figure with something to open (figureWantsControl)", () => {
+test("the control: one decision (decideFigureControl) puts a button of the bar's glyph dress after figureAnchor's climb, marked, titled Open the picture for a file of the session and, for a picture from the web, naming its host and the new tab with the web class and the outbound glyph (dressFigureControl, keyed on figureTarget's kind at every decision, a standing control's included), never inside a gate's placeholder, never twice, and only for a figure with something to open (figureWantsControl); sentence pins on the source's spelling, whose property file-figure-open-browser.test.ts executes in its outbound case", () => {
   const fn = between(VIEW, "function decideFigureControl(img: Element, filePath: string): void {", "function addFigureControls(");
   const want = between(VIEW, "function figureWantsControl(img: Element, anchor: Element, filePath: string): boolean {", "function decideFigureControl(");
   assert.match(want, /if \(img\.closest\('\[data-act="' \+ GATE_ACT \+ '"\]'\)\) return false;/, "a gated figure waits for its load");
   assert.match(want, /if \(figureTarget\(img, filePath\) === null\) return false;/, "none for a figure with nothing to open");
-  assert.match(fn, /const anchor = figureAnchor\(img\);\n\s*const standing = figureControlAfter\(anchor\);\n\s*const want = figureWantsControl\(img, anchor, filePath\);\n\s*if \(standing\) \{ if \(!want\) removeFigureControl\(standing\); return; \}\n\s*if \(!want\) return;/, "one control per figure: the verdict against the one standing, added when missing and wanted, removed when standing and unwanted (the removal hands the keyboard on first, removeFigureControl)");
+  assert.match(fn, /const anchor = figureAnchor\(img\);\n\s*const standing = figureControlAfter\(anchor\);\n\s*const want = figureWantsControl\(img, anchor, filePath\);\n\s*const target = figureTarget\(img, filePath\);[^\n]*\n\s*dressFigureTitle\(img, anchor, target\);\n\s*if \(standing\) \{ if \(!want\) removeFigureControl\(standing\); else dressFigureControl\(standing, target\); return; \}\n\s*if \(!want\) return;/, "one control per figure: the verdict against the one standing, added when missing and wanted, removed when standing and unwanted (the removal hands the keyboard on first, removeFigureControl), and a standing wanted one RE-DRESSED from the target read at this decision (the file review's round 11, ui-1 with extra8-1: a <picture> re-selecting between a local and a remote candidate flips the kind with no add or remove); the picture's own title decided before the control's verdict, so a remote picture under the floor carries its address too");
   assert.match(fn, /el\("button", "fileview-btn fileview-icon " \+ FIGOPEN_CLASS\)/, "the bar's glyph dress and the control's own class");
-  assert.match(fn, /b\.type = "button"; const glyph = figureControlGlyph\(\); if \(glyph\) b\.appendChild\(glyph\); b\.dataset\.icon = "1";/, "the icon family's drawing, cloned into the control (never an innerHTML write on the control: it stands under the Rendered box during the render, and file-view-figures-gate-adopt.test.ts records a live re-parse there as a red; the author's closing pass after the file review's round 5, records-1)");
-  const glyphFn = between(VIEW, "function figureControlGlyph(): Node | null {", "/**");
-  assert.match(glyphFn, /const holder = el\("span"\); holder\.innerHTML = ICON_EXPAND; figureGlyph = holder\.firstElementChild \?\? null;/, "the glyph parsed once onto a holder that enters no document");
-  assert.match(glyphFn, /return figureGlyph \? figureGlyph\.cloneNode\(true\) : null;/, "and cloned per control");
+  assert.match(fn, /b\.type = "button"; b\.dataset\.icon = "1";\n\s*b\.setAttribute\(FIGOPEN_MARK, ""\);\n\s*dressFigureControl\(b, target\);/, "the dress (words, class, glyph) applied by the one function that re-applies it to a standing control");
+  const dressFn = between(VIEW, "function dressFigureControl(b: HTMLElement, target: FigureTarget | null): void {", "/** The picture's own title");
+  assert.match(dressFn, /const glyph = figureControlGlyph\(web\); if \(drawn\) drawn\.remove\(\); if \(glyph\) b\.appendChild\(glyph\);/, "the icon family's drawing for the kind, cloned into the control and swapped when the kind it was drawn for differs (never an innerHTML write on the control: it stands under the Rendered box during the render, and file-view-figures-gate-adopt.test.ts records a live re-parse there as a red; the author's closing pass after the file review's round 5, records-1)");
+  assert.match(dressFn, /if \(!drawn \|\| b\.classList\.contains\(FIGOPEN_WEB_CLASS\) !== web\)/, "the web class on the control is the record of the kind its glyph was drawn for");
+  assert.match(dressFn, /b\.classList\.toggle\(FIGOPEN_WEB_CLASS, web\);/, "the class the sheets dress, keyed on the kind");
+  const glyphFn = between(VIEW, "function figureControlGlyph(web = false): Node | null {", "/**");
+  assert.match(glyphFn, /const holder = el\("span"\); holder\.innerHTML = ICON_EXPAND \+ ICON_OUTBOUND; figureGlyph = holder\.children\[0\] \?\? null; figureWebGlyph = holder\.children\[1\] \?\? null;/, "the two drawings parsed once, in one write, onto a holder that enters no document (file-view-seam.test.ts holds the file's re-parse count)");
+  assert.match(glyphFn, /return drawing \? drawing\.cloneNode\(true\) : null;/, "and cloned per control");
   assert.doesNotMatch(fn.slice(0, fn.indexOf("/** The control's glyph")), /innerHTML|outerHTML|insertAdjacentHTML/, "no markup write in the decision itself");
   assert.match(fn, /b\.setAttribute\(FIGOPEN_MARK, ""\);/, "the mark it is found by");
-  assert.match(fn, /b\.title = FIGURE_OPEN_TITLE; b\.setAttribute\("aria-label", FIGURE_OPEN_TITLE\);/, "the words in the title and the aria-label");
+  assert.match(dressFn, /const words = target !== null && target\.kind === "web" \? figureOpenWebTitle\(targetHost\(target\.href\)\) : FIGURE_OPEN_TITLE;\n\s*if \(b\.title !== words\) \{ b\.title = words; b\.setAttribute\("aria-label", words\); \}/, "the words in the title and the aria-label, keyed on the target's kind: the host and the tab for a picture from the web, the one word set for a file");
+  assert.match(VIEW, /\nexport function figureOpenWebTitle\(host: string\): string \{ return "Open the picture in a new tab at " \+ host; \}\n/, "the web words name the host and the new tab");
+  assert.match(VIEW, /\nfunction targetHost\(href: string\): string \{\n\s*try \{ return new URL\(href\)\.host; \} catch \{ return href; \}\n\}\n/, "the host alone, never the address with its credentials");
+  assert.match(VIEW, /\nconst FIGOPEN_WEB_CLASS = FIGOPEN_CLASS \+ "-web";\n/);
+  // the picture's own title for the two gestures with no control: the address on its own line after the author's title, kept under a mark and restored
+  const titleFn = between(VIEW, "function dressFigureTitle(img: Element, anchor: Element, target: FigureTarget | null): void {", "/** The control's glyph");
+  assert.match(titleFn, /const web = target !== null && target\.kind === "web" && anchor\.closest\('a, \[data-act="openpath"\]'\) === null;/, "a web target whose click is the figure's own: inside a link the click is the link's");
+  assert.match(titleFn, /const title = \(author \? author \+ "\\n" : ""\) \+ figureWebTitleLine\(shownAddress\(\(target as \{ href: string \}\)\.href\)\);/, "the author's title first, the address line after it on its own line");
+  assert.match(titleFn, /if \(held === null\) img\.setAttribute\(FIGTITLE_MARK, author\);/, "the author's title kept under the mark while the line stands");
+  assert.match(titleFn, /\} else if \(held !== null\) \{\n\s*if \(held\) img\.setAttribute\("title", held\); else img\.removeAttribute\("title"\);\n\s*img\.removeAttribute\(FIGTITLE_MARK\);/, "restored, and the mark taken off, when the candidate is local again");
+  assert.match(VIEW, /\nexport function figureWebTitleLine\(address: string\): string \{ return "Opens in a new tab: " \+ address; \}\n/);
+  assert.match(VIEW, /\nconst FIGTITLE_MARK = "data-fv-figtitle";\n/);
   assert.match(fn, /parent\.insertBefore\(b, anchor\.nextSibling\);/, "the anchor's next sibling: a sibling, never a wrapper");
   assert.doesNotMatch(fn, /tabIndex|tabindex/, "a button is in the tab order as it is: nothing takes it out");
   assert.match(VIEW, /\nconst FIGOPEN_MARK = "data-fv-figopen";\n/); assert.match(VIEW, /\nconst FIGOPEN_CLASS = "fv-figopen";\n/);
   assert.match(VIEW, /\nexport const FIGURE_OPEN_TITLE = "Open the picture";\n/);
   assert.match(ICONS, /^export const ICON_EXPAND = svg\(/m, "the glyph in icons.ts");
-  assert.match(VIEW, /import \{ [^}]*ICON_EXPAND \} from "\.\/icons";/, "imported beside the bar's glyphs");
+  assert.match(ICONS, /^export const ICON_OUTBOUND = svg\('<path /m, "the outbound glyph in icons.ts, the bar's family: a box with an arrow leaving it");
+  assert.match(VIEW, /import \{ [^}]*ICON_EXPAND, ICON_OUTBOUND \} from "\.\/icons";/, "both imported beside the bar's glyphs");
   // found by the mark alone: the sanitizer keeps an author's class and never a data-* attribute
   const after = between(VIEW, "function figureControlAfter(anchor: Element): HTMLElement | null {", "/**");
   assert.match(after, /hasAttribute\(FIGOPEN_MARK\)/); assert.doesNotMatch(after, /FIGOPEN_CLASS|classList/);
@@ -162,6 +178,7 @@ test("the sheets: the control rests transparent over the figure's corner with a 
     }
     assert.match(css, /\n\.fileview-md \.fv-figopen \{ position: relative; z-index: 1; vertical-align: top; margin: 0 6px 0 -28px; top: 6px; padding: 3px; background: var\(--bg\); opacity: 0; \}\n/, name + ": the rest");
     assert.match(css, /\n\.fileview-md \.fv-figopen-left \{ float: left; \}\n\.fileview-md \.fv-figopen-right \{ float: right; margin: 0 -28px 0 6px; \}\n/, name + ": the float twins");
+    assert.match(css, /\n\.fileview-md \.fv-figopen-web \{ border-style: dashed; \}\n/, name + ": the web control's dress, the gate's dashed border for a figure from another host (the file review's round 11, ui-1 with extra8-1; a sentence pin on the rule's spelling, and the closed set below holds the property over the parsed rules)");
     assert.match(css, /\n@media screen \{ \.fileview-md :hover \+ \.fv-figopen, \.fileview-md \.fv-figopen:hover, \.fileview-md \.fv-figopen:focus-visible \{ opacity: 1; \} \}\n/, name + ": the reveal, screen only");
     assert.match(css, /\n@media screen and \(hover: none\) \{ \.fileview-md \.fv-figopen \{ opacity: 0\.8; \} \}/, name + ": no hover keeps it visible, screen only");
     const print = css.slice(css.indexOf("\n@media print {"), css.indexOf("\n}", css.indexOf("\n@media print {")));
@@ -183,7 +200,8 @@ test("the sheets: the control rests transparent over the figure's corner with a 
       ".fileview-md .fv-figopen { position: relative; z-index: 1; vertical-align: top; margin: 0 6px 0 -28px; top: 6px; padding: 3px; background: var(--bg); opacity: 0; }",
       ".fileview-md .fv-figopen:hover { background: var(--bg) linear-gradient(var(--accent-wash), var(--accent-wash)); }",
       ".fileview-md .fv-figopen-left { float: left; }", ".fileview-md .fv-figopen-right { float: right; margin: 0 -28px 0 6px; }",
-    ], name + ": the rules naming the control outside a screen-only at-rule, however the sheet writes them, are exactly the rest, the hover background and the float twins; any other rule naming the class there is one a print would apply" + BOUND + ")");
+      ".fileview-md .fv-figopen-web { border-style: dashed; }",
+    ], name + ": the rules naming the control outside a screen-only at-rule, however the sheet writes them, are exactly the rest, the hover background, the float twins and the web dress; any other rule naming the class there is one a print would apply" + BOUND + ")");
     assert.deepEqual(control.filter((r) => underScreen(r.chain)).map(renderRule), [
       "@media screen { .fileview-md :hover + .fv-figopen, .fileview-md .fv-figopen:hover, .fileview-md .fv-figopen:focus-visible { opacity: 1; } }",
       "@media screen and (hover: none) { .fileview-md .fv-figopen { opacity: 0.8; } }",

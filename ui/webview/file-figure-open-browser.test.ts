@@ -14,11 +14,17 @@
 // overlay draws a region, and the control's click is not swallowed by the overlay; with the panel
 // open on a COARSE pointer the layer's overlay is off, so the plain tap reaches the figure listener itself, which stands down
 // to the comment offer (the guard's own execution: nothing opens, the trail does not move) while a Ctrl-click and the control
-// keep their opens; print media shows no control even when it holds the focus; a device with no hover keeps it visible. Red
-// over the unchanged viewer at the first control assertion (no control exists). Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there; the launch is real-viewer-leg.ts's inBrowser, the shared helper). Synthetic values only: the notes-api world, a placeholder session id, example.invalid addresses,
+// keep their opens; print media shows no control even when it holds the focus; a device with no hover keeps it visible; a
+// LOADED picture from the web, served by a second http server the test starts, shows where its open goes before any gesture
+// (its control's words name the host and the new tab, its class and glyph are the outbound ones, and the picture's own title
+// carries the address after the author's title) while the local picture beside it keeps the one control, and a <picture>
+// whose candidate changes kind at a media change is re-dressed both ways with no add or remove (the file review's round 11,
+// ui-1 with extra8-1). Red over the unchanged viewer at the first control assertion (no control exists), and the outbound
+// case red at the head before it, where the two controls presented one surface. Skips LOUDLY without a playwright browser (in CI the Test step runs before the job's Chromium install, so the leg skips there; the launch is real-viewer-leg.ts's inBrowser, the shared helper). Synthetic values only: the notes-api world, a placeholder session id, example.invalid and example.test addresses,
 // /repo/notes-api paths.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import * as http from "node:http";   // the outbound case's second server (the last test): a real origin of its own for the remote pictures
 import { inBrowser, openViewer, openPanel, frames, topBlock, putAtTop, ROOT, REPORT, SID, PARA } from "./real-viewer-leg";
 
 const NOTES = ROOT + "/docs/notes.md";
@@ -213,7 +219,7 @@ test("in a browser: a figure inside an author's link keeps the link on its plain
     await page.waitForFunction(() => { const imgs = document.querySelectorAll(".fileview-md img"); const i = imgs[4] as HTMLImageElement; return !i.closest('[data-act="fv-load"]') && i.complete && i.naturalWidth > 0 && !!(i.nextElementSibling && i.nextElementSibling.hasAttribute("data-fv-figopen")); }, null, { timeout: 10000 });
     await frames(page, 2);   // the picture's box replacing the placeholder's settles the layout the control sits on
     const c = await controls(page);
-    assert.deepEqual([c[4].control, c[4].gated, c[4].title], [true, false, "Open the picture"], "loaded: the control stands after the img");
+    assert.deepEqual([c[4].control, c[4].gated, c[4].title], [true, false, "Open the picture in a new tab at example.invalid"], "loaded: the control stands after the img, its words naming the host and the tab (the outbound case visible before the gesture; a property, read off the page)");
     await page.locator(".fileview-md [data-fv-figopen]").nth(4).click();
     await frames(page, 2);
     assert.deepEqual(await opened(page), [REMOTE], "a remote picture opens in a tab, from the control");
@@ -404,4 +410,111 @@ test("in a browser: a top-level html-block figure wearing the production control
     assert.deepEqual(errors, [], "no page errors");
     await page.close();
   });
+});
+
+// ── the outbound case is visible before it happens: a picture from the web wears its own words, class and glyph ─────────
+// (the file review's round 11, ui-1 with extra8-1: the owner's decision of 2026-09-22 kept every gesture that opens a web
+// picture's address in a tab and asked that the case be visible before the click; at the head before this, a loaded remote
+// picture and a local one presented a byte-identical surface). A second local http server on another port stands for the
+// remote origin: the page sees it as http://example.test through a context route that relays the bytes (a loopback
+// subresource from the page's routed non-loopback origin is refused by Chromium's private network access), so the figure's
+// origin differs from the page's and the bytes come from a real second server the test starts itself.
+const WEB = "http://example.test";
+const WEB_HOST = "example.test";
+const WEB_WORDS = "Open the picture in a new tab at " + WEB_HOST;      // the control's title and aria-label for a picture from the web (file-view.ts figureOpenWebTitle)
+const WEB_LINE = (href: string): string => "Opens in a new tab: " + href;   // the picture's own title line for the two click roads (file-view.ts figureWebTitleLine)
+const AUTHOR_TITLE = "Figure 2: an author's title";
+const PLOT3 = ROOT + "/docs/figs/plot3.svg";
+// a local figure; a remote one with an author's title; a remote one with none; a <picture> whose wide candidate is remote and
+// whose narrow one (the img's src) is local, so a viewport change re-selects the kind with no add or remove of the control
+const WEB_TEXT = "# Report\n\n![local](figs/plot.svg)\n\n" + PARA(1) + "\n\n"
+  + '<img src="' + WEB + '/pic.svg" alt="remote" title="' + AUTHOR_TITLE + '">\n\n' + PARA(2) + "\n\n"
+  + "![bare](" + WEB + "/bare.svg)\n\n" + PARA(3) + "\n\n"
+  + '<picture><source media="(min-width: 800px)" srcset="' + WEB + '/wide.svg"><img src="figs/plot3.svg" alt="adaptive" title="Figure 4"></picture>\n\n' + PARA(4) + "\n";
+const WEB_DOCS: Record<string, string> = { [REPORT]: WEB_TEXT, [PLOT]: svg("#456"), [PLOT3]: svg("#465") };
+/** The second server: a real http server on another loopback port, serving every remote picture and logging each request. */
+function secondServer(log: string[]): Promise<{ port: number; close: () => Promise<void> }> {
+  return new Promise((resolve) => {
+    const s = http.createServer((req, res) => { log.push((req.method || "") + " " + (req.url || "")); res.writeHead(200, { "Content-Type": "image/svg+xml" }); res.end(svg("#333")); });
+    s.listen(0, "127.0.0.1", () => { const a = s.address() as { port: number }; resolve({ port: a.port, close: () => new Promise((r) => s.close(() => r())) }); });
+  });
+}
+const fromSecond = (port: number, p: string): Promise<{ status: number; type: string; body: string }> => new Promise((resolve, reject) => {
+  http.get({ host: "127.0.0.1", port, path: p }, (res) => { let b = ""; res.on("data", (c) => { b += c; }); res.on("end", () => resolve({ status: res.statusCode || 0, type: String(res.headers["content-type"] || ""), body: b })); }).on("error", reject);
+});
+type Dress = { alt: string; shown: string; imgTitle: string | null; imgCursor: string; title: string | null; aria: string | null; web: boolean; glyph: string | null; borderStyle: string | null };
+/** Every img of the Rendered box with the dress the reader sees before any gesture: the picture's title and cursor, and its control's
+ *  words, web class, glyph markup and border style. */
+const dress = (page: any): Promise<Dress[]> => page.evaluate(() => {
+  const box = document.querySelector(".fileview-md")!;
+  return Array.from(box.querySelectorAll("img")).map((img) => {
+    let a: Element = img;
+    for (let p = a.parentElement; p && (p.localName === "a" || p.classList.contains("fc-imgwrap") || p.localName === "picture"); p = a.parentElement) a = p;
+    const n = a.nextElementSibling;
+    const c = n && n.hasAttribute("data-fv-figopen") ? n as HTMLElement : null;
+    const g = c ? c.querySelector("svg") : null;
+    return { alt: img.getAttribute("alt") || "", shown: (img as HTMLImageElement).currentSrc, imgTitle: img.getAttribute("title"), imgCursor: getComputedStyle(img).cursor, title: c ? c.title : null, aria: c ? c.getAttribute("aria-label") : null,
+      web: !!c && c.classList.contains("fv-figopen-web"), glyph: g ? g.innerHTML : null, borderStyle: c ? getComputedStyle(c).borderStyle : null };
+  });
+});
+
+test("in a browser: a LOADED picture from the web beside a local one shows where its open goes before any gesture: its control's title and aria-label name the host and a new tab, it carries the fv-figopen-web class with the sheets' own dress and the outbound glyph, and the picture's own title carries the address on its own line after an author's title (a picture with no title gets the line alone); the local picture keeps the one control and no title; a <picture> whose candidate changes kind at a media change is re-dressed both ways with no add or remove; a property pin: every value is read off the page, and file-figure-open.test.ts holds the spellings", { timeout: 240000 }, async (t) => {
+  const served: string[] = [];
+  const second = await secondServer(served);
+  try {
+    await inBrowser(t, async (browser) => {
+      const before = async (pg: any): Promise<void> => {
+        await pg.context().route((u: URL) => u.href.startsWith(WEB + "/"), async (route: any) => {
+          const a = await fromSecond(second.port, new URL(route.request().url()).pathname);
+          return route.fulfill({ status: a.status, contentType: a.type, body: a.body });
+        });
+      };
+      const { page, errors } = await openViewer(browser, "chat", 900, 600, {
+        docs: WEB_DOCS, before,
+        serve: (u) => { const p = u.pathname === "/file" ? u.searchParams.get("path") || "" : ""; return WEB_DOCS[p] !== undefined && /\.svg$/.test(p) ? { status: 200, type: "image/svg+xml", body: WEB_DOCS[p] } : null; },
+      });
+      await page.waitForFunction(() => { const i = document.querySelectorAll(".fileview-md img")[0] as HTMLImageElement; return i.complete && i.naturalWidth > 0; }, null, { timeout: 10000 });
+      // the host is on no list: one click on the first placeholder loads every figure of the host, the <picture>'s wide candidate among them
+      await page.click('[data-act="fv-load"]');
+      await page.waitForFunction(() => Array.from(document.querySelectorAll(".fileview-md img")).every((i) => !i.closest('[data-act="fv-load"]') && (i as HTMLImageElement).complete && (i as HTMLImageElement).naturalWidth > 0 && (() => { let a: Element = i; for (let p = a.parentElement; p && (p.localName === "picture"); p = a.parentElement) a = p; return !!(a.nextElementSibling && a.nextElementSibling.hasAttribute("data-fv-figopen")); })()), null, { timeout: 10000 });
+      await frames(page, 2);
+      const d = await dress(page);
+      assert.deepEqual(d.map((x) => x.alt), ["local", "remote", "bare", "adaptive"], "the four figures, each loaded with a control");
+      assert.ok(served.some((s) => s.endsWith("/pic.svg")) && served.some((s) => s.endsWith("/wide.svg")), "the second server served the remote pictures: " + JSON.stringify(served));
+      assert.ok(d[3].shown.startsWith(WEB + "/"), "at 900 px the <picture> shows its wide, remote candidate: " + d[3].shown);
+      // FAILS BEFORE: the remote control wears the local words, Open the picture, no web class and the same glyph
+      assert.deepEqual([d[1].title, d[1].aria, d[1].web], [WEB_WORDS, WEB_WORDS, true], "the remote picture's control names the host and the tab, and carries the web class");
+      assert.deepEqual([d[0].title, d[0].aria, d[0].web], ["Open the picture", "Open the picture", false], "the local picture's control keeps the one word set and no web class");
+      assert.deepEqual([d[2].title, d[2].web, d[3].title, d[3].web], [WEB_WORDS, true, WEB_WORDS, true], "the bare remote picture and the <picture> on its remote candidate wear the web words and class too");
+      assert.ok(d[1].glyph && d[0].glyph && d[1].glyph !== d[0].glyph, "the outbound glyph differs from the local control's corner arrows");
+      assert.match(d[1].glyph!, /<path /, "the outbound glyph draws a box"); assert.match(d[1].glyph!, /<line /, "with an arrow leaving it");
+      assert.equal(d[2].glyph, d[1].glyph, "one outbound drawing for every web control"); assert.equal(d[3].glyph, d[1].glyph);
+      assert.notEqual(d[1].borderStyle, d[0].borderStyle, "the sheets dress the web control apart from the local one: " + d[1].borderStyle + " vs " + d[0].borderStyle);
+      // the picture itself: the address on its own line after the author's title; the line alone with no author's title; the local one untouched
+      assert.equal(d[1].imgTitle, AUTHOR_TITLE + "\n" + WEB_LINE(WEB + "/pic.svg"), "the author's title kept, the address on its own line after it");
+      assert.equal(d[2].imgTitle, WEB_LINE(WEB + "/bare.svg"), "no author's title: the line alone");
+      assert.equal(d[3].imgTitle, "Figure 4\n" + WEB_LINE(WEB + "/wide.svg"), "the <picture>'s img names the candidate shown, the remote one");
+      assert.equal(d[0].imgTitle, null, "the local picture carries no title of the viewer's");
+      assert.equal(d[1].imgCursor, d[0].imgCursor, "the cursor is unchanged");
+      // the media change: at 600 px the <picture> falls to its img src, a local file; the standing control is re-dressed with no add or remove
+      const controlId = await page.evaluate(() => { const c = document.querySelectorAll(".fileview-md [data-fv-figopen]")[3] as HTMLElement; c.dataset.probeId = "standing"; return c.dataset.probeId; });
+      assert.equal(controlId, "standing");
+      await page.setViewportSize({ width: 600, height: 600 });
+      await page.waitForFunction(() => { const i = document.querySelectorAll(".fileview-md img")[3] as HTMLImageElement; return i.complete && i.naturalWidth > 0 && /plot3\.svg/.test(decodeURIComponent(i.currentSrc)); }, null, { timeout: 10000 });
+      await frames(page, 3);
+      const n = await dress(page);
+      assert.equal(await page.evaluate(() => (document.querySelectorAll(".fileview-md [data-fv-figopen]")[3] as HTMLElement).dataset.probeId), "standing", "the same control stands: re-dressed, not replaced");
+      assert.deepEqual([n[3].title, n[3].aria, n[3].web, n[3].imgTitle], ["Open the picture", "Open the picture", false, "Figure 4"], "on the local candidate the control wears the local words and no web class, and the picture's title is the author's alone again");
+      assert.equal(n[3].glyph, n[0].glyph, "and the local glyph");
+      // and back to 900 px: the remote candidate again, the web dress again on the same control
+      await page.setViewportSize({ width: 900, height: 600 });
+      await page.waitForFunction((web: string) => { const i = document.querySelectorAll(".fileview-md img")[3] as HTMLImageElement; return i.complete && i.naturalWidth > 0 && i.currentSrc.startsWith(web + "/"); }, WEB, { timeout: 10000 });
+      await frames(page, 3);
+      const w = await dress(page);
+      assert.equal(await page.evaluate(() => (document.querySelectorAll(".fileview-md [data-fv-figopen]")[3] as HTMLElement).dataset.probeId), "standing", "still the same control");
+      assert.deepEqual([w[3].title, w[3].web, w[3].imgTitle, w[3].glyph === w[1].glyph], [WEB_WORDS, true, "Figure 4\n" + WEB_LINE(WEB + "/wide.svg"), true], "the web dress again");
+      assert.deepEqual(errors, [], "no page errors");
+      await page.close();
+    });
+  } finally { await second.close(); }
 });

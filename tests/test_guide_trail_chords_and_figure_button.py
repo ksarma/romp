@@ -103,16 +103,19 @@ PICTURE = ("A picture in a rendered file that comes from a file or a web address
                 "o does a Cmd-click on the picture on a mouse or trackpad, and a drag draws a rectangle unless it sta"
                 "rts on the button, which takes the press), a Cmd-click (Ctrl on Windows and Linux) on the picture wh"
                 "ile the panel is closed, or on the button at any time, opens the picture in a browser tab, and a pic"
-                "ture from the web opens its address in a new tab, as a link to that site does; a figure waiting behi"
-                "nd its host's box gets its button once it has loaded, as does one still on its way (a click on it be"
-                "fore then opens nothing), and once the browser has answered for a picture, four kinds have none: a p"
-                "icture that failed to load, which opens nothing either; a `data:` picture, whose bytes are written i"
-                "nto the file itself and which does not open; a picture smaller than 48 pixels on either side (a badg"
-                "e, an inline icon), which the button would cover, and which a plain click still opens when no link h"
-                "olds it; and a picture inside a link that holds more than the picture (a caption beside it), where a"
-                " click follows the link (a link with no address left, or an anchor that only marks a place, leaves t"
-                "he click to the picture, which opens), while a picture that is all its link holds keeps its button b"
-                "eside the link.")
+                "ture from the web opens its address in a new tab, as a link to that site does, and the button and th"
+                "e picture both show that before the click: the button's tooltip says it opens a new tab at the addre"
+                "ss's host, its border is dashed and its glyph is an arrow leaving a box, and the picture's own toolt"
+                "ip shows the address, on a line after the author's title when there is one; a figure waiting behind "
+                "its host's box gets its button once it has loaded, as does one still on its way (a click on it befor"
+                "e then opens nothing), and once the browser has answered for a picture, four kinds have none: a pict"
+                "ure that failed to load, which opens nothing either; a `data:` picture, whose bytes are written into"
+                " the file itself and which does not open; a picture smaller than 48 pixels on either side (a badge, "
+                "an inline icon), which the button would cover, and which a plain click still opens when no link hold"
+                "s it; and a picture inside a link that holds more than the picture (a caption beside it), where a cl"
+                "ick follows the link (a link with no address left, or an anchor that only marks a place, leaves the "
+                "click to the picture, which opens), while a picture that is all its link holds keeps its button besi"
+                "de the link.")
 PICTURE_HEAD = PICTURE[:PICTURE.index("; a plain click")]
 PICTURE_NONE = PICTURE[PICTURE.index("a figure waiting behind"):]
 # the guide's condition clause for the Back and Forward pair, the browser plan's matching clause, and the one line of openFileView both claim
@@ -312,7 +315,7 @@ class PicturesWithoutTheButton(GuideSentences):
         self.assertIn("return linkAbove(anchor) === null;", build, "a link holding more than the picture")
         decide = _body(self.viewer, "function decideFigureControl(img: Element, filePath: string): void {", "}")
         self.assertIn("const anchor = figureAnchor(img);", decide)
-        self.assertIn("if (standing) { if (!want) removeFigureControl(standing); return; }", decide, "the one place a control is added or removed")
+        self.assertIn("if (standing) { if (!want) removeFigureControl(standing); else dressFigureControl(standing, target); return; }", decide, "the one place a control is added or removed, a standing one re-dressed from the target read at the decision (the spelling: a sentence pin)")
         self.assertLess(build.index("figureTooSmall"), build.index("linkAbove"))
         above = _body(self.viewer, "function linkAbove(anchor: Element): Element | null {", "}")
         self.assertIn("return p ? p.closest('a, [data-act=\"openpath\"]') : null;", above, "any link: to a file, a web address or a section, and a dead one")
