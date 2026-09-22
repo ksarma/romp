@@ -14,7 +14,9 @@ The mechanics under test:
   * flag_settings_path folds a non-empty env into the per-sid settings payload beside ultracode /
     fastMode, and the return-""-when-no-keys contract stands (with no key riding nothing is
     touched, as before the door). It refuses a sid that is not a bare file name and a path that
-    is a symbolic link (review round 2 of the env-pick door, 2026-09-19), and writes on write_reg's
+    is a symbolic link (review round 2 of the env-pick door, 2026-09-19), and a directory whose real
+    path is not under the state root's (round 9 of fork PR #781's review, fresh-2: a linked
+    sdk-flag-settings/ was followed and the env block written outside the root), and writes on write_reg's
     temp-and-rename pattern, to a fresh inode and never through the existing one (review round 3,
     2026-09-19). Every row it logs has a ring text whose length is a function of its format. The
     link check and the write run under _flag_settings_lock, so two connects for one sid write in
@@ -251,16 +253,19 @@ CENSUS_FILES = (SDK_BACKEND, KERNEL_PY, CREDENTIALS_PY)
 # _host_transport_for, tainted through the host process, bounded by HOST_REFUSED_RING in the follow-up commit. Twelve
 # since the round-8 merge of main (2026-09-21): main's fork PR #814 added the directory-refused row in
 # _refused_directory_row, the same prose through problem_row's log= again (one explicit violation, one UNBOUNDED row),
-# bounded by HOST_REFUSED_RING inside that merge, the way the two sibling roads were.
-# Re-derived at the round-8 merge of main: census content_identities() = [('flag_settings_path', 'FLAG_SID_RING', False),
-# ('flag_settings_path', 'FLAG_LINK_RING', False), ('flag_settings_path', 'FLAG_UNWRITABLE_RING', False),
-# ('_host_transport_for', 'HOST_REFUSED_RING', False), ('_host_transport_for', 'HOST_REFUSED_RING', False),
-# ('_refused_directory_row', 'HOST_REFUSED_RING', False), ('_options', 'RESERVED_DROP_RING', True), ('_options',
-# 'STORED_OFFENDER_RING', True), ('fork', 'FORK_RESERVED_RING', False), ('fork', 'FORK_DROP_RING', False), ('set_env',
-# 'REFUSAL_RING_HEAD', False), ('set_env', 'REFUSAL_RING_HEAD', False)]
+# bounded by HOST_REFUSED_RING inside that merge, the way the two sibling roads were. Thirteen since round 9's closing
+# commit (fresh-2, held to the landing): the writer's fourth row, the directory whose real path is not under the state
+# root's (FLAG_DIR_LINK_RING), filed where a linked sdk-flag-settings/ had been followed with no row.
+# Re-derived at round 9's closing commit: census content_identities() = [('flag_settings_path', 'FLAG_SID_RING', False),
+# ('flag_settings_path', 'FLAG_LINK_RING', False), ('flag_settings_path', 'FLAG_DIR_LINK_RING', False),
+# ('flag_settings_path', 'FLAG_UNWRITABLE_RING', False), ('_host_transport_for', 'HOST_REFUSED_RING', False),
+# ('_host_transport_for', 'HOST_REFUSED_RING', False), ('_refused_directory_row', 'HOST_REFUSED_RING', False),
+# ('_options', 'RESERVED_DROP_RING', True), ('_options', 'STORED_OFFENDER_RING', True), ('fork', 'FORK_RESERVED_RING',
+# False), ('fork', 'FORK_DROP_RING', False), ('set_env', 'REFUSAL_RING_HEAD', False), ('set_env', 'REFUSAL_RING_HEAD',
+# False)]
 ROWS = [
     ("flag_settings_path", "FLAG_SID_RING", False), ("flag_settings_path", "FLAG_LINK_RING", False),
-    ("flag_settings_path", "FLAG_UNWRITABLE_RING", False),
+    ("flag_settings_path", "FLAG_DIR_LINK_RING", False), ("flag_settings_path", "FLAG_UNWRITABLE_RING", False),
     ("_host_transport_for", "HOST_REFUSED_RING", False), ("_host_transport_for", "HOST_REFUSED_RING", False),
     ("_refused_directory_row", "HOST_REFUSED_RING", False),
     ("_options", "RESERVED_DROP_RING", True), ("_options", "STORED_OFFENDER_RING", True),
@@ -272,7 +277,9 @@ ROWS = [
 # the population over round 8's commit, doors 436 to 442, self calls 198 to 202, door-value sites 20 to 21, problem_row
 # sites 13 to 14, content rows 11 to 12, functions 3233 to 3241, and this equality fired on the growth before the tables
 # were re-derived there; re-derived again at the round's SECOND merge of main, which brought fork PR #884: functions
-# 3241 to 3245, its two `skipped` lambdas, _row_owner and refused_in_replay, and no other entry moved). Until round 8 these were FLOORS, and a floor
+# 3241 to 3245, its two `skipped` lambdas, _row_owner and refused_in_replay, and no other entry moved; re-derived at round
+# 9's closing commit, which added the writer's directory row through a new helper: doors 442 to 443, calls reaching the
+# writer 358 to 359 (param 35 to 36), content rows 12 to 13, functions 3246 to 3247, and no other entry moved). Until round 8 these were FLOORS, and a floor
 # is silent slack: twice a merge of main grew the population under floors that stayed green (38 doors of slack at round
 # 6's head; three doors, a call, a door-value site, a problem_row site and a function at round 7's head), and at that
 # head a walk blinded to one param-kind door call passed every floor. The rule as enforced now: any growth or shrinkage
@@ -284,11 +291,11 @@ ROWS = [
 #   print(json.dumps(c.counts, sort_keys=True)); print(json.dumps(c.by_kind, sort_keys=True))
 #   print(len(c.existence_rows), len(c.mods["credentials.py"].fns))'
 COUNTS = {
-    "doors": 442,                  # 1 appender + 358 calls reaching it + 47 conduit and feeder call sites (_log_quietly 21,
+    "doors": 443,                  # 1 appender + 359 calls reaching it + 47 conduit and feeder call sites (_log_quietly 21,
     #                                problem_row 14, _sdk_problem 8, _spend_guard_row 2, _note_ws_drop 2) + 21 door-as-argument
     #                                sites + 10 parameter-bound functions + 2 feeder appends + 3 merge reads
-    "calls_reaching_writer": 358,  # self._log in SdkBackend 202, another receiver 109, ApiHealth's bound self._log 7,
-    #                                a log= parameter 35, a local alias 5
+    "calls_reaching_writer": 359,  # self._log in SdkBackend 202, another receiver 109, ApiHealth's bound self._log 7,
+    #                                a log= parameter 36, a local alias 5
     "log_param_fns": 10,           # problem_row, ApiHealth.__init__, flag_settings_path, cli_scope_supported, cli_scope_limits and
     #                                its pass-through _cli_scope_settle, helper_fast_org_env and its pass-through key_fast_org_env,
     #                                relocate_transcripts, sweep_dead_test_roots
@@ -303,13 +310,14 @@ COUNTS = {
     "sdk_problem_sites": 8,
     "feeder_appends": 2,           # _SDK_BOOT_PROBLEMS in _sdk_problem, _WS_DROPS in _note_ws_drop
     "merge_reads": 3,              # _sdk_problem_rows reads the two lists and be.problems()
-    "content_rows": 12,            # the ENV ROWS line's rows; content_identities() == ROWS holds them exactly, so this entry
+    "content_rows": 13,            # the ENV ROWS line's rows; content_identities() == ROWS holds them exactly, so this entry
     #                                carries no tension of its own and is here so the block is truthful
-    "functions": 3246,             # every def and lambda of the three files, nested ones included: 3245 at the second merge of main,
+    "functions": 3247,             # every def and lambda of the three files, nested ones included: 3245 at the second merge of main,
     #                                re-derived at round 9's commit as 3246 (_UnownedBackend.set_env, the one def the round added;
-    #                                no other entry moved)
+    #                                no other entry moved) and at round 9's closing commit as 3247 (_flag_settings_dir_link_rows, the
+    #                                directory row's helper; the credentials.py count did not move)
 }
-CALLS_BY_KIND = {"self": 202, "typed": 109, "bound-self": 7, "param": 35, "alias": 5}   # the 358's derivation, an equality each
+CALLS_BY_KIND = {"self": 202, "typed": 109, "bound-self": 7, "param": 36, "alias": 5}   # the 359's derivation, an equality each
 EXISTENCE_ROWS = 20      # the existence rows (tag "pick" alone, a fixed vocabulary plus names): derived at round 8's commit and
 #                          re-derived unchanged at both round-8 merges of main; the vocabulary test holds the count exactly (a
 #                          floor of 20 stood here until round 8)
@@ -669,10 +677,14 @@ class FlagSettingsEnv(unittest.TestCase):
 
 class FlagSettingsWriter(unittest.TestCase):
     """The one writer of the per-sid flag-settings file (flag_settings_path) since review round 3 of the env-pick
-    door (2026-09-19) sent the env pick's own edit of the file away with the redaction road. Two refusals stand
-    ahead of its write (review round 2): a sid that is not a bare file name (rules-2 / kernel-4: the path is built
-    from the sid, and a crafted one would carry the env block outside the state root) and a path that is a symbolic
-    link (extra5-2: the write road put the env block into the link's target). The write itself is write_reg's
+    door (2026-09-19) sent the env pick's own edit of the file away with the redaction road. Three refusals stand
+    ahead of its write (review round 2, the first two): a sid that is not a bare file name (rules-2 / kernel-4: the path
+    is built from the sid, and a crafted one would carry the env block outside the state root), a path that is a symbolic
+    link (extra5-2: the write road put the env block into the link's target), and a directory whose real path is not
+    under the state root's (round 9 of fork PR #781's review, fresh-2, held to the landing: the file check saw the file's
+    path alone, so with sdk-flag-settings/ a link the writer made the directory through it, wrote the env block into the
+    link's target outside the root, filed no row and returned the in-root path; refused by realpath containment, which
+    passes a state root that is itself a link). The write itself is write_reg's
     temp-and-rename (round 3, correctness-4 and kernel-3: an in-place O_TRUNC write refreshed a hard link's other
     name with every connect's env and followed a symlink planted between the check and the open), and every row the
     writer logs has a ring text whose length is a function of its format (round 3, correctness-3 and kernel-2: the
@@ -861,6 +873,87 @@ class FlagSettingsWriter(unittest.TestCase):
         self.assertLessEqual(len(kw["ring_text"]), sb.ERROR_CENTER_TEXT_CAP)
         self.assertEqual(_temps(self.d), [])
 
+    def test_a_symbolic_link_at_the_directory_is_refused_and_nothing_is_written_through_it(self):
+        """fresh-2 (round 9 of fork PR #781's review, held to the landing): the link check above sees the FILE's path
+        alone, and the directory it sits in was followed, so with <state>/sdk-flag-settings a symbolic link the writer made
+        the directory through it, wrote the env block, value included, into the link's target outside the state root,
+        filed no row and returned the in-root path (round 3's refuter had named the shape as a residual; no round ruled on
+        it until this one). Now the file's real path must be under the state root's (realpath containment, inside the
+        lock): the write is refused with its own row, the kernel log line naming the directory, where it resolves and the
+        root, the ring text none of them, and the link is left in place. Red at the round-9 head: the target directory
+        holds the sid's file with the value in it, the call returns the in-root path, and nothing is logged."""
+        outside = Path(self.root, "elsewhere")
+        outside.mkdir()
+        d = Path(self.d, sb.FLAG_SETTINGS_DIR)
+        shutil.rmtree(d)                                         # setUp made the real directory; the plant is a link in its place
+        os.symlink(str(outside), str(d))
+        val = _secret_value("notes-token")
+        env = {**ENV, "NOTES_API_TOKEN": val}                     # the value the base wrote outside the root; assembled at run time
+        p = Path(d, PARENT + ".json")
+        logged, log = self._log()
+        self.assertEqual(sb.flag_settings_path(self.d, PARENT, env=env, fast=True, log=log), "", "the write road refuses")
+        self.assertEqual(os.listdir(outside), [], "nothing landed in the link's target")
+        self.assertTrue(os.path.islink(d), "the link is left in place: it is not this writer's")
+        self.assertFalse(os.path.lexists(p), "and nothing was minted through it")
+        for root, _dirs, files in os.walk(self.root):
+            for f in files:
+                self.assertNotIn(val, Path(root, f).read_text(errors="replace"), "the value is in no file under the test root: %s" % f)
+        self.assertEqual(len(logged), 1, logged)
+        m, problem, kw = logged[0]
+        self.assertTrue(problem)
+        self.assertIn(str(d), m, "the kernel log line names the directory")
+        self.assertIn(os.path.realpath(str(outside)), m, "and where it resolves")
+        self.assertIn(os.path.realpath(self.d), m, "and the state root it is outside of")
+        self.assertIn("outside the state root", m, "the condition the check refuses, in words")
+        self.assertIn("symbolic link", m)
+        self.assertNotIn(val, m, "never a value")
+        self.assertEqual(kw["ring_text"], sb.FLAG_DIR_LINK_RING % PARENT, "the ring text names no path")
+        self.assertNotIn(self.root, kw["ring_text"])
+        self.assertIn("resolves outside the state root", kw["ring_text"], "the ring text names the condition too")
+        self.assertLessEqual(len(kw["ring_text"]), sb.ERROR_CENTER_TEXT_CAP)
+        self.assertEqual(_temps(self.d), [])
+        # a directory link whose target is INSIDE the root passes containment: the file stays under the root, where the
+        # reference's lister looks (its glob follows a directory link), so the refusal's reason does not apply
+        inside = Path(self.d, "inside-dir")
+        inside.mkdir()
+        os.unlink(d)
+        os.symlink(str(inside), str(d))
+        del logged[:]
+        self.assertEqual(sb.flag_settings_path(self.d, PARENT, env=ENV, log=log), str(p), "a link into the root is written through")
+        self.assertEqual(json.loads(Path(inside, PARENT + ".json").read_text())["env"], ENV)
+        self.assertEqual(sorted(glob.glob(os.path.join(self.d, sb.FLAG_SETTINGS_DIR, "*.json"))), [str(p)], "and the lister's glob finds it")
+        self.assertEqual(logged, [], "no row for a write that stayed under the root")
+
+    def test_a_state_root_that_is_itself_a_symbolic_link_passes_containment(self):
+        """The other side of fresh-2's check (round 9 of fork PR #781's review): realpath containment resolves BOTH sides,
+        so a state root that is itself a symbolic link, or has one among its parents, passes: the whole root relocates and
+        the file lands beside the registry, in the link's target, with no row. Refusing by os.path.islink on the state
+        root's path would red this (the ruling named the linked root as the shape that must pass), and a string-prefix
+        check in place of commonpath would pass a sibling whose name begins with the root's; both shapes are driven."""
+        real = Path(self.root, "real-state")
+        os.makedirs(Path(real, sb.FLAG_SETTINGS_DIR))
+        linked = Path(self.root, "linked-state")
+        os.symlink(str(real), str(linked))
+        parent_link = Path(self.root, "linked-parent")
+        os.symlink(self.root, str(parent_link))
+        logged, log = self._log()
+        for state in (linked, Path(parent_link, "real-state")):
+            p = sb.flag_settings_path(state, PARENT, env=ENV, log=log)
+            self.assertEqual(p, str(Path(state, sb.FLAG_SETTINGS_DIR, PARENT + ".json")), "written, and the in-root path returned: %s" % state)
+            self.assertEqual(json.loads(Path(real, sb.FLAG_SETTINGS_DIR, PARENT + ".json").read_text())["env"], ENV, "the file is beside the registry")
+            self.assertEqual(logged, [], "no row: the root relocated whole")
+            os.unlink(Path(real, sb.FLAG_SETTINGS_DIR, PARENT + ".json"))
+        # commonpath, not a prefix: a sibling directory whose name begins with the root's is outside it
+        sibling = Path(str(real) + "-sibling")
+        os.makedirs(sibling)
+        d = Path(real, sb.FLAG_SETTINGS_DIR)
+        shutil.rmtree(d)
+        os.symlink(str(sibling), str(d))
+        self.assertEqual(sb.flag_settings_path(real, PARENT, env=ENV, log=log), "", "the sibling is outside the root")
+        self.assertEqual(os.listdir(sibling), [])
+        self.assertEqual(len(logged), 1, logged)
+        self.assertEqual(logged[0][2]["ring_text"], sb.FLAG_DIR_LINK_RING % PARENT)
+
     def test_the_write_goes_to_a_fresh_inode_so_a_hard_link_is_never_refreshed(self):
         """correctness-4 / extra8-3 (review round 3 of the env-pick door, 2026-09-19): the link guard sees symbolic
         links only, and the in-place O_CREAT|O_TRUNC write went through the existing inode, so a hard link at the
@@ -915,8 +1008,9 @@ class FlagSettingsWriter(unittest.TestCase):
         """regression-6 (review round 3 of the env-pick door, 2026-09-19): the module's two statements of its lock
         order say the link check and the write run under _flag_settings_lock, and the round's mutation pass found no
         test reading the lock (the `with` replaced by nothing stayed green). Probed, not named: a stand-in that counts
-        its depth replaces the module's lock for the test, and the writer's two moments, the islink check and the
-        rename, record the depth they run at; a `with` that is not there, or one around the write alone, reads zero."""
+        its depth replaces the module's lock for the test, and the writer's three moments, the islink check, the
+        realpath containment check (round 9 of fork PR #781's review, fresh-2) and the rename, record the depth they
+        run at; a `with` that is not there, or one around the write alone, reads zero."""
         seen = {}
 
         class _Probe:
@@ -939,6 +1033,12 @@ class FlagSettingsWriter(unittest.TestCase):
                 seen["islink"] = _Probe.depth
                 return self._real.islink(p)
 
+            def realpath(self, p):
+                # the SHALLOWEST depth any realpath ran at: the check resolves two paths, and one of them moved out of
+                # the lock must read zero here, where the last call's depth would hide it
+                seen["realpath"] = min(seen.get("realpath", _Probe.depth), _Probe.depth)
+                return self._real.realpath(p)
+
         class _Os(_OsProxy):
             @property
             def path(self):
@@ -954,7 +1054,7 @@ class FlagSettingsWriter(unittest.TestCase):
         sb.os = _Os(sb.os, replace=_replace)
         p = sb.flag_settings_path(self.d, PARENT, env=ENV)
         self.assertTrue(p)
-        self.assertEqual(seen, {"islink": 1, "replace": 1}, "both moments run inside the lock")
+        self.assertEqual(seen, {"islink": 1, "realpath": 1, "replace": 1}, "all three moments run inside the lock")
         self.assertEqual(_Probe.depth, 0, "and the lock is released on the way out")
         self.assertEqual(json.loads(Path(p).read_text())["env"], ENV)
 
@@ -1040,8 +1140,9 @@ class FlagSettingsWriter(unittest.TestCase):
         self.assertEqual(sorted(sb.FLAG_SETTINGS_KEYS), list(sb.FLAG_SETTINGS_KEYS), "sorted, as the writer joins them")
         sid_worst = sb.FLAG_SID_RING % (max(sb.FLAG_SID_REASONS, key=len), "x" * sb.RING_SID_BUDGET, keys)
         link_worst = sb.FLAG_LINK_RING % ("x" * sb.RING_SID_BUDGET)
+        dir_link_worst = sb.FLAG_DIR_LINK_RING % ("x" * sb.RING_SID_BUDGET)
         unw_worst = sb.FLAG_UNWRITABLE_RING % ("x" * sb.RING_SID_BUDGET, "x" * sb.RING_CLASS_BUDGET, keys)
-        for name, worst in (("sid", sid_worst), ("link", link_worst), ("unwritable", unw_worst)):
+        for name, worst in (("sid", sid_worst), ("link", link_worst), ("directory link", dir_link_worst), ("unwritable", unw_worst)):
             self.assertLessEqual(len(worst), sb.ERROR_CENTER_TEXT_CAP, (name, len(worst), worst))
             self.assertEqual(km._sdk_problem_text(worst), worst, "and whole in the feed")
         long_root = os.path.join(self.root, "a" * 120)
@@ -1235,7 +1336,8 @@ class EnvRowsPopulation(unittest.TestCase):
     def _assert_pin(self, c, expected=None):
         """The pin's first assertions, shared with the planted-module tests: a failure of the derivation itself refuses
         before anything is compared, and the content rows are `expected`'s, by identity: the tree's ROWS by default (eleven
-        at round 7's head, nine at round 6, twelve since the round-8 merge of main), or what a plant arm expects, the control
+        at round 7's head, nine at round 6, twelve since the round-8 merge of main, thirteen since round 9's closing
+        commit), or what a plant arm expects, the control
         census's identities plus the planted row (round 9 of the review, tests-2: the arms had asserted that this pin REFUSES
         a planted census over the small module, which it did for any census there, plant or no plant, since no small-module
         census equals the tree's ROWS; now the ONE identity equality is executed by the population pin and by every arm,
@@ -4700,7 +4802,11 @@ class DrivePlumbing(unittest.TestCase):
                       "lives: the refusal, the frame and the queue surviving behind the pick are pinned by execution in "
                       "tests/test_kernel_meta_command_gate.py (RefusalReachesTheClient's env pins)")
         self.assertIn("    def set_env(self, sid, value):\n", src.split("class _UnownedBackend(sb.SessionBackend):", 1)[1],
-                      "_UnownedBackend answers set_env beside its other setters (round 9); its verdict is pinned by execution there too")
+                      "_UnownedBackend answers set_env beside its other setters (round 9): the def's PRESENCE is this source pin's "
+                      "(round 9's closing commit, extra10-1: with the method removed and the drain's guard kept, the guard refuses "
+                      "in its place and every behavioural test stays green, so only this line and the census def count red); its "
+                      "VERDICT is pinned by execution in tests/test_kernel_meta_command_gate.py, RefusalReachesTheClient's unowned "
+                      "drain test, which calls km._UNOWNED.set_env directly and asserts the False it answers")
         self.assertIn('("model", "effort", "fast", "env", "cwd")', src,
                        "a repeat env pick REPLACES the earlier parked one in place, like model/effort (and a move)")
 
@@ -5103,6 +5209,22 @@ class CredentialShapedNamesAtTheDoor(unittest.TestCase):
             self.assertFalse(sb._cred.is_op_env_name(folded), "the boot check's classifier reads %s as spelled" % folded)
 
 
+def _ring_road_budget():
+    """The ring roads' budget and lengths, derived from the pieces the refusal row is built from (round 9 of fork PR #781's
+    review, extra7-1): the error centre's cap less set_env's head at the session budget and CREDENTIAL_RING_FORMAT at the
+    name budget with the widest count text and no road, and each road's length. Returns (budget, {road: length, ...,
+    "budget": budget, "headroom": budget less the longest road}). The worst-case pin asserts against it; a report states
+    these figures by running this function, never by typing them."""
+    head = sb.REFUSAL_RING_HEAD % ("x" * sb.RING_SESSION_BUDGET)
+    names_worst = "%s and %s more" % ("x" * sb.RING_NAME_BUDGET, sb._cred.count_text(sb._cred.COUNT_CAP + 1))
+    fixed = len(head) + len(sb._cred.CREDENTIAL_RING_FORMAT % (names_worst, "are", ""))
+    budget = sb.ERROR_CENTER_TEXT_CAP - fixed
+    lengths = {k: len(v) for k, v in sb._cred.CREDENTIAL_RING_ROADS.items()}
+    lengths["budget"] = budget
+    lengths["headroom"] = budget - max(lengths[k] for k in sb._cred.CREDENTIAL_RING_ROADS)
+    return budget, lengths
+
+
 class CredentialShapedNamesEndToEnd(_OptionsBackend):
     """The backend end to end (2026-09-18): a refused pick writes nothing, the stored env stands and the value
     is in no file under the state root; a plain name still lands in the flag-settings file; a stored env from
@@ -5419,6 +5541,7 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
         worst = {
             "FLAG_SID_RING": [formats["FLAG_SID_RING"] % (max(sb.FLAG_SID_REASONS, key=len), D, keys)],
             "FLAG_LINK_RING": [formats["FLAG_LINK_RING"] % D],
+            "FLAG_DIR_LINK_RING": [formats["FLAG_DIR_LINK_RING"] % D],
             "FLAG_UNWRITABLE_RING": [formats["FLAG_UNWRITABLE_RING"] % (D, "x" * sb.RING_CLASS_BUDGET, keys)],
             "HOST_REFUSED_RING": [formats["HOST_REFUSED_RING"] % (S, "x" * sb.RING_REASON_BUDGET)],
             "RESERVED_DROP_RING": [formats["RESERVED_DROP_RING"] % (S, N + count_worst)],
@@ -5909,6 +6032,15 @@ class CredentialShapedNamesEndToEnd(_OptionsBackend):
         worst = (sb.REFUSAL_RING_HEAD % ("x" * sb.RING_SESSION_BUDGET)) + sb._cred.CREDENTIAL_RING_FORMAT % (names_worst, "are", road)
         self.assertLessEqual(len(worst), cap, "the format's worst case fits: %d against %d" % (len(worst), cap))
         self.assertEqual(km._sdk_problem_text(worst), worst, "and whole in the feed")
+        # The roads' budget is DERIVED here and nowhere typed (round 9 of fork PR #781's review, extra7-1: the body and the
+        # module's docstring typed "of 113" and "one character of headroom", both wrong by one against this pin's figures):
+        # what the cap leaves after the head at its session budget and the format at its name budget and widest count.
+        # _ring_road_budget is the statement of record; the commit message and the body paste its output, never a figure
+        budget, lengths = _ring_road_budget()
+        self.assertEqual(budget, cap - len(worst) + len(road), "the budget is what the cap leaves the road: %r" % (lengths,))
+        self.assertEqual(lengths["mixed"], len(road))
+        self.assertLessEqual(lengths["mixed"], budget, "the mixed road within the derived budget: %r" % (lengths,))
+        self.assertEqual(cap - len(worst), budget - lengths["mixed"], "the headroom is the budget less the mixed road: %r" % (lengths,))
         for other in ("op", "suffix"):
             self.assertLess(len(sb._cred.CREDENTIAL_RING_ROADS[other]), len(road))
         # the real row at the worst case: a session name past its budget, a first name past its budget, a thousand

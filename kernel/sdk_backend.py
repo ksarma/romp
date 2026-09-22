@@ -5412,6 +5412,13 @@ FORK_DROP_RING = "env (%s): fork copies no credential-shaped %s from the parent'
 FLAG_SID_RING = "flag settings: %s (%s); no per-session settings file is written for it; launching WITHOUT %s"
 FLAG_LINK_RING = ("flag settings (%s): the per-session settings file is a symbolic link and is not written through: nothing "
                   "of romp's makes one, and a write through it would carry the env block outside the directory")
+# The directory's own refusal (round 9 of fork PR #781's review, fresh-2, held to the landing): the file check above sees the
+# file's path alone, and the directory it sits in was followed, so with <state>/sdk-flag-settings a symbolic link the
+# writer made the directory through it and wrote the env block, value included, into the link's target outside the
+# state root, with no row. The check is realpath containment (flag_settings_path), which passes a linked state root and
+# refuses the linked directory; the row names the condition the check refuses, never a path.
+FLAG_DIR_LINK_RING = ("flag settings (%s): the per-session settings directory resolves outside the state root (a symbolic "
+                      "link) and is not written through: a write there would carry the env block out of the root")
 FLAG_UNWRITABLE_RING = "flag settings (%s): the per-session settings file could not be written (%s); launching WITHOUT %s"
 # The refused-launch rows' short form (_host_transport_for's two roads, fork PR #777's: a session host that exited before
 # serving its socket, and one that never served it and was ended; and _refused_directory_row's, fork PR #814's, a
@@ -5442,7 +5449,7 @@ RESERVED_DROP_RING = ("env (%s): ignoring reserved %s from the stored session en
                       "Claude Code's own")                                               # _options' skip at the launch
 FORK_RESERVED_RING = ("env (%s): dropping reserved %s from the inherited env: romp sets the identity env itself (the parent "
                       "reg predates the reserved names)")                                # fork's drop at the copy
-# ENV ROWS: flag_settings_path -> FLAG_SID_RING FLAG_LINK_RING FLAG_UNWRITABLE_RING | _host_transport_for -> HOST_REFUSED_RING HOST_REFUSED_RING | _refused_directory_row -> HOST_REFUSED_RING | _options -> RESERVED_DROP_RING(keyed) STORED_OFFENDER_RING(keyed) | fork -> FORK_RESERVED_RING FORK_DROP_RING | set_env -> REFUSAL_RING_HEAD REFUSAL_RING_HEAD
+# ENV ROWS: flag_settings_path -> FLAG_SID_RING FLAG_LINK_RING FLAG_DIR_LINK_RING FLAG_UNWRITABLE_RING | _host_transport_for -> HOST_REFUSED_RING HOST_REFUSED_RING | _refused_directory_row -> HOST_REFUSED_RING | _options -> RESERVED_DROP_RING(keyed) STORED_OFFENDER_RING(keyed) | fork -> FORK_RESERVED_RING FORK_DROP_RING | set_env -> REFUSAL_RING_HEAD REFUSAL_RING_HEAD
 # ^ the CONTENT rows: every door to the problem ring whose message or ring text carries a value derived from the
 #   per-session env sources and that is filed problem=True, grouped by the writing function in source order, one name
 #   per row: the module-level FORMAT the row's ring_text starts from (a helper such as stored_offender_ring_text or
@@ -5573,8 +5580,8 @@ def env_credential_names(environ) -> list:
 def _overlay_text(value) -> str:
     """One env-overlay value as text: a str byte for byte, None as the empty string (the unset it means), any
     other JSON-native value as str() of it. The coercion exists for the NAME decision only: spawn_env_secret_names
-    judges the shape rule over this view so that env_credential_names, which strips every value it is handed, can
-    read every value without raising, and split_spawn_secrets returns it for the names it moves, so the Popen(env=...)
+    judges the shape rule over this view so that credentials.credential_env_names, which strips every value it is
+    handed, can read every value without raising, and split_spawn_secrets returns it for the names it moves, so the Popen(env=...)
     that launches the host (_spawn_host) gets strings (review round 1 of the spawn-spec fix, 2026-09-18). It says
     nothing about what the host later does with a non-string value left in the spec under a plain name: that
     value stays in the file as it always did, and of the host's two transports only the pipe one
@@ -5594,13 +5601,15 @@ def _overlay_text(value) -> str:
 def spawn_env_secret_names(env) -> list:
     """The names a host spawn spec's env overlay must not carry into hosts/<sid>/spawn.json, for
     split_spawn_secrets to move to the host's process environment: the three credential names (AUTH_ENV_NAMES,
-    whatever their value, as the pull-in's writer moved them) and every name env_credential_names flags over
-    the OVERLAY ITSELF, a non-empty value under a name ending _API_KEY or _TOKEN or one of 1Password's own, in any
+    whatever their value, as the pull-in's writer moved them) and every name credentials.credential_env_names flags
+    over the OVERLAY ITSELF, a non-empty value under a name ending _API_KEY or _TOKEN or one of 1Password's own, in any
     letter case. The pull-in's writer stripped the three names alone, so a credential-shaped variable of any other name a compose
     put in options.env was written to disk (the box admin's hazard review of the pull-in, 2026-09-16; fixed
     2026-09-18), against the fork's rule that no credential is ever written to a file, and the rule for the
-    shape already existed for the boot notice (_note_env_credential_names), so the file and that notice now
-    agree on what a credential looks like. Judged over the overlay, never this process's environment: what the
+    shape already existed for the boot notice (_note_env_credential_names), so the file and that notice share one
+    rule and differ on the control token alone, the notice's exclusion (round 9 of fork PR #781's review, regression-1:
+    this sentence named the notice's wrapper as the rule the writer applies, a set the writer stopped producing in
+    round 1). Judged over the overlay, never this process's environment: what the
     file would carry is what is checked. An empty value stays in the overlay: it holds no secret, and there it
     is the unset it was meant to be (a None stays as the JSON null it was; what a transport exports for it is the
     transport's business, below). Sorted, names only, fit for a log line. [] for no overlay.
@@ -5727,6 +5736,26 @@ def _flag_settings_link_rows(sid, p) -> tuple:
     return line, FLAG_LINK_RING % _cred.cut_to(sid, RING_SID_BUDGET)
 
 
+def _flag_settings_dir_link_rows(sid, d, resolved, root) -> tuple:
+    """The problem row for a per-sid flag-settings DIRECTORY whose real path is not under the state root's (round 9 of
+    fork PR #781's review, fresh-2, held to the landing): _flag_settings_link_rows above refuses the FILE's path when it
+    is a symbolic link, and the directory it sits in was followed, so with <state>/sdk-flag-settings a link the writer
+    made the directory through it, wrote the session's env block, value included, into the link's target outside the
+    state root, filed no row and returned the in-root path (the base wrote the same way; round 3's refuter named the
+    shape as a residual and no round ruled on it until this one). The check is flag_settings_path's realpath containment,
+    os.path.realpath of the file's path under os.path.realpath of the state root: a state root that is itself a link, or
+    has one among its parents, PASSES (the whole root relocates and the file lands beside the registry), a link at the
+    directory whose target is outside the root is refused, and a link whose target is inside the root passes too (the
+    file stays under the root, where the reference's lister looks; its glob follows a directory link). `d` is the
+    directory as the writer joined it, `resolved` its real path and `root` the state root's. The kernel log line names
+    all three and never a value; the ring text (FLAG_DIR_LINK_RING) names none of them and cuts the sid to
+    RING_SID_BUDGET, so its length is the format's. Returns (line, ring_text)."""
+    line = ("flag settings (%s): %s resolves to %s, outside the state root %s (a symbolic link on its path), and is not "
+            "written through: nothing of romp's makes such a link, and a write through it would carry a session's env "
+            "block into a file outside the root" % (sid, d, resolved, root))
+    return line, FLAG_DIR_LINK_RING % _cred.cut_to(sid, RING_SID_BUDGET)
+
+
 def flag_settings_path(state_dir, sid: str, *, ultracode: bool = False, fast: bool = False,
                        env: dict | None = None, no_helper: bool = False, log=None) -> str:
     """The settings file handed to the CLI (options.settings — the flag-settings layer, the CLI's
@@ -5768,11 +5797,19 @@ def flag_settings_path(state_dir, sid: str, *, ultracode: bool = False, fast: bo
     riding, "" and nothing touched: a file an earlier connect left stays as it was (the base's behaviour; the
     unlink that round 1 of the env-pick door added here left with the redaction road in round 3, 2026-09-19).
 
-    Two refusals stand ahead of the write (review round 2 of the env-pick door, 2026-09-19), each a problem row
-    naming its reason and touching nothing: a sid that is not a bare file name (_flag_settings_sid_error: the
-    path is built from the sid, and a crafted one would carry the env block outside the state root), and a path
-    that is a symbolic link (_flag_settings_link_rows: a write through the link would carry it outside this
-    directory). The write is write_reg's pattern (review round 3, 2026-09-19): a writer-unique temp (pid and a
+    Three refusals stand ahead of the write (review round 2 of the env-pick door, 2026-09-19, the first two; round 9
+    of fork PR #781's review, fresh-2, the third), each a problem row naming its reason and touching nothing: a sid
+    that is not a bare file name (_flag_settings_sid_error: the path is built from the sid, and a crafted one would
+    carry the env block outside the state root), a path that is a symbolic link (_flag_settings_link_rows: a write
+    through the link would carry it outside this directory), and a directory whose real path is not under the state
+    root's (_flag_settings_dir_link_rows: the file check sees the file's path alone, and with <state>/sdk-flag-settings
+    a symbolic link the writer followed it and put the env block into the link's target outside the root, with no
+    row; the check is os.path.realpath(p) under os.path.realpath(state_dir), which passes a state root that is itself
+    a link and refuses the linked directory). The rename below closes the file check's window (a link planted at the
+    path is replaced, not followed) and not the directory's: the temp and the path are both under the directory, so a
+    link planted there between the check and the temp's open is written through, the residual this check leaves,
+    named; nothing of romp's makes such a link, and it takes write access to the state root, which holds the
+    registry. The write is write_reg's pattern (review round 3, 2026-09-19): a writer-unique temp (pid and a
     random suffix) created with O_EXCL at 0600, written, renamed over the path, and unlinked in a finally, so the
     bytes go to a FRESH inode and never through the existing one. That is the answer to a hard link at the path,
     which os.path.islink cannot see (the round's correctness-4): a link made by whoever already reads the file
@@ -5816,6 +5853,18 @@ def flag_settings_path(state_dir, sid: str, *, ultracode: bool = False, fast: bo
             if log:
                 line, ring = _flag_settings_link_rows(sid, p)
                 log(line, problem=True, ring_text=ring)
+            return ""
+        # the directory's turn (round 9 of fork PR #781's review, fresh-2): the file's real path must be under the state
+        # root's, so a symbolic link at sdk-flag-settings/ pointing out of the root is refused where the file check
+        # above sees nothing, and a root that is itself a link passes, both sides resolved. commonpath, not a string
+        # prefix: a sibling directory whose name begins with the root's is outside it
+        root = os.path.realpath(str(state_dir))
+        if os.path.commonpath((root, os.path.realpath(p))) != root:
+            if log:
+                # its own locals: the census follows a local to every assignment, so the file row's pair reused
+                # here would give both rows two formats and neither a bound
+                dir_line, dir_ring = _flag_settings_dir_link_rows(sid, d, os.path.realpath(d), root)
+                log(dir_line, problem=True, ring_text=dir_ring)
             return ""
         tmp = p + ".%d.%s.tmp" % (os.getpid(), uuid.uuid4().hex[:8])
         fd = None                                       # the descriptor the exclusive open returned: what this call created

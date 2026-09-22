@@ -393,12 +393,24 @@ class RefusalReachesTheClient(unittest.TestCase):
         val = "synthetic-notes-token-" + uuid.uuid4().hex     # assembled at run time: the scanner reads this repo
         pick = {"NOTES_ENDPOINT": "http://notes.test", "NOTES_API_TOKEN": val}
         err = self._park_env_then_send_then_drain(km._UNOWNED, pick, "a message parked behind the pick")
+        # the verdict itself, by execution, first (round 9's closing commit, extra10-1): the method's presence is a source
+        # pin in tests/test_session_env.py (DrivePlumbing), and the drain refuses through its hasattr guard when the method
+        # is gone, so without this call a removed set_env left every behavioural test green. Red under method-removed
+        # (AttributeError, here, before the drain's assertions below) and under return-None (None is not False)
+        with redirect_stderr(io.StringIO()):
+            self.assertIs(km._UNOWNED.set_env(SID, pick), False, "the unowned backend's own verdict: False, as set_effort and set_fast answer")
         self.assertEqual(self.frames, [("chat", self._frame("env", km._env_refusal()))],
                          "the chat hears the refusal on the frame the effort and fast arms answer with, and nothing else")
         self.assertIn("pending ops apply: _UnownedBackend refused '/env NOTES_API_TOKEN NOTES_ENDPOINT' for %s" % SID[:8], err,
                       "the drain's own refusal line, the op rendered as its names-only chip")
         self.assertIn("send to %s refused: no backend owns this session" % SID, err,
                       "the send behind the pick reached the backend (its own refusal line is the proof): the queue survived the pick")
+        # the pick's own reason line, send's shape (round 9's closing commit, kernel-1): _env_refusal's sentence on the
+        # frame points at the backend's log line, and this route wrote none. Red at the round-9 head: the line absent
+        self.assertIn("per-session env for %s refused: no backend owns this session" % SID, err,
+                      "the unowned backend writes why it refused the pick, as its send does; the frame's sentence points at this line")
+        self.assertLess(err.index("per-session env for %s refused" % SID), err.index("pending ops apply: _UnownedBackend refused"),
+                        "the backend's reason line precedes the drain's own line, the order the SDK backend's roads have")
         self.assertNotIn("Traceback", err, "no raise: the handler that pops the whole queue never ran")
         self.assertNotIn("set_env", err, "no AttributeError naming the missing setter")
         self.assertNotIn(val, err + repr(self.frames), "no value on stderr or in the frame")

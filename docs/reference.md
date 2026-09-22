@@ -263,8 +263,12 @@ follows it at once, the flag-settings file only at the session's next connect
 that writes it, and a file nothing rewrites stays as it was. A fork of that
 session (a cut turn, a comment thread) inherits its parent's env less any such
 name, so a fork's env can differ from its parent's by exactly those names; the
-parent's registry keeps it. The problem ring shows the most recent problems,
-so the check is the command below, not the error centre. It lists, by name
+parent's registry keeps it. After a re-declaration drops such a name from
+the registry, no row is filed or refreshed for it, and a row already in the
+ring leaves at the ring's roll-off or the kernel's restart, because the row
+reads the registry and not the file, which keeps the value until a connect
+that writes it. The problem ring shows the most recent problems, so the check
+is the command below, not the error centre. It lists, by name
 only, the stored offenders in the two launch files it reads, the per-session
 flag-settings files and the session registries, and in the temp file a kernel
 killed mid-write can leave beside either (`<sid>.json.<pid>.<hex>.tmp`, which

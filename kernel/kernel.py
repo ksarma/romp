@@ -24522,7 +24522,12 @@ class _UnownedBackend(sb.SessionBackend):
         # extra9-1): set_env is not on the ABC (SdkBackend alone takes a per-session env), so without this the
         # parked-op drain's env arm reached an attribute this class lacked, and its blanket handler dropped the sid's
         # whole parked queue; the drain guards the call too, and this makes the refusal UNIFORM with set_effort and
-        # set_fast, so the next arm added to that loop inherits the behaviour instead of needing its own guard
+        # set_fast, so the next arm added to that loop inherits the behaviour instead of needing its own guard.
+        # The reason line is send's shape (the closing commit of round 9, kernel-1): every refusal this answers is
+        # echoed with _env_refusal's sentence, which points the user at the backend's log line, and this route
+        # wrote none, so the user was pointed at a line that did not exist. Names nothing of the pick (its dict
+        # carries values) and not the setter's name: the drain's pin reads stderr for no AttributeError naming it
+        sys.stderr.write("per-session env for %s refused: no backend owns this session\n" % sid)
         return False
 
     def spawn(self, name, cwd, bg="", fg="", sid=None, *a, **kw):
@@ -41122,9 +41127,11 @@ def _env_refusal():
     """The sentence a refused per-session env pick is answered with, POST /new's echo and the parked-op
     drain's alike (review round 2 of the env-pick door, 2026-09-19; the drain's since round 1): generic on
     purpose, and NAMES nothing of the pick, because the pick's dict carries values and a credential-shaped one
-    is what the door refuses; the backend's own problem row says why on every road it refuses (a refused name, or a
-    registry it could not read: that road logged nothing until the closing review of 2026-09-19, so the sentence
-    pointed at no line there; `romp sessions` shows whether the session is listed)."""
+    is what the door refuses; the backend's own log line says why on every road it refuses: SdkBackend's problem row
+    (a refused name, or a registry it could not read: that road logged nothing until the closing review of 2026-09-19,
+    so the sentence pointed at no line there) and the unowned route's stderr line (_UnownedBackend.set_env, for a sid
+    no backend owns: it refused in silence until the closing commit of round 9 of fork PR #781's review, kernel-1, so
+    the sentence pointed at no line there either; `romp sessions` shows whether the session is listed)."""
     return "Couldn't set the per-session env: the session's backend refused it (its log line says why)."
 
 

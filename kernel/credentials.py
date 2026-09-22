@@ -293,7 +293,7 @@ def first_and_count(names, budget: int) -> str:
 # The refusal's error-centre form: the named variable and the count, is/are, and the road for the half matched.
 CREDENTIAL_RING_FORMAT = "%s %s credential-shaped: the pick was not saved. %s"
 CREDENTIAL_RING_ROADS = {
-    "mixed": "Suffix values go in the process environment; OP_* names (as op spells them) are refused at boot; door folds case",
+    "mixed": "Suffix values go in the process env; OP_* (as op spells them) refused at boot; door folds case; a helper's file",
     "op": "An OP_* name (as op spells it) is refused in the process environment at boot; door folds case; a helper's file",
     "suffix": "Such a value belongs in the process environment, not in a per-session env",
 }
@@ -311,9 +311,12 @@ def credential_env_ring_text(names) -> str:
     computes the worst case from those pieces. The full sentence, every name whole, stays in the kernel log. Scoped
     by half like the sentence (review round 2, 2026-09-19): a 1Password name is not sent to the process environment,
     which refuses it at boot as 1Password spells it (the door folds case, the boot check does not, and the road says
-    so; round 9 of fork PR #781's review). The mixed road has one character of headroom under the cap (the worst-case
-    pin computes it), so it says the spelling and the disagreement and leaves the helper's file to the op road and the
-    kernel log's whole sentence."""
+    so; round 9 of fork PR #781's review). Every road names the half's destination: the mixed road says where a suffix
+    value goes, that an OP_* name as op spells it is refused at boot, that the door folds case, and that the 1Password
+    value belongs in a helper's file (round 9's closing commit, extra10-2: the round-9 rewording had dropped the
+    destination). The mixed road is the longest and sits at the bound the worst-case pin in tests/test_session_env.py
+    derives from this format under the cap; that pin states the roads' lengths and the budget, no figure is typed here
+    (extra7-1: a typed headroom figure was wrong by one), and a reword that grows the road past the budget reds it."""
     names = sorted(names)
     op = any(is_op_env_name(str(n).upper()) for n in names)
     suffix = any(not is_op_env_name(str(n).upper()) for n in names)

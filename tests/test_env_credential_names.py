@@ -537,46 +537,58 @@ class RuleStatementCount(unittest.TestCase):
     statement is a line matching `_API_KEY.{0,12}_TOKEN` that names 1Password on the same line or on the next (the
     two split statements: the boot notice's _log call and env_credential_names' docstring, each stating the suffix half
     with the 1Password half on the next line); a matching line with 1Password on neither is code (the suffix tuple,
-    the reference lister's own test) and not a statement. Over kernel/, cli/, bin/, docs/ and ui/, with the
-    bin/romp_sdk_backend.py symlink to kernel/sdk_backend.py excluded (it would count the module twice) and binary
-    files skipped. Mutating one statement away (dropping 1Password from one) reds it."""
+    the reference lister's own test) and not a statement. Over the TRACKED files of kernel/, cli/, bin/, docs/ and ui/
+    (`git ls-files`, the census idiom of tests/test_entrypoints_executable.py; round 9 of fork PR #781's review,
+    extra6-1: the walk read every file under the five roots, so an editor's backup or a merge's .orig beside a counted
+    module red the count with no statement changed, and .gitignore excludes neither), with the bin/romp_sdk_backend.py
+    symlink to kernel/sdk_backend.py excluded (it would count the module twice) and binary files skipped. A tree with no
+    repository above it fails loudly rather than counting nothing. Mutating one statement away (dropping 1Password from
+    one) reds it; an untracked copy of a counted module beside it no longer does."""
     DIRS = ("kernel", "cli", "bin", "docs", "ui")
-    SKIP_DIRS = {"node_modules", "dist", "__pycache__", ".git"}
     PATTERN = re.compile(r"_API_KEY.{0,12}_TOKEN")
+
+    @classmethod
+    def _tracked(cls):
+        """The tracked files under DIRS, from `git ls-files -z` at the repository root; a failure to list is the test's own
+        error, in git's words, never an empty census (a git-archive export has no index to read)."""
+        r = subprocess.run(["git", "ls-files", "-z", "--", *cls.DIRS], cwd=str(ROOT), capture_output=True, timeout=60)
+        if r.returncode != 0:
+            raise AssertionError("git ls-files failed under %s (exit %d): %s" % (ROOT, r.returncode, r.stderr.decode("utf-8", "replace").strip()))
+        rels = sorted(x.decode("utf-8", "surrogateescape") for x in r.stdout.split(b"\0") if x)
+        assert rels, "git ls-files listed nothing under %s" % (cls.DIRS,)
+        return rels
 
     def _statements(self):
         single, split, code = [], [], []
-        for d in self.DIRS:
-            for root, dirs, files in os.walk(ROOT / d):
-                dirs[:] = sorted(x for x in dirs if x not in self.SKIP_DIRS and not os.path.islink(os.path.join(root, x)))
-                for f in sorted(files):
-                    path = os.path.join(root, f)
-                    if os.path.islink(path):
-                        continue
-                    try:
-                        data = Path(path).read_bytes()
-                    except OSError:
-                        continue
-                    if b"\0" in data[:4096]:
-                        continue
-                    lines = data.decode("utf-8", errors="replace").splitlines()
-                    for i, line in enumerate(lines):
-                        if not self.PATTERN.search(line):
-                            continue
-                        rel = "%s:%d" % (os.path.relpath(path, ROOT), i + 1)
-                        if "1Password" in line:
-                            single.append(rel)
-                        elif i + 1 < len(lines) and "1Password" in lines[i + 1]:
-                            split.append(rel)
-                        else:
-                            code.append(rel)
+        for rel in self._tracked():
+            path = os.path.join(ROOT, rel)
+            if os.path.islink(path):
+                continue
+            try:
+                data = Path(path).read_bytes()
+            except OSError:
+                continue
+            if b"\0" in data[:4096]:
+                continue
+            lines = data.decode("utf-8", errors="replace").splitlines()
+            for i, line in enumerate(lines):
+                if not self.PATTERN.search(line):
+                    continue
+                at = "%s:%d" % (rel, i + 1)
+                if "1Password" in line:
+                    single.append(at)
+                elif i + 1 < len(lines) and "1Password" in lines[i + 1]:
+                    split.append(at)
+                else:
+                    code.append(at)
         return single, split, code
 
     def test_the_rule_is_stated_fourteen_times_twelve_on_one_line_and_two_split(self):
         single, split, code = self._statements()
         self.assertTrue(os.path.islink(ROOT / "bin" / "romp_sdk_backend.py"), "the symlink the count excludes is a symlink")
         self.assertFalse([p for p in single + split + code if p.startswith("bin/romp_sdk_backend.py")])
-        self.assertEqual((len(single), len(split)), (12, 2), "12 single-line statements and 2 split ones: %r / %r" % (single, split))
+        self.assertEqual((len(single), len(split)), (12, 2), "12 single-line statements and 2 split ones over the tracked files "
+                         "of the five roots (git ls-files; an untracked file beside a counted module is not read): %r / %r" % (single, split))
         self.assertEqual(sorted(p.split(":")[0] for p in split), ["kernel/sdk_backend.py", "kernel/sdk_backend.py"])
         self.assertEqual(sorted(p.split(":")[0] for p in code), ["docs/reference.md", "kernel/credentials.py"],
                          "the suffix tuple and the lister's own test are code, not statements: %r" % (code,))
@@ -1142,8 +1154,13 @@ class BootRefusalMirror(unittest.TestCase):
     where a node test could only retype them a third time or parse Python source. Two checks: the three const lines,
     parsed as the array and string literals they are, equal the tuples in order; and the function itself, run under node
     over the whole derived population (_population) with values assembled at run time, refuses exactly the names the boot
-    check refuses over the same environment, in its order: the retired names as RETIRED_VARS lists them, then the exact
-    1Password spellings sorted (is_op_env_name, no case fold: the boot check refuses what `op` exports). Names only."""
+    check refuses over the same environment. What the boot check refuses is found by EXECUTING it (round 9 of fork PR
+    #781's review, extra6-2: until then this restated check_boot_environment's in_env expression from the constants, so a
+    drift of the Python check away from the manager left it green): check_boot_environment is run once per name of the
+    population, over an environment holding that name alone and an absent service.env, and the names it raises on are
+    the refused set; the manager's list must equal that set, and its order is the manager's own contract, the retired
+    names as RETIRED_VARS lists them and then the exact 1Password spellings sorted (is_op_env_name, no case fold: the boot
+    check refuses what `op` exports). Names only."""
 
     def _const(self, src, name):
         m = re.search(r"^const %s = (.*);$" % re.escape(name), src, re.M)
@@ -1172,9 +1189,23 @@ class BootRefusalMirror(unittest.TestCase):
                            capture_output=True, text=True, timeout=120)
         self.assertEqual(r.returncode, 0, "the manager's retiredCredentialNames runs under node: %s" % r.stderr)
         got = json.loads(r.stdout)
-        want = [n for n in cred.RETIRED_VARS if n in values] + sorted(n for n in values if cred.is_op_env_name(n))
-        self.assertGreaterEqual(len(want), len(cred.RETIRED_VARS) + len(cred.OP_ENV_NAMES) + 1, "the exact half of the population: %r" % (want,))
-        self.assertEqual(got, want, "the manager refuses what the boot check refuses (check_boot_environment's in_env), name for name, in its order")
+        # the boot check EXECUTED per name: refused is a RuntimeError over an environment of that one name (an absent
+        # service.env and no marker, so the environment is the only road it can refuse on); the names that pass return
+        absent = os.path.join(state, "absent.env")
+        refused = set()
+        for n, v in values.items():
+            try:
+                cred.check_boot_environment(path=absent, environ={n: v})
+            except RuntimeError as e:
+                self.assertIn(n, str(e), "the refusal names the variable it refused")
+                self.assertNotIn(v, str(e), "and never its value")
+                refused.add(n)
+        self.assertGreaterEqual(len(refused), len(cred.RETIRED_VARS) + len(cred.OP_ENV_NAMES) + 1, "the exact half of the population: %r" % (sorted(refused),))
+        self.assertEqual(set(got), refused, "the manager refuses what the boot check refuses, by execution of check_boot_environment over "
+                                            "every name of the population: %r" % (sorted(set(got) ^ refused),))
+        self.assertEqual(len(got), len(set(got)), "each name once")
+        want = [n for n in cred.RETIRED_VARS if n in refused] + sorted(n for n in refused if n not in cred.RETIRED_VARS)
+        self.assertEqual(got, want, "the manager's order: the retired names as RETIRED_VARS lists them, then the rest sorted")
         for n in cred.OP_ENV_NAMES + (cred.OP_ENV_PREFIX + "TESTACCT",):
             self.assertIn(n, got, "%s is refused at boot" % n)
             self.assertNotIn(n.lower(), got, "the exact half: %r is the doors' business, not the boot's" % (n.lower(),))
