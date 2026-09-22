@@ -59,7 +59,8 @@ as sb.SdkSession(...), whose start() is its own) is not a thread start; a receiv
 a call it cannot classify, a method the class does not define, a product Thread subclass) is UNREADABLE and LISTED,
 never passed in silence. A bound `.start` HANDED ON AS A VALUE rather than called (a keyword or positional argument:
 tests/test_postal_token.py's `self._load_watched(before=writer.start, ...)`; the value of an assignment or a return; an
-element of a list, tuple, set, dict or comprehension) is a start the callee makes on the test's behalf: it is a row like
+element of a list, tuple, set, dict or comprehension; a conditional or boolean expression, a default argument, a yield, an
+await or a starred value in such a position) is a start the callee makes on the test's behalf: it is a row like
 a call's, classed at the HANDING statement (its kind from the target as usual; its shape from the walk forward from that
 statement, whose own text is read first: the `after=lambda: writer.join(timeout=5)` beside it is the join), and one
 whose receiver the walk cannot resolve is listed unreadable like a call's. A `.start` in an operand position
@@ -122,7 +123,9 @@ the helper's own row.
            -> _login_reader_loop reads a pty: waits; a test's `self.post()` helper reading its HTTP response: waits).
            UNTIMED is no arguments or only the spellings Python reads as untimed (_untimed_call): q.get(True),
            q.get(block=True), ev.wait(None), ev.wait(timeout=None), lk.acquire(blocking=True), t.join(None), in the body
-           or through the construction's args= / kwargs=; any other argument is a timeout to the walk.
+           or through the construction's args= / kwargs=, and the spellings Python reads the same way (a nonzero number
+           as the block flag: q.get(1), lk.acquire(1); an acquire's timeout=-1; arguments the walk cannot read, *a /
+           **kw); a name or a number as the TIMEOUT is a timeout to the walk (ev.wait(deadline) reads timed).
   bounded: a body the walk read with no loop and only timed waits, a stdlib call the table says returns, a Thread with
            no target (the default run() does nothing). Such a thread ends on its own whatever the test does, within its
            own bound, so its join is a convenience of the body and not the stop; the shape rule BOUNDED excuses it, with
@@ -236,6 +239,7 @@ directly for the table (`--table`; `--tail` prints only the tail-only and unread
 
 """
 import ast
+import builtins
 import copy
 import os
 import re
@@ -287,9 +291,10 @@ STDLIB_RETURNS = {
     "get_nowait": "Queue.get_nowait raises Empty or returns at once whatever its arguments and on any stdlib receiver (queue, asyncio, multiprocessing)",
     "cancel": "Timer.cancel returns at once whatever its arguments (it takes none) and on any stdlib receiver (a Future's, a Task's, a Handle's cancel returns at once too)",
     "release": "Lock.release returns at once whatever its arguments and on any stdlib receiver (a Lock, RLock, Semaphore or Condition release never waits; it raises when not held)",
-    "notify": "Condition.notify returns at once whatever its arguments (n) and on any stdlib receiver (it raises when the lock is not held)",
-    "notify_all": "Condition.notify_all returns at once whatever its arguments (it takes none) and on any stdlib receiver (it raises when the lock is not held)",
 }
+# Dropped on 2026-09-22 (the adversarial review of pass 5): notify / notify_all, because multiprocessing.Condition.notify does an
+# untimed _woken_count.acquire() per woken sleeper, so the entry could not say "on any stdlib receiver"; no tree row used them.
+_BUILTIN_NAMES = frozenset(dir(builtins))     # range(...), slice(...), object(): a builtin constructs no thread of ours
 # Servers whose server_close has no handler threads to join: a plain socketserver / HTTPServer handles in the accept
 # thread; ThreadingHTTPServer's handlers are daemon threads, which ThreadingMixIn.server_close does not join. A
 # ThreadingTCPServer / ThreadingUDPServer under its defaults (block_on_close=True, daemon_threads=False) joins every live
@@ -383,10 +388,22 @@ def _is_thread_ctor(node):
     return isinstance(node, ast.Call) and _callee_name(node) in THREAD_CTORS
 
 
-def _target_expr(call):
+def _names_timer(node):
+    """The expression names threading.Timer by its own name (threading.Timer, Timer)."""
+    return (isinstance(node, ast.Attribute) and node.attr == "Timer") or (isinstance(node, ast.Name) and node.id == "Timer")
+
+
+def _is_timer(call, unit=None):
+    """The construction is a Timer: by name, or (with `unit` to read the bindings) through an alias or a Timer subclass
+    (_Unit.is_timer_ctor)."""
+    return unit.is_timer_ctor(call) if unit is not None else _names_timer(call.func)
+
+
+def _target_expr(call, unit=None):
     """The callable a Thread or Timer runs: `target=` (or the first positional) for Thread, `function=` (or the second
-    positional) for Timer."""
-    if _callee_name(call) == "Timer":
+    positional) for Timer, a Timer being read by name or, with `unit`, through an alias or a subclass (Tm =
+    threading.Timer; class T2(threading.Timer))."""
+    if _is_timer(call, unit):
         for kw in call.keywords:
             if kw.arg == "function":
                 return kw.value
@@ -397,10 +414,11 @@ def _target_expr(call):
     return call.args[0] if call.args else None
 
 
-def _handed_args(call):
+def _handed_args(call, unit=None):
     """(the positional argument nodes, the (name, node) keyword pairs) a construction hands its target through args= /
     kwargs= (a tuple or list; a dict with string keys); None when the walk cannot read them (a name, a starred value, a
-    ** argument, a positional past the target: a Timer's are interval and function, only a third is the target's)."""
+    ** argument, a positional past the target: a Timer's are interval and function, only a third is the target's; the
+    Timer read by name or, with `unit`, through an alias or a subclass)."""
     args, kws = [], []
     for kw in call.keywords:
         if kw.arg == "args":
@@ -413,7 +431,7 @@ def _handed_args(call):
             kws += [(k.value, v) for k, v in zip(kw.value.keys, kw.value.values)]
         elif kw.arg is None:
             return None
-    n = 2 if _callee_name(call) == "Timer" else 1
+    n = 2 if _is_timer(call, unit) else 1
     if len(call.args) > n or any(isinstance(a, ast.Starred) for a in call.args):
         return None
     return args, kws
@@ -422,37 +440,48 @@ def _handed_args(call):
 def _untimed_call(name, args, keywords):
     """A blocking call is UNTIMED with no arguments or with only the spellings Python reads as untimed (romp-manager's
     ruling, 2026-09-22): q.get(True), q.get(block=True), lk.acquire(blocking=True) (a true block flag and no timeout or
-    timeout=None), ev.wait(None), ev.wait(timeout=None), t.join(None) (no timeout or timeout=None). Any other argument
-    (a number, a name, a keyword not read here) makes the call timed to the walk. `keywords` are (name, node) pairs."""
+    timeout=None), ev.wait(None), ev.wait(timeout=None), t.join(None) (no timeout or timeout=None); and the spellings
+    Python reads the same way (the adversarial review of pass 5): a nonzero number as the block flag (q.get(1),
+    lk.acquire(1)), an acquire's timeout=-1 (the Lock's own forever), and arguments the walk cannot read (*a, **kw:
+    the restricted side). A name or a number as the TIMEOUT is a timeout to the walk: ev.wait(deadline) reads timed, the
+    body's excused side, a stated edge. `keywords` are (name, node) pairs; a ** argument has the name None."""
+    if any(isinstance(a, ast.Starred) for a in args) or any(k is None for k, _v in keywords):
+        return True
     kw = dict(keywords)
 
-    def is_(node, value):
-        return isinstance(node, ast.Constant) and node.value is value
+    def is_none(node):
+        return isinstance(node, ast.Constant) and node.value is None
+
+    def is_on(node):
+        return isinstance(node, ast.Constant) and (node.value is True or (isinstance(node.value, (int, float))
+                                                                          and not isinstance(node.value, bool) and node.value != 0))
 
     if name in ("get", "acquire"):
         flag = "block" if name == "get" else "blocking"
         block = args[0] if args else kw.get(flag)
         timeout = args[1] if len(args) > 1 else kw.get("timeout")
         extra = args[2:] or [k for k in kw if k not in (flag, "timeout")]
-        return not extra and (block is None or is_(block, True)) and (timeout is None or is_(timeout, None))
+        forever = timeout is None or is_none(timeout) or (name == "acquire" and _number_literal(timeout) == -1)
+        return not extra and (block is None or is_on(block)) and forever
     if name in ("wait", "join"):
         timeout = args[0] if args else kw.get("timeout")
         extra = args[1:] or [k for k in kw if k != "timeout"]
-        return not extra and (timeout is None or is_(timeout, None))
+        return not extra and (timeout is None or is_none(timeout))
     return not args and not keywords
 
 
-def _handed_untimed(ctor, name):
+def _handed_untimed(ctor, name, unit=None):
     """The target `name` (a BLOCKING method) runs untimed with what the construction hands it through args= / kwargs=:
-    nothing, or only the untimed spellings; arguments the walk cannot read are not untimed (the target then falls to the
-    stdlib table or to unreadable, the restricted side)."""
-    handed = _handed_args(ctor)
+    nothing, or only the untimed spellings; arguments the walk cannot read are not untimed here (the target then falls
+    to the stdlib table or to unreadable, the restricted side)."""
+    handed = _handed_args(ctor, unit)
     return handed is not None and _untimed_call(name, handed[0], handed[1])
 
 
 def _args_text(call, module):
-    """The arguments of a call as written: `True`, `block=True`."""
-    return ", ".join([_text(a, module) for a in call.args] + ["%s=%s" % (k.arg, _text(k.value, module)) for k in call.keywords])
+    """The arguments of a call as written: `True`, `block=True`, `**kw`."""
+    return ", ".join([_text(a, module) for a in call.args]
+                     + [("**%s" % _text(k.value, module)) if k.arg is None else "%s=%s" % (k.arg, _text(k.value, module)) for k in call.keywords])
 
 
 def _number_literal(node):
@@ -765,6 +794,7 @@ class _Module:
         self.globals, self.imports = {}, set()
         self.import_names = {}               # local name -> the dotted name it imports (lab_dist; tests.fs_clock.move_ctime)
         self.thread_aliases = set()          # names bound at module level to threading.Thread / Timer
+        self.timer_aliases = set()           # of those, the ones bound to threading.Timer (its callable is function=)
         for n in ast.walk(self.tree):
             if isinstance(n, ast.Import):
                 self.imports.update((a.asname or a.name).split(".")[0] for a in n.names)
@@ -777,6 +807,7 @@ class _Module:
                         self.import_names[a.asname or a.name] = "%s.%s" % (n.module, a.name)
                 if n.module == "threading":                          # from threading import Thread as Th
                     self.thread_aliases.update(a.asname or a.name for a in n.names if a.name in THREAD_CTORS)
+                    self.timer_aliases.update(a.asname or a.name for a in n.names if a.name == "Timer")
         for n in self.tree.body:
             if isinstance(n, ast.Assign):
                 for t in n.targets:
@@ -793,6 +824,8 @@ class _Module:
         for name, value in self.globals.items():                     # Th = threading.Thread
             if _names_thread_ctor(value):
                 self.thread_aliases.add(name)
+            if _names_timer(value):                                  # Tm = threading.Timer
+                self.timer_aliases.add(name)
         self.thread_classes = {}             # module classes whose bases (here, transitively) name Thread or an alias of it
         for name, c in self.classes.items():
             if self.derives_thread(c):
@@ -826,6 +859,24 @@ class _Module:
                     q.append(nxt)
         return False
 
+    def derives_timer(self, cls, local_aliases=(), local_classes=None):
+        """The class or a base of it in this file (or a local class handed in) has a base that names threading.Timer or
+        an alias of it: its construction's callable is function= (or the second positional), its interval the first."""
+        seen, q = set(), [cls]
+        while q:
+            c = q.pop(0)
+            if c.name in seen:
+                continue
+            seen.add(c.name)
+            for b in c.bases:
+                if _names_timer(b) or (isinstance(b, ast.Name) and (b.id in self.timer_aliases or b.id in local_aliases)):
+                    return True
+                nm = _text(b, self).split(".")[-1]
+                nxt = (local_classes or {}).get(nm) or self.classes.get(nm)
+                if nxt is not None:
+                    q.append(nxt)
+        return False
+
     def bases_of(self, cls):
         """The class and its bases in this file, nearest first."""
         out, q, seen = [], [cls], set()
@@ -850,7 +901,7 @@ class _Module:
     def units(self):
         """Every function the walk classes on its own: module-level functions and every method of every class, a class
         nested in a class included (SettingsPickThroughTheLoop._Client in tests/test_sdk_backend.py: 68 such classes in
-        the tree on 2026-09-22, none starting a thread, three calling run_in_executor)."""
+        the tree on 2026-09-22, none starting a thread, two of them calling run_in_executor at three sites)."""
         if self._units is None:
             out = []
             for f in self.tree.body:
@@ -1184,6 +1235,8 @@ class _Unit:
                 self.local_classes.setdefault(s.name, s)
         self.thread_aliases = {nm for table in self.scopes.values() for nm, vals in table.items()   # Real = threading.Thread
                                if any(not isinstance(v, tuple) and _names_thread_ctor(v) for _l, v in vals)}
+        self.timer_aliases = {nm for table in self.scopes.values() for nm, vals in table.items()    # Tm = threading.Timer
+                              if any(not isinstance(v, tuple) and _names_timer(v) for _l, v in vals)}
         self.thread_classes = {nm: c for nm, c in self.local_classes.items()     # class W(threading.Thread), in the body
                                if module.derives_thread(c, self.thread_aliases | module.thread_aliases, self.local_classes)}
 
@@ -1345,6 +1398,25 @@ class _Unit:
             return self.module.thread_classes.get(f.id)
         return None
 
+    def is_timer_ctor(self, call):
+        """The construction is a Timer: by name (threading.Timer, Timer), through an alias (module-level or local, `Tm =
+        threading.Timer`, `from threading import Timer as Tm`) or of a Timer subclass defined in this module or this
+        function: its callable is function= (or the second positional) and its interval the first (_timer_rule)."""
+        f = call.func
+        if _names_timer(f):
+            return True
+        if not isinstance(f, ast.Name):
+            return False
+        aliases = self.timer_aliases | self.module.timer_aliases | (self.parent.timer_aliases if self.parent is not None else set())
+        if f.id in aliases:
+            return True
+        cls = self.thread_class_of(call)
+        if cls is None:
+            return False
+        local = dict(self.parent.local_classes) if self.parent is not None else {}
+        local.update(self.local_classes)
+        return self.module.derives_timer(cls, aliases, local)
+
     def class_named(self, name):
         """The ClassDef a bare name denotes here: a class defined in this function, in the enclosing one, or in the module."""
         for scope in (self, self.parent):
@@ -1419,6 +1491,10 @@ class _Unit:
         parts = ast.unparse(call.func).split(".")
         if parts[0] in NON_THREAD_HEADS or any(p in NON_THREAD_PARTS for p in parts) or parts[-1] in NON_THREAD_ATTRS:
             return True
+        if isinstance(call.func, ast.Name) and call.func.id in _BUILTIN_NAMES and call.func.id not in self.module.classes \
+                and call.func.id not in self.module.functions and call.func.id not in self.thread_classes \
+                and call.func.id not in self.module.thread_classes and call.func.id not in self.local_defs:
+            return True                 # range(3), slice(1, 2), object(): a builtin constructs no thread of ours
         if len(parts) >= 2 and isinstance(call.func, ast.Attribute):
             head = parts[0]
             g = self.module.globals.get(head)
@@ -1613,9 +1689,10 @@ class _Unit:
 
     def _handed_on(self, attr):
         """The bound `.start` is a VALUE handed on: a keyword or positional argument of a call (not its callee), the value
-        of an assignment or a return, an element of a list, tuple, set, dict or comprehension. Not one in an operand
+        of an assignment or a return, an element of a list, tuple, set, dict or comprehension, a conditional or boolean
+        expression, a default argument, a yield, an await or a starred value in such a position. Not one in an operand
         position (`self.start <= m.start()`, `r.start + 0`: a slice's, a range's or a match's start, a value of some
-        other object)."""
+        other object); a builtin's construction (range(3), slice(1, 2)) resolves to no thread (known_non_thread)."""
         p = self.parent_node.get(id(attr))
         if isinstance(p, ast.keyword):
             return True
@@ -1629,6 +1706,16 @@ class _Unit:
             return any(v is attr for v in p.values)
         if isinstance(p, (ast.ListComp, ast.SetComp, ast.GeneratorExp)):
             return p.elt is attr
+        if isinstance(p, ast.DictComp):
+            return p.key is attr or p.value is attr
+        if isinstance(p, ast.IfExp):                                # before=t.start if fast else None
+            return p.body is attr or p.orelse is attr
+        if isinstance(p, ast.BoolOp):                               # before=hook or t.start
+            return any(v is attr for v in p.values)
+        if isinstance(p, (ast.Yield, ast.YieldFrom, ast.Await, ast.Starred)):
+            return p.value is attr
+        if isinstance(p, ast.arguments):                            # def go(cb=t.start); lambda cb=t.start: cb()
+            return any(d is attr for d in p.defaults + [d for d in p.kw_defaults if d is not None])
         return False
 
     def product_starts(self):
@@ -1649,8 +1736,10 @@ class _Unit:
                 if nm == "run_in_executor" and len(sub.args) >= 2:
                     ran = sub.args[1]
                     untimed = isinstance(ran, ast.Attribute) and ran.attr in BLOCKING and len(sub.args) == 2
-                    out.append(_ProductStart(self, sub, "run_in_executor", "a worker of the loop's default executor runs %s%s"
-                                             % (_text(ran, self.module), ", an untimed wait" if untimed else "")))
+                    ex = sub.args[0]
+                    where = "the loop's default executor" if isinstance(ex, ast.Constant) and ex.value is None else "the executor `%s`" % _text(ex, self.module)
+                    out.append(_ProductStart(self, sub, "run_in_executor", "a worker of %s runs %s%s"
+                                             % (where, _text(ran, self.module), ", an untimed wait" if untimed else "")))
                 elif nm in POOL_CTORS:
                     under = isinstance(self.parent_node.get(id(sub)), ast.withitem)
                     out.append(_ProductStart(self, sub, "pool", "the pool's worker threads, %s"
@@ -1752,10 +1841,10 @@ class _Start:
                 self.target_expr = run
                 self.target = "%s.run" % self.subclass.name
             else:                                     # no run() of its own: Thread.run calls the construction's target
-                self.target_expr = _target_expr(ctor)
+                self.target_expr = _target_expr(ctor, ctor_unit)
                 self.target = _text(self.target_expr, ctor_unit.module) if self.target_expr is not None else "%s (no run)" % self.subclass.name
         else:
-            self.target_expr = _target_expr(ctor) if ctor is not None else None
+            self.target_expr = _target_expr(ctor, ctor_unit) if ctor is not None else None
             self.target = _text(self.target_expr, ctor_unit.module) if self.target_expr is not None else "?"
         self.line = call.lineno
         self._words = {}
@@ -1813,6 +1902,9 @@ def _argument_for(fn, param, call):
             return kw.value
     if any(kw.arg is None for kw in call.keywords):
         return None
+    kwonly = [a.arg for a in fn.args.kwonlyargs]
+    if param in kwonly:
+        return fn.args.kw_defaults[kwonly.index(param)]      # None for a required keyword-only parameter not handed
     names = [a.arg for a in fn.args.posonlyargs + fn.args.args]
     if names and names[0] in ("self", "cls"):
         names = names[1:]
@@ -1921,8 +2013,10 @@ def _spawner_calls(unit, call, name):
         if isinstance(obj, str) and obj != "module":
             defs = prod.methods(obj, name, unit.module)
             heads = [h for h in table.get(name, []) if any(h[2] is fn for _p, _c, fn in defs)]
-        elif obj is True:
+        elif obj is True:                      # a product object whose class the walk cannot name: every class's method of that name
             heads = [h for h in table.get(name, []) if h[1] is not None]
+            if heads:
+                by_name = " [matched by name: the object's class is not read]"
     out = []
     for p, cname, fn, guards in heads:
         m = prod.module(p, unit.module)
@@ -2339,7 +2433,7 @@ def _timer_rule(start, kind, why):
     for an hour whatever ev.set does); a loop or a wait in the function stays what it is; otherwise UNREADABLE (a cancel
     or an untimed join before the first assertion is still its stop)."""
     ctor = start.ctor
-    if ctor is None or kind != "bounded" or _callee_name(ctor) != "Timer":
+    if ctor is None or kind != "bounded" or not start.ctor_unit.is_timer_ctor(ctor):
         return kind, why
     interval = next((kw.value for kw in ctor.keywords if kw.arg == "interval"), ctor.args[0] if ctor.args else None)
     n = _number_literal(interval)
@@ -2380,7 +2474,7 @@ def _target_kind(start):
             return body
         if expr.attr in FOREVER:
             return "loop", expr.attr
-        if expr.attr in BLOCKING and _handed_untimed(ctor, expr.attr):
+        if expr.attr in BLOCKING and _handed_untimed(ctor, expr.attr, unit):
             return "waits", "the target is an untimed .%s" % expr.attr
         if expr.attr in READS:
             return "waits", "the target is a read"
@@ -2657,7 +2751,7 @@ def _stdlib_rule(unit, name, shown, ctor, call):
 def _sleep_rule(unit, ctor, call):
     """time.sleep as a target is bounded ONLY when args= carries a literal number at or under BOUND_S, read at the call
     (romp-manager's ruling, 2026-09-22): a sleep of 3600 s, or of a name, outlives the test; UNREADABLE otherwise."""
-    handed = _handed_args(ctor) if ctor is not None else None
+    handed = _handed_args(ctor, unit) if ctor is not None else None
     secs = handed[0][0] if handed and handed[0] else None
     n = _number_literal(secs)
     if n is not None and n <= BOUND_S:
@@ -4414,16 +4508,38 @@ class PlantedShapes(unittest.TestCase):
             "        self.assertTrue(False)\n"
             "    def test_operand(self):\n"
             "        r = range(3)\n"
-            "        self.assertEqual(r.start + 0, 0)\n")
+            "        self.assertEqual(r.start + 0, 0)\n"
+            "        self.assertEqual(max(r.start, 0), 0)\n"
+            "    def test_ifexp(self, fast=True):\n"
+            "        t = threading.Thread(target=_loop)\n"
+            "        self._run(before=t.start if fast else None)\n"
+            "        self.assertTrue(False)\n"
+            "    def test_boolop(self, hook=None):\n"
+            "        t = threading.Thread(target=_loop)\n"
+            "        self._run(before=hook or t.start)\n"
+            "        self.assertTrue(False)\n"
+            "    def test_default(self):\n"
+            "        t = threading.Thread(target=_loop)\n"
+            "        def go(cb=t.start):\n"
+            "            cb()\n"
+            "        go()\n"
+            "        self.assertTrue(False)\n"
+            "    def test_starred(self):\n"
+            "        t = threading.Thread(target=_loop)\n"
+            "        self._run(*[t.start])\n"
+            "        self.assertTrue(False)\n")
         by = {w: (s.target, s.kind, sh, s.handed) for s, sh, w in rows}
+        for name in ("test_ifexp", "test_boolop", "test_default", "test_starred"):
+            self.assertEqual(by["T." + name], ("_loop", "loop", "tail-only", True), name)
         self.assertEqual(by["T.test_kw"], ("_loop", "loop", "tail-only", True))
         self.assertEqual(by["T.test_kw_join_beside"], ("_once", "bounded", "stop-before-first-assertion", True))
         self.assertEqual(by["T.test_pos"], ("_loop", "loop", "tail-only", True))
         self.assertEqual(by["T.test_list"], ("_loop", "loop", "tail-only", True))
         self.assertEqual(by["T.test_assigned"], ("_loop", "loop", "stop-before-first-assertion", True))
         self.assertNotIn("T.test_operand", by)
-        self.assertEqual(self._tails(tails), [("_loop", "T.test_kw"), ("_loop", "T.test_list"), ("_loop", "T.test_pos")])
-        self.assertEqual([(s.recv_shown, w, s.handed) for s, w in unread], [("worker", "T.test_param", True)])
+        self.assertEqual(self._tails(tails), [("_loop", "T.test_boolop"), ("_loop", "T.test_default"), ("_loop", "T.test_ifexp"),
+                                              ("_loop", "T.test_kw"), ("_loop", "T.test_list"), ("_loop", "T.test_pos"), ("_loop", "T.test_starred")])
+        self.assertEqual([(s.recv_shown, w, s.handed) for s, w in unread], [("worker", "T.test_param", True)], "a range's start as an argument is no start")
         self.assertTrue(unread[0][0].describe().endswith("T.test_param hands worker.start on"), unread[0][0].describe())
         self.assertTrue(any(s.describe().endswith("via t.start handed on") for s, _sh, _w in rows if s.is_thread))
 
@@ -4436,10 +4552,13 @@ class PlantedShapes(unittest.TestCase):
         the stdlib table, which has no rule for a timed wait (unreadable)."""
         head = self.HEAD.replace("import unittest\n", "import unittest\nimport queue\n")
         untimed = {"get_true": "q.get(True)", "get_block": "q.get(block=True)", "wait_none": "ev.wait(None)",
-                   "wait_kw": "ev.wait(timeout=None)", "acq_blocking": "lk.acquire(blocking=True)", "join_none": "t0.join(None)"}
-        timed = {"get_timed": "q.get(True, 1)", "wait_timed": "ev.wait(1)", "acq_timed": "lk.acquire(True, 2)", "join_timed": "t0.join(timeout=1)"}
+                   "wait_kw": "ev.wait(timeout=None)", "acq_blocking": "lk.acquire(blocking=True)", "join_none": "t0.join(None)",
+                   "get_one": "q.get(1)", "get_block_one": "q.get(block=1)", "acq_one": "lk.acquire(1)",
+                   "acq_forever": "lk.acquire(timeout=-1)", "acq_both": "lk.acquire(True, -1)", "wait_unread": "ev.wait(**kw)", "get_star": "q.get(*a)"}
+        timed = {"get_timed": "q.get(True, 1)", "wait_timed": "ev.wait(1)", "acq_timed": "lk.acquire(True, 2)", "join_timed": "t0.join(timeout=1)",
+                 "get_zero": "q.get(0)", "wait_name": "ev.wait(deadline)"}
         body = "".join("    def test_%s(self):\n        q, ev, lk = queue.Queue(), threading.Event(), threading.Lock()\n"
-                       "        t0 = threading.Thread(target=_once)\n"
+                       "        t0 = threading.Thread(target=_once); kw = {}; a = (); deadline = 1\n"
                        "        def run():\n            %s\n"
                        "        t = threading.Thread(target=run)\n        t.start()\n        self.assertTrue(False)\n        t.join(5)\n"
                        % (name, call) for name, call in list(untimed.items()) + list(timed.items()))
@@ -4486,7 +4605,14 @@ class PlantedShapes(unittest.TestCase):
                 "    def test_timer_long(self):\n        ev = threading.Event()\n        t = threading.Timer(3600, ev.set); t.start()\n        self.assertTrue(False)\n"
                 "    def test_timer_name(self):\n        ev = threading.Event(); n = 1\n        t = threading.Timer(n, ev.set); t.start()\n        self.assertTrue(False)\n"
                 "    def test_timer_cancelled(self):\n        ev = threading.Event()\n        t = threading.Timer(3600, ev.set); t.start(); t.cancel()\n        self.assertTrue(False)\n"
-                "    def test_timer_loop(self):\n        t = threading.Timer(0.1, _loop); t.start()\n        self.assertTrue(False)\n")
+                "    def test_timer_loop(self):\n        t = threading.Timer(0.1, _loop); t.start()\n        self.assertTrue(False)\n"
+                "    def test_timer_local_alias_long(self):\n        ev = threading.Event(); Tm = threading.Timer\n        t = Tm(interval=3600, function=ev.set); t.start()\n        self.assertTrue(False)\n"
+                "    def test_timer_local_alias_ok(self):\n        ev = threading.Event(); Tm = threading.Timer\n        t = Tm(1, ev.set); t.start()\n        self.assertTrue(False)\n"
+                "    def test_timer_import_alias_long(self):\n        ev = threading.Event()\n        t = Tim(3600, ev.set); t.start()\n        self.assertTrue(False)\n"
+                "    def test_timer_subclass_long(self):\n        ev = threading.Event()\n        class T2(threading.Timer):\n            pass\n"
+                "        t = T2(3600, ev.set); t.start()\n        self.assertTrue(False)\n"
+                "    def test_timer_global_alias_long(self):\n        ev = threading.Event()\n        t = TimerG(3600, ev.set); t.start()\n        self.assertTrue(False)\n")
+        head = head.replace("from time import sleep\n", "from time import sleep\nfrom threading import Timer as Tim\nTimerG = threading.Timer\n")
         rows, (tails, unread, stale, bounded), _p = self._census(body, head=head)
         by = {w.split(".")[1]: (s.kind, s.why, sh) for s, sh, w in rows}
         self.assertEqual(by["test_sleep_ok"], ("bounded", "time.sleep(3) returns after 3 s, a literal at or under the 5 s bound read at the call", "tail-only"))
@@ -4506,9 +4632,14 @@ class PlantedShapes(unittest.TestCase):
             self.assertTrue(by["test_" + name][1].startswith("a Timer whose interval "), by["test_" + name][1])
         self.assertEqual((by["test_timer_cancelled"][0], by["test_timer_cancelled"][2]), (KIND_UNREAD, "stop-before-first-assertion"))
         self.assertEqual(by["test_timer_loop"][0], "loop")
+        self.assertEqual(by["test_timer_local_alias_ok"], ("bounded", STDLIB_RETURNS["set"], "tail-only"), "an alias reads as a Timer: function= is the callable")
+        for name in ("timer_local_alias_long", "timer_import_alias_long", "timer_subclass_long", "timer_global_alias_long"):
+            self.assertEqual(by["test_" + name][0], KIND_UNREAD, (name, by["test_" + name]))
+            self.assertTrue(by["test_" + name][1].startswith("a Timer whose interval `3600`"), (name, by["test_" + name][1]))
         self.assertTrue(all(bounded_reason_is_read(s.why) for s, _sh, _w in rows if s.kind == "bounded"), [s.why for s, _sh, _w in rows if s.kind == "bounded"])
         self.assertEqual(sorted(w.split(".")[1] for s, w in unread),
-                         sorted(["test_sleep_long", "test_sleep_name", "test_sleep_noargs", "test_close_threading", "test_timer_long", "test_timer_name"]))
+                         sorted(["test_sleep_long", "test_sleep_name", "test_sleep_noargs", "test_close_threading", "test_timer_long", "test_timer_name",
+                                 "test_timer_local_alias_long", "test_timer_import_alias_long", "test_timer_subclass_long", "test_timer_global_alias_long"]))
         self.assertEqual(self._tails(tails), [("_loop", "T.test_timer_loop")], "the looping Timer is pinned like any loop")
 
     def test_every_stdlib_returns_entry_says_it_returns_whatever_its_arguments_on_any_receiver(self):
