@@ -143,6 +143,7 @@ CP_FAMILY = ("exec", "execSync", "execFile", "execFileSync", "spawn", "spawnSync
 # The one program the kernel starts from a directory outside the runtime trees; a string constant naming tools/ or scripts/
 # from the runtime trees that is not one of these fails the run (PROGRAM).
 KNOWN_PROGRAM_REFS = {"file-comments-host.mjs"}   # kernel/kernel.py _FILE_COMMENTS_HOST = ROOT / "tools" / "file-comments-host.mjs"
+_PROGRAM_PATH = re.compile(r"^(?:tools|scripts)/.*\.(?:py|mjs|cjs|js|sh)$")   # a program path spelled as one string constant
 
 # The table: "file:function" (a Python site) or "file:tool" (a shell or JavaScript line) -> road. Every function with a site that
 # reaches another machine is named here, and so is every loopback or local-program site the default rules cannot place, and every
@@ -348,6 +349,16 @@ DOM = [("attribute write", r"\.(?:src|srcset|href)\s*=[^=]"), ("setAttribute", r
        ("template", r"<(?:img|script|iframe|link|source|video|audio|a|embed|object)\b[^>]*\b(?:src|srcset|href)="), ("window.open", r"window\.open\(")]
 
 
+def _compiled(tools):
+    """A pattern list compiled once, with one alternation of the whole list: line_scan hands a line to the list's per-tool loop
+    only when the alternation matches it, and the alternation matches exactly when some pattern of the list does, so a line
+    that names no tool costs one search instead of one per pattern. Which lines are sites, and under which tool, is unchanged."""
+    return [(name, re.compile(rx)) for name, rx in tools], re.compile("|".join("(?:%s)" % rx for _name, rx in tools))
+
+
+SH_RX, SH_ANY = _compiled(SH); JS_RX, JS_ANY = _compiled(JS); DOM_RX, DOM_ANY = _compiled(DOM)
+
+
 class Site(object):
     __slots__ = ("file", "line", "prim", "head", "fn", "road", "cls", "kind")
     def __init__(self, file, line, prim, head, fn, road, cls, kind):
@@ -378,12 +389,16 @@ def _call_arg(line, opener):
     return "".join(out).strip()
 
 
+_HELPER_CALL = re.compile(r"^(?:%s)\(" % "|".join(KERNEL_URL_HELPERS))   # a kernel-URL helper call as the fetch argument
+_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")                        # a URL scheme at the head of a literal
+
+
 def _fetch_class(arg):
     """'local' (a relative literal, or a kernel-URL helper call), 'absolute' (a literal with a scheme or a host), or 'computed'."""
-    if re.match(r"^(?:%s)\(" % "|".join(KERNEL_URL_HELPERS), arg): return "local"
+    if _HELPER_CALL.match(arg): return "local"
     if arg[:1] in ("'", '"', "`"):
         body = arg[1:arg.find(arg[0], 1)] if arg.find(arg[0], 1) > 0 else arg[1:]
-        if body.startswith("//") or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", body): return "absolute"
+        if body.startswith("//") or _SCHEME.match(body): return "absolute"
         if body.startswith("${"): return "computed"
         return "local"
     return "computed"
@@ -456,7 +471,7 @@ class Scan(ast.NodeVisitor):
             self.res.problems.append("PROGRAM %s:%d names %r: a program under that directory is outside the declared scope; add it to NAMED "
                                      "and KNOWN_PROGRAM_REFS, or state here why it is not a program the kernel runs" % (self.rel, n.lineno, value))
     def visit_Constant(self, n):   # a program path spelled as one string: "tools/x.mjs"
-        if isinstance(n.value, str) and re.match(r"^(?:tools|scripts)/.*\.(?:py|mjs|cjs|js|sh)$", n.value): self.program_ref(n, n.value)
+        if isinstance(n.value, str) and _PROGRAM_PATH.match(n.value): self.program_ref(n, n.value)
     def visit_BinOp(self, n):   # a program path built with pathlib: ROOT / "tools" / "x.mjs"
         if (isinstance(n.op, ast.Div) and isinstance(n.right, ast.Constant) and isinstance(n.right.value, str) and isinstance(n.left, ast.BinOp)
                 and isinstance(n.left.right, ast.Constant) and n.left.right.value in ("tools", "scripts")):
@@ -556,33 +571,45 @@ def walk(root, res):
 
 
 _CP_MODULE = r"['\"](?:node:)?child_process['\"]"
+# The binding shapes, compiled once: a destructured require or import (the names), a require assigned whole or a namespace
+# or default import (the spaces), and the `as` or `:` that renames a destructured member.
+_CP_NAMES = re.compile(r"(?:const|let|var)\s*\{([^}]*)\}\s*=\s*require\(\s*%s\s*\)|import\s*(?:type\s+)?\{([^}]*)\}\s*from\s*%s" % (_CP_MODULE, _CP_MODULE))
+_CP_SPACES = re.compile(r"(?:const|let|var)\s+(\w+)\s*=\s*require\(\s*%s\s*\)|import\s+\*\s+as\s+(\w+)\s+from\s*%s|import\s+(\w+)\s+from\s*%s" % (_CP_MODULE, _CP_MODULE, _CP_MODULE))
+_CP_RENAME = re.compile(r"\s+as\s+|\s*:\s*")
 
 
 def _cp_bindings(text):
-    """The names a JavaScript or TypeScript file binds from child_process: `names` maps a bare name the file destructures or
-    imports to the family member it stands for, `spaces` holds the names the file keeps the module under (a namespace or
-    default import, a require assigned whole). A family member called by a bare name the file does not bind is not a site."""
+    """The names a JavaScript or TypeScript file binds from child_process, and the call patterns those bindings make, read once
+    per file: `names` maps a bare name the file destructures or imports to the family member it stands for, `spaces` holds
+    the names the file keeps the module under (a namespace or default import, a require assigned whole), `qualified` matches
+    a family call qualified to the module (`child_process.<fn>(`, `require('child_process').<fn>(`, a name in `spaces`), and
+    `bare` matches a family call by a name in `names`, or is None when the file binds none. A file whose text never names
+    child_process binds nothing and qualifies no call, so it is None here and no line of it is a site. A family member
+    called by a bare name the file does not bind is not a site."""
+    if "child_process" not in text: return None
     names, spaces = {}, set()
-    for m in re.finditer(r"(?:const|let|var)\s*\{([^}]*)\}\s*=\s*require\(\s*%s\s*\)|import\s*(?:type\s+)?\{([^}]*)\}\s*from\s*%s" % (_CP_MODULE, _CP_MODULE), text):
+    for m in _CP_NAMES.finditer(text):
         for part in (m.group(1) or m.group(2) or "").split(","):
             part = part.strip()
             if part.startswith("type "): part = part[5:].strip()
             if part:
-                bits = [b.strip() for b in re.split(r"\s+as\s+|\s*:\s*", part)]
+                bits = [b.strip() for b in _CP_RENAME.split(part)]
                 names[bits[-1]] = bits[0]
-    for m in re.finditer(r"(?:const|let|var)\s+(\w+)\s*=\s*require\(\s*%s\s*\)|import\s+\*\s+as\s+(\w+)\s+from\s*%s|import\s+(\w+)\s+from\s*%s" % (_CP_MODULE, _CP_MODULE, _CP_MODULE), text):
+    for m in _CP_SPACES.finditer(text):
         spaces.add(m.group(1) or m.group(2) or m.group(3))
-    return {"names": names, "spaces": spaces}
+    qual = [r"\bchild_process", r"require\(\s*%s\s*\)" % _CP_MODULE] + [r"\b" + re.escape(s) for s in sorted(spaces)]
+    bare = sorted(n for n, fn in names.items() if fn in CP_FAMILY)
+    return {"names": names, "spaces": spaces, "qualified": re.compile(r"(?:%s)\.(%s)\(" % ("|".join(qual), "|".join(CP_FAMILY))),
+            "bare": re.compile(r"(?<![\w.$])(%s)\(" % "|".join(map(re.escape, bare))) if bare else None}
 
 
 def _cp_sites(ln, cp):
-    """(family member, index after its open paren) for every child_process call on the line: qualified to the module
-    (`child_process.<fn>(`, `require('child_process').<fn>(`, a namespace the file binds), or a bare name the file binds."""
-    qual = [r"\bchild_process", r"require\(\s*%s\s*\)" % _CP_MODULE] + [r"\b" + re.escape(s) for s in sorted(cp["spaces"])]
-    out = [(m.group(1), m.end()) for m in re.finditer(r"(?:%s)\.(%s)\(" % ("|".join(qual), "|".join(CP_FAMILY)), ln)]
-    bare = sorted(n for n, fn in cp["names"].items() if fn in CP_FAMILY)
-    if bare:
-        out.extend((cp["names"][m.group(1)], m.end()) for m in re.finditer(r"(?<![\w.$])(%s)\(" % "|".join(map(re.escape, bare)), ln))
+    """(family member, index after its open paren) for every child_process call on the line, through the file's bindings
+    (_cp_bindings): qualified to the module, or a bare name the file binds; none in a file that never names the module."""
+    if cp is None: return []
+    out = [(m.group(1), m.end()) for m in cp["qualified"].finditer(ln)]
+    if cp["bare"] is not None:
+        out.extend((cp["names"][m.group(1)], m.end()) for m in cp["bare"].finditer(ln))
     return out
 
 
@@ -605,6 +632,9 @@ def _js_args(text):
     return args
 
 
+_SHELL_TRUE = re.compile(r"\bshell\s*:\s*true\b")   # a `shell: true` option in a child_process call's arguments
+
+
 def _js_argv(fn, text):
     """(head, git subcommand or '', the literal after the head or '', shell) for a child_process call, read from the text after
     its open paren the way Scan.argv reads a Python command call: a quoted literal is the head, anything else RUNTIME-SUPPLIED;
@@ -618,20 +648,26 @@ def _js_argv(fn, text):
         lits = [e for e in elts if e is not None]
         if head == "git": sub = next((v for v in lits if not v.startswith("-")), "")
         if elts and elts[0] is not None: follow = elts[0]
-    shell = fn in ("exec", "execSync") or bool(re.search(r"\bshell\s*:\s*true\b", text))   # exec runs its text through a shell
+    shell = fn in ("exec", "execSync") or bool(_SHELL_TRUE.search(text))   # exec runs its text through a shell
     return head, sub, follow, shell
+
+
+_JS_FROM = re.compile(r"\bfrom\s*(['\"])([^'\"]+)\1")
+_JS_SIDE_EFFECT = re.compile(r"import\s*(['\"])([^'\"]+)\1")
+_JS_REQUIRE = re.compile(r"(?<![\w.$])(?:require|import)\(\s*(['\"])([^'\"]+)\1\s*\)")
 
 
 def _js_specifiers(s):
     """The module specifiers a JavaScript or TypeScript line imports or requires: an import or export statement's `from` string
     (the closing line of a multi-line import starts with `}`), a side-effect import, and every literal require() and import()."""
+    if "import" not in s and "require" not in s and "from" not in s: return []   # every shape below spells one of the three
     out = []
     if s.startswith(("import", "export", "}")):
-        m = re.search(r"\bfrom\s*(['\"])([^'\"]+)\1", s)
+        m = _JS_FROM.search(s)
         if m: out.append(m.group(2))
-        m = re.match(r"import\s*(['\"])([^'\"]+)\1", s)
+        m = _JS_SIDE_EFFECT.match(s)
         if m: out.append(m.group(2))
-    out.extend(m.group(2) for m in re.finditer(r"(?<![\w.$])(?:require|import)\(\s*(['\"])([^'\"]+)\1\s*\)", s))
+    out.extend(m.group(2) for m in _JS_REQUIRE.finditer(s))
     return out
 
 
@@ -644,10 +680,10 @@ def _js_package(spec):
     return "/".join(parts[:2]) if spec.startswith("@") else parts[0]
 
 
-def line_scan(root, rel, kind, res):
-    tools, comment = (JS, ("//", "*", "/*")) if kind == "js" else (SH, ("#",))
+def line_scan(rel, kind, text, res):
+    """The shell or JavaScript sites, the DOM loads and the package gate over one file's text (read once, by scan)."""
+    tools, any_tool, comment = (JS_RX, JS_ANY, ("//", "*", "/*")) if kind == "js" else (SH_RX, SH_ANY, ("#",))
     dom = kind == "js" and rel.startswith(tuple(d + "/" for d in JS_ROOTS))
-    with open(os.path.join(root, rel), encoding="utf-8", errors="replace") as fh: text = fh.read()
     cp = _cp_bindings(text) if kind == "js" else None
     for i, ln in enumerate(text.splitlines(), 1):
         s = ln.strip()
@@ -673,30 +709,32 @@ def line_scan(root, rel, kind, res):
             for m in SH_INTERPRETER.finditer(ln):   # the interpreter arm: keyed file plus tool, external-program by class
                 tool = "%s %s" % (os.path.basename(m.group("head")), m.group("flag"))
                 res.emit(rel, i, tool, s[:70], "-", T.get("%s:%s" % (rel, tool)), "external-program", kind)
-        for tool, rx in tools:
-            if re.search(rx, ln):
-                road, cls, head = T.get("%s:%s" % (rel, tool)), None, s[:70]
-                if tool == "fetch":   # placed by its URL: the argument is what the listing shows
-                    arg = _call_arg(ln, "fetch("); fc = _fetch_class(arg); head = "fetch(%s)" % arg[:60]
-                    if fc == "local": road = "local-kernel"
-                    elif fc == "computed": cls = "browser-computed-url"
-                if tool == "import()":   # a literal specifier is an import (gated above), a computed one a site of the class
-                    arg = _call_arg(ln, "import(")
-                    if arg[:1] in ("'", '"', "`") and "${" not in arg: continue
-                    cls, head = "browser-computed-url", "import(%s)" % arg[:60]
-                res.emit(rel, i, tool, head, "-", road, cls, kind)
-        if dom:
-            for name, rx in DOM:
-                if re.search(rx, ln): res.dom.append((rel, i, name, s[:70])); break
+        if any_tool.search(ln):   # the list's alternation (_compiled): a miss means no tool below matches, so the loop is skipped
+            for tool, rx in tools:
+                if rx.search(ln):
+                    road, cls, head = T.get("%s:%s" % (rel, tool)), None, s[:70]
+                    if tool == "fetch":   # placed by its URL: the argument is what the listing shows
+                        arg = _call_arg(ln, "fetch("); fc = _fetch_class(arg); head = "fetch(%s)" % arg[:60]
+                        if fc == "local": road = "local-kernel"
+                        elif fc == "computed": cls = "browser-computed-url"
+                    if tool == "import()":   # a literal specifier is an import (gated above), a computed one a site of the class
+                        arg = _call_arg(ln, "import(")
+                        if arg[:1] in ("'", '"', "`") and "${" not in arg: continue
+                        cls, head = "browser-computed-url", "import(%s)" % arg[:60]
+                    res.emit(rel, i, tool, head, "-", road, cls, kind)
+        if dom and DOM_ANY.search(ln):
+            for name, rx in DOM_RX:
+                if rx.search(ln): res.dom.append((rel, i, name, s[:70])); break
 
 
 def scan(root):
-    res = Result()
-    for rel, kind in walk(root, res):
+    res = Result(); bootstrap = None
+    for rel, kind in walk(root, res):   # each file's text is read once here: a Python file strictly, the others with replacement
         res.files.append(rel)
-        if kind != "py": line_scan(root, rel, kind, res); continue
-        with open(os.path.join(root, rel), encoding="utf-8") as fh: src = fh.read()
-        try: tree = ast.parse(src)
+        with open(os.path.join(root, rel), encoding="utf-8", errors=None if kind == "py" else "replace") as fh: text = fh.read()
+        if rel == "bootstrap.sh": bootstrap = text   # the one-liner pass below reads the text its line scan read
+        if kind != "py": line_scan(rel, kind, text, res); continue
+        try: tree = ast.parse(text)
         except SyntaxError as e:
             res.problems.append("PARSE %s:%s does not parse (%s)" % (rel, e.lineno, e.msg)); continue
         sc = Scan(rel, res); sc.visit(tree)
@@ -704,11 +742,10 @@ def scan(root):
             if mod not in KNOWN_IMPORTS:
                 res.problems.append("IMPORT %s:%d imports %s, a module the census does not know: a client that opens connections takes its "
                                     "primitives into NET or SUB; either way add it to KNOWN_IMPORTS with the reason" % (rel, line, mod))
-    if "bootstrap.sh" in res.files:
-        with open(os.path.join(root, "bootstrap.sh"), encoding="utf-8", errors="replace") as fh:
-            for ln in fh:   # the documented one-liner: the user's own curl of this script is a road too
-                if ln.startswith("#") and "curl" in ln and "bootstrap.sh | bash" in ln:
-                    res.emit("bootstrap.sh", 3, "curl", "the documented one-liner: " + ln.strip("# \n")[:50], "-", T["bootstrap.sh:curl"], None, "sh")
+    if bootstrap is not None:
+        for ln in bootstrap.split("\n"):   # the documented one-liner: the user's own curl of this script is a road too
+            if ln.startswith("#") and "curl" in ln and "bootstrap.sh | bash" in ln:
+                res.emit("bootstrap.sh", 3, "curl", "the documented one-liner: " + ln.strip("# \n")[:50], "-", T["bootstrap.sh:curl"], None, "sh")
     res.sites.sort(key=Site.tuple)
     return res
 
