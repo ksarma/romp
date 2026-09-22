@@ -4803,8 +4803,9 @@ class DrivePlumbing(unittest.TestCase):
                       "tests/test_kernel_meta_command_gate.py (RefusalReachesTheClient's env pins)")
         self.assertIn("    def set_env(self, sid, value):\n", src.split("class _UnownedBackend(sb.SessionBackend):", 1)[1],
                       "_UnownedBackend answers set_env beside its other setters (round 9): the def's PRESENCE is this source pin's "
-                      "(round 9's closing commit, extra10-1: with the method removed and the drain's guard kept, the guard refuses "
-                      "in its place and every behavioural test stays green, so only this line and the census def count red); its "
+                      "(round 9's closing commit, extra10-1: at the round-9 head, with the method removed and the drain's guard kept, "
+                      "the guard refused in its place and every behavioural test stayed green, so only this line and the census def "
+                      "count went red; since that commit the gate test's direct call reds too, with AttributeError); its "
                       "VERDICT is pinned by execution in tests/test_kernel_meta_command_gate.py, RefusalReachesTheClient's unowned "
                       "drain test, which calls km._UNOWNED.set_env directly and asserts the False it answers")
         self.assertIn('("model", "effort", "fast", "env", "cwd")', src,
@@ -5202,6 +5203,16 @@ class CredentialShapedNamesAtTheDoor(unittest.TestCase):
         for k in ("op", "mixed"):
             self.assertIn("as op spells", sb._cred.CREDENTIAL_RING_ROADS[k], "the %s ring road names the spelling" % k)
             self.assertIn("door folds case", sb._cred.CREDENTIAL_RING_ROADS[k], "the %s ring road says the two checks differ" % k)
+            # The other clauses each road owes are pinned by their own words too (round 9 of fork PR #781's review, the
+            # closing commit's check: extra10-2 restored the mixed road's destination and only the roads' LENGTHS held it, so
+            # a same-length reword that dropped the destination again stayed green): the boot refusal of the 1Password half
+            # and where its value belongs, on both roads that name that half, and where a suffix value belongs, on both
+            # roads that name that half
+            self.assertIn("refused", sb._cred.CREDENTIAL_RING_ROADS[k], "the %s ring road names the boot refusal" % k)
+            self.assertIn("at boot", sb._cred.CREDENTIAL_RING_ROADS[k], "the %s ring road says where the refusal happens" % k)
+            self.assertIn("a helper's file", sb._cred.CREDENTIAL_RING_ROADS[k], "the %s ring road names where the 1Password value belongs" % k)
+        self.assertIn("process env", sb._cred.CREDENTIAL_RING_ROADS["mixed"], "the mixed ring road names where a suffix value belongs")
+        self.assertIn("process environment", sb._cred.CREDENTIAL_RING_ROADS["suffix"], "the suffix ring road names where such a value belongs")
         for folded in ("op_account", "Op_Session_Notes", "op_service_account_token"):
             sb._cred.check_boot_environment(path=absent, environ={folded: "x"})     # returns: not refused at boot
             self.assertTrue(sb.env_request_error({**PLAIN, folded: _secret_value("v")}), "%s is refused at this door" % folded)

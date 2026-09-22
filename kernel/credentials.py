@@ -314,7 +314,7 @@ def credential_env_ring_text(names) -> str:
     so; round 9 of fork PR #781's review). Every road names the half's destination: the mixed road says where a suffix
     value goes, that an OP_* name as op spells it is refused at boot, that the door folds case, and that the 1Password
     value belongs in a helper's file (round 9's closing commit, extra10-2: the round-9 rewording had dropped the
-    destination). The mixed road is the longest and sits at the bound the worst-case pin in tests/test_session_env.py
+    destination). The mixed road is the longest and sits within the bound the worst-case pin in tests/test_session_env.py
     derives from this format under the cap; that pin states the roads' lengths and the budget, no figure is typed here
     (extra7-1: a typed headroom figure was wrong by one), and a reword that grows the road past the budget reds it."""
     names = sorted(names)
