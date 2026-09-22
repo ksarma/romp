@@ -43,6 +43,13 @@ def _row(c, sid):
     return row
 
 
+def _count(row):
+    """A helper row's count (the rows _tab_meta returns), checked for the key first, as _row checks a client's strip row."""
+    if "userTodos" not in row:
+        raise AssertionError("every helper row carries the count, 0 included: the row has keys %s" % sorted(row))
+    return row["userTodos"]
+
+
 class UserTodosRoster(_ColdTabFixture):
     """The four tests the fix brief marks red before the change, over the real _push, then the requirements its
     critic added: one predicate and one gate for every surface, one switch read and one store read per push, no roster
@@ -149,7 +156,7 @@ class UserTodosRoster(_ColdTabFixture):
                                    "not a record"]})
         rows = km._open_user_todos(S3)
         self.assertEqual([t["id"] for t in rows], ["ut-00000001"], "premise: one open row of the four")
-        counts = {r["id"]: r["userTodos"] for r in km._tab_meta(km._chat_tab_sessions(0, {}))}
+        counts = {r["id"]: _count(r) for r in km._tab_meta(km._chat_tab_sessions(0, {}))}
         self.assertEqual(counts[S3], len(rows), "the count is the rows' length, whatever the store holds")
         self.assertEqual([counts[s] for s in (S1, S2, S4)], [0, 0, 0])
         # by source: the predicate is ONE (_user_todo_open) and the ended gate is ONE (_user_todos_shown); the helper,
@@ -202,7 +209,7 @@ class UserTodosRoster(_ColdTabFixture):
         self.assertIsNotNone(km._set_user_todos(False))
         with mock.patch.object(km, "_user_todos_on", on), mock.patch.object(km, "_user_todos", store):
             rows = km._tab_meta(km._chat_tab_sessions(0, {}))
-        self.assertEqual([r["userTodos"] for r in rows], [0] * len(TAB_ORDER))
+        self.assertEqual([_count(r) for r in rows], [0] * len(TAB_ORDER))
         self.assertEqual((calls["on"], calls["store"]), (1, 0), "the switch off: no store read at all")
 
     def test_a_push_with_no_chat_client_builds_no_roster(self):
