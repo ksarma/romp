@@ -972,110 +972,202 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   assert.match(RENDER, /interface View \{[^\n]*measured\?: \{ avg\?: number; per\?: number \};/, "the parked figures live on the view");
 });
 
-// ── the `view` key's minters across ui/webview, by the PROPERTY (the maintainer's round 5 ruling, tests-1, adopting the census refuted extra7-2 proposed) ──
+// ── the `view` key's minters across the modules the page bundles LOAD, by the PROPERTY (the maintainer's round 5 ruling, tests-1, adopting the census refuted extra7-2 proposed; the population derived from the bundles since the maintainer's round 6 ruling, correctness-1 and extra8-2) ──
 
-test("ui/webview, every production module read with the compiler: the only write of a `view` property onto an object that reaches a clientDiag post is spacerRow's shorthand under a spread of a literal conditioned on equality with the one word, and every other write of a `view` property in the modules is enumerated with the object it writes and why no post reads it (the maintainer's round 5 ruling, tests-1; the owner 2026-09-21, who approved the field)", () => {
-  // WHAT IS READ: every production module under ui/webview (`.ts` and `.js`, less `.test.ts` and `.d.ts`), each parsed with the compiler, as
-  // the hover-class ownership census parses render.ts's bundle (compact-seam-exec.test.ts) and the censuses above parse render.ts. The
-  // directory and not the import closure, so a module the page's bundles do not load yet is read too; the tests are excluded because a
-  // test's literal is not a minter the page runs (the bundles are built from the production modules alone), and because this census's own
-  // reverse plants and the fixture rows in this file would red it. WHAT IS KEYED ON: the PROPERTY NAME `view` written onto an object, in
-  // every form the field census above reads (writeSites) and two of a class's: a literal's member of any kind (a property, a shorthand, a
-  // method, an accessor) under an identifier, a string or a computed string-literal name, a spread of a literal read through its literal;
-  // an assignment of any operator whose target names the property at its end (`row.view = x`, `row["view"] = x`) or a destructuring
-  // pattern that does; a for-of or for-in target; ++/--; delete; Object.defineProperty, Reflect.set, Reflect.defineProperty and
-  // Reflect.deleteProperty with the literal key (Object.assign's and Object.defineProperties' literal sources are literals, read by the
-  // first form); a class field and a constructor's parameter property named `view`. Not the string "view" as a VALUE (tailMutRow's
-  // `where: "view"` names where a tail mutation happened), not a parameter, a type member or a variable so named. Outside by construction,
-  // as for the field census: a computed key of a non-literal expression, a non-literal spread or source, a call through an alias of Object
-  // or Reflect. WHAT REACHES A POST, from every module's tree: the clientDiag posts (an object literal with `type: "clientDiag"`, its `data`
-  // member a literal, read directly, or a call of a named function, a builder) and scrollDiagRow's calls in render.ts (its data argument's
-  // literals and the named functions it calls, through a conditional, a parenthesis or an Object.assign); a write is in the diag population
-  // when its owner is a builder or it lies inside a post's or a call's data literal. Every write in the modules is then a closed multiset by
-  // (module, owner, form): the diag population holds exactly spacerRow's, and each other member is named below with the object it writes
-  // and why no post reads it, so a `view` written on any other row kind, by any form the tree reads, in any module, is named or reds.
-  const dir = path.resolve(process.cwd(), "..", "ui", "webview");
-  const modules = fs.readdirSync(dir).filter((f) => (f.endsWith(".ts") || f.endsWith(".js")) && !f.endsWith(".test.ts") && !f.endsWith(".d.ts")).sort();
-  assert.ok(modules.length > 150 && modules.includes("render.ts") && modules.includes("scroll-write.ts"), "the production modules under ui/webview (" + modules.length + ")");
+const pkgRequire = createRequire(path.resolve(process.cwd(), "package.json"));   // vscode-extension/: esbuild.js and its esbuild, as editor-lazy.test.ts requires them
+const ROOT = path.resolve(process.cwd(), "..");
+const MODULE_SUFFIX = /\.(ts|mts|cts|js|mjs|cjs)$/;
+const TEST_OR_TYPES = /\.(test|d)\.[mc]?ts$/;
+/** The modules the page bundles load: esbuild's metafile of the shipped `webview` config (vscode-extension/esbuild.js exports the config and
+ *  emits no metafile of its own) built in memory, nothing written, the shape ui/webview/editor-lazy.test.ts builds the editor chunk with;
+ *  every input keyed by its path relative to vscode-extension/, made repo-relative here with forward slashes. Inputs under node_modules are
+ *  third-party and left out; the `.css` inputs are not modules. Built once and shared by the census and its witness. */
+let bundledP: Promise<string[]> | null = null;
+function bundledModules(): Promise<string[]> {
+  if (!bundledP) bundledP = (async () => {
+    const { webview } = pkgRequire("./esbuild.js") as { webview: import("esbuild").BuildOptions };
+    const esbuild = pkgRequire("esbuild") as typeof import("esbuild");
+    const r = await esbuild.build({ ...webview, write: false, metafile: true, logLevel: "silent" });
+    return Object.keys(r.metafile!.inputs).filter((k) => !k.includes("node_modules/") && MODULE_SUFFIX.test(k))
+      .map((k) => path.relative(ROOT, path.resolve(process.cwd(), k)).split(path.sep).join("/")).sort();
+  })();
+  return bundledP;
+}
+/** Every file under `dir`, recursively, repo-relative with forward slashes. */
+function filesUnder(dir: string): string[] {
+  const out: string[] = [];
+  const walk = (d: string): void => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else if (e.isFile()) out.push(path.relative(ROOT, p).split(path.sep).join("/")); } };
+  walk(dir);
+  return out.sort();
+}
+type Site = { module: string; owner: string; form: string; node: ts.Node; sf: ts.SourceFile };
+type ViewCensus = { sites: Site[]; builders: Set<string>; dataLiterals: Array<{ sf: ts.SourceFile; node: ts.Node }>; posts: number; opaque: number };
+const newViewCensus = (): ViewCensus => ({ sites: [], builders: new Set<string>(), dataLiterals: [], posts: 0, opaque: 0 });
+const describeSite = (s: Site): string => s.module + " " + s.owner + ": " + s.form;
+const inDataLiteral = (c: ViewCensus, s: Site): boolean => c.dataLiterals.some((d) => d.sf === s.sf && s.node.getStart(s.sf) >= d.node.getStart(d.sf) && s.node.getEnd() <= d.node.getEnd());
+/** One module's tree walked for the `view` census (the cell below says what is keyed on and what reaches a post); `module` is the repo-relative
+ *  path, the key of the closed multiset, and render.ts's scrollDiagRow calls are read when the module is render.ts. Module-level so the witness
+ *  cell runs a synthetic source through the same walker the census runs. */
+function censusViewWrites(module: string, sf: ts.SourceFile, c: ViewCensus): void {
   const KEY = "view";
-  type Site = { module: string; owner: string; form: string; node: ts.Node; sf: ts.SourceFile };
-  const sites: Site[] = []; const builders = new Set<string>(); const dataLiterals: Array<{ sf: ts.SourceFile; node: ts.Node }> = []; let posts = 0, opaque = 0;
-  for (const f of modules) {
-    const sf = f === "render.ts" ? SF : ts.createSourceFile(f, fs.readFileSync(path.join(dir, f), "utf8"), ts.ScriptTarget.Latest, true, f.endsWith(".js") ? ts.ScriptKind.JS : ts.ScriptKind.TS);
-    const nameIn = (fn: ts.SignatureDeclaration): string | null => {
-      if (ts.isConstructorDeclaration(fn)) { const c = fn.parent; return "constructor of " + (ts.isClassLike(c) && c.name ? c.name.text : "<class>"); }
-      if ((ts.isFunctionDeclaration(fn) || ts.isMethodDeclaration(fn) || ts.isFunctionExpression(fn)) && fn.name) return ts.isIdentifier(fn.name) ? fn.name.text : fn.name.getText(sf);
-      const p = fn.parent;
-      if (p && ts.isVariableDeclaration(p) && ts.isIdentifier(p.name)) return p.name.text;
-      if (p && (ts.isPropertyAssignment(p) || ts.isPropertyDeclaration(p))) return p.name.getText(sf);
-      return null;
-    };
-    const ownerIn = (n: ts.Node): string => { for (let p: ts.Node | undefined = n.parent; p; p = p.parent) { if (ts.isFunctionLike(p)) { const nm = nameIn(p); if (nm) return nm; } if (ts.isClassLike(p) && p.name) return "class " + p.name.text; } return "<module>"; };
-    const memberKey = (n: ts.PropertyName | undefined): string | null => !n ? null : ts.isIdentifier(n) || ts.isStringLiteralLike(n) ? n.text : ts.isComputedPropertyName(n) && ts.isStringLiteralLike(n.expression) ? n.expression.text : null;
-    const namesKey = (e: ts.Node): boolean => (ts.isPropertyAccessExpression(e) && e.name.text === KEY) || (ts.isElementAccessExpression(e) && ts.isStringLiteralLike(e.argumentExpression) && e.argumentExpression.text === KEY);
-    const isAssign = (n: ts.Node): n is ts.BinaryExpression => ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && n.operatorToken.kind <= ts.SyntaxKind.LastAssignment;
-    const site = (node: ts.Node, form: string): void => { sites.push({ module: f, owner: ownerIn(node), form, node, sf }); };
-    const memberNamed = (o: ts.ObjectLiteralExpression, k: string): ts.ObjectLiteralElementLike | undefined => o.properties.find((p) => !ts.isSpreadAssignment(p) && memberKey(p.name) === k);
-    // a post's or a call's data: a literal is read directly (and its spreads' calls are builders), a named function called is a builder, a
-    // conditional's arms, a parenthesis and Object.assign's arguments are walked; anything else (an identifier bound elsewhere, a parameter)
-    // is outside the attributable population and inside the closed multiset
-    const dataOf = (e: ts.Node | undefined): void => {
-      if (!e) return;
-      if (ts.isParenthesizedExpression(e) || ts.isAsExpression(e)) return dataOf(e.expression);
-      if (ts.isConditionalExpression(e)) { dataOf(e.whenTrue); dataOf(e.whenFalse); return; }
-      if (ts.isObjectLiteralExpression(e)) { dataLiterals.push({ sf, node: e }); for (const p of e.properties) if (ts.isSpreadAssignment(p)) dataOf(p.expression); return; }
-      if (ts.isCallExpression(e) && ts.isIdentifier(e.expression)) { builders.add(e.expression.text); return; }
-      if (ts.isCallExpression(e) && ts.isPropertyAccessExpression(e.expression) && e.expression.getText(sf) === "Object.assign") { for (const a of e.arguments) dataOf(a); return; }
-      opaque++;
-    };
-    const go = (n: ts.Node): void => {
-      if (ts.isObjectLiteralElementLike(n) && !ts.isSpreadAssignment(n) && memberKey(n.name) === KEY) site(n, ts.isShorthandPropertyAssignment(n) ? "a literal shorthand" : ts.isPropertyAssignment(n) ? "a literal property" : ts.isMethodDeclaration(n) ? "a method" : "an accessor");
-      if (ts.isPropertyDeclaration(n) && memberKey(n.name) === KEY) site(n, "a class field");
-      if (ts.isParameter(n) && ts.isIdentifier(n.name) && n.name.text === KEY && (ts.getModifiers(n) || []).length > 0 && ts.isConstructorDeclaration(n.parent)) site(n, "a parameter property");
-      if (isAssign(n)) for (const t of targetsOf(n.left)) if (namesKey(t)) site(n, "an assignment");
-      if ((ts.isForOfStatement(n) || ts.isForInStatement(n)) && !ts.isVariableDeclarationList(n.initializer)) for (const t of targetsOf(n.initializer)) if (namesKey(t)) site(n, "a for target");
-      if ((ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) && (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken) && namesKey(n.operand)) site(n, "an increment");
-      if (ts.isDeleteExpression(n) && namesKey(n.expression)) site(n, "a delete");
-      if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && ts.isIdentifier(n.expression.expression)) {
-        const callee = n.expression.expression.text + "." + n.expression.name.text, k = n.arguments[1];
-        if (["Object.defineProperty", "Reflect.set", "Reflect.defineProperty", "Reflect.deleteProperty"].includes(callee) && k && ts.isStringLiteralLike(k) && k.text === KEY) site(n, callee);
-      }
-      if (ts.isObjectLiteralExpression(n)) {
-        const t = memberNamed(n, "type");
-        if (t && ts.isPropertyAssignment(t) && ts.isStringLiteralLike(t.initializer) && t.initializer.text === "clientDiag") { posts++; const d = memberNamed(n, "data"); if (d && ts.isPropertyAssignment(d)) dataOf(d.initializer); else opaque++; }
-      }
-      if (f === "render.ts" && ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "scrollDiagRow") dataOf(n.arguments[1]);
-      ts.forEachChild(n, go);
-    };
-    go(sf);
-  }
-  assert.ok(posts >= 20, "the clientDiag posts across the modules, from the trees (" + posts + "; " + opaque + " with a data the tree cannot attribute, inside the closed multiset below)");
-  for (const b of ["scrollWriteRow", "spacerRow", "tailChangeRow", "tailMutRow", "unitChangeRow"]) assert.ok(builders.has(b), "a builder scrollDiagRow is handed, by name from render.ts's tree: " + b + " (all: " + [...builders].sort().join(", ") + ")");
-  const describe = (s: Site): string => s.module + " " + s.owner + ": " + s.form;
-  const inLiteral = (s: Site): boolean => dataLiterals.some((d) => d.sf === s.sf && s.node.getStart(s.sf) >= d.node.getStart(d.sf) && s.node.getEnd() <= d.node.getEnd());
-  const diag = sites.filter((s) => builders.has(s.owner) || inLiteral(s));
-  assert.deepEqual(diag.map(describe), ["scroll-write.ts spacerRow: a literal shorthand"], "one write of a `view` property reaches a post, spacerRow's shorthand; a second minter (another row kind's literal, a builder's return, an Object.assign or a Reflect.set onto a row) is named here");
+  const nameIn = (fn: ts.SignatureDeclaration): string | null => {
+    if (ts.isConstructorDeclaration(fn)) { const k = fn.parent; return "constructor of " + (ts.isClassLike(k) && k.name ? k.name.text : "<class>"); }
+    if ((ts.isFunctionDeclaration(fn) || ts.isMethodDeclaration(fn) || ts.isFunctionExpression(fn)) && fn.name) return ts.isIdentifier(fn.name) ? fn.name.text : fn.name.getText(sf);
+    const p = fn.parent;
+    if (p && ts.isVariableDeclaration(p) && ts.isIdentifier(p.name)) return p.name.text;
+    if (p && (ts.isPropertyAssignment(p) || ts.isPropertyDeclaration(p))) return p.name.getText(sf);
+    return null;
+  };
+  const ownerIn = (n: ts.Node): string => { for (let p: ts.Node | undefined = n.parent; p; p = p.parent) { if (ts.isFunctionLike(p)) { const nm = nameIn(p); if (nm) return nm; } if (ts.isClassLike(p) && p.name) return "class " + p.name.text; } return "<module>"; };
+  const memberKey = (n: ts.PropertyName | undefined): string | null => !n ? null : ts.isIdentifier(n) || ts.isStringLiteralLike(n) ? n.text : ts.isComputedPropertyName(n) && ts.isStringLiteralLike(n.expression) ? n.expression.text : null;
+  const namesKey = (e: ts.Node): boolean => (ts.isPropertyAccessExpression(e) && e.name.text === KEY) || (ts.isElementAccessExpression(e) && ts.isStringLiteralLike(e.argumentExpression) && e.argumentExpression.text === KEY);
+  const isAssign = (n: ts.Node): n is ts.BinaryExpression => ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && n.operatorToken.kind <= ts.SyntaxKind.LastAssignment;
+  const site = (node: ts.Node, form: string): void => { c.sites.push({ module, owner: ownerIn(node), form, node, sf }); };
+  const memberNamed = (o: ts.ObjectLiteralExpression, k: string): ts.ObjectLiteralElementLike | undefined => o.properties.find((p) => !ts.isSpreadAssignment(p) && memberKey(p.name) === k);
+  // a post's or a call's data: a literal is read directly (and its spreads' calls are builders), a named function called is a builder, a
+  // conditional's arms, a parenthesis and Object.assign's arguments are walked; anything else (an identifier bound elsewhere, a parameter, a
+  // key built from a string VALUE: Object.fromEntries over a literal pair list, JSON.parse of a literal) is outside the attributable population
+  // AND outside the closed multiset, since the tree names no property write in it: it is counted as opaque and held by the kernel's allowlist
+  // and value bound alone (the maintainer's round 6 ruling, extra8-3; the witness cell below)
+  const dataOf = (e: ts.Node | undefined): void => {
+    if (!e) return;
+    if (ts.isParenthesizedExpression(e) || ts.isAsExpression(e)) return dataOf(e.expression);
+    if (ts.isConditionalExpression(e)) { dataOf(e.whenTrue); dataOf(e.whenFalse); return; }
+    if (ts.isObjectLiteralExpression(e)) { c.dataLiterals.push({ sf, node: e }); for (const p of e.properties) if (ts.isSpreadAssignment(p)) dataOf(p.expression); return; }
+    if (ts.isCallExpression(e) && ts.isIdentifier(e.expression)) { c.builders.add(e.expression.text); return; }
+    if (ts.isCallExpression(e) && ts.isPropertyAccessExpression(e.expression) && e.expression.getText(sf) === "Object.assign") { for (const a of e.arguments) dataOf(a); return; }
+    c.opaque++;
+  };
+  const go = (n: ts.Node): void => {
+    if (ts.isObjectLiteralElementLike(n) && !ts.isSpreadAssignment(n) && memberKey(n.name) === KEY) site(n, ts.isShorthandPropertyAssignment(n) ? "a literal shorthand" : ts.isPropertyAssignment(n) ? "a literal property" : ts.isMethodDeclaration(n) ? "a method" : "an accessor");
+    if (ts.isPropertyDeclaration(n) && memberKey(n.name) === KEY) site(n, "a class field");
+    if (ts.isParameter(n) && ts.isIdentifier(n.name) && n.name.text === KEY && (ts.getModifiers(n) || []).length > 0 && ts.isConstructorDeclaration(n.parent)) site(n, "a parameter property");
+    if (isAssign(n)) for (const t of targetsOf(n.left)) if (namesKey(t)) site(n, "an assignment");
+    if ((ts.isForOfStatement(n) || ts.isForInStatement(n)) && !ts.isVariableDeclarationList(n.initializer)) for (const t of targetsOf(n.initializer)) if (namesKey(t)) site(n, "a for target");
+    if ((ts.isPrefixUnaryExpression(n) || ts.isPostfixUnaryExpression(n)) && (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken) && namesKey(n.operand)) site(n, "an increment");
+    if (ts.isDeleteExpression(n) && namesKey(n.expression)) site(n, "a delete");
+    if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && ts.isIdentifier(n.expression.expression)) {
+      const callee = n.expression.expression.text + "." + n.expression.name.text, k = n.arguments[1];
+      if (["Object.defineProperty", "Reflect.set", "Reflect.defineProperty", "Reflect.deleteProperty"].includes(callee) && k && ts.isStringLiteralLike(k) && k.text === KEY) site(n, callee);
+    }
+    if (ts.isObjectLiteralExpression(n)) {
+      const t = memberNamed(n, "type");
+      if (t && ts.isPropertyAssignment(t) && ts.isStringLiteralLike(t.initializer) && t.initializer.text === "clientDiag") { c.posts++; const d = memberNamed(n, "data"); if (d && ts.isPropertyAssignment(d)) dataOf(d.initializer); else c.opaque++; }
+    }
+    if (module === "ui/webview/render.ts" && ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "scrollDiagRow") dataOf(n.arguments[1]);
+    ts.forEachChild(n, go);
+  };
+  go(sf);
+}
+
+test("every module the page bundles load, read with the compiler: the only write of a `view` property onto an object that reaches a clientDiag post is spacerRow's shorthand under a spread of a literal conditioned on equality with the one word, and every other write of a `view` property in the modules is enumerated with the object it writes and why no post reads it (the maintainer's round 5 ruling, tests-1; the population derived from what the bundles load and tied to the directory by equality both ways, the maintainer's round 6 ruling, correctness-1 and extra8-2; the owner 2026-09-21, who approved the field)", async () => {
+  // WHAT IS READ: every module the page bundles LOAD, derived from esbuild's metafile of the shipped `webview` config built in memory
+  // (bundledModules above), each parsed with the compiler, as the hover-class ownership census parses render.ts's bundle
+  // (compact-seam-exec.test.ts) and the censuses above parse render.ts. The metafile, and not a directory listing or the compiler's file list
+  // under vscode-extension/tsconfig.json: it is literally the import closure the pages run, recursive by construction and suffix-agnostic
+  // (`.ts`, `.mts`, `.js`, `.mjs`, `.cjs` alike), so it reaches the two `.js` modules in ui/webview and the five modules outside it named
+  // below, which tsconfig's file list (no allowJs; the test helpers under ui/ included) misses, and it leaves out the seven modules in the
+  // directory no page loads, which a listing counts. The directory is read too, recursively, and the two are tied by EQUALITY both ways,
+  // never a floor: the directory's modules no page bundle loads are exactly the seven named below (each imported by tests alone), and the
+  // loaded modules outside the directory are exactly the five named below (the timeline panel's prebuilt bundle and four vendored
+  // track-changents modules, display.js reached from track-logic.js through the vendored package's own exports map), so a module that
+  // starts or stops being loaded, appears outside the directory or leaves it, is named here or reds. The walk is the loaded set: a module no
+  // page runs mints nothing the kernel receives. The tests are excluded because a test's literal is not a minter the page runs (the bundles
+  // are built from the production modules alone), and because this census's own reverse plants and the fixture rows in this file would red
+  // it. WHAT IS KEYED ON: the PROPERTY NAME `view` written onto an object, in every form the field census above reads (writeSites) and two
+  // of a class's: a literal's member of any kind (a property, a shorthand, a method, an accessor) under an identifier, a string or a computed
+  // string-literal name, a spread of a literal read through its literal; an assignment of any operator whose target names the property at
+  // its end (`row.view = x`, `row["view"] = x`) or a destructuring pattern that does; a for-of or for-in target; ++/--; delete;
+  // Object.defineProperty, Reflect.set, Reflect.defineProperty and Reflect.deleteProperty with the literal key (Object.assign's and
+  // Object.defineProperties' literal sources are literals, read by the first form); a class field and a constructor's parameter property
+  // named `view`. Not the string "view" as a VALUE (tailMutRow's `where: "view"` names where a tail mutation happened), not a parameter, a
+  // type member or a variable so named. Outside by construction, as for the field census: a computed key of a non-literal expression, a
+  // non-literal spread or source, a call through an alias of Object or Reflect; and a fourth class, a `view` key built from a string VALUE
+  // (Object.fromEntries over a literal pair list, JSON.parse of a literal) inside a post's data, which the tree cannot name as a property
+  // write at all: it raises the opaque count below and is in neither the diag population nor the closed multiset, held by the kernel's value
+  // bound alone (CLIENT_DIAG_VALUES refuses every word but the one: tests/test_client_diag_allowlist.py); the witness cell after this one
+  // runs that shape through the same walker and asserts it is NOT named, so this sentence cannot outlive the behaviour (the maintainer's
+  // round 6 ruling, extra8-3). WHAT REACHES A POST, from every module's tree: the clientDiag posts (an object literal with `type:
+  // "clientDiag"`, its `data` member a literal, read directly, or a call of a named function, a builder) and scrollDiagRow's calls in
+  // render.ts (its data argument's literals and the named functions it calls, through a conditional, a parenthesis or an Object.assign); a
+  // write is in the diag population when its owner is a builder or it lies inside a post's or a call's data literal. Every write in the
+  // modules is then a closed multiset by (module, owner, form), the module its repo-relative path so a module outside ui/webview cannot
+  // collide with one inside by its bare name: the diag population holds exactly spacerRow's, and each other member is named below with the
+  // object it writes and why no post reads it, so a `view` written on any other row kind, by any form the tree reads, in any module a page
+  // loads, is named or reds.
+  const loaded = await bundledModules();
+  const loadedSet = new Set(loaded);
+  const listed = filesUnder(path.resolve(ROOT, "ui", "webview")).filter((f) => MODULE_SUFFIX.test(f) && !TEST_OR_TYPES.test(f));
+  const UNLOADED = [   // under ui/webview, loaded by no page bundle: each imported by tests alone
+    "ui/webview/feed-flip.ts",                   // the feed's FLIP-pass predicate, executed by feed-flip.test.ts
+    "ui/webview/file-view-outline-fixture.ts",   // the Outline's synthetic fixture, shared by file-view-outline.test.ts and its browser leg
+    "ui/webview/md-wiki.ts",                     // wikilink and callout extensions to the markdown grammar, executed by md-wiki.test.ts
+    "ui/webview/real-viewer-leg.ts",             // the real viewer mounted in a served page for the browser legs (*-browser.test.ts)
+    "ui/webview/scroll-journal-audit.ts",        // the scroll journal's reader, executed by scroll-journal-audit.test.ts
+    "ui/webview/shell-drag-leg.ts",              // the dashboard shell's pane-row drag mounted in a page of its own, for its browser leg and the bench
+    "ui/webview/writer-census.ts",               // the scroll-write census over a source's tree, executed by writer-census.test.ts and landing-settle.test.ts
+  ];
+  const OUTSIDE = [   // loaded by a page bundle from outside ui/webview
+    "ui/romp-timeline-view.js",                              // the timeline panel's prebuilt bundle, required by timeline-main.ts
+    "vendor/track-changents/display.js",                     // required by track-logic.js through the vendored package's exports map
+    "vendor/track-changents/engine.js",                      // imported by anchor-map.ts, editor-chunk.ts and track-decorations.ts
+    "vendor/track-changents/obsidian/src/track-cm.js",       // imported by editor-chunk.ts and track-decorations.ts
+    "vendor/track-changents/obsidian/src/track-logic.js",    // imported by track-decorations.ts
+  ];
+  assert.deepEqual(listed.filter((m) => !loadedSet.has(m)), UNLOADED, "the modules under ui/webview (recursive) that no page bundle loads are exactly the seven named, each imported by tests alone: a module that stops being loaded, or a named one that starts, or leaves the directory, is named here or reds (" + listed.length + " listed, " + loaded.length + " loaded)");
+  assert.deepEqual(loaded.filter((m) => !m.startsWith("ui/webview/")), OUTSIDE, "the modules a page bundle loads from outside ui/webview are exactly the five named: a sixth, or one gone from the bundles, reds here");
+  assert.ok(loadedSet.has("ui/webview/render.ts") && loadedSet.has("ui/webview/scroll-write.ts"), "render.ts and scroll-write.ts are among the loaded modules");
+  const modules = loaded;   // the walk IS the derived set
+  const c = newViewCensus();
+  for (const m of modules) censusViewWrites(m, m === "ui/webview/render.ts" ? SF : ts.createSourceFile(m, fs.readFileSync(path.resolve(ROOT, m), "utf8"), ts.ScriptTarget.Latest, true, /\.[mc]?js$/.test(m) ? ts.ScriptKind.JS : ts.ScriptKind.TS), c);
+  assert.ok(c.posts >= 20, "the clientDiag posts across the modules, from the trees (" + c.posts + "; " + c.opaque + " with a data the tree cannot attribute: an identifier bound elsewhere, a parameter, a key built from a string value; outside the census and held by the kernel's allowlist and value bound)");
+  for (const b of ["scrollWriteRow", "spacerRow", "tailChangeRow", "tailMutRow", "unitChangeRow"]) assert.ok(c.builders.has(b), "a builder scrollDiagRow is handed, by name from render.ts's tree: " + b + " (all: " + [...c.builders].sort().join(", ") + ")");
+  const diag = c.sites.filter((s) => c.builders.has(s.owner) || inDataLiteral(c, s));
+  assert.deepEqual(diag.map(describeSite), ["ui/webview/scroll-write.ts spacerRow: a literal shorthand"], "one write of a `view` property reaches a post, spacerRow's shorthand; a second minter (another row kind's literal, a builder's return, an Object.assign or a Reflect.set onto a row, in any module a page loads) is named here");
   // the one mint's guard, on the tree: the shorthand's literal is the true arm of a conditional on the parameter's equality with the one
   // word, spread into the row, and the false arm spreads nothing (the builder cell above executes the guard; this is its shape)
   const m = diag[0], lit = m.node.parent;
   assert.ok(ts.isObjectLiteralExpression(lit) && ts.isConditionalExpression(lit.parent) && lit.parent.whenTrue === lit, "the shorthand's literal is the true arm of a conditional: " + lit.parent.getText(m.sf));
   let up: ts.Node = lit.parent.parent; while (ts.isParenthesizedExpression(up)) up = up.parent;   // the conditional is parenthesised under the spread
   assert.ok(ts.isSpreadAssignment(up), "…spread into the row: " + up.getText(m.sf));
-  const cond = lit.parent as ts.ConditionalExpression, c = cond.condition;
-  assert.ok(ts.isBinaryExpression(c) && c.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken && ts.isIdentifier(c.left) && c.left.text === KEY && ts.isStringLiteral(c.right) && c.right.text === "inactive", "the spread is conditioned on `view === \"inactive\"`, the parameter's equality with the one word: " + c.getText(m.sf));
+  const cond = lit.parent as ts.ConditionalExpression, cc = cond.condition;
+  assert.ok(ts.isBinaryExpression(cc) && cc.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken && ts.isIdentifier(cc.left) && cc.left.text === "view" && ts.isStringLiteral(cc.right) && cc.right.text === "inactive", "the spread is conditioned on `view === \"inactive\"`, the parameter's equality with the one word: " + cc.getText(m.sf));
   assert.ok(ts.isObjectLiteralExpression(cond.whenFalse) && cond.whenFalse.properties.length === 0, "…and spreads nothing otherwise");
   // every write of the property in the modules, a closed multiset by (module, owner, form), each with the object it writes and why no post
-  // reads it: a new writer anywhere under ui/webview is named here or reds
-  assert.deepEqual(sites.map(describe).sort(), [
-    "federation.ts class FederationManager: a method",                       // the manager's reader of the tab order, a method on the class, not a row's key
-    "file-view.ts placeFromRemembered: a literal property",                  // the viewer's Place from a remembered one (view: rendered or raw, the pane the reader was in), kept in storage, never posted
-    "file-view.ts rememberedPlaceOf: a literal property",                    // the remembered place the viewer writes to storage
-    "files-recent.ts asPlace: a literal property",                           // the recent-files pane's copy of a remembered place
-    "preview.ts wirePinchZoom: a literal shorthand",                         // a pinch gesture's snapshot (the pinch-zoom view), no row
-    "reader-place.ts placeOf: a literal shorthand",                          // the reader's place in a document (view: rendered or raw)
-    "scroll-write.ts spacerRow: a literal shorthand",                        // THE mint: the spacer row's marker, guarded as pinned above
-    "track-decorations.ts constructor of PointerTracker: a parameter property",   // the editor view the pointer tracker listens on
-  ], "every write of a `view` property in ui/webview's production modules, by module, owner and form; one reaches a post (spacerRow's), the rest write the viewer's places, a gesture's snapshot, a class's method or field");
+  // reads it: a new writer in any module a page loads is named here or reds (the five modules outside ui/webview hold none today)
+  assert.deepEqual(c.sites.map(describeSite).sort(), [
+    "ui/webview/federation.ts class FederationManager: a method",                       // the manager's reader of the tab order, a method on the class, not a row's key
+    "ui/webview/file-view.ts placeFromRemembered: a literal property",                  // the viewer's Place from a remembered one (view: rendered or raw, the pane the reader was in), kept in storage, never posted
+    "ui/webview/file-view.ts rememberedPlaceOf: a literal property",                    // the remembered place the viewer writes to storage
+    "ui/webview/files-recent.ts asPlace: a literal property",                           // the recent-files pane's copy of a remembered place
+    "ui/webview/preview.ts wirePinchZoom: a literal shorthand",                         // a pinch gesture's snapshot (the pinch-zoom view), no row
+    "ui/webview/reader-place.ts placeOf: a literal shorthand",                          // the reader's place in a document (view: rendered or raw)
+    "ui/webview/scroll-write.ts spacerRow: a literal shorthand",                        // THE mint: the spacer row's marker, guarded as pinned above
+    "ui/webview/track-decorations.ts constructor of PointerTracker: a parameter property",   // the editor view the pointer tracker listens on
+  ], "every write of a `view` property in the modules the page bundles load, by module (its repo-relative path), owner and form; one reaches a post (spacerRow's), the rest write the viewer's places, a gesture's snapshot, a class's method or field");
+});
+
+test("the fourth class the census cannot name, witnessed through its own walker: a `view` key built from a string VALUE (Object.fromEntries over a literal pair list, JSON.parse of a literal) inside a clientDiag post's data, or spread into it, or handed to scrollDiagRow, is NOT a site (in neither the diag population nor the closed multiset) and raises the opaque count alone; the same word as a literal property in the same post IS a site, so the shapes are what the census reads (the maintainer's round 6 ruling, extra8-3: the bound on that class is the kernel's value bound, CLIENT_DIAG_VALUES, and this cell keeps the census's sentence honest)", () => {
+  // synthetic sources (no real data): the word is one the kernel refuses (tests/test_client_diag_allowlist.py drives that refusal), so a
+  // page that built the key this way would post a value the kernel drops with its line, whichever module built it
+  const run = (module: string, src: string): ViewCensus => { const c = newViewCensus(); censusViewWrites(module, ts.createSourceFile(module, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS), c); return c; };
+  const shapes: Array<[string, string, string]> = [
+    ["Object.fromEntries as a post's data", "ui/webview/synthetic.ts", 'export const p = { type: "clientDiag", data: Object.fromEntries([["view", "away"]]) };'],
+    ["JSON.parse as a post's data", "ui/webview/synthetic.ts", 'export const p = { type: "clientDiag", data: JSON.parse(\'{"view":"away"}\') };'],
+    ["Object.fromEntries spread into a post's data literal", "ui/webview/synthetic.ts", 'export const p = { type: "clientDiag", data: { ...Object.fromEntries([["view", "away"]]) } };'],
+    ["Object.fromEntries as scrollDiagRow's data in render.ts", "ui/webview/render.ts", 'scrollDiagRow("spacer", Object.fromEntries([["view", "away"]]));'],
+  ];
+  for (const [what, module, src] of shapes) {
+    const c = run(module, src);
+    assert.deepEqual(c.sites.map(describeSite), [], what + ": a key built from a string value is no property write the tree can name, so the census does not name it: outside the census by construction, held by CLIENT_DIAG_VALUES alone (a walker that resolved this shape would red here, and the census's sentence would then be false)");
+    assert.equal(c.opaque, 1, what + ": the opaque count rises by one for the unattributable data");
+    assert.equal(c.posts, module === "ui/webview/render.ts" ? 0 : 1, what + ": the post is counted where there is one");
+  }
+  // the control: the same word as a literal property of the same post's data IS a site, inside the data literal, in the diag population
+  const ctl = run("ui/webview/synthetic.ts", 'export const p = { type: "clientDiag", data: { view: "away" } };');
+  assert.deepEqual(ctl.sites.map(describeSite), ["ui/webview/synthetic.ts <module>: a literal property"], "the literal property is a site, named by module, owner and form");
+  assert.ok(ctl.sites.length === 1 && inDataLiteral(ctl, ctl.sites[0]), "…inside the post's data literal, so it would be in the diag population");
+  assert.equal(ctl.opaque, 0, "…and nothing opaque");
 });
 
 test("the page's guard literal is a member of the set the kernel admits for the marker, both read from their sources: kernel.py states the set once (CLIENT_DIAG_VALUES, one entry, chat's `view`, one word) and scroll-write.ts's spacerRow compares its `view` parameter with that word and types the parameter by it, so a change to either side alone reds here (the author's fixer pass over the pass after the maintainer's round 5, its verifier (b): until then the tie between the page's spelling and the kernel's set was two hand-written literals, the allowlist module's fixture row and the census's guard pin above)", () => {
