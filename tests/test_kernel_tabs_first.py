@@ -1,13 +1,16 @@
 """TABS-FIRST (the user 2026-06-26): the tabOrder push carries name+color per tab so the client can paint the
 WHOLE strip as placeholders up front (no one-by-one pop-in). Every strip sender (_push, on its cycle and as
 the connect push a `ready` triggers; _push_session_now; _confirm_close_now) hands a `tabs` list of {id, name,
-color} alongside the sid `order` to _send_tab_order, the one frame builder's caller. The `ready` handler
+color, emoji, userTodos} alongside the sid `order` to _send_tab_order, the one frame builder's caller. The rows
+come from ONE builder, _tab_meta (2026-09-22); `userTodos` is the count of the session's open user todos, so a tab a
+page holds as a skeleton paints its flag from the strip (tests/test_user_todos_roster.py proves the rows by execution). The `ready` handler
 sends no strip of its own, whichever app's renderer posted it.
 Each sender hands the builder the cycle's liveness map (_live_map(); the fork's per-sender collapse guard left
 with the tmux backend 2026-09-11), and the frame carries the `live` sids that map affirms (T258: the
 pane keeps a live sid the order omits).
 
 """
+import ast
 import inspect
 import json
 import os
@@ -28,11 +31,39 @@ km = load_source("romp_kernel", KPATH)
 
 
 class TabsFirst(unittest.TestCase):
+    # The three strip senders, as the frame builder's docstring names them (_tab_order_frame): the pusher's tabs-first
+    # send (the connect push a `ready` triggers included), the off-cycle session push and the close confirmation. The
+    # census below is derived over this tuple: a fourth sender is added here or fails the whole-text count.
+    SENDERS = ("_push", "_push_session_now", "_confirm_close_now")
+
+    @staticmethod
+    def _tab_meta_bindings(fn):
+        """Every `tab_meta = ...` binding in `fn`, by AST rather than by spelling: per binding, (calls to _tab_meta in
+        the bound value, row literals in it: a dict display or a list comprehension)."""
+        out = []
+        for n in ast.walk(ast.parse(inspect.getsource(fn))):
+            if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name) \
+                    and n.targets[0].id == "tab_meta":
+                calls = [x for x in ast.walk(n.value) if isinstance(x, ast.Call) and isinstance(x.func, ast.Name)
+                         and x.func.id == "_tab_meta"]
+                literals = [x for x in ast.walk(n.value) if isinstance(x, (ast.Dict, ast.ListComp))]
+                out.append((len(calls), len(literals)))
+        return out
+
     def test_push_taborder_carries_name_and_color_per_tab(self):
+        # 2026-09-22: the rows moved into _tab_meta, the ONE row builder (name, colour, emoji and the count of the
+        # session's open user todos, so a tab a page holds as a skeleton paints its flag from the strip;
+        # tests/test_user_todos_roster.py proves the rows by execution over all three senders). The census here is over
+        # the SENDERS: each binds its tab_meta from the helper exactly once and builds no row literal of its own, and
+        # the kernel has no other binding of that name (a fourth inline dict would drop a field again).
+        for name in self.SENDERS:
+            self.assertEqual(self._tab_meta_bindings(getattr(km, name)), [(1, 0)],
+                             "%s binds tab_meta once, from _tab_meta, with no row literal of its own" % name)
+        text = open(KPATH).read()
+        self.assertEqual(text.count("tab_meta = _tab_meta(chat_list)"), len(self.SENDERS),
+                         "the helper's callers are the senders and nothing else")
+        self.assertEqual(text.count("tab_meta = [{"), 0, "no inline tab_meta rows anywhere in the kernel")
         src = inspect.getsource(km._push)
-        self.assertIn('tab_meta = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"]),\n'
-                      '                             "emoji": _name_emoji(s["sid"])} for s in chat_list]', src,
-                      "the periodic push builds a name+color+emoji list per tab")
         # 2026-09-07: the frame itself moved into _tab_order_frame — the ONE builder (T258: it carries the
         # affirmed-live sids; and a reconnecting client's skeleton list) — so the pusher hands its order + meta
         # + liveness to _send_tab_order, which builds the frame per client
