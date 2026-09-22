@@ -366,7 +366,9 @@ above, in tests/test_kernel_parked_ops_liveness.py's docstring or in the ledger 
 those THREE HOMES, the prose that carried the figure (romp-manager's ruling on the ninth pass, 2026-09-22: CI tests a pull
 request's MERGE with main, so a docstring pinned to the count read went red the day main gained a test module, and would
 every time; the oracle's own figure beside it stays pinned to the derivation; the ninth pass's pin read this docstring
-alone, the tenth's reads the three, the reviewer's ruling of 2026-09-22); tests/conftest.py,
+alone, the tenth's reads the three, the reviewer's ruling of 2026-09-22; since round 4 of PR 891's review, romp-manager's
+ruling of 2026-09-22, the `of N` shape counts only with the word modules in its own sentence, and a count whose sentence
+names its head, a commit's sha, is a measurement record and exempt); tests/conftest.py,
 tests/__init__.py, the helper modules under tests/ and tests/fixtures/ are read only for a returned Thread
 (helper_modules). The listing is
 what pytest collects under tests/ only while two things hold, both PINNED by a tree test
@@ -4955,16 +4957,53 @@ def module_paths(root=HERE):
     return sorted(os.path.join(root, f) for f in os.listdir(root) if f.startswith("test_") and f.endswith(".py"))
 
 
-_MODULE_COUNT = re.compile(r"\b\d{3,}\s+(?:test\s+)?modules\b|\bof\s+(?:the\s+)?\d{3,}(?=\s*[,;.)]|\s+(?:test\s+)?modules\b|\s*$)|\bmodules\s*\(\d{3,}\b")
+_MODULE_COUNT = re.compile(r"\b\d{3,}\s+(?:test\s+)?modules\b|(?P<of>\bof\s+(?:the\s+)?\d{3,}(?![.,]\d)(?=\s*[,;.)]|\s+(?:test\s+)?modules\b|\s*$))"
+                           r"|\bmodules\s*\(\d{3,}\b")
+_SENTENCE_END = re.compile(r"""[.!?][)\]'"`]*(?=\s|$)|\n[ \t]*\n""")   # a stop (brackets or quotes after it) then whitespace or the end; a blank line
+_MODULES_WORD = re.compile(r"\bmodules\b")
+_NAMED_HEAD = re.compile(r"\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b")   # a commit's sha, abbreviated or whole: a digit and a letter among its hex digits
+
+
+def _sentences(text):
+    """The sentences of a prose text as (start, end) spans that tile it: a sentence ends at a period, a question mark or an
+    exclamation mark (closing brackets or quotes after it) followed by whitespace or the text's end, or at a blank line. A
+    period inside a version, a decimal, a time or a file name (3.12, 0.57 s, 12:30, tests/x.py) ends none, and neither does a
+    semicolon, a colon or a wrapped line, so a sentence of the ledger or of a docstring is one span however many lines or
+    clauses it runs (the ledger's run to a thousand characters). The last span is the text after its last sentence end."""
+    spans, start = [], 0
+    for m in _SENTENCE_END.finditer(text):
+        spans.append((start, m.end()))
+        start = m.end()
+    spans.append((start, len(text)))
+    return spans
 
 
 def _literal_module_counts(text):
-    """The literal module counts in a prose text, the shapes the population figure has taken: a number of three or more
-    digits before `modules` or `test modules`, after `of` or `of the` when a comma, a semicolon, a period, a parenthesis, the
-    word modules or the end follows (not a date, a time, a decimal or a quantity with a unit: `a sleep of 3600 s`), or in a
-    parenthesis after `modules`. The population has one home, the table; a tree test pins this empty over the prose's three
-    homes: this module's docstring, the liveness module's docstring and the ledger entry."""
-    return [m.group(0) for m in _MODULE_COUNT.finditer(text)]
+    """The literal module counts in a prose text, the shapes the population figure has taken (_MODULE_COUNT): a number of three
+    or more digits before `modules` or `test modules`; in a parenthesis after `modules`; or after `of` or `of the` when a comma,
+    a semicolon, a period, a parenthesis, the word modules or the end follows it, and only when the word `modules` stands in
+    the SAME SENTENCE as the figure, the previous sentence end to the next (_sentences; romp-manager's ruling on round 4 of
+    PR 891's review, 2026-09-22: read bare, the shape had named a bats count and an npm count in the ledger's sweep sentence).
+    A sentence, not a character window: the ledger's sentences carried the word hundreds of characters before the figure. So
+    `bats 859 of 859`, `npm 8531 of 8531` and `17332 passed of 17797` are counts of something else and are not named.
+    EXCLUDED, and by the regex, not this docstring alone: a decimal or a thousands-comma figure (`of 3995.9`, `of 250,000`: a
+    digit after the point or the comma ends the `of` shape), a date, a time and a quantity with a unit (`the probe of
+    2026-09-22`, `a sleep of 3600 s`: the shape's own tail refuses what follows), a figure of one or two digits, and a count
+    whose sentence names its head, a commit's sha of seven or more hex digits (_NAMED_HEAD: a digit and a letter among them,
+    so neither a decimal run id nor a word spelt in a to f names one): a count at a named head is a measurement record of
+    that head, not a claim about the tree's count, which is what the pin holds empty. The population has one home, the
+    table; a tree test pins this empty over the prose's three homes: this module's docstring, the liveness module's
+    docstring and the ledger entry. Returns the matched shapes in text order, for the failure message to print."""
+    found, spans = [], _sentences(text)
+    for m in _MODULE_COUNT.finditer(text):
+        start, end = next(span for span in spans if span[0] <= m.start() < span[1])
+        sentence = text[start:end]
+        if m.group("of") and not _MODULES_WORD.search(sentence):
+            continue                                          # an `of N` counting something else: bats, npm, tests passed
+        if _NAMED_HEAD.search(sentence):
+            continue                                          # a measurement record at a named head
+        found.append(m.group(0))
+    return found
 
 
 def _report(rows, only_tail=False):
@@ -5190,19 +5229,32 @@ class ThreadStopCensus(unittest.TestCase):
         `(of NNN,`, `of the NNN`, `modules (NNN`), in ANY of the prose's THREE HOMES (the reviewer's ruling on the tenth
         pass, 2026-09-22; the ninth's pin read this docstring alone): this module's docstring, the liveness module's
         docstring (tests/test_kernel_parked_ops_liveness.py, whose reach sentence carried the figure) and the ledger entry
-        (upstream/2026-09-21-parked-ops-liveness-boot-hold.md, which carried ten); the failure message names the three.
-        The liveness module's docstring is read from its PARSED FILE (parse_cache.source_and_tree, the parse the tree
-        derivation already holds, so this test parses nothing, held on the counter; ast.get_docstring of the module,
-        uncleaned, which is the module's __doc__ verbatim: asserted on this module, where both roads are in hand) and NOT
-        by importing it: its import sets XDG_STATE_HOME to a fresh directory for the whole process and loads bin/romp-kernel
-        under a module name of its own, side effects a census that reads the tree by parse must not take in the middle of
-        a run (this module alone under pytest, or as a script, has not imported it, and every test after it in the process
-        would read the liveness module's state root). The ledger entry is read by path, as text. The oracle bullet's `5
-        test modules` is the oracle's own figure, derived and held by the test above, and the reach figure of the
-        2026-09-21 probe is phrased as callers in both docstrings. THE RED, planted in each home: the sentences the
-        docstring carried, with the count the census read written into their shapes (so this test carries no literal
-        either), appended to the home's text one at a time, and the regex names exactly the plant and nothing of the home;
-        and a date, a commit, a quantity with a unit or a two-digit figure is not a count."""
+        (upstream/2026-09-21-parked-ops-liveness-boot-hold.md, which carried ten); the failure message names the three and
+        prints the shape it matched. THE `of NNN` SHAPE IS SENTENCE-SCOPED (romp-manager's ruling on round 4 of PR 891's
+        review, 2026-09-22): read bare, it had named a bats count and an npm count in the ledger's sweep sentence, and the
+        prose was reworded around it, which fixed nothing; an `of NNN` now counts only when the word modules stands in the
+        SAME SENTENCE, the previous sentence end to the next (_sentences), not within a character window, which two of the
+        plants below (re-planted inside a sentence carrying the word) and the historical ledger shape (the word hundreds of
+        characters before the figure in one sentence, planted below too) both break; a decimal and a thousands-comma figure
+        are refused by the regex itself, no longer by the helper's docstring alone (`of 3995.9`, `of 250,000`, in the fine
+        list beside the word, so the exclusion and not the sentence rule is what passes them); and a count whose sentence
+        names its head, a commit's sha, is a measurement record of that head, not a claim about the tree's count, and is
+        EXEMPT, planted as a pair: the bare count named, the same count beside a sha not (the ledger's measurement
+        paragraphs name their heads and stand as prose). The liveness module's docstring is read from its PARSED FILE
+        (parse_cache.source_and_tree, the parse the tree derivation already holds, so this test parses nothing, held on the
+        counter; ast.get_docstring of the module, uncleaned, which is the module's __doc__ verbatim: asserted on this
+        module, where both roads are in hand) and NOT by importing it: its import sets XDG_STATE_HOME to a fresh directory
+        for the whole process and loads bin/romp-kernel under a module name of its own, side effects a census that reads
+        the tree by parse must not take in the middle of a run (this module alone under pytest, or as a script, has not
+        imported it, and every test after it in the process would read the liveness module's state root). The ledger entry
+        is read by path, as text. The oracle bullet's `5 test modules` is the oracle's own figure, derived and held by the
+        test above, and the reach figure of the 2026-09-21 probe is phrased as callers in both docstrings. THE RED, planted
+        in each home: the sentences the docstring carried, with the count the census read written into their shapes (so
+        this test carries no literal either), appended to the home's text after a newline, one at a time (every home ends
+        its last sentence, asserted, so the plant is a sentence of its own there and the home's last sentence lends it no
+        word and no head), and the regex names exactly the plant and nothing of the home; and a date, a commit, a quantity
+        with a unit, a two-digit figure, a decimal, a thousands-comma figure, an `of N` in a sentence without the word
+        modules and a count beside its head is not a count."""
         own = PC.source_and_tree(__file__)[1]
         self.assertEqual(ast.get_docstring(own, clean=False), __doc__,
                          "the parse road reads this module's docstring as its __doc__: the liveness module's is read the same way")
@@ -5219,21 +5271,35 @@ class ThreadStopCensus(unittest.TestCase):
         names = ", ".join(name for name, _text in homes)
         for name, text in homes:
             self.assertTrue(text and "modules" in text, "%s: the text read carries the word the regex looks beside" % name)
-            self.assertEqual(_literal_module_counts(text), [], "a literal module count in %s: the table is its one home; the "
-                             "three prose homes this pin reads are %s" % (name, names))
+            self.assertFalse(text[_sentences(text)[-1][0]:].strip(),
+                             "%s ends its last sentence, so a plant appended after a newline is a sentence of its own" % name)
+            found = _literal_module_counts(text)
+            self.assertEqual(found, [], "a literal module count in %s, the shape %s: the table is its one home; the three prose "
+                             "homes this pin reads are %s" % (name, ", ".join(repr(shape) for shape in found), names))
         n = self.extras["modules"]
+        bare = ("the census read %d modules at that head, the count the table prints" % n,                    # the count bare: named
+                "the modules read at that head, the runtime oracle called by 5 of the %d; the table prints the count" % n)
+        at_head = tuple(p.replace("at that head", "at 2a354ab46") for p in bare)                                # the same count beside its head: exempt
         for planted in ("the listing of tests/test_*.py (module_paths; %d modules at this head, a figure the table prints" % n,
                         "call it: 5 test modules at this head (of %d, 2026-09-22: test_codex_backend" % n,
-                        "the runtime oracle called by 5 of the %d" % n, "the runtime oracle called by 5 of the %d; the liveness module" % n,
-                        "a population of %d test modules" % (n + 63), "the modules (%d at this head)" % n):
+                        "the census reads the modules; the runtime oracle called by 5 of the %d" % n,
+                        "the census reads the modules; the runtime oracle called by 5 of the %d; the liveness module" % n,
+                        "the tree table identical under both: the modules read (the count the table prints), the start rows by kind, the "
+                        "tail-only stops, the unreadable listed, the stale allow entries, the bounded tail-only excused, ALLOW empty, the "
+                        "informational product-start rows, the runtime oracle called by 5 of the %d;" % n,      # the historical ledger shape
+                        "a population of %d test modules" % (n + 63), "the modules (%d at this head)" % n) + bare:
             named = _literal_module_counts(planted)
             self.assertTrue(named, planted)
             for name, text in homes:                              # the red in each home: the plant, and only the plant, is named
                 self.assertEqual(_literal_module_counts(text + "\n" + planted), named, "%s with the plant %r" % (name, planted))
         for fine in ("5 test modules at this head (of the modules the census reads, a count the table prints; 2026-09-22:",
                      "the probe of 2026-09-22", "kernel commit 3421c94d0", "13 modules save stores", "141 callers of jd._rebind_state()",
-                     "on 20000 random payloads", "round 2 of PR 891's review", "a sleep of 3600 s, or of a name", "a bound of 107 bytes"):
-            self.assertEqual(_literal_module_counts(fine), [], fine)
+                     "on 20000 random payloads", "round 2 of PR 891's review", "a sleep of 3600 s, or of a name", "a bound of 107 bytes",
+                     "bats 859 of 859; npm 8531 of 8531.", "17332 passed of 17797,",                      # counts of something else, no modules in the sentence
+                     "the census reads the modules. The sweep: bats 859 of 859; npm 8531 of 8531.",       # the word in the sentence BEFORE: a boundary
+                     "the modules' derivation of 3995.9 s", "a budget of 250,000 objects for the modules"  # a decimal, a thousands comma, beside the word
+                     ) + at_head:
+            self.assertEqual(_literal_module_counts(fine), [], "not a module count, yet named: %r" % fine)
 
     def test_every_bounded_kind_comes_from_a_read_body_or_the_stdlib_table(self):
         """THE RULE over the tree: no bounded row carries a reason other than a body the walk read (its own, each of a
