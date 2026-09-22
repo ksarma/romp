@@ -272,7 +272,13 @@ collapsed (_text), never ast.unparse, a renderer whose spelling differs between 
 matched against each other (UNPARSE_ROADS names every such function with its reason, and a test parses this module to
 assert there is no other). THE POPULATION is the non-recursive listing of tests/test_*.py (module_paths; 936 modules at
 this head, a figure the table prints and the tree test's message carries); tests/conftest.py, tests/__init__.py, the
-helper modules under tests/ and tests/fixtures/ are read only for a returned Thread (helper_modules). Run the module
+helper modules under tests/ and tests/fixtures/ are read only for a returned Thread (helper_modules). The listing is
+what pytest collects under tests/ only while two things hold, both PINNED by a tree test
+(test_the_population_is_what_pytest_collects_under_tests, romp-manager's ruling of 2026-09-22): this repository has no
+pytest configuration (no pytest.ini, setup.cfg, tox.ini or pyproject.toml; tests/conftest.py names no python_files), so
+pytest's defaults apply, `test_*.py` AND `*_test.py`, recursively; and no `*_test.py` exists anywhere under tests/ and
+no `test_*.py` below its top level, so those defaults collect exactly this listing. The day one appears the pin says
+so, instead of the census omitting it in silence. Run the module
 directly for the table (`--table`; `--tail` prints only the tail-only and unreadable rows).
 
 """
@@ -3915,6 +3921,26 @@ class ThreadStopCensus(unittest.TestCase):
     def test_the_bounded_rule_excuses_at_least_one_site_or_it_is_stale(self):
         _tails, _unread, _stale, bounded = tail_only(self.rows)
         self.assertTrue(bounded, "no bounded thread has a tail-only join anymore: retire the BOUNDED shape rule")
+
+    def test_the_population_is_what_pytest_collects_under_tests(self):
+        """The census reads the non-recursive listing of tests/test_*.py (module_paths). pytest, with no configuration file in
+        this repository, collects by its defaults: python_files `test_*.py` AND `*_test.py`, recursively under tests/. The two
+        agree only while no configuration appears (a pytest.ini, setup.cfg, tox.ini or pyproject.toml; a python_files line in
+        tests/conftest.py), no `*_test.py` exists anywhere under tests/ and no `test_*.py` sits below the top level: this pins
+        that emptiness, so the day one appears the census says so instead of silently omitting it (romp-manager's ruling,
+        2026-09-22); and the listing's length is the count the census read."""
+        for name in ("pytest.ini", "setup.cfg", "tox.ini", "pyproject.toml"):
+            self.assertFalse(os.path.exists(os.path.join(ROOT, name)),
+                             "%s exists: pytest's collection may no longer be its defaults; re-derive the population" % name)
+        with open(os.path.join(HERE, "conftest.py"), encoding="utf-8") as f:
+            self.assertNotIn("python_files", f.read(), "tests/conftest.py names python_files: the collection pattern moved; re-derive the population")
+        strays = []
+        for dirpath, _dirs, files in os.walk(HERE):
+            for name in files:
+                if name.endswith("_test.py") or (name.startswith("test_") and name.endswith(".py") and dirpath != HERE):
+                    strays.append(os.path.relpath(os.path.join(dirpath, name), ROOT))
+        self.assertEqual(sorted(strays), [], "pytest collects these by its defaults and the census does not read them: widen module_paths or move them")
+        self.assertEqual(len(module_paths()), self.extras["modules"])
 
     def test_the_helper_modules_under_tests_are_parsed_for_thread_factories(self):
         """The road a test takes to a thread through a helper module is walked over the tree: the helper modules the
