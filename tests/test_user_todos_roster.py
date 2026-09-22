@@ -15,6 +15,7 @@ Drives the real _push, _push_session_now and _confirm_close_now over the cold-ta
 four listed tabs, build_session stubbed and counted, a private state root per test; the roster's count is read from the
 store, never from a build). Synthetic only: the fixture's own invented sids under a per-test private state root,
 invented todo text, hostname TESTHOST, never the shared placeholder sid and never a real session."""
+import ast
 import contextlib
 import inspect
 import io
@@ -50,6 +51,40 @@ def _count(row):
     if "userTodos" not in row:
         raise AssertionError("every helper row carries the count, 0 included: the row has keys %s" % sorted(row))
     return row["userTodos"]
+
+
+def _stamp_key_reach(text):
+    """The census's population, DERIVED (extra6-1, round 1): over the kernel's source, the innermost function around every
+    access to the stamp key "resolved" (a .get or .pop call with it as the first argument, a subscript by it in any
+    context, a `"resolved" in x` or `not in` test), as a set of names; and the parent shape of EVERY "resolved" literal
+    in the file, key access or not, as a set of shape names, so the walk's bound (it keys on the literal) is checked by
+    execution: a spelling it would not read is a new shape."""
+    tree = ast.parse(text)
+    readers, shapes = set(), set()
+
+    def shape_of(parent):
+        if isinstance(parent, ast.Call) and isinstance(parent.func, ast.Attribute):
+            return "Call." + parent.func.attr
+        if isinstance(parent, ast.Compare):
+            return "Compare." + "/".join(type(op).__name__ for op in parent.ops)
+        return type(parent).__name__
+
+    def visit(node, enclosing):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            enclosing = node.name
+        for ch in ast.iter_child_nodes(node):
+            if isinstance(ch, ast.Constant) and ch.value == "resolved":
+                shape = shape_of(node)
+                shapes.add(shape)
+                key_access = ((shape in ("Call.get", "Call.pop") and node.args and node.args[0] is ch)
+                              or (isinstance(node, ast.Subscript) and node.slice is ch)
+                              or (isinstance(node, ast.Compare) and node.left is ch
+                                  and all(isinstance(op, (ast.In, ast.NotIn)) for op in node.ops)))
+                if key_access:
+                    readers.add(enclosing or "<module>")
+            visit(ch, enclosing)
+    visit(tree, None)
+    return readers, shapes
 
 
 class UserTodosRoster(_ColdTabFixture):
@@ -161,20 +196,53 @@ class UserTodosRoster(_ColdTabFixture):
         counts = {r["id"]: _count(r) for r in km._tab_meta(km._chat_tab_sessions(0, {}))}
         self.assertEqual(counts[S3], len(rows), "the count is the rows' length, whatever the store holds")
         self.assertEqual([counts[s] for s in (S1, S2, S4)], [0, 0, 0])
+        for sid, n in counts.items():                  # the kernel's half of the webview's one open predicate over the
+            self.assertIs(type(n), int, "the count for %s is an integer, never a bool or a float: %r" % (sid, n))
+            self.assertGreaterEqual(n, 0, "...and never negative (correctness-1, round 1): a non-negative integer, so "
+                                    "the strip's one spelling of open over the count rests on a fact")
         # by source: the predicate is ONE (_user_todo_open) and the ended gate is ONE (_user_todos_shown); the helper,
         # the rows and the boot notice ask them and re-spell neither
         meta = inspect.getsource(km._tab_meta)
-        self.assertIn("_user_todo_open(", meta)
-        self.assertIn("_user_todos_shown(", meta)
+        self.assertIn("_user_todo_open(", meta, "_tab_meta counts by the one predicate")
+        self.assertIn("_user_todos_shown(", meta, "_tab_meta gates by the one ended gate")
         self.assertNotIn('"resolved"', meta, "the helper does not re-spell the open row")
         self.assertNotIn("_user_todo_session_ended", meta, "...nor the ended gate")
-        # every reader of "is this row open" outside the store's mutators (the predicate's docstring names those): the rows,
-        # the boot notice and the answer-lost verdict, whose "open" is the same claim. The check keys on the stamp read,
-        # `.get("resolved")`, whatever the row variable is called.
-        for fn in (km._open_user_todos, km._user_todos_off_boot_notice, km._user_todo_answer_lost):
+        # every reader of "is this row open" for a surface asks the predicate: the rows, the boot notice, the answer-lost
+        # verdict and the roster's count (the positive half, by source)...
+        for fn in (km._open_user_todos, km._user_todos_off_boot_notice, km._user_todo_answer_lost, km._tab_meta):
             self.assertIn("_user_todo_open(", inspect.getsource(fn), "%s asks the one predicate" % fn.__name__)
-            self.assertNotIn('.get("resolved")', inspect.getsource(fn),
-                             "%s re-spells no open row: the stamp read belongs to the predicate" % fn.__name__)
+        # ...and the POPULATION of functions that reach the stamp key at all is derived, never enumerated by hand
+        # (extra6-1, round 1): _stamp_key_reach walks the kernel's AST for every access to the key "resolved" and names
+        # the innermost function around each, so a new function that spells the open check itself is named in this red
+        # instead of passing unseen. The set is held to the predicate and the NAMED exemptions, each of which reads a
+        # stamp's presence or kind for its own step and rules on no row's openness for a surface (_user_todo_open's
+        # docstring says the same). The bound: the walk keys on the key's literal spelling; the second assertion holds
+        # every "resolved" literal in the file to a shape the walk reads or to the file-comments code's status VALUE
+        # (an equality, a tuple member, a keyword argument, a conditional's arm), so the key held in a variable, which
+        # the walk could not follow, is a new shape and reds there, named.
+        ksrc = open(km.__file__).read()
+        readers, shapes = _stamp_key_reach(ksrc)
+        self.assertEqual(readers, {
+            "_user_todo_open",             # the predicate itself
+            "_resolve_user_todo",          # a mutator: the lookup by id, the stamp write, the history cap's sort
+            "_reopen_user_todo",           # the lift: an 'answered' stamp's kind, then the del
+            "_withdraw_user_todo",         # the withdraw's account of what it found: the stamp's kind
+            "_prune_user_todos",           # the sweep: a dead session's resolved rows leave
+            "_user_todos_from_log",        # the log replay: writes and pops the stamp
+            "_user_todo_loss_boot_pass",   # the boot backstop: rows still 'answered', the reopen's own filter
+            "_settled_todo_phrase",        # the warning's clause: how a settled todo was cleared, never whether one is open
+        }, "every function reaching the stamp key is the predicate or a named exemption: a new one spells the open check itself")
+        self.assertEqual(shapes - {"Call.get", "Call.pop", "Subscript", "Compare.In", "Compare.NotIn",
+                                   "Compare.Eq", "Tuple", "keyword", "IfExp"}, set(),
+                         "every \"resolved\" literal in the kernel is a key access the walk reads, or a comment-status value")
+        # the walk lists a plant, proved here by execution over the source plus three hand-rolled readers, one per shape
+        planted = ksrc + (
+            '\n\ndef _probe_reader_by_get(sid):\n'
+            '    return [t for t in _user_todos().get(sid) or [] if isinstance(t, dict) and not t.get("resolved")]\n'
+            '\n\ndef _probe_reader_by_in(t):\n    return "resolved" not in t\n'
+            '\n\nclass _Probe:\n    def reader_by_subscript(self, t):\n        return t["resolved"] is None\n')
+        self.assertLessEqual({"_probe_reader_by_get", "_probe_reader_by_in", "reader_by_subscript"}, _stamp_key_reach(planted)[0],
+                             "the walk names a planted reader of each shape, a method included")
         real_build = self._saved[3]                    # the fixture stubs build_session for the pushes: the saved original is the source
         for fn, arg in ((real_build, "sid"), (km._feed_session_key, "fsid")):
             src = inspect.getsource(fn)

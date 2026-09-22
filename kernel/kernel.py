@@ -10424,7 +10424,13 @@ def _user_todo_open(t):
     (_user_todo_answer_lost, whose "open" is this claim about the row it found) all ask this, so a loaded tab's rows
     and a skeleton tab's count can never disagree on what counts as open (the fix brief of 2026-09-22, requirement 1).
     The store's mutators keep their own lookups: _resolve_user_todo finds a row by id, and _prune_user_todos keeps
-    every unstamped row, id or not (tests/test_user_todos_roster.py holds the census over the readers)."""
+    every unstamped row, id or not. tests/test_user_todos_roster.py DERIVES the population by an AST walk of this file
+    (every function that reaches the stamp key, "resolved", by .get, .pop, a subscript or `in`) and holds each to this
+    predicate or to a NAMED exemption: the store's mutators (_resolve_user_todo, _reopen_user_todo, _withdraw_user_todo,
+    _prune_user_todos), the log replay (_user_todos_from_log), the boot pass's answered filter
+    (_user_todo_loss_boot_pass) and the settled-phrase reader (_settled_todo_phrase), which read a stamp's kind or
+    presence for their own step and rule on no row's openness; a new function that spells the read itself is named in
+    that test's red."""
     return isinstance(t, dict) and bool(t.get("id")) and not t.get("resolved")
 
 
