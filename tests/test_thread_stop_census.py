@@ -71,14 +71,20 @@ THE KIND of a thread, read from its target: what it does if the test never stops
 CANNOT READ FALLS TO THE RESTRICTED SIDE, NEVER TO EXCUSED. `bounded` comes ONLY from a body the walk READ and found free
 of loops, of untimed waits and of calls of a parameter it has not in hand (the third arm, below), or from a method of the
 stdlib the STDLIB_RETURNS table says returns WHATEVER ITS ARGUMENTS
-AND ON ANY STDLIB RECEIVER (Event.set, Lock.release: each entry's reason says so in those words, UNCONDITIONAL_WORDS, and
-a table-shaped test holds every entry to them; a name that cannot say it is CONDITIONED instead, STDLIB_CONDITIONED,
+AND ON ANY STDLIB RECEIVER (Timer.cancel, Lock.release: each entry's reason says so in those words, UNCONDITIONAL_WORDS,
+states which receiver classes carry the name and what its arguments do, the re-examination of 2026-09-22, and a
+table-shaped test holds every entry to the words; a name that cannot say it is CONDITIONED instead, STDLIB_CONDITIONED,
 checked at the call: time.sleep is bounded only when args= carries a literal number at or under BOUND_S, 5 s;
 server_close only when the receiver was constructed as a TCPServer, UDPServer, HTTPServer or ThreadingHTTPServer, a
 server with no handler threads to join, since socketserver.ThreadingMixIn.server_close joins live handlers under its
-defaults and a ThreadingTCPServer with a handler parked in recv did not return in the runtime probe of 2026-09-22; and
-a Timer is bounded only for a literal interval at or under the same bound, whatever its function does; each otherwise
-UNREADABLE); the name rules (serve_forever, an untimed wait, a read) classify the other way, to loop or
+defaults and a ThreadingTCPServer with a handler parked in recv did not return in the runtime probe of 2026-09-22; an
+Event's set, clear and is_set only on a threading or asyncio Event() (multiprocessing.Event.set runs
+Condition.notify_all's per-sleeper handshake, the argument that dropped notify and notify_all in pass 5 and, re-run over
+every entry, moved these three: the `set` entry had said "no stdlib set() blocks"); a queue's put_nowait and get_nowait
+only on a queue or asyncio queue, put_nowait also on a multiprocessing.Queue() (a JoinableQueue's put takes a
+multiprocessing Condition; a multiprocessing get reads the pipe untimed); the receiver's module read through the
+imports (mp.Event(), a bare Event() from either module); and a Timer is bounded only for a literal interval at or under
+the same bound, whatever its function does; each otherwise UNREADABLE); the name rules (serve_forever, an untimed wait, a read) classify the other way, to loop or
 waits; a target the walk cannot read is UNREADABLE, never bounded, and its tail-only stop is listed with the unreadable
 receivers (the pin asserts that bucket empty; ALLOW may excuse one by name with its reason). A structural test hands
 _kind a table of unknown targets, and of bodies whose work is a call of a parameter, and asserts none reads bounded;
@@ -171,7 +177,8 @@ supplied at the caller is read in the caller's row only: the helper's own row ke
            parameter no hand supplies (the third arm), a function of a module it does not
            read (a third-party import), a stdlib function or method with no STDLIB_RETURNS entry (a shutdown blocks until
            the serve loop ends; a put can block on a full queue) or whose CONDITIONED check fails at the call
-           (time.sleep(3600), server_close of a ThreadingTCPServer, a Timer(3600, ...)), a method run on an instance it
+           (time.sleep(3600), server_close of a ThreadingTCPServer, set of a multiprocessing.Event(), a Timer(3600, ...)), a
+           method run on an instance it
            cannot name, a product
            attribute no product function defines, a callable built by a call it does not read (functools.partial(f),
            factory()), a target hidden in * / ** arguments, any other expression (an element of a list, a conditional).
@@ -305,26 +312,28 @@ CLOCK = re.compile(r"\btime\.|monotonic|perf_counter|deadline|thread_time")
 PRODUCT_DIRS = ("kernel", "postal", "cli")
 KINDS_PINNED = ("loop", "waits")
 KIND_UNREAD = "unreadable"       # the kind of a target the walk cannot read: never excused, listed unless its stop is guaranteed
-# Methods of a stdlib object (an Event, a Queue, a Timer, a Lock, a Condition built through a stdlib module) that return
-# on their own WHATEVER THEIR ARGUMENTS AND ON ANY STDLIB RECEIVER, by name, each with a reason that says so in those
-# words (UNCONDITIONAL_WORDS; stdlib_table_problems holds every entry to them, asserted by a test): a Timer(0.5,
-# km._LOOPS_STOP.set) is bounded because Event.set returns. A name that cannot say that is CONDITIONED instead
-# (STDLIB_CONDITIONED, below its checkers: time.sleep on a literal argument at or under BOUND_S read at the call;
-# server_close on a server with no handler threads to join) or dropped. Any other method of a stdlib object used as a
-# target is UNREADABLE (a shutdown blocks until the serve loop ends; a put can block on a full queue; a wait with a
-# timeout is a wait the walk has no rule for).
+# Methods of a stdlib object (a Timer, a Lock, a Future built through a stdlib module) that return on their own WHATEVER
+# THEIR ARGUMENTS AND ON ANY STDLIB RECEIVER, by name, each with a reason that says so in those words (UNCONDITIONAL_WORDS;
+# stdlib_table_problems holds every entry to them, asserted by a test) and states its RE-EXAMINATION of 2026-09-22
+# (romp-manager's ruling on round 1 of PR 891: which receiver classes carry the name, and what its arguments do). A name
+# that cannot say that is CONDITIONED instead (STDLIB_CONDITIONED, below its checkers, each reading the receiver's
+# construction or the call: time.sleep on a literal argument at or under BOUND_S; server_close on a server with no handler
+# threads to join; an Event's set, clear and is_set and a queue's put_nowait and get_nowait on the receiver's module) or
+# dropped. Any other method of a stdlib object used as a target is UNREADABLE (a shutdown blocks until the serve loop
+# ends; a put can block on a full queue; a wait with a timeout is a wait the walk has no rule for).
 UNCONDITIONAL_WORDS = ("whatever its arguments", "on any stdlib receiver")
 STDLIB_RETURNS = {
-    "set": "Event.set raises the flag and returns whatever its arguments (it takes none) and on any stdlib receiver (no stdlib set() blocks)",
-    "clear": "Event.clear lowers the flag and returns whatever its arguments (it takes none) and on any stdlib receiver (a container's clear() empties it and returns)",
-    "is_set": "Event.is_set reads the flag and returns whatever its arguments (it takes none) and on any stdlib receiver",
-    "put_nowait": "Queue.put_nowait raises Full or returns at once whatever its arguments and on any stdlib receiver (queue, asyncio, multiprocessing)",
-    "get_nowait": "Queue.get_nowait raises Empty or returns at once whatever its arguments and on any stdlib receiver (queue, asyncio, multiprocessing)",
-    "cancel": "Timer.cancel returns at once whatever its arguments (it takes none) and on any stdlib receiver (a Future's, a Task's, a Handle's cancel returns at once too)",
-    "release": "Lock.release returns at once whatever its arguments and on any stdlib receiver (a Lock, RLock, Semaphore or Condition release never waits; it raises when not held)",
+    "cancel": "Timer.cancel returns at once whatever its arguments and on any stdlib receiver (re-examined 2026-09-22: threading.Timer.cancel sets a threading.Event; concurrent.futures.Future.cancel takes its threading.Condition, which every method holds briefly, and notifies it; asyncio's Task, Future, Handle and TimerHandle schedule and return, Task.cancel(msg) storing its argument; sched.scheduler.cancel removes the event under its lock)",
+    "release": "Lock.release returns at once whatever its arguments and on any stdlib receiver (re-examined 2026-09-22: threading's Lock, RLock and Condition release the lock, raising when not held; threading's Semaphore and BoundedSemaphore take their Condition briefly and notify it, release(n) n times; multiprocessing's Lock, RLock, Semaphore, BoundedSemaphore and Condition post the semaphore, no handshake; asyncio's Lock, Semaphore, BoundedSemaphore and Condition wake a waiter's future)",
 }
 # Dropped on 2026-09-22 (the adversarial review of pass 5): notify / notify_all, because multiprocessing.Condition.notify does an
 # untimed _woken_count.acquire() per woken sleeper, so the entry could not say "on any stdlib receiver"; no tree row used them.
+# CONDITIONED on 2026-09-22 (round 1 of PR 891's review: the same argument re-run over every entry): set, because
+# multiprocessing.Event.set runs that notify_all; clear and is_set, because multiprocessing.Event's take the Condition's lock a
+# set() stuck in that handshake holds; put_nowait, because multiprocessing.JoinableQueue.put takes its multiprocessing
+# Condition, which task_done's notify_all holds through the same handshake; get_nowait, because multiprocessing.Queue.get(False)
+# reads the pipe untimed after its poll. Each is bounded on the receivers its checker names (_event_method_rule,
+# _queue_method_rule) and UNREADABLE elsewhere; one tree row uses them, km._LOOPS_STOP.set on the kernel's threading.Event().
 _BUILTIN_NAMES = frozenset(dir(builtins))     # range(...), slice(...), object(): a builtin constructs no thread of ours
 # Servers whose server_close has no handler threads to join: a plain socketserver / HTTPServer handles in the accept
 # thread; ThreadingHTTPServer's handlers are daemon threads, which ThreadingMixIn.server_close does not join. A
@@ -3078,7 +3087,7 @@ def _library_ctor(call, unit=None):
     while isinstance(head, ast.Attribute):
         head = head.value
     if isinstance(f, ast.Attribute) and isinstance(head, ast.Name):
-        return head.id in getattr(sys, "stdlib_module_names", ())
+        return head.id in getattr(sys, "stdlib_module_names", ()) or (unit is not None and unit.module.is_stdlib_alias(head.id))
     if isinstance(f, ast.Name):
         return f.id in _STDLIB_CTORS or (unit is not None and unit.module.is_stdlib_alias(f.id))
     return False
@@ -3139,10 +3148,78 @@ def _server_close_rule(unit, ctor, call):
                          "of 2026-09-22)" % (name or "server the walk cannot name"))
 
 
+def _ctor_module(unit, call):
+    """The stdlib module a receiver's construction names, resolved through the unit's imports: `threading` for
+    threading.Event(), `multiprocessing` for mp.Event() under `import multiprocessing as mp` and for a bare Event() from
+    `from multiprocessing import Event`, `queue` for queue.Queue(); None when the head is not a name (a call's result:
+    multiprocessing.get_context().Event())."""
+    head = call.func
+    while isinstance(head, ast.Attribute):
+        head = head.value
+    if not isinstance(head, ast.Name):
+        return None
+    return unit.module.import_names.get(head.id, head.id).split(".")[0]
+
+
+def _event_method_rule(name):
+    """The checker for an Event's set / clear / is_set: bounded on a threading.Event() (the flag under a lock its own methods
+    hold briefly; wait releases it while waiting; set's notify_all is a threading Condition's, no handshake) and on an
+    asyncio.Event() (the flag and the waiters' futures, no lock); UNREADABLE on a multiprocessing.Event() (set runs
+    Condition.notify_all's per-sleeper _woken_count.acquire() handshake, the argument that dropped notify; clear and is_set
+    take the Condition's lock a set() stuck in that handshake holds) and on a receiver whose construction the walk cannot
+    name."""
+    def rule(unit, ctor, call):
+        mod = _ctor_module(unit, call) if call is not None else None
+        ctor_name = _callee_name(call) if call is not None else None
+        if ctor_name == "Event" and mod == "threading":
+            return "bounded", ("%s of a threading.Event() returns: the flag under a lock its own methods hold briefly (wait releases it while "
+                               "waiting), set's notify_all a threading Condition's with no handshake" % name)
+        if ctor_name == "Event" and mod == "asyncio":
+            return "bounded", "%s of an asyncio.Event() returns: the flag and the waiters' futures, no lock" % name
+        if mod == "multiprocessing":
+            return KIND_UNREAD, ("%s of a multiprocessing.%s(): set runs Condition.notify_all's per-sleeper _woken_count.acquire() handshake (the "
+                                 "argument that dropped notify), and clear and is_set take the Condition's lock a set() stuck in it holds"
+                                 % (name, ctor_name or "Event"))
+        return KIND_UNREAD, "%s of a %s the walk has no rule for: an Event's %s is bounded only on a threading or asyncio Event()" % (
+            name, ("%s.%s()" % (mod, ctor_name)) if mod and ctor_name else "receiver whose construction the walk cannot name", name)
+    return rule
+
+
+def _queue_method_rule(name):
+    """The checker for a queue's put_nowait / get_nowait: bounded on queue's Queue, LifoQueue, PriorityQueue and SimpleQueue
+    (a mutex every method holds briefly, a blocking put or get waiting on a Condition with it released; Full or Empty
+    raised at once) and on asyncio's (no lock); on a multiprocessing.Queue() put_nowait is bounded (a non-blocking
+    semaphore acquire, then the feeder thread's threading.Condition) and get_nowait UNREADABLE (get(False) reads the pipe
+    untimed after its poll); on a multiprocessing.JoinableQueue() both are UNREADABLE (put takes its multiprocessing
+    Condition, which task_done's notify_all holds through its per-sleeper handshake); UNREADABLE on a receiver whose
+    construction the walk cannot name."""
+    def rule(unit, ctor, call):
+        mod = _ctor_module(unit, call) if call is not None else None
+        ctor_name = _callee_name(call) if call is not None else None
+        if mod == "queue" and ctor_name in ("Queue", "LifoQueue", "PriorityQueue", "SimpleQueue"):
+            return "bounded", ("%s of a queue.%s() returns: Full or Empty raised at once, else the item, under a mutex every method holds "
+                               "briefly (a blocking put or get waits on a Condition with it released)" % (name, ctor_name))
+        if mod == "asyncio" and ctor_name in ("Queue", "LifoQueue", "PriorityQueue"):
+            return "bounded", "%s of an asyncio.%s() returns: QueueFull or QueueEmpty raised at once, else the item, no lock" % (name, ctor_name)
+        if mod == "multiprocessing" and ctor_name == "Queue" and name == "put_nowait":
+            return "bounded", ("put_nowait of a multiprocessing.Queue() returns: a non-blocking acquire of its semaphore (Full), then the feeder "
+                               "thread's threading.Condition, held briefly")
+        if mod == "multiprocessing":
+            return KIND_UNREAD, ("%s of a multiprocessing.%s(): get(False) reads the pipe untimed after its poll; a JoinableQueue's put takes its "
+                                 "multiprocessing Condition, which task_done's notify_all holds through its per-sleeper handshake"
+                                 % (name, ctor_name or "Queue"))
+        return KIND_UNREAD, "%s of a %s the walk has no rule for: bounded only on a queue or asyncio queue, and put_nowait on a multiprocessing.Queue()" % (
+            name, ("%s.%s()" % (mod, ctor_name)) if mod and ctor_name else "receiver whose construction the walk cannot name")
+    return rule
+
+
 # The stdlib names whose boundedness is CONDITIONED on the call: each checker reads the construction (`ctor`) or the
 # receiver's construction (`call`) and answers bounded with its reason or unreadable. A name here is never in
 # STDLIB_RETURNS (stdlib_table_problems holds the two apart).
-STDLIB_CONDITIONED = {"sleep": _sleep_rule, "server_close": _server_close_rule}
+STDLIB_CONDITIONED = {"sleep": _sleep_rule, "server_close": _server_close_rule,
+                      "set": _event_method_rule("set"), "clear": _event_method_rule("clear"), "is_set": _event_method_rule("is_set"),
+                      "put_nowait": _queue_method_rule("put_nowait"), "get_nowait": _queue_method_rule("get_nowait")}
+CONDITIONED_HEADS = ("time.sleep(",) + tuple("%s of a" % n for n in STDLIB_CONDITIONED if n != "sleep")   # the bounded reasons' heads
 
 
 def _unread_reason(unit, expr, line):
@@ -3626,7 +3703,7 @@ def bounded_reason_is_read(why):
     was read in turn (a hand read loop or waits makes the row that, never bounded)."""
     head, *hands = why.split(" | ")
     ok = head in ("no loop, no untimed wait", "no target: the default run() does nothing") \
-        or head.startswith(("each of ", "a product function read in ", "time.sleep(", "server_close of a ", "a constant `", "a literal ")) \
+        or head.startswith(("each of ", "a product function read in ", "a constant `", "a literal ") + CONDITIONED_HEADS) \
         or head in STDLIB_RETURNS.values()
     return ok and all(_HAND.match(h) for h in hands)
 
@@ -5004,14 +5081,15 @@ class PlantedShapes(unittest.TestCase):
             self.assertTrue(by["test_" + name][1].startswith("server_close of a "), by["test_" + name][1])
         self.assertEqual(by["test_close_threading"][0], KIND_UNREAD)
         self.assertIn("ThreadingTCPServer", by["test_close_threading"][1])
-        self.assertEqual(by["test_timer_ok"], ("bounded", STDLIB_RETURNS["set"], "tail-only"))
+        self.assertEqual((by["test_timer_ok"][0], by["test_timer_ok"][2]), ("bounded", "tail-only"))
+        self.assertTrue(by["test_timer_ok"][1].startswith("set of a threading.Event() returns"), by["test_timer_ok"][1])
         self.assertEqual(by["test_timer_kw"][0], "bounded")
         for name in ("timer_long", "timer_name"):
             self.assertEqual(by["test_" + name][0], KIND_UNREAD, (name, by["test_" + name]))
             self.assertTrue(by["test_" + name][1].startswith("a Timer whose interval "), by["test_" + name][1])
         self.assertEqual((by["test_timer_cancelled"][0], by["test_timer_cancelled"][2]), (KIND_UNREAD, "stop-before-first-assertion"))
         self.assertEqual(by["test_timer_loop"][0], "loop")
-        self.assertEqual(by["test_timer_local_alias_ok"], ("bounded", STDLIB_RETURNS["set"], "tail-only"), "an alias reads as a Timer: function= is the callable")
+        self.assertEqual((by["test_timer_local_alias_ok"][0], by["test_timer_local_alias_ok"][2]), ("bounded", "tail-only"), "an alias reads as a Timer: function= is the callable")
         for name in ("timer_local_alias_long", "timer_import_alias_long", "timer_subclass_long", "timer_global_alias_long"):
             self.assertEqual(by["test_" + name][0], KIND_UNREAD, (name, by["test_" + name]))
             self.assertTrue(by["test_" + name][1].startswith("a Timer whose interval `3600`"), (name, by["test_" + name][1]))
@@ -5021,15 +5099,65 @@ class PlantedShapes(unittest.TestCase):
                                  "test_timer_local_alias_long", "test_timer_import_alias_long", "test_timer_subclass_long", "test_timer_global_alias_long"]))
         self.assertEqual(self._tails(tails), [("_loop", "T.test_timer_loop")], "the looping Timer is pinned like any loop")
 
+    def test_an_events_set_and_a_queues_nowait_are_bounded_only_on_a_receiver_whose_construction_the_walk_reads(self):
+        """STDLIB_CONDITIONED's Event and queue names (romp-manager's ruling on round 1 of PR 891, 2026-09-22). set, clear and
+        is_set: bounded on a threading.Event() (through the module, and a bare Event() imported from threading), on an
+        asyncio.Event(), and on the kernel-style Timer(0.5, ev.set); UNREADABLE on a multiprocessing.Event() through the
+        module, through an import alias (mp.Event()), as a bare name imported from multiprocessing, and on a construction
+        the walk cannot name (multiprocessing.get_context().Event()). put_nowait and get_nowait: bounded on queue.Queue()
+        and a bare Queue imported from queue, on asyncio.Queue(), and put_nowait on a multiprocessing.Queue(); UNREADABLE for
+        get_nowait on a multiprocessing.Queue() and for put_nowait on a multiprocessing.JoinableQueue(). Every bounded reason
+        passes bounded_reason_is_read; every unreadable one is listed."""
+        head = self.HEAD.replace("import unittest\n", "import unittest\nimport asyncio\nimport queue\nimport multiprocessing\nimport multiprocessing as mp\n"
+                                                    "from threading import Event\nfrom multiprocessing import Event as MpEvent\nfrom queue import Queue as Q\n")
+        body = ("    def test_thr_set(self):\n        ev = threading.Event()\n        t = threading.Thread(target=ev.set); t.start()\n        self.assertTrue(False)\n"
+                "    def test_thr_clear(self):\n        ev = threading.Event()\n        t = threading.Thread(target=ev.clear); t.start()\n        self.assertTrue(False)\n"
+                "    def test_thr_is_set(self):\n        ev = threading.Event()\n        t = threading.Thread(target=ev.is_set); t.start()\n        self.assertTrue(False)\n"
+                "    def test_bare_set(self):\n        ev = Event()\n        t = threading.Thread(target=ev.set); t.start()\n        self.assertTrue(False)\n"
+                "    def test_aio_set(self):\n        ev = asyncio.Event()\n        t = threading.Thread(target=ev.set); t.start()\n        self.assertTrue(False)\n"
+                "    def test_timer_set(self):\n        ev = threading.Event()\n        t = threading.Timer(0.5, ev.set); t.start()\n        self.assertTrue(False)\n"
+                "    def test_mp_set(self):\n        ev = multiprocessing.Event()\n        t = threading.Thread(target=ev.set); t.start()\n        self.assertTrue(False)\n"
+                "    def test_mp_alias_set(self):\n        ev = mp.Event()\n        t = threading.Thread(target=ev.set); t.start()\n        self.assertTrue(False)\n"
+                "    def test_mp_bare_clear(self):\n        ev = MpEvent()\n        t = threading.Thread(target=ev.clear); t.start()\n        self.assertTrue(False)\n"
+                "    def test_ctx_set(self):\n        ev = multiprocessing.get_context().Event()\n        t = threading.Thread(target=ev.set); t.start()\n        self.assertTrue(False)\n"
+                "    def test_q_put(self):\n        q = queue.Queue()\n        t = threading.Thread(target=q.put_nowait, args=(1,)); t.start()\n        self.assertTrue(False)\n"
+                "    def test_q_bare_get(self):\n        q = Q()\n        t = threading.Thread(target=q.get_nowait); t.start()\n        self.assertTrue(False)\n"
+                "    def test_aio_get(self):\n        q = asyncio.Queue()\n        t = threading.Thread(target=q.get_nowait); t.start()\n        self.assertTrue(False)\n"
+                "    def test_mp_put(self):\n        q = multiprocessing.Queue()\n        t = threading.Thread(target=q.put_nowait, args=(1,)); t.start()\n        self.assertTrue(False)\n"
+                "    def test_mp_get(self):\n        q = multiprocessing.Queue()\n        t = threading.Thread(target=q.get_nowait); t.start()\n        self.assertTrue(False)\n"
+                "    def test_jq_put(self):\n        q = multiprocessing.JoinableQueue()\n        t = threading.Thread(target=q.put_nowait, args=(1,)); t.start()\n        self.assertTrue(False)\n")
+        rows, (tails, unread, stale, bounded), _p = self._census(body, head=head)
+        by = {w.split(".")[1]: (s.kind, s.why, sh) for s, sh, w in rows}
+        for name, start in (("thr_set", "set of a threading.Event() returns"), ("thr_clear", "clear of a threading.Event() returns"),
+                            ("thr_is_set", "is_set of a threading.Event() returns"), ("bare_set", "set of a threading.Event() returns"),
+                            ("aio_set", "set of an asyncio.Event() returns"), ("timer_set", "set of a threading.Event() returns"),
+                            ("q_put", "put_nowait of a queue.Queue() returns"), ("q_bare_get", "get_nowait of a queue.Queue() returns"),
+                            ("aio_get", "get_nowait of an asyncio.Queue() returns"), ("mp_put", "put_nowait of a multiprocessing.Queue() returns")):
+            self.assertEqual(by["test_" + name][0], "bounded", (name, by["test_" + name]))
+            self.assertTrue(by["test_" + name][1].startswith(start), (name, by["test_" + name][1]))
+            self.assertTrue(bounded_reason_is_read(by["test_" + name][1]), (name, by["test_" + name][1]))
+        for name, words in (("mp_set", "set of a multiprocessing.Event()"), ("mp_alias_set", "set of a multiprocessing.Event()"),
+                            ("mp_bare_clear", "clear of a multiprocessing.Event()"), ("ctx_set", "an object the walk does not read"),
+                            ("mp_get", "get_nowait of a multiprocessing.Queue()"), ("jq_put", "put_nowait of a multiprocessing.JoinableQueue()")):
+            self.assertEqual(by["test_" + name][0], KIND_UNREAD, (name, by["test_" + name]))
+            self.assertIn(words, by["test_" + name][1], (name, by["test_" + name][1]))
+        self.assertEqual(sorted(w.split(".")[1] for s, w in unread),
+                         sorted(["test_mp_set", "test_mp_alias_set", "test_mp_bare_clear", "test_ctx_set", "test_mp_get", "test_jq_put"]))
+        self.assertEqual((tails, stale), ([], []))
+
     def test_every_stdlib_returns_entry_says_it_returns_whatever_its_arguments_on_any_receiver(self):
         """Table-shaped (romp-manager's ruling, 2026-09-22): every STDLIB_RETURNS entry's reason states, in UNCONDITIONAL_WORDS,
         the property that lets a name alone excuse a thread: the call returns whatever its arguments and on any stdlib
         receiver. A planted conditional entry without the words reds (the sleep entry the tree carried until this ruling),
-        and a conditioned name planted in the table reds even with the words. sleep and server_close are the conditioned
-        names, in STDLIB_CONDITIONED and not in STDLIB_RETURNS."""
+        and a conditioned name planted in the table reds even with the words. sleep, server_close, an Event's set, clear
+        and is_set and a queue's put_nowait and get_nowait are the conditioned names, in STDLIB_CONDITIONED and not in
+        STDLIB_RETURNS; the `set` entry the table carried until 2026-09-22 reds as a conditioned name now."""
         self.assertEqual(stdlib_table_problems(STDLIB_RETURNS), [])
-        self.assertEqual(sorted(STDLIB_CONDITIONED), ["server_close", "sleep"])
+        self.assertEqual(sorted(STDLIB_CONDITIONED), ["clear", "get_nowait", "is_set", "put_nowait", "server_close", "set", "sleep"])
+        self.assertEqual(sorted(STDLIB_RETURNS), ["cancel", "release"])
         self.assertFalse(set(STDLIB_CONDITIONED) & set(STDLIB_RETURNS))
+        planted = dict(STDLIB_RETURNS, set="Event.set raises the flag and returns whatever its arguments (it takes none) and on any stdlib receiver (no stdlib set() blocks)")
+        self.assertEqual(stdlib_table_problems(planted), [("set", "a conditioned name: its check runs at the call, it cannot be excused by name")])
         planted = dict(STDLIB_RETURNS, wait="Event.wait returns when the flag is raised")
         self.assertEqual(stdlib_table_problems(planted), [("wait", "the reason does not say 'whatever its arguments' and 'on any stdlib receiver'")])
         planted = dict(STDLIB_RETURNS, sleep="time.sleep returns when its argument elapses")
@@ -5306,7 +5434,8 @@ class PlantedShapes(unittest.TestCase):
         self.assertEqual(by["T.test_be_pump"], ("loop", "a product function: calls self._loop, a while loop", "tail-only"))
         self.assertEqual(by["T.test_local_alias"][0], "bounded")
         self.assertEqual(by["T.test_missing"], (KIND_UNREAD, "km.nothing_here: a product attribute no product function defines", "tail-only"))
-        self.assertEqual(by["T.test_event_set"], ("bounded", STDLIB_RETURNS["set"], "tail-only"))
+        self.assertEqual((by["T.test_event_set"][0], by["T.test_event_set"][2]), ("bounded", "tail-only"))
+        self.assertTrue(by["T.test_event_set"][1].startswith("set of a threading.Event() returns"), by["T.test_event_set"][1])
         self.assertEqual(by["T.test_event_wait"], ("waits", "the target is an untimed .wait", "tail-only"))
         self.assertEqual(by["T.test_lambda_spin"], ("loop", "calls spin, a product function with a while loop", "tail-only"))
         self.assertEqual(by["T.test_relay_joined"][2], "stop-before-first-assertion", "an indirect loop: the timed join is its stop")
