@@ -24,7 +24,8 @@ test starts km._producer against judge tiers stuck on a gate. Two things went wr
      not guaranteed: five full sweeps checked on 2026-09-21 did not fire it (those for 853, 862 twice and 887, and 781's
      at c7e51ae47) and one did (box 2's control at 65f1895f6). An isolated-level certainty and a sweep-level flake at the
      same time, decided by which tests ran before it in that worker's process; never in CI (serial). The red-before
-     measurement is the single test alone, serially. setUp neutralises the hold as tests/test_judges_process.py does.
+     measurement is the single test alone, serially. setUp neutralises the hold with the stub tests/test_judges_process.py
+     uses (a lambda returning True), here as one of setUp's patchers so tearDown restores it.
   2. The stop on the tail. The stop seam, the gate release and the join were the body's LAST lines, so the failed
      assertion skipped them, the with-block's eleven patches were undone on the way out while the producer was still in
      its hold, and a live, fully unpatched judge loop ran for the rest of the worker's life; tearDown only CLEARED the
@@ -125,9 +126,10 @@ class DeliveryRidesTheSettle(unittest.TestCase):
             mock.patch.object(km, "_names_snapshot", lambda: {}),
             mock.patch.object(km, "_live_map", lambda: {SID: {"state": "waiting", "backend": "sdk"}}),
             # The boot hold (kernel 3421c94d0): the producer's FIRST pass waits up to BOOT_JUDGE_HOLD_S for attachDone,
-            # which nothing in this module fires. Released the way tests/test_judges_process.py releases it
-            # (km._wait_boot_attached = lambda: True); the hold is a boot-time gate on the first pass, orthogonal to
-            # everything asserted here. The 5 s poll for the pass below stays as it was.
+            # which nothing in this module fires (km._sdk is stubbed: the one side-effect latcher is gone). Released with
+            # the stub tests/test_judges_process.py uses (a lambda returning True), here as one of setUp's patchers so
+            # tearDown restores it; the hold is a boot-time gate on the first pass, orthogonal to everything asserted
+            # here. The 5 s poll for the pass below stays as it was.
             mock.patch.object(km, "_wait_boot_attached", lambda timeout=None: True),
         ] + [mock.patch.object(km, name, lambda *a, **k: None) for name in _OTHER_JOBS]
         for p in self._patches:
