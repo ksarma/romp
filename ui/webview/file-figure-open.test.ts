@@ -50,7 +50,7 @@ test("the control: one decision (decideFigureControl) puts a button of the bar's
   assert.match(dressFn, /if \(!drawn \|\| b\.classList\.contains\(FIGOPEN_WEB_CLASS\) !== web\)/, "the web class on the control is the record of the kind its glyph was drawn for");
   assert.match(dressFn, /b\.classList\.toggle\(FIGOPEN_WEB_CLASS, web\);/, "the class the sheets dress, keyed on the kind");
   const glyphFn = between(VIEW, "function figureControlGlyph(web = false): Node | null {", "/**");
-  assert.match(glyphFn, /const holder = el\("span"\); holder\.innerHTML = ICON_EXPAND \+ ICON_OUTBOUND; figureGlyph = holder\.children\[0\] \?\? null; figureWebGlyph = holder\.children\[1\] \?\? null;/, "the two drawings parsed once, in one write, onto a holder that enters no document (file-view-seam.test.ts holds the file's re-parse count)");
+  assert.match(glyphFn, /const holder = el\("span"\); holder\.innerHTML = ICON_EXPAND \+ ICON_OUTBOUND; figureGlyph = holder\.firstElementChild \?\? null; figureWebGlyph = figureGlyph \? figureGlyph\.nextElementSibling : null;/, "the two drawings parsed once, in one write, onto a holder that enters no document, and read through firstElementChild and nextElementSibling, never children[], which a stand-in document answers with an element that has no cloneNode (file-view-seam.test.ts holds the file's re-parse count; a sentence pin)");
   assert.match(glyphFn, /return drawing \? drawing\.cloneNode\(true\) : null;/, "and cloned per control");
   assert.doesNotMatch(fn.slice(0, fn.indexOf("/** The control's glyph")), /innerHTML|outerHTML|insertAdjacentHTML/, "no markup write in the decision itself");
   assert.match(fn, /b\.setAttribute\(FIGOPEN_MARK, ""\);/, "the mark it is found by");

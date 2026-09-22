@@ -20,7 +20,10 @@
 //     inside a default, a trailing comment after the colon, an async def) fails by name, since a page the read drops would take
 //     its sheets out of the population silently (the file review's round 11, correctness-1 with regression-1 and extra7-2: the
 //     annotated and the `)`-in-default shapes had left the read with no failure, and the header had said every page was read
-//     whatever its parameters); each with the function's own text, the lines up to the first statement at column zero outside a
+//     whatever its parameters); the head is matched wherever its line stands, so a def-shaped line at column zero inside a literal
+//     (a module-level docstring, a page's own template) is read as a page too, a phantom that can add sheets to the population
+//     and takes no page and no sheet out of it, a shape this reader discloses and does not refuse; each with the function's own
+//     text, the lines up to the first statement at column zero outside a
 //     triple-quoted literal (a column-zero line inside one is the template's own text, so a constant the page names after it is
 //     read; the body had ended at that line whether or not a literal was open), its comment lines dropped so a sheet a comment
 //     mentions is not read as one the page loads; from each: every `/dist/<name>.css` it
@@ -57,9 +60,9 @@ const fail = (why) => { throw new Error('host-sheets: ' + why); };
 /** A module-level string constant of kernel.py by name, as Python reads it: `NAME = """..."""` (taken raw, and a backslash in
  *  it fails, since this reader decodes no escape in that form) or `NAME = (` followed by lines each holding one double-quoted
  *  literal with an optional trailing comment, blank and comment lines between, closed by a `)` at column zero or by a `)` at the
- *  end of the last literal's line (kernel.py writes five of its six parenthesised runs the second way, _LOADER_CSS among them,
- *  and the reader had failed on every one of them; the file review's round 11, extra6-1 with extra7-1), any other line failing
- *  by name and a run that never closes failing too. */
+ *  end of the last literal's line (kernel.py closes _LOADER_CSS and the landing shell's _STALE_CSS, _UPD_CSS and _RDRIFT_CSS the
+ *  second way and _CHAT_MOBILE_CSS with the lone `)`, and the reader had failed on every run of the second form; the file review's
+ *  round 11, extra6-1 with extra7-1), any other line failing by name and a run that never closes failing too. */
 export function pyStringConstant(src, name) {
   const at = src.indexOf('\n' + name + ' = ');
   if (at < 0) fail(name + ' is not assigned at column zero of kernel.py');
@@ -116,7 +119,9 @@ function defBody(lines, from) {
  *  dropped. After the read, every `def _<name>_page` at column zero, `async def` included, is counted against the pages read, and
  *  a page def in any other shape (a return annotation, a `)` inside a default, a trailing comment after the colon, an async def)
  *  fails by name, since a page the read drops would take its sheets out of the population silently (the file review's round 11,
- *  correctness-1 with regression-1 and extra7-2). */
+ *  correctness-1 with regression-1 and extra7-2). The head is matched wherever its line stands, so a def-shaped line at column
+ *  zero inside a literal is read as a page too, a phantom that can add to the population and takes nothing out of it (disclosed,
+ *  not refused). */
 export function kernelPages(kernel) {
   const out = [];
   const lines = kernel.split('\n');
@@ -145,9 +150,11 @@ const all = (re, text) => { const out = []; let m; re.lastIndex = 0; while ((m =
 /** The `<style>` block a helper writes into the HTML it returns, or null when its text writes none: the run from the literal
  *  opening `"<style>` to the literal closing `</style>"`, each double-quoted literal decoded and each `<NAME>_CSS` constant it
  *  concatenates read by pyStringConstant, in the order the served HTML has them; a helper with no def in the strict shape, a
- *  `<style` outside such a run, any other token in the run and a run that does not decode to one block fail by name (the file
- *  review's round 11, extra6-1 with extra7-1, kernel-1 and tests-1: the pane spinner's block, `_pane_spin`'s with _LOADER_CSS
- *  folded in, served with the chat, feed, sessions and waiting pages, had been outside the read with every pin green). */
+ *  `<style` outside such a run, any other token in the run, a run that does not decode to one block (a second `</style>` inside
+ *  it), a prefix letter on the opening literal (an f-, r- or b-string) and a `%` or `.format(` applied after the closing literal
+ *  fail by name, since each decodes to text the page does not serve (the file review's round 11, extra6-1 with extra7-1, kernel-1
+ *  and tests-1: the pane spinner's block, `_pane_spin`'s with _LOADER_CSS folded in, served with the chat, feed, sessions and
+ *  waiting pages, had been outside the read with every pin green; the three formatted shapes had decoded silently). */
 function helperStyle(kernel, lines, name) {
   const head = new RegExp('^def ' + name + '\\([^)]*\\):\\n', 'm').exec(kernel);
   if (!head) fail(name + ' is called by a page body and is no module-level def this reader has a rule for');
@@ -155,6 +162,8 @@ function helperStyle(kernel, lines, name) {
   if (!text.includes('<style')) return null;
   const open = text.indexOf('"<style>'), close = text.indexOf('</style>"');
   if (open < 0 || close < 0 || close < open) fail(name + ' writes a <style> in a form this reader has no rule for (not a run of literals from "<style> to </style>")');
+  if (open > 0 && /\w/.test(text[open - 1])) fail(name + "'s <style> literal carries a prefix letter (an f-, r- or b-string), whose text is not what Python serves");
+  if (/^\s*(?:%|\.format\()/.test(text.slice(close + '</style>"'.length))) fail(name + "'s <style> run is formatted by a % or .format() operator after its closing literal, so its text is not what the page serves");
   const run = text.slice(open, close + '</style>"'.length);
   let out = '';
   const tok = /\s+|("(?:[^"\\]|\\.)*")|\+|\b(_?[A-Z][A-Z0-9_]*_CSS)\b|#[^\n]*/y;
@@ -167,7 +176,9 @@ function helperStyle(kernel, lines, name) {
     i = tok.lastIndex;
   }
   if (!out.startsWith('<style>') || !out.endsWith('</style>')) fail(name + "'s <style> run did not decode to one <style> block");
-  return out.slice('<style>'.length, -'</style>'.length);
+  const block = out.slice('<style>'.length, -'</style>'.length);
+  if (block.includes('</style>')) fail(name + "'s <style> run holds a second block; this reader reads one block per helper");
+  return block;
 }
 
 /** Every sheet a page of either host loads, sorted by name: `{ name, css, loadedBy }`, `name` the sheet's path in the tree

@@ -5169,11 +5169,15 @@ function dressFigureTitle(img: Element, anchor: Element, target: FigureTarget | 
  *  (file-view-figures-gate-adopt.test.ts, its Reparse record; the author's closing pass after the file review's round 5,
  *  records-1: the control had written its glyph through innerHTML, two live re-parses under the box per render of that
  *  scene's file, red at the merge of the fork's main). The bar's glyphs keep the write: the bar stands outside the box. A
- *  stand-in document that parses no markup yields no glyph, and the control stands bare there, as it did. */
+ *  stand-in document that parses no markup, or answers no firstElementChild, yields no glyph, and the control stands bare there,
+ *  as it did: the drawings are read through firstElementChild and nextElementSibling, never through children[], which the
+ *  outline suite's stand-in answers with an element that has no cloneNode, and the first shape of the web dress (the file review's
+ *  round 11, ui-1 with extra8-1) read children[0] and children[1], so the clone threw inside the paint and the Rendered view fell
+ *  to Raw over a heading holding a picture (file-view-outline.test.ts). */
 let figureGlyph: Element | null = null;
 let figureWebGlyph: Element | null = null;
 function figureControlGlyph(web = false): Node | null {
-  if (!figureGlyph) { const holder = el("span"); holder.innerHTML = ICON_EXPAND + ICON_OUTBOUND; figureGlyph = holder.children[0] ?? null; figureWebGlyph = holder.children[1] ?? null; }
+  if (!figureGlyph) { const holder = el("span"); holder.innerHTML = ICON_EXPAND + ICON_OUTBOUND; figureGlyph = holder.firstElementChild ?? null; figureWebGlyph = figureGlyph ? figureGlyph.nextElementSibling : null; }
   const drawing = web ? figureWebGlyph : figureGlyph;
   return drawing ? drawing.cloneNode(true) : null;
 }

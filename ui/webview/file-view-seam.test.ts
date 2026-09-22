@@ -1694,7 +1694,7 @@ test("no re-parse after the adoption: mdBlock's post-adoption region and every m
   assert.deepEqual(importedCallees, IMPORTED_CALLEES, "the imported functions a reached local calls, each to its module (a new one widens the module set first)");
   assert.deepEqual([...globals].sort(), [...GLOBAL_CALLS].sort(), "the globals a reached local calls (a new one is judged here first)");
   for (const l of reached) assert.deepEqual(methodCallsIn(localBody(l), "signature"), [], "no method call on an imported binding in the reached local " + l + " (the compiler's tree, under any access spelling): a pass in that form would hide from the walk");
-  const GLYPH_HOLDER = 'if (!figureGlyph) { const holder = el("span"); holder.innerHTML = ICON_EXPAND + ICON_OUTBOUND; figureGlyph = holder.children[0] ?? null; figureWebGlyph = holder.children[1] ?? null; }';
+  const GLYPH_HOLDER = 'if (!figureGlyph) { const holder = el("span"); holder.innerHTML = ICON_EXPAND + ICON_OUTBOUND; figureGlyph = holder.firstElementChild ?? null; figureWebGlyph = figureGlyph ? figureGlyph.nextElementSibling : null; }';
   assert.deepEqual(reached.flatMap((l) => localBody(l).split("\n").filter((x) => RE_PARSE.test(x)).map((x) => l + ": " + x.trim())), ["figureControlGlyph: " + GLYPH_HOLDER], "the one re-parse a reached local holds is the glyph's holder (figureControlGlyph), judged: parsed once, both drawings in one write, cloned into each control (the holder line's spelling, a sentence pin, inside the derived count)");
   const glyphBody = localBody("figureControlGlyph");
   assert.equal(glyphBody.split("\n").filter((x) => /\bholder\b/.test(x)).length, 1, "the holder lives on that one line: it is inserted nowhere, so it enters no document");

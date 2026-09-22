@@ -8659,8 +8659,10 @@ the contract said the same; the claim was false, and the follow-on is a privacy 
 (open point 11: all three gestures kept, the outbound case made visible before it happens). The verifications: `git diff --stat $(git merge-base origin/main HEAD) HEAD -- kernel/` is empty and
 `git diff --name-only $(git merge-base origin/main HEAD) HEAD` lists files under ui/webview, docs, plans, tools,
 upstream or tests alone (48 files, the ledger entry's where line; run 2026-09-22 at the head that carries the fixes ruled in
-the file review's round 10, where the merge-base is 53f9f4aa3, the fork's main the branch merged for the file review's round
-11, and the listing is the branch's whole delta over it; the run at the head that carries the author's closing pass after the
+the file review's round 11, where the merge-base is 4ae3b6659, the fork's main the branch merged after those fixes for the
+round that reads them, and the listing is the branch's whole delta over it; the run at the head that carries the fixes ruled in
+the file review's round 10, from the merge-base 53f9f4aa3, the fork's main the branch merged for the file review's round 11,
+listed the same 48; the run at the head that carries the author's closing pass after the
 file review's round 10, from the merge-base 65f1895f6, the fork's main the branch merged for the file review's round 10,
 listed 45, before ui/webview/host-sheets.mjs, ui/webview/host-sheets.d.mts
 and ui/webview/file-view-outline.test.ts joined the delta in those fixes (the file review's round 10, correctness-1 with

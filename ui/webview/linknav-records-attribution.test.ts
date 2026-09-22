@@ -200,7 +200,10 @@ export function conventionOf(paragraph: string): Reviews {
   assert.ok(family.length >= 1, "the id family: " + JSON.stringify(family));
   // the file review's own id families, read off the paragraph's parenthetical for the landing round's fixlist ("its fixlist
   // carrying its own ids (fresh-N, rules-N, ... and extra-N with a digit before the hyphen)"): the ids a record may cite only by
-  // a round's number, never as the landing round's alone, since the landing round and its second read share ids
+  // a round's number, never as the landing round's alone, since the landing round and its second read share ids; the label is
+  // judged over these WITH every family the roster files (judgeUnit: the file review's round 11, tests-2, whose companion had
+  // read this parenthetical alone, so a label followed by correctness-N, ui-N or kernel-N, families the roster files and the
+  // parenthetical does not name, passed)
   const own = /its fixlist carrying its own ids \(((?:[a-z]+-N, )*[a-z]+-N and [a-z]+-N)\s+with a digit before the hyphen\)/.exec(paragraph);
   assert.ok(own, "the convention lists the file review's own id families, as \"its fixlist carrying its own ids (fresh-N, rules-N and extra-N with a digit before the hyphen)\"; the paragraph carries no such list, so the landing-round label cannot be judged");
   const fileIds = Array.from(own![1].matchAll(/([a-z]+)-N/g), (m) => m[1]);
@@ -364,13 +367,16 @@ export function judgeUnit(text: string, reviews: Reviews, keyed = false, left?: 
   }
   // a finding cited as the landing round's alone (the label followed, with or without a phrase between, by one of the file
   // review's own ids) names no round's digits, so ROUND_RE never reads it, and the landing round and its second read share
-  // ids, so the label names two findings (the file review's round 11, tests-2). A companion of ROUND_RE, keyed on the family
-  // list conventionOf derives, judged under the same nearest-review rule: a property, the shape faulted wherever it stands.
-  // The window stops at a sentence or clause end and at a bracket.
-  const landingRe = new RegExp("\\blanding\\s+round\\b[^.;:()]{0,80}?\\b(?:" + reviews.fileIds.join("|") + ")\\d*-\\d+\\b", "gi");
+  // ids, so the label names two findings (the file review's round 11, tests-2). A companion of ROUND_RE, keyed on every family
+  // a fixlist of the file review filed, the roster's with the parenthetical's, both derived (the companion had read the
+  // parenthetical alone, so a label followed by correctness-N, ui-N or kernel-N, families the roster files and the parenthetical
+  // does not name, passed), judged under the same nearest-review rule: a property, the shape faulted wherever it stands. The
+  // window stops at a sentence or clause end and at a bracket.
+  const landingFamilies = [...new Set([...reviews.fileIds, ...families])];
+  const landingRe = new RegExp("\\blanding\\s+round\\b[^.;:()]{0,80}?\\b(?:" + landingFamilies.join("|") + ")\\d*-\\d+\\b", "gi");
   for (const m of text.matchAll(landingRe)) {
     if (!ours(nearest(m.index!, kept), m.index!)) continue;
-    faults.push({ at: m.index!, fault: quoteAt(m) + ": cites a finding as the landing round's alone, a label with no round's digits that the landing round and its second read share; write the file review's round by its number, with the id kept" });
+    faults.push({ at: m.index!, fault: quoteAt(m) + ": cites a finding as the landing round's alone, a label with no round's digits that the landing round and its second read share (read for every family a fixlist of the file review filed: " + landingFamilies.join(", ") + "); write the file review's round by its number, with the id kept" });
   }
   return { faults, judged, foreign, unanchored };
 }
@@ -572,7 +578,7 @@ test("the reader (source-units.ts): a string the program sees as one value is on
   assert.ok(SCRIPT_SUFFIXES.includes(".cts") && SCRIPT_SUFFIXES.includes(".tsx") && SCRIPT_SUFFIXES.includes(".jsx") && !PROSE_SUFFIXES.some((s) => SCRIPT_SUFFIXES.includes(s)), "the two suffix lists are disjoint and the script list carries the three the round found missing");
 });
 
-test("the convention: the branch's review has rounds 1 and 2, the file review's rounds are enumerated with the ids each round's fixlist filed, the author's passes are never rounds and own an id family; the rule reads a unit's nearest review and refuses a round the convention does not give it, a pass with a round, an id of the pass's family with no pass named, a round with no review named, and a finding cited under a round whose fixlist did not file it", () => {
+test("the convention: the branch's review has rounds 1 and 2, the file review's rounds are enumerated with the ids each round's fixlist filed, the author's passes are never rounds and own an id family; the rule reads a unit's nearest review and refuses a round the convention does not give it, a pass with a round, an id of the pass's family with no pass named, a round with no review named, a finding cited under a round whose fixlist did not file it, and a finding cited as the landing round's alone under every family a fixlist filed", () => {
   const r = convention();
   assert.deepEqual([...r.branch], [1, 2]);
   assert.ok(r.file.size >= 4 && r.file.has(1) && r.file.has(r.file.size), "the file review's rounds 1 to " + r.file.size);
@@ -654,6 +660,18 @@ test("the convention: the branch's review has rounds 1 and 2, the file review's 
   assert.deepEqual(roundFaults(P + "after " + R4 + ", tests-" + n(2) + " settled it", two), [], "an id after a pass named by the round it followed is the pass's, no citation of the round inside the name");
   assert.deepEqual(judgeUnit("the Slice 7 review's round " + n(3) + ", rules-" + n(1) + " found it", two, true), { faults: [], judged: 0, foreign: 1, unanchored: 0 }, "another review's citation is left alone under the key");
   assert.deepEqual(roundFaults(R3 + ", extra9-" + n(1) + " found it", two), [], "a family no round of the roster filed is not read as the file review's id");
+  // the landing-round label (the file review's round 11, tests-2): faulted before every family a fixlist filed, the roster's with
+  // the parenthetical's (the companion had read the parenthetical alone, so rules-N, a family the synthetic roster files and its
+  // parenthetical does not name, passed); the label's words are assembled so this module's own text carries no such shape
+  const LR = "the file review's landing round";
+  const landingOnly = (t: string, rv: Reviews) => roundFaults(t, rv).filter((f) => /landing round's alone/.test(f.fault));
+  assert.equal(landingOnly(LR + ", tests-" + n(2) + " found it", two).length, 1, "a landing-round label followed by a family of the parenthetical is faulted (a property pin)");
+  assert.equal(landingOnly(LR + "'s second read, tests-" + n(2) + " found it", two).length, 1, "and with a phrase between the label and the id (a property pin)");
+  assert.equal(landingOnly(LR + ", rules-" + n(1) + " found it", two).length, 1, "and by a family the roster files that the parenthetical does not name (a property pin over the derived families, red while the companion read the parenthetical alone)");
+  assert.deepEqual(landingOnly(R3 + ", rules-" + n(1) + " found it", two), [], "a round named by its digits is no landing-round label (the roster road judges it)");
+  const beyond = [...new Set([...r.filed.values()].flatMap((s) => [...s].map((id) => id.slice(0, id.lastIndexOf("-")))))].filter((f) => !r.fileIds.includes(f));
+  assert.ok(beyond.length >= 1, "the real roster files families the parenthetical does not name: " + JSON.stringify(beyond));
+  for (const f of beyond) assert.equal(landingOnly(LR + ", " + f + "-" + n(1) + " found it", r).length, 1, "a landing-round label followed by " + f + "-N, a family the real roster files and the parenthetical does not name, is faulted (a property pin over the derived families)");
   // and against the REAL derived roster: an id one enumerated round filed and another did not, both read off the plan, so the
   // case holds whatever the maintainer files next (a property pin over the derived roster)
   assert.equal(r.filed.size, r.file.size, "a roster entry for every enumerated round");

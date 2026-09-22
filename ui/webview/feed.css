@@ -1964,8 +1964,8 @@ a.fileview-gh-note { border-style: dashed; }
    the earlier one, and the far edge cannot be reached without the figure's width). A picture from the web (file-view.ts
    dressFigureControl, keyed on the figure's target: `fv-figopen-web` beside the class, the outbound glyph and words naming the host)
    wears the border dashed, the gate's dress for a figure from another host, so the control that leaves the page reads apart from
-   the one that opens a file before any gesture; no accent, since the difference is a kind and not a status (ui/CLAUDE.md). Byte-equal
-   in both sheets (fileview-parity.test.ts); laid out in file-figure-open-browser.test.ts. */
+   the one that opens a file before any gesture; no accent: the accent is highlight chrome, and a kind's mark wears it only where
+   ui/CLAUDE.md names an exception. Byte-equal in both sheets (fileview-parity.test.ts); laid out in file-figure-open-browser.test.ts. */
 .fileview-md .fv-figopen { position: relative; z-index: 1; vertical-align: top; margin: 0 6px 0 -28px; top: 6px; padding: 3px; background: var(--bg); opacity: 0; }
 .fileview-md .fv-figopen:hover { background: var(--bg) linear-gradient(var(--accent-wash), var(--accent-wash)); }
 .fileview-md .fv-figopen-left { float: left; }

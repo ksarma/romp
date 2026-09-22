@@ -398,7 +398,7 @@ const tempTree = (kernel) => {
   fs.writeFileSync(path.join(d, 'vscode-extension', 'src', 'extension.ts'), '');
   return d;
 };
-test('pyStringConstant: a parenthesised run closed by a `)` on the last literal\'s line decodes, the form five of kernel.py\'s six runs take (the file review\'s round 11, extra6-1 with extra7-1, the refuter\'s correction; a property pin over synthetic source, red before the widened arm)', () => {
+test('pyStringConstant: a parenthesised run closed by a `)` on the last literal\'s line decodes, the form _LOADER_CSS and the landing shell\'s notice constants take in kernel.py, _CHAT_MOBILE_CSS closing with the lone `)` (the file review\'s round 11, extra6-1 with extra7-1, the refuter\'s correction; a property pin over synthetic source, red before the widened arm)', () => {
   assert.equal(pyStringConstant(pySrc('X = 1', '_T_CSS = (', '    "a{b:c}"', '    # a comment between', '    "d{e:f}")', '', 'Y = 2'), '_T_CSS'), 'a{b:c}d{e:f}');
 });
 test('pyStringConstant control: a run closed by a lone `)` at column zero decodes as before (a property pin over synthetic source)', () => {
@@ -415,6 +415,18 @@ test('hostSheets: a helper a page body calls whose def writes a <style> run join
 });
 test('hostSheets: a helper <style> run the reader cannot decode fails by name rather than falling outside the read (the file review\'s round 11, extra7-1; a property pin over a synthetic tree, red before the follow)', () => {
   const d = tempTree(pySrc('def _spin(cid):', '    return "<style>" + cid + "</style>"', '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
+  try { assert.throws(() => hostSheets(d), /_spin/); } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});
+test('hostSheets: a helper <style> run formatted after its closing literal (a % or a .format() operator) fails by name, since the literal\'s text is not what the page serves (the file review\'s round 11, extra7-1: the run had decoded to its placeholders silently; a property pin over a synthetic tree, red before the refusal)', () => {
+  const d = tempTree(pySrc('def _spin(cid):', '    return "<style>%s</style>" % cid', '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
+  try { assert.throws(() => hostSheets(d), /_spin/); } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});
+test('hostSheets: a helper <style> run holding a second block fails by name rather than reading the markup between the blocks as a sheet (the file review\'s round 11, extra7-1; a property pin over a synthetic tree, red before the refusal)', () => {
+  const d = tempTree(pySrc('def _spin(cid):', '    return "<style>a{b:c}</style><div></div><style>d{e:f}</style>"', '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
+  try { assert.throws(() => hostSheets(d), /_spin/); } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});
+test('hostSheets: a helper <style> literal with a prefix letter (an f-string) fails by name, since its text is not what Python serves (the file review\'s round 11, extra7-1; a property pin over a synthetic tree, red before the refusal)', () => {
+  const d = tempTree(pySrc('def _spin(cid):', '    return f"<style>a{{b:c}}</style>"', '', 'def _a_page():', '    return "<html>%s</html>" % (_spin("x"),)'));
   try { assert.throws(() => hostSheets(d), /_spin/); } finally { fs.rmSync(d, { recursive: true, force: true }); }
 });
 test('hostSheets, the real tree: the pane spinner\'s block is a sheet of the population under the helper\'s name, loaded by exactly the pages whose bodies call _pane_spin (the chat, the feed, the sessions pane and the waiting pane, four), and the population is eleven sheets, the eleventh that block (the file review\'s round 11, extra6-1 with extra7-1, kernel-1 and tests-1; a property pin over the tree, red before the follow: ten sheets and no entry for the helper)', () => {
