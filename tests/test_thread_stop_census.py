@@ -5729,7 +5729,12 @@ class ParseCacheRetention(unittest.TestCase):
     tracked objects. The count is LIVE (it drops when a frozen object dies by reference count), so a road that must not
     freeze is pinned on growth too: a sentinel of tracked objects, allocated before the call and kept alive across it, is
     unfrozen, and a freeze on that road would move it, growing the count by at least the sentinel's size; the pin asserts
-    it did not. The one gc.disable() a case makes in its body is the planted state of a caller who had the collector
+    it did not. READING THE COUNT IS A WALK, not a counter read: gc.get_freeze_count() walks the permanent generation's
+    list, a tenth of a second to a second per call once the census's trees are frozen (by how scattered the heap is;
+    both figures measured on this pass over the derivation's frozen heap), so each case reads it at most TWICE, once
+    before and once after the calls it pins, never in a loop and never per object, and the three roads that must not
+    freeze (a raising build, a refused build, a hit) share one sentinel and one pair of readings; tests/parse_cache.py
+    never reads it. The one gc.disable() a case makes in its body is the planted state of a caller who had the collector
     off, restored by the cleanup registered before it, not a speed measure. Every key a case derives is this class's own,
     never the census's, so these run in any worker and need no tree."""
     KEY = ("tests/test_thread_stop_census.py", "a planted key of ParseCacheRetention")
@@ -5748,8 +5753,8 @@ class ParseCacheRetention(unittest.TestCase):
     def test_a_build_runs_with_the_collector_off_freezes_what_it_leaves_alive_and_hands_the_collector_back_on(self):
         """The road a caller with the collector on takes (pytest's state): inside the build gc.isenabled() is False; after the
         call it is True again; gc.get_freeze_count() grew by at least the tracked objects the value keeps alive (the freeze
-        moved what the build left alive, its value among it); a hit on the memo builds nothing and freezes nothing (a
-        sentinel alive and unfrozen across the hit is not moved: the class docstring)."""
+        moved what the build left alive, its value among it; two readings, one before and one after the call, the walk's
+        cost in the class docstring); a hit on the memo builds nothing (that it freezes nothing is the next case's)."""
         self.assertTrue(gc.isenabled(), "the case reads the road a caller with the collector on takes, the state pytest runs in")
         self._restore_collector()
         key = self.KEY + ("a build with the collector on",)
@@ -5759,40 +5764,40 @@ class ParseCacheRetention(unittest.TestCase):
         def build():
             seen.append(gc.isenabled())
             return [[] for _ in range(n)]                         # n tracked objects the value keeps alive, and the list holding them
-        before = gc.get_freeze_count()
+        before = gc.get_freeze_count()                            # reading one
         value = PC.derived(key, build)
+        after = gc.get_freeze_count()                             # reading two, the last of this case
         self.assertEqual(seen, [False], "the collector was off inside the build")
         self.assertTrue(gc.isenabled(), "and on again after the call: the state found")
-        self.assertGreaterEqual(gc.get_freeze_count() - before, n + 1, "the freeze moved what the build left alive, the value's objects among it")
-        frozen = gc.get_freeze_count()
-        keep = [[] for _ in range(n)]                             # alive and unfrozen across the hit: a freeze there would move it
+        self.assertGreaterEqual(after - before, n + 1, "the freeze moved what the build left alive, the value's objects among it")
         self.assertIs(PC.derived(key, build), value)
         self.assertEqual(seen, [False], "a hit builds nothing")
-        self.assertLess(gc.get_freeze_count() - frozen, n + 1, "a hit freezes nothing: the sentinel kept alive across it was not moved")
-        del keep
 
-    def test_a_build_that_raises_or_is_refused_leaves_the_collector_on_and_freezes_nothing(self):
-        """Both raising roads with the collector found on: a build that raises its own exception (re-raised as it was) and a
-        build that returned but wrote on a parser singleton (refused by the after-check, the restore of the attribute
-        registered BEFORE the build runs). After each gc.isenabled() is True again and gc.get_freeze_count() has not grown
-        by the sentinel kept alive and unfrozen across the call (the count is live and may drop, so the pin is on growth:
-        the class docstring): the finally handed the collector back and nothing was frozen."""
+    def test_a_build_that_raises_or_is_refused_and_a_hit_leave_the_collector_on_and_freeze_nothing(self):
+        """The three roads that must not freeze, with the collector found on: a build that raises its own exception
+        (re-raised as it was), a build that returned but wrote on a parser singleton (refused by the after-check, the
+        restore of the attribute registered BEFORE the build runs), and a hit on a key derived before the readings. After
+        each raising road gc.isenabled() is True again. One sentinel of tracked objects is allocated after the first
+        reading and kept alive across all three calls; a freeze on any of them would move it, so the second reading has
+        not grown by the sentinel's size (the count is live and may drop, so the pin is on growth; two readings in all,
+        the walk's cost in the class docstring): the finally handed the collector back and nothing was frozen."""
         self.assertTrue(gc.isenabled(), "the case reads the raising roads from the state pytest runs in")
         self._restore_collector()
         key = self.KEY + ("a build that raises or is refused",)
-        self.addCleanup(PC.clear, key)
+        memo = self.KEY + ("a key derived before the readings, hit after them",)
+        self.addCleanup(PC.clear, key, memo)
+        value = PC.derived(memo, object)                          # the hit's key: its build (and freeze) before the readings
         n, seen = 10000, []
-        keep = [[] for _ in range(n)]                             # alive and unfrozen across both builds: a freeze on either road would move it
+        before = gc.get_freeze_count()                            # reading one
+        keep = [[] for _ in range(n)]                             # alive and unfrozen across the three calls: a freeze on any road would move it
 
         def raising_build():
             seen.append(gc.isenabled())
             raise RuntimeError("the build's own failure")
-        before = gc.get_freeze_count()
         with self.assertRaises(RuntimeError):
             PC.derived(key, raising_build)
         self.assertEqual(seen, [False], "the collector was off inside the raising build")
         self.assertTrue(gc.isenabled(), "handed back on the raising road")
-        self.assertLess(gc.get_freeze_count() - before, n + 1, "a build that raised froze nothing: the sentinel was not moved")
         load = ast.parse("x").body[0].value.ctx
         self.assertIs(load, ast.parse("y").body[0].value.ctx, "the parser's Load is one object per process")
         self.addCleanup(ParseCacheKeyAndLock._unplant, load, "_retention")   # BEFORE the build that writes it
@@ -5806,16 +5811,18 @@ class ParseCacheRetention(unittest.TestCase):
         self.assertIn("after the build", str(cm.exception))
         self.assertEqual(seen, [False, False])
         self.assertTrue(gc.isenabled(), "handed back on the after-check's road")
-        self.assertLess(gc.get_freeze_count() - before, n + 1, "a build the after-check refused froze nothing: the sentinel was not moved")
-        del keep
         ParseCacheKeyAndLock._unplant(load, "_retention")
+        self.assertIs(PC.derived(memo, object), value, "the hit")
+        after = gc.get_freeze_count()                             # reading two, the last of this case
+        self.assertLess(after - before, n + 1, "a raising build, a refused build or a hit froze: the sentinel kept alive across them was moved")
+        del keep
         self.assertEqual(PC.builds_of(key), 2, "both were builds, counted, and neither memoised")
 
     def test_a_caller_with_the_collector_off_gets_it_back_off_and_its_value_and_the_freeze_still_runs(self):
         """A caller who disabled the collector before the call (planted here, the re-enable registered as a cleanup BEFORE the
         disable): the helper never enables it, inside the build or after, on the returning road or on the raising road; the
         value comes back as on any call; and the freeze, which does not depend on the collector's state, still runs after
-        the build that returned."""
+        the build that returned (two readings, before and after that build; the walk's cost in the class docstring)."""
         self.assertTrue(gc.isenabled(), "the case plants the caller's off state from the on state pytest runs in")
         self._restore_collector()                                 # gc.enable, registered BEFORE the disable below
         gc.disable()                                              # the planted caller state, not a speed measure
@@ -5827,12 +5834,13 @@ class ParseCacheRetention(unittest.TestCase):
         def build():
             seen.append(gc.isenabled())
             return [[] for _ in range(n)]
-        before = gc.get_freeze_count()
+        before = gc.get_freeze_count()                            # reading one
         value = PC.derived(key, build)
+        after = gc.get_freeze_count()                             # reading two, the last of this case
         self.assertEqual(seen, [False], "off inside the build, as the caller left it")
         self.assertFalse(gc.isenabled(), "handed back off: the helper enables no collector it found off")
         self.assertEqual(len(value), n, "and the value comes back as on any call")
-        self.assertGreaterEqual(gc.get_freeze_count() - before, n + 1, "the freeze ran: it does not depend on the collector's state")
+        self.assertGreaterEqual(after - before, n + 1, "the freeze ran: it does not depend on the collector's state")
 
         def raising_build():
             raise ValueError("the build's own failure")

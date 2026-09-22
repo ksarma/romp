@@ -68,7 +68,9 @@ build's walks its heaps to mark them, milliseconds per million objects). The fre
 alive at that moment leaves the collector's generations for the rest of the process, the cache's trees and everything
 else alive, each build freezing what is alive then, a hit on the memo freezing nothing, and gc.unfreeze is never called;
 the count gc.get_freeze_count() reads is live, growing with each build here and dropping when a frozen object dies by
-reference count. Acceptable in a test process because the process is a test run and
+reference count, and reading it WALKS the permanent generation's list, a tenth of a second to a second per call once
+the trees are frozen, so nothing in this module reads it and a pin reads it at most twice. Acceptable in a test process
+because the process is a test run and
 ends with it: an object alive at a freeze that later falls into an unreachable cycle is never reclaimed by the collector
 (a cycle made after the freeze is, as before), gc.get_objects() no longer lists what is frozen, and a full collection
 over a frozen heap costs microseconds on the interpreters with a GIL; the free-threaded build's collector, which has one
