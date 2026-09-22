@@ -47,6 +47,33 @@ inherited by the next reader of the same tree. The thread-stop census's no-forei
 every cached tree after its derivation (cached_trees() hands it every (realpath, tree) held) and asserts each carries
 only its _fields and _attributes, so a consumer that breaks the contract in the same process is shown there.
 
+THE SINGLETON PIN (the thread-stop census's twelfth pass, 2026-09-22; the mechanism read back by CI's diagnostic run
+35740276523). The parser hands out ONE instance of each expression context (ast.Load, ast.Store, ast.Del) and of each
+operator (the ast.operator, ast.boolop, ast.unaryop and ast.cmpop subclasses) per process, shared by every tree it builds
+(SINGLETON_TYPES; ast.Load() builds a fresh, unshared one, the parser's is the ctx of any parsed Name). An attribute
+written on one rides on every tree parsed afterwards in the process, cached here or not. In CI's serial cell
+tests/test_hosts_path_census.py, which marked every node of its own trees with `_fn` and `_parent` (guarded since), ran
+before the thread-stop census, whose copy.deepcopy of a two-node hand (a Name and its Load) followed the shared Load's
+`_parent` into that census's whole graph: a RecursionError inside copy.py on Python 3.10 and 3.11, where the C frames of
+deepcopy's reduce road count against the recursion limit, and on 3.12 a completed copy of the graph, 147 s in the
+census's setUpClass and a minute in one of its plants. The census's iterative copier made it immune; this pin makes the
+WRITER visible. check_singletons(where) probes two separate parses of one small text that uses every context and
+operator, reads the instance of each type from the PARSES and asserts it is the same object in both (parser_singletons;
+never a constructed ast.Load(), which is fresh and unshared and would read clean beside a polluted parser instance;
+two parses that disagree are their own red), and raises AssertionError when any carries an attribute, the message
+naming each node, attribute and value type
+(singleton_attributes: `Load carries _fn (Fn), _parent (Module)`), the site it ran at, and the remedy: another module
+that ran earlier in this process wrote it on a node the parser shares with every tree; grep tests/ for that write over
+AST walks and guard singleton nodes. It runs here on the FIRST parse of the process (source_and_tree: once, the flag set
+before the check so it runs once whatever the outcome, before the file is opened, so a refused parse counts nothing)
+and BEFORE and AFTER every build (derived: before, an earlier writer, the build neither called nor counted; after, the
+build itself, counted and not memoised), so every consumer of the cache inherits it; a consumer's own visible call is the
+thread-stop census's setUpClass, before its tree derivation. It NEVER removes what it finds: a repair would hide the
+writer. It is order-dependent by nature: red exactly when a writer ran earlier in the same process, which is CI's
+serial shape (one process, every test module in collection order), and green for a module run alone. Its cost is one
+small parse and a vars() per singleton per check. The read-only pin over the cached nodes (the contract above) walks
+the singletons too, each once per tree, and says which of its lines name a shared node.
+
 THE TWO IMPORT ROADS. Under pytest tests/ is a package (tests/__init__.py), so `from tests.parse_cache import
 source_and_tree` (or `from . import parse_cache` in a test module) is one module object every test module shares. A census
 run as a script (`python3 tests/test_thread_stop_census.py --table`) has no package: it puts its own directory on sys.path
@@ -73,6 +100,73 @@ _PARSES = {}          # realpath -> the number of ast.parse calls made for it he
 _BUILDS = {}          # key -> the number of build() calls made for it here
 _STATS = {"parses": 0, "derivations": 0, "parse_hits": 0, "derived_hits": 0}
 _LOCK = threading.RLock()   # across source_and_tree, derived and clear: one miss path at a time; re-entrant for a build's reads
+SINGLETON_TYPES = (ast.expr_context, ast.operator, ast.boolop, ast.unaryop, ast.cmpop)   # one instance each per process, on every tree
+_SINGLETON_PROBE = ("x = y\ndel z\n"                                                    # every context and operator, once
+                    "a + b - c * d / e // f % g ** h << i >> j | k ^ l & m @ n\n"
+                    "a and b or c\n"
+                    "-a; +a; ~a; not a\n"
+                    "a < b <= c > d >= e == f != g is h is not i in j not in k\n")
+_PARSE_CHECKED = False      # the singleton pin has run on the first-parse road of this process (source_and_tree)
+SINGLETON_REMEDY = ("another module that ran earlier in this process wrote it on a node the parser shares with every tree; grep "
+                    "tests/ for %s over AST walks and guard singleton nodes (skip `isinstance(node, (ast.expr_context, ast.operator, "
+                    "ast.boolop, ast.unaryop, ast.cmpop))`, or keep the datum in a side table keyed by id(node))")
+
+
+def _singletons_of(tree):
+    out = {}
+    for n in ast.walk(tree):
+        if isinstance(n, SINGLETON_TYPES):
+            out.setdefault(type(n), n)
+    return out
+
+
+def parser_singletons():
+    """The parser's shared singleton nodes, one per type (SINGLETON_TYPES), read from PARSES and never constructed
+    (ast.Load() builds a fresh, unshared instance, which a probe over it would find clean while the parser's carries a
+    writer's chain): two separate parses of one small text that uses every expression context and every operator, and
+    the instance of each type must be THE SAME OBJECT in both (`is`), else AssertionError saying the probe is not reading
+    a shared instance; only those instances are inspected by the pin."""
+    first, second = _singletons_of(ast.parse(_SINGLETON_PROBE)), _singletons_of(ast.parse(_SINGLETON_PROBE))
+    differ = sorted(t.__name__ for t in set(first) | set(second) if first.get(t) is not second.get(t))
+    if differ:
+        raise AssertionError("tests/parse_cache.py's singleton probe is not reading a shared instance: two parses of one text "
+                             "gave different %s objects, so this interpreter does not share them and the pin cannot inspect them"
+                             % ", ".join(differ))
+    return list(first.values())
+
+
+def singleton_attributes():
+    """One line per parser singleton carrying an attribute, `Load carries _fn (Fn), _parent (Module)` (the node's type, each
+    attribute's name and its value's type); these node types have no fields or attributes of their own, so a clean one has
+    an empty vars(). Empty when the singletons are clean."""
+    out = []
+    for n in parser_singletons():
+        held = vars(n)
+        if held:
+            out.append("%s carries %s" % (type(n).__name__, ", ".join("%s (%s)" % (k, type(v).__name__) for k, v in sorted(held.items()))))
+    return out
+
+
+def singleton_message(where, found):
+    """The singleton pin's message for the lines singleton_attributes() returned: where the check ran, the lines, the remedy
+    with the grep for each attribute found, and the order-dependence."""
+    names = sorted({part.split(" (")[0] for line in found for part in line.split(" carries ", 1)[1].split(", ")})
+    return ("tests/parse_cache.py's singleton pin, %s: the parser's shared singleton nodes carry attributes:\n  %s\n%s. The pin is "
+            "order-dependent by nature: it reds only when the writer ran earlier in the same process, which is CI's serial shape "
+            "(one process, every test module in collection order), and never for a module run alone; the helper removes nothing it "
+            "found, so the writer stays visible."
+            % (where, "\n  ".join(found), SINGLETON_REMEDY % (" and ".join("`.%s =`" % n for n in names),)))
+
+
+def check_singletons(where):
+    """THE SINGLETON PIN: raises AssertionError when any parser singleton carries an attribute, the message naming each (node
+    type, attribute name, value type), the site `where` and the remedy; returns None when they are clean. Never repairs:
+    deleting what it found would hide the writer. Cheap (one small parse and a vars() per singleton), so it runs on the
+    first parse of the process (source_and_tree), before and after every build (derived) and at a consumer's own visible
+    site (the thread-stop census's setUpClass)."""
+    found = singleton_attributes()
+    if found:
+        raise AssertionError(singleton_message(where, found))
 
 
 def source_and_tree(path, rel=None):
@@ -80,7 +174,9 @@ def source_and_tree(path, rel=None):
     ctime_ns hold (a same-size rewrite within the timestamp granularity is the stated blind spot: the module docstring);
     `rel` is the filename the tree carries (for a SyntaxError's message), else `path`. A file that does not parse raises as
     ast.parse does, and nothing is cached for it. Under the module's lock: two threads asking for one path get one parse
-    and the same tree."""
+    and the same tree. The first parse of the process runs the singleton pin first (check_singletons; the module
+    docstring): a red refuses the read, counts nothing, and is not raised again on this road."""
+    global _PARSE_CHECKED
     real = os.path.realpath(path)
     with _LOCK:
         st = os.stat(real)
@@ -89,6 +185,9 @@ def source_and_tree(path, rel=None):
         if hit is not None and hit[0] == key:
             _STATS["parse_hits"] += 1
             return hit[1], hit[2]
+        if not _PARSE_CHECKED:
+            _PARSE_CHECKED = True
+            check_singletons("at the first parse of this process (parse_cache.source_and_tree of %s)" % (rel or path))
         with open(real, encoding="utf-8") as f:
             text = f.read()
         _PARSES[real] = _PARSES.get(real, 0) + 1
@@ -107,14 +206,18 @@ def derived(key, build):
     """build()'s value the first time `key` is asked for in this process, the memo after. A build that raises caches
     nothing, so the next call builds again (and is counted again). Under the module's lock, held through the build: two
     threads asking for one key get one build and the same value, and a build that reads files or derives other keys
-    re-enters the lock from its own thread."""
+    re-enters the lock from its own thread. The singleton pin runs BEFORE the build (an earlier writer: the build is
+    neither called nor counted) and AFTER it (the build itself wrote on a singleton: counted, memoised as nothing, so the
+    next call builds again); the module docstring."""
     with _LOCK:
         if key in _DERIVED:
             _STATS["derived_hits"] += 1
             return _DERIVED[key]
+        check_singletons("before the build of %r (parse_cache.derived): an earlier writer" % (key,))
         _BUILDS[key] = _BUILDS.get(key, 0) + 1
         _STATS["derivations"] += 1
         value = build()
+        check_singletons("after the build of %r (parse_cache.derived): the build itself wrote them, or a thread beside it" % (key,))
         _DERIVED[key] = value
         return value
 
