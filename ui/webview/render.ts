@@ -12805,7 +12805,7 @@ function tailMutations(records: MutationRecord[]): { removedTail: string[]; adde
 // the cap is the default unless the page's localStorage says otherwise (a laptop capturing raises it; T262j)
 const scrollDiagCap = readScrollDiagCap((k) => { try { return localStorage.getItem(k); } catch { return null; } });
 const scrollDiag = new ScrollDiagBudget(scrollDiagCap);
-function scrollDiagRow(kind: "scrollwrite" | "scrollgesture" | "tailchange" | "spacer" | "tailmut" | "unitchange" | "regionask" | "landmiss", data: any): void {
+function scrollDiagRow(kind: "scrollwrite" | "scrollgesture" | "tailchange" | "spacer" | "spacer-dropped" | "tailmut" | "unitchange" | "regionask" | "landmiss", data: any): void {
   const v = scrollDiag.take(activeId || "", kind, Date.now());
   if (v === "drop") return;
   vscodeApi?.postMessage(v === "cap"
@@ -14151,6 +14151,23 @@ function queueSpacerRow(sid: string, topBefore: number, topAfter: number, botBef
     for (const [rsid, a, b, c, d] of rows) scrollDiagRow("spacer", rsid === live ? spacerRow(rsid, a, b, c, d, sh, ch) : spacerRow(rsid, a, b, c, d, null, null, "inactive"));
   });
 }
+/** The page's visibility changing ends the frame the queued spacer rows were waiting for (the maintainer's round 5 ruling, kernel-1): an
+ *  animation frame does not run while the document is hidden, so rows queued just before the page hid, and rows queued by the paints that
+ *  run while it is hidden, would be filed by the frame that comes once it shows again, with THAT frame's scroller heights (every paint in
+ *  between in them) and the kernel's arrival time: another frame's figures on a row about an earlier write. On either edge of
+ *  visibilitychange (the listener stands beside the prebuild's, outside the span the spacer harness lifts, and hands the edge here) the
+ *  rows whose frame has not run are DROPPED, their frame cancelled, and ONE row says what was dropped, the count and the kind, and on which
+ *  edge (`why`: hidden, for rows queued before the page hid; shown, for rows queued while it was hidden), never a row filed with another
+ *  frame's figures: the repository's authoritative-source rule applied to a beacon. A cap alone would file the rows it kept with the
+ *  wrong frame's figures, so the bound is the event. The drop row's keys are the chat allowlist's (sid, n, kind, why), no new key and no
+ *  `view`, posted through scrollDiagRow like every diag row, so the budget caps it too. */
+function dropSpacerRowsOnVisibility(): void {
+  const rows = spacerRowsPending;
+  if (rows.length === 0) return;
+  spacerRowsPending = [];
+  if (spacerRowsRaf != null) { cancelAnimationFrame(spacerRowsRaf); spacerRowsRaf = null; }
+  scrollDiagRow("spacer-dropped", { sid: activeId || "", n: rows.length, kind: "spacer", why: document.hidden ? "hidden" : "shown" });
+}
 
 /** A follow-mode reader at the bottom gets the measured figures on the NEXT PAINT (PR E; the author's pass 0, medium): the unit observer
  *  parked them (measureUnits) and this asks for appendActive's paint, whose sync takes them (applyMeasure in syncViewInner) and whose
@@ -14582,6 +14599,10 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) sche
 // window shown again after minutes hidden catches its today labels up at once rather than at the next boundary
 setTimeout(railMinuteTick, 60000 - (Date.now() % 60000) + 50);
 document.addEventListener("visibilitychange", () => { if (!document.hidden && activeId) refreshRelativeMarkers(views.get(activeId)?.el); });
+// the spacer rows' frame does not run while the page is hidden: on either edge the pending rows are dropped and one row says so
+// (dropSpacerRowsOnVisibility, in the spacer span above; the listener lives here because a module-level statement inside that span
+// would run at lift time in the harnesses that slice it, spacer-measure.test.ts)
+document.addEventListener("visibilitychange", dropSpacerRowsOnVisibility);
 
 function runPrebuild(deadline: IdleDeadline): void {
   prebuildHandle = null;

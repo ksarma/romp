@@ -254,6 +254,9 @@ type World = {
   figuresBefore: (v: any) => { avg: number | undefined; per: number | undefined; measured: any }; untakeMeasure: (v: any, before: any) => boolean;
   setActive: (id: string | null) => void;   // the lifted span's own activeId (a tab switch between a queued spacer row and its frame)
   gapUnitsOf: (items: DisplayItem[], per: number | undefined) => Map<number, number> | undefined; entryBoxHeight: (e: any) => number;
+  cancelled: number[];                       // the frame ids cancelAnimationFrame was handed (a cancelled callback leaves `rafs`)
+  visibilityDrop: (() => void) | null;       // the span's visibilitychange handler (dropSpacerRowsOnVisibility), null where the span has none
+  hide: () => void; show: () => void;        // document.hidden flipped as the browser flips it, then the handler, as the listener outside the span calls it
 };
 /** The scroller: 9,114 px tall in a 902 px viewport; `scrollTop` starts at the bottom unless a world says otherwise. Every layout read counts.
  *  `paints` counts the appendActive paints the frame-end take asks for (scheduleAppendActive). */
@@ -262,9 +265,13 @@ function lift(activeId: string | null, scrollTop = 9114 - 902): World {
   const reads: Reads = { offsetHeight: 0, scrollHeight: 0, clientHeight: 0 };
   const diag: Diag = []; const rafs: Array<() => void> = []; const views = new Map<string, any>(); const writes: Writes = [];
   const content = { scrollTop, ch: 902, get scrollHeight() { reads.scrollHeight++; return 9114; }, get clientHeight() { reads.clientHeight++; return this.ch; } };
-  const world: any = { reads, diag, rafs, views, activeId, writes, content, paints: 0 };
-  const hooks = { FakeEl, views, activeId, document: { getElementById: (id: string) => (id === "content" ? content : null) },
-                  raf: (cb: () => void) => { rafs.push(cb); return rafs.length; }, diag: (kind: string, data: any) => diag.push({ kind, data }),
+  const cancelled: number[] = []; const rafIds = new Map<number, () => void>(); let rafSeq = 0;   // frame ids, so a cancel takes its callback out of `rafs`
+  const doc = { getElementById: (id: string) => (id === "content" ? content : null), hidden: false };
+  const world: any = { reads, diag, rafs, views, activeId, writes, content, paints: 0, cancelled };
+  const hooks = { FakeEl, views, activeId, document: doc,
+                  raf: (cb: () => void) => { rafs.push(cb); rafIds.set(++rafSeq, cb); return rafSeq; },
+                  caf: (id: number) => { cancelled.push(id); const cb = rafIds.get(id); const i = cb ? rafs.indexOf(cb) : -1; if (i >= 0) rafs.splice(i, 1); },
+                  diag: (kind: string, data: any) => diag.push({ kind, data }),
                   spacerRow, gapHeight, rowsFor, meanRowHeight, perTurnEstimate,
                   atBottom: (c: any) => c.scrollHeight - c.scrollTop - c.clientHeight <= 2,
                   writeScroll: (c: any, top: number, writer: string, stick = false) => { writes.push({ top, writer, stick }); c.scrollTop = Math.min(top, c.scrollHeight - c.clientHeight); },
@@ -275,11 +282,15 @@ function lift(activeId: string | null, scrollTop = 9114 - 902): World {
     const el = (tag, cls) => new H.FakeEl(tag, cls || "");
     const views = H.views; let activeId = H.activeId; const document = H.document;
     const setActive = (id) => { activeId = id; };
-    const requestAnimationFrame = H.raf; const scrollDiagRow = H.diag; const spacerRow = H.spacerRow; const gapHeight = H.gapHeight;
+    const requestAnimationFrame = H.raf; const cancelAnimationFrame = H.caf; const scrollDiagRow = H.diag; const spacerRow = H.spacerRow; const gapHeight = H.gapHeight;
     const rowsFor = H.rowsFor, meanRowHeight = H.meanRowHeight, perTurnEstimate = H.perTurnEstimate;
     const atBottom = H.atBottom, writeScroll = H.writeScroll, scheduleAppendActive = H.scheduleAppendActive;
   `;
-  const api = new Function("HOOKS", prelude + js + "\nreturn { sizeSpacers, measureUnits, applyMeasure, redrawGapUnits, gapUnitsOf, entryBoxHeight, takeMeasureAtBottom, forgetAverage, setActive, figuresBefore, untakeMeasure };")(hooks);
+  // the visibility handler is read by name where the span has one, so a world over a span without it still lifts (the red-before of the
+  // hidden-page cells ran against such a span: the rows filed with the later frame's figures, the property, not a ReferenceError)
+  const api = new Function("HOOKS", prelude + js + "\nreturn { sizeSpacers, measureUnits, applyMeasure, redrawGapUnits, gapUnitsOf, entryBoxHeight, takeMeasureAtBottom, forgetAverage, setActive, figuresBefore, untakeMeasure, visibilityDrop: typeof dropSpacerRowsOnVisibility === \"function\" ? dropSpacerRowsOnVisibility : null };")(hooks);
+  world.hide = () => { doc.hidden = true; api.visibilityDrop?.(); };
+  world.show = () => { doc.hidden = false; api.visibilityDrop?.(); };
   return Object.assign(world, api) as World;
 }
 /** The unit observer's callback, lifted from ensureView (the `const view3 = v;` span) over a world's measure and take: a fake
@@ -481,6 +492,52 @@ test("a frame whose live view is hidden by the section-at-a-glance view files it
   w.rafs.shift()!();
   assert.deepEqual(w.reads, { offsetHeight: 0, scrollHeight: 1, clientHeight: 1 }, "…and its frame reads the scroller once");
   assert.deepEqual(w.diag.slice(1).map((d) => [d.data.sid, d.data.sh, d.data.ch, "view" in d.data]), [["A", 9114, 902, false]], "the shown view's row: the frame's figures and no marker");
+});
+
+test("rows queued and the page hidden before their frame (visibilitychange): the rows are dropped, their frame cancelled, and one row names the drop, the count, the kind and the edge; a frame that ran anyway files nothing; a row queued once the page shows again files as before (the maintainer's round 5 ruling, kernel-1)", () => {
+  // an animation frame does not run while the document is hidden, so at the head the maintainer's round 5 ruled on, the rows queued before
+  // the page hid waited, and the frame that came once it showed again filed them with THAT frame's scroller heights and the kernel's
+  // arrival time: another frame's figures on a row about an earlier write. The bound is the event, not a timer or a cap: the hidden edge
+  // drops what is pending, cancels the frame and files one row about it (spacer-dropped: sid, n, kind, why; the chat allowlist's keys and
+  // no `view`), through scrollDiagRow like every diag row. The harness flips document.hidden as the browser does and calls the span's
+  // handler as the listener outside the span does.
+  const w = lift("A");
+  const { v, items } = viewOver(w, 200, 301, 221, () => ["turn turn-assistant", 90]);
+  w.views.set("A", v);
+  buildOne(w, v, items);                       // one row queued
+  v.avgTurnH = 70; w.sizeSpacers(v);           // a second write in the same task: the same frame
+  assert.equal(w.rafs.length, 1, "one frame armed for the two rows");
+  const frame = w.rafs[0];
+  w.hide();                                    // visibilitychange to hidden before the frame ran
+  frame();                                     // the frame that came later (once the page showed again, in the browser)
+  assert.deepEqual(w.diag.map((d) => [d.kind, d.data]), [["spacer-dropped", { sid: "A", n: 2, kind: "spacer", why: "hidden" }]], "the two queued rows are not filed with the later frame's figures; one row names the drop: the count, the kind, the edge");
+  assert.deepEqual(w.reads, { offsetHeight: 0, scrollHeight: 0, clientHeight: 0 }, "the scroller was not read for them");
+  assert.deepEqual(w.cancelled, [1], "the armed frame was cancelled on the hidden edge");
+  assert.equal(w.rafs.length, 0, "…so no frame is pending");
+  // the page shows again with nothing pending: the shown edge files nothing; a write then queues and files as before
+  w.show();
+  assert.equal(w.diag.length, 1, "nothing pending at the shown edge: no row");
+  v.avgTurnH = 80; w.sizeSpacers(v);
+  assert.equal(w.rafs.length, 1, "a write while visible arms a frame"); w.rafs.shift()!();
+  assert.deepEqual(w.diag.slice(1).map((d) => [d.kind, d.data.sid, d.data.sh, d.data.ch, "view" in d.data]), [["spacer", "A", 9114, 902, false]], "a row queued and framed while visible files with its frame's figures, as before");
+});
+
+test("rows queued while the page is hidden (a paint runs there) wait for a frame that does not come: the shown edge drops them, cancels the frame and files one row naming the drop, never the first visible frame's heights (the maintainer's round 5 ruling, kernel-1)", () => {
+  // the other side of the edge: a paint while hidden (a streamed frame's append) writes the spacers and queues its row; the frame it asks
+  // for runs only once the page shows, with every paint since in the scroller's heights. The shown edge drops the pending rows the same way.
+  const w = lift("A");
+  const { v, items } = viewOver(w, 200, 301, 221, () => ["turn turn-assistant", 90]);
+  w.views.set("A", v);
+  w.hide();
+  assert.equal(w.diag.length, 0, "nothing pending at the hidden edge: no row");
+  buildOne(w, v, items);                       // a paint while hidden queues its row
+  assert.equal(w.rafs.length, 1, "the row is queued and a frame asked for, which the hidden page never runs");
+  const frame = w.rafs[0];
+  w.show();                                    // visibilitychange to visible: the frame it would now run has another frame's figures
+  frame();
+  assert.deepEqual(w.diag.map((d) => [d.kind, d.data]), [["spacer-dropped", { sid: "A", n: 1, kind: "spacer", why: "shown" }]], "the row queued while hidden is dropped at the shown edge and named, never filed with the first visible frame's heights");
+  assert.deepEqual(w.reads, { offsetHeight: 0, scrollHeight: 0, clientHeight: 0 }, "the scroller was not read");
+  assert.equal(w.rafs.length, 0, "its frame was cancelled");
 });
 
 test("spacerRow mints the `view` marker only when handed one, and only the one word (the owner 2026-09-21, who approved the field)", () => {
@@ -756,6 +813,12 @@ test("render.ts: the render task's spacer code holds no layout read; the unit ob
   assert.match(inFrame, /requestAnimationFrame\(\(\) => \{[\s\S]*?const liveView = activeId \? views\.get\(activeId\) : undefined;\s*\n\s*const live = liveView && liveView\.el\.style\.display !== "none" \? activeId : null;\s*\n\s*let sh: number \| null = null, ch: number \| null = null;\s*\n\s*if \(live && content && rows\.some\(\(\[rsid\]\) => rsid === live\)\) \{ sh = content\.scrollHeight; ch = content\.clientHeight; \}/, "the diag row's scroller read rides a frame, once, for the SHOWN live view's rows alone: the live id counts as live only while its element is not display none (the section-at-a-glance view hides every view and #content holds the list; the maintainer's round 5 ruling, extra10-1)");
   assert.match(inFrame, /rsid === live \? spacerRow\(rsid, a, b, c, d, sh, ch\) : spacerRow\(rsid, a, b, c, d, null, null, "inactive"\)\)/, "a switched-away view's row: no geometry and the `view` marker, on the owner's approval of 2026-09-21; keyed on the call's source spelling, so a marker reached another way is for the executed pins: the three row tests above (the switched-away row marked, the active view's rows unmarked, the mixed frame's two rows each with their own view's figures) and tests/test_client_diag_allowlist.py's presence cell");
   assert.equal((code(inFrame).match(/"inactive"/g) || []).length, 1, "the marker's word is in the frame's code once, as the switched-away arm's string literal (the comment names it too; the code alone is counted)");
+  // the deferral is bounded on the visibility EVENT (the maintainer's round 5 ruling, kernel-1): the handler inside the span drops the
+  // pending rows, cancels their frame and files one row through scrollDiagRow (the budget) with the allowlist's keys and no `view`; the
+  // listener stands outside the span, beside the prebuild's, because a module-level statement inside it would run at lift time in the
+  // harnesses that slice this region (the two hidden-page cells above execute the handler through the harness's hide and show)
+  assert.match(inFrame, /function dropSpacerRowsOnVisibility\(\): void \{\s*\n\s*const rows = spacerRowsPending;\s*\n\s*if \(rows\.length === 0\) return;\s*\n\s*spacerRowsPending = \[\];\s*\n\s*if \(spacerRowsRaf != null\) \{ cancelAnimationFrame\(spacerRowsRaf\); spacerRowsRaf = null; \}\s*\n\s*scrollDiagRow\("spacer-dropped", \{ sid: activeId \|\| "", n: rows\.length, kind: "spacer", why: document\.hidden \? "hidden" : "shown" \}\);/, "the visibility handler drops the pending rows, cancels their frame and files one budgeted row naming the count, the kind and the edge");
+  assert.match(RENDER, /\ndocument\.addEventListener\("visibilitychange", dropSpacerRowsOnVisibility\);/, "the visibilitychange listener hands both edges to the span's handler, from outside the span");
   assert.doesNotMatch(inFrame, /const sh = content \? content\.scrollHeight : 0/, "the batch read is gone");
   const uo = RENDER.slice(RENDER.indexOf("v.uo = new ResizeObserver((entries) => {"), RENDER.indexOf("v.mo = new MutationObserver("));
   assert.match(uo, /unitHeights\.set\(e\.target, entryBoxHeight\(e\)\); view3\.measureDue = true; measureUnits\(view3\); takeMeasureAtBottom\(view3\); return; \}/, "a reflow records border boxes, re-measures and asks for a bottom reader's paint");

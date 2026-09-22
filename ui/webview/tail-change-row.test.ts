@@ -50,7 +50,7 @@ test("with a unit predicate the tail is the last child that carries a unit: a ho
 
 test("render.ts files the row from both tail observers, beside the tail-shrink rule, through the capped diag path", () => {
   assert.match(RENDER, /import \{ ScrollDiagBudget, classifyScroll, scrollWriteRow, tailChangeRow, tailLabel, spacerRow, readScrollDiagCap, summarizeTailMutations, tailMutRow, unitChangeRow, unitChanges, boxChanges, boxLabel, BOX_FROM_TAIL \} from "\.\/scroll-write";/);   // + spacerRow, readScrollDiagCap (T262j)
-  assert.match(RENDER, /function scrollDiagRow\(kind: "scrollwrite" \| "scrollgesture" \| "tailchange" \| "spacer" \| "tailmut" \| "unitchange" \| "regionask" \| "landmiss", data: any\): void \{/);   // + spacer (T262j)
+  assert.match(RENDER, /function scrollDiagRow\(kind: "scrollwrite" \| "scrollgesture" \| "tailchange" \| "spacer" \| "spacer-dropped" \| "tailmut" \| "unitchange" \| "regionask" \| "landmiss", data: any\): void \{/);   // + spacer (T262j)
   // the view's tail by the one unit predicate (render.ts unitOfNode, the trim's and the measure's): a hover's band as the last child is not
   // the tail this row names (PR E, the maintainer's round 2 ruling)
   assert.match(RENDER, /if \(content && lastH >= 0 && activeId === id && view\.shown && h !== lastH\)\s*\n\s*scrollDiagRow\("tailchange", tailChangeRow\(id, h - lastH, tailLabel\(view\.el\.children, \(c\) => unitOfNode\(c\) >= 0\), view\.stick, content\.scrollHeight, content\.clientHeight\)\);/);

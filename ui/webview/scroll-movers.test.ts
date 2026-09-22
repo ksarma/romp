@@ -62,6 +62,6 @@ test("render.ts: a spacer re-size of the active view files a spacer row; the cap
   assert.match(RENDER, /if \(\(topAfter !== topBefore \|\| botAfter !== botBefore\) && activeId && views\.get\(activeId\) === v\) queueSpacerRow\(activeId, topBefore, topAfter, botBefore, botAfter\);/);
   assert.match(RENDER, /for \(const \[rsid, a, b, c, d\] of rows\) scrollDiagRow\("spacer", rsid === live \? spacerRow\(rsid, a, b, c, d, sh, ch\) : spacerRow\(rsid, a, b, c, d, null, null, "inactive"\)\);/);   // the active view's row carries the frame's read, a switched-away view's none and the `view` marker (PR E, the maintainer's round 1 addendum for the nulls; the marker one fixed word and no host name, admitted on the owner's approval: the owner 2026-09-21, who approved the field; spacer-measure.test.ts runs it)
   assert.match(RENDER, /const scrollDiagCap = readScrollDiagCap\(\(k\) => \{ try \{ return localStorage\.getItem\(k\); \} catch \{ return null; \} \}\);\s*\n\s*const scrollDiag = new ScrollDiagBudget\(scrollDiagCap\);/);
-  assert.match(RENDER, /function scrollDiagRow\(kind: "scrollwrite" \| "scrollgesture" \| "tailchange" \| "spacer" \| "tailmut" \| "unitchange" \| "regionask" \| "landmiss", data: any\): void \{/);
+  assert.match(RENDER, /function scrollDiagRow\(kind: "scrollwrite" \| "scrollgesture" \| "tailchange" \| "spacer" \| "spacer-dropped" \| "tailmut" \| "unitchange" \| "regionask" \| "landmiss", data: any\): void \{/);
   assert.match(RENDER, /data: \{ sid: activeId \|\| "", perMinute: scrollDiagCap \} \}/, "the capped row says which cap");
 });
