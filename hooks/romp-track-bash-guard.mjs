@@ -871,7 +871,7 @@
 // into it (xargs, an interpreter's system, exec or subprocess call, a wrapper outside the set, a shell outside SHELLS, a file
 // the command writes and then runs or sources, a function's call of itself, which the replay does not follow again); a
 // command name the resolver never reads, a command whose name is an expansion of a kind the resolver does not read
-// ("${a[@]}", a loop variable, a name read or filled by getopts, printf -v or a nameref, ${SHELL}, a substitution outside the
+// ("${a[@]}", a loop variable, a name read or filled by getopts, printf -v or a nameref, a name the shell itself sets (${SHELL}, $0, $BASH, $ZSH_ARGZERO, $_ after a command), a substitution outside the
 // output model such as $(which cp), a ${...} operator form the resolver does not read, a positional parameter of a script
 // handed to a fresh shell with arguments of its own; "$@", $1 and $* stand for the operands of a called function or of a
 // `set` this shell ran since round 6's sixth commit); a script held in a variable, a value the command gives a name through a
@@ -882,7 +882,7 @@
 // from anything but a literal echo or printf, alone or in a subshell or group of such commands, or a plain cat passing such a
 // text through (a call of a function the command defines, a tee or a pipe through another command, a cat of a file); zsh's
 // glob grouping, a `(..)` inside a word handed to zsh, read as a subshell by the lexer's zsh grammar while zsh globs it (a
-// lexer gap, stated since the first commit of this round); an opaque expansion from a cwd outside every project, a leading
+// lexer gap, stated since the first commit of this round); zsh's hook functions, a function the command defines under a name zsh calls on its own (chpwd, precmd, preexec, periodic, zshexit, and the names in chpwd_functions and its kin), whose body runs when the shell moves, prompts or exits, from the directory the shell is in then, while the guard judges the definition where it stands; an opaque expansion from a cwd outside every project, a leading
 // opaque expansion, or one after a literal head outside every project, from a cwd in no project (B2 as ruled, with its
 // boundary). A shape outside these classes that reaches a tracked file is a rule to state, not a residual. The same
 // paragraph,
@@ -903,6 +903,30 @@
 // `$argv` and `${@[N,M]}` read as the list. THE EMPTY ALTERNATIVE among a call's operands: the body is replayed under bash's reading (the empty word
 // dropped) and zsh's (kept). The head splice reconstructs its siblings from a resolved word's text, not its raw spelling, so a `"$@"` the walk already
 // expanded is not re-expanded (spliceRaw). Every remaining allow-and-write the verifiers measured is a RESIDUAL_TABLE row with its writers.
+// ROUND 6, EIGHTH COMMIT (2026-09-21; the round's three verifiers on the seventh commit's head): the regression closed through every wrapper, two
+// mechanism defects that let a shell write while the guard allowed, and the rest disclosed as rows. THE WRAPPED PRINTER (commandOf, printerOf): the
+// seventh commit's splice restored the bare `$e 'cp a b' | bash` refusal and left the same printer behind a wrapper allowed (`e=echo; command $e
+// 'cp a b' | bash`, and env, nice, exec, builtin, time, nohup, timeout, stdbuf, setsid, ionice, taskset, chrt, flock, numactl, sudo and zsh's
+// modifiers, piped and substituted), where the round-5 head refused each as a wrapper option it did not read; commandOf records the word its
+// walk stopped at (`at`), and printerOf splices an expansion standing there through THE SPLICED PRINTER, the segment re-lexed and the wrapper
+// peeled again on the spliced text, one road for the printer as for the writer, consumer and passthrough heads. THE VANISHING OPERAND
+// (mayVanish, vanishVariants, the copying writers' case, recordMutations): a copying writer with three or more operands, one an unquoted
+// expansion the shell may make no word of (an unset or empty name, `${c:-}`, an empty substitution, `$*`, `$@` and `"$@"` with no positional
+// parameter, an empty array, a pattern under nullglob or null_glob with the directory unknown), was read as a copy into a directory named by
+// the tracked file and allowed while every shell ran the two-operand copy onto it; the operand count is a set now, the destination judged under
+// the list as spelled and under every list with such operands dropped, a write under any of them refused naming the operand dropped, the
+// bound paths and class H recorded under each list, a rename or a hard link with such an operand marking every literal operand as a path the
+// command may have changed, and more than VANISH_CAP such operands a target the hook cannot read. THE PAREN RULE (parenCloses; the lexer's
+// scope markers, skipNested, closeSubshell): an unparenthesised case pattern's `)` inside `( .. )` or `$( .. )` closed the lexer's subshell or
+// substitution, so the producer after it was lost and `(case x in x) echo 'cp a b';; esac) | bash`, `bash -c "$(case ..)"`, the here-string,
+// the here-document and the process substitution were allowed while every shell ran the text, where the walk's closeSubshell already knew that
+// in a case body a `)` ends a pattern; the rule has one home now, asked by the walk over its frames and by the lexer over the scopes it tracks,
+// so such a `)` is a marker that pairs with no `(` and a substitution reads past it, and the case beside its printer is UNRESOLVABLE (THE
+// COMPOUND PRODUCER). The residual table gains the names the shell itself sets (`$0`, `${0}`, `"$0"`, `$BASH`, `$SHELL` and `$ZSH_ARGZERO` as
+// the command, with `-c`, a here-document and a pipe, and `$_` after a command), zsh's hook functions (`chpwd` and `chpwd_functions`, whose
+// body runs where the cd lands) and zsh's `(N)` glob qualifier, the property's third class naming the shell-set names and an eighth class the
+// hook functions; the piped-script matrix names, in a field of its own, the allowed rows whose writer evidence needs ksh, a shell no box
+// running the matrix has, so their allow rests on ksh's `[[` grammar (TEST_ARITH_SHELLS) and on no measured writer.
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -1268,6 +1292,7 @@ export function lex(command, shell = null, opts = {}) {
   const dashGrammar = shell == null || shell === 'sh' || !TEST_ARITH_SHELLS.has(shell);
   const zshGrammar = shell == null || shell === 'zsh';   // zsh's own forms (`=(cmd)`, the third fix-up): read for the Bash tool's command, whose shell is not known, and for a script handed to zsh
   const segments = [];
+  const lexScopes = [];   // THE PAREN RULE's scopes, innermost last: 'subshell' at a `(` marker, 'case' at a segment headed by `case` (its `esac` drops it and every scope inside), asked at each `)` through parenCloses
   let seg = newSegment();
   let buf = '';
   let raw = '';
@@ -1425,6 +1450,8 @@ export function lex(command, shell = null, opts = {}) {
     inTest = false;
     seg.op = op;
     seg.shell = shell;   // THE SPLICED PRINTER (round 6's seventh commit) re-lexes a spliced command name under this segment's grammar
+    // THE PAREN RULE's scopes (round 6's eighth commit): a segment headed by `case` opens a case body; its `esac` closes it and every scope opened inside
+    { const head = compoundHeadOf(seg.words); if (head === 'case') lexScopes.push('case'); else if (head != null && Object.hasOwn(CLOSERS, head) && CLOSERS[head].includes('case')) { const j = lexScopes.lastIndexOf('case'); if (j >= 0) lexScopes.length = j; } }
     if (op === '|' && seg.words.length && !(seg.words.length === 1 && plainWord(seg.words[0]) && (seg.words[0].text === '}' || Object.hasOwn(CLOSERS, seg.words[0].text)))) placeReading(segmentOutput(seg), seg.words.map((w) => w.raw).join(' '), 'segment');   // THE PIPED SCRIPT: the producer's printed text, for extract's pipedScripts (THE RESOLVER'S CONTRACT); every piped segment with words is asked since round 6's seventh commit (segmentOutput answers null for a head that is no printer, and a head that is an expansion THE HEAD CANDIDATES resolve is read through THE SPLICED PRINTER), where the gate had been a literal echo or printf among the words; a `}` or a keyword closer alone falls to its own branch below (THE OUTPUT MODEL reads the group or compound around it)
     else if (op === '|' && !seg.words.length && segments.length && segments[segments.length - 1].paren === ')') {
       // THE OUTPUT MODEL (round 6's second commit, 2026-09-20; round 5's tests-1: `(echo 'cp ..') | bash` was pinned allowed under a label
@@ -1434,7 +1461,7 @@ export function lex(command, shell = null, opts = {}) {
       const close = segments.length - 1;
       let depth = 0;
       let open = -1;
-      for (let j = close; j >= 0 && open < 0; j--) { if (segments[j].paren === ')') depth++; else if (segments[j].paren === '(' && --depth === 0) open = j; }
+      for (let j = close; j >= 0 && open < 0; j--) { if (segments[j].paren === ')' && !segments[j].pattern) depth++; else if (segments[j].paren === '(' && --depth === 0) open = j; }   // a `)` ending a case pattern pairs with no `(` (THE PAREN RULE)
       if (open >= 0) placeReading(closerOutput(segments.slice(open + 1, close), seg, 'subshell'), spellingOf(segments.slice(open, close + 1)), 'segment', seg.redirects.length || seg.heredocs.length || (seg.stdin && seg.stdin.length) ? seg : segments[close]);   // with a redirection after the `)` this segment is pushed and carries the pipe (producerAt reads the segment before the consumer), else the `)` marker does
     } else if (op === '|' && seg.words.length === 1 && plainWord(seg.words[0]) && seg.words[0].text === '}') {
       // and a `{ }` group before the pipe (its closer heads this segment, splitAtClosers's cut): the list from the segment holding the
@@ -1638,7 +1665,13 @@ export function lex(command, shell = null, opts = {}) {
       if (c === '$' && src[i + 1] === '{' && open !== '{') { i += 2; skipNested('{', '}'); continue; }
       if (c === '`') { const e = src.indexOf('`', i + 1); i = e < 0 ? src.length : e + 1; continue; }
       if (c === open) depth++;
-      else if (c === close) depth--;
+      else if (c === close) {
+        // THE PAREN RULE inside a `$(..)`, a `<(..)`, a `>(..)` or zsh's `=(..)` (round 6's eighth commit): a `)` that ends a case pattern closes nothing, read
+        // off the text so far by this lexer's own case tracking (lex's patternParen; one rule, one home), so `$(case x in x) echo 'cp a b';; esac)` is the
+        // whole case, whose list THE OUTPUT MODEL then reads (a `case` beside a printer: UNRESOLVABLE). Asked only where the text so far spells `case`.
+        if (open === '(' && nestDepth < NESTED_DEPTH_CAP && /\bcase\b/.test(src.slice(start, i)) && lex(src.slice(start, i), shell, { depth: nestDepth + 1 }).patternParen) { i++; continue; }
+        depth--;
+      }
       i++;
     }
     if (depth > 0) opaque = true;
@@ -2042,7 +2075,12 @@ export function lex(command, shell = null, opts = {}) {
       if (c === ';') { i += src[i + 1] === ';' ? 2 : 1; endSegment(';'); continue; }
       // ( or ): a segment break and a scope marker
       i++; endSegment(c);
-      segments.push({ ...newSegment(), paren: c, start: i - 1 });
+      const marker = { ...newSegment(), paren: c, start: i - 1 };
+      // THE PAREN RULE (round 6's eighth commit): a `(` opens a subshell scope; a `)` closes the innermost subshell, unless a case body is open inside it,
+      // where it ends a pattern (`pattern`: the marker pairs with no `(`, so the scans over the markers and the walk's frames read the case whole)
+      if (c === '(') lexScopes.push('subshell');
+      else { const j = parenCloses(lexScopes); if (j >= 0) lexScopes.length = j; else if (lexScopes.includes('case')) marker.pattern = true; }
+      segments.push(marker);
       continue;
     }
     inWord = true; buf += c; marks += 'u'; raw += c; i++;
@@ -2051,7 +2089,7 @@ export function lex(command, shell = null, opts = {}) {
   endSegment('');
   readHeredocBodies();
   if (pendingHeredocs.length) opaque = true;
-  return { segments: splitAtClosers(segments), opaque };
+  return { segments: splitAtClosers(segments), opaque, patternParen: lexScopes.includes('case') && parenCloses(lexScopes) < 0 };   // patternParen: a `)` after this text would end a case pattern (THE PAREN RULE; skipNested asks it of the text so far)
 }
 
 // THE CLOSING BRACE (round 5's third addendum, 2026-09-20; the round's verifier found twenty live false allows in one family
@@ -2505,7 +2543,7 @@ function commandOf(words) {
     k++;
     const spec = WRAPPER_OPT[name];
     let lead = spec.lead || 0;
-    const unknown = (option, value = null) => ({ unknown: { option, wrapper: name, value, rest: words.slice(k + 1) } });
+    const unknown = (option, value = null) => ({ unknown: { option, wrapper: name, value, rest: words.slice(k + 1), at: k } });   // `at`: the word the walk stopped at (THE WRAPPED PRINTER, round 6's eighth commit: printerOf splices an expansion standing there)
     const opaque = (option, script) => ({ opaque: { option, wrapper: name, script, rest: words.slice(k + 1) } });
     // the value of an option at letter `j` of word `k`: the glued rest of the word, else the next word
     const valueAt = (j) => (j < words[k].text.length - 1 ? sliceWord(words[k], j + 1) : (words[k + 1] || null));
@@ -3585,7 +3623,18 @@ function splicedPrinter(s, headIdx) {
 const printerOf = (s) => {
   if (s.paren) return null;
   const cmd = commandOf(s.words);
-  if (!cmd || cmd.unknown || cmd.opaque) return null;
+  if (!cmd || cmd.opaque) return null;
+  if (cmd.unknown) {
+    // THE WRAPPED PRINTER (round 6's eighth commit, 2026-09-21; the body auditor: `e=echo; command $e 'cp a b' | bash` was allowed at the seventh
+    // commit's head while every shell ran the printed text, and the same behind env, nice, exec, builtin and a printf, where the round-5 head had
+    // refused each as a wrapper option it did not read): the wrapper's walk (commandOf) stopped at a word that is an expansion, in the position
+    // the command name or an option takes; the word is spliced through THE SPLICED PRINTER as a bare head is, the segment re-lexed with each text
+    // in its place, and commandOf peels the wrapper again on the spliced text (one road: the wrapper stripping the writer, consumer and passthrough
+    // heads get through the walk's resolved words). A wrapper option the walk does not parse stays what it was (the walk's rule (b) refuses it).
+    const at = cmd.unknown.at;
+    const w = at != null ? s.words[at] : null;
+    return w && !w.literal && w.marks && w.marks.includes('x') ? splicedPrinter(s, at) : null;
+  }
   const headIdx = cmd.name ? s.words.length - cmd.args.length - 1 : -1;
   const headWord = headIdx >= 0 ? s.words[headIdx] : null;
   if (headWord && !headWord.literal && headWord.marks && headWord.marks.includes('x')) return splicedPrinter(s, headIdx);   // THE SPLICED PRINTER: a command name that is an expansion (commandOf names it by its spelling), read through the texts it stands for
@@ -3807,6 +3856,47 @@ export function dqSingleField(raw) {
 // The command inside a word that is one process substitution (`<(cmd)`, `>(cmd)`, zsh's `=(cmd)`), as the lexer spells such a word
 // (the spelling, every character an expansion's), or null.
 const procsubOf = (w) => (w && w.marks && /^x+$/.test(w.marks) && /^[<>=]\([^]*\)$/.test(w.text) ? w.text.slice(2, -1) : null);
+// THE VANISHING OPERAND (round 6's eighth commit, 2026-09-21; the residuals verifier: `cp $c ../base/report.md report.md`, `cp ../base/report.md $c
+// report.md`, `cp ${c:-} ..`, `cp $(true) ..`, `cp $* ..`, `cp "$@" ..`, `cp ${x[@]} ..`, `c=; cp $c ..`, `cp $1 ..`, `shopt -s nullglob; cp nomatch* ..`,
+// and the same through mv, install, `ln -sf` and `ln -f`, from docs/ and by absolute paths from a cwd in no project, each ALLOWED while bash, zsh and
+// dash ran the two-operand copy onto the tracked file: copyTargets read three operands and a destination that is no directory as a copy the command
+// stops on, while the shell made no word of the empty expansion and ran the copy with two). THE RULE, from the grammars (bash: Word Splitting, "if
+// the value is empty, no field results", and Special Parameters; dash(1): Word Expansions; zshexpn(1): Parameter Expansion, Filename Generation):
+// an unquoted expansion whose value is empty or unset, or IFS whitespace in bash and dash, yields NO field; so do `$@`, `$*` and `"$@"` with no
+// positional parameter, an array's `[@]` with no element, an unquoted command substitution printing nothing, and a pattern matching nothing under
+// bash's nullglob or zsh's null_glob (bash and dash keep the pattern's text otherwise, zsh stops); a literal character outside the expansions makes
+// at least one field, a double-quoted word the guard proves one field (dqSingleField) is one field however empty, a process substitution is a
+// path, and an arithmetic expansion, a `${#name}` length, `$?`, `$$`, `$#` and `$0` are never empty. A copying writer's operand that may vanish
+// makes the operand COUNT a set (the mirror of THE SPLIT OPERAND, whose one operand may become several): the destination is judged under the
+// list as spelled and under every list with such operands dropped (vanishVariants), a write under any of them refused with the operand dropped
+// named; more than VANISH_CAP such operands make the count a target the hook cannot read. A value the readability rule resolved is a literal
+// word (resolveWord keeps an empty or blank value as the expansion, so `c=; cp $c a b` is read here); a pattern the guard expanded is its
+// matches (copyTargets drops a source matching nothing already, the same reading under a known directory), and one it could not expand (the
+// directory unknown) may vanish. Pinned by execution in the three shells (the eighth commit's rows test), the never-empty forms among them.
+const NEVER_EMPTY_EXPANSION = /^(?:\$\(\(|\$\{#|\$[?$#0]$|\$\{[?$#0]\}$)/;   // never an empty value in any shell: an arithmetic expansion, a length, and the parameters every shell sets
+const VANISH_CAP = 6;
+function mayVanish(w, cwdKnown) {
+  if (w.literal) return false;
+  if (w.glob) return !cwdKnown;
+  if (!w.marks || !/^x+$/.test(w.marks)) return false;
+  if (dqSingleField(w.raw)) return false;
+  if (procsubOf(w) != null) return false;
+  return !NEVER_EMPTY_EXPANSION.test(w.raw);
+}
+// The operand lists the shell may hand a copying writer besides the one spelled: `args` with each non-empty subset of the operands that may vanish
+// dropped ({ dropped, kept }), or null past VANISH_CAP such operands (the caller then records the count as a target it cannot read).
+function vanishVariants(args, cwdKnown) {
+  const vanishing = args.map((a, i) => (!(a.text.startsWith('-') && a.text.length > 1) && mayVanish(a, cwdKnown) ? i : -1)).filter((i) => i >= 0);
+  if (vanishing.length > VANISH_CAP) return null;
+  const out = [];
+  for (let mask = 1; mask < (1 << vanishing.length); mask++) {
+    const dropped = vanishing.filter((_, b) => mask & (1 << b));
+    out.push({ dropped: dropped.map((i) => args[i]), kept: args.filter((_, i) => !dropped.includes(i)) });
+  }
+  return out;
+}
+// what the refusal says of the operands dropped under a vanishing reading
+const droppedHow = (name, dropped) => `${name} (once the shell drops ${dropped.map((w) => `\`${w.raw}\``).join(' and ')}, ${dropped.some((w) => w.glob) ? 'a pattern it makes no word of when nothing matches under nullglob or null_glob' : 'an operand it makes no word of when the value is empty or unset'})`;
 
 // The paths a command would write, each as { path, how }, resolved against `cwd` (the session's
 // working directory; a `cd` earlier in the command moves it, a `cd` inside `( ... )` only up to
@@ -4183,6 +4273,22 @@ function peelIndex(words, from = 0, braces = true, wrappers = true) {
 }
 // The segment's compound head: the text of the word at peelIndex when it is a plain word, else null.
 const compoundHeadOf = (words, from = 0) => { const w = words[peelIndex(words, from)]; return plainWord(w) ? w.text : null; };
+// THE PAREN RULE (round 6's eighth commit, 2026-09-21; the residuals verifier: `(case x in x) echo 'cp a b';; esac) | bash` and `bash -c "$(case x in
+// x) echo 'cp a b';; esac)"` were allowed while bash, zsh and dash ran the echoed text, the unparenthesised pattern's `)` having closed the lexer's
+// subshell or substitution so the producer after it was lost, where the walk's closeSubshell already knew that in a case body a `)` ends a
+// pattern): which open scope, innermost last, a `)` closes. The innermost subshell, unless a case body or a function definition is open inside it,
+// where the `)` ends a case pattern (or is the definition's own) and closes nothing: -1 then, else the index of the subshell closed. ONE HOME: the
+// walk's closeSubshell asks it over its frames, and the lexer asks it over the scopes it tracks (a `(` marker, a segment headed by `case`, its
+// `esac`) to mark a `)` that ends a pattern (`pattern` on the marker, skipped by the scans that pair parentheses) and, inside skipNested, to keep
+// reading a `$(..)` or `<(..)` past such a `)`; the shells' grammars agree (bash: Compound Commands, case; dash(1): Case; zshmisc(1): Complex
+// Commands), each reading the `)` after a pattern as the pattern's end and never as a subshell's.
+function parenCloses(kinds) {
+  for (let j = kinds.length - 1; j >= 0; j--) {
+    if (kinds[j] === 'case' || kinds[j] === 'function') return -1;
+    if (kinds[j] === 'subshell') return j;
+  }
+  return -1;
+}
 function readableHomeWrites(segments) {
   const out = new Set();
   let opened = false;
@@ -4980,14 +5086,27 @@ function extractIn(command, ctx) {
     // source's text, so a later command named by that path is read as the source (`cp /usr/bin/cp ../scratch/c2; ../scratch/c2 a b` and
     // `ln -s /usr/bin/cp ../scratch/c2 && ../scratch/c2 a b` copied in every shell, measured); a source the resolver cannot read binds null
     if (name === 'cp' || name === 'install' || name === 'ln' || name === 'mv' || name === 'link') {
-      const parsed = name === 'link' ? { operands: args.filter((a) => !(a.text.startsWith('-') && a.text.length > 1)) } : parseCopyOptions(args, name);
-      if (!parsed.unknown && !parsed.installDir) {
+      const parseOps = (a) => (name === 'link' ? { operands: a.filter((x) => !(x.text.startsWith('-') && x.text.length > 1)) } : parseCopyOptions(a, name));
+      const bindUnder = (parsed) => {
+        if (parsed.unknown || parsed.installDir) return;
         const ops = parsed.operands || [];
         const srcText = (w) => (w && w.literal ? w.text : null);
         if (parsed.targetDir) { if (parsed.targetDir.literal) for (const src of ops) { const d = literalPath(path.join(parsed.targetDir.text, path.basename(src.text)), cwd); if (d) bound.set(d, srcText(src)); } }
         else if (ops.length === 2) { const d = abs(ops[1]); if (d) bound.set(d, srcText(ops[0])); }
         else if (ops.length > 2) { const dst = ops[ops.length - 1]; if (dst.literal) for (const src of ops.slice(0, -1)) { const d = literalPath(path.join(dst.text, path.basename(src.text)), cwd); if (d) bound.set(d, srcText(src)); } }
-      }
+      };
+      bindUnder(parseOps(args));
+      // THE VANISHING OPERAND: the path is bound under every operand list the shell may hand the writer (`cp $c /usr/bin/cp ../scratch/c2` binds c2 to
+      // cp's text once `$c` is dropped); past the cap every literal operand is a path this command may have changed (markMutated, below)
+      for (const { kept } of vanishVariants(args, !!cwd) || []) bindUnder(parseOps(kept));
+    }
+    // THE VANISHING OPERAND (round 6's eighth commit): a rename, a hard link or a linking copy with an operand the shell may make no word of leaves which
+    // operand is the source and which the destination unplaced, as an unknown option does (rule (f)), so every literal candidate is a path this command
+    // may have changed
+    if ((name === 'mv' || name === 'ln' || name === 'cp') && args.some((a) => !(a.text.startsWith('-') && a.text.length > 1) && mayVanish(a, !!cwd))) {
+      const symbolic = name === 'ln' && args.some((a) => a.literal && (a.text === '--symbolic' || (/^-[^-]/.test(a.text) && a.text.includes('s'))));   // a symbolic ln is class H under each list (recordSymlink over the variants, in the writer's case)
+      const linky = name === 'mv' || (name === 'ln' && !symbolic) || (name === 'cp' && args.some((a) => a.literal && ((/^-[^-]/.test(a.text) && (a.text.includes('l') || a.text.includes('s'))) || a.text === '--link' || a.text === '--symbolic-link')));
+      if (linky) { markAllCandidates(name === 'cp' ? 'cp -l' : name); return; }
     }
     if (name === 'rm' || name === 'rmdir' || name === 'unlink' || name === 'shred') {
       for (const a of args) if (!(a.text.startsWith('-') && a.text.length > 1)) markMutated(abs(a), name);
@@ -5375,7 +5494,7 @@ function extractIn(command, ctx) {
       let depth = 0;
       for (let j = from; j < segments.length; j++) {
         if (segments[j].paren === '(') depth++;
-        else if (segments[j].paren === ')' && --depth === 0) { const next = segments[j + 1]; return next && !next.words.length ? closerTexts(next) : []; }
+        else if (segments[j].paren === ')' && !segments[j].pattern && --depth === 0) { const next = segments[j + 1]; return next && !next.words.length ? closerTexts(next) : []; }   // a `)` ending a case pattern pairs with no `(` (THE PAREN RULE)
       }
       return [];
     }
@@ -5548,19 +5667,15 @@ function extractIn(command, ctx) {
     }
   };
   const closeSubshell = (op) => {
-    for (let j = frames.length - 1; j >= 0; j--) {
-      if (frames[j].kind === 'case' || frames[j].kind === 'function') return;   // in a case body a ) ends a pattern
-      if (frames[j].kind === 'subshell') {
-        restore(frames[j]);
-        frames.length = j;
-        // the `)` that ends a compound head's word list or condition (round 5's addendum): foreach's body opens here; a `)` with
-        // nothing between it and the next word makes that word zsh's one-command body (`if (x) cmd`, `for y (..) cmd`, F6)
-        const t = frames[frames.length - 1];
-        if (isCompound(t) && !t.opened) { if (t.kind === 'foreach') t.opened = true; else t.afterParen = op === ''; }
-        afterChildClosed();
-        return;
-      }
-    }
+    const j = parenCloses(frames.map((f) => f.kind));   // THE PAREN RULE (one home with the lexer's markers, round 6's eighth commit): in a case body a `)` ends a pattern, and inside a definition it closes nothing
+    if (j < 0) return;
+    restore(frames[j]);
+    frames.length = j;
+    // the `)` that ends a compound head's word list or condition (round 5's addendum): foreach's body opens here; a `)` with
+    // nothing between it and the next word makes that word zsh's one-command body (`if (x) cmd`, `for y (..) cmd`, F6)
+    const t = frames[frames.length - 1];
+    if (isCompound(t) && !t.opened) { if (t.kind === 'foreach') t.opened = true; else t.afterParen = op === ''; }
+    afterChildClosed();
   };
   // The body of the innermost compound frame, read on a segment (round 5's addendum; the frame lens found each spelling walked
   // as plain sequence past a body the shell skipped, F4, F6, F7; the third addendum, 2026-09-20, made this the one reader of
@@ -6250,12 +6365,28 @@ function extractIn(command, ctx) {
         } else {
           for (const w of r.targets) add(w, name);
           if (name === 'ln') recordSymlink(args, unknownDir ? null : dir);   // class H: a symlink for a later word in the same command
+          // THE VANISHING OPERAND (round 6's eighth commit; the rule is stated at mayVanish): the copy is judged again under every operand list the
+          // shell may hand the writer with an operand that may vanish dropped, and a write under any of them refuses naming the operand dropped;
+          // past VANISH_CAP such operands the count is a target the hook cannot read
+          const variants = vanishVariants(args, !unknownDir);
+          if (variants == null) cannotRead(args.find((a) => mayVanish(a, !unknownDir)), name, { kind: 'vanishOperand', cap: VANISH_CAP });
+          else for (const { dropped, kept } of variants) {
+            let rr;
+            try { rr = copyTargets(kept, unknownDir ? null : dir, name); }
+            catch (e) {
+              if (isUnknownPath(e) && !(e.why && e.why.how)) e.why = { ...(e.why || {}), how: droppedHow(name, dropped) + viaOf(), raw: dropped[0].raw };
+              throw e;
+            }
+            if (!rr.unknown) for (const w of rr.targets) add(w, droppedHow(name, dropped));
+            if (name === 'ln' && !rr.unknown) recordSymlink(kept, unknownDir ? null : dir);   // class H under this list too: `ln -sf $c report.md ../scratch/l.md` links l.md to the tracked file once `$c` is dropped
+          }
         }
         break;
       }
       case 'link': {   // coreutils link(1): one hard link, made at the second operand (the third pass; the sibling of a hard `ln`)
         const ops = args.filter((a) => !(a.text.startsWith('-') && a.text.length > 1));
         if (ops.length >= 2) add(ops[1], 'link');
+        for (const { dropped, kept } of vanishVariants(args, !unknownDir) || []) { const k = kept.filter((a) => !(a.text.startsWith('-') && a.text.length > 1)); if (k.length >= 2) add(k[1], droppedHow('link', dropped)); }   // THE VANISHING OPERAND
         break;
       }
       case 'tee':
@@ -7324,6 +7455,13 @@ function judge(command, cwd) {
         + `several words when the command runs, so I cannot tell which file it would write, and ${where} tracks files whose changes are `
         + `recorded for me to accept or reject. Spell the source and the destination out as two words: outside that project the command `
         + `then runs as usual, and a tracked file takes its change through track-edit instead:\n${TRACK_EDIT}`;
+    }
+    if (u.why && u.why.kind === 'vanishOperand') {
+      // THE VANISHING OPERAND (round 6's eighth commit): more operands the shell may make no word of than the readings the guard follows
+      return `This command is blocked here: its ${u.how} has more than ${u.why.cap} operands the shell may make no word of (${u.raw} is one: an unquoted `
+        + `expansion whose value may be empty or unset, or a pattern that may match nothing), so how many operands it runs with, and which file it would `
+        + `write, is not known, and ${where} tracks files whose changes are recorded for me to accept or reject. Spell the operands out as literal `
+        + `words: outside that project the command then runs as usual, and a tracked file takes its change through track-edit instead:\n${TRACK_EDIT}`;
     }
     if (u.why && u.why.kind === 'unresolvable') {
       return `This command is blocked here: its ${u.how} names ${u.raw}, and ${u.why.text}, a directory on that path, is one I cannot `

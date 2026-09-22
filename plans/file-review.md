@@ -4679,6 +4679,40 @@ document stands on its own, each with the reasoning it was given.
     process substitution, a decode, an inner shell's output, fakeroot and rbash, a producer outside the output
     model (a `bash -c cat` in a pipe, zsh's `print`, a NULLCMD here-string, a cat of a process substitution), and
     python's os.rename, os.replace, an exec'd write and an aliased open.
+    ROUND 6, EIGHTH COMMIT (2026-09-21; the round's three verifiers on the seventh commit's head, an attack lens, a
+    residuals lens and the body auditor). The regression closed through every wrapper, two mechanism defects that let
+    a shell write while the guard allowed, and the rest disclosed as rows. THE WRAPPED PRINTER (commandOf, printerOf):
+    the seventh commit's splice restored the bare `$e 'cp a b' | bash` refusal and left the same printer behind a
+    wrapper allowed (`e=echo; command $e 'cp a b' | bash`, and env, nice, exec, builtin, time, nohup, timeout,
+    stdbuf, setsid, ionice, taskset, chrt, flock, numactl, sudo and zsh's modifiers, piped and substituted), where the
+    round-5 head had refused each as a wrapper option it did not read; commandOf records the word its walk stopped at
+    (`at`), and printerOf splices an expansion standing there through THE SPLICED PRINTER, the segment re-lexed and the
+    wrapper peeled again on the spliced text: one road for the printer, as the writer, consumer and passthrough heads
+    have. THE VANISHING OPERAND (mayVanish, vanishVariants, the copying writers' case, recordMutations): a copying
+    writer with three or more operands, one an unquoted expansion the shell may make no word of (an unset or empty
+    name, `${c:-}`, an empty substitution, `$*`, `$@` and `"$@"` with no positional parameter, an empty array, a
+    pattern under nullglob or null_glob with the directory unknown), was read as a copy into a directory named by the
+    tracked file and allowed while every shell ran the two-operand copy onto it; by the resolver's contract an operand
+    whose presence the guard cannot establish makes the operand COUNT a set, so the destination is judged under the
+    list as spelled and under every list with such operands dropped, a write under any of them refused naming the
+    operand dropped, the bound paths and class H recorded under each list, a rename or a hard link with such an
+    operand marking every literal operand as a path the command may have changed, and more than VANISH_CAP such
+    operands a target the hook cannot read; the never-empty forms (an arithmetic expansion, a `${#name}` length,
+    `$?`, `$$`, `$#`, `$0`, a double-quoted word the guard proves one field, a literal character beside the
+    expansion) stay one operand. THE PAREN RULE (parenCloses; the lexer's scope markers, skipNested, closeSubshell):
+    an unparenthesised case pattern's `)` inside `( .. )` or `$( .. )` closed the lexer's subshell or substitution, so
+    the producer after it was lost and `(case x in x) echo 'cp a b';; esac) | bash`, `bash -c "$(case ..)"`, the
+    here-string, the here-document and the process substitution were allowed while every shell ran the text, where
+    the walk's closeSubshell already knew that in a case body a `)` ends a pattern; the rule has one home now, asked
+    by the walk over its frames and by the lexer over the scopes it tracks (a `(` marker, a segment headed by `case`,
+    its `esac`), so such a `)` is a marker that pairs with no `(` and a substitution reads past it, and the case beside
+    its printer is UNRESOLVABLE (THE COMPOUND PRODUCER). The residual table gains the names the shell itself sets
+    (`$0`, `${0}`, `"$0"`, `$BASH`, `$SHELL` and `$ZSH_ARGZERO` as the command, with `-c`, a here-document and a pipe,
+    and `$_` after a command), zsh's hook functions (`chpwd` and `chpwd_functions`, whose body runs where the cd lands
+    while the definition is judged where it stands) and zsh's `(N)` glob qualifier; the property's third class names
+    the shell-set names and an eighth class the hook functions. The piped-script matrix names, in a field of its own,
+    the allowed rows whose writer evidence needs ksh, a shell no box running the matrix has, so their allow rests on
+    ksh's `[[` grammar (TEST_ARITH_SHELLS) and on no measured writer.
     THE RESIDUAL PROPERTY. The guard refuses a write only when it resolves the command to a writer it models (the
     writer cases of extract's switch, a write redirection, an interpreter's write call it scans) reached through a
     road it reads (the wrapper set, the shells' script roads, the readings of the resolver, the alias and hash roads),
@@ -4694,7 +4728,7 @@ document stands on its own, each with the reasoning it was given.
     interpreter's system, exec or subprocess call, a wrapper outside the set, a shell outside SHELLS, a file the
     command writes and then runs or sources, a function's call of itself, which the replay does not follow again); a
     command name the resolver never reads, a command whose name is an expansion of a kind the resolver does not read
-    ("${a[@]}", a loop variable, a name read or filled by getopts, printf -v or a nameref, ${SHELL}, a substitution
+    ("${a[@]}", a loop variable, a name read or filled by getopts, printf -v or a nameref, a name the shell itself sets (${SHELL}, $0, $BASH, $ZSH_ARGZERO, $_ after a command), a substitution
     outside the output model such as $(which cp), a ${...} operator form the resolver does not read, a positional
     parameter of a script handed to a fresh shell with arguments of its own; "$@", $1 and $* stand for the operands of
     a called function or of a `set` this shell ran since round 6's sixth commit); a script held in a variable, a value
@@ -4706,7 +4740,7 @@ document stands on its own, each with the reasoning it was given.
     echo or printf, alone or in a subshell or group of such commands, or a plain cat passing such a text through (a
     call of a function the command defines, a tee or a pipe through another command, a cat of a file); zsh's glob
     grouping, a `(..)` inside a word handed to zsh, read as a subshell by the lexer's zsh grammar while zsh globs it
-    (a lexer gap, stated since the first commit of this round); an opaque expansion from a cwd outside every project,
+    (a lexer gap, stated since the first commit of this round); zsh's hook functions, a function the command defines under a name zsh calls on its own (chpwd, precmd, preexec, periodic, zshexit, and the names in chpwd_functions and its kin), whose body runs when the shell moves, prompts or exits, from the directory the shell is in then, while the guard judges the definition where it stands; an opaque expansion from a cwd outside every project,
     a leading opaque expansion, or one after a literal head outside every project, from a cwd in no project (B2 as
     ruled, with its boundary). A shape outside these classes that reaches a tracked file is a rule to state, not a
     residual.

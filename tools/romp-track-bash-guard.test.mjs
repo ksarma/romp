@@ -6217,6 +6217,15 @@ test("round 5's fifth addendum, second fix-up, the piped-script matrix: the prod
       const modelled = p >= 0 && segs[p].op === '|' && !!segs[p].printed;
       assert.equal(!!row.residual, !modelled, `${row.id}: residual exactly when the producer before the pipe is outside THE OUTPUT MODEL (no printed text): ${JSON.stringify(row.cmd)}`);
     }
+    // round 6's eighth commit (the residuals verifier): the ALLOWED rows whose writer evidence needs ksh, a shell no box running this matrix has (absent
+    // here and on the CI runner), are named in a field of the fixture, derived here from the pins and the needs, since the invariant `no row a shell
+    // writes is allowed` is measured for them nowhere: their allow rests on ksh's `[[` grammar (TEST_ARITH_SHELLS) and, for the residual rows, on the
+    // producer being outside THE OUTPUT MODEL, not on a measured writer
+    const kshAllowed = Object.keys(PIPED_SCRIPT_MATRIX_PIN.pin).filter((id) => PIPED_SCRIPT_MATRIX_PIN.pin[id].startsWith('a:') && (PIPED_SCRIPT_MATRIX_PIN.needs[id] || []).includes('ksh')).sort();
+    assert.ok(kshAllowed.length > 0, 'the matrix has allowed rows whose evidence needs ksh (else the field below is stale)');
+    assert.deepEqual([...PIPED_SCRIPT_MATRIX_PIN.allowedWithoutWriterEvidence.ksh].sort(), kshAllowed, 'the fixture names exactly the allowed rows whose evidence needs ksh');
+    assert.ok(PIPED_SCRIPT_MATRIX_PIN.allowedWithoutWriterEvidence.why.includes('measured for them nowhere'), 'and says the invariant is measured for them nowhere');
+    console.log(`# the piped-script matrix: ${kshAllowed.length} allowed rows whose writer evidence needs ksh, a shell no box running the matrix has, named in the fixture's allowedWithoutWriterEvidence field`);
     const present = shellsFor(SHELL_ORDER, 'the piped-script matrix');
     runMatrixAgainstPin(w, rows, PIPED_SCRIPT_MATRIX_PIN, 'the piped-script matrix', () => null, present, (row) => row.consumer);
   } finally { process.env.HOME = savedHome; w.rm(); }
@@ -7357,10 +7366,11 @@ test("round 6, second commit, THE OUTPUT MODEL: a subshell or a `{ }` group of e
 const RESIDUAL_CLASSES = {
   'a writer outside the model': 'a program, or a write form of a program the hook models, that writes the file by its own nature and is not among the write forms the hook reads (rsync, patch, tar -x, ed, ex, vim, make, shuf -o, gawk -i inplace, awk\'s print redirect, uniq, scp, openssl -out, shred, curl -o, wget -O, find -exec, a git alias or a subcommand that writes the tree, bash\'s history -w, zsh\'s sysopen and mapfile modules, sed\'s e command and a w command in a sed script the resolver cannot read, busybox\'s applets)',
   'a reader outside the roads': 'a program that runs a command or a script the hook does not follow into it (xargs, an interpreter\'s system, exec or subprocess call, a wrapper outside the set, a shell outside SHELLS, a file the command writes and then runs or sources, a function\'s call of itself, which the replay does not follow again)',
-  'a command name the resolver never reads': 'a command whose name is an expansion of a kind the resolver does not read ("${a[@]}", a loop variable, a name read or filled by getopts, printf -v or a nameref, ${SHELL}, a substitution outside the output model such as $(which cp), a ${...} operator form the resolver does not read, a positional parameter of a script handed to a fresh shell with arguments of its own; "$@", $1 and $* stand for the operands of a called function or of a `set` this shell ran since round 6\'s sixth commit)',
+  'a command name the resolver never reads': 'a command whose name is an expansion of a kind the resolver does not read ("${a[@]}", a loop variable, a name read or filled by getopts, printf -v or a nameref, a name the shell itself sets (${SHELL}, $0, $BASH, $ZSH_ARGZERO, $_ after a command), a substitution outside the output model such as $(which cp), a ${...} operator form the resolver does not read, a positional parameter of a script handed to a fresh shell with arguments of its own; "$@", $1 and $* stand for the operands of a called function or of a `set` this shell ran since round 6\'s sixth commit)',
   'a script held in a variable': 'a value the command gives a name through a construct the resolver does not read (`read`, `printf -v`, a positional parameter of a fresh shell\'s script), run as a command or handed to a shell (`$c` after `read c`, `eval "$1"` inside a `bash -c` given arguments, `bash -c "$c"` after `printf -v c`; a value an assignment word gives, whitespace included, is read through THE HEAD CANDIDATES since round 6\'s fourth commit, and a `${name:=word}` gives word since the sixth)',
   'a producer outside the output model': 'a pipe into a shell from anything but a literal echo or printf, alone or in a subshell or group of such commands, or a plain cat passing such a text through (a call of a function the command defines, a tee or a pipe through another command, a cat of a file)',
   'zsh\'s glob grouping': 'a `(..)` inside a word handed to zsh, read as a subshell by the lexer\'s zsh grammar while zsh globs it (a lexer gap, stated since the first commit of this round)',
+  'zsh\'s hook functions': 'a function the command defines under a name zsh calls on its own (chpwd, precmd, preexec, periodic, zshexit, and the names in chpwd_functions and its kin), whose body runs when the shell moves, prompts or exits, from the directory the shell is in then, while the guard judges the definition where it stands',   // round 6's eighth commit
   'an opaque expansion from a cwd outside every project': 'a leading opaque expansion, or one after a literal head outside every project, from a cwd in no project (B2 as ruled, with its boundary)',
 };
 const RESIDUAL_TABLE = [
@@ -7561,6 +7571,25 @@ const RESIDUAL_TABLE = [
   ['RT-python-replace', 'a writer outside the model', 'python3', 'python3 -c \'import os; os.replace("../base/report.md", "report.md")\'', ['bash', 'zsh', 'dash']],
   ['RT-python-exec-open', 'a writer outside the model', 'python3', 'python3 -c \'exec("open(\\"report.md\\", \\"w\\").write(\\"x\\")")\'', ['bash', 'zsh', 'dash']],
   ['RT-python-aliased-open', 'a writer outside the model', 'python3', 'python3 -c \'x=open; x("report.md", "w").write("x")\'', ['bash', 'zsh', 'dash']],
+  // round 6's eighth commit (2026-09-21; the round's three verifiers on the seventh commit's head): the names the shell itself sets as the command
+  // (`$0` is the running shell under `-c` in every shell, `$BASH` bash's own path, `$SHELL` the login shell bash fills in when unset, `$ZSH_ARGZERO`
+  // zsh's, `$_` the last operand of the previous command in bash and zsh), each a command name the resolver never reads; zsh's hook functions, whose
+  // body runs where the cd lands while the definition is judged where it stands (the class the eighth commit states); and zsh's `(N)` qualifier, a
+  // `(..)` inside a word zsh globs (zsh's glob grouping). The wrapped printer, the vanishing operand and the case pattern's paren the verifiers found
+  // beside these are read now (the eighth commit's rows test), so they are not here.
+  ['RT-dollar0-c', 'a command name the resolver never reads', null, "$0 -c 'cp ../base/report.md report.md'", ['bash', 'zsh', 'dash']],
+  ['RT-braced0-c', 'a command name the resolver never reads', null, "${0} -c 'cp ../base/report.md report.md'", ['bash', 'zsh', 'dash']],
+  ['RT-dq0-c', 'a command name the resolver never reads', null, "\"$0\" -c 'cp ../base/report.md report.md'", ['bash', 'zsh', 'dash']],
+  ['RT-dollar0-heredoc', 'a command name the resolver never reads', null, "$0 <<'EOF'\ncp ../base/report.md report.md\nEOF", ['bash', 'zsh', 'dash']],
+  ['RT-dollar0-pipe', 'a command name the resolver never reads', null, "echo 'cp ../base/report.md report.md' | $0", ['bash', 'zsh', 'dash']],
+  ['RT-bash-var-c', 'a command name the resolver never reads', null, "$BASH -c 'cp ../base/report.md report.md'", ['bash']],
+  ['RT-bash-var-heredoc', 'a command name the resolver never reads', null, "$BASH <<'EOF'\ncp ../base/report.md report.md\nEOF", ['bash']],
+  ['RT-shell-var-heredoc', 'a command name the resolver never reads', null, "$SHELL <<'EOF'\ncp ../base/report.md report.md\nEOF", ['bash']],   // as RT-shell-var-c: bash alone fills SHELL in when the environment lacks it; zsh and dash feed the here-document to no command
+  ['RT-zsh-argzero-c', 'a command name the resolver never reads', null, "$ZSH_ARGZERO -c 'cp ../base/report.md report.md'", ['zsh']],
+  ['RT-underscore-head', 'a command name the resolver never reads', null, 'true /usr/bin/cp; $_ ../base/report.md report.md', ['bash', 'zsh']],   // dash has no `$_`
+  ['RT-zsh-chpwd', 'zsh\'s hook functions', null, 'chpwd() { cp base/report.md docs/report.md; }; cd ..', ['zsh']],   // the body runs at the project's root, where the cd lands; the guard judges it from docs/, where `docs/report.md` names no tracked file
+  ['RT-zsh-chpwd-functions', 'zsh\'s hook functions', null, 'f() { cp base/report.md docs/report.md; }; chpwd_functions=(f); cd ..', ['zsh']],
+  ['RT-zsh-null-glob-qualifier', 'zsh\'s glob grouping', null, 'cp nomatch*(N) ../base/report.md report.md', ['zsh']],   // zsh's `(N)` makes no word of a pattern matching nothing, so zsh runs the two-operand copy (bash and dash stop on the parenthesis); the lexer reads `(N)` as a subshell
 ];
 test("round 6, second commit, THE RESIDUAL TABLE: every shape the round could name that still reaches a tracked file, run through the hook (allowed) and the shells (the writers as measured), each under a class of THE RESIDUAL PROPERTY, and the property's paragraph on the hook header names every class", () => {
   const w = sixthPassWorld();
@@ -8655,5 +8684,202 @@ test("round 6, seventh commit, the rows: a command name resolved to a printer is
     assert.deepEqual(targets('set -- cp base/report.md docs/report.md; c=$*; $c'), [report], 'THE COMPOSED VALUE: a top-level set laundered through a name');
     assert.deepEqual(targets('f() { c=$1; shift; $c "$@"; }; f cp base/report.md docs/report.md'), [report], 'THE POSITIONAL VALUE meeting THE HEAD SPLICE: the shifted list is spliced once, not doubled');
     assert.ok(lex("bash -c \"$(printf 'x\\u')\"").segments[0].words[2].unresolvableReading, 'a bare \\u makes the substitution word UNRESOLVABLE');
+  } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+// ── round 6, eighth commit (2026-09-21): the round's three verifiers on the seventh commit's head ────────────────────────────────
+//
+// The regression left open through the wrappers (THE WRAPPED PRINTER), two mechanism defects that let a shell write while the guard
+// allowed (THE VANISHING OPERAND, THE PAREN RULE), each closed at the mechanism and pinned by execution: every row runs through the hook
+// as a process from the tracked docs/ cwd (or, for the absolute forms, from the cwd in no project) and unguarded in bash, zsh and dash
+// over a fresh world, the writers pinned, with the twins that stay allowed and the costs that refuse where no shell writes, stated.
+
+test("round 6, eighth commit, the rows: a resolved printer behind every wrapper the hook peels is spliced through the wrapper (piped and substituted), a copying writer's operand the shell may make no word of is judged under the shorter operand list too (the never-empty forms staying one operand), and a case pattern's `)` inside a subshell or a substitution ends the pattern, not the scope; each with the shells that write and the twins that stay allowed", () => {
+  const w = sixthPassWorld();
+  const savedHome = process.env.HOME;
+  process.env.HOME = w.HOME;
+  try {
+    const A = ['bash', 'zsh', 'dash'];
+    const BZ = ['bash', 'zsh'];
+    const BD = ['bash', 'dash'];
+    const B = ['bash'];
+    const Z = ['zsh'];
+    const N = [];
+    const CP = 'cp ../base/report.md report.md';
+    const COULD_NOT = 'could not establish that text';
+    const DROPPED = 'once the shell drops';
+    const CASE = `case x in x) echo '${CP}';; esac`;
+    // [id, cwd, command, the shells that write, the verdict from the row's cwd ('name', 'allow', or ['text', substring]), the verdict from the cwd in
+    // no project ('allow' unless stated: 'refuse' for a cost the row states, none for a row that already runs from that cwd)]
+    const rows = [
+      // THE WRAPPED PRINTER: the printer behind every wrapper the hook peels, piped, refuses by name (the round-5 verdict, through the mechanism now)
+      ['S8-wp-command', 'nad', `e=echo; command $e '${CP}' | bash`, A, 'name'],
+      ['S8-wp-env', 'nad', `e=echo; env $e '${CP}' | bash`, A, 'name'],
+      ['S8-wp-nice', 'nad', `e=echo; nice $e '${CP}' | bash`, A, 'name'],
+      ['S8-wp-nice-n', 'nad', `e=echo; nice -n 5 $e '${CP}' | bash`, A, 'name'],
+      ['S8-wp-exec', 'nad', `e=echo; exec $e '${CP}' | bash`, A, 'name'],
+      ['S8-wp-builtin', 'nad', `e=echo; builtin $e '${CP}' | bash`, BZ, 'name'],   // dash has no `builtin`
+      ['S8-wp-time', 'nad', `e=echo; time $e '${CP}' | bash`, A, 'name'],
+      ['S8-wp-time-p', 'nad', `e=echo; time -p $e '${CP}' | bash`, BD, 'name'],   // zsh rejects `time -p`
+      ['S8-wp-nohup', 'nad', `e=echo; nohup $e '${CP}' | bash`, A, 'name'],
+      ['S8-wp-timeout', 'nad', `e=echo; timeout 5 $e '${CP}' | bash`, A, 'name'],
+      ['S8-wp-stdbuf', 'nad', `e=echo; stdbuf -o0 $e '${CP}' | bash`, A, 'name'],
+      ['S8-wp-setsid', 'nad', `e=echo; setsid -w $e '${CP}' | bash`, A, 'name'],
+      ['S8-wp-ionice', 'nad', `e=echo; ionice $e '${CP}' | bash`, A, 'name'],
+      ['S8-wp-taskset', 'nad', `e=echo; taskset 1 $e '${CP}' | bash`, A, 'name'],
+      ['S8-wp-chrt', 'nad', `e=echo; chrt -o 0 $e '${CP}' | bash`, A, 'name'],
+      ['S8-wp-flock', 'nad', `e=echo; flock {OUT}/scratch/lock $e '${CP}' | bash`, A, 'name'],
+      ['S8-wp-numactl', 'nad', `e=echo; numactl $e '${CP}' | bash`, A, 'name'],
+      ['S8-wp-noglob', 'nad', `e=echo; noglob $e '${CP}' | bash`, Z, 'name'],
+      ['S8-wp-nocorrect', 'nad', `e=echo; nocorrect $e '${CP}' | bash`, Z, 'name'],
+      ['S8-wp-dash', 'nad', `e=echo; - $e '${CP}' | bash`, Z, 'name'],
+      ['S8-wp-command-p', 'nad', `e=echo; command -p $e '${CP}' | bash`, A, 'name'],
+      ['S8-wp-env-i', 'nad', `e=echo; env -i $e '${CP}' | bash`, A, 'name'],
+      ['S8-wp-env-kv', 'nad', `e=echo; env X=1 $e '${CP}' | bash`, A, 'name'],
+      ['S8-wp-command-command', 'nad', `e=echo; command command $e '${CP}' | bash`, BD, 'name'],
+      ['S8-wp-printf', 'nad', `p=printf; command $p '%s\\n' '${CP}' | bash`, A, 'name'],
+      ['S8-wp-env-bash', 'nad', `e=echo; command $e '${CP}' | env bash`, A, 'name'],
+      // and substituted: the `-c` script, the here-string, the process substitution, a group and a subshell before the pipe
+      ['S8-wp-c', 'nad', `e=echo; bash -c "$(command $e '${CP}')"`, A, 'name'],
+      ['S8-wp-herestring', 'nad', `e=echo; bash <<< "$(env $e '${CP}')"`, BZ, 'name'],
+      ['S8-wp-procsub', 'nad', `e=echo; bash <(nice $e '${CP}')`, BZ, 'name'],
+      ['S8-wp-group', 'nad', `e=echo; { command $e '${CP}'; } | bash`, A, 'name'],
+      ['S8-wp-subshell', 'nad', `e=echo; (command $e '${CP}') | bash`, A, 'name'],
+      // twins: a default word in the wrapper's position stays the wrapper-option refusal; a cat of a file behind a wrapper is the residual; an untracked text passes
+      ['S8-wp-twin-default', 'nad', `command \${e:-echo} '${CP}' | bash`, A, ['text', 'carries the option']],
+      ['S8-wp-twin-cat-file', 'nad', `e=cat; command $e ../scratch/other.md | bash`, N, 'allow'],
+      ['S8-wp-twin-untracked', 'nad', `e=echo; command $e 'cp ../base/report.md ../scratch/keep.md' | bash`, N, 'allow'],
+      // THE VANISHING OPERAND: a third operand the shell may make no word of, in every family the grammars name, refuses under the two-operand reading
+      ['S8-vo-unset-first', 'nad', `cp $c ${CP.slice(3)}`, A, 'name'],
+      ['S8-vo-unset-mid', 'nad', `cp ../base/report.md $c report.md`, A, 'name'],
+      ['S8-vo-braced', 'nad', `cp \${c} ${CP.slice(3)}`, A, 'name'],
+      ['S8-vo-default-empty', 'nad', `cp \${c:-} ${CP.slice(3)}`, A, 'name'],
+      ['S8-vo-plus', 'nad', `cp \${c+x} ${CP.slice(3)}`, A, 'name'],
+      ['S8-vo-strip', 'nad', `cp \${c%x} ${CP.slice(3)}`, A, 'name'],
+      ['S8-vo-sub-true', 'nad', `cp $(true) ${CP.slice(3)}`, A, 'name'],
+      ['S8-vo-backtick-true', 'nad', 'cp `true` ' + CP.slice(3), A, 'name'],
+      ['S8-vo-star', 'nad', `cp $* ${CP.slice(3)}`, A, 'name'],
+      ['S8-vo-at', 'nad', `cp $@ ${CP.slice(3)}`, A, 'name'],
+      ['S8-vo-dq-at', 'nad', `cp "$@" ${CP.slice(3)}`, A, 'name'],
+      ['S8-vo-array', 'nad', `cp \${x[@]} ${CP.slice(3)}`, BZ, 'name'],
+      ['S8-vo-dq-array', 'nad', `cp "\${x[@]}" ${CP.slice(3)}`, B, 'name'],
+      ['S8-vo-readable-empty', 'nad', `c=; cp $c ${CP.slice(3)}`, A, 'name'],
+      ['S8-vo-readable-blank', 'nad', `c=' '; cp $c ${CP.slice(3)}`, BD, 'name'],   // zsh splits no expansion: the blank is an operand there
+      ['S8-vo-two-names', 'nad', `cp $c$d ${CP.slice(3)}`, A, 'name'],
+      ['S8-vo-two-operands', 'nad', `cp $a $b ${CP.slice(3)}`, A, 'name'],
+      ['S8-vo-pos1', 'nad', `cp $1 ${CP.slice(3)}`, A, 'name'],
+      ['S8-vo-pos9', 'nad', `cp $9 ${CP.slice(3)}`, A, 'name'],
+      ['S8-vo-fn-noargs', 'nad', `f() { cp $1 ${CP.slice(3)}; }; f`, A, 'name'],
+      ['S8-vo-fn-empty', 'nad', `f() { cp $1 ${CP.slice(3)}; }; f ''`, A, 'name'],
+      ['S8-vo-nullglob-bash', 'nad', `shopt -s nullglob; cp nomatch* ${CP.slice(3)}`, B, ['text', DROPPED]],   // the option leaves the directory unknown, so the relative target refuses with the dropped pattern named
+      ['S8-vo-nullglob-zsh', 'nad', `setopt null_glob; cp nomatch* ${CP.slice(3)}`, Z, ['text', DROPPED]],
+      ['S8-vo-mv', 'nad', `mv $c ../scratch/other.md report.md`, A, 'name'],
+      ['S8-vo-mv-dq-at', 'nad', `mv "$@" ../scratch/other.md report.md`, A, 'name'],
+      ['S8-vo-install', 'nad', `install $c ${CP.slice(3)}`, A, 'name'],
+      ['S8-vo-install-D', 'nad', `install -D $c ${CP.slice(3)}`, A, 'name'],
+      ['S8-vo-ln-f', 'nad', `ln -f $c ${CP.slice(3)}`, A, 'name'],
+      ['S8-vo-ln-sf', 'nad', `ln -sf $c ${CP.slice(3)}`, A, ['text', DROPPED], 'refuse'],   // a symbolic link whose source is not literal marks its name (rule (c)), so the dropped reading's target refuses from any cwd: the stated cost
+      ['S8-vo-ln-sfn', 'nad', `ln -sfn $c ${CP.slice(3)}`, A, ['text', DROPPED], 'refuse'],
+      ['S8-vo-cp-T', 'nad', `cp -T $c ${CP.slice(3)}`, A, 'name'],
+      ['S8-vo-cp-r', 'nad', `cp -r $c ${CP.slice(3)}`, A, 'name'],
+      ['S8-vo-cp-dashdash', 'nad', `cp $c -- ${CP.slice(3)}`, A, 'name'],
+      ['S8-vo-notes', 'nad', `cp $c ../base/report.md ../notes/n1.md`, A, 'name'],
+      ['S8-vo-eval', 'nad', `eval 'cp $c ${CP.slice(3)}'`, A, 'name'],
+      ['S8-vo-subshell', 'nad', `(cp $c ${CP.slice(3)})`, A, 'name'],
+      ['S8-vo-group', 'nad', `{ cp $c ${CP.slice(3)}; }`, A, 'name'],
+      ['S8-vo-if', 'nad', `if true; then cp $c ${CP.slice(3)}; fi`, A, 'name'],
+      ['S8-vo-and', 'nad', `true && cp $c ${CP.slice(3)}`, A, 'name'],
+      ['S8-vo-env', 'nad', `env cp $c ${CP.slice(3)}`, A, 'name'],
+      ['S8-vo-bash-c', 'nad', `bash -c 'cp $c ${CP.slice(3)}'`, A, 'name'],
+      ['S8-vo-dst-readable-empty', 'nad', `c=; cp ${CP.slice(3)} $c`, A, 'name'],
+      ['S8-vo-dst-unset', 'nad', `cp ${CP.slice(3)} $c`, A, 'name'],
+      ['S8-vo-abs-first', 'out', `cp $c {NA}/base/report.md {NA}/docs/report.md`, A, 'name', null],
+      ['S8-vo-abs-mid', 'out', `cp {NA}/base/report.md $c {NA}/docs/report.md`, A, 'name', null],
+      // the never-empty forms stay one operand (no shell writes; allowed), and a dropped reading landing on an untracked file passes
+      ['S8-vo-twin-arith', 'nad', `cp $((0)) ${CP.slice(3)}`, N, 'allow'],
+      ['S8-vo-twin-length', 'nad', `cp \${#c} ${CP.slice(3)}`, N, 'allow'],
+      ['S8-vo-twin-status', 'nad', `cp $? ${CP.slice(3)}`, N, 'allow'],
+      ['S8-vo-twin-pid', 'nad', `cp $$ ${CP.slice(3)}`, N, 'allow'],
+      ['S8-vo-twin-dq-name', 'nad', `cp "$c" ${CP.slice(3)}`, N, 'allow'],
+      ['S8-vo-twin-dq-star', 'nad', `cp "$*" ${CP.slice(3)}`, N, 'allow'],
+      ['S8-vo-twin-dq-array-star', 'nad', `cp "\${x[*]}" ${CP.slice(3)}`, N, 'allow'],
+      ['S8-vo-twin-dq-literal-at', 'nad', `cp "x$@" ${CP.slice(3)}`, N, 'allow'],
+      ['S8-vo-twin-literal-prefix', 'nad', `cp x$c ${CP.slice(3)}`, N, 'allow'],
+      ['S8-vo-twin-literal-suffix', 'nad', `cp \${c:-}/ ${CP.slice(3)}`, N, 'allow'],
+      ['S8-vo-twin-untracked', 'nad', `cp $c ../base/report.md ../scratch/new.md`, N, 'allow'],
+      // THE PAREN RULE: an unparenthesised case pattern's `)` inside a subshell or a substitution ends the pattern; the case beside its printer is UNRESOLVABLE
+      ['S8-pr-subshell', 'nad', `(${CASE}) | bash`, A, ['text', COULD_NOT]],
+      ['S8-pr-subshell-sh', 'nad', `(${CASE}) | sh`, A, ['text', COULD_NOT]],
+      ['S8-pr-subshell-zsh', 'nad', `(${CASE}) | zsh`, A, ['text', COULD_NOT]],
+      ['S8-pr-group-consumer', 'nad', `(${CASE}) | { bash; }`, A, ['text', COULD_NOT]],
+      ['S8-pr-var-consumer', 'nad', `s=bash; (${CASE}) | $s`, A, ['text', COULD_NOT]],
+      ['S8-pr-glob-pattern', 'nad', `(case a.md in *.md) echo '${CP}';; esac) | bash`, A, ['text', COULD_NOT]],
+      ['S8-pr-group-in-subshell', 'nad', `({ ${CASE}; }) | bash`, A, ['text', COULD_NOT]],
+      ['S8-pr-lines', 'nad', `(case x in\nx) echo '${CP}';;\nesac) | bash`, A, ['text', COULD_NOT]],
+      ['S8-pr-in-on-its-line', 'nad', `(case x\nin\nx) echo '${CP}';;\nesac) | bash`, A, ['text', COULD_NOT]],
+      ['S8-pr-two-arms', 'nad', `(case x in y) :;; x) echo '${CP}';; esac) | bash`, A, ['text', COULD_NOT]],
+      ['S8-pr-nested', 'nad', `(case x in x) case y in y) echo '${CP}';; esac;; esac) | bash`, A, ['text', COULD_NOT]],
+      ['S8-pr-fallthrough', 'nad', `(case x in x) echo '${CP}';;& *) :;; esac) | bash`, B, ['text', COULD_NOT]],   // `;;&` is bash's
+      ['S8-pr-continue', 'nad', `(case x in x) echo '${CP}';& esac) | bash`, BZ, ['text', COULD_NOT]],   // `;&`: bash and zsh
+      ['S8-pr-no-terminator', 'nad', `(case x in x) echo '${CP}' ; esac) | bash`, A, ['text', COULD_NOT]],
+      ['S8-pr-c', 'nad', `bash -c "$(${CASE})"`, A, ['text', COULD_NOT]],
+      ['S8-pr-sh-c', 'nad', `sh -c "$(${CASE})"`, A, ['text', COULD_NOT]],
+      ['S8-pr-herestring', 'nad', `bash <<< "$(${CASE})"`, BZ, ['text', COULD_NOT]],
+      ['S8-pr-heredoc', 'nad', `bash <<EOF\n$(${CASE})\nEOF`, A, ['text', COULD_NOT]],
+      ['S8-pr-procsub', 'nad', `bash <(${CASE})`, BZ, ['text', COULD_NOT]],
+      ['S8-pr-function', 'nad', `f() { (${CASE}) | bash; }; f`, A, ['text', COULD_NOT]],
+      ['S8-pr-head', 'nad', `$(case x in x) echo cp;; esac) ${CP.slice(3)}`, A, ['text', COULD_NOT]],
+      ['S8-pr-target', 'nad', `echo poison > $(case x in x) echo report.md;; esac)`, A, ['text', 'not a literal path']],
+      // controls the seventh commit's head already refused, unchanged; and the twins: a case with no printer is outside the model (allowed), a case
+      // beside a printer whose text is harmless is UNRESOLVABLE all the same (THE COMPOUND PRODUCER's stated cost)
+      ['S8-pr-ctl-bare', 'nad', `${CASE} | bash`, A, ['text', COULD_NOT]],
+      ['S8-pr-ctl-paren-pattern', 'nad', `(case x in (x) echo '${CP}';; esac) | bash`, A, ['text', COULD_NOT]],
+      ['S8-pr-ctl-group', 'nad', `{ ${CASE}; } | bash`, A, ['text', COULD_NOT]],
+      ['S8-pr-ctl-backtick', 'nad', 'bash -c "`' + CASE + '`"', A, ['text', COULD_NOT]],
+      ['S8-pr-ctl-direct', 'nad', `(case x in x) ${CP};; esac)`, A, 'name'],
+      ['S8-pr-twin-silent', 'nad', `(case x in x) true;; esac) | bash`, N, 'allow'],
+      ['S8-pr-twin-harmless', 'nad', `(case x in x) echo 'cp ../base/report.md ../scratch/keep.md';; esac) | bash`, N, ['text', COULD_NOT]],
+    ];
+    const judge = (id, cwd, raw, writers, expect, outside = 'allow') => {
+      const cmd = w.fill(raw);
+      const at = w.cwds[cwd];
+      w.build();
+      const h = w.hook(cmd, at);
+      assert.ok(!h.reason.includes('an error of my own'), `${id}: no internal error: ${h.reason.split('\n')[0]}`);
+      if (expect === 'allow') assert.equal(h.status, 0, `${id}: allowed: ${cmd}: ${h.reason}`);
+      else {
+        assert.equal(h.status, 2, `${id}: refused: ${cmd}: ${h.reason}`);
+        assert.ok(!/\u2014/.test(h.reason) && !ROMP_NOUNS.test(h.reason.split(w.W).join('<w>')), `${id}: no em dash, no romp noun`);
+        if (expect === 'name') assert.match(h.reason, BY_NAME_RE, `${id}: by name: ${h.reason.split('\n')[0]}`);
+        else assert.ok(h.reason.includes(expect[1]), `${id}: refused, the reason including (${expect[1]}): ${h.reason.split('\n')[0]}`);
+      }
+      if (outside != null) {
+        w.build();
+        const o = w.hook(cmd, w.cwds.out);
+        if (outside === 'allow') assert.equal(o.status, 0, `${id}: from a cwd in no project the relative write reaches no tracked file: ${cmd}: ${o.reason}`);
+        else assert.equal(o.status, 2, `${id}: from a cwd in no project the stated cost refuses: ${cmd}`);
+      }
+      if (namedPresent(cmd, `${id}, whose command names it: ${cmd}`)) for (const shell of shellsFor(A, id)) {
+        const r = w.run(cmd, at, shell);
+        assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset: ${cmd}: ${r.stderr}`);
+      }
+    };
+    let n = 0;
+    for (const [id, cwd, raw, writers, expect, outside] of rows) { judge(id, cwd, raw, writers, expect, outside); n++; }
+    assert.equal(n, 119);
+    // the readings the fixes rest on, in-process over the scratch project (sudo's printer is read the same way; its shells are not run here)
+    assert.deepEqual(targets("e=echo; sudo $e 'cp base/report.md docs/report.md' | bash"), [report], 'THE WRAPPED PRINTER: a resolved echo behind sudo is the printer');
+    assert.deepEqual(targets("e=echo; command $e 'cp base/report.md docs/report.md' | bash"), [report], 'THE WRAPPED PRINTER: behind command');
+    assert.deepEqual(targets('cp $c base/report.md docs/report.md'), [report], 'THE VANISHING OPERAND: the two-operand reading names the tracked file');
+    assert.deepEqual(targets('cp $((0)) base/report.md docs/report.md'), [], 'an arithmetic expansion is never empty: one operand, no two-operand reading');
+    assert.deepEqual(targets('cp "$c" base/report.md docs/report.md'), [], 'a double-quoted name is one field however empty');
+    const sub = lex(`(${CASE}) | bash`).segments;
+    assert.ok(sub.some((s) => s.paren === ')' && s.pattern), "THE PAREN RULE: the pattern's `)` is a marker that pairs with no `(`");
+    assert.ok(sub.find((s) => s.paren === ')' && !s.pattern && s.op === '|').printed.unresolvableReading, 'the subshell before the pipe is read whole: a case beside its printer is UNRESOLVABLE');
+    const c = lex(`bash -c "$(${CASE})"`);
+    assert.equal(c.segments.length, 1, 'the substitution holding the case is one word of one segment');
+    assert.ok(c.segments[0].words[2].unresolvableReading, 'and the word is UNRESOLVABLE');
+    assert.equal(lex(`bash -c "$(${CASE})"`).patternParen, false, "after a closed case a `)` ends no pattern");
+    assert.equal(lex('case x in x').patternParen, true, "inside an open case a `)` ends a pattern");
   } finally { process.env.HOME = savedHome; w.rm(); }
 });
