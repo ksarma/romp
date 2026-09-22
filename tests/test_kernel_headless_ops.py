@@ -3094,6 +3094,32 @@ class SdkSingleFlight(unittest.TestCase):
         for n in dir(km.jd):
             self.assertNotIsInstance(getattr(km.jd, n), mock.Mock, "%s still wired to the Mock module" % n)
 
+    def test_the_backend_is_built_with_the_kernels_names_lock(self):
+        # fork PR #813, round 6, sixteenth commit: the kernel's names-registry lock (_NAMES_LOCK, the one its colour,
+        # emoji, palette and dead-tab name writers hold across their read-edit-publish of names/<sid>) is handed to the
+        # backend, which holds it across every write of the file it makes; executed against the constructor call with
+        # the module a fake, the way the single-flight test above builds it. The behaviour behind the wire is
+        # tests/test_session_emoji.py's TheTwoFamiliesShareTheNamesLock (a recolour's span and a rename, real threads).
+        built = {}
+
+        class FakeBackend:                         # an instance the kernel's post-construction wiring can set fields on
+            pass
+        fake_mod = mock.Mock()
+        fake_mod.SdkBackend = lambda *a, **k: built.update(k) or FakeBackend()
+        prev = km._sdk_backend
+        wires = {n: getattr(km.jd, n) for n in dir(km.jd) if n.endswith("_FN")}
+        try:
+            km._sdk_backend = None
+            with mock.patch.object(km, "load_source", return_value=fake_mod), \
+                 mock.patch.object(km, "_ensure_sdk_on_path", return_value=True):
+                self.assertIsNotNone(km._sdk())
+        finally:
+            km._sdk_backend = prev
+            for n, fn in wires.items():
+                setattr(km.jd, n, fn)
+        self.assertIn("names_lock", built, "the constructor call carries the lock: %r" % (sorted(built),))
+        self.assertIs(built["names_lock"], km._NAMES_LOCK, "and it is the kernel's own names-registry lock")
+
 
 class WiringPins(unittest.TestCase):
     """Source pins (the test_sdk_kernel style) for boot/shutdown wiring that can't run in-process:

@@ -109,8 +109,29 @@ test("kernel: forkSession is a session op; seeding precedes discoverability; the
   // one-shot: the init's lastSid flip spends the flags, so a reconnect resumes the fork's own transcript
   assert.match(BACKEND, /if self\._fork_of and fsid == self\.sid:/);
   assert.match(BACKEND, /self\.backend\._update_reg\(self\.sid, forkOf="", forkAt=""\)/);
-  // …and the names/ entry is written LAST (it is the discoverability trigger)
-  assert.match(BACKEND, /self\._write_reg_locked\(sid, reg\)[\s\S]{0,400}write_name\(self\.state_dir, sid, name, cwd, bg, fg\)[\s\S]{0,200}append_state\(self\.state_dir, sid, "waiting"\)/);
+  // ...and the names/ entry is written LAST (it is the discoverability trigger): the register under _reg_lock, then the
+  // publish inside `if not thread_of:` through _publish_name (the names lock), then the waiting state; until fork PR #813's
+  // round 6 the register was _write_reg_locked and the publish a bare write_name, which this pin matched by name
+  assert.match(BACKEND, /with self\._reg_lock:\s*\n\s*write_reg\(self\.state_dir, sid, reg\)[\s\S]{0,600}?if not thread_of:\s*\n\s*self\._publish_name\(sid, name, cwd, bg, fg\)\s*\n\s*append_state\(self\.state_dir, sid, "waiting"\)/,
+    "fork writes its register under _reg_lock, then publishes the names/ entry inside `if not thread_of:` through _publish_name, then " +
+    "appends the waiting state. This pin matches kernel/sdk_backend.py by source text and is the WEAKER guard; if a refactor moved the " +
+    "calls, re-key it here and confirm tests/test_sdk_rename_ping.py::NamesFilePublicationsUnderTheLocks::" +
+    "test_a_rename_arriving_at_a_forks_names_publish_waits_and_lands_after_it and " +
+    "::test_a_forks_record_names_entry_and_waiting_state_land_in_that_order_and_a_thread_fork_skips_the_entry still pass, which is what " +
+    "actually guards the property by execution: the names/ entry is the discoverability trigger, written after the register and before " +
+    "the waiting state; a thread fork withholds it");
+  // _publish_name is the backend's one names writer: write_name under the names lock (the kernel's _NAMES_LOCK when the kernel built it)
+  const pubAt = BACKEND.indexOf("    def _publish_name(");
+  assert.ok(pubAt >= 0, "_publish_name is defined in kernel/sdk_backend.py (a text pin, the weaker guard; the executed one is " +
+    "tests/test_sdk_rename_ping.py::NamesFilePublicationsUnderTheLocks::test_the_constructor_wires_the_names_lock_the_kernel_hands_it)");
+  const pub = BACKEND.slice(pubAt, BACKEND.indexOf("\n    def ", pubAt + 1));
+  assert.match(pub, /with self\._names_lock:\s*\n\s*write_name\(self\.state_dir, sid, name, cwd, bg, fg\)/,
+    "_publish_name calls write_name(self.state_dir, sid, name, cwd, bg, fg) under the names lock. This pin matches kernel/sdk_backend.py " +
+    "by source text and is the WEAKER guard; if a refactor moved the write, re-key it here and confirm " +
+    "tests/test_sdk_rename_ping.py::NamesFilePublicationsUnderTheLocks::" +
+    "test_a_names_publication_waits_for_a_writer_holding_the_names_lock_and_carries_what_it_landed and " +
+    "::test_the_constructor_wires_the_names_lock_the_kernel_hands_it still pass, which is what actually guards the property by " +
+    "execution: every names/ write the backend makes holds the names lock");
 });
 
 // ── branch lineage (the user 2026-08-13: branching must SHOW) ───────────────────────────────────

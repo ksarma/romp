@@ -610,10 +610,15 @@ class LiveTail(unittest.TestCase):
         # fast_opt after _options returned, and a set_fast landing in between made a flagless connect read as
         # flagged); the loop stamps nothing of its own
         import inspect
+        # the one read and the stamp live in _stamp_compose since round 1 of the billing verb's review (2026-09-19: the
+        # compose's stamps were extracted from _options so a test can drive them with no CLI); _options composes the flag
+        # file from the value that read returned, by name
         src = inspect.getsource(sb.SdkBackend._options)
-        self.assertIn("fast_opt = sess.fast_opt", src)
+        stamps = inspect.getsource(sb.SdkBackend._stamp_compose)
+        self.assertIn("fast_opt = sess.fast_opt", stamps)
+        self.assertIn("shape, fast_opt = self._stamp_compose(sess, side, login_id)", src)
         self.assertIn("fast=fast_opt,", src)
-        self.assertIn("sess._fast_unlocked = fast_opt", src)
+        self.assertIn("sess._fast_unlocked = fast_opt", stamps)
         self.assertNotIn("self._fast_unlocked = self.fast_opt", inspect.getsource(sb.SdkSession._amain))
 
     def test_set_fast_refuses_bad_values_and_unknown_sids(self):
@@ -6976,6 +6981,65 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         asyncio.run(s2._do_set_mode("plan", prev="default"))
         self.assertEqual(s2._launched_mode, "default"); self.assertEqual(s2.perm_mode, "default")
 
+    def test_a_refused_live_mode_switch_puts_back_only_the_layers_that_still_hold_the_refused_pick(self):
+        # THE REVIEWER'S RULING OF 2026-09-21 ON ROUND 6'S OBSERVATION (fork PR #813, round 6, ninth commit), applied to _do_set_mode's revert, a sibling of the billing
+        # guard's restore in the ruling's population of restore sites: a restore puts a layer back only if it still holds
+        # what the step put there. set_mode writes the record BEFORE the live fields (its locked RMW, then the hold), so a
+        # newer pick can have reached the record and not yet the session when the CLI's refusal of an older live switch
+        # lands. Driven with a real second thread parked right after its record write: the refusal reverts the live layers
+        # (they still hold the refused pick, compared and written in one hold) and leaves the record to the newer pick
+        # (_revert_mode_record's compare-and-swap under the reg lock); the newer pick's live write then lands, and the
+        # session and its record agree on it. At the round-6 head the revert wrote the record back unconditionally: the
+        # newer pick, whose caller was told it applied, was undone on the record alone while the session ran it, and a
+        # restart would have launched the old mode. Red there at the three-layer assertion: ('plan', 'plan', 'default') !=
+        # ('plan', 'plan', 'plan').
+        s = self._sess(mode="default")
+        s.perm_mode = "default"; s._launched_mode = "default"
+        live = []
+        s.set_mode_live = lambda mode, prev="default": live.append((mode, prev))   # the loop hop, stubbed: the test drives _do_set_mode
+        arrived, gate, answered, threads = threading.Event(), threading.Event(), [], []
+        real = sb.SdkBackend._update_reg
+
+        def parked(be, sid, live_fields=None, **kw):
+            out = real(be, sid, live_fields=live_fields, **kw)
+            if threading.current_thread().name == "q813-pick-plan" and kw.get("mode") == "plan":
+                arrived.set()          # the newer pick's record write landed...
+                gate.wait(10)          # ...and its live write waits until the refusal has run
+            return out
+
+        class _Refusing:
+            async def set_permission_mode(self_, m):
+                t = threading.Thread(target=lambda: answered.append(s.backend.set_mode(self.SID, "plan")), name="q813-pick-plan")
+                threads.append(t)
+                t.start()
+                self.assertTrue(arrived.wait(10), "the newer pick's record write landed inside the refusal's window")
+                raise Exception("Cannot set permission mode to %s" % m)   # the CLI's refusal: a bare Exception (_cli_refusal)
+        s.client = _Refusing()
+        with mock.patch.object(sb.SdkBackend, "_update_reg", parked):
+            self.assertTrue(s.backend.set_mode(self.SID, "acceptEdits"), "the pick under test: its live switch is the one refused")
+            self.assertEqual(live, [("acceptEdits", "default")])
+            asyncio.run(s._do_set_mode("acceptEdits", prev="default"))
+            gate.set()
+            threads[0].join(10)
+        self.assertFalse(threads[0].is_alive())
+        self.assertEqual(answered, [True], "the newer pick was told applied")
+        reg = sb.read_reg(s.backend.state_dir, self.SID)
+        self.assertEqual((s.mode, s.perm_mode, reg.get("mode")), ("plan", "plan", "plan"),
+                         "the newer pick stands on every layer: the refusal reverted the live layers it found holding the refused "
+                         "pick and left the record to the newer pick, whose live write then landed")
+        self.assertEqual(live[-1], ("plan", "default"), "the newer pick's own live switch was asked, the confirmed mode its revert target")
+        self.assertTrue(any("did NOT apply" in str(m) and "the mode reverted to default; its record already carries a newer pick, "
+                            "which stands" in str(m) for m in self.logs), self.logs)
+        # the other half of the compare, by the same road with no newer pick: every layer goes back (test_mode_truth.py's
+        # RefusedSwitchReverts drives it through set_mode_live's real hop); here the record's compare-and-swap alone
+        s2 = self._sess(mode="default")
+        s2.perm_mode = "default"; s2._launched_mode = "default"
+        self.assertTrue(s2.backend.set_mode(self.SID, "plan"))
+        self.assertIs(s2.backend._revert_mode_record(self.SID, "plan", "default"), True, "the record held the refused pick: put back")
+        self.assertEqual(sb.read_reg(s2.backend.state_dir, self.SID).get("mode"), "default")
+        self.assertIs(s2.backend._revert_mode_record(self.SID, "plan", "acceptEdits"), False, "it no longer holds it: left alone")
+        self.assertEqual(sb.read_reg(s2.backend.state_dir, self.SID).get("mode"), "default")
+
     def test_j2_a_repeat_bypass_pick_during_the_hold_is_a_no_op_never_the_refused_live_call(self):
         # prev read the declared (unconfirmed) bypass, so the re-click went LIVE and the CLI refused it
         # with the red "did NOT apply" problem while the hold stood (review round 2)
@@ -8476,7 +8540,9 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         # whether the hold lock is held at the write, and the three writers run: the landing, a confirmed live switch,
         # and a turn's init report. Every write is locked, and each writer is reached. An AST walk over the module
         # then enumerates every assignment statement to the four names outside __init__, setattr included, and requires
-        # a _hold_write block around it, so a writer the fake does not reach cannot land bare either
+        # a _hold_write block around it (or a _step_write block: the same lock taken through _hold_write, with a billing
+        # step's recorder, fork PR #813's ninth commit, round 6 of its review; tests/test_billing_route.py drives that it holds the lock), so a writer
+        # the fake does not reach cannot land bare either
         STAMPS = ("_launched_effort", "_launched_mode", "_launched_auth", "_launched_env")
         writes = []
 
@@ -8562,7 +8628,7 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
         def hold_write(node):
             return isinstance(node, ast.With) and any(
                 isinstance(i.context_expr, ast.Call) and isinstance(i.context_expr.func, ast.Attribute)
-                and i.context_expr.func.attr == "_hold_write" for i in node.items)
+                and i.context_expr.func.attr in ("_hold_write", "_step_write") for i in node.items)
 
         def bare_writes(tree):
             bare = []
@@ -8954,9 +9020,18 @@ class SettingsPickWaitsForLiveWork(unittest.TestCase):
                                  #                                 and since round 1 of the review the attach landing) asks as
                                  #                                 set_auth asks, its pick named, so a request that raced the
                                  #                                 landing is served by the landed process the same way
-                                 "_ask_parked_pick": ["auth"]})  # the picked closer's ask at the CLI's first init (round 5 of the
-        #                                                          reviewer's review, 2026-09-19): a pick the init finds unserved with
-        #                                                          no arm standing is asked as set_auth asks, its pick named
+                                 "_follow_default_unlanded": ["auth"],    # `romp billing <session> default` on a session with no
+                                 #                                          running side while a connect composed from the OLD pick
+                                 #                                          is in flight (round 1 of the billing verb's review,
+                                 #                                          2026-09-18): the same ask, so its arm rides after
+                                 #                                          that connect lands
+                                 "_ask_parked_pick": ["auth"]})  # the ask for a PICK left to its deciding event: the picked closer's
+        #                                                          at the CLI's first init (round 5 of the reviewer's review,
+        #                                                          2026-09-19) and the landing's for a pick parked on an object no
+        #                                                          landing had stamped (round 2 of the billing verb's review,
+        #                                                          2026-09-18, fork PR #813's landing roads; one method since the
+        #                                                          verb's rebase): a pick found unserved with no arm standing is
+        #                                                          asked as set_auth asks, its pick named
 
     def test_y6_a_pick_the_composed_connect_serves_rides_it_and_keeps_its_flag_until_the_landing(self):
         # the served check's in-progress branch moves the names it discards into the riding set, so a pick that landed
@@ -9932,6 +10007,15 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
         self.assertEqual([str(m) for m in self.logs if "reported its billing" in str(m)],
                          ["auth (web): this session's surviving CLI reported its billing, the key, which its pick names: the pick is served, "
                           "no reconnect"])   # said since round 5 (2026-09-19), the served half of the closer
+        # THE SERVED LEG IS DISCRIMINATED FROM THE ASK-THEN-WITHDRAW ROAD (round 1 of fork PR #813's review, 2026-09-19, the 17:14Z takes; its
+        # extra6-1, strengthening this test of fork PR #787's closer): with the closer's ask leg load-bearing, a closer that ASKED
+        # here instead of serving also ends with the pending cleared and no relaunch, since the ask's own request is withdrawn by
+        # the served check (_served_by_connect: the running process already runs the key), which clears the pending the same
+        # way; the two roads differ in the line said and in auth_live, which the served check's withdrawal wipes and the
+        # dashboard's Billing row reads. The pins the refuters found discriminating in this harness (its _Now loop double
+        # resets the slot flag on both roads, so the flag assertions proposed first do not)
+        self.assertEqual([str(m) for m in self.logs if "so it is asked now" in str(m)], [], "served, not asked and withdrawn")
+        self.assertEqual(s.auth_live, "key", "the report stands: the ask-then-withdraw road wipes it")
 
     def test_a_picked_landing_that_stamped_no_auth_serves_the_ask_off_the_attach_road_alone(self):
         # the mutation pass over round 4 (2026-09-19; m36): the picked branch's `_launched_auth is None and not attach`
@@ -9992,10 +10076,17 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
             with s._hold_write():
                 s._auth_pending = "login"; s._auth_pending_login = target["id"]
             self.be._update_reg(s.sid, authLogin=target["id"], authPending=True)
+            del self.logs[:]
             self.be._note_auth_source(s, "none")                     # the init: the bearer login answered, A's token
             self.assertEqual((s._launched_auth, s.auth_login_live), ("login", a["id"]))
             self.assertEqual(s._auth_pending, "" if served else "login", "served for A's own pending; B's stands for its reconnect")
             self.assertEqual(bool(self._reg(s).get("authPending")), not served)
+            if served:
+                # the served leg discriminated from the ask-then-withdraw road (round 1 of fork PR #813's review, 2026-09-19, the 17:14Z takes; its
+                # extra6-1, strengthening this test of fork PR #787's closer): the closer's line, no ask line, and the report kept
+                self.assertEqual(len([str(m) for m in self.logs if "the pick is served, no reconnect" in str(m)]), 1, self.logs)
+                self.assertEqual([str(m) for m in self.logs if "so it is asked now" in str(m)], [], "served, not asked and withdrawn")
+                self.assertEqual(s.auth_live, "login", "the report stands: the ask-then-withdraw road wipes it")
 
     def test_the_init_closer_waits_for_a_landing(self):
         # the mutation pass over round 4 (2026-09-19; m41): the closer's gate requires a landing to have happened
@@ -10026,6 +10117,18 @@ class DefaultBillingMovesItsFollowers(unittest.TestCase):
             self.be._note_auth_source(s, "apiKeyHelper")
         self.assertEqual(closer.call_count, 0, "no pending, no closer")
         self.assertEqual((s.auth_live, s._auth_pending), ("key", ""))
+        # THE FIRST-INIT ROAD STAMPS THE SIDE FOR A PICKED SESSION WITH NO PENDING TOO (round 1 of fork PR #813's review,
+        # 2026-09-19, the 17:14Z takes; its extra6-2): fork PR #787's picked-init gate stamped only when a pending stood, and the rebase of fork
+        # PR #813 widened it to every first init of a session whose landing could not tell (the verb's status reads the stamp).
+        # The widening is load-bearing: with the stamp narrowed back, a later pick on this session finds an object no landing
+        # stamped, parks with no request (set_auth's never-landed branch), and nothing applies it. So the stamp is pinned
+        # directly, and then the follow-on pick of the other side REQUESTS its reconnect against it
+        self.assertEqual(s._launched_auth, "key", "the report became the stamp, pending or not")
+        self.assertEqual(self.be.auth_apply_outlook(s.sid), "none", "nothing pending on a stamped object")
+        self.assertTrue(self.be.set_auth(s.sid, "login"))            # the follow-on pick of the other side
+        self.assertEqual(s._auth_pending_target(), ("login", ""))
+        self.assertTrue(s._reconnect, "the pick's own request armed: the stamp said what runs, so the request branch was taken")
+        self.assertEqual(self.be.auth_apply_outlook(s.sid), "now", "not 'report': the pending stands on a stamped object with its arm")
 
     def _same_side_re_pick_in_an_attach_window(self, n=0, pick="key"):
         """A picked session whose boot re-attach composes its own pick, re-picked inside the attach window (set_auth's

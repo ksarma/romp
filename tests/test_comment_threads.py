@@ -266,7 +266,10 @@ class ThreadForkInvisibility(unittest.TestCase):
         # (one read of the ask under the hold lock since review round 6, handed on by name; the reconnect loop
         # snapshotted the flag from the session after this returned before, so a set_fast landing in between
         # made a flagless connect read as flagged)
-        self.assertIn("fast_opt = sess.fast_opt", inspect.getsource(sb.SdkBackend._options))
+        # (the read moved into _stamp_compose, the compose's stamps, in round 1 of the billing verb's review, 2026-09-19;
+        # _options takes the value back by name and hands it to the flag file)
+        self.assertIn("fast_opt = sess.fast_opt", inspect.getsource(sb.SdkBackend._stamp_compose))
+        self.assertIn("shape, fast_opt = self._stamp_compose(sess, side, login_id)", inspect.getsource(sb.SdkBackend._options))
         self.assertIn("fast=fast_opt,", inspect.getsource(sb.SdkBackend._options))
         self.assertIn('keys["fastMode"] = True', inspect.getsource(sb.flag_settings_path))
         refusal = inspect.getsource(sb.SdkSession._adopt_fast_state)

@@ -221,8 +221,12 @@ def _read_settings(path):
     with the coarse tick); past that tick a rename into place is a new inode and a chmod is a new ctime, so
     both are seen (the chmod matters: a file made unreadable takes the loud path below at the next call
     instead of serving its old parse). Nothing loud is memoized: an unreadable or unparsable file raises on
-    every call. An absent file drops its entry. Callers read the returned dict and never mutate it: it is the
-    memoized object."""
+    every call. A file whose bytes are not UTF-8 (a torn rewrite of one holding a non-ASCII byte, an
+    encoding the CLI would reject) raises the same CredentialError as an unreadable one, so every cannot-tell
+    caller (key_state, _helper_source_read, the problem-row surface) handles it rather than letting the
+    decode escape to whatever read it (fork PR #813, round 3 of the review, 2026-09-20; its extra7-1, ruled
+    high: an uncaught decode turned every billing route into a 500 whose body carried this box's paths). An
+    absent file drops its entry. Callers read the returned dict and never mutate it: it is the memoized object."""
     try:
         st = os.stat(path)
     except FileNotFoundError:
@@ -240,6 +244,10 @@ def _read_settings(path):
     except FileNotFoundError:
         _SETTINGS_CACHE.pop(path, None)      # removed between the stat and the open: absent, as the stat would say
         return None
+    except UnicodeDecodeError:
+        # bytes that are not UTF-8: loud like an unreadable file, so every cannot-tell caller handles it and the
+        # decode does not escape to its reader (fork PR #813, round 3 of the review, 2026-09-20; its extra7-1, ruled high)
+        raise CredentialError("Claude Code settings file cannot be read: %s" % path)
     except OSError:
         raise CredentialError("Claude Code settings file cannot be read: %s" % path)
     try:

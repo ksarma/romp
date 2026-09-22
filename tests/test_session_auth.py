@@ -1432,6 +1432,23 @@ class Availability(unittest.TestCase):
         a = km._auth_avail()
         self.assertEqual((a["login"], a["key"], a["acct"]), (False, True, ""))
 
+    def test_a_settings_file_that_cannot_be_read_just_now_is_cannot_tell_for_both_never_a_raise(self):
+        # the owner's lenses over round 3's commit of fork PR #813 (2026-09-20; the reader lens's finding 2): _auth_both's
+        # settings read (helper_source, for the managed-helper bar) had no CredentialError arm and was safe only by the
+        # short-circuit ahead of it, so a settings rewrite landing between the key read and this one raised out of the
+        # pusher's identity tuple and build_session's authBoth field. It takes _auth_avail's own arm now: a file that cannot
+        # be read just now is cannot tell, not "managed".
+        # ERROR BEFORE ITS ASSERTION at round 3's commit and at the round-3 base, at the call under test:
+        # CredentialError out of _auth_both, the raise this test exists to catch.
+        self._world(FAKE_KEY, "aaaaaaaaaaaa")
+
+        def unreadable():
+            raise km.jd._cred.CredentialError("Claude Code settings file cannot be read: settings.json")
+        km.jd._cred.helper_source = unreadable
+        self.assertTrue(km._auth_both(), "cannot tell is not a managed helper: both choices stand, as _auth_avail says")
+        a = km._auth_avail()
+        self.assertEqual((a["login"], a["key"]), (True, True), "the same read takes the same arm")
+
     def test_the_session_payload_always_carries_auth_and_gates_only_the_controls(self):
         import inspect
         src = inspect.getsource(km.build_session)
@@ -1534,11 +1551,31 @@ class Availability(unittest.TestCase):
         self.assertIn('"authAvail": _auth_avail()', src)
 
     def test_the_refusal_toast_names_the_backend_reason(self):
-        # a refused setAuth tells the user WHY (no login signed in / no apiKeyHelper / a managed helper)
-        # from the backend's own sentence, and keeps the generic text for the cases without one
+        # a refused setAuth tells the user WHY (no login signed in / no apiKeyHelper / a managed helper) from the backend's
+        # own sentence, and keeps the generic text for the cases without one. PINNED PER ARM (round 4 of fork PR #813's
+        # review, 2026-09-20; its regression-2): the WS handler has a machine-scope setAuth arm and a per-session one, and
+        # the one-argument spelling this test asserted over the whole source exists only on the machine-scope arm at this
+        # head, while the per-session arm (fork PR #813, round 3 of its review) reads two sources for `why`, the box's reason
+        # for the PARSED pick and the guarded door's own sentence; asserted over the whole source, no change to the arm the
+        # comment described could red it. Each arm is sliced from its `elif` to the next same-indentation `elif`, so a
+        # spelling is looked for on the arm that carries it and nowhere else.
         src = open(os.path.join(BIN, "romp-kernel")).read()
-        self.assertIn('why = str(getattr(be, "auth_unavailable_why", lambda v: "")(str(msg["value"])) or "")', src)
-        self.assertIn('("Couldn\'t switch the account this session bills: %s." % why) if why', src)
+
+        def arm(anchor):
+            i = src.index(anchor)
+            return src[i:src.index("\n    elif t == ", i + len(anchor))]
+        machine = arm('elif t == "setAuth" and msg.get("scope") == "machine" and (msg.get("value") == "auto" or lg.parse_pick(msg.get("value"))[0]):')
+        session = arm('elif t == "setAuth" and lg.parse_pick(msg.get("value"))[0]:')
+        self.assertIn('why = str(getattr(be, "auth_unavailable_why", lambda v: "")(str(msg["value"])) or "")', machine,
+                      "the machine-scope arm: the box's reason on the raw value, one reader")
+        self.assertIn('("Couldn\'t set this machine\'s default billing: %s." % why) if why', machine)
+        self.assertIn('why = (str(getattr(be, "auth_unavailable_why", lambda *a: "")(*lg.parse_pick(str(msg["value"]))) or "")', session,
+                      "the per-session arm: the box's reason for the PARSED pick first")
+        self.assertIn('or str(getattr(be, "pop_auth_refusal", lambda s: "")(sid) or ""))', session,
+                      "then the guarded door's own sentence for this refusal")
+        self.assertIn('("Couldn\'t switch the account this session bills: %s." % why) if why', session)
+        self.assertNotIn('("Couldn\'t switch the account this session bills: %s." % why) if why', machine,
+                         "the per-session toast is not on the machine-scope arm")
 
 
 class SwitchCycleTruthTable(_Keyed):
@@ -1622,7 +1659,12 @@ class DrivePlumbing(unittest.TestCase):
         self.assertNotIn("a stored login can't be the machine's default yet", src)
         self.assertIn('_gate_or_park(sid, ("auth", value))', src)   # parks on the gate, or hands over (2026-09-05)
         self.assertIn('elif op[0] == "auth":', src)
-        self.assertIn("be.set_auth(sid, op[1])", src)
+        # the replay takes the guarded door's helper with the FIFO gate off since round 6 of fork PR #813's review (2026-09-20):
+        # the SDK backend's set_auth then runs inside set_auth_guarded's guard, the frame that restores a pick whose own record
+        # write skipped and raised; until then the drain called set_auth bare, the text this pin held. The skip is driven
+        # through the drain by execution in tests/test_billing_route.py (ARecordSkipAtTheDrain)
+        self.assertIn("_set_auth_or_park_verdict(be, sid, op[1], park=False)", src)
+        self.assertNotIn("be.set_auth(sid, op[1])", src, "no raw set_auth call at the drain: the door's helper is the one road")
 
     def test_create_paths_pass_the_pick_through(self):
         src = open(os.path.join(BIN, "romp-kernel")).read()

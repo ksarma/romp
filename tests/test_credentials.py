@@ -262,6 +262,26 @@ class SettingsReadCache(_Settings):
             os.chmod(p, 0o644)     # a memo hit here serves the correct old parse anyway: no wait needed
         self.assertEqual(cred.helper_source(), "user", "readable again: read again")
 
+    def test_a_file_whose_bytes_are_not_utf8_is_loud_on_every_call(self):
+        # ERROR BEFORE ITS ASSERTION at the round-3 base, at the call under test: UnicodeDecodeError out of cred.helper_source()
+        # inside the assertRaises, the raise this test exists to convert to CredentialError (measured at the helper_source call
+        # below; recorded in round 4 of fork PR #813's review, 2026-09-20, its extra8-2, in the refuter's wording).
+        # a torn rewrite, or a settings file that holds a non-UTF-8 byte: the decode is CredentialError, the same loud
+        # path an unreadable file takes, so every cannot-tell caller handles it rather than the decode escaping to its
+        # reader (fork PR #813, round 3 of the review, 2026-09-20; its extra7-1, ruled high). Bytes assembled here, so
+        # no non-UTF-8 byte sits in the repo. Never memoized: loud on every call.
+        p = os.path.join(self.cfg, "settings.json")
+        Path(p).write_bytes(b'{"apiKeyHelper": "' + bytes([0xff, 0xfe]) + b'"}')
+        for _ in range(3):
+            with self.assertRaises(cred.CredentialError) as cm:
+                cred.helper_source()
+            # the STATIC words plus the path, never the offending bytes (the owner's lenses over round 3's commit, 2026-09-20;
+            # the mutation lens's A3: a message carrying the bytes stayed green under the regex alone). The row this reaches
+            # (SdkBackend._say_settings_unreadable) is the operator's own Log, and the bytes are the file's contents
+            self.assertEqual(str(cm.exception), "Claude Code settings file cannot be read: " + p)
+        self._write("user", {"apiKeyHelper": "/u/helper.sh"})
+        self.assertEqual(cred.helper_source(), "user", "valid UTF-8 again: read again at the next call")
+
 
 class HelperRun(_Settings):
     def test_the_helper_runs_once_per_ttl_and_the_value_stays_in_memory(self):

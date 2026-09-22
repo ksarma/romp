@@ -22,6 +22,13 @@ Behaviour:
   * FAKE_CLI_LOG (env): every stdin line is appended there, so a test can see what reached the CLI.
   * FAKE_CLI_TRANSCRIPT_DIR (env): the turn's records are also appended to <dir>/<session id>.jsonl,
     a transcript stand-in, so a test can count writers.
+  * FAKE_CLI_HONOR_HELPER (env, an opt-in; the billing verb's lab, 2026-09-18): the init's `apiKeySource` follows
+    the real CLI's precedence for the helper: "none" when the flag-settings overlay romp hands the launch
+    (`--settings <file>`) blanks `apiKeyHelper` (a login pick) or CLAUDE_CODE_OAUTH_TOKEN rides the environment (a
+    stored login), else "apiKeyHelper" when the user settings ($CLAUDE_CONFIG_DIR/settings.json, else
+    ~/.claude/settings.json) configure one, else "none". Read, never run. Unset, every init reports "none" as
+    before: the tests that predate the knob run on machines whose settings may carry a helper, and their sessions
+    must keep landing where they did.
 """
 import json
 import os
@@ -90,13 +97,42 @@ def wait_response(rid: str, cancel_after: float | None) -> dict | None:
     return got
 
 
+def _api_key_source() -> str:
+    """The init's apiKeySource under FAKE_CLI_HONOR_HELPER (the docstring's rule); "none" without the opt-in."""
+    if not os.environ.get("FAKE_CLI_HONOR_HELPER"):
+        return "none"
+    overlay = None
+    argv = sys.argv[1:]
+    for i, a in enumerate(argv):
+        if a.startswith("--settings="):
+            v = a.split("=", 1)[1]
+        elif a == "--settings" and i + 1 < len(argv):
+            v = argv[i + 1]
+        else:
+            continue
+        try:
+            overlay = json.loads(open(v).read()) if os.path.isfile(v) else json.loads(v)
+        except (OSError, ValueError):
+            overlay = None
+    if isinstance(overlay, dict) and "apiKeyHelper" in overlay and not overlay["apiKeyHelper"]:
+        return "none"
+    if os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
+        return "none"
+    cfg = os.path.expanduser((os.environ.get("CLAUDE_CONFIG_DIR") or "").strip() or "~/.claude")
+    try:
+        user = json.loads(open(os.path.join(cfg, "settings.json")).read())
+    except (OSError, ValueError):
+        user = {}
+    return "apiKeyHelper" if isinstance(user, dict) and user.get("apiKeyHelper") else "none"
+
+
 def run_turn(text: str) -> None:
     global _init_sent
     opts = tokens(text)
     if not _init_sent:
         _init_sent = True
         emit({"type": "system", "subtype": "init", "session_id": SESSION_ID, "model": "fake-model",
-              "cwd": os.getcwd(), "tools": [], "apiKeySource": "none"})
+              "cwd": os.getcwd(), "tools": [], "apiKeySource": _api_key_source()})
     emit({"type": "assistant", "message": {"role": "assistant", "model": "fake-model", "content": [{"type": "text", "text": "working on it"}]},
           "session_id": SESSION_ID, "uuid": str(uuid.uuid4())})
     cancel_after = float(opts["cancel-after"]) if "cancel-after" in opts else None
