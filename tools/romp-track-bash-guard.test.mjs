@@ -6929,24 +6929,77 @@ const READER_COMMANDS = {
   '%b dash': ['dash', ['-c', 'printf %b "$F"']],
 };
 
-test("round 6, the escape readers by execution: every reader the hook derives (echo, a printf format, a `%b` operand, in bash, zsh and dash) is run in its shell, in the C and the UTF-8 locale, over every escape form the manuals name, and the hook's reading equals the shell's output byte for byte (a `\\c` stopping where the shell stops; a byte, a NUL or a locale-dependent code point the hook does not decode declared, and the shell's output showing why); bash's xpg_echo reads as its `-e` does; and echo's union, read through the lexer, holds every shell's output and nothing no shell prints", () => {
-  const present = shellsFor(['bash', 'zsh', 'dash'], 'the escape readers');
+// THE RECORDED OUTPUTS (round 6's fifteenth commit, 2026-09-22): what each reader command's shell printed for every form in the C and
+// the UTF-8 locale, stdout as latin1 (one character per byte, so a NUL or a byte at or above 0x80 survives the literal; one string
+// where the two locales agree), recorded from bash 5.2.21, zsh 5.9 and dash 0.5.12 by recordEscapeOutputs below; `plain bash` is
+// bash's echo without `-e`, the as-spelled reading echo's union holds. Where a shell is present its live output is asserted equal to
+// its record, so the record is current on every box that can check it; where a shell is absent, its record stands in as that shell's
+// evidence and its live leg is NOT RUN by name. Before this the pin reasoned over the shells present alone: on the fork's CI at the
+// fourteenth commit (ubuntu, no zsh) every observed output for `\xg` agreed (`\xg` as spelled in bash and dash; a NUL in zsh, whose
+// `\x` reads zero hex digits) and held no NUL, so the hook's decline, right for a box with zsh, read as unjustified there.
+const ESCAPE_OUTPUTS_RECORDED = {
+  shells: { bash: '5.2.21(1)-release', zsh: '5.9', dash: '0.5.12' },
+  outputs: {
+    "echo bash": {"\\a":"A\u0007Z\n","\\b":"A\bZ\n","\\e":"A\u001bZ\n","\\E":"A\u001bZ\n","\\f":"A\fZ\n","\\n":"A\nZ\n","\\r":"A\rZ\n","\\t":"A\tZ\n","\\v":"A\u000bZ\n","\\\\":"A\\Z\n","\\\"":"A\\\"Z\n","\\'":"A\\'Z\n","\\?":"A\\?Z\n","\\q":"A\\qZ\n","\\8":"A\\8Z\n","\\/":"A\\/Z\n","\\0":"A\u0000Z\n","\\01":"A\u0001Z\n","\\012":"A\nZ\n","\\0101":"AAZ\n","\\1":"A\\1Z\n","\\12":"A\\12Z\n","\\101":"A\\101Z\n","\\1011":"A\\1011Z\n","\\x4":"A\u0004Z\n","\\x41":"AAZ\n","\\x411":"AA1Z\n","\\xg":"A\\xgZ\n","\\u41":"AAZ\n","\\u0041":"AAZ\n","\\u00411":"AA1Z\n","\\U1F600":["A\\U0001F600Z\n","AðZ\n"],"\\U0001F600":["A\\U0001F600Z\n","AðZ\n"],"\\c":"A"},
+    "echo zsh": {"\\a":"A\u0007Z\n","\\b":"A\bZ\n","\\e":"A\u001bZ\n","\\E":"A\\EZ\n","\\f":"A\fZ\n","\\n":"A\nZ\n","\\r":"A\rZ\n","\\t":"A\tZ\n","\\v":"A\u000bZ\n","\\\\":"A\\Z\n","\\\"":"A\\\"Z\n","\\'":"A\\'Z\n","\\?":"A\\?Z\n","\\q":"A\\qZ\n","\\8":"A\\8Z\n","\\/":"A\\/Z\n","\\0":"A\u0000Z\n","\\01":"A\u0001Z\n","\\012":"A\nZ\n","\\0101":"AAZ\n","\\1":"A\\1Z\n","\\12":"A\\12Z\n","\\101":"A\\101Z\n","\\1011":"A\\1011Z\n","\\x4":"A\u0004Z\n","\\x41":"AAZ\n","\\x411":"AA1Z\n","\\xg":"A\u0000gZ\n","\\u41":"AAZ\n","\\u0041":"AAZ\n","\\u00411":"AA1Z\n","\\U1F600":["A\n","AðZ\n"],"\\U0001F600":["A\n","AðZ\n"],"\\c":"A"},
+    "echo dash": {"\\a":"A\u0007Z\n","\\b":"A\bZ\n","\\e":"A\u001bZ\n","\\E":"A\\EZ\n","\\f":"A\fZ\n","\\n":"A\nZ\n","\\r":"A\rZ\n","\\t":"A\tZ\n","\\v":"A\u000bZ\n","\\\\":"A\\Z\n","\\\"":"A\\\"Z\n","\\'":"A\\'Z\n","\\?":"A\\?Z\n","\\q":"A\\qZ\n","\\8":"A\\8Z\n","\\/":"A\\/Z\n","\\0":"A\u0000Z\n","\\01":"A\u0001Z\n","\\012":"A\nZ\n","\\0101":"AAZ\n","\\1":"A\u0001Z\n","\\12":"A\nZ\n","\\101":"AAZ\n","\\1011":"AA1Z\n","\\x4":"A\\x4Z\n","\\x41":"A\\x41Z\n","\\x411":"A\\x411Z\n","\\xg":"A\\xgZ\n","\\u41":"A\\u41Z\n","\\u0041":"A\\u0041Z\n","\\u00411":"A\\u00411Z\n","\\U1F600":"A\\U1F600Z\n","\\U0001F600":"A\\U0001F600Z\n","\\c":"A"},
+    "format bash": {"\\a":"A\u0007Z","\\b":"A\bZ","\\e":"A\u001bZ","\\E":"A\u001bZ","\\f":"A\fZ","\\n":"A\nZ","\\r":"A\rZ","\\t":"A\tZ","\\v":"A\u000bZ","\\\\":"A\\Z","\\\"":"A\"Z","\\'":"A'Z","\\?":"A?Z","\\q":"A\\qZ","\\8":"A\\8Z","\\/":"A\\/Z","\\0":"A\u0000Z","\\01":"A\u0001Z","\\012":"A\nZ","\\0101":"A\b1Z","\\1":"A\u0001Z","\\12":"A\nZ","\\101":"AAZ","\\1011":"AA1Z","\\x4":"A\u0004Z","\\x41":"AAZ","\\x411":"AA1Z","\\xg":"A\\xgZ","\\u41":"AAZ","\\u0041":"AAZ","\\u00411":"AA1Z","\\U1F600":["A\\U0001F600Z","AðZ"],"\\U0001F600":["A\\U0001F600Z","AðZ"],"\\c":"A\\cZ"},
+    "format zsh": {"\\a":"A\u0007Z","\\b":"A\bZ","\\e":"A\u001bZ","\\E":"A\\EZ","\\f":"A\fZ","\\n":"A\nZ","\\r":"A\rZ","\\t":"A\tZ","\\v":"A\u000bZ","\\\\":"A\\Z","\\\"":"A\\\"Z","\\'":"A\\'Z","\\?":"A\\?Z","\\q":"A\\qZ","\\8":"A\\8Z","\\/":"A\\/Z","\\0":"A\u0000Z","\\01":"A\u0001Z","\\012":"A\nZ","\\0101":"A\b1Z","\\1":"A\u0001Z","\\12":"A\nZ","\\101":"AAZ","\\1011":"AA1Z","\\x4":"A\u0004Z","\\x41":"AAZ","\\x411":"AA1Z","\\xg":"A\u0000gZ","\\u41":"AAZ","\\u0041":"AAZ","\\u00411":"AA1Z","\\U1F600":["A","AðZ"],"\\U0001F600":["A","AðZ"],"\\c":"A"},
+    "format dash": {"\\a":"A\u0007Z","\\b":"A\bZ","\\e":"A\u001bZ","\\E":"A\\EZ","\\f":"A\fZ","\\n":"A\nZ","\\r":"A\rZ","\\t":"A\tZ","\\v":"A\u000bZ","\\\\":"A\\Z","\\\"":"A\\\"Z","\\'":"A\\'Z","\\?":"A\\?Z","\\q":"A\\qZ","\\8":"A\\8Z","\\/":"A\\/Z","\\0":"A\u0000Z","\\01":"A\u0001Z","\\012":"A\nZ","\\0101":"A\b1Z","\\1":"A\u0001Z","\\12":"A\nZ","\\101":"AAZ","\\1011":"AA1Z","\\x4":"A\\x4Z","\\x41":"A\\x41Z","\\x411":"A\\x411Z","\\xg":"A\\xgZ","\\u41":"A\\u41Z","\\u0041":"A\\u0041Z","\\u00411":"A\\u00411Z","\\U1F600":"A\\U1F600Z","\\U0001F600":"A\\U0001F600Z","\\c":"A\\cZ"},
+    "%b bash": {"\\a":"A\u0007Z","\\b":"A\bZ","\\e":"A\u001bZ","\\E":"A\u001bZ","\\f":"A\fZ","\\n":"A\nZ","\\r":"A\rZ","\\t":"A\tZ","\\v":"A\u000bZ","\\\\":"A\\Z","\\\"":"A\\\"Z","\\'":"A\\'Z","\\?":"A\\?Z","\\q":"A\\qZ","\\8":"A\\8Z","\\/":"A\\/Z","\\0":"A\u0000Z","\\01":"A\u0001Z","\\012":"A\nZ","\\0101":"AAZ","\\1":"A\u0001Z","\\12":"A\nZ","\\101":"AAZ","\\1011":"AA1Z","\\x4":"A\u0004Z","\\x41":"AAZ","\\x411":"AA1Z","\\xg":"A\\xgZ","\\u41":"AAZ","\\u0041":"AAZ","\\u00411":"AA1Z","\\U1F600":["A\\U0001F600Z","AðZ"],"\\U0001F600":["A\\U0001F600Z","AðZ"],"\\c":"A"},
+    "%b zsh": {"\\a":"A\u0007Z","\\b":"A\bZ","\\e":"A\u001bZ","\\E":"A\\EZ","\\f":"A\fZ","\\n":"A\nZ","\\r":"A\rZ","\\t":"A\tZ","\\v":"A\u000bZ","\\\\":"A\\Z","\\\"":"A\\\"Z","\\'":"A\\'Z","\\?":"A\\?Z","\\q":"A\\qZ","\\8":"A\\8Z","\\/":"A\\/Z","\\0":"A\u0000Z","\\01":"A\u0001Z","\\012":"A\nZ","\\0101":"AAZ","\\1":"A\\1Z","\\12":"A\\12Z","\\101":"A\\101Z","\\1011":"A\\1011Z","\\x4":"A\u0004Z","\\x41":"AAZ","\\x411":"AA1Z","\\xg":"A\u0000gZ","\\u41":"AAZ","\\u0041":"AAZ","\\u00411":"AA1Z","\\U1F600":["A","AðZ"],"\\U0001F600":["A","AðZ"],"\\c":"A"},
+    "%b dash": {"\\a":"A\u0007Z","\\b":"A\bZ","\\e":"A\u001bZ","\\E":"A\\EZ","\\f":"A\fZ","\\n":"A\nZ","\\r":"A\rZ","\\t":"A\tZ","\\v":"A\u000bZ","\\\\":"A\\Z","\\\"":"A\\\"Z","\\'":"A\\'Z","\\?":"A\\?Z","\\q":"A\\qZ","\\8":"A\\8Z","\\/":"A\\/Z","\\0":"A\u0000Z","\\01":"A\u0001Z","\\012":"A\nZ","\\0101":"AAZ","\\1":"A\u0001Z","\\12":"A\nZ","\\101":"AAZ","\\1011":"AA1Z","\\x4":"A\\x4Z","\\x41":"A\\x41Z","\\x411":"A\\x411Z","\\xg":"A\\xgZ","\\u41":"A\\u41Z","\\u0041":"A\\u0041Z","\\u00411":"A\\u00411Z","\\U1F600":"A\\U1F600Z","\\U0001F600":"A\\U0001F600Z","\\c":"A"},
+    "plain bash": {"\\a":"A\\aZ\n","\\b":"A\\bZ\n","\\e":"A\\eZ\n","\\E":"A\\EZ\n","\\f":"A\\fZ\n","\\n":"A\\nZ\n","\\r":"A\\rZ\n","\\t":"A\\tZ\n","\\v":"A\\vZ\n","\\\\":"A\\\\Z\n","\\\"":"A\\\"Z\n","\\'":"A\\'Z\n","\\?":"A\\?Z\n","\\q":"A\\qZ\n","\\8":"A\\8Z\n","\\/":"A\\/Z\n","\\0":"A\\0Z\n","\\01":"A\\01Z\n","\\012":"A\\012Z\n","\\0101":"A\\0101Z\n","\\1":"A\\1Z\n","\\12":"A\\12Z\n","\\101":"A\\101Z\n","\\1011":"A\\1011Z\n","\\x4":"A\\x4Z\n","\\x41":"A\\x41Z\n","\\x411":"A\\x411Z\n","\\xg":"A\\xgZ\n","\\u41":"A\\u41Z\n","\\u0041":"A\\u0041Z\n","\\u00411":"A\\u00411Z\n","\\U1F600":"A\\U1F600Z\n","\\U0001F600":"A\\U0001F600Z\n","\\c":"A\\cZ\n"},
+  },
+};
+const RECORDED_COMMANDS = { ...READER_COMMANDS, 'plain bash': ['bash', ['--norc', '--noprofile', '-c', 'echo "$F"']] };
+// the record's entries for the shells given, from this box's shells: pasted over the entries above when a shell's record is stale
+const recordEscapeOutputs = (shells) => {
+  const lines = [];
+  for (const [key, [sh, argv]] of Object.entries(RECORDED_COMMANDS)) {
+    if (!shells.includes(sh)) continue;
+    const m = {};
+    for (const form of ESCAPE_FORMS) {
+      const v = ['C', 'C.UTF-8'].map((locale) => spawnSync(sh, argv, { encoding: 'buffer', env: { PATH: process.env.PATH, F: `A${form}Z`, LC_ALL: locale }, timeout: 10000 }).stdout.toString('latin1'));
+      m[form] = v[0] === v[1] ? v[0] : v;
+    }
+    lines.push(`    ${JSON.stringify(key)}: ${JSON.stringify(m)},`);
+  }
+  return lines.join('\n');
+};
+
+test("round 6, the escape readers by execution: every reader the hook derives (echo, a printf format, a `%b` operand, in bash, zsh and dash) is run in its shell, in the C and the UTF-8 locale, over every escape form the manuals name, and the hook's reading equals the shell's output byte for byte (a `\\c` stopping where the shell stops; a byte, a NUL or a locale-dependent code point the hook does not decode declared, and the shell's output showing why); bash's xpg_echo reads as its `-e` does; echo's union, read through the lexer, holds every shell's output and nothing no shell prints; and a shell this runner lacks stands in the evidence by its record, checked live wherever the shell is present, its live leg NOT RUN by name (the fifteenth commit)", () => {
+  const SHELLS = ['bash', 'zsh', 'dash'];
   const readers = Object.keys(guard.ESCAPE_READERS);
   assert.equal(readers.length, 9, 'nine readers: three contexts in three shells');
-  // every shell run below is a shell the probe passed (`present`), in two locales: a `\u` or `\U` code point at or above 0x80 prints
-  // as the character in a UTF-8 locale and as the escape spelled in the C locale (bash, measured), so a form whose output differs
-  // between the two, or holds a byte at or above 0x80 or a NUL, is one the hook must decline rather than read
+  const readersOf = (sh) => readers.filter((k) => k.endsWith(` ${sh}`));
+  // one probe line per absent shell, naming the evidence that stands in its place
+  const present = SHELLS.filter((sh) => shellsFor([sh], `the escape readers' ${readersOf(sh).length} ${sh} readers over ${ESCAPE_FORMS.length} forms and echo's union in ${sh}, the hook's readings compared to the outputs recorded from ${sh} ${ESCAPE_OUTPUTS_RECORDED.shells[sh]}, not to a live ${sh}`).length === 1);
+  const absent = SHELLS.filter((sh) => !present.includes(sh));
+  // every live run below is in a shell the probe passed, in two locales: a `\u` or `\U` code point at or above 0x80 prints as the
+  // character in a UTF-8 locale and as the escape spelled in the C locale (bash, measured), so a form whose output differs between
+  // the two, or holds a byte at or above 0x80 or a NUL, is one the hook must decline rather than read
   const LOCALES = ['C', 'C.UTF-8'];
   const runIn = (sh, argv, text, locale) => spawnSync(sh, argv, { encoding: 'buffer', env: { PATH: process.env.PATH, F: text, LC_ALL: locale }, timeout: 10000 }).stdout;
+  const recorded = (key, form) => { const v = ESCAPE_OUTPUTS_RECORDED.outputs[key][form]; assert.ok(v !== undefined, `${key} ${form}: the record holds the form`); return (Array.isArray(v) ? v : [v, v]).map((s) => Buffer.from(s, 'latin1')); };
+  // a shell's outputs for a reader command over a form, per locale: live where the shell is present (and equal to its record, so the
+  // record is current on every box that can check it), the record where it is absent
+  let fromRecord = 0;
+  const outputsOf = (key, form) => {
+    const [sh, argv] = RECORDED_COMMANDS[key];
+    const rec = recorded(key, form);
+    if (!present.includes(sh)) { fromRecord++; return rec; }
+    const outs = LOCALES.map((locale) => runIn(sh, argv, `A${form}Z`, locale));
+    for (const [k, locale] of LOCALES.entries()) if (!outs[k].equals(rec[k])) assert.fail(`${key} ${form} (${locale}): this ${sh} prints what the record holds for ${sh} ${ESCAPE_OUTPUTS_RECORDED.shells[sh]} (live ${JSON.stringify(outs[k].toString('latin1'))}, recorded ${JSON.stringify(rec[k].toString('latin1'))}); a stale record is re-recorded from recordEscapeOutputs([${JSON.stringify(sh)}]):\n${recordEscapeOutputs([sh])}`);   // the re-recording runs the shells: built on a mismatch alone
+    return outs;
+  };
   const undecodable = (outs) => outs.some((o) => o.includes(0) || [...o].some((b) => b >= 0x80)) || !outs.every((o) => o.equals(outs[0]));
   let compared = 0;
   for (const key of readers) {
-    const [sh, argv] = READER_COMMANDS[key];
-    assert.ok(argv, `the test knows how to reach ${key}`);
-    if (!present.includes(sh)) continue;
+    assert.ok(READER_COMMANDS[key], `the test knows how to reach ${key}`);
     for (const form of ESCAPE_FORMS) {
       const text = `A${form}Z`;
-      const outs = LOCALES.map((locale) => runIn(sh, argv, text, locale));
+      const outs = outputsOf(key, form);
       let got;
       try { got = guard.shellEscapes(text, key); }
       catch (e) {
@@ -6963,15 +7016,14 @@ test("round 6, the escape readers by execution: every reader the hook derives (e
       compared++;
     }
   }
-  const bashLeg = present.find((sh) => sh === 'bash') || null;   // the probe's bash, or none: a leg never names a shell beside a runner call
+  const bashLeg = present.includes('bash') ? 'bash' : null;   // xpg_echo is a live leg: bash when present, else none (the probe's line above names it)
   if (bashLeg) for (const form of ESCAPE_FORMS) {   // xpg_echo is the -e reading
     const e = runIn(bashLeg, ['--norc', '--noprofile', '-c', 'echo -e "$F"'], `A${form}Z`, 'C.UTF-8');
     const x = runIn(bashLeg, ['--norc', '--noprofile', '-c', 'shopt -s xpg_echo; echo "$F"'], `A${form}Z`, 'C.UTF-8');
     assert.ok(e.equals(x), `xpg_echo prints as -e does for ${form}`);
   }
-  assert.ok(compared >= ESCAPE_FORMS.length * 3 * present.length, `every form was compared in every present shell (${compared})`);
+  assert.equal(compared, ESCAPE_FORMS.length * readers.length, `every form was compared in every reader, live or from the record (${compared})`);
   // echo's union through the lexer: the word of `bash -c "$(echo '..')"` stands for every shell's output, and for nothing no shell prints
-  const echoArgv = (sh, e = false) => (sh === 'bash' ? ['--norc', '--noprofile', '-c', e ? 'echo -e "$F"' : 'echo "$F"'] : sh === 'zsh' ? ['-f', '-c', 'echo "$F"'] : ['-c', 'echo "$F"']);
   let unions = 0;
   let declined = 0;
   let quoteForms = 0;
@@ -6981,21 +7033,21 @@ test("round 6, the escape readers by execution: every reader the hook derives (e
     const w = lex(`bash -c "$(echo '${text}')"`).segments[0].words[2];
     const union = w.readings || (w.literal ? [w.text] : null);
     const raw = [];
-    for (const sh of present) for (const locale of LOCALES) raw.push(runIn(sh, echoArgv(sh), text, locale));
-    if (bashLeg) for (const locale of LOCALES) raw.push(runIn(bashLeg, echoArgv(bashLeg, true), text, locale));
+    for (const key of ['plain bash', 'echo bash', 'echo zsh', 'echo dash']) raw.push(...outputsOf(key, form));   // bash's echo as spelled and with -e, zsh's and dash's, each live or by its record
     const produced = new Set(raw.map((o) => o.toString('utf8').replace(/\n+$/, '')));
     if (union == null) {
       assert.ok(w.unresolvableReading, `${form}: no union means the word is marked unresolvable`);
-      assert.ok(undecodable(raw) || /^\\[uU]/.test(form), `${form}: unresolvable only where a shell prints a byte or NUL the hook does not decode, or differently by locale, or a unicode escape (declined whatever the shells print, since bash and dash print it by locale)`);
+      assert.ok(undecodable(raw) || /^\\[uU]/.test(form), `${form}: unresolvable only where a shell, live or by its record, prints a byte or NUL the hook does not decode, or the shells or the locales disagree, or a unicode escape (declined whatever the shells print, since bash and dash print it by locale): ${JSON.stringify(raw.map((o) => o.toString('latin1')))}`);
       declined++;
       continue;
     }
     for (const t of produced) assert.ok(union.includes(t), `${form}: a shell's output ${JSON.stringify(t)} is in the union ${JSON.stringify(union)}`);
-    if (present.length === 3) for (const t of union) assert.ok(produced.has(t), `${form}: the union's ${JSON.stringify(t)} is printed by some shell (${JSON.stringify([...produced])})`);
+    for (const t of union) assert.ok(produced.has(t), `${form}: the union's ${JSON.stringify(t)} is printed by some shell (${JSON.stringify([...produced])})`);   // every shell's outputs are in hand, live or by record, so this holds on every runner
     unions++;
   }
   assert.equal(unions + declined + quoteForms, ESCAPE_FORMS.length, `every form was either checked as a union (${unions}), declined for a reason the shells show (${declined}) or a quote form the operand's quoting cannot carry (${quoteForms})`);
   assert.ok(unions >= 20 && declined >= 5, `both kinds are populated (${unions} unions, ${declined} declined)`);
+  console.log(`# the escape readers: ${compared} reader comparisons over ${ESCAPE_FORMS.length} forms and ${unions} unions, ${present.length} shells live (${present.join(', ')}), ${absent.length} by record (${absent.join(', ') || 'none'}; ${fromRecord} outputs)`);
 });
 
 // THE PRINTF GRAMMAR's form space: [format, ...operands] as the shells receive them, spelled single-quoted in the command; `resolved`
@@ -7874,7 +7926,44 @@ const RESIDUAL_TABLE = [
   ['RT-cat-procsub-pipe', 'a producer outside the output model', null, "cat <(echo 'cp ../base/report.md report.md') | bash", ['bash', 'zsh']],
   ['RT-procsub-function-cat', 'a producer outside the output model', null, "f() { cat; }; echo 'cp ../base/report.md report.md' > >(f | bash)", ['bash', 'zsh']],
 ];
-test("round 6, second commit, THE RESIDUAL TABLE: every shape the round could name that still reaches a tracked file, run through the hook (allowed) and the shells (the writers as measured), each under a class of THE RESIDUAL PROPERTY, and the property's paragraph on the hook header names every class", () => {
+// THE REFUSING PROGRAM (round 6's fifteenth commit, 2026-09-22): a program this box HAS may refuse to run the command it is given,
+// before running it. The fork's CI at the fourteenth commit had perf on its ubuntu runner, and perf without CAP_PERFMON printed
+// `Error:` and the perf-security text on stderr and exited 255 with the copy never made, so RT-perf-stat's writer measurement read
+// false where the row says bash writes. That is the class of a program the box lacks, not a row that stopped writing: NOT RUN with
+// the refusal as the reason, counted and printed like the lacking-program rows. The refusal is the PROGRAM's, established apart from
+// the row's write: the row's command with its copy replaced by `true` (WRITE_SPELLING, the copy every wrapper and reader row carries),
+// run in each present shell the row names as a writer (the row's own grammar: a `<(..)` or a descriptor form sh cannot parse), from the
+// row's cwd with the world's env. A nonzero exit that says why on stderr in EVERY one of them is a refusal, the first's first line the
+// reason (a bare label ending in a colon, perf's `Error:`, takes the line after it); the command running in any shell is none, a
+// nonzero exit that says nothing is none, and a command without the copy has no probe, so its miss reds as before. A row
+// is NOT RUN only when every writer leg left the subset unchanged AND its program refuses; a row of a refusing program that still
+// wrote reds (a contradiction to see), and a row that missed under a program that runs `true` reds as before (a defect, not a
+// refusal). The rows a box cannot run are derived from its programs alone and the rows not run are held equal to them, so a NOT RUN
+// never stands in for a miss the box could have measured, and on a box whose every program runs the table is a full measurement.
+const WRITE_SPELLING = /cp (?:\S*\/)?base\/report\.md (?:\S*\/)?report\.md/;
+const refusalReason = (stderr) => {
+  const lines = String(stderr || '').split('\n').map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) return null;
+  return (lines[0].endsWith(':') && lines.length > 1 ? `${lines[0]} ${lines[1]}` : lines[0]).slice(0, 200);
+};
+const shellArgv = (shell, cmd) => (shell === 'bash' ? ['--norc', '--noprofile', '-c', cmd] : shell === 'zsh' ? ['-f', '-c', cmd] : ['-c', cmd]);   // as the world runs a row
+// the refusal's reason when the program of `cmd` refuses to run its command in every shell of `shells` under `env` from `cwd`; null when
+// some shell runs it, a shell's nonzero exit says nothing, no shell is given, or cmd carries no copy to replace
+const refusalOf = (cmd, cwd, env, shells) => {
+  if (!WRITE_SPELLING.test(cmd) || !shells.length) return null;
+  const probe = cmd.replace(WRITE_SPELLING, 'true');
+  let reason = null;
+  for (const shell of shells) {
+    const r = spawnSync(shell, shellArgv(shell, probe), { cwd, input: '', encoding: 'utf8', env, timeout: 20000 });
+    if (r.status === 0 || r.status === null) return null;
+    const why = refusalReason(r.stderr);
+    if (why === null) return null;
+    reason = reason ?? why;
+  }
+  return reason;
+};
+const REFUSAL_LINE = (program, reason, id) => `NOT RUN: real ${program} refuses to run on this runner (${reason}), so its evidence leg did not run: the residual table's ${id}`;
+test("round 6, second commit, THE RESIDUAL TABLE: every shape the round could name that still reaches a tracked file, run through the hook (allowed) and the shells (the writers as measured), each under a class of THE RESIDUAL PROPERTY, and the property's paragraph on the hook header names every class; a row whose program is present but refuses to run here is NOT RUN with the refusal as its reason, and the rows not run are exactly the rows this box cannot run, derived from its programs (the fifteenth commit)", () => {
   const w = sixthPassWorld();
   const savedHome = process.env.HOME;
   process.env.HOME = w.HOME;
@@ -7882,23 +7971,40 @@ test("round 6, second commit, THE RESIDUAL TABLE: every shape the round could na
     const A = ['bash', 'zsh', 'dash'];
     const toolPresent = (p) => _spawnSync('sh', ['-c', `command -v ${p}`], { encoding: 'utf8' }).status === 0;   // `sh` is not a shell of the probe: plumbing, as the NAMED_PROBE's own `command -v`
     let ran = 0;
-    let notRun = 0;
+    let lacking = 0;    // a program this box lacks, the row's own or one its command names
+    let refusing = 0;   // a program this box has that refuses to run the command (THE REFUSING PROGRAM)
+    const notRunIds = [];
     for (const [id, cls, program, raw, writers, cwd = 'nad'] of RESIDUAL_TABLE) {
       assert.ok(Object.hasOwn(RESIDUAL_CLASSES, cls), `${id}: its class ${cls} is one the property states`);
       assert.ok(Object.hasOwn(w.cwds, cwd), `${id}: its cwd ${cwd} is one the world has`);
       const cmd = w.fill(raw);
       const h = w.hook(cmd, w.cwds[cwd]);
       assert.equal(h.status, 0, `${id}: allowed from the row's cwd, ${cwd} (the residual): ${cmd}: ${h.reason}`);
-      if (program && !toolPresent(program)) { console.error(`NOT RUN: real ${program} is not on this runner, so its evidence leg did not run: the residual table's ${id}`); notRun++; continue; }
-      if (!namedPresent(cmd, `the residual table's ${id}, whose command names it`)) { notRun++; continue; }
-      for (const shell of shellsFor(A, `the residual table's ${id}`)) {
-        const r = w.run(cmd, w.cwds[cwd], shell);
-        assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset (the residual is live): ${cmd}: ${r.stderr}`);
+      if (program && !toolPresent(program)) { console.error(`NOT RUN: real ${program} is not on this runner, so its evidence leg did not run: the residual table's ${id}`); lacking++; notRunIds.push(id); continue; }
+      if (!namedPresent(cmd, `the residual table's ${id}, whose command names it`)) { lacking++; notRunIds.push(id); continue; }
+      const results = shellsFor(A, `the residual table's ${id}`).map((shell) => [shell, w.run(cmd, w.cwds[cwd], shell)]);
+      const writerLegs = results.filter(([shell]) => writers.includes(shell));
+      if (program && writerLegs.length && writerLegs.every(([, r]) => !r.changed)) {   // every writer leg left the subset unchanged: the program's refusal, or a defect
+        const refusal = refusalOf(cmd, w.cwds[cwd], w.env, writerLegs.map(([shell]) => shell));
+        if (refusal !== null) {
+          assert.ok(results.every(([, r]) => !r.changed), `${id}: ${program} refuses to run here (${refusal}), so no shell wrote`);
+          console.error(REFUSAL_LINE(program, refusal, id));
+          refusing++;
+          notRunIds.push(id);
+          continue;
+        }
       }
+      for (const [shell, r] of results) assert.equal(r.changed, writers.includes(shell), `${id}: run unguarded, ${shell} ${writers.includes(shell) ? 'writes' : 'leaves'} the tracked subset (the residual is live): ${cmd}: ${r.stderr}`);
       ran++;
     }
-    console.log(`# the residual table: ${RESIDUAL_TABLE.length} rows, ${ran} measured, ${notRun} not run for a program this box lacks; classes ${Object.keys(RESIDUAL_CLASSES).length}`);
+    console.log(`# the residual table: ${RESIDUAL_TABLE.length} rows, ${ran} measured, ${lacking + refusing} not run (${lacking} for a program this box lacks, ${refusing} for a program that refuses to run here); classes ${Object.keys(RESIDUAL_CLASSES).length}`);
     assert.ok(ran >= 25, `most rows measured here (${ran})`);
+    // the rows this box cannot run, derived from its programs alone (absent by `command -v` or by name; refusing by the probe): the rows
+    // not run are exactly these, so a NOT RUN never stands in for a miss the box could have measured, and on a box whose every program
+    // runs (this one: the list is empty) the table is a full measurement
+    const presentShells = shellsFor(A, null, SHELL_PROBE, () => {});   // the probe's lines stand above, once per row
+    const cannot = RESIDUAL_TABLE.filter(([, , program, raw, writers, cwd = 'nad']) => { const cmd = w.fill(raw); return (program && !toolPresent(program)) || !namedPresent(cmd, null, NAMED_PROBE, () => {}) || (program && refusalOf(cmd, w.cwds[cwd], w.env, presentShells.filter((s) => writers.includes(s))) !== null); }).map((r) => r[0]);
+    assert.deepEqual(notRunIds, cannot, `the rows not run are exactly the rows this box cannot run, derived from its programs (${cannot.length}: ${cannot.join(', ') || 'none'})`);
     // the property on the hook header names every class of the table, in the words RESIDUAL_CLASSES pairs with it
     const header = fs.readFileSync(HOOK, 'utf8').replace(/\n\/\/ ?/g, ' ').replace(/\s+/g, ' ');
     assert.ok(header.includes('THE RESIDUAL PROPERTY.'), 'the header states the property');
@@ -7915,21 +8021,27 @@ test("round 6, second commit, THE RESIDUAL TABLE: every shape the round could na
 // child test below counted the probe's own line, printed at every matrix's start whether or not a row was skipped, so a no-op rows
 // report passed it; the pattern is pinned against both lines in the third commit's rows test)
 const ROWS_NOT_RUN_LINE = /NOT RUN: real zsh is not on this runner, so its evidence leg did not run: the (piped-script|stdin-script|heredoc-body) matrix's \d+ rows whose evidence needs zsh, their verdicts compared and their writers and parsing not/;
+// a bin dir under `dir` linking every program on this PATH but the names given: the runner-shape harness (round 6's second commit, for the
+// three matrices without zsh; a helper since the fifteenth, whose runner-shape child puts a refusing perf ahead of it too)
+const linkAllBut = (dir, names) => {
+  const bin = path.join(dir, 'bin');
+  fs.mkdirSync(bin);
+  let linked = 0;
+  for (const d of process.env.PATH.split(':')) {
+    let entries = [];
+    try { entries = fs.readdirSync(d); } catch { continue; }
+    for (const n of entries) {
+      if (names.includes(n) || fs.existsSync(path.join(bin, n))) continue;
+      try { fs.symlinkSync(path.join(d, n), path.join(bin, n)); linked++; } catch { /* a name that raced or cannot be linked */ }
+    }
+  }
+  assert.ok(linked > 10 && names.every((n) => !fs.existsSync(path.join(bin, n))), `a bin dir linking every program but ${names.join(', ')} (${linked} linked)`);
+  return bin;
+};
 test("round 6, second commit (rulings E and tests-2), a runner lacking zsh reproduced: the three matrices with a named consumer run as a child under a PATH linking every program but zsh, the runner's own child marker removed; the child passes, prints the NOT RUN line per matrix, skips exactly the rows whose evidence needs zsh (the fixture's `needs`) and measures the rest, so the hard invariant holds on the rows the box can measure", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-bash-guard-nozsh-'));
   try {
-    const bin = path.join(dir, 'bin');
-    fs.mkdirSync(bin);
-    let linked = 0;
-    for (const d of process.env.PATH.split(':')) {
-      let names = [];
-      try { names = fs.readdirSync(d); } catch { continue; }
-      for (const n of names) {
-        if (n === 'zsh' || fs.existsSync(path.join(bin, n))) continue;
-        try { fs.symlinkSync(path.join(d, n), path.join(bin, n)); linked++; } catch { /* a name that raced or cannot be linked */ }
-      }
-    }
-    assert.ok(linked > 10 && !fs.existsSync(path.join(bin, 'zsh')), `a bin dir linking every program but zsh (${linked} linked)`);
+    const bin = linkAllBut(dir, ['zsh']);
     const env = { ...process.env, PATH: bin };
     delete env.NODE_TEST_CONTEXT;
     const r = _spawnSync(process.execPath, ['--test', '--test-name-pattern', 'the piped-script matrix|the stdin-script matrix|the heredoc-body matrix', fileURLToPath(import.meta.url)], { env, encoding: 'utf8', timeout: 900000, maxBuffer: 64 * 1024 * 1024 });
@@ -9901,4 +10013,90 @@ test("round 6, twelfth commit, the rows: zsh's unbraced positional subscript (`$
     assert.ok(hook.includes("if (name === 'set' && positionalsApply())") && hook.includes("else if (name === 'shift' && positionals !== null && positionalsApply())"), 'a set or shift inside a body being defined does not rebind this shell\'s list (behaviour: S12-bl-body-set)');
     assert.ok(hook.includes('const NEVER_EMPTY = /^[#$0?]$/;') && hook.includes("(param.op.startsWith(':') ? NEVER_EMPTY : ALWAYS_SET).test(param.name)"), 'the colon form of an always-set parameter needs a never-empty one (behaviour: S12-of-* above)');
   } finally { process.env.HOME = savedHome; w.rm(); }
+});
+
+
+// ── round 6, fifteenth commit (2026-09-22): the fork's CI at the fourteenth commit ──────────────────────────────────────────────
+//
+// The Shell job's node step on ubuntu, where zsh is absent and perf is present but refuses to run without CAP_PERFMON, failed two
+// tests this box's run of the same step passed: the escape readers' pin, whose justification for the hook's decline of `\xg` (a NUL
+// in zsh, `\xg` as spelled in bash and dash) was a disagreement among the shells PRESENT, unobservable without zsh while the hook's
+// decline stayed right; and THE RESIDUAL TABLE, whose RT-perf-stat measured no write where perf had exited before running the copy,
+// a class the table's evidence rule (NOT RUN for a program the box lacks) did not cover. THE RECORDED OUTPUTS and THE REFUSING
+// PROGRAM, at their homes above, close each; the runner's shape is reproduced here as a child of this file.
+const RUNNER_PERF_REFUSAL = ['Error:', 'Access to performance monitoring and observability operations is limited.', 'Consider adjusting /proc/sys/kernel/perf_event_paranoid setting to open', 'access to performance monitoring and observability operations for processes', 'without CAP_PERFMON, CAP_SYS_PTRACE or CAP_SYS_ADMIN Linux capability.'];
+// a perf that prints the runner's refusal and exits 255 before running anything, in a bin dir under `dir`
+const refusingPerf = (dir) => {
+  const bin = path.join(dir, 'refusing');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'perf'), `#!/bin/sh\n# perf on a runner whose kernel refuses perf_event_open without CAP_PERFMON: the runner's text, exit 255\nprintf '%s\\n' ${RUNNER_PERF_REFUSAL.map((l) => `'${l}'`).join(' ')} >&2\nexit 255\n`, { mode: 0o755 });
+  return bin;
+};
+// a perf that runs its workload (`perf stat [-o file] cmd...` runs cmd), in a bin dir under `dir`: the control
+const runningPerf = (dir) => {
+  const bin = path.join(dir, 'running');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'perf'), '#!/bin/sh\n# a perf that runs its workload\n[ "$1" = stat ] && shift\nwhile [ $# -gt 0 ]; do case "$1" in -o) shift 2;; --) shift; break;; -*) shift;; *) break;; esac; done\nexec "$@"\n', { mode: 0o755 });
+  return bin;
+};
+test("round 6, fifteenth commit, THE REFUSING PROGRAM's helpers by execution: refusalReason takes the refusal's first line and, after a bare label, the line that follows; refusalOf runs the row's command with its copy replaced by true in the shells given under the env given: a perf that prints the runner's refusal and exits 255 in every shell is a refusal with that reason, a perf that runs its workload is none, a nonzero exit that says nothing is none, a command without the copy has no probe, and no shell is no refusal; the copy's spelling covers every cwd the table's rows write from; and every row whose program needs a capability, a namespace, a pty or a daemon the runner may deny has a probe", () => {
+  assert.equal(refusalReason(`${RUNNER_PERF_REFUSAL.join('\n')}\n`), 'Error: Access to performance monitoring and observability operations is limited.', "the runner's text: the label and the line after it");
+  assert.equal(refusalReason('strace: ptrace(PTRACE_TRACEME, ...): Operation not permitted\n'), 'strace: ptrace(PTRACE_TRACEME, ...): Operation not permitted', 'a one-line refusal is its line');
+  assert.equal(refusalReason('unshare: unshare failed: Operation not permitted\nmore\n'), 'unshare: unshare failed: Operation not permitted', 'a first line that is no bare label stands alone');
+  assert.equal(refusalReason(''), null, 'nothing said: no reason');
+  assert.equal(refusalReason('\n \n'), null, 'blank lines: no reason');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-bash-guard-refusal-'));
+  try {
+    fs.mkdirSync(path.join(dir, 'docs'));   // the cwd; the probe runs true, so nothing is written
+    const cwd = path.join(dir, 'docs');
+    const cmd = 'perf stat -o /dev/null cp ../base/report.md report.md';
+    const env = (bin) => ({ PATH: `${bin}:${process.env.PATH}`, HOME: dir, LC_ALL: 'C.UTF-8' });
+    const shells = shellsFor(['bash', 'dash'], "THE REFUSING PROGRAM's helpers");
+    const refusing = refusingPerf(dir);
+    assert.equal(refusalOf(cmd, cwd, env(refusing), shells), 'Error: Access to performance monitoring and observability operations is limited.', "the refusing perf: a refusal with the runner's reason");
+    assert.equal(refusalOf(cmd, cwd, env(runningPerf(dir)), shells), null, 'the running perf: no refusal');
+    const silent = path.join(dir, 'silent');
+    fs.mkdirSync(silent);
+    fs.writeFileSync(path.join(silent, 'perf'), '#!/bin/sh\nexit 3\n', { mode: 0o755 });
+    assert.equal(refusalOf(cmd, cwd, env(silent), shells), null, 'a nonzero exit that says nothing is no refusal: the row reds as before');
+    assert.equal(refusalOf("printf '%s\\n' ../base/report.md report.md | xargs cp", cwd, env(refusing), shells), null, 'a command without the copy has no probe');
+    assert.equal(refusalOf(cmd, cwd, env(refusing), []), null, 'no shell to run the probe in: no refusal');
+    assert.ok(!fs.existsSync(path.join(dir, 'docs', 'report.md')), 'the probe wrote nothing');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  // the copy as the rows spell it from docs/, from the project root and from a cwd in no project
+  for (const s of ['cp ../base/report.md report.md', 'cp base/report.md docs/report.md', 'cp /w/notes-api/base/report.md /w/notes-api/docs/report.md']) assert.ok(WRITE_SPELLING.test(s), `the copy's spelling: ${s}`);
+  assert.ok(!WRITE_SPELLING.test('cp ../base/report.md other.md') && !WRITE_SPELLING.test('cat ../base/report.md > report.md'), 'a copy elsewhere, or a redirection, is not the spelling');
+  // the population: the table's rows with a program, split by whether the program runs the copy (a probe derives) or writes by its own nature (none)
+  const withProgram = RESIDUAL_TABLE.filter((r) => r[2]);
+  const withProbe = withProgram.filter((r) => WRITE_SPELLING.test(r[3]));
+  const without = withProgram.filter((r) => !WRITE_SPELLING.test(r[3]));
+  assert.equal(withProbe.length + without.length, withProgram.length);
+  for (const id of ['RT-perf-stat', 'RT-strace', 'RT-unshare-U', 'RT-setpriv', 'RT-setpriv-caps', 'RT-prlimit', 'RT-nsenter', 'RT-capsh', 'RT-fakeroot', 'RT-setarch', 'RT-linux64', 'RT-tmux-new', 'RT-dbus-run-session', 'RT-eatmydata', 'RT-script-wrapper', 'RT-rbash']) assert.ok(withProbe.some((r) => r[0] === id), `${id}, whose program the runner may deny, has a probe`);
+  console.log(`# the residual table's refusal probes: ${withProbe.length} rows with a probe (${new Set(withProbe.map((r) => r[2])).size} programs), ${without.length} without (${new Set(without.map((r) => r[2])).size} programs that write by their own nature, whose miss reds as before)`);
+});
+
+test("round 6, fifteenth commit, the runner's shape reproduced: the escape readers and the residual table run as a child of this file under a PATH linking every program but zsh, a perf that prints the runner's refusal and exits 255 ahead of it; the child passes; the escape readers print one NOT RUN line naming zsh's three readers and its record and compare every form in every reader; the residual table prints RT-perf-stat's NOT RUN line with the refusal as its reason, counts every refusal line it printed as a row not run for a refusing program (eatmydata refuses behind the harness's links too, unable to find itself, which is the rule at work), and holds its rows not run equal to the rows the shape cannot run", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'romp-bash-guard-runner-shape-'));
+  try {
+    const env = { ...process.env, PATH: `${refusingPerf(dir)}:${linkAllBut(dir, ['zsh'])}` };
+    delete env.NODE_TEST_CONTEXT;
+    const r = _spawnSync(process.execPath, ['--test', '--test-name-pattern', 'round 6, the escape readers by execution|round 6, second commit, THE RESIDUAL TABLE', fileURLToPath(import.meta.url)], { env, encoding: 'utf8', timeout: 900000, maxBuffer: 64 * 1024 * 1024 });
+    const out = String(r.stdout || '') + String(r.stderr || '');
+    assert.equal(r.status, 0, `the child passes on the runner's shape: ${out.slice(0, 3000)}`);
+    assert.ok(/^# pass 2$/m.test(out) && /^# fail 0$/m.test(out), `two tests, both passing: ${out.slice(-600)}`);
+    const esc = out.split('\n').filter((l) => /NOT RUN: real zsh is not on this runner, so its evidence leg did not run: the escape readers' 3 zsh readers over 34 forms and echo's union in zsh, the hook's readings compared to the outputs recorded from zsh 5\.9, not to a live zsh \(/.test(l));
+    assert.equal(esc.length, 1, `one NOT RUN line for zsh's readers (${esc.length}): ${esc.join(' | ')}`);
+    assert.ok(out.includes(`# the escape readers: ${ESCAPE_FORMS.length * 9} reader comparisons over ${ESCAPE_FORMS.length} forms and `) && out.includes('2 shells live (bash, dash), 1 by record (zsh; '), `every form compared in every reader, zsh's by record: ${(out.match(/# the escape readers: [^\n]*/) || [''])[0]}`);
+    const refusals = out.split('\n').filter((l) => /NOT RUN: real \S+ refuses to run on this runner \(/.test(l));
+    const perf = refusals.filter((l) => l.includes(REFUSAL_LINE('perf', 'Error: Access to performance monitoring and observability operations is limited.', 'RT-perf-stat')));
+    assert.equal(perf.length, 1, `one NOT RUN line for perf's refusal (${perf.length}): ${refusals.join(' | ')}`);
+    const m = out.match(/# the residual table: (\d+) rows, (\d+) measured, (\d+) not run \((\d+) for a program this box lacks, (\d+) for a program that refuses to run here\); classes (\d+)/);
+    assert.ok(m, `the child printed the table's summary: ${(out.match(/# the residual table[^\n]*/) || [''])[0]}`);
+    assert.equal(Number(m[1]), RESIDUAL_TABLE.length, 'every row');
+    assert.equal(Number(m[5]), refusals.length, `the rows not run for a refusing program are the refusal lines printed (${refusals.length}): ${refusals.join(' | ')}`);
+    assert.ok(Number(m[5]) >= 1, 'RT-perf-stat among them');
+    assert.equal(Number(m[2]) + Number(m[3]), RESIDUAL_TABLE.length, 'measured and not run partition the table');
+    assert.equal(Number(m[3]), Number(m[4]) + Number(m[5]), 'not run is the lacking and the refusing rows');
+    console.log(`# on the runner's shape, the residual table: ${m[1]} rows, ${m[2]} measured, ${m[4]} not run for a program the shape lacks, ${m[5]} for a refusing program (${refusals.map((l) => l.match(/the residual table's (\S+)/)[1]).join(', ')})`);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
