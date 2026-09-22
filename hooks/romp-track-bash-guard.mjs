@@ -883,7 +883,7 @@
 // text through, or a command substitution over such a producer handed to a shell, an eval or a here-string (a call of a function
 // the command defines, a tee or a pipe through another command, a cat of a file, an eval or a shell -c inside the substitution);
 // zsh's glob grouping, a `(..)` inside a word handed to zsh, read as a subshell by the lexer's zsh grammar while zsh globs it (a
-// lexer gap, stated since the first commit of this round); zsh's hook functions, a function the command defines under a name zsh calls on its own (chpwd, precmd, preexec, periodic, zshexit, and the names in chpwd_functions and its kin), whose body runs when the shell moves, prompts or exits, from the directory the shell is in then, while the guard judges the definition where it stands; an opaque expansion from a cwd outside every project, a leading
+// lexer gap, stated since the first commit of this round); zsh's hook functions, a function the command defines under a name zsh calls on its own (chpwd, precmd, preexec, periodic, zshexit, and the names in chpwd_functions and its kin), whose body runs when the shell moves, prompts or exits, from the directory the shell is in then, while the guard judges the definition where it stands; a positional the resolver reads at the word by a model the shell does not keep, an element's emptiness, a binding a later shift or unset removed, zsh's subscript grammar beyond one index (the colon form of a positional's alternate value is read as set by the list's length, not the element, so `set -- ''; eval cp ${1:+x} a b` copies in every shell; a head or script text reads a positional's candidate that no shift, second set, unset, read or body's local removes, so `set -- a; shift; ${1}cp a b` is read as `acp` while every shell runs cp, and the known set reads a name or a list bound in a subshell, a pipeline, a background job, a command substitution, an untaken body, a prefix position or behind a wrapper as this shell's, as in `c=a; unset c; eval cp ${c:+x} a b` and `(set -- a); eval cp ${1:+x} a b`; the unbraced list's subscript is read as one numeric index while zsh's `[@]`, `[*]`, an arithmetic, flagged or quoted subscript and a word of several such expansions select from the list too, so `$argv[*] cp a b` copies in zsh, and in every shell through `zsh -c`; each pre-existing at the round-5 head and filed in round 6's thirteenth commit for the round's ruling, a fix at the mechanism or an accepted allow); an opaque expansion from a cwd outside every project, a leading
 // opaque expansion, or one after a literal head outside every project, from a cwd in no project (B2 as ruled, with its
 // boundary). A shape outside these classes that reaches a tracked file is a rule to state, not a residual. The same
 // paragraph,
@@ -1029,6 +1029,31 @@
 // "$(which cp)" <out>/scratch/c2; PATH=<out>/scratch:$PATH; c2 <proj>/base/report.md <proj>/docs/report.md` copies while allowed, an opaque
 // operand after a literal head outside every project (the eighth class), pinned as a row with the shells that write. Every fix pinned by
 // execution in the twelfth commit's rows test (114 rows, the writers measured in bash, zsh and dash), red on the eleventh commit's head.
+// ROUND 6, THIRTEENTH COMMIT (2026-09-22; the round's two verifiers on the twelfth commit's head): three populations measured allowing while a shell
+// writes, each pre-existing at the round-5 head and standing on no surface, filed on the residual table as rows keyed on evidence (the shells that
+// write and the hook's verdict, re-measured every run) under one class named for the mechanism, a positional the resolver reads at the word by a model
+// the shell does not keep, with no change to the hook; whether the class is fixed at the mechanism or accepted as allow-by-default is the round's
+// ruling. THE EMPTY POSITIONAL (scriptTexts' posKnown): the colon form is read as set when the list the walk holds is long enough, never whether the
+// element is non-empty, so `set -- ''; eval cp ${1:+x} a b` copies in bash, zsh and dash while allowed; 30 rows (a second or empty element, `bash -c`,
+// `sh -c`, a double-quoted word or text, install, mv, `ln -f`, a redirection target, a subshell, a group, a list, a shift onto the empty element, a
+// second set, `${@:+x}` and `${*:+x}` in bash and dash, the tracked notes/ folder, the project root, scratch/, a cwd in no project). THE STALE
+// POSITIONAL CANDIDATE (candidateTexts, bindPositionals): each bind's values are noted into the candidates and none cleared, so after `set -- a;
+// shift` a head word or a script text still reads `a` for `1` (`set -- a; shift; ${1}cp a b` is read as `acp`, no writer, while every shell runs cp;
+// `eval "cp a ${1}report.md"` as the untracked `areport.md`); 31 rows (`$1cp`, `shift 2`, a second positional, `set --`, a double-quoted head, eval,
+// `bash -c`, sed, tee, a pipe's or a process substitution's consumer, the eval, `bash -c` and `sh -c` script roads, a redirection target, notes/, the
+// root, a cwd in no project, a PATH-bound name). THE KNOWN SET (scriptTexts' setKnown, candKnown and posKnown): a name's or the list's binding is read
+// as this shell's where the shell does not hold it at the word, a value an `unset`, a `read`, a body's `local` or a reassignment to an empty default
+// dropped, and a `c=a` or a `set -- a` in a subshell, a pipeline, a background job, a command substitution, an untaken if, `&&`, `||`, case, for or
+// while body, a prefix position or behind `env`, `nice` or zsh's `command` (`c=a; unset c; eval cp ${c:+x} a b` and `(set -- a); eval cp ${1:+x} a b`
+// copy in every shell while allowed); 31 rows, the shells named writing (bash and dash for a pipeline's last member and a background assignment, zsh
+// for `command set`). THE SUBSCRIPTED POSITIONAL beyond one numeric index (ZSH_POSITIONAL_SUBSCRIPT, mayVanish): the regex takes one numeric subscript
+// on the whole word while under zsh's grammar every `[..]` after the unbraced `$argv`, `$@` or `$*` selects from the list (`[@]`, `[*]`, an
+// arithmetic, flagged or quoted subscript), and a word of several such expansions is not one subscript, so the head keeps its place and `$argv[*] cp a
+// b` copies in zsh while allowed; 60 rows, zsh writing (every shell through `zsh -c`): the head, glued to the command, the printer, `zsh -c`, a
+// function body, eval, sed, tee, `set --`, the operand road, notes/, the root, a cwd in no project. Three members of stated classes beside their
+// witness rows (`$c printf -v x '..'; $x` in bash, `cat <(echo '..') | bash` and `f() { cat; }; echo '..' > >(f | bash)` in bash and zsh). The table's
+// rows name their cwd where it is not docs/ (a sixth element); 423 rows over 9 classes, the class on every surface the property stands on, pinned by
+// the plan test with the record and the count.
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -4073,6 +4098,11 @@ const NEVER_EMPTY_EXPANSION = /^(?:\$\(\(|\$\{#|\$[?$#0]$|\$\{[?$#0]\}$)/;   // 
 // removed beside bash's reading (candidateTexts), so the glued form's remaining characters are the command. A double-quoted `"$argv[1]"` is one
 // field, empty at most (dqSingleField), and a braced `${argv[1]}` was read already (its marks are all expansion). Pinned by execution in the
 // twelfth commit's rows test, zsh alone writing (every shell where the line is handed to zsh).
+// THE SUBSCRIPTED POSITIONAL beyond one numeric index (round 6's thirteenth commit, 2026-09-22; the round's verifiers on the twelfth commit's head): the
+// regex below takes one numeric subscript on the whole word, while under zsh's grammar every `[..]` after the unbraced list name selects from the list
+// (`[@]`, `[*]`, an arithmetic, flagged or quoted subscript), and a word of several such expansions is not one subscript, so the head keeps its place
+// and `$argv[*] cp a b` copies in zsh while allowed: filed, not changed here, as 60 rows of THE RESIDUAL TABLE under the class 'a positional the
+// resolver reads at the word by a model the shell does not keep', for the round's ruling.
 const ZSH_POSITIONAL_SUBSCRIPT = /^\$(?:argv|[@*])\[-?[0-9]+(?:,-?[0-9]+)?\]$/;   // the whole word: the list's unbraced name and one subscript, unquoted
 const ZSH_SUBSCRIPT_AFTER_LIST = /^\[-?[0-9]+(?:,-?[0-9]+)?\]/;   // the subscript opening a literal run that follows the list's name (candidateTexts)
 const ENDS_WITH_LIST_NAME = /\$(?:argv|[@*])$/;   // the expansion run before such a literal run ends with the list's unbraced name
@@ -4743,6 +4773,10 @@ function extractIn(command, ctx) {
   const UNKNOWN_POSITIONALS = 'unknown';
   let positionals = ctx.callArgs != null ? ctx.callArgs : null;   // an array of words (known), UNKNOWN_POSITIONALS (rebound to values not read), or null (not modelled)
   let positionalsWhy = ctx.positionalsWhy || null;
+  // THE STALE POSITIONAL CANDIDATE (round 6's thirteenth commit, 2026-09-22; the round's verifiers on the twelfth commit's head): the notes below clear no
+  // earlier bind's candidates, so after `set -- a; shift` candidateTexts still yields `a` for `1` at a head word or in a script text (`set -- a; shift;
+  // ${1}cp a b` is read as `acp` while every shell runs cp): filed, not changed here, as 31 rows of THE RESIDUAL TABLE under the class 'a positional the
+  // resolver reads at the word by a model the shell does not keep', for the round's ruling.
   const bindPositionals = (ws, why = null) => {
     for (const k of [...vars.keys()]) if (/^[0-9]+$/.test(k)) vars.delete(k);
     if (ws === UNKNOWN_POSITIONALS) {
@@ -5627,6 +5661,12 @@ function extractIn(command, ctx) {
           // (the safe side for a default word, whose every value joins the texts) and no reading of whether a positional is SET now, so a
           // positional's alternate value is read from the list the walk holds alone (posKnown, and vars, which bindPositionals rebinds), never
           // from them; a name's candidates stay a reading of the name being set, as the tenth commit made them
+          // THE EMPTY POSITIONAL and THE KNOWN SET (round 6's thirteenth commit, 2026-09-22; the round's verifiers on the twelfth commit's head): posKnown
+          // below reads the colon form as set by the list's length, never whether the element is non-empty (`set -- ''; eval cp ${1:+x} a b` copies in
+          // every shell while allowed), and setKnown, candKnown and posKnown read a name's or the list's binding as this shell's where the shell does
+          // not hold it at the word (an unset, a read, a body's local, a bind in a subshell, a pipeline, a background job, a command substitution, an
+          // untaken body, a prefix position or behind a wrapper): filed, not changed here, as 61 rows of THE RESIDUAL TABLE under the class 'a positional
+          // the resolver reads at the word by a model the shell does not keep', for the round's ruling.
           const candKnown = !/^[0-9@*]+$/.test(name) && candidates.has(name) && [...candidates.get(name)].length > 0 && (!/:/.test(op || '') || [...candidates.get(name)].every((v) => v !== ''));
           const posKnown = /^[0-9@*]+$/.test(name) && positionalsApply() && Array.isArray(positionals) && (name === '@' || name === '*' ? positionals.length > 0 : positionals.length >= Number(name));   // Array.isArray: at the top level the list is not modelled (null), so a positional's alternate value is not known and the dropped form joins the readings (round 6's eleventh commit: `eval cp ${1:+x} a b` had refused through the catch-all, a TypeError on null, where the rule refuses by name)
           if (!(setKnown || candKnown || posKnown)) texts.add(before + after);
