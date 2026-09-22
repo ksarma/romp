@@ -139,6 +139,12 @@ its second call and the plant harness, which diffs a base census that had been v
 the view's own drift as a change the plants made (two plant cases red at this addendum's first cut). A name typed as a
 holder now makes its scope live like a tainted local, the fixpoint types the whole chain whatever the order, and a pin
 holds the view idempotent and the chain's last reader typed.
+Fork PR #813's merge of main (2026-09-22) met a third engine defect and fixed it: roads() read self.sites as a dict under
+iteration, while the tag walk it runs over each site's arguments can record a site the fixpoint left unresolved (a call
+inside the argument whose receiver was typed only after its scope's one walk, the accepted lazy binding the idempotency
+pin names), so at a tree where a resolved site's argument held such a call it raised `dictionary changed size during
+iteration` (four of the module's tests, at the merged tree and not at main's); the sites are read as a worklist now,
+drained until none is unread, and a plant pins the shape (PLANTED_LATE_SITE).
 """
 import ast
 import glob
@@ -1577,33 +1583,51 @@ class Census:
         `HostTransport.from_journal(hdir)`, `host_stderr_size(dirs)`); a MINT is a call whose value is tainted
         (`hdir = ht.host_dir(...)`, `spec_path = ht.write_spawn_spec(...)`) or that enters a function holding a seed or
         returning a descriptor holder (`open_host_dirs(...)`, `remove_host_dir(...)`, `hosts_dir(...)`), the roads by
-        which a use inside a helper is reached from a caller that passes nothing tainted itself."""
+        which a use inside a helper is reached from a caller that passes nothing tainted itself.
+        The sites are read as a WORKLIST, drained until none is unread: the tag walk this method runs over a site's
+        arguments can itself RECORD a site the fixpoint left unresolved (a call inside the argument whose receiver was
+        typed only after its scope's one walk, the non-holder lazy binding the idempotency pin names as accepted), so
+        self.sites can grow under this read. Read as a dict under iteration it raised `dictionary changed size during
+        iteration` at fork PR #813's merge of main (2026-09-22): SdkSession._recover_picked_pending_at_init's
+        `self.backend.login_display(...)`, inside the argument of a `self._log_quietly(...)` site, on a scope walked once
+        in round 0, before SdkSession.__init__'s re-walk typed `backend`. A snapshot would leave the site a pass recorded
+        unread by the call that recorded it; the worklist reads every site there is when it returns, whatever recorded
+        it. Such a site can carry nothing (a scope the fixpoint did not re-walk holds no taint, by the liveness rule in
+        run(), so its arguments are untainted and its callees' values are not), which is why a snapshot and the worklist
+        agree in output over this tree; the worklist is kept so that this read does not rest on that rule. Pinned by
+        test_a_site_the_view_records_while_roads_reads_is_read_by_the_same_call."""
         seed_quals = {(t.file, t.qual) for _, t in self.seeds if t.kind == "path"} | {(f, q) for f, q, _, _ in DECLARED_SEEDS}
         holders = {c for (c, a), tags in self.attr.items() if tags and c != "*"}
         out = []
-        for (f, q, ln, col, _eln, _ecol), (fn, call, callees) in self.sites.items():
-            kinds = set()
-            args = list(call.args) + [kw.value for kw in call.keywords]
-            for a in args:
-                kinds |= {t.kind for t in self.tags(a, fn)}
-                if any(t in holders for t in self.types_of(a, fn)) and not (isinstance(a, ast.Name) and a.id in ("self", "cls")):
-                    kinds.add("holder")
-            carrier = bool(kinds - {"text", "exc"})
-            value = self.tags(call, fn)
-            mint = bool(value) or any((c.file, c.qual) in seed_quals or any(t in holders for t in self.ret_type.get((c.file, c.qual), ()))
-                                      for c in callees)
-            if not (carrier or mint):
-                continue
+        read = set()
+        while len(read) < len(self.sites):
+            # a pass over the keys unread so far, listed before the pass (the tag walk below may add to self.sites), and
+            # another pass while any is unread, so a site one pass recorded is read by the next (the docstring)
+            for key in [k for k in self.sites if k not in read]:
+                read.add(key)
+                fn, call, callees = self.sites[key]
+                kinds = set()
+                args = list(call.args) + [kw.value for kw in call.keywords]
+                for a in args:
+                    kinds |= {t.kind for t in self.tags(a, fn)}
+                    if any(t in holders for t in self.types_of(a, fn)) and not (isinstance(a, ast.Name) and a.id in ("self", "cls")):
+                        kinds.add("holder")
+                carrier = bool(kinds - {"text", "exc"})
+                value = self.tags(call, fn)
+                mint = bool(value) or any((c.file, c.qual) in seed_quals or any(t in holders for t in self.ret_type.get((c.file, c.qual), ()))
+                                          for c in callees)
+                if not (carrier or mint):
+                    continue
 
-            def tainted(a):
-                return bool({t for t in self.tags(a, fn) if t.kind not in ("text", "exc")}) or \
-                    (any(t in holders for t in self.types_of(a, fn)) and not (isinstance(a, ast.Name) and a.id in ("self", "cls")))
-            tainted_args = [self.segment(fn, a) for a in call.args if tainted(a)]
-            tainted_args += ["%s=%s" % (kw.arg, self.segment(fn, kw.value)) for kw in call.keywords if tainted(kw.value)]
-            text = "%s(%s)" % (self.segment(fn, call.func), ", ".join(tainted_args) if tainted_args else "...")
-            kind = "carrier" if carrier else "mint"
-            mech = "+".join(sorted(kinds - {"text", "exc"})) if carrier else ("+".join(sorted({t.kind for t in value})) or "enters")
-            out.append(Terminal(fn, call, kind, text, self._ord_of(fn, kind, text, call), mech, set()))
+                def tainted(a):
+                    return bool({t for t in self.tags(a, fn) if t.kind not in ("text", "exc")}) or \
+                        (any(t in holders for t in self.types_of(a, fn)) and not (isinstance(a, ast.Name) and a.id in ("self", "cls")))
+                tainted_args = [self.segment(fn, a) for a in call.args if tainted(a)]
+                tainted_args += ["%s=%s" % (kw.arg, self.segment(fn, kw.value)) for kw in call.keywords if tainted(kw.value)]
+                text = "%s(%s)" % (self.segment(fn, call.func), ", ".join(tainted_args) if tainted_args else "...")
+                kind = "carrier" if carrier else "mint"
+                mech = "+".join(sorted(kinds - {"text", "exc"})) if carrier else ("+".join(sorted({t.kind for t in value})) or "enters")
+                out.append(Terminal(fn, call, kind, text, self._ord_of(fn, kind, text, call), mech, set()))
         return out
 
     def members(self):
@@ -1973,6 +1997,35 @@ class _Q814Addendum:
 '''
 
 
+# The shape fork PR #813's merge of main exposed (2026-09-22): a scope the fixpoint walks once, in round 0 (no seed, no
+# tainted name, no call whose value is tainted, no holder), holding a resolved site (a method of self) whose argument calls
+# a method on a receiver typed only AFTER that one walk: here by a later method of the same class, walked after the first
+# in round 0 (in the tree, SdkSession.backend, typed when SdkSession.__init__ is re-walked). The fixpoint leaves the inner
+# call unresolved; roads() resolves it when it reads the outer site's argument, and records it. The peer has an __init__
+# because types_of reads a constructor call through _init_of: a class without one types to nothing.
+PLANTED_LATE_SITE = '''
+
+
+class _Q813LateSite:
+    def l01_outer_site_with_a_late_call_in_its_argument(self):
+        self.l01_sink("%s" % self.peer.l01_label(""))
+
+    def l01_sink(self, text):
+        return text
+
+    def l01_type_the_receiver(self):
+        self.peer = _Q813LatePeer()
+
+
+class _Q813LatePeer:
+    def __init__(self):
+        self.l01_seen = 0
+
+    def l01_label(self, x):
+        return x
+'''
+
+
 def plant(base_census, appendices):
     """Run the census over a scratch copy of the three files with `appendices` ({file: source}) appended, and return
     ({plant method prefix: [(op, mech)]}, [member keys new outside the planted classes, escapes excepted], [escape lines
@@ -2223,6 +2276,47 @@ def _q814_no_descriptor(state_dir, sid):
         self.assertEqual(fns, ["_q814_by_path_arm"], "the planted fallback arm is the one function of that shape: %r" % (fns,))
         self.assertEqual(len(holes), 1, holes)
         self.assertIn("_q814_no_descriptor -> _q814_by_path_arm (no dir_fd)", holes[0])
+
+    def test_a_site_the_view_records_while_roads_reads_is_read_by_the_same_call(self):
+        """roads() reads the resolved sites as a worklist (its docstring): the tag walk it runs over a site's arguments
+        can record a site the fixpoint left unresolved, a call inside the argument whose receiver was typed only after
+        its scope's one walk. Planted on a scratch copy of kernel/sdk_backend.py (PLANTED_LATE_SITE): a class whose first
+        method holds a resolved site (a method of self) with a call on `self.peer` inside its argument, and whose LATER
+        method types `self.peer`, walked after the first in round 0; the fixpoint does not re-walk the first, which holds
+        nothing tainted. The premise is asserted, not assumed: after run() the outer call is a site, the inner is not, and
+        the receiver is typed. Then roads() returns (red before this pin: RuntimeError, dictionary changed size during
+        iteration, the red fork PR #813's merge of main met on the real tree, 2026-09-22), the inner call is a site after
+        that one call, it is neither a carrier nor a mint (its scope holds no taint, by the liveness rule that left it
+        unwalked, so a snapshot of the keys would give the same output; the worklist is what the docstring promises),
+        and the view is idempotent."""
+        import shutil
+        import tempfile
+        scratch = tempfile.mkdtemp(prefix="hosts-census-")
+        self.addCleanup(shutil.rmtree, scratch, True)
+        for f in FILES:
+            os.makedirs(os.path.dirname(os.path.join(scratch, f)), exist_ok=True)
+            shutil.copy(os.path.join(ROOT, f), os.path.join(scratch, f))
+        with open(os.path.join(scratch, "kernel/sdk_backend.py"), "a") as fh:
+            fh.write(PLANTED_LATE_SITE)
+        c = Census(scratch).run()
+        outer_q = "_Q813LateSite.l01_outer_site_with_a_late_call_in_its_argument"
+        texts = lambda: sorted(c.segment(c.sites[k][0], c.sites[k][1]) for k in c.sites if k[1] == outer_q)
+        self.assertEqual(texts(), ['self.l01_sink("%s" % self.peer.l01_label(""))'],
+                         "the premise: the fixpoint recorded the outer site and left the inner call unresolved")
+        self.assertEqual(c.attr_type.get(("_Q813LateSite", "peer")), ("_Q813LatePeer",),
+                         "the premise: the receiver is typed by the time the view reads, by the later method's round-0 walk")
+        try:
+            roads = c.roads()
+        except RuntimeError as e:
+            self.fail("roads() raised while its own tag walk grew the site set: %r" % (e,))
+        self.assertEqual(texts(), ['self.l01_sink("%s" % self.peer.l01_label(""))', 'self.peer.l01_label("")'],
+                         "the one roads() call recorded the inner call as a site")
+        self.assertEqual([t.key() for t in roads if t.fn.qual.startswith("_Q813LateSite.")], [],
+                         "a site the view records sits in a scope the fixpoint did not re-walk, which holds no taint: "
+                         "neither a carrier nor a mint")
+        keys1 = sorted(t.key() for t in c.members())
+        keys2 = sorted(t.key() for t in c.members())
+        self.assertEqual(keys1, keys2, "the view is not idempotent")
 
 
 def main():
