@@ -33,9 +33,14 @@ MOON = "\U0001F319"                      # an emoji for a names record: the rost
 
 
 def _row(c, sid):
-    """The row for `sid` on the LAST strip client `c` received."""
+    """The row for `sid` on the LAST strip client `c` received, checked for the count's key first, so a row without it
+    fails on the property (every tabs row carries `userTodos`, 0 included) and not on a KeyError in the caller."""
     strips = [f for f in c["_frames"] if f["type"] == "tabOrder"]
-    return {t["id"]: t for t in strips[-1]["tabs"]}[sid]
+    row = {t["id"]: t for t in strips[-1]["tabs"]}[sid]
+    if "userTodos" not in row:
+        raise AssertionError("every tabs row carries the count, 0 included: the row for the tab at position %d has keys %s"
+                             % (TAB_ORDER.index(sid), sorted(row)))
+    return row
 
 
 class UserTodosRoster(_ColdTabFixture):
