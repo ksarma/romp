@@ -1472,8 +1472,10 @@ substitute_for() {   # <commit>: a clean commit over the same parent, with a cle
 # same list with the option removed, the road as git applies the key, so each
 # case shows what the option closes. The refusal stays for the one case the
 # option cannot reach, a scanner whose git does not honour it: refused on the
-# count as before, the line naming the key, saying the option was not honoured,
-# and the remedy.
+# count as before, the line stating the two facts (a short count beside the key
+# false and a root commit in the range) and naming the key as a candidate cause
+# with its remedy, asserting neither that the option went unhonoured nor that
+# the key lifts the refusal.
 
 # The hook's argument list with --root taken out of its log options and every
 # other word kept: the scanner as git applies log.showRoot, for the road.
@@ -2495,6 +2497,7 @@ symlink_commit() {   # <path> <target> <message>: a committed symlink
     [ "$status" -eq 1 ]
     [[ "$output" == *"romp pre-push: thing in commit ${leak:0:10} is text that git calls binary although its diff attribute reads unspecified, so no attribute of its path accounts for the verdict; the previous version of the file is binary by its bytes (a NUL in its first 8000), which made git print no text diff for the change, and the identifier scan could not read the new text, so the push is refused rather than scanned"* ]]
     [[ "$output" == *"Where a line names the previous version's bytes as the cause, the hook scans only commits new to every fetched remote: if the commit is already on some remote, fetch that remote first and push again, or push from a clone that has fetched it."* ]]
+    [[ "$output" == *"set the diff attribute on the PREVIOUS version's path: an explicit \"<path> diff\" line in .gitattributes, for the old path where the line names one and for the file's own path otherwise"* ]]   # the second remedy of that line: the attribute on the pre-image's path lifts the pair to text (the round 5 refuter, 2026-09-22)
     [[ "$output" != *"core.bigFileThreshold is not set"* ]]   # the key is not the cause here: the line states the cause, not the key's facts
     [[ "$output" != *"a configuration key can be what makes git call the file binary"* ]]
     [[ "$output" != *"Remove the diff attribute"* ]]                            # the attribute paragraph: absent, the line having said no attribute accounts for the verdict
@@ -2567,6 +2570,7 @@ symlink_commit() {   # <path> <target> <message>: a committed symlink
     [ "$status" -eq 1 ]
     [[ "$output" == *"romp pre-push: thing in commit ${merge:0:10} is text that git calls binary although its diff attribute reads unspecified, so no attribute of its path accounts for the verdict; the previous version of the file in parent 1 of the merge is binary by its bytes (a NUL in its first 8000), which made git print no text diff for the change, and the identifier scan could not read the new text, so the push is refused rather than scanned"* ]]
     [[ "$output" == *"Where a line names the previous version's bytes as the cause, the hook scans only commits new to every fetched remote: if the commit is already on some remote, fetch that remote first and push again, or push from a clone that has fetched it."* ]]
+    [[ "$output" == *"set the diff attribute on the PREVIOUS version's path: an explicit \"<path> diff\" line in .gitattributes, for the old path where the line names one and for the file's own path otherwise"* ]]   # the second remedy of that line: the attribute on the pre-image's path lifts the pair to text (the round 5 refuter, 2026-09-22)
     [[ "$output" != *"core.bigFileThreshold is not set"* ]]   # the key is not the cause here: the line states the cause, not the key's facts
     [[ "$output" != *"a configuration key can be what makes git call the file binary"* ]]
     [[ "$output" != *"Remove the diff attribute"* ]]                            # the attribute paragraph: absent, the line having said no attribute accounts for the verdict
@@ -2597,6 +2601,7 @@ symlink_commit() {   # <path> <target> <message>: a committed symlink
     [ "$status" -eq 1 ]
     [[ "$output" == *"romp pre-push: new.txt in commit ${leak:0:10} is text that git calls binary although its diff attribute reads unspecified, so no attribute of its path accounts for the verdict; the previous version of the file (at old.txt, the path the diff read it from) is binary by its bytes (a NUL in its first 8000), which made git print no text diff for the change, and the identifier scan could not read the new text, so the push is refused rather than scanned"* ]]
     [[ "$output" == *"Where a line names the previous version's bytes as the cause, the hook scans only commits new to every fetched remote"* ]]
+    [[ "$output" == *"set the diff attribute on the PREVIOUS version's path: an explicit \"<path> diff\" line in .gitattributes, for the old path where the line names one and for the file's own path otherwise"* ]]   # the second remedy: for a rename the OLD path, the one the line names (the round 5 refuter, 2026-09-22)
     [[ "$output" != *"the diff read it as a rename, so the attribute of the path it came from counted too"* ]]   # the cause line names the old path itself
     [[ "$output" != *"core.bigFileThreshold is not set"* ]]
     [[ "$output" != *"a configuration key can be what makes git call the file binary"* ]]
@@ -3562,7 +3567,7 @@ empty_diff_tree_raw_c() { git_refusing 'case " $* " in *" --raw "*" -c "*) true 
     [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$BASE" ]
 }
 
-@test "a path holding a newline byte is refused as unscanned at the tip and in the commit: the listings are joined line by line, and such a path would be judged by nothing" {
+@test "a path holding a newline byte is refused as unscanned at the tip and in the commit: the listings are joined line by line, and such a path would be judged by nothing; a later commit that only DELETES the path the remote holds is refused too, since every changed path is rewritten and checked against the commit's verdicts (the widening the hook header discloses)" {
     commit_file file.txt "nothing to see" "clean"
     printf 'x\n' > "$REPO/"$'odd\nname.txt'
     git -C "$REPO" add -- $'odd\nname.txt'
@@ -3572,6 +3577,20 @@ empty_diff_tree_raw_c() { git_refusing 'case " $* " in *" --raw "*" -c "*) true 
     [ "$status" -eq 1 ]
     [[ "$output" == *"a path at the tip of refs/heads/main (${sha:0:10}) holds a newline, which the BINARY VERDICT check cannot judge"* ]]
     [[ "$output" == *"a path commit ${sha:0:10} changes holds a newline, which the BINARY VERDICT check cannot judge"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    # the widening (round 5, disclosed in the hook header): the remote holds the path, and the one commit in range only deletes it;
+    # its listing names the path, so the listing is rewritten for the check against its verdicts and refused, where the round 4
+    # text passed a commit with no post-image before any rewrite
+    add_remote
+    git -C "$REPO" push -q origin main                            # the adding commit on the remote: out of range below
+    git -C "$REPO" rm -q -- $'odd\nname.txt'
+    git -C "$REPO" commit -qm "delete the path with a newline"
+    gone="$(git -C "$REPO" rev-parse HEAD)"
+    run_hook "$sha"
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"a path at the tip of"* ]]                   # the tip no longer holds it
+    [[ "$output" != *"commit ${sha:0:10}"* ]]                    # out of range: the remote holds it
+    [[ "$output" == *"a path commit ${gone:0:10} changes holds a newline, which the BINARY VERDICT check cannot judge"* ]]
     [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
 }
 
@@ -3588,9 +3607,11 @@ empty_diff_tree_raw_c() { git_refusing 'case " $* " in *" --raw "*" -c "*) true 
 # test read a failed pipeline as a count of zero. Each test and each rewrite
 # now reads its own status and the caller names the read. The fault is a tr
 # first on the hook's PATH that refuses the Nth invocation of ONE argument
-# shape (the rewrite; the newline test) and execs the real tr for every other,
-# counting in a file since each invocation is its own process; the joins' own
-# tr (newline to NUL) is neither shape and runs through. Once per test, like
+# shape (the rewrite; the newline test; since round 6b the joins' own tr,
+# newline to NUL, for the join's fourth arm at the end of this file) and execs
+# the real tr for every other, counting in a file since each invocation is its
+# own process; the cases here refuse the rewrite and the test, and the joins'
+# tr runs through. Once per test, like
 # git_refusing. Since round 5 every commit's scratch files are rewritten, a
 # deletion-only commit's too (its listing is checked against its verdicts), so
 # the count of a rewrite is the tip's two, then eight per one-parent commit
@@ -3599,7 +3620,7 @@ empty_diff_tree_raw_c() { git_refusing 'case " $* " in *" --raw "*" -c "*) true 
 # holding a marker exits 0 and writes nothing (tr_silent_on, keyed on the
 # content and not on a count, so the same fault reaches the same file at any
 # hook text), and a wc that reads its input and answers nothing.
-tr_refusing() {   # <rewrite|test> <N>: the Nth tr of that shape exits 1, the real tr runs otherwise
+tr_refusing() {   # <rewrite|test|join> <N>: the Nth tr of that shape exits 1, the real tr runs otherwise (join: the joins' newline-to-NUL tr, which reads its input before it refuses, as a tr that failed after reading would)
     local real_tr
     real_tr="$(command -v tr)"
     mkdir -p "$TEST_DIR/shim"
@@ -3611,9 +3632,10 @@ tr_refusing() {   # <rewrite|test> <N>: the Nth tr of that shape exits 1, the re
 shape=""
 if [ $# -eq 2 ] && [ "$1" = '\0' ] && [ "$2" = '\n' ]; then shape=rewrite; fi
 if [ $# -eq 2 ] && [ "$1" = -cd ] && [ "$2" = '\n' ]; then shape=test; fi
+if [ $# -eq 2 ] && [ "$1" = '\n' ] && [ "$2" = '\0' ]; then shape=join; fi
 if [ "$shape" = "$want" ]; then
     seen=$(( $(cat "$counter") + 1 )); echo "$seen" > "$counter"
-    if [ "$seen" -eq "$n" ]; then echo "shim: tr refused ($shape $n)" >&2; exit 1; fi
+    if [ "$seen" -eq "$n" ]; then [ "$shape" != join ] || cat > /dev/null; echo "shim: tr refused ($shape $n)" >&2; exit 1; fi
 fi
 exec "$real_tr" "$@"
 SHIM
@@ -4378,4 +4400,210 @@ awk_silent_on_count() {   # an awk that exits 0 printing nothing for the program
     [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
     [[ "$output" == *"gitleaks could not scan"* ]]
     [[ "$output" != *"gitleaks found a credential"* ]]
+}
+
+
+# ── round 6b: the previous-version line's two remedies, the join's fourth arm, the short file's path ──
+# Round 5's refuters, by execution on the round 5 text: (1) a merge's rename
+# candidate whose combined section printed Binary (a text file moved onto a
+# path a parent holds a binary file at) was marked as judged by the addition
+# verdict alone, so the report skipped every parent's version and printed the
+# key's facts and the key's advice with no cause named; the marker is now set
+# only where the addition verdict decided (a type change; a merge's rename
+# candidate the patch printed no section for), and such a candidate takes the
+# parent loop. (2) The previous-version line printed the fetch remedy alone on
+# the claim that neither the key nor an attribute lifts a pair binary by its
+# bytes; an explicit diff attribute on the PREVIOUS version's path (the old
+# path for a rename; the file's own path otherwise) does, so the paragraph
+# names that line too, whatever the attribute read did, and two cases below
+# show it turning the refusal into the ADDS hit. (3) The join's tools failing
+# for a reason of their own (a tr exiting 1, an awk exiting 2) were reported as
+# a numstat that answered short, a cause the status does not establish; the
+# fourth arm names the JOIN's own failure, its pipeline's status, the tool's
+# error line above it and whether the join had written the short file before
+# the failure. (4) The short file's path reached awk through -v, which
+# escape-processes its value: under a TMPDIR carrying a backslash pair gawk
+# warned on every clean push and lost the path at a short read; the path
+# travels through the environment now, which awk leaves alone.
+awk_refusing_join() {   # an awk that exits 2 with a line on stderr for the join's program (the one given -v rev=, the join's alone) and runs the real awk for every other
+    local real_awk
+    real_awk="$(command -v awk)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if [ "${1:-}" = -v ] && [[ "${2:-}" == rev=* ]]; then echo "shim: awk refused (the join)" >&2; exit 2; fi\n'
+        printf 'exec %q "$@"\n' "$real_awk"
+    } > "$TEST_DIR/shim/awk"
+    chmod 755 "$TEST_DIR/shim/awk"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+
+@test "a MERGE moving a text file carrying the string onto a path a parent holds a BINARY file at (a rename candidate whose combined section printed Binary), gone at the tip, is refused on the parent's version: the line names parent 1's bytes as the cause, with the fetch remedy and the attribute line, and the key's facts and advice are absent, since the patch's verdict decided it and not the addition numstat's" {
+    add_remote
+    printf 'ab\0cd\n' > "$REPO/bin.dat"
+    git -C "$REPO" add bin.dat
+    commit_file notes.txt "seen on TESTHOST" "a binary file and a text file"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" checkout -q -b side
+    commit_file side.txt "the web session's line" "side"
+    git -C "$REPO" checkout -q main
+    commit_file main.txt "the api session's line" "main side"
+    git -C "$REPO" merge -q --no-ff --no-commit side > /dev/null 2>&1
+    git -C "$REPO" mv -f notes.txt bin.dat
+    git -C "$REPO" commit -qm "merge side, notes.txt moved onto bin.dat"
+    merge="$(git -C "$REPO" rev-parse HEAD)"
+    is_merge "$merge"
+    remove_file bin.dat "remove it"                              # gone at the tip: only the per-commit half can name it
+    # the road as git applies it: both parents hold a NUL-carrying bin.dat, so the section prints Binary and no hunk for the new text;
+    # notes.txt is a deletion against each parent, so the new path is a rename candidate as well, on the Binary section
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1" -- bin.dat' _ "$merge"
+    [[ "$output" == *"Binary files differ"* ]]
+    [[ "$output" != *"TESTHOST"* ]]
+    run _hook_in "$REPO" -c 'git diff-tree -r --raw --no-renames -m -z --no-commit-id "$1" | tr "\0" "|"' _ "$merge"
+    [[ "$output" == *" D|notes.txt|"* ]]
+    run_hook "$BASE"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"romp pre-push: bin.dat in commit ${merge:0:10} is text that git calls binary although its diff attribute reads unspecified, so no attribute of its path accounts for the verdict; the previous version of the file in parent 1 of the merge is binary by its bytes (a NUL in its first 8000), which made git print no text diff for the change, and the identifier scan could not read the new text, so the push is refused rather than scanned"* ]]
+    [[ "$output" == *"Where a line names the previous version's bytes as the cause, the hook scans only commits new to every fetched remote"* ]]
+    [[ "$output" == *"set the diff attribute on the PREVIOUS version's path"* ]]
+    [[ "$output" != *"core.bigFileThreshold is not set"* ]]       # the round 5 text printed the key's facts here, the marker having skipped every parent
+    [[ "$output" != *"a configuration key can be what makes git call the file binary"* ]]
+    [[ "$output" != *"Remove the diff attribute"* ]]
+    [[ "$output" != *"the diff read it as a rename"* ]]
+    [[ "$output" != *"printed no verdict"* ]]
+    [[ "$output" != *"personal identifier"* ]]
+    [[ "$output" == *"git push --no-verify"* ]]
+}
+
+@test "a one-parent commit turning a NUL-carrying file into a text file (the disclosed shape) whose check-attr FAILS is refused on the previous version's bytes, the failure in the attribute's place, with both remedies of that line, the fetch paragraph and the attribute line; the attribute paragraph (remove a -diff) and the key's sentence are absent, since the line named the bytes as the cause" {
+    printf 'ab\0cd\n' > "$REPO/thing"
+    git -C "$REPO" add thing
+    git -C "$REPO" commit -qm "a binary file"
+    commit_file thing "seen on TESTHOST" "now a text file carrying the string"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file thing "remove it"                                # gone at the tip: only the per-commit half can name it
+    git_refusing '[ "${1:-}" = check-attr ]' 128 "fatal: shim: check-attr refused"
+    run _hook_in "$REPO" -c 'git check-attr -z diff -- thing'
+    [ "$status" -eq 128 ]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"romp pre-push: thing in commit ${leak:0:10} is text that git calls binary although its diff attribute could not be read (git check-attr exited 128), so whether an attribute of its path accounts for the verdict is unknown; the previous version of the file is binary by its bytes (a NUL in its first 8000), which made git print no text diff for the change, and the identifier scan could not read the new text, so the push is refused rather than scanned"* ]]
+    [[ "$output" == *"Where a line names the previous version's bytes as the cause, the hook scans only commits new to every fetched remote"* ]]
+    [[ "$output" == *"set the diff attribute on the PREVIOUS version's path"* ]]      # the attribute line: present whatever the attribute read did
+    [[ "$output" != *"Remove the diff attribute"* ]]                                  # the attribute paragraph: withheld, the line having named the bytes (red with the gate's prior clause dropped)
+    [[ "$output" != *"a configuration key can be what makes git call the file binary"* ]]
+    [[ "$output" != *"so no attribute of its path accounts for the verdict"* ]]
+    [[ "$output" == *"git push --no-verify"* ]]
+}
+
+@test "the same shape with an explicit diff attribute on the file's path (the previous version's path for a one-parent change) is the ADDS hit naming the commit and the path, and no line calls it hidden: under the attribute git treats the NUL-carrying version as text, so the diff prints the change and the scan reads it" {
+    attributes 'thing diff'
+    printf 'ab\0cd\n' > "$REPO/thing"
+    git -C "$REPO" add thing
+    git -C "$REPO" commit -qm "a binary file"
+    commit_file thing "seen on TESTHOST" "now a text file carrying the string"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file thing "remove it"
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1" -- thing' _ "$leak"
+    [[ "$output" == *"+seen on TESTHOST"* ]]                     # the road: the attribute lifts the pair to text, so the hunk prints
+    [[ "$output" != *"Binary files"* ]]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"romp pre-push: commit ${leak:0:10} ADDS a personal identifier in:"* ]]
+    [[ "$output" == *"  thing"* ]]
+    [[ "$output" != *"is text that"* ]]
+    [[ "$output" != *"previous version"* ]]
+}
+
+@test "the rename twin: an explicit diff attribute on the NEW path alone leaves the refusal standing, the line naming the old path as the previous version's; the attribute on the OLD path, the pre-image's, turns it into the ADDS hit naming the new path" {
+    { printf 'line %s\n' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; printf 'x\0y\n'; } > "$REPO/old.txt"
+    git -C "$REPO" add old.txt
+    git -C "$REPO" commit -qm "a file binary by its bytes"
+    git -C "$REPO" mv old.txt new.txt
+    { printf 'line %s\n' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; printf 'seen on TESTHOST\n'; } > "$REPO/new.txt"
+    git -C "$REPO" add new.txt
+    git -C "$REPO" commit -qm "renamed and made text, the string in the change"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file new.txt "remove it"
+    attributes 'new.txt diff'                                    # the wrong path: the new side was text already, and the old side's bytes decide
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1"' _ "$leak"
+    [[ "$output" == *"Binary files a/old.txt and b/new.txt differ"* ]]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"romp pre-push: new.txt in commit ${leak:0:10} is text that git calls binary although its diff attribute reads set, so no attribute of its path accounts for the verdict; the previous version of the file (at old.txt, the path the diff read it from) is binary by its bytes"* ]]
+    [[ "$output" == *"set the diff attribute on the PREVIOUS version's path"* ]]
+    [[ "$output" != *"ADDS a personal identifier"* ]]
+    attributes 'old.txt diff'                                    # the pre-image's path, the one the paragraph names for a rename
+    run _hook_in "$REPO" -c 'git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1"' _ "$leak"
+    [[ "$output" == *"+seen on TESTHOST"* ]]
+    [[ "$output" != *"Binary files"* ]]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"romp pre-push: commit ${leak:0:10} ADDS a personal identifier in:"* ]]
+    [[ "$output" == *"  new.txt"* ]]
+    [[ "$output" != *"is text that"* ]]
+    [[ "$output" != *"previous version"* ]]
+}
+
+@test "the join's tr failing for a reason of its own (exit 1, after the awk had met a post-image with no verdict) is refused as the JOIN's own failure: the line names the pipeline's status, says the tool's error line is above it, names the path the join had recorded, and claims no short read, since a tr that failed is not a numstat that answered short" {
+    commit_file file.txt "nothing to see" "clean"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file file.txt "remove it"                             # gone at the tip: the blob is the commit's to judge
+    empty_diff_tree_numstat                                      # every numstat answers nothing: the join meets file.txt with no verdict (status 3) and writes the short file before its tr runs
+    tr_refusing join 2                                           # the tip's candidates join is the first tr of the joins' shape, the commit's join the second (the removal commit has no post-image and no join)
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"shim: tr refused (join 2)"*"romp pre-push: the JOIN of commit ${sha:0:10}'s verdicts could not be made for the BINARY VERDICT check (its pipeline exited 1; the tool's own error line, where it printed one, is above; the join had recorded file.txt as a post-image met no verdict for before the pipeline failed)"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"answered for fewer paths"* ]]              # the round 5 text's cause: the status does not establish a short read
+    [[ "$output" != *"could not be joined"* ]]
+    [[ "$output" != *"exited 3"* ]]
+    [ "$(cat "$TEST_DIR/tr-calls")" -eq 2 ]
+}
+
+@test "the join's awk failing for a reason of its own (exit 2) on a MERGE with a hidden link is refused the same way, the line naming the status and that the join had recorded no path; the link is neither called hidden nor a short read" {
+    merge_with_hidden_link
+    awk_refusing_join
+    run _hook_in "$REPO" -c 'echo x | awk -v rev=abc "{ print }"'
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"shim: awk refused (the join)"* ]]
+    run_hook "$BASE"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"shim: awk refused (the join)"*"romp pre-push: the JOIN of commit ${sha:0:10}'s verdicts could not be made for the BINARY VERDICT check (its pipeline exited 2; the tool's own error line, where it printed one, is above; the join had recorded no post-image as met no verdict for)"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"is text that"* ]]
+    [[ "$output" != *"printed no verdict"* ]]
+    [[ "$output" != *"could not be joined"* ]]
+}
+
+@test "a clean push under a TMPDIR whose path carries a backslash-q pair prints NOTHING: the short file's path reaches the join's awk through the environment, which awk does not escape-process (through -v, gawk warned on every commit's join)" {
+    export TMPDIR="$TEST_DIR/tmp\\qdir"
+    mkdir -p "$TMPDIR"
+    commit_file file.txt "nothing to see" "clean"
+    run _hook_in "$REPO" -c 'printf "%s" "$TMPDIR"'
+    [[ "$output" == *'\q'* ]]
+    run_hook
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    [ "$(ls -1 "$TMPDIR" | grep -c '^romp-pre-push\.')" -eq 0 ]
+}
+
+@test "a short read under a TMPDIR carrying a backslash-q pair, and under one carrying a backslash-n pair, names the path met no verdict for and prints no fatal or warning line: the short file's path is not altered on its way to awk (through -v, the backslash-n cut it at a newline, the join ended on a failed redirect and the line named no path)" {
+    commit_file file.txt "nothing to see" "clean"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file file.txt "remove it"
+    empty_diff_tree_numstat
+    for d in 'tmp\qdir' 'tmp\ndir'; do
+        export TMPDIR="$TEST_DIR/$d"
+        mkdir -p "$TMPDIR"
+        run_hook
+        [ "$status" -eq 1 ]
+        [[ "$output" == *"the BINARY VERDICTS of commit ${sha:0:10} could not be read (git diff-tree --numstat answered for fewer paths than the commit changes and printed no verdict for file.txt)"* ]]
+        [[ "$output" != *"fatal:"* ]]
+        [[ "$output" != *"warning:"* ]]
+        [[ "$output" != *"did not record"* ]]
+        [[ "$output" != *"could not be made"* ]]
+        [ "$(ls -1 "$TMPDIR" | grep -c '^romp-pre-push\.')" -eq 0 ]
+    done
 }

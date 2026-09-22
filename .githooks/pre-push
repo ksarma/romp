@@ -269,8 +269,10 @@
 # needs and not as a cause, or, for a changed file, the previous version's
 # bytes (in a one-parent commit's parent, at the path the diff read it from
 # when it read the change as a rename; in any parent of a merge, for a path
-# whose combined section printed Binary; never for a type change or a rename
-# candidate, judged by the addition of the new object alone) where a NUL
+# whose combined section printed Binary, a rename candidate's included, since
+# the patch's verdict decided it there; never for a type change, or for a
+# merge's rename candidate the patch printed no section for, each judged by
+# the addition of the new object alone) where a NUL
 # among them is the cause, key or no
 # key (either side binary makes the pair binary), the two facts kept beside
 # that cause where the key is set and the key's advice not printed for it,
@@ -294,14 +296,24 @@
 # clone that has fetched any remote excludes them from every range, and a
 # clone with no remote-tracking refs pushing the history as a new ref is
 # refused on them, so the remedy is to fetch first, or to push from a clone
-# that has (found by the round 3 fixer's whole-history run, 2026-09-22).
+# that has (found by the round 3 fixer's whole-history run, 2026-09-22); for
+# a commit no remote holds, an explicit `diff` attribute on the PREVIOUS
+# version's path (the old path for a rename; the file's own path otherwise,
+# a merge's parents' included) makes git treat that version as text whatever
+# its bytes, so the diff prints the change and the scan reads it (by
+# execution, the round 5 refuter, 2026-09-22): the advice names that line
+# ahead of the bypass, which publishes the new text unread.
 # The check's NUL-delimited listings live in a scratch directory under TMPDIR
 # (mktemp -d, prefix romp-pre-push.), removed by its exact minted path when the
 # identifier scan ends: a hard kill between the minting and the removal leaves
 # it behind, bounded by its living under TMPDIR with that prefix, so a reader
 # can find and remove it. The listings are joined line by line, so a path
 # holding a newline byte (legal to git, seen nowhere) refuses the push as
-# unscanned rather than be judged by nothing.
+# unscanned rather than be judged by nothing; since round 5 every changed
+# path is rewritten and checked against the commit's verdicts, so a commit
+# that only DELETES such a path the remote already holds is refused too,
+# where the round 4 text passed it (the widening, disclosed here and in
+# tests/pre-push-hook.bats' newline case; the round 5 refuter, 2026-09-22).
 #
 # The credential scan reads the same new commits, each merge by its
 # first-parent diff, and refuses the push on a hit. A range this clone cannot
@@ -418,7 +430,7 @@ failed_creds=0          # a subset of failed_scan: gitleaks itself could not sca
 hidden_paths=0          # a subset of failed_scan: git calls a text file binary and the identifier scan skipped it, with a remedy of its own
 hidden_unnamed=0        # a subset of hidden_paths: no diff attribute accounts for the verdict, so the advice names the configuration key too
 hidden_attr=0           # a subset of hidden_paths: a refused line named the path's diff attribute as the cause, or could not read it, so the advice names the attribute's remedy
-hidden_prior=0          # a subset of hidden_paths: a changed file whose previous version (in the commit's parent, at the path a rename came from, or in any parent of a merge) is binary by its bytes, with the fetch remedy
+hidden_prior=0          # a subset of hidden_paths: a changed file whose previous version (in the commit's parent, at the path a rename came from, or in any parent of a merge) is binary by its bytes, with the fetch remedy and the attribute line for the previous version's path
 scratch=""              # a directory for the added-lines capture (scan_identifiers) and the NUL-delimited listings the binary-verdict check reads (refuse_hidden_paths); made on first use (make_scratch), removed by scan_identifiers
 read_rc=0               # judged_read's two answers for the read just made: its status, and its output when no file took it
 read_out=""
@@ -576,7 +588,11 @@ type_unread() {   # <local_ref> <sha>: the clause
 # the hook does not show), -e merges it into the output (the tip's grep, which
 # tells its error lines apart), -k keeps the output's trailing newlines (a
 # symlink target of a newline alone is not an empty target), -o <file> and
-# -a <file> write or append the output to a file instead of read_out. A
+# -a <file> write or append the output to a file instead of read_out; -d
+# <function> names a function run in this shell after a read the set refuses,
+# whose output replaces {detail} in the clause, for a fact known only once the
+# read has run (the join's short file, whether it was written before the
+# pipeline failed); it makes no judged_read call of its own. A
 # pipeline is passed as a function whose status is the pipeline's (pipefail),
 # so every stage's status reaches here; no command run here is a judged_read
 # of its own (in a substitution its refusal would set failed_scan in a
@@ -586,14 +602,15 @@ type_unread() {   # <local_ref> <sha>: the clause
 # either way, so a caller that judges a partial answer too (a hit ahead of a
 # failure is still named) calls with `|| :`, since under set -e a bare refused
 # call would end the hook before its verdict.
-judged_read() {   # <gate="name"|own="name"> <expected statuses, comma-separated> <clause, {rc} the status> [-q|-e] [-k] [-o <file>|-a <file>] -- <command...>
-    local expect="$2" clause="$3" errs=inherit keep=0 out="" append=0
+judged_read() {   # <gate="name"|own="name"> <expected statuses, comma-separated> <clause, {rc} the status, {detail} the -d function's answer> [-q|-e] [-k] [-d <function>] [-o <file>|-a <file>] -- <command...>
+    local expect="$2" clause="$3" errs=inherit keep=0 out="" append=0 detail=""
     shift 3
     while [ "$1" != -- ]; do
         case "$1" in
             -q) errs=quiet ;;
             -e) errs=merge ;;
             -k) keep=1 ;;
+            -d) detail="$2"; shift ;;
             -o) out="$2"; shift ;;
             -a) out="$2"; append=1; shift ;;
         esac
@@ -630,6 +647,7 @@ judged_read() {   # <gate="name"|own="name"> <expected statuses, comma-separated
         esac
     fi
     case ",$expect," in *",$read_rc,"*) return 0 ;; esac
+    [ -z "$detail" ] || clause=${clause//\{detail\}/$("$detail" || :)}
     unscanned "${clause//\{rc\}/$read_rc}"
     return 1
 }
@@ -849,7 +867,15 @@ byte_counts() {   # <blob-ish>: "<bytes> <NULs>" over the first 8000 bytes, coun
 join_candidates() {   # <rev> <merge> <short file> <rows.nl> <rows2.nl> <gone.nl> <links.nl> <tpaths.nl> <rows3.nl> <tipblobs> <post.nl>: the candidate entries, one per NUL; status 3 or 4 for a short read (refuse_hidden_paths says which)
     local rev=$1 merge=$2 short_file=$3
     shift 3
-    LC_ALL=C awk -v rev="$rev" -v merge="$merge" -v short_file="$short_file" '
+    # The short file's path reaches awk through the ENVIRONMENT, never a -v
+    # operand: awk escape-processes a -v value, so under a TMPDIR carrying a
+    # backslash pair gawk warned on every clean push (a backslash before a
+    # letter it has no escape for) and ended the join on a failed redirect at
+    # a short read (a backslash-n, the path cut at a newline), the path
+    # unnamed (the round 5 refuters, 2026-09-22). The two -v flags left carry
+    # a sha and a digit, never a path.
+    ROMP_SHORT_FILE=$short_file LC_ALL=C awk -v rev="$rev" -v merge="$merge" '
+        BEGIN { short_file = ENVIRON["ROMP_SHORT_FILE"] }
         FILENAME == ARGV[1] { p = substr($0, 4); seenm[p] = 1; if (substr($0, 1, 1) == "b") binm[p] = 1; if (substr($0, 1, 1) == "t") hunk[p] = 1; if (substr($0, 2, 1) == "r") ren[p] = 1; next }
         FILENAME == ARGV[2] { p = substr($0, 4); seenn[p] = 1; if (substr($0, 1, 1) == "b") binn[p] = 1; next }
         FILENAME == ARGV[3] { gone[$0] = 1; next }
@@ -872,8 +898,23 @@ join_candidates() {   # <rev> <merge> <short file> <rows.nl> <rows2.nl> <gone.nl
               else {
                   if (!(path in binm)) next
                   if ((path in ren) && (blob in gone) && !(path in binn)) next } }
-          printf "%s%s%s%s\t%s\n", rev, ((path in ren) ? "+rename" : ""), ((path in link) ? "+link" : ""), ((path in typed) ? "+typed" : ""), $0 }
+          printf "%s%s%s%s\t%s\n", rev, ((path in ren) ? "+rename" : ""), ((path in link) ? "+link" : ""), (((path in typed) && !(merge && (path in binm))) ? "+typed" : ""), $0 }
         END { if (short) exit short }' "$@" | tr '\n' '\0'
+}
+
+# The fourth arm's rider for the join (judged_read -d, composed after the
+# read): whether the join had written the short file before its pipeline
+# failed. Under pipefail a tr that failed after the awk exited 3 or 4 hides
+# that status and leaves the path recorded, so the path is stated as a fact
+# the join recorded, never as a short read the status does not establish.
+join_short_detail() {
+    local path=""
+    { IFS= read -r path || :; } < "$scratch/short"
+    if [ -n "$path" ]; then
+        printf '%s' "; the join had recorded $path as a post-image met no verdict for before the pipeline failed"
+    else
+        printf '%s' "; the join had recorded no post-image as met no verdict for"
+    fi
 }
 
 # The blobs the identifier scan's two content reads SKIPPED as binary while
@@ -981,9 +1022,14 @@ join_candidates() {   # <rev> <merge> <short file> <rows.nl> <rows2.nl> <gone.nl
 # commit's raw listing with -M, an R row's two path records, never carried as
 # a field of the rows, since a path may hold a tab); for a merge in each
 # parent in turn, the parent count the caller read (rev-list --parents), the
-# first parent whose version holds a NUL named; never for a type change or a
-# merge's rename candidate, judged by the addition of the new object alone,
-# where the previous version is no cause. A read that fails, or a path
+# first parent whose version holds a NUL named; never for a type change, nor
+# for a merge's rename candidate the patch printed no section for, each
+# judged by the addition of the new object alone, where the previous version
+# is no cause (a rename candidate whose section printed Binary was judged by
+# the patch, so each parent's version is read for it: marked as judged by
+# the addition, a text file moved onto a path a parent holds a binary file
+# at took the key's facts and the key's advice with no cause named; the
+# round 5 refuters, 2026-09-22). A read that fails, or a path
 # with no previous version (an addition, a root commit), leaves the line
 # with its two facts. A one-parent commit's symlink reads no attribute (the
 # pairwise diff applies none to a symlink) and its line says so, with the
@@ -1247,9 +1293,14 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
         # read as a rename is marked (+rename)
         # so the line can say the earlier path counted; a one-parent commit's
         # symlink is marked (+link) so the line reads no attribute; a path
-        # judged as the addition of its new object (+typed: a type change, a
-        # merge's rename candidate) reads no previous version, since the
-        # addition verdict alone decided it. One a read
+        # judged as the addition of its new object (+typed: a type change; a
+        # merge's rename candidate the patch printed no section for) reads no
+        # previous version, since the addition verdict alone decided it. A
+        # merge's rename candidate whose section printed Binary is a candidate
+        # on that section and is NOT marked, so the report reads each parent's
+        # version at its path (marked, a text file moved onto a path a parent
+        # holds a binary file at took the key's advice with no cause named;
+        # the round 5 refuters, 2026-09-22). One a read
         # did not answer for is a short read (awk exits 3 for the pair
         # numstats or the combined patch, 4 for the addition numstat), refused
         # as unscanned when every read exited 0: a read that failed on its
@@ -1260,11 +1311,23 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
         # the line names it; named by the commit alone, the pusher had to
         # find the path themselves (the round 4 refuter, 2026-09-22).
         # The join (join_candidates) through judged_read: 0, 3 and 4 are its
-        # expected statuses (3 and 4 the short-read codes, judged below), and any
-        # other status is the join itself failing, refused here naming its tools.
+        # expected statuses (3 and 4 the short-read codes, the three lines below
+        # keyed on them), and any other status is the JOIN itself failing (a tr
+        # or an awk failing for a reason of its own: exit 1 or 2), the fourth
+        # arm, the helper's clause: it names the pipeline's status, says the
+        # tool's own error line is above it, and says whether the join had
+        # written the short file before the failure (join_short_detail, composed
+        # after the read: under pipefail a tr that failed after the awk exited
+        # 3 or 4 hides that status and leaves the path recorded), and it names
+        # no read as short, since the status does not establish one (a tr
+        # exiting 1 was reported as a numstat that answered short; the round 5
+        # refuter, 2026-09-22).
         rc=0
-        judged_read own="the JOIN of the verdicts of a commit" 0,3,4 "the BINARY VERDICTS of commit ${rev:0:10} could not be joined for the BINARY VERDICT check (the join's awk or tr exited {rc})" -a "$scratch/entries" -- join_candidates "$rev" "$merge" "$scratch/short" "$scratch/rows.nl" "$scratch/rows2.nl" "$scratch/gone.nl" "$scratch/links.nl" "$scratch/tpaths.nl" "$scratch/rows3.nl" "$scratch/tipblobs" "$scratch/post.nl" && rc=$read_rc
-        if [ "$rc" -ne 0 ] && [ "$numstat_ok" -ne 0 ]; then
+        judged_read own="the JOIN of the verdicts of a commit" 0,3,4 "the JOIN of commit ${rev:0:10}'s verdicts could not be made for the BINARY VERDICT check (its pipeline exited {rc}; the tool's own error line, where it printed one, is above{detail})" -d join_short_detail -a "$scratch/entries" -- join_candidates "$rev" "$merge" "$scratch/short" "$scratch/rows.nl" "$scratch/rows2.nl" "$scratch/gone.nl" "$scratch/links.nl" "$scratch/tpaths.nl" "$scratch/rows3.nl" "$scratch/tipblobs" "$scratch/post.nl" && rc=$read_rc
+        if { [ "$rc" -eq 3 ] || [ "$rc" -eq 4 ]; } && [ "$numstat_ok" -ne 0 ]; then
+            # A short read: 3 for a pair numstat or the combined patch, 4 for the
+            # addition numstat, the FIRST post-image met no verdict for in the
+            # short file.
             path=""; { IFS= read -r path || :; } < "$scratch/short"     # the first post-image the join met no verdict for (the file is made per commit above, so this is never a read of a missing file); empty when the join recorded none
             [ -n "$path" ] || path="a path the join did not record (it exited $rc)"
             if [ "$merge" -eq 0 ]; then
@@ -1366,8 +1429,9 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
             size=$(git cat-file -s "$blob" 2>/dev/null || echo unknown)          # outside judged_read: for the report (above)
             threshold=$(git config core.bigFileThreshold 2>/dev/null || true)    # outside judged_read: for the report (above)
             # No attribute: for a commit's changed file (not a symlink, judged by
-            # its own bytes; not a type change or a merge's rename candidate,
-            # +typed, judged by the addition of the new object alone), the
+            # its own bytes; not a type change or a merge's rename candidate the
+            # patch printed no section for, +typed, each judged by the addition
+            # of the new object alone), the
             # PREVIOUS version's first 8000 bytes are read as the blob's were
             # above, key or no key, since a pre-image binary by its bytes makes
             # the pair binary whatever the key says and the diff prints no text
@@ -1394,8 +1458,17 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
             # choose the advice: a two-fact line has the key's (hidden_unnamed)
             # and, where the attribute could not be read, the attribute's too
             # (hidden_attr), since either may be the cause; a line naming the
-            # previous version has the fetch remedy alone (hidden_prior), since
-            # neither the key nor an attribute lifts a pair binary by its bytes.
+            # previous version has the fetch remedy and the attribute line
+            # (hidden_prior), whatever the attribute read did: the key lifts
+            # nothing there, but an explicit `diff` attribute on the PREVIOUS
+            # version's path (the old path for a rename; the file's own path
+            # otherwise, a merge's parents' included) makes git treat that
+            # version as text whatever its bytes, so the diff prints the change
+            # and the scan reads it (by execution, the round 5 refuter,
+            # 2026-09-22; this comment had claimed no attribute lifts such a
+            # pair). The attribute paragraph (hidden_attr) is not that remedy,
+            # since it removes a -diff a line named as the cause, and a line
+            # naming the previous version named its bytes: withheld there.
             prior=0; where=""
             if [ "$place" != tip ] && [ "$islink" -eq 0 ] && [ "$typed" -eq 0 ]; then
                 k=$(LC_ALL=C awk -v r="$place" '$1 == r { print $2; exit }' "$scratch/pcount")     # outside judged_read: for the report (above)
@@ -1897,9 +1970,15 @@ scan_identifiers() {
         # paragraph is not there to point at. Where a line could not read the
         # attribute, either may be the cause and both paragraphs print. Where a
         # line named the previous version's bytes, no attribute and no key is
-        # the cause and the scan cannot read the change: the remedy is the
+        # the cause and the scan cannot read the change: two remedies, the
         # range's (a commit some remote holds is out of range once that remote
-        # is fetched), and a new commit of the shape has the bypass alone.
+        # is fetched) and, for a new commit of the shape, an explicit diff
+        # attribute on the PREVIOUS version's path (the old path for a rename),
+        # under which git treats that version as text whatever its bytes and
+        # prints the change for the scan to read (by execution, the round 5
+        # refuter, 2026-09-22), named ahead of the bypass it is safer than;
+        # the attribute paragraph above is not that remedy (it removes a -diff
+        # a line named), so the second line says it in its own words.
         if [ "$hidden_attr" -ne 0 ]; then
             echo "  Remove the diff attribute for each path named (the -diff line or binary macro in .gitattributes, .git/info/attributes or the file core.attributesFile names, or the driver's diff.<driver>.binary), or keep the file text on purpose with an explicit \"<path> diff\" line (a later line in .gitattributes overrides a -diff inherited from a broader pattern or from core.attributesFile; a -diff in .git/info/attributes outranks the tree's files and is changed there), then push again." >&2
             echo "  A rename or copy of such a file is content too: its bytes reach the remote under the new path, so the refusal is about the attribute, not the rename." >&2
@@ -1908,7 +1987,8 @@ scan_identifiers() {
             echo "  Where a line names no attribute, a configuration key can be what makes git call the file binary: core.bigFileThreshold makes it call every blob over that size binary (the line shows the key's value here and the blob's size), so raise the key above the size or unset it (git config --unset core.bigFileThreshold) and push again, or keep the file text on purpose with an explicit \"<path> diff\" line in .gitattributes, which outranks the key for a regular file (a one-parent commit's diff applies no attribute to a symbolic link's target, so for such a link the key is the remedy)." >&2
         fi
         if [ "$hidden_prior" -ne 0 ]; then
-            echo "  Where a line names the previous version's bytes as the cause, the hook scans only commits new to every fetched remote: if the commit is already on some remote, fetch that remote first and push again, or push from a clone that has fetched it. A commit of this shape that no remote holds yet is refused the same way, since the scan cannot read its new text; check that text yourself before using the bypass below." >&2
+            echo "  Where a line names the previous version's bytes as the cause, the hook scans only commits new to every fetched remote: if the commit is already on some remote, fetch that remote first and push again, or push from a clone that has fetched it. A commit of this shape that no remote holds yet is refused the same way, since the scan cannot read its new text." >&2
+            echo "  For a commit of that shape, set the diff attribute on the PREVIOUS version's path: an explicit \"<path> diff\" line in .gitattributes, for the old path where the line names one and for the file's own path otherwise. git then treats that version as text whatever its bytes, so the diff prints the change and the scan reads it; push again. That is safer than the bypass below, which publishes the new text unread." >&2
         fi
     fi
     if [ "$blocked_ids" -ne 0 ]; then
