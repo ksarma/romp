@@ -5975,7 +5975,8 @@ class ParseCacheRetention(unittest.TestCase):
         freezes, and with chunks of ten thousand the calibration's one chunk fired five collections and the premise's two
         fired nine, which with the three explicit collections cost this pin 1.7 s in the whole-module run on 3.14t against
         0.03 s alone (the fifteenth pass's verification, 2026-09-22); with the sized chunk the calibration finds one chunk
-        and the armed span sees about six collections. Nothing here asserts seconds."""
+        and the armed span sees four automatic collections, seven walks with the three explicit ones (the collector's
+        callbacks, probed on 3.14.6t at this head). Nothing here asserts seconds."""
         self.assertTrue(gc.isenabled(), "the pin needs the automatic collector on, the state pytest runs in")
         self._restore_collector()
         chunk, cap = 10000, 400
