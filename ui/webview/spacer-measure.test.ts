@@ -1107,9 +1107,9 @@ test("every module the page bundles load, read with the compiler: the only write
   // (Object.fromEntries over a literal pair list, JSON.parse of a literal) inside a post's data, which the tree cannot name as a property
   // write at all: it raises the opaque count below and is in neither the diag population nor the closed multiset, held by the kernel's value
   // bound alone (CLIENT_DIAG_VALUES refuses every word but the one: tests/test_client_diag_allowlist.py); the witness cell after this one
-  // runs that shape through the same walker and asserts it is NOT named, so this sentence cannot outlive the behaviour (the maintainer's
-  // round 6 ruling, extra8-3). WHAT REACHES A POST, from every module's tree: the clientDiag posts (an object literal with `type:
-  // "clientDiag"`, its `data` member a literal, read directly, or a call of a named function, a builder) and scrollDiagRow's calls in
+  // runs that shape through the same walker and asserts it is NOT named, so this sentence cannot outlive the behaviour
+  // (the maintainer's round 6 ruling, extra8-3). WHAT REACHES A POST, from every module's tree: the clientDiag posts (an object literal
+  // with `type: "clientDiag"`, its `data` member a literal, read directly, or a call of a named function, a builder) and scrollDiagRow's calls in
   // render.ts (its data argument's literals and the named functions it calls, through a conditional, a parenthesis or an Object.assign); a
   // write is in the diag population when its owner is a builder or it lies inside a post's or a call's data literal. Every write in the
   // modules is then a closed multiset by (module, owner, form), the module its repo-relative path so a module outside ui/webview cannot
