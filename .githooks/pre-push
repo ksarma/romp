@@ -89,27 +89,87 @@
 # a dirty tip, tag or commit through a real push with nothing printed but git's
 # own error line where it printed one; the per-commit diff failed that way with
 # the real git once the added file's blob was gone from the store.
-# Two classes of fail-open are closed that way, and the guarantee is stated per
-# class. The STATUS-KEYED class: a read whose failure returns a non-zero status
-# (or prints an error line), refused as above on every read the hook makes.
-# The EXIT-0 EMPTY-OR-SHORT-ANSWER class: a read that exits 0 with an empty or
-# a short answer the check would read as "nothing to judge" (a listing with no
-# entry, a rewrite with no bytes, a count of zero). It has no status to read,
-# so it is closed by a second read already in hand that the answer must agree
-# with, and a disagreement refuses the push as unscanned, naming the read and
-# both answers. The reads gated that way, all in the binary-verdict check
-# (refuse_hidden_paths): the numstats and the combined patch against the paths
-# a commit changes (round 3: a post-image no verdict answers for is a short
-# read); check-attr's answer against the path asked; the per-commit
-# changed-path listing against the paths its verdicts name; each scratch
-# listing's rewrite against its input's bytes (as_lines); the tip's listing
-# against the symlink pass's listing of the same tree and the grep's read
-# list; and the byte judge's count against the blob's size. The content reads
-# themselves (the tip's grep, the added-lines diff, the address and message
-# logs, a tag's fields) have empty answers that are the object's own (a clean
-# tree, a commit adding no line, a tag with no message) and no second read to
-# check them against: those pass as absent, as the paragraph above says, and a
-# git that exits 0 while printing nothing there is outside this guarantee.
+# Two classes of fail-open are closed that way, both BY CONSTRUCTION: every
+# read the hook judges (every git whose output a check reads, every grep over
+# captured content, every tool a join runs) goes through one helper
+# (judged_read) that captures the status and the output together and refuses
+# any status outside the read's expected set (a grep: 0 or 1; a git: 0; the
+# set stated at each call, with the reason where it is wider) as unscanned,
+# naming the read. A read left outside the helper is declared at its site
+# with the reason (`outside judged_read:`): the reads made for the report
+# alone, whose failure leaves a refused line with fewer facts and decides
+# nothing; two configuration reads whose swallowed failure is the strict side
+# and pinned as such; the ref list on stdin; the scanner's own exit, judged
+# from its log. The STATUS-KEYED class: a read whose failure returns a
+# non-zero status (or prints an error line), refused by the set. The EXIT-0
+# EMPTY-OR-SHORT-ANSWER class: a read that exits 0 with an empty or a short
+# answer the check would read as "nothing to judge" (a listing with no entry,
+# a rewrite with no bytes, a count of zero, a type that is no type). It has no
+# status to read, so each call site says how such an answer is judged, by a
+# TAG the helper is given: gate= where a second read or fact already in hand
+# must agree with the answer (the sibling named at the call site), a
+# disagreement refusing the push as unscanned naming the read and both
+# answers; own= where the empty answer is the object's own (a clean tree, a
+# commit adding no line, a tag with no message) and no sibling fact exists,
+# so it passes as absent, as the paragraph above says, and a tool that exits
+# 0 while printing nothing there is outside this guarantee. The two lists
+# below are DERIVED from those tags: tests/pre-push-hook.bats reads every tag
+# out of this file and fails when either list names anything else, or misses
+# a tag, or a call carries none, so neither list is written by hand (round 5
+# found six reads of the second class the hand-written list had missed, each
+# shown by a real push publishing a banned line with nothing printed;
+# 2026-09-22).
+# Reads gated by a sibling fact (gate=):
+#   the CONTENT grep of the tip
+#   the SYMLINK listing of the tip
+#   the TYPE of the object the tip peels to
+#   the SYMLINK TARGET of a link at the tip
+#   the SIZE of a symlink target blob
+#   the COMMIT listing of a pushed ref
+#   the REMOTE REFS containing the pushed commit
+#   the ANCESTRY of the pushed commit over the remote commit
+#   the PARENT COUNT of a commit
+#   the SORT of the paths a grep named
+#   the ADDRESSES log of a commit
+#   the TYPE of a pushed object
+#   the OBJECT field of a tag
+#   the -z listing of the tip
+#   the READ LIST of the grep of the tip
+#   the ENTRY COUNT of the -z listing
+#   the NEWLINE COUNT of a scratch listing
+#   the REWRITE of a scratch listing
+#   the BYTE COUNT of a scratch listing
+#   the CHANGED PATHS listing of a commit
+#   the COMBINED PATCH of a merge
+#   the SECTION ROWS of a combined patch
+#   the PER-PARENT listing of a merge
+#   the RENAME CANDIDATES of a merge
+#   the NUMSTAT of a commit
+#   the EMPTY TREE name
+#   the BYTE COUNTS of a hidden blob
+#   the SIZE of a hidden blob
+#   the REPOSITORY ROOT
+#   the COUNT of commits with content to scan
+#   the COLOUR STRIP of the scanner log
+#   the COMMIT COUNT line of the scanner log
+# Reads whose empty answer is the object's own (own=):
+#   the ADDED LINES diff of a commit
+#   the ADDED LINES grep
+#   the MESSAGE log of a commit
+#   the MESSAGE grep
+#   the ADDRESS DOMAIN grep
+#   the CHOSEN ADDRESS match
+#   the SYMLINK TARGET grep
+#   the TAGGER field of a tag
+#   the MESSAGE of a tag
+#   the REPLACE REFS listing
+#   the TIP LISTING join against the read list
+#   the TIP BLOBS of the -z listing
+#   the TIP CANDIDATES join
+#   the LISTING join of a commit against its verdicts
+#   the JOIN of the verdicts of a commit
+#   the ERR line of the scanner log
+#   the RANGE probe of the credential scan
 #
 # Both content checks read what git calls TEXT: the tip's grep skips a blob
 # git calls binary (-I), and the per-commit diff prints no line for one. git
@@ -337,9 +397,15 @@ export GIT_NO_REPLACE_OBJECTS=1
 # when a short count meets it false. The key itself is neutralised on the
 # scanner's command line (--root, in gitleaks_args), not here: beyond the
 # replacement switch above, the hook sets nothing for the gits it runs.
+# outside judged_read: a configuration read for the report alone, never a
+# verdict; a failure reads as the key unset and costs the key line, the
+# shape tests/pre-push-hook.bats pins (a failed read of log.showRoot), and
+# the helper is defined below this line in any case.
 showroot_configured=$(git config --type=bool log.showRoot 2>/dev/null || true)
 
 # git feeds the ref list on stdin and both scans need it, so read it once.
+# outside judged_read: stdin, not a read of an object; a cat that fails ends
+# the hook here under set -e with its status, which refuses the push.
 refs="$(cat)"
 zero=0000000000000000000000000000000000000000
 blocked_ids=0
@@ -354,7 +420,8 @@ hidden_unnamed=0        # a subset of hidden_paths: no diff attribute accounts f
 hidden_attr=0           # a subset of hidden_paths: a refused line named the path's diff attribute as the cause, or could not read it, so the advice names the attribute's remedy
 hidden_prior=0          # a subset of hidden_paths: a changed file whose previous version (in the commit's parent, at the path a rename came from, or in any parent of a merge) is binary by its bytes, with the fetch remedy
 scratch=""              # a directory for the added-lines capture (scan_identifiers) and the NUL-delimited listings the binary-verdict check reads (refuse_hidden_paths); made on first use (make_scratch), removed by scan_identifiers
-rewrite_failure=""      # as_lines' report when it returns 2: the tool that failed and its status, for the caller's unscanned line
+read_rc=0               # judged_read's two answers for the read just made: its status, and its output when no file took it
+read_out=""
 
 # The commits THIS push publishes for one ref: what no remote already has.
 # "Already has" means reachable from the remote ref's current value or from ANY
@@ -395,13 +462,13 @@ rev_range() {   # <local_sha> <remote_sha> → a rev-list argument list
 # `diff --combined` line and the first hunk: inside a hunk, a line that begins
 # with `+++ ` is added content (`++ b/x` as written) and belongs to the current
 # file. Two reads, made apart by the caller so a refusal can name the one that
-# failed: the parent count (parent_count; rev-list's status through pipefail; a
-# failure there leaves n empty, which awk reads as 1, and a merge's combined
-# diff is read in one column: over-scan, but a read that failed all the same)
-# and the diff (added_lines, whose status is the diff-tree's through pipefail).
-parent_count() {   # <rev>
-    git rev-list --parents -n 1 "$1" | awk '{ print NF - 1 }'
-}
+# failed: the parent count (read in scan_identifiers, in bash: rev-list
+# --parents -n 1 prints the commit and then each parent, so its answer is
+# judged against the commit named first once the read exited 0, and a failure
+# or a short answer leaves n empty, which awk reads as 1, so a merge's
+# combined diff is read in one column: over-scan, but a read refused all the
+# same) and the diff (added_lines, a pipeline passed to judged_read whole,
+# whose status is the diff-tree's or the awk's through pipefail).
 added_lines() {   # <rev> <parent count>
     git diff-tree -p -r -M -c --root --no-commit-id --no-color "$1" | awk -v n="$2" '
         BEGIN { if (n < 1) n = 1; for (i = 0; i < n; i++) plus = plus "+" }
@@ -417,45 +484,31 @@ added_lines() {   # <rev> <parent count>
 # environment's overrides, one per line. An unset user.email contributes nothing,
 # so on a clone that never set one every stamped address is checked. Blank lines
 # are harmless: a non-empty address never matches one whole.
+# outside judged_read: a read of the clone's configuration, not of a pushed
+# object, whose failure is the STRICT side (no address is then chosen, so
+# every stamped address is judged), the shape tests/pre-push-hook.bats pins
+# through a real push (a chosen-addresses read that fails); refusing it as
+# unscanned would refuse a clean push over a configuration read.
 chosen_emails() {
     git config --get-all user.email 2>/dev/null || true
     printf '%s\n' "${GIT_AUTHOR_EMAIL:-}" "${GIT_COMMITTER_EMAIL:-}" "${EMAIL:-}"
 }
 
 # Whether an address is one this clone chose: matched whole, case-insensitively.
-is_chosen() {   # <address> <chosen addresses, one per line>
-    printf '%s\n' "$2" | grep -qixF -e "$1"
-}
-
-# The addresses a commit is stamped with that this clone did not choose, one
-# line per role as "<role>\t<address>", authored and committed, whether or not
-# the two addresses are the same. An empty address is skipped (there is nothing
-# to publish in `<>`), and so is a chosen one.
-#
-# --no-show-signature here and on the message read below: with log.showSignature
-# set, git log prints a signed commit's verification report (the signer's name
-# or address among it) ahead of whatever the format asks for. Read as part of the
-# message, that refused a clean signed commit whose signer is on the denylist,
-# as the author's own name and address are, and numbered a real hit's line from
-# the report's first line rather than the subject. The flag keeps both reads to
-# the commit's own fields.
-#
-# The log is captured before the loop, so the function's status is the log's:
-# piped into the loop, a log that failed was a commit stamped with no address.
-stamped_addresses() {   # <rev> <chosen addresses, one per line>
-    local role email stamped
-    stamped=$(git log -1 --no-show-signature --format='authored%x09%ae%ncommitted%x09%ce' "$1") || return $?
-    while IFS=$'\t' read -r role email; do
-        [ -n "$email" ] || continue
-        is_chosen "$email" "$2" && continue
-        printf '%s\t%s\n' "$role" "$email"
-    done <<< "$stamped"
+# The grep's status is read through judged_read (0 chosen, 1 not, anything
+# else refused as unscanned with the caller's clause, the address then judged
+# as one the clone did not choose: the strict side). Called as a condition,
+# never in a substitution, so the refusal's flag is kept.
+is_chosen() {   # <address> <chosen addresses, one per line> <clause for a grep that failed, {rc} its status>
+    judged_read own="the CHOSEN ADDRESS match" 0,1 "$3" -- grep -qixF -e "$1" <<< "$2" || return 1
+    [ "$read_rc" -eq 0 ]
 }
 
 # One header field of an annotated tag object (`tagger`, `object`), or its
 # message: the header ends at the first empty line and the message is the rest
 # (a signed tag's signature included; it is text like any other). awk reads the
-# whole object before either function prints.
+# whole object before either function prints. Each is a pipeline passed to
+# judged_read whole, so its status is the cat-file's or the awk's (pipefail).
 tag_field() {   # <tag_sha> <field>
     git cat-file -p "$1" | awk -v f="$2" 'BEGIN { hdr = 1 }
         hdr && !NF { hdr = 0; next }
@@ -486,15 +539,99 @@ unscanned() {   # <what could not be read, as a clause>
     echo "romp pre-push: $1; the scan is incomplete, so the push is refused" >&2
     failed_scan=1
 }
-tag_unread() {   # <local_ref> <tag_sha> <FIELD> [<consequence>]
-    unscanned "the $3 of tag $1 (${2:0:10}) could not be read${4:+, $4}"
+# The two below build the CLAUSE judged_read is given for a tag field or a
+# type read that fails (no status in the line: the reads print their own error
+# line ahead of it where they print one).
+tag_unread() {   # <local_ref> <tag_sha> <FIELD> [<consequence>]: the clause
+    printf '%s' "the $3 of tag $1 (${2:0:10}) could not be read${4:+, $4}"
 }
 # The TYPE read decides whether there is a tag to scan at all, on the pushed
 # object and on each one the peel reaches; read as "not a tag" when it failed, it
 # left the tag unpeeled and unscanned. A branch is pushed through this read too,
 # so the line names the object the ref pushes, not "the tag".
-type_unread() {   # <local_ref> <sha>
-    unscanned "the TYPE of the object $1 pushes (${2:0:10}) could not be read, so whether it is an annotated tag is unknown"
+type_unread() {   # <local_ref> <sha>: the clause
+    printf '%s' "the TYPE of the object $1 pushes (${2:0:10}) could not be read, so whether it is an annotated tag is unknown"
+}
+
+# Every read the hook judges goes through here: the header's two classes,
+# closed by construction rather than read by read. The command runs with its
+# status captured in read_rc and its output in read_out (or written to the
+# file -o names, or appended to the file -a names: a NUL-delimited listing, or
+# the added lines, which a substitution would mangle), and a status outside the
+# read's EXPECTED set (a grep: 0 for a match and 1 for none; a git: 0; a set
+# stated at each call, with the reason where it is wider) refuses the push as
+# unscanned with the caller's clause, {rc} in it replaced by the status. The
+# first argument is the read's TAG, the second class's answer for it:
+#   gate="<name>"  the caller judges an exit-0 EMPTY or SHORT answer after the
+#                  call against a sibling fact in hand, named at the call site,
+#                  and a disagreement refuses the push naming both answers
+#   own="<name>"   an exit-0 empty answer is the object's own (a clean tree, a
+#                  commit adding no line, a tag with no message) and passes;
+#                  no sibling fact exists to check it against
+# The header's two lists are DERIVED from these tags: tests/pre-push-hook.bats
+# reads the tags out of this file and fails when either list names anything
+# else, so the lists are never written by hand, and a new call site without a
+# tag, or with a name the header lacks, is red there. Options before the --:
+# -q sends the command's stderr to /dev/null (the reads whose git error line
+# the hook does not show), -e merges it into the output (the tip's grep, which
+# tells its error lines apart), -k keeps the output's trailing newlines (a
+# symlink target of a newline alone is not an empty target), -o <file> and
+# -a <file> write or append the output to a file instead of read_out. A
+# pipeline is passed as a function whose status is the pipeline's (pipefail),
+# so every stage's status reaches here; no command run here is a judged_read
+# of its own (in a substitution its refusal would set failed_scan in a
+# subshell and be lost, and in -o mode it would overwrite read_rc). Returns 0
+# when the status is in the set (the caller then judges the answer) and 1 when
+# the read was refused here; read_out holds whatever the command printed
+# either way, so a caller that judges a partial answer too (a hit ahead of a
+# failure is still named) calls with `|| :`, since under set -e a bare refused
+# call would end the hook before its verdict.
+judged_read() {   # <gate="name"|own="name"> <expected statuses, comma-separated> <clause, {rc} the status> [-q|-e] [-k] [-o <file>|-a <file>] -- <command...>
+    local expect="$2" clause="$3" errs=inherit keep=0 out="" append=0
+    shift 3
+    while [ "$1" != -- ]; do
+        case "$1" in
+            -q) errs=quiet ;;
+            -e) errs=merge ;;
+            -k) keep=1 ;;
+            -o) out="$2"; shift ;;
+            -a) out="$2"; append=1; shift ;;
+        esac
+        shift
+    done
+    shift
+    read_rc=0; read_out=""
+    if [ -n "$out" ] && [ "$append" -ne 0 ]; then
+        case "$errs" in
+            quiet) "$@" >> "$out" 2>/dev/null || read_rc=$? ;;
+            merge) "$@" >> "$out" 2>&1 || read_rc=$? ;;
+            *)     "$@" >> "$out" || read_rc=$? ;;
+        esac
+    elif [ -n "$out" ]; then
+        case "$errs" in
+            quiet) "$@" > "$out" 2>/dev/null || read_rc=$? ;;
+            merge) "$@" > "$out" 2>&1 || read_rc=$? ;;
+            *)     "$@" > "$out" || read_rc=$? ;;
+        esac
+    elif [ "$keep" -ne 0 ]; then
+        # A marker byte after the output, stripped below: the substitution drops
+        # trailing newlines, and a target of a newline alone would read as empty.
+        case "$errs" in
+            quiet) read_out=$(set +e; "$@" 2>/dev/null; s=$?; printf x; exit "$s") || read_rc=$? ;;
+            merge) read_out=$(set +e; "$@" 2>&1; s=$?; printf x; exit "$s") || read_rc=$? ;;
+            *)     read_out=$(set +e; "$@"; s=$?; printf x; exit "$s") || read_rc=$? ;;
+        esac
+        read_out=${read_out%x}
+    else
+        case "$errs" in
+            quiet) read_out=$("$@" 2>/dev/null) || read_rc=$? ;;
+            merge) read_out=$("$@" 2>&1) || read_rc=$? ;;
+            *)     read_out=$("$@") || read_rc=$? ;;
+        esac
+    fi
+    case ",$expect," in *",$read_rc,"*) return 0 ;; esac
+    unscanned "${clause//\{rc\}/$read_rc}"
+    return 1
 }
 # Whether each scan WOULD run: the identifier scan when the denylist file exists
 # (ROMP_PRIVATE_STRINGS, else the XDG default), the credential scan when it is
@@ -540,10 +677,10 @@ credential_scan_armed() {
 # where to look. A listing that failed refuses too: whether the reads and the
 # push agree is then unknown.
 refuse_replace_refs() {
-    local rc=0 found ref
+    local found ref
     identifier_scan_armed || credential_scan_armed || return 0
-    found=$(git for-each-ref --format='%(refname)' "${GIT_REPLACE_REF_BASE:-refs/replace/}") || rc=$?
-    [ "$rc" -eq 0 ] || unscanned "the REPLACE REFS of this clone could not be listed (git for-each-ref exited $rc), so whether the scans read what the push transfers is unknown"
+    judged_read own="the REPLACE REFS listing" 0 "the REPLACE REFS of this clone could not be listed (git for-each-ref exited {rc}), so whether the scans read what the push transfers is unknown" -- git for-each-ref --format='%(refname)' "${GIT_REPLACE_REF_BASE:-refs/replace/}" || :
+    found=$read_out
     [ -n "$found" ] || return 0
     while IFS= read -r ref; do
         echo "romp pre-push: this clone carries a replace ref ($ref): under it what a scan reads and what the push transfers can differ, so the push is refused rather than scanned" >&2
@@ -582,26 +719,32 @@ make_scratch() {
 # count), and every count, the newline count first, must be a run of digits
 # before any arithmetic reads it, since bash reads an empty operand as zero,
 # the count of a clean file (a wc answering nothing passed the newline test).
-# A count that is not a number, or a rewrite whose count differs from its
-# input's, is status 2 with the rewrite and both raw answers in
-# rewrite_failure.
-as_lines() {   # <file>...: rewrites each as <file>.nl; status 1 when one holds a newline, 2 when a test, a rewrite or a count failed or answered short (rewrite_failure says which)
-    local f n a b rc
+# Each read goes through judged_read with the caller's PREFIX (the line's
+# subject: which listings, of the tip or of which commit, could not be
+# rewritten), so a tool that failed is refused here naming the read, and a
+# count that is not a number, or a rewrite whose count differs from its
+# input's, is refused here too, naming the rewrite and both raw answers;
+# status 2 tells the caller a refusal was made.
+as_lines() {   # <prefix: "the LISTINGS of ... could not be rewritten for the BINARY VERDICT check"> <file>...: rewrites each as <file>.nl; status 1 when one holds a newline, 2 when a test, a rewrite or a count failed or answered short (refused here)
+    local prefix="$1" f n a b
+    shift
     for f in "$@"; do
-        rc=0; n=$(tr -cd '\n' < "$f" | wc -c) || rc=$?
-        [ "$rc" -eq 0 ] || { rewrite_failure="the newline test's tr or wc exited $rc"; return 2; }
-        case "${n//[[:space:]]/}" in ''|*[!0-9]*) rewrite_failure="the newline test's wc answered \"$n\" for ${f##*/}, not a count"; return 2 ;; esac
+        judged_read gate="the NEWLINE COUNT of a scratch listing" 0 "$prefix (the newline test's tr or wc exited {rc})" -- newline_count "$f" || return 2
+        n=$read_out
+        case "${n//[[:space:]]/}" in ''|*[!0-9]*) unscanned "$prefix (the newline test's wc answered \"$n\" for ${f##*/}, not a count)"; return 2 ;; esac
         [ "${n//[[:space:]]/}" -eq 0 ] || return 1
-        rc=0; tr '\0' '\n' < "$f" > "$f.nl" || rc=$?
-        [ "$rc" -eq 0 ] || { rewrite_failure="tr exited $rc"; return 2; }
-        rc=0; a=$(wc -c < "$f") || rc=$?
-        [ "$rc" -eq 0 ] || { rewrite_failure="the byte count's wc exited $rc for ${f##*/}"; return 2; }
-        rc=0; b=$(wc -c < "$f.nl") || rc=$?
-        [ "$rc" -eq 0 ] || { rewrite_failure="the byte count's wc exited $rc for the rewrite of ${f##*/}"; return 2; }
-        case "${a//[[:space:]]/}" in ''|*[!0-9]*) rewrite_failure="the byte count's wc answered \"$a\" for ${f##*/}, not a count"; return 2 ;; esac
-        case "${b//[[:space:]]/}" in ''|*[!0-9]*) rewrite_failure="the byte count's wc answered \"$b\" for the rewrite of ${f##*/}, not a count"; return 2 ;; esac
-        [ "${a//[[:space:]]/}" -eq "${b//[[:space:]]/}" ] || { rewrite_failure="the rewrite of ${f##*/} wrote ${b//[[:space:]]/} bytes for ${a//[[:space:]]/} read; tr exited 0"; return 2; }
+        judged_read gate="the REWRITE of a scratch listing" 0 "$prefix (tr exited {rc})" -o "$f.nl" -- tr '\0' '\n' < "$f" || return 2
+        judged_read gate="the BYTE COUNT of a scratch listing" 0 "$prefix (the byte count's wc exited {rc} for ${f##*/})" -- wc -c < "$f" || return 2
+        a=$read_out
+        judged_read gate="the BYTE COUNT of a scratch listing" 0 "$prefix (the byte count's wc exited {rc} for the rewrite of ${f##*/})" -- wc -c < "$f.nl" || return 2
+        b=$read_out
+        case "${a//[[:space:]]/}" in ''|*[!0-9]*) unscanned "$prefix (the byte count's wc answered \"$a\" for ${f##*/}, not a count)"; return 2 ;; esac
+        case "${b//[[:space:]]/}" in ''|*[!0-9]*) unscanned "$prefix (the byte count's wc answered \"$b\" for the rewrite of ${f##*/}, not a count)"; return 2 ;; esac
+        [ "${a//[[:space:]]/}" -eq "${b//[[:space:]]/}" ] || { unscanned "$prefix (the rewrite of ${f##*/} wrote ${b//[[:space:]]/} bytes for ${a//[[:space:]]/} read; tr exited 0)"; return 2; }
     done
+}
+newline_count() {   # <file>: the count of newline bytes in it, the newline test's pipeline passed to judged_read whole
+    tr -cd '\n' < "$1" | wc -c
 }
 
 # One numstat, as NUL-delimited rows "<b or t><r or .>\t<path>": b for a
@@ -609,12 +752,15 @@ as_lines() {   # <file>...: rewrites each as <file>.nl; status 1 when one holds 
 # otherwise; r when the row was a rename (its old and new path follow the
 # counts as two more records; the new path is the one kept). The arguments
 # after the output file are diff-tree's: -M --root <rev> for a one-parent
-# commit against its parent, or two trees and a pathspec. The status is
-# git's.
-numstat_rows() {   # <out> <diff-tree arguments...>
-    local out=$1 rc=0 row name kind
-    shift
-    git diff-tree -r --numstat -z --no-commit-id "$@" > "$out.raw" || rc=$?
+# commit against its parent, or two trees and a pathspec. The read goes
+# through judged_read with the caller's clause; status 1 when it was refused
+# there (the rows read from whatever git printed all the same). Its empty
+# answer is the join's to judge: a post-image no row answers for is a short
+# read there.
+numstat_rows() {   # <clause for a diff-tree that failed, {rc} its status> <out> <diff-tree arguments...>
+    local clause=$1 out=$2 rc=0 row name kind
+    shift 2
+    judged_read gate="the NUMSTAT of a commit" 0 "$clause" -o "$out.raw" -- git diff-tree -r --numstat -z --no-commit-id "$@" || rc=1
     : > "$out"
     while IFS= read -r -d '' row; do
         name=${row#*$'\t'*$'\t'}; kind=.
@@ -671,6 +817,63 @@ combined_rows() {   # <patch file>
         hdr && /^Binary files / { kind = "b"; next }
         /^@@/               { if (hdr && path != "") kind = "t"; hdr = 0; next }
         END { flush() }' "$1"
+}
+
+# The joins and pipelines refuse_hidden_paths passes to judged_read whole (each
+# one's status is its awk's, or its tr's, through pipefail), their programs as
+# the check has read them since round 3.
+tip_unlisted_read_file() {   # <tip sha> <listing.nl> <read.nl>: the first file the grep lists as read that the -z listing lacks
+    LC_ALL=C awk -v sha="$1" '
+        FILENAME == ARGV[1] { i = index($0, "\t"); listed[substr($0, i + 1)] = 1; next }
+        { if (substr($0, 1, length(sha) + 1) == sha ":") { p = substr($0, length(sha) + 2); if (!(p in listed)) { print p; exit } } }' "$2" "$3"
+}
+tip_blobs() {   # <listing.nl>: the blob shas of the tree's regular files and symlinks, one per line
+    LC_ALL=C awk '{ i = index($0, "\t"); split(substr($0, 1, i - 1), f, " "); if (f[1] == "100644" || f[1] == "100755" || f[1] == "120000") print f[3] }' "$1"
+}
+tip_candidates() {   # <tip sha> <read.nl> <listing.nl>: "tip\t<blob>\t<path>" per NUL for each regular file with bytes that the grep did not list
+    LC_ALL=C awk -v sha="$1" '
+        FILENAME == ARGV[1] { if (substr($0, 1, length(sha) + 1) == sha ":") read[substr($0, length(sha) + 2)] = 1; next }
+        { i = index($0, "\t"); split(substr($0, 1, i - 1), f, " "); path = substr($0, i + 1)
+          if ((f[1] == "100644" || f[1] == "100755") && f[4] + 0 > 0 && !(path in read)) printf "tip\t%s\t%s\n", f[3], path }' "$2" "$3" | tr '\n' '\0'
+}
+merge_rename_candidates() {   # <gone.nl> <post.nl>: the post-image paths whose blob some parent held under a path the merge lacks, one per NUL
+    LC_ALL=C awk 'FILENAME == ARGV[1] { gone[$0] = 1; next } { i = index($0, "\t"); if (substr($0, 1, i - 1) in gone) print substr($0, i + 1) }' "$1" "$2" | tr '\n' '\0'
+}
+unlisted_verdict_path() {   # <listed.nl> <rows.nl> <rows2.nl> <rows3.nl>: the first path a verdict names that the listing did not
+    LC_ALL=C awk 'FILENAME == ARGV[1] { listed[$0] = 1; next } { p = substr($0, 4); if (!(p in listed)) { print p; exit } }' "$@"
+}
+byte_counts() {   # <blob-ish>: "<bytes> <NULs>" over the first 8000 bytes, counted with their NULs; the rest is drained so the cat-file is never cut off mid-write (the group's status is the drain's, so the status is the cat-file's)
+    git cat-file blob "$1" | { head -c 8000 | LC_ALL=C od -An -v -tu1 | awk '{ for (i = 1; i <= NF; i++) { b++; if ($i == 0) z++ } } END { print b + 0, z + 0 }'; cat > /dev/null; }
+}
+
+join_candidates() {   # <rev> <merge> <short file> <rows.nl> <rows2.nl> <gone.nl> <links.nl> <tpaths.nl> <rows3.nl> <tipblobs> <post.nl>: the candidate entries, one per NUL; status 3 or 4 for a short read (refuse_hidden_paths says which)
+    local rev=$1 merge=$2 short_file=$3
+    shift 3
+    LC_ALL=C awk -v rev="$rev" -v merge="$merge" -v short_file="$short_file" '
+        FILENAME == ARGV[1] { p = substr($0, 4); seenm[p] = 1; if (substr($0, 1, 1) == "b") binm[p] = 1; if (substr($0, 1, 1) == "t") hunk[p] = 1; if (substr($0, 2, 1) == "r") ren[p] = 1; next }
+        FILENAME == ARGV[2] { p = substr($0, 4); seenn[p] = 1; if (substr($0, 1, 1) == "b") binn[p] = 1; next }
+        FILENAME == ARGV[3] { gone[$0] = 1; next }
+        FILENAME == ARGV[4] { link[$0] = 1; next }
+        FILENAME == ARGV[5] { typed[$0] = 1; next }
+        FILENAME == ARGV[6] { p = substr($0, 4); seent[p] = 1; if (substr($0, 1, 1) == "b") bint[p] = 1; next }
+        FILENAME == ARGV[7] { tip[$0] = 1; next }
+        { i = index($0, "\t"); blob = substr($0, 1, i - 1); path = substr($0, i + 1)
+          if (blob in tip) next
+          if (merge) {
+              if (path in hunk) next
+              if (!(path in binm)) {
+                  if (path in typed) {
+                      if (!(path in seent)) { if (!short) { short = 4; print path > short_file }; next }
+                      if (!(path in bint)) next }
+                  else if (!(path in seenm)) { if (!short) { short = 3; print path > short_file }; next } } }
+          else {
+              if (!(path in seenm) || !(path in seenn) || ((path in typed) && !(path in seent))) { if (!short) { short = 3; print path > short_file }; next }
+              if (path in typed) { if (!(path in bint)) next }
+              else {
+                  if (!(path in binm)) next
+                  if ((path in ren) && (blob in gone) && !(path in binn)) next } }
+          printf "%s%s%s%s\t%s\n", rev, ((path in ren) ? "+rename" : ""), ((path in link) ? "+link" : ""), ((path in typed) ? "+typed" : ""), $0 }
+        END { if (short) exit short }' "$@" | tr '\n' '\0'
 }
 
 # The blobs the identifier scan's two content reads SKIPPED as binary while
@@ -816,24 +1019,23 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
     : > "$scratch/entries"      # "<tip, or the commit's sha>\t<blob>\t<path>", one per NUL: the blobs git called binary
     : > "$scratch/tipblobs"     # the blob shas of the tip's tree, one per line: a per-commit candidate among them is the tip half's to judge
     if [ "$tip_listed" -ne 0 ]; then
-        listing_rc=0; git ls-tree -r -z -l "$local_sha" > "$scratch/listing" || listing_rc=$?
-        [ "$listing_rc" -eq 0 ] || unscanned "the TREE of the tip of $local_ref (${local_sha:0:10}) could not be listed for the BINARY VERDICT check (git ls-tree exited $listing_rc)"
-        # The files the tip's grep reads, by the same grep: exit 1 is a tree it
-        # read nothing from (empty, or of empty files), not a failure.
-        rc=0; git grep --no-color -I -l -z -e '' "$local_sha" -- > "$scratch/read" 2>/dev/null || rc=$?
-        if [ "$rc" -gt 1 ]; then
-            unscanned "the FILES the grep of the tip of $local_ref (${local_sha:0:10}) reads could not be listed for the BINARY VERDICT check (git grep exited $rc)"
-        else
+        # The -z listing (its empty answer gated below against the symlink pass's
+        # entry count and the grep's read list) and the read list, by the same
+        # grep: exit 1 is a tree it read nothing from (empty, or of empty files),
+        # not a failure, so 0 and 1 are its expected set; its empty answer sends
+        # every regular file with bytes to the byte judge below, the safe side,
+        # so the join is its gate.
+        listing_rc=0
+        judged_read gate="the -z listing of the tip" 0 "the TREE of the tip of $local_ref (${local_sha:0:10}) could not be listed for the BINARY VERDICT check (git ls-tree exited {rc})" -o "$scratch/listing" -- git ls-tree -r -z -l "$local_sha" || listing_rc=$read_rc
+        if judged_read gate="the READ LIST of the grep of the tip" 0,1 "the FILES the grep of the tip of $local_ref (${local_sha:0:10}) reads could not be listed for the BINARY VERDICT check (git grep exited {rc})" -q -o "$scratch/read" -- git grep --no-color -I -l -z -e '' "$local_sha" --; then
             # The two listings rewritten for the joins: as_lines returns 1 for a
-            # path holding a newline and 2 for a test or a rewrite that failed
-            # (rewrite_failure says which); either is refused as unscanned rather
-            # than judged by an empty rewrite.
-            rc=0; as_lines "$scratch/listing" "$scratch/read" || rc=$?
+            # path holding a newline and 2 for a test, a rewrite or a count that
+            # failed or answered short (refused there, naming the read); either
+            # is refused as unscanned rather than judged by an empty rewrite.
+            rc=0; as_lines "the LISTINGS of the tip of $local_ref (${local_sha:0:10}) could not be rewritten for the BINARY VERDICT check" "$scratch/listing" "$scratch/read" || rc=$?
             if [ "$rc" -eq 1 ]; then
                 unscanned "a path at the tip of $local_ref (${local_sha:0:10}) holds a newline, which the BINARY VERDICT check cannot judge"
-            elif [ "$rc" -ne 0 ]; then
-                unscanned "the LISTINGS of the tip of $local_ref (${local_sha:0:10}) could not be rewritten for the BINARY VERDICT check ($rewrite_failure)"
-            else
+            elif [ "$rc" -eq 0 ]; then
                 # The -z listing against the two reads in hand (the header's second
                 # class), when it exited 0: its record count against the entry count
                 # of the symlink pass's plain listing of the same tree (a different
@@ -844,37 +1046,41 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
                 # remote already holding it, would be judged by nothing. Each count
                 # is a run of digits before -eq reads it.
                 if [ "$listing_rc" -eq 0 ]; then
-                    count=$(grep -c . "$scratch/listing.nl") || true
-                    if [ -z "$count" ] || [ -n "${count//[0-9]/}" ] || [ -z "$tip_entries" ] || [ -n "${tip_entries//[0-9]/}" ]; then
-                        unscanned "the TREE of the tip of $local_ref (${local_sha:0:10}) could not be counted for the BINARY VERDICT check (the -z listing's entries counted as \"$count\" and the symlink pass's as \"$tip_entries\", not two counts)"
-                    elif [ "$count" -ne "$tip_entries" ]; then
-                        unscanned "the TREE of the tip of $local_ref (${local_sha:0:10}) was listed short or long for the BINARY VERDICT check (git ls-tree -r -z -l exited 0 and listed $count entries where the symlink pass's git ls-tree -r of the same tree listed $tip_entries)"
+                    # grep -c exits 1 for a count of zero and prints it, so 0 and 1
+                    # are its expected set; the count is a run of digits below.
+                    if judged_read gate="the ENTRY COUNT of the -z listing" 0,1 "the TREE of the tip of $local_ref (${local_sha:0:10}) could not be counted for the BINARY VERDICT check (grep -c exited {rc})" -- grep -c . "$scratch/listing.nl"; then
+                        count=$read_out
+                        if [ -z "$count" ] || [ -n "${count//[0-9]/}" ] || [ -z "$tip_entries" ] || [ -n "${tip_entries//[0-9]/}" ]; then
+                            unscanned "the TREE of the tip of $local_ref (${local_sha:0:10}) could not be counted for the BINARY VERDICT check (the -z listing's entries counted as \"$count\" and the symlink pass's as \"$tip_entries\", not two counts)"
+                        elif [ "$count" -ne "$tip_entries" ]; then
+                            unscanned "the TREE of the tip of $local_ref (${local_sha:0:10}) was listed short or long for the BINARY VERDICT check (git ls-tree -r -z -l exited 0 and listed $count entries where the symlink pass's git ls-tree -r of the same tree listed $tip_entries)"
+                        fi
                     fi
-                    path=$(LC_ALL=C awk -v sha="$local_sha" '
-                        FILENAME == ARGV[1] { i = index($0, "\t"); listed[substr($0, i + 1)] = 1; next }
-                        { if (substr($0, 1, length(sha) + 1) == sha ":") { p = substr($0, length(sha) + 2); if (!(p in listed)) { print p; exit } } }' \
-                        "$scratch/listing.nl" "$scratch/read.nl")
-                    [ -z "$path" ] || unscanned "the TREE of the tip of $local_ref (${local_sha:0:10}) was listed short for the BINARY VERDICT check (git ls-tree -r -z -l exited 0 and its listing lacks $path, a file the grep of the tip lists as read)"
+                    if judged_read own="the TIP LISTING join against the read list" 0 "the TREE of the tip of $local_ref (${local_sha:0:10}) could not be compared with the grep's read list for the BINARY VERDICT check (awk exited {rc})" -- tip_unlisted_read_file "$local_sha" "$scratch/listing.nl" "$scratch/read.nl"; then
+                        path=$read_out
+                        [ -z "$path" ] || unscanned "the TREE of the tip of $local_ref (${local_sha:0:10}) was listed short for the BINARY VERDICT check (git ls-tree -r -z -l exited 0 and its listing lacks $path, a file the grep of the tip lists as read)"
+                    fi
                 fi
                 # The tip's blobs, for the per-commit half: a candidate blob the tip
                 # holds under any path was judged here, by the grep (read, or skipped
                 # and refused below) or by the symlink pass, and is not judged again.
-                LC_ALL=C awk '{ i = index($0, "\t"); split(substr($0, 1, i - 1), f, " "); if (f[1] == "100644" || f[1] == "100755" || f[1] == "120000") print f[3] }' "$scratch/listing.nl" > "$scratch/tipblobs"
+                # An emptied answer sends every per-commit candidate to the byte
+                # judge, the safe side.
+                judged_read own="the TIP BLOBS of the -z listing" 0 "the TREE of the tip of $local_ref (${local_sha:0:10}) could not be read for its blobs for the BINARY VERDICT check (awk exited {rc})" -o "$scratch/tipblobs" -- tip_blobs "$scratch/listing.nl" || :
                 # "<mode> blob <sha> <size>\t<path>" against "<tree-ish>:<path>": a
                 # regular file with bytes that the grep did not list is one it skipped.
-                LC_ALL=C awk -v sha="$local_sha" '
-                    FILENAME == ARGV[1] { if (substr($0, 1, length(sha) + 1) == sha ":") read[substr($0, length(sha) + 2)] = 1; next }
-                    { i = index($0, "\t"); split(substr($0, 1, i - 1), f, " "); path = substr($0, i + 1)
-                      if ((f[1] == "100644" || f[1] == "100755") && f[4] + 0 > 0 && !(path in read)) printf "tip\t%s\t%s\n", f[3], path }' \
-                    "$scratch/read.nl" "$scratch/listing.nl" | tr '\n' '\0' >> "$scratch/entries"
+                judged_read own="the TIP CANDIDATES join" 0 "the TREE of the tip of $local_ref (${local_sha:0:10}) could not be joined with the grep's read list for the BINARY VERDICT check (awk or tr exited {rc})" -a "$scratch/entries" -- tip_candidates "$local_sha" "$scratch/read.nl" "$scratch/listing.nl" || :
             fi
         fi
     fi
     : > "$scratch/pcount"       # "<sha> <parent count>", one per line: the count the report below reads a commit's previous versions by
     while read -r -u 3 rev n; do
         [ -n "$rev" ] || continue
-        listing_rc=0; git diff-tree -r --raw --no-renames --root -c -z --no-commit-id "$rev" > "$scratch/listing" || listing_rc=$?
-        [ "$listing_rc" -eq 0 ] || unscanned "the CHANGED PATHS of commit ${rev:0:10} could not be listed for the BINARY VERDICT check (git diff-tree exited $listing_rc)"
+        # The listing's empty answer is gated below against its verdicts: a path
+        # a numstat row or a combined-patch section names that it did not is a
+        # listing that answered short.
+        listing_rc=0
+        judged_read gate="the CHANGED PATHS listing of a commit" 0 "the CHANGED PATHS of commit ${rev:0:10} could not be listed for the BINARY VERDICT check (git diff-tree exited {rc})" -o "$scratch/listing" -- git diff-tree -r --raw --no-renames --root -c -z --no-commit-id "$rev" || listing_rc=$read_rc
         # Two records per listing entry: ":<modes> <shas> <status>" (a merge's
         # combined line has one more mode, sha and leading colon per parent; the
         # post-image mode and sha come last of their kind) and then the path.
@@ -886,11 +1092,14 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
         : > "$scratch/short"     # the first post-image the join below met no verdict for, when a read answered short: made here, so the report's read of it is never of a missing file (which set -e would end the hook on)
         # More than one parent: the combined patch's own verdict, not the pair's.
         # Decided by the parent count the caller read (rev-list --parents, once
-        # per commit for the added-lines pass), not by the listing's shape: a
-        # listing that answered nothing for a merge would read as a one-parent
-        # commit's, whose pair numstat prints nothing for a merge, and the two
-        # empty answers would agree. The listing's shape decides only when that
-        # read failed (refused there, so any verdict here is on a refused push).
+        # per commit for the added-lines pass, its answer judged there against
+        # the commit named first), not by the listing's shape: a listing that
+        # answered nothing for a merge would read as a one-parent commit's,
+        # whose pair numstat prints nothing for a merge, and the two empty
+        # answers would agree. The count is EMPTY here only when its read failed
+        # or answered short, each refused there; the listing's shape (one mode
+        # and one sha per parent in a record) then decides, on a push already
+        # refused.
         merge=0; k=1
         case "$n" in ''|*[!0-9]*) n="" ;; *) [ "$n" -le 1 ] || merge=1 ;; esac
         while IFS= read -r -d '' meta && IFS= read -r -d '' path; do
@@ -939,25 +1148,25 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
             # as unscanned and stands the short arm down for this commit; one
             # that answers short leaves such a path a short read, the safe
             # side.
-            rc=0; git diff-tree -p -r -M -c --root --no-commit-id --no-color "$rev" > "$scratch/patch" || rc=$?
-            [ "$rc" -eq 0 ] || { numstat_ok=0; unscanned "the BINARY VERDICTS of commit ${rev:0:10} could not be read (git diff-tree -p -c, the merge's combined patch, exited $rc)"; }
-            combined_rows "$scratch/patch" > "$scratch/rows"
-            rc=0; git diff-tree -r --raw --no-renames -m -z --no-commit-id "$rev" > "$scratch/parents" || rc=$?
-            [ "$rc" -eq 0 ] || { numstat_ok=0; unscanned "the BINARY VERDICTS of commit ${rev:0:10} could not be read (git diff-tree --raw -m, the merge's changes against each parent, exited $rc)"; }
+            # Each read's empty answer is the join's to judge: a post-image with
+            # no section is a short read, and a candidate a listing failed to name
+            # leaves such a path a short read too.
+            judged_read gate="the COMBINED PATCH of a merge" 0 "the BINARY VERDICTS of commit ${rev:0:10} could not be read (git diff-tree -p -c, the merge's combined patch, exited {rc})" -o "$scratch/patch" -- git diff-tree -p -r -M -c --root --no-commit-id --no-color "$rev" || numstat_ok=0
+            judged_read gate="the SECTION ROWS of a combined patch" 0 "the BINARY VERDICTS of commit ${rev:0:10} could not be read (awk over the merge's combined patch exited {rc})" -o "$scratch/rows" -- combined_rows "$scratch/patch" || numstat_ok=0
+            judged_read gate="the PER-PARENT listing of a merge" 0 "the BINARY VERDICTS of commit ${rev:0:10} could not be read (git diff-tree --raw -m, the merge's changes against each parent, exited {rc})" -o "$scratch/parents" -- git diff-tree -r --raw --no-renames -m -z --no-commit-id "$rev" || numstat_ok=0
             while IFS= read -r -d '' meta && IFS= read -r -d '' path; do
                 # shellcheck disable=SC2206  # the record is deliberately word-split
                 fields=($meta)
                 [ "${fields[1]}" != 000000 ] || printf '%s\0' "${fields[2]}" >> "$scratch/gone"
             done < "$scratch/parents"
-            rc=0; as_lines "$scratch/post" "$scratch/gone" || rc=$?
+            rc=0; as_lines "the LISTINGS of commit ${rev:0:10} could not be rewritten for the BINARY VERDICT check" "$scratch/post" "$scratch/gone" || rc=$?
             if [ "$rc" -eq 1 ]; then
                 unscanned "a path commit ${rev:0:10} changes holds a newline, which the BINARY VERDICT check cannot judge"
                 continue
             elif [ "$rc" -ne 0 ]; then
-                unscanned "the LISTINGS of commit ${rev:0:10} could not be rewritten for the BINARY VERDICT check ($rewrite_failure)"
-                continue
+                continue        # refused in as_lines, naming the read
             fi
-            LC_ALL=C awk 'FILENAME == ARGV[1] { gone[$0] = 1; next } { i = index($0, "\t"); if (substr($0, 1, i - 1) in gone) print substr($0, i + 1) }' "$scratch/gone.nl" "$scratch/post.nl" | tr '\n' '\0' > "$scratch/tpaths"
+            judged_read gate="the RENAME CANDIDATES of a merge" 0 "the BINARY VERDICTS of commit ${rev:0:10} could not be read (the rename candidates' awk or tr exited {rc})" -o "$scratch/tpaths" -- merge_rename_candidates "$scratch/gone.nl" "$scratch/post.nl" || numstat_ok=0
         else
             # One parent: git's verdict twice over, on the PAIR the per-commit
             # diff reads (-M: a renamed file is judged with the path it came
@@ -969,10 +1178,8 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
             # whether the NEW path hides the blob, the rule the rename refusal
             # set; a pure rename is one whose new path's blob is among the
             # commit's deletions.
-            rc=0; numstat_rows "$scratch/rows" -M --root "$rev" || rc=$?
-            [ "$rc" -eq 0 ] || { numstat_ok=0; unscanned "the BINARY VERDICTS of commit ${rev:0:10} could not be read (git diff-tree --numstat -M exited $rc)"; }
-            rc=0; numstat_rows "$scratch/rows2" --no-renames --root "$rev" || rc=$?
-            [ "$rc" -eq 0 ] || { numstat_ok=0; unscanned "the BINARY VERDICTS of commit ${rev:0:10} could not be read (git diff-tree --numstat --no-renames exited $rc)"; }
+            numstat_rows "the BINARY VERDICTS of commit ${rev:0:10} could not be read (git diff-tree --numstat -M exited {rc})" "$scratch/rows" -M --root "$rev" || numstat_ok=0
+            numstat_rows "the BINARY VERDICTS of commit ${rev:0:10} could not be read (git diff-tree --numstat --no-renames exited {rc})" "$scratch/rows2" --no-renames --root "$rev" || numstat_ok=0
         fi
         # The third, for the paths judged as the addition of their new object
         # (a one-parent commit's type changes; a merge's rename candidates):
@@ -982,27 +1189,25 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
         : > "$scratch/rows3"
         if [ -s "$scratch/tpaths" ]; then
             if [ -z "$empty_tree" ]; then
-                rc=0; empty_tree=$(git hash-object -t tree --stdin < /dev/null) || rc=$?
-                if [ "$rc" -ne 0 ]; then
-                    empty_tree=""; numstat_ok=0; unscanned "the BINARY VERDICTS of commit ${rev:0:10} could not be read (git hash-object, asked for the empty tree's name, exited $rc)"
-                elif [ -z "$empty_tree" ]; then
-                    numstat_ok=0; unscanned "the BINARY VERDICTS of commit ${rev:0:10} could not be read (git hash-object, asked for the empty tree's name, answered nothing)"
+                if judged_read gate="the EMPTY TREE name" 0 "the BINARY VERDICTS of commit ${rev:0:10} could not be read (git hash-object, asked for the empty tree's name, exited {rc})" -- git hash-object -t tree --stdin < /dev/null; then
+                    empty_tree=$read_out
+                    [ -n "$empty_tree" ] || { numstat_ok=0; unscanned "the BINARY VERDICTS of commit ${rev:0:10} could not be read (git hash-object, asked for the empty tree's name, answered nothing)"; }
+                else
+                    numstat_ok=0
                 fi
             fi
             if [ -n "$empty_tree" ]; then
                 tpaths=()
                 while IFS= read -r -d '' path; do tpaths+=(":(literal)$path"); done < "$scratch/tpaths"
-                rc=0; numstat_rows "$scratch/rows3" --no-renames "$empty_tree" "$rev" -- "${tpaths[@]}" || rc=$?
-                [ "$rc" -eq 0 ] || { numstat_ok=0; unscanned "the BINARY VERDICTS of commit ${rev:0:10} could not be read (git diff-tree --numstat against the empty tree exited $rc)"; }
+                numstat_rows "the BINARY VERDICTS of commit ${rev:0:10} could not be read (git diff-tree --numstat against the empty tree exited {rc})" "$scratch/rows3" --no-renames "$empty_tree" "$rev" -- "${tpaths[@]}" || numstat_ok=0
             fi
         fi
-        rc=0; as_lines "$scratch/post" "$scratch/gone" "$scratch/rows" "$scratch/rows2" "$scratch/links" "$scratch/tpaths" "$scratch/rows3" "$scratch/listed" || rc=$?
+        rc=0; as_lines "the LISTINGS of commit ${rev:0:10} could not be rewritten for the BINARY VERDICT check" "$scratch/post" "$scratch/gone" "$scratch/rows" "$scratch/rows2" "$scratch/links" "$scratch/tpaths" "$scratch/rows3" "$scratch/listed" || rc=$?
         if [ "$rc" -eq 1 ]; then
             unscanned "a path commit ${rev:0:10} changes holds a newline, which the BINARY VERDICT check cannot judge"
             continue
         elif [ "$rc" -ne 0 ]; then
-            unscanned "the LISTINGS of commit ${rev:0:10} could not be rewritten for the BINARY VERDICT check ($rewrite_failure)"
-            continue
+            continue        # refused in as_lines, naming the read
         fi
         # The listing against its verdicts (the header's second class): every
         # path a numstat row or a combined-patch section names must be one the
@@ -1016,9 +1221,9 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
         # per-parent listing of a merge (-m) is never compared: it names paths
         # that differ from one parent alone, which the combined listing leaves
         # out by design.
-        if [ "$listing_rc" -eq 0 ] && [ "$numstat_ok" -ne 0 ]; then
-            path=$(LC_ALL=C awk 'FILENAME == ARGV[1] { listed[$0] = 1; next } { p = substr($0, 4); if (!(p in listed)) { print p; exit } }' \
-                "$scratch/listed.nl" "$scratch/rows.nl" "$scratch/rows2.nl" "$scratch/rows3.nl")
+        if [ "$listing_rc" -eq 0 ] && [ "$numstat_ok" -ne 0 ] \
+            && judged_read own="the LISTING join of a commit against its verdicts" 0 "the CHANGED PATHS of commit ${rev:0:10} could not be compared with its verdicts for the BINARY VERDICT check (awk exited {rc})" -- unlisted_verdict_path "$scratch/listed.nl" "$scratch/rows.nl" "$scratch/rows2.nl" "$scratch/rows3.nl"; then
+            path=$read_out
             if [ -n "$path" ]; then
                 if [ "$merge" -ne 0 ]; then
                     unscanned "the CHANGED PATHS of commit ${rev:0:10} were listed short for the BINARY VERDICT check (git diff-tree --raw -c exited 0 and its listing lacks $path, a path the merge's combined patch printed a section for)"
@@ -1054,33 +1259,13 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
         # truncates it on the first open, so the guard keeps the first), and
         # the line names it; named by the commit alone, the pusher had to
         # find the path themselves (the round 4 refuter, 2026-09-22).
-        rc=0; LC_ALL=C awk -v rev="$rev" -v merge="$merge" -v short_file="$scratch/short" '
-            FILENAME == ARGV[1] { p = substr($0, 4); seenm[p] = 1; if (substr($0, 1, 1) == "b") binm[p] = 1; if (substr($0, 1, 1) == "t") hunk[p] = 1; if (substr($0, 2, 1) == "r") ren[p] = 1; next }
-            FILENAME == ARGV[2] { p = substr($0, 4); seenn[p] = 1; if (substr($0, 1, 1) == "b") binn[p] = 1; next }
-            FILENAME == ARGV[3] { gone[$0] = 1; next }
-            FILENAME == ARGV[4] { link[$0] = 1; next }
-            FILENAME == ARGV[5] { typed[$0] = 1; next }
-            FILENAME == ARGV[6] { p = substr($0, 4); seent[p] = 1; if (substr($0, 1, 1) == "b") bint[p] = 1; next }
-            FILENAME == ARGV[7] { tip[$0] = 1; next }
-            { i = index($0, "\t"); blob = substr($0, 1, i - 1); path = substr($0, i + 1)
-              if (blob in tip) next
-              if (merge) {
-                  if (path in hunk) next
-                  if (!(path in binm)) {
-                      if (path in typed) {
-                          if (!(path in seent)) { if (!short) { short = 4; print path > short_file }; next }
-                          if (!(path in bint)) next }
-                      else if (!(path in seenm)) { if (!short) { short = 3; print path > short_file }; next } } }
-              else {
-                  if (!(path in seenm) || !(path in seenn) || ((path in typed) && !(path in seent))) { if (!short) { short = 3; print path > short_file }; next }
-                  if (path in typed) { if (!(path in bint)) next }
-                  else {
-                      if (!(path in binm)) next
-                      if ((path in ren) && (blob in gone) && !(path in binn)) next } }
-              printf "%s%s%s%s\t%s\n", rev, ((path in ren) ? "+rename" : ""), ((path in link) ? "+link" : ""), ((path in typed) ? "+typed" : ""), $0 }
-            END { if (short) exit short }' "$scratch/rows.nl" "$scratch/rows2.nl" "$scratch/gone.nl" "$scratch/links.nl" "$scratch/tpaths.nl" "$scratch/rows3.nl" "$scratch/tipblobs" "$scratch/post.nl" | tr '\n' '\0' >> "$scratch/entries" || rc=$?
+        # The join (join_candidates) through judged_read: 0, 3 and 4 are its
+        # expected statuses (3 and 4 the short-read codes, judged below), and any
+        # other status is the join itself failing, refused here naming its tools.
+        rc=0
+        judged_read own="the JOIN of the verdicts of a commit" 0,3,4 "the BINARY VERDICTS of commit ${rev:0:10} could not be joined for the BINARY VERDICT check (the join's awk or tr exited {rc})" -a "$scratch/entries" -- join_candidates "$rev" "$merge" "$scratch/short" "$scratch/rows.nl" "$scratch/rows2.nl" "$scratch/gone.nl" "$scratch/links.nl" "$scratch/tpaths.nl" "$scratch/rows3.nl" "$scratch/tipblobs" "$scratch/post.nl" && rc=$read_rc
         if [ "$rc" -ne 0 ] && [ "$numstat_ok" -ne 0 ]; then
-            path=$(cat "$scratch/short" 2>/dev/null || true)     # the first post-image the join met no verdict for; empty only when the pipeline failed some other way (a tr or an awk that did not run), which the status alone reports
+            path=""; { IFS= read -r path || :; } < "$scratch/short"     # the first post-image the join met no verdict for (the file is made per commit above, so this is never a read of a missing file); empty when the join recorded none
             [ -n "$path" ] || path="a path the join did not record (it exited $rc)"
             if [ "$merge" -eq 0 ]; then
                 unscanned "the BINARY VERDICTS of commit ${rev:0:10} could not be read (git diff-tree --numstat answered for fewer paths than the commit changes and printed no verdict for $path)"
@@ -1100,15 +1285,12 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
         if [ "$place" = tip ]; then at="at the tip of $local_ref (${local_sha:0:10})"; else at="in commit ${place:0:10}"; fi
         # The first 8000 bytes, counted with their NULs; the rest is drained so
         # the cat-file is never cut off mid-write (its status is the pipe's).
-        rc=0; counts=$(git cat-file blob "$blob" | { head -c 8000 | LC_ALL=C od -An -v -tu1 | awk '{ for (i = 1; i <= NF; i++) { b++; if ($i == 0) z++ } } END { print b + 0, z + 0 }'; cat > /dev/null; }) || rc=$?
-        if [ "$rc" -ne 0 ]; then
-            if [ "$place" = tip ]; then
-                unscanned "the CONTENT of $path at the tip of $local_ref (${local_sha:0:10}), which git calls binary and the identifier scan therefore skipped, could not be read (git cat-file exited $rc)"
-            else
-                unscanned "the CONTENT of $path in commit ${place:0:10}, which git calls binary and the identifier scan therefore skipped, could not be read (git cat-file exited $rc)"
-            fi
-            continue
+        if [ "$place" = tip ]; then
+            judged_read gate="the BYTE COUNTS of a hidden blob" 0 "the CONTENT of $path at the tip of $local_ref (${local_sha:0:10}), which git calls binary and the identifier scan therefore skipped, could not be read (git cat-file exited {rc})" -- byte_counts "$blob" || continue
+        else
+            judged_read gate="the BYTE COUNTS of a hidden blob" 0 "the CONTENT of $path in commit ${place:0:10}, which git calls binary and the identifier scan therefore skipped, could not be read (git cat-file exited {rc})" -- byte_counts "$blob" || continue
         fi
+        counts=$read_out
         # The two counts are runs of digits before -eq reads them, and a count
         # of ZERO bytes is empty content only when the blob is empty (the
         # header's second class): a cat-file that exits 0 and prints nothing, or
@@ -1122,13 +1304,13 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
             continue
         fi
         if [ "$bytes" -eq 0 ]; then
-            rc=0; size=$(git cat-file -s "$blob" 2>/dev/null) || rc=$?
-            if [ "$rc" -ne 0 ]; then
-                unscanned "the CONTENT of $path $at, which git calls binary and the identifier scan therefore skipped, was read as 0 bytes while its SIZE could not be read (git cat-file -s exited $rc), so whether the blob is empty is unknown"
-            elif [ -z "$size" ] || [ -n "${size//[0-9]/}" ]; then
-                unscanned "the CONTENT of $path $at, which git calls binary and the identifier scan therefore skipped, was read as 0 bytes while its SIZE reads \"$size\" (git cat-file -s), not a size, so whether the blob is empty is unknown"
-            elif [ "$size" -ne 0 ]; then
-                unscanned "the CONTENT of $path $at, which git calls binary and the identifier scan therefore skipped, was read as 0 bytes while git cat-file -s gives its size as $size bytes, so the read answered short (git cat-file blob exited 0)"
+            if judged_read gate="the SIZE of a hidden blob" 0 "the CONTENT of $path $at, which git calls binary and the identifier scan therefore skipped, was read as 0 bytes while its SIZE could not be read (git cat-file -s exited {rc}), so whether the blob is empty is unknown" -q -- git cat-file -s "$blob"; then
+                size=$read_out
+                if [ -z "$size" ] || [ -n "${size//[0-9]/}" ]; then
+                    unscanned "the CONTENT of $path $at, which git calls binary and the identifier scan therefore skipped, was read as 0 bytes while its SIZE reads \"$size\" (git cat-file -s), not a size, so whether the blob is empty is unknown"
+                elif [ "$size" -ne 0 ]; then
+                    unscanned "the CONTENT of $path $at, which git calls binary and the identifier scan therefore skipped, was read as 0 bytes while git cat-file -s gives its size as $size bytes, so the read answered short (git cat-file blob exited 0)"
+                fi
             fi
             continue        # empty (the size agrees): nothing hidden
         fi
@@ -1144,11 +1326,18 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
         # an attribute accounts for the verdict is unknown, keeps the two facts
         # and has both remedies print (the tail claimed what the failed read
         # could not establish; the round 4 refuter, 2026-09-22).
+        # outside judged_read: every read from here to the refused line (the
+        # attribute, the driver's key, the size and the threshold, the parent
+        # count and the rename source, the previous version's bytes) is for the
+        # REPORT alone, on a push refused already by the verdict above: a read
+        # that fails leaves the line with fewer facts and says so where the
+        # tail depends on it (the attribute), and none decides anything, so a
+        # refusal for one would name a second cause on a refused push.
         how=""; says=""; accounts="so no attribute of its path accounts for the verdict"; unread=0
         if [ "$islink" -ne 0 ]; then
             says="it is a symbolic link, whose target this read judges by its size and bytes and by no attribute of the path"
         else
-            rc=0; git check-attr -z diff -- "$path" > "$scratch/attr" 2>/dev/null || rc=$?
+            rc=0; git check-attr -z diff -- "$path" > "$scratch/attr" 2>/dev/null || rc=$?     # outside judged_read: for the report (above)
             if [ "$rc" -ne 0 ]; then
                 says="its diff attribute could not be read (git check-attr exited $rc)"; accounts="so whether an attribute of its path accounts for the verdict is unknown"; unread=1
             else
@@ -1157,7 +1346,7 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
                     says="its diff attribute could not be read (git check-attr answered nothing for the path asked)"; accounts="so whether an attribute of its path accounts for the verdict is unknown"; unread=1
                 elif [ "$apath" != "$path" ] || [ "$attr" != diff ] || [ -z "$value" ]; then
                     says="its diff attribute could not be read (git check-attr answered out of step with the path asked)"; accounts="so whether an attribute of its path accounts for the verdict is unknown"; unread=1
-                elif [ "$(git config --type=bool "diff.$value.binary" 2>/dev/null || true)" = true ]; then
+                elif [ "$(git config --type=bool "diff.$value.binary" 2>/dev/null || true)" = true ]; then     # outside judged_read: for the report (above)
                     how="diff=$value, binary"
                 elif [ "$value" = unset ]; then
                     how="unset"
@@ -1174,8 +1363,8 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
             fi
             hidden_attr=1
         else
-            size=$(git cat-file -s "$blob" 2>/dev/null || echo unknown)
-            threshold=$(git config core.bigFileThreshold 2>/dev/null || true)
+            size=$(git cat-file -s "$blob" 2>/dev/null || echo unknown)          # outside judged_read: for the report (above)
+            threshold=$(git config core.bigFileThreshold 2>/dev/null || true)    # outside judged_read: for the report (above)
             # No attribute: for a commit's changed file (not a symlink, judged by
             # its own bytes; not a type change or a merge's rename candidate,
             # +typed, judged by the addition of the new object alone), the
@@ -1209,12 +1398,12 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
             # neither the key nor an attribute lifts a pair binary by its bytes.
             prior=0; where=""
             if [ "$place" != tip ] && [ "$islink" -eq 0 ] && [ "$typed" -eq 0 ]; then
-                k=$(LC_ALL=C awk -v r="$place" '$1 == r { print $2; exit }' "$scratch/pcount")
+                k=$(LC_ALL=C awk -v r="$place" '$1 == r { print $2; exit }' "$scratch/pcount")     # outside judged_read: for the report (above)
                 if [ -z "$k" ] || [ -n "${k//[0-9]/}" ]; then k=0; fi
                 if [ "$k" -eq 1 ]; then
                     prev=$path
                     if [ -n "$renamed" ]; then
-                        prev=""; rc=0; git diff-tree -r --raw -M -z --root --no-commit-id "$place" > "$scratch/renames" 2>/dev/null || rc=$?
+                        prev=""; rc=0; git diff-tree -r --raw -M -z --root --no-commit-id "$place" > "$scratch/renames" 2>/dev/null || rc=$?     # outside judged_read: for the report (above)
                         if [ "$rc" -eq 0 ]; then
                             while IFS= read -r -d '' meta && IFS= read -r -d '' rsrc; do
                                 case "${meta##* }" in R*|C*) IFS= read -r -d '' rdst || rdst=""; [ "$rdst" != "$path" ] || prev=$rsrc ;; esac
@@ -1222,13 +1411,13 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
                         fi
                     fi
                     if [ -n "$prev" ]; then
-                        rc=0; counts=$(git cat-file blob "$place^:$prev" 2>/dev/null | { head -c 8000 | LC_ALL=C od -An -v -tu1 | awk '{ for (i = 1; i <= NF; i++) { b++; if ($i == 0) z++ } } END { print b + 0, z + 0 }'; cat > /dev/null; }) || rc=$?
+                        rc=0; counts=$(git cat-file blob "$place^:$prev" 2>/dev/null | { head -c 8000 | LC_ALL=C od -An -v -tu1 | awk '{ for (i = 1; i <= NF; i++) { b++; if ($i == 0) z++ } } END { print b + 0, z + 0 }'; cat > /dev/null; }) || rc=$?     # outside judged_read: for the report (above)
                         if [ "$rc" -eq 0 ]; then read -r bytes nuls <<< "$counts"; case "$nuls" in ''|*[!0-9]*) ;; 0) ;; *) prior=1 ;; esac; fi
                         [ "$prior" -eq 0 ] || [ "$prev" = "$path" ] || where=" (at $prev, the path the diff read it from)"
                     fi
                 elif [ "$k" -gt 1 ]; then
                     for ((i = 1; i <= k; i++)); do
-                        rc=0; counts=$(git cat-file blob "$place^$i:$path" 2>/dev/null | { head -c 8000 | LC_ALL=C od -An -v -tu1 | awk '{ for (i = 1; i <= NF; i++) { b++; if ($i == 0) z++ } } END { print b + 0, z + 0 }'; cat > /dev/null; }) || rc=$?
+                        rc=0; counts=$(git cat-file blob "$place^$i:$path" 2>/dev/null | { head -c 8000 | LC_ALL=C od -An -v -tu1 | awk '{ for (i = 1; i <= NF; i++) { b++; if ($i == 0) z++ } } END { print b + 0, z + 0 }'; cat > /dev/null; }) || rc=$?     # outside judged_read: for the report (above)
                         [ "$rc" -eq 0 ] || continue
                         read -r bytes nuls <<< "$counts"
                         case "$nuls" in ''|*[!0-9]*) ;; 0) ;; *) prior=1; where=" in parent $i of the merge"; break ;; esac
@@ -1254,9 +1443,60 @@ refuse_hidden_paths() {   # <local_ref> <local_sha> <revs: one "<sha> <parent co
 }
 
 # ── identifiers ───────────────────────────────────────────────────────────
+# The type the pushed object PEELS to (blob, tree or commit; cat-file -t on
+# <sha>^{}), read once per ref and only when a read needs it: the symlink pass
+# when its listing exited 128 (a blob has no tree to list), and the commit
+# listing when it answered nothing (a blob or a tree names no commit, so the
+# empty listing is the object's own). Any answer outside the object types
+# refuses the push as unscanned naming the read and the answer, and leaves
+# peeled empty, which every caller reads as "not a blob": the safe side. Sets
+# peeled and peeled_read, the caller's.
+peel_type() {   # <local_ref> <local_sha>
+    [ "$peeled_read" -eq 0 ] || return 0
+    peeled_read=1; peeled=""
+    judged_read gate="the TYPE of the object the tip peels to" 0 "the TYPE of the object the tip of $1 (${2:0:10}) peels to could not be read (git cat-file -t exited {rc})" -q -- git cat-file -t "$2^{}" || return 0
+    case "$read_out" in
+        blob|tree|commit) peeled=$read_out ;;
+        *) unscanned "the TYPE of the object the tip of $1 (${2:0:10}) peels to was read as \"$read_out\" (git cat-file -t exited 0), not an object type" ;;
+    esac
+}
+# The TYPE of the object a ref pushes, and of each object the peel below
+# reaches: read through judged_read (a failure refused with type_unread's
+# clause) and its answer judged in this shell, never a subshell, against the
+# four object types, since a type is never an object's own empty answer: an
+# answer outside them refuses the push as unscanned naming the read and the
+# answer (a cat-file -t answering nothing with a clean status read as "not a
+# tag" and published a banned tagger through a real push; the round 5
+# refuters, 2026-09-22). The shape is judged only on a read that exited 0, so
+# a failed read is refused once; either way kind is left empty, which ends
+# the peel. Sets kind, the caller's.
+object_type() {   # <local_ref> <sha>
+    kind=""
+    judged_read gate="the TYPE of a pushed object" 0 "$(type_unread "$1" "$2")" -q -- git cat-file -t "$2" || return 0
+    case "$read_out" in
+        blob|tree|commit|tag) kind=$read_out ;;
+        *) unscanned "the TYPE of the object $1 pushes (${2:0:10}) was read as \"$read_out\" (git cat-file -t exited 0), not an object type, so whether it is an annotated tag is unknown" ;;
+    esac
+}
+# The line numbers of the hits in a message (a commit's, a tag's), for the
+# report: the grep's status through judged_read (0 a hit, 1 none, anything
+# else refused as unscanned with the caller's clause), -n numbering the lines
+# from the subject, and the numbers joined with commas into lines, the
+# caller's. Called as a condition: status 0 when the message carries a hit.
+message_hit_lines() {   # <clause for a grep that failed, {rc} its status> <message>
+    local hit
+    lines=""
+    judged_read own="the MESSAGE grep" 0,1 "$1" -- grep -in -F "${grep_args[@]}" <<< "$2" || return 1
+    [ "$read_rc" -eq 0 ] || return 1
+    while IFS= read -r hit; do lines="$lines${hit%%:*},"; done <<< "$read_out"
+    lines=${lines%,}
+    [ -n "$lines" ]
+}
 scan_identifiers() {
     local strings_file line grep_args local_ref local_sha _remote_ref remote_sha lines role email obj tagger chosen
-    local rc out errs hits listing links link blob link_path target revs rev n msg addrs inner kind tip_listed tip_entries rev_counts
+    local rc errs hits listing link blob link_path target size revs rev n msg addrs inner kind tip_listed tip_entries rev_counts
+    local peeled peeled_read fell_back agreed paths
+    local -a words
     strings_file="$(private_strings_file)"
     identifier_scan_armed || return 0
 
@@ -1296,16 +1536,35 @@ scan_identifiers() {
         # colour codes even off a terminal, and a coloured hit is not
         # "<sha>:<path>": it read as an error line, and a real hit was reported
         # as a broken scanner (2026-09-21).
-        rc=0; out=$(git grep --no-color -i -I -l -F "${grep_args[@]}" "$local_sha" -- 2>&1) || rc=$?
-        hits=$(printf '%s\n' "$out" | grep -E "^$local_sha(:|\$)" || true)
-        errs=$(printf '%s\n' "$out" | grep -Ev "^$local_sha(:|\$)" | grep . || true)
-        if [ "$rc" -gt 1 ] || [ -n "$errs" ]; then
+        # The hit lines and the error lines are told apart here, line by line,
+        # and the grep's own status is the sibling fact for its answer: exit 0
+        # is a match, so a match that printed no hit line is a short answer,
+        # refused as unscanned.
+        peeled=""; peeled_read=0
+        judged_read gate="the CONTENT grep of the tip" 0,1 "the CONTENT of the tip of $local_ref (${local_sha:0:10}) could not be fully scanned (git grep exited {rc})" -e -- git grep --no-color -i -I -l -F "${grep_args[@]}" "$local_sha" -- || :
+        rc=$read_rc; hits=""; errs=""
+        while IFS= read -r line; do
+            case "$line" in
+                "$local_sha:"*|"$local_sha") hits="$hits$line"$'\n' ;;
+                '') ;;
+                *) errs="$errs$line"$'\n' ;;
+            esac
+        done <<< "$read_out"
+        hits=${hits%$'\n'}; errs=${errs%$'\n'}
+        if [ "$rc" -le 1 ] && [ -n "$errs" ]; then
             unscanned "the CONTENT of the tip of $local_ref (${local_sha:0:10}) could not be fully scanned (git grep exited $rc)"
-            [ -z "$errs" ] || printf '%s\n' "$errs" | sed 's/^/  /' >&2
+        fi
+        if [ -n "$errs" ]; then
+            while IFS= read -r line; do printf '  %s\n' "$line" >&2; done <<< "$errs"
+        fi
+        if [ "$rc" -eq 0 ] && [ -z "$hits" ]; then
+            unscanned "the CONTENT of the tip of $local_ref (${local_sha:0:10}) was scanned with no hit listed (git grep exited 0, a match, and printed no hit line), so the answer is short"
         fi
         if [ -n "$hits" ]; then
             echo "romp pre-push: the tip of $local_ref (${local_sha:0:10}) would publish a personal identifier in:" >&2
-            echo "$hits" | sed "s/^$local_sha:/  /" >&2
+            while IFS= read -r line; do
+                case "$line" in "$local_sha:"*) printf '  %s\n' "${line#"$local_sha:"}" >&2 ;; *) printf '%s\n' "$line" >&2 ;; esac
+            done <<< "$hits"
             blocked_ids=1
         fi
 
@@ -1328,34 +1587,70 @@ scan_identifiers() {
         # read the blob itself. The peel-type read is made only when the listing
         # failed, and its own failure refuses like any other.
         tip_listed=1            # read again with -z by refuse_hidden_paths; not when this listing failed or found no tree
-        listing=$(git ls-tree -r "$local_sha" 2>/dev/null) || {
+        # The listing's expected set is 0 and 128: ls-tree exits 128 for a pushed
+        # object that peels to a blob ("not a tree object"), which has no tree to
+        # list, and the peeled type then decides whether that is the case; any
+        # other status is refused here, and whatever was listed is still read. An
+        # empty listing under exit 0 is gated in refuse_hidden_paths, where the -z
+        # listing of the same tree must agree with its entry count and with the
+        # grep's read list.
+        judged_read gate="the SYMLINK listing of the tip" 0,128 "the SYMLINKS of the tip of $local_ref (${local_sha:0:10}) could not be listed" -q -- git ls-tree -r "$local_sha" || :
+        listing=$read_out
+        if [ "$read_rc" -eq 128 ]; then
             tip_listed=0
-            if [ "$(git cat-file -t "${local_sha}^{}" 2>/dev/null || true)" = blob ]; then
+            peel_type "$local_ref" "$local_sha"
+            if [ "$peeled" = blob ]; then
                 listing=""
             else
                 unscanned "the SYMLINKS of the tip of $local_ref (${local_sha:0:10}) could not be listed"
             fi
-        }
-        # Its entry count, for the -z listing refuse_hidden_paths makes of the same
-        # tree to agree with (the header's second class). grep -c over the lines,
-        # never wc -l over the printf: an empty listing is one empty line to wc.
-        tip_entries=$(printf '%s\n' "$listing" | grep -c .) || true
-        if links=$(printf '%s\n' "$listing" | grep '^120000 '); then
-            while IFS= read -r link; do
-                blob=${link#* * }; blob=${blob%%[[:space:]]*}
-                link_path=${link#*$'\t'}
-                # A blob that cannot be read is reported the same way, and its target
-                # counts as empty so the loop goes on to the next link (under set -e a
-                # bare failed substitution would end the hook before its verdict).
-                target=$(git cat-file -p "$blob" 2>/dev/null) \
-                    || { target=""; unscanned "the SYMLINK TARGET of $link_path at the tip of $local_ref (${local_sha:0:10}) could not be read"; }
-                if printf '%s' "$target" | grep -qi -F "${grep_args[@]}"; then
-                    echo "romp pre-push: the tip of $local_ref (${local_sha:0:10}) would publish a personal identifier" >&2
-                    echo "  in the SYMLINK TARGET of $link_path -> $target" >&2
-                    blocked_ids=1
-                fi
-            done <<< "$links"
+        elif [ "$read_rc" -ne 0 ]; then
+            tip_listed=0
         fi
+        # Its entry count, for the -z listing refuse_hidden_paths makes of the same
+        # tree to agree with (the header's second class): the non-empty lines,
+        # counted by the loop that reads each 120000 entry (an empty listing is
+        # one empty line to the herestring, counted as nothing).
+        tip_entries=0
+        while IFS= read -r link; do
+            [ -n "$link" ] || continue
+            tip_entries=$((tip_entries + 1))
+            case "$link" in "120000 "*) ;; *) continue ;; esac
+            blob=${link#* * }; blob=${blob%%[[:space:]]*}
+            link_path=${link#*$'\t'}
+            # The target, with its trailing newlines kept (-k) so a target of a
+            # newline alone is not read as empty. A blob that cannot be read is
+            # refused, and its target counts as empty so the loop goes on to the
+            # next link. A target read as EMPTY under exit 0 is judged against the
+            # blob's SIZE (cat-file -s), the header's second class: a size that is
+            # not zero, or that could not be read, refuses the tip as unscanned
+            # naming the link, the empty answer and the size, since an empty
+            # answer is an empty target only when the blob is (emptiness compared,
+            # never byte counts; a cat-file -p answering nothing with a clean
+            # status published a link the remote already held whose target
+            # carried a banned string; the round 5 refuters, 2026-09-22).
+            judged_read gate="the SYMLINK TARGET of a link at the tip" 0 "the SYMLINK TARGET of $link_path at the tip of $local_ref (${local_sha:0:10}) could not be read" -q -k -- git cat-file -p "$blob" || :
+            target=$read_out
+            if [ "$read_rc" -eq 0 ] && [ -z "$target" ]; then
+                if judged_read gate="the SIZE of a symlink target blob" 0 "the SYMLINK TARGET of $link_path at the tip of $local_ref (${local_sha:0:10}) was read as empty while its SIZE could not be read (git cat-file -s exited {rc}), so whether the target is empty is unknown" -q -- git cat-file -s "$blob"; then
+                    size=$read_out
+                    if [ -z "$size" ] || [ -n "${size//[0-9]/}" ]; then
+                        unscanned "the SYMLINK TARGET of $link_path at the tip of $local_ref (${local_sha:0:10}) was read as empty while its SIZE reads \"$size\" (git cat-file -s), not a size, so whether the target is empty is unknown"
+                    elif [ "$size" -ne 0 ]; then
+                        unscanned "the SYMLINK TARGET of $link_path at the tip of $local_ref (${local_sha:0:10}) was read as empty while git cat-file -s gives its size as $size bytes, so the read answered short (git cat-file -p exited 0)"
+                    fi
+                fi
+            fi
+            # The grep and the report read the target as a substitution would have
+            # given it, without its trailing newlines; the grep's status is read
+            # (0 a hit, 1 none, anything else refused as unscanned naming the read).
+            while [ "${target%$'\n'}" != "$target" ]; do target=${target%$'\n'}; done
+            if judged_read own="the SYMLINK TARGET grep" 0,1 "the SYMLINK TARGET of $link_path at the tip of $local_ref (${local_sha:0:10}) could not be grepped (grep exited {rc})" -- grep -qi -F "${grep_args[@]}" <<< "$target" && [ "$read_rc" -eq 0 ]; then
+                echo "romp pre-push: the tip of $local_ref (${local_sha:0:10}) would publish a personal identifier" >&2
+                echo "  in the SYMLINK TARGET of $link_path -> $target" >&2
+                blocked_ids=1
+            fi
+        done <<< "$listing"
 
         # The lines each commit new to the remote adds. Each per-commit read below
         # (the parent count and the diff, the addresses, the message) is captured with its status before
@@ -1377,36 +1672,136 @@ scan_identifiers() {
         # lines would otherwise make it call the file binary and print no line
         # for a hit. A scratch directory that cannot be made leaves the lines
         # unread, refused as unscanned naming mktemp.
+        # The commits this push publishes (rev_range). The range read's expected
+        # set is 0 and 128: a range this clone cannot resolve (a force-push over a
+        # remote tip nobody fetched) fails with 128, and the listing then falls
+        # back to everything the pushed tip reaches, the header's rule; any other
+        # status is refused. An EMPTY listing under exit 0 is gated by sibling
+        # facts (the header's second class): the type the pushed object peels to
+        # (a blob or a tree names no commit, so the empty answer is the object's
+        # own), else some remote-tracking ref must contain the pushed commit
+        # (for-each-ref --contains: every commit of the range is then one a
+        # remote already has) OR, for a ref update, the pushed commit must be an
+        # ancestor of the remote's current one (merge-base --is-ancestor: a rewind
+        # publishes nothing new); the OR, since the ancestry alone would refuse a
+        # fast-forward of commits another remote holds. A listing that answered
+        # nothing while neither fact holds is refused as unscanned naming the
+        # read and the empty answer: a rev-list answering nothing with a clean
+        # status published a middle commit's banned line through a real push, on
+        # a new branch and on a ref update alike (the round 5 refuters,
+        # 2026-09-22).
         # shellcheck disable=SC2046  # the range is deliberately word-split
-        revs=$(git rev-list $(rev_range "$local_sha" "$remote_sha") 2>/dev/null \
-               || git rev-list "$local_sha")
+        fell_back=0
+        judged_read gate="the COMMIT listing of a pushed ref" 0,128 "the COMMITS of $local_ref (${local_sha:0:10}) could not be listed for the identifier scan (git rev-list exited {rc})" -q -- git rev-list $(rev_range "$local_sha" "$remote_sha") || :
+        if [ "$read_rc" -eq 128 ]; then
+            fell_back=1
+            judged_read gate="the COMMIT listing of a pushed ref" 0 "the COMMITS of $local_ref (${local_sha:0:10}) could not be listed for the identifier scan (git rev-list exited {rc})" -- git rev-list "$local_sha" || :
+        fi
+        revs=$read_out
+        if [ "$read_rc" -eq 0 ] && [ -z "$revs" ]; then
+            peel_type "$local_ref" "$local_sha"
+            case "$peeled" in
+                blob|tree) ;;           # no commit to list: the object's own empty answer
+                *)
+                    agreed=0
+                    if judged_read gate="the REMOTE REFS containing the pushed commit" 0 "the COMMITS of $local_ref (${local_sha:0:10}) were listed as none, and whether a remote-tracking ref contains the pushed commit could not be read (git for-each-ref --contains exited {rc})" -- git for-each-ref --format='%(refname)' --contains "$local_sha" refs/remotes/; then
+                        [ -z "$read_out" ] || agreed=1
+                    fi
+                    if [ "$agreed" -eq 0 ] && [ "$remote_sha" != "$zero" ] && [ "$fell_back" -eq 0 ]; then
+                        if judged_read gate="the ANCESTRY of the pushed commit over the remote commit" 0,1 "the COMMITS of $local_ref (${local_sha:0:10}) were listed as none, and whether the pushed commit is an ancestor of the remote's ${remote_sha:0:10} could not be read (git merge-base exited {rc})" -q -- git merge-base --is-ancestor "$local_sha" "$remote_sha"; then
+                            [ "$read_rc" -ne 0 ] || agreed=1
+                        fi
+                    fi
+                    if [ "$agreed" -eq 0 ]; then
+                        if [ "$remote_sha" = "$zero" ]; then
+                            unscanned "the COMMITS of $local_ref (${local_sha:0:10}) were listed as none (git rev-list exited 0 and printed nothing) while no remote-tracking ref contains the pushed commit and the ref is new on the remote, so the listing answered short"
+                        elif [ "$fell_back" -ne 0 ]; then
+                            unscanned "the COMMITS of $local_ref (${local_sha:0:10}) were listed as none (git rev-list exited 0 and printed nothing) while no remote-tracking ref contains the pushed commit and the remote's ${remote_sha:0:10} is not in this clone, so the listing answered short"
+                        else
+                            unscanned "the COMMITS of $local_ref (${local_sha:0:10}) were listed as none (git rev-list exited 0 and printed nothing) while no remote-tracking ref contains the pushed commit and it is not an ancestor of the remote's ${remote_sha:0:10}, so the listing answered short"
+                        fi
+                    fi
+                    ;;
+            esac
+        fi
         rev_counts=""           # "<sha> <parent count>" per line, for refuse_hidden_paths: the count read here decides a merge there, not a listing's shape
         for rev in $revs; do
-            rc=0; n=$(parent_count "$rev") || rc=$?
-            [ "$rc" -eq 0 ] || unscanned "the ADDED LINES of commit ${rev:0:10} could not be read (git rev-list --parents exited $rc)"
+            # The parent count: rev-list --parents -n 1 prints the commit and then
+            # each parent, so the answer's first word is the commit itself, the
+            # sibling fact a short answer is judged against once the read exited 0
+            # (judged in bash, never inside an awk under pipefail, which reported a
+            # rev-list exiting 128 as an empty answer). A failure or a short answer
+            # leaves n empty, which added_lines reads as one column (a merge is then
+            # over-scanned), and is refused: an empty count beside an empty combined
+            # listing read a merge as a one-parent commit and published its hidden
+            # file through a real push (the round 5 refuters, 2026-09-22).
+            n=""
+            if judged_read gate="the PARENT COUNT of a commit" 0 "the ADDED LINES of commit ${rev:0:10} could not be read (git rev-list --parents exited {rc})" -- git rev-list --parents -n 1 "$rev"; then
+                read -r -a words <<< "$read_out"
+                if [ "${#words[@]}" -ge 1 ] && [ "${words[0]}" = "$rev" ]; then
+                    n=$(( ${#words[@]} - 1 ))
+                else
+                    unscanned "the ADDED LINES of commit ${rev:0:10} could not be read (git rev-list --parents exited 0 and answered \"$read_out\", not the commit and its parents)"
+                fi
+            fi
             rev_counts="$rev_counts$rev $n"$'\n'
             if make_scratch; then
-                rc=0; added_lines "$rev" "$n" > "$scratch/added" || rc=$?
-                [ "$rc" -eq 0 ] || unscanned "the ADDED LINES of commit ${rev:0:10} could not be read (git diff-tree exited $rc)"
-                if hits=$(grep -a -i -F "${grep_args[@]}" "$scratch/added" | cut -f1 | sort -u) && [ -n "$hits" ]; then
+                judged_read own="the ADDED LINES diff of a commit" 0 "the ADDED LINES of commit ${rev:0:10} could not be read (git diff-tree exited {rc})" -o "$scratch/added" -- added_lines "$rev" "$n" || :
+                # The grep's status is read (0 a hit, 1 none, anything else refused
+                # as unscanned naming the read: a grep exiting 2 left the hits empty
+                # and published the commit through a real push; the round 5
+                # refuters, 2026-09-22). Its hit lines go to a file, never a
+                # substitution (a NUL among them would be dropped with a warning);
+                # their paths are read from it here and sorted unique for the
+                # report, the sort's answer judged against the lines it was given.
+                hits=""
+                if judged_read own="the ADDED LINES grep" 0,1 "the ADDED LINES of commit ${rev:0:10} could not be grepped (grep exited {rc})" -o "$scratch/hits" -- grep -a -i -F "${grep_args[@]}" "$scratch/added" && [ "$read_rc" -eq 0 ]; then
+                    paths=""
+                    while IFS= read -r line; do paths="$paths${line%%$'\t'*}"$'\n'; done < "$scratch/hits"
+                    if judged_read gate="the SORT of the paths a grep named" 0 "the ADDED LINES of commit ${rev:0:10} could not be reported (sort exited {rc})" -- sort -u <<< "${paths%$'\n'}"; then
+                        hits=$read_out
+                        [ -n "$hits" ] || unscanned "the ADDED LINES of commit ${rev:0:10} could not be reported (sort exited 0 and answered nothing for the paths the grep named)"
+                    fi
+                fi
+                if [ -n "$hits" ]; then
                     echo "romp pre-push: commit ${rev:0:10} ADDS a personal identifier in:" >&2
-                    echo "$hits" | sed 's/^/  /' >&2
+                    while IFS= read -r line; do printf '  %s\n' "$line" >&2; done <<< "$hits"
                     blocked_ids=1
                 fi
             else
                 unscanned "the ADDED LINES of commit ${rev:0:10} could not be read (no scratch directory for the capture: mktemp failed)"
             fi
-            # The addresses it is stamped with: the domain of each one the clone did
-            # not choose. `${email##*@}` is the whole string for an address with no @,
-            # which git never stamps; such an address is read whole. Captured in
-            # this shell rather than read through a process substitution: bash gives
-            # the loop no status for one, and a counter set inside it is lost with
-            # its subshell. A herestring of an empty capture is one empty line.
-            rc=0; addrs=$(stamped_addresses "$rev" "$chosen") || rc=$?
-            [ "$rc" -eq 0 ] || unscanned "the ADDRESSES of commit ${rev:0:10} could not be read (git log exited $rc)"
+            # The addresses it is stamped with, one line per role as "<role>\t<address>"
+            # (authored and committed, whether or not the two are the same), and the
+            # domain of each one the clone did not choose. `${email##*@}` is the whole
+            # string for an address with no @, which git never stamps; such an
+            # address is read whole. An empty address is skipped (there is nothing
+            # to publish in `<>`), and so is a chosen one (is_chosen).
+            # --no-show-signature here and on the message read below: with
+            # log.showSignature set, git log prints a signed commit's verification
+            # report (the signer's name or address among it) ahead of whatever the
+            # format asks for. Read as part of the message, that refused a clean
+            # signed commit whose signer is on the denylist, as the author's own
+            # name and address are, and numbered a real hit's line from the report's
+            # first line rather than the subject. The flag keeps both reads to the
+            # commit's own fields. The log is captured in this shell (never a
+            # process substitution, which gives the loop no status and loses a
+            # counter set inside it) and its answer judged against the format asked
+            # for: the two role lines, so an exit-0 answer of any other shape is
+            # short, refused as unscanned naming it; whatever was printed is judged
+            # either way. A herestring of an empty capture is one empty line.
+            judged_read gate="the ADDRESSES log of a commit" 0 "the ADDRESSES of commit ${rev:0:10} could not be read (git log exited {rc})" -- git log -1 --no-show-signature --format='authored%x09%ae%ncommitted%x09%ce' "$rev" || :
+            addrs=$read_out
+            if [ "$read_rc" -eq 0 ]; then
+                case "$addrs" in
+                    authored$'\t'*$'\n'committed$'\t'*) ;;
+                    *) unscanned "the ADDRESSES of commit ${rev:0:10} could not be read (git log exited 0 and answered \"$addrs\", not the two stamped roles)" ;;
+                esac
+            fi
             while IFS=$'\t' read -r role email; do
                 [ -n "$email" ] || continue
-                if printf '%s' "${email##*@}" | grep -qi -F "${grep_args[@]}"; then
+                is_chosen "$email" "$chosen" "the ADDRESS <$email> of commit ${rev:0:10} could not be compared with the addresses this clone is configured to use (grep exited {rc})" && continue
+                if judged_read own="the ADDRESS DOMAIN grep" 0,1 "the ADDRESS <$email> of commit ${rev:0:10} could not be grepped (grep exited {rc})" -- grep -qi -F "${grep_args[@]}" <<< "${email##*@}" && [ "$read_rc" -eq 0 ]; then
                     echo "romp pre-push: commit ${rev:0:10} is $role as <$email>, an address this clone is not configured to use, whose domain carries a personal identifier" >&2
                     blocked_ids=1
                     blocked_addresses=1
@@ -1414,13 +1809,12 @@ scan_identifiers() {
             done <<< "$addrs"
             # Its message, subject and body, like lines of content. -n so the report
             # can point at the line (1 is the subject) without echoing the string;
-            # --no-show-signature so the message is all it reads (stamped_addresses).
-            # Captured first; a substitution drops trailing newlines only, so the
-            # numbering from the subject is the pipe's.
-            rc=0; msg=$(git log -1 --no-show-signature --format=%B "$rev") || rc=$?
-            [ "$rc" -eq 0 ] || unscanned "the MESSAGE of commit ${rev:0:10} could not be read (git log exited $rc)"
-            if hits=$(printf '%s\n' "$msg" | grep -in -F "${grep_args[@]}" | cut -d: -f1) && [ -n "$hits" ]; then
-                lines=$(printf '%s\n' "$hits" | tr '\n' ,); lines=${lines%,}
+            # --no-show-signature so the message is all it reads (above). Captured
+            # first; a substitution drops trailing newlines only, so the numbering
+            # from the subject is the grep's (message_hit_lines).
+            judged_read own="the MESSAGE log of a commit" 0 "the MESSAGE of commit ${rev:0:10} could not be read (git log exited {rc})" -- git log -1 --no-show-signature --format=%B "$rev" || :
+            msg=$read_out
+            if message_hit_lines "the MESSAGE of commit ${rev:0:10} could not be grepped (grep exited {rc})" "$msg"; then
                 echo "romp pre-push: the MESSAGE of commit ${rev:0:10} carries a personal identifier on line $lines (line 1 is the subject)" >&2
                 blocked_ids=1
                 blocked_messages=1
@@ -1443,12 +1837,14 @@ scan_identifiers() {
         # peel ends, and under set -e a bare failed substitution would end the hook
         # before its verdict.
         obj="$local_sha"
-        kind="$(git cat-file -t "$obj" 2>/dev/null)" || { kind=""; type_unread "$local_ref" "$obj"; }
+        object_type "$local_ref" "$obj"
         while [ "$kind" = tag ]; do
-            tagger="$(tag_field "$obj" tagger 2>/dev/null)" || { tagger=""; tag_unread "$local_ref" "$obj" TAGGER; }
+            judged_read own="the TAGGER field of a tag" 0 "$(tag_unread "$local_ref" "$obj" TAGGER)" -q -- tag_field "$obj" tagger || :
+            tagger=$read_out
             email=""
             case "$tagger" in *"<"*">"*) email="${tagger#*<}"; email="${email%%>*}";; esac
-            if [ -n "$email" ] && ! is_chosen "$email" "$chosen" && printf '%s' "${email##*@}" | grep -qi -F "${grep_args[@]}"; then
+            if [ -n "$email" ] && ! is_chosen "$email" "$chosen" "the TAGGER ADDRESS <$email> of tag $local_ref (${obj:0:10}) could not be compared with the addresses this clone is configured to use (grep exited {rc})" \
+                && judged_read own="the ADDRESS DOMAIN grep" 0,1 "the TAGGER ADDRESS <$email> of tag $local_ref (${obj:0:10}) could not be grepped (grep exited {rc})" -- grep -qi -F "${grep_args[@]}" <<< "${email##*@}" && [ "$read_rc" -eq 0 ]; then
                 echo "romp pre-push: tag $local_ref (${obj:0:10}) is tagged as <$email>, an address this clone is not configured to use, whose domain carries a personal identifier" >&2
                 blocked_ids=1
                 blocked_addresses=1
@@ -1456,18 +1852,26 @@ scan_identifiers() {
             fi
             # The message is captured before the grep so a failed read has a road of
             # its own: piped straight into grep, the read's failure was grep's no-match.
-            msg="$(tag_message "$obj" 2>/dev/null)" || { msg=""; tag_unread "$local_ref" "$obj" MESSAGE; }
-            if hits=$(printf '%s\n' "$msg" | grep -in -F "${grep_args[@]}" | cut -d: -f1) && [ -n "$hits" ]; then
-                lines=$(printf '%s\n' "$hits" | tr '\n' ,); lines=${lines%,}
+            judged_read own="the MESSAGE of a tag" 0 "$(tag_unread "$local_ref" "$obj" MESSAGE)" -q -- tag_message "$obj" || :
+            msg=$read_out
+            if message_hit_lines "the MESSAGE of tag $local_ref (${obj:0:10}) could not be grepped (grep exited {rc})" "$msg"; then
                 echo "romp pre-push: the MESSAGE of tag $local_ref (${obj:0:10}) carries a personal identifier on line $lines" >&2
                 blocked_ids=1
                 blocked_messages=1
                 blocked_tags=1
             fi
-            inner="$(tag_field "$obj" object 2>/dev/null)" || { inner=""; tag_unread "$local_ref" "$obj" OBJECT "which ends the peel here"; }
+            # The OBJECT field names what the tag points at, and the type read said
+            # this object is a tag, so an EMPTY field under exit 0 is a short answer
+            # (a tag object always carries one), refused as unscanned naming the
+            # read and the answer; either way an empty field ends the peel.
+            inner=""
+            if judged_read gate="the OBJECT field of a tag" 0 "$(tag_unread "$local_ref" "$obj" OBJECT "which ends the peel here")" -q -- tag_field "$obj" object; then
+                inner=$read_out
+                [ -n "$inner" ] || unscanned "the OBJECT of tag $local_ref (${obj:0:10}) was read as empty (git cat-file -p exited 0) while its type read as tag, which ends the peel here"
+            fi
             obj="$inner"
-            [ -n "$obj" ] || break      # the OBJECT read failed, reported above: nothing to peel to
-            kind="$(git cat-file -t "$obj" 2>/dev/null)" || { kind=""; type_unread "$local_ref" "$obj"; }
+            [ -n "$obj" ] || break      # the OBJECT read failed or answered nothing, reported above: nothing to peel to
+            object_type "$local_ref" "$obj"
         done
     done <<< "$refs"
     [ -z "$scratch" ] || rm -rf -- "$scratch"      # the exact minted path, never a glob (the header's residual)
@@ -1634,7 +2038,16 @@ scan_credentials() {
     fi
     gl="$(gitleaks_binary)"
 
-    root="$(git rev-parse --show-toplevel)"
+    # The repository root, for the scanner's argument list: a read that fails
+    # or answers nothing leaves no root to scan, so the push is refused as
+    # unscanned with the scanner's advice and the loop below reads no ref.
+    root=""
+    if judged_read gate="the REPOSITORY ROOT" 0 "the REPOSITORY ROOT could not be read for the credential scan (git rev-parse exited {rc})" -- git rev-parse --show-toplevel; then
+        root=$read_out
+        [ -n "$root" ] || { unscanned "the REPOSITORY ROOT could not be read for the credential scan (git rev-parse exited 0 and answered nothing)"; failed_creds=1; }
+    else
+        failed_creds=1
+    fi
     # The repo's rules, named explicitly: without --config gitleaks reads a
     # GITLEAKS_CONFIG from the environment before the source root, so a
     # developer's own config (for a pre-commit hook of theirs, say) would
@@ -1653,14 +2066,28 @@ scan_credentials() {
         # that ran but failed, or wrote to stderr; a log that came up short) is
         # read from its own log after the scan, below, not from its exit status.
         range="$(rev_range "$local_sha" "$remote_sha")"
+        # The probe's expected set is 0 and 128 (128 a range this clone cannot
+        # resolve, which sends the scan over everything the tip reaches); its
+        # answer is discarded, the status alone decides.
         # shellcheck disable=SC2086  # the range is deliberately word-split
-        git rev-list $range >/dev/null 2>&1 || range="$local_sha"
+        if judged_read own="the RANGE probe of the credential scan" 0,128 "the COMMITS of $local_ref (${local_sha:0:10}) could not be listed for the credential scan (git rev-list exited {rc})" -q -o /dev/null -- git rev-list $range; then
+            [ "$read_rc" -eq 0 ] || range="$local_sha"
+        else
+            failed_creds=1
+        fi
         # The commits gitleaks should count over that range, read before the scan
-        # so a range this git cannot read is refused on a line of its own.
+        # so a range this git cannot read is refused on a line of its own; the
+        # count is a run of digits, so an exit-0 answer of any other shape is
+        # refused too (an empty count would have skipped the comparison below).
         # shellcheck disable=SC2086  # the range is deliberately word-split
-        rc=0; expected=$(scannable_commits $range) || { rc=$?; expected=""; }
-        if [ "$rc" -ne 0 ]; then
-            unscanned "the COMMITS of $local_ref (${local_sha:0:10}) could not be counted for the credential scan (a git read exited $rc)"
+        expected=""
+        if judged_read gate="the COUNT of commits with content to scan" 0 "the COMMITS of $local_ref (${local_sha:0:10}) could not be counted for the credential scan (a git read exited {rc})" -- scannable_commits $range; then
+            expected=$read_out
+            if [ -z "$expected" ] || [ -n "${expected//[0-9]/}" ]; then
+                unscanned "the COMMITS of $local_ref (${local_sha:0:10}) could not be counted for the credential scan (the count read exited 0 and answered \"$expected\", not a count)"
+                failed_creds=1; expected=""
+            fi
+        else
             failed_creds=1
         fi
         # The argument list is gitleaks_args' (the options and why, there).
@@ -1673,6 +2100,9 @@ scan_credentials() {
         # were whole. The colour codes it writes even off a terminal are stripped
         # from the copy that is read, not from the copy shown.
         gitleaks_args "$root" "$range" ${cfg[@]+"${cfg[@]}"}
+        # outside judged_read: the scanner's own exit is judged here (0 clean, 2 a
+        # finding, anything else a failed scan with the scanner's advice) and its
+        # verdict is read from its log below; it is no read of an object.
         rc=0
         log=$( { "$gl" "${GL_ARGS[@]}" 2>&1 1>&3; } 3>&2 ) || rc=$?
         [ -z "$log" ] || printf '%s\n' "$log" >&2
@@ -1688,13 +2118,30 @@ scan_credentials() {
         # unscanned, with the scanner's advice; a finding beside them still
         # prints its own.
         if [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ]; then
-            plain=$(printf '%s\n' "$log" | sed $'s/\e\\[[0-9;]*m//g')
-            err=$(printf '%s\n' "$plain" | awk '$2 == "ERR" { sub(/^[^ ]+ ERR /, ""); print; exit }')
+            # The three reads of the log through judged_read: the colour strip
+            # (its empty answer is judged by the count arm below, which refuses a
+            # log with no count line), the ERR line (its empty answer is the log's
+            # own: no error) and the count line (an empty answer refused below).
+            plain=""; err=""; reported=""
+            if judged_read gate="the COLOUR STRIP of the scanner log" 0 "the CREDENTIAL scan of $local_ref (${local_sha:0:10}) could not be judged: its log could not be read (sed exited {rc})" -- sed $'s/\e\\[[0-9;]*m//g' <<< "$log"; then
+                plain=$read_out
+            else
+                failed_creds=1
+            fi
+            if judged_read own="the ERR line of the scanner log" 0 "the CREDENTIAL scan of $local_ref (${local_sha:0:10}) could not be judged: its log could not be read for an error line (awk exited {rc})" -- awk '$2 == "ERR" { sub(/^[^ ]+ ERR /, ""); print; exit }' <<< "$plain"; then
+                err=$read_out
+            else
+                failed_creds=1
+            fi
             if [ -n "$err" ]; then
                 unscanned "the CREDENTIAL scan of $local_ref (${local_sha:0:10}) did not complete: gitleaks logged an error ($err)"
                 failed_creds=1
             fi
-            reported=$(printf '%s\n' "$plain" | awk '$2 == "INF" && $4 == "commits" && $5 == "scanned." { print $3; exit }')
+            if judged_read gate="the COMMIT COUNT line of the scanner log" 0 "the CREDENTIAL scan of $local_ref (${local_sha:0:10}) could not be judged: its log could not be read for the commit count (awk exited {rc})" -- awk '$2 == "INF" && $4 == "commits" && $5 == "scanned." { print $3; exit }' <<< "$plain"; then
+                reported=$read_out
+            else
+                failed_creds=1
+            fi
             if [ -z "$reported" ]; then
                 unscanned "the CREDENTIAL scan of $local_ref (${local_sha:0:10}) reported no commit count, so what it read is unknown"
                 failed_creds=1
@@ -1712,6 +2159,8 @@ scan_credentials() {
                 # option went unhonoured nor promises that the key's remedy lifts
                 # the refusal. A refusal a contributor cannot act on is a defect,
                 # so the remedy for the candidate is still given.
+                # outside judged_read: the root-commit probe below is for the advice
+                # line alone (a candidate cause on a push refused already).
                 # shellcheck disable=SC2086  # the range is deliberately word-split
                 if [ "$reported" -lt "$expected" ] 2>/dev/null && [ "$showroot_configured" = false ] \
                     && [ -n "$(git rev-list --max-parents=0 $range 2>/dev/null || true)" ]; then
@@ -1719,7 +2168,7 @@ scan_credentials() {
                 fi
             fi
         fi
-    done <<< "$refs"
+    done <<< "${root:+$refs}"
 
     if [ "$blocked_creds" -ne 0 ]; then
         echo "" >&2

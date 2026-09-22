@@ -4067,3 +4067,315 @@ fail_config_showroot() { git_refusing '[ "${1:-}" = config ] && [ "${2:-}" = --t
     [[ "$output" != *"gitleaks found a credential"* ]]
     [[ "$output" != *"shim:"* ]]
 }
+
+
+# ── every read through one helper: the exit-0 empty answer closed by construction ─────
+# Round 4 gated six exit-0 empty answers read by read and the header claimed the
+# class; round 5 found six more reads of the same class, each shown by a real
+# push with a shim publishing a banned line with nothing printed (a grep exiting
+# 2 over the added lines, a rev-list listing no commit, a parent count of
+# nothing beside an empty combined listing, a type of nothing, an empty symlink
+# target over a blob with bytes). The hook now makes every read it judges
+# through one helper (judged_read): a status outside the read's expected set is
+# refused naming the read, and an exit-0 empty answer is judged against a
+# sibling fact where one exists (gate=) or declared the object's own (own=) at
+# the call site; the header's two lists of reads are derived from those tags,
+# and the first case below pins that derivation. The rest are the six reads,
+# each through a real push with the shim that published at the earlier text,
+# and the remote asserted to hold nothing new.
+
+# The hook installed for one real push of the given branch, behind the wrapper
+# that puts the shim directory first on the hook's PATH (push_main_through_hook_with_shim
+# pushes main; this one any branch or tag ref).
+push_ref_through_hook_with_shim() {   # <refspec>
+    mkdir -p "$TEST_DIR/hooks"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'export PATH=%q:"$PATH"\n' "$TEST_DIR/shim"
+        printf 'exec %q "$@"\n' "$HOOK"
+    } > "$TEST_DIR/hooks/pre-push"
+    chmod 755 "$TEST_DIR/hooks/pre-push"
+    git -C "$REPO" config core.hooksPath "$TEST_DIR/hooks"
+    run git -C "$REPO" push origin "$1"
+    git -C "$REPO" config core.hooksPath "$TEST_DIR/no-hooks"
+}
+remote_holds_ref() { git -C "$TEST_DIR/remote.git" rev-parse -q --verify "$1" >/dev/null; }   # <ref>
+
+# A grep first on the hook's PATH that exits 2 (an error, not a no-match) for
+# ONE argument shape and runs the real grep for every other: the shape is the
+# read's own flags, so the fixture decides which read meets it.
+grep_refusing() {   # <bash test over the shim's "$@">
+    local real_grep
+    real_grep="$(command -v grep)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if %s; then echo "shim: grep refused" >&2; exit 2; fi\n' "$1"
+        printf 'exec %q "$@"\n' "$real_grep"
+    } > "$TEST_DIR/shim/grep"
+    chmod 755 "$TEST_DIR/shim/grep"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+
+@test "the header's two lists of reads are DERIVED from the tags at the helper's call sites: every judged_read call carries an own= or a gate= tag, and each list names exactly the tags of its kind (a name added or dropped by hand is red here)" {
+    # the tags, one per call site (a call's tag is on the same line as the helper's name)
+    tags="$(grep -oE 'judged_read (own|gate)="[^"]*"' "$HOOK" | sed 's/^judged_read //' | sort -u)"
+    [ -n "$tags" ]
+    # every invocation of the helper carries a tag: the lines naming it as a command
+    # (its definition and the comments set aside, a trailing comment stripped first)
+    calls="$(sed -E 's/[[:space:]]+#.*$//' "$HOOK" | grep -vE '^[[:space:]]*#' | grep -E '(^|[[:space:]!&|;(])judged_read([[:space:]]|$)' | grep -v 'judged_read()' | grep -vcE 'judged_read (own|gate)="[^"]*"')" || true
+    [ "$calls" = 0 ]
+    [ "$(grep -cE '(^|[[:space:]!&|;(])judged_read (own|gate)="' "$HOOK")" -gt 40 ]      # the call sites are many: a regex that matched none would pass the count above for the wrong reason
+    # the header's lists: the indented names under each heading, until the first line that is not one
+    listed="$(awk '/^# Reads gated by a sibling fact \(gate=\):$/ { m = "gate"; next }
+                   /^# Reads whose empty answer is the object.s own \(own=\):$/ { m = "own"; next }
+                   m != "" && /^#   / { sub(/^#   /, ""); print m "=\"" $0 "\""; next }
+                   m != "" { m = "" }' "$HOOK" | sort -u)"
+    [ -n "$listed" ]
+    [ "$tags" = "$listed" ]
+    # both kinds are in use, and the two lists are disjoint
+    [[ "$tags" == *'gate="'* ]]
+    [[ "$tags" == *'own="'* ]]
+    [ "$(printf '%s\n' "$tags" | sed 's/^[a-z]*=//' | sort | uniq -d | wc -l)" = 0 ]
+}
+
+@test "the ADDED LINES grep exiting 2 (an error, not a no-match) is refused as unscanned naming the read, through a real push: a grep that could not read the lines is not a commit that added nothing, and the remote stays at the base" {
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    commit_file leak.txt "home is /home/zzsynthuser/code" "leak"
+    leak="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file leak.txt "remove it"                     # gone at the tip: the added-lines pass alone can name it
+    grep_refusing '[ "${1:-}" = -a ]'                    # the added-lines grep's shape (-a -i -F); no other grep of the hook reads a file as text
+    run _hook_in "$REPO" -c 'printf "x\n" | grep -a -i -F -e x; echo "status $?"'
+    [[ "$output" == *"status 2"* ]]
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the ADDED LINES of commit ${leak:0:10} could not be grepped (grep exited 2)"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"ADDS a personal identifier"* ]]     # nothing was read to find
+    [[ "$output" != *"BLOCKED"* ]]
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$BASE" ]
+}
+
+@test "the SYMLINK TARGET grep exiting 2 is refused as unscanned naming the link, through a real push of a branch whose tip inherits the link: an unread target is not a clean one, and the remote never gets the branch" {
+    branch_inheriting_mains_symlink_leak                 # main published the link; the branch adds a clean file, under the chosen identity, so no address grep runs
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    grep_refusing '[ "${1:-}" = -qi ]'                   # the target grep's shape (-qi -F), shared with the address-domain grep, which this fixture never reaches
+    push_ref_through_hook_with_shim feature
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the SYMLINK TARGET of node_modules at the tip of refs/heads/feature (${sha:0:10}) could not be grepped (grep exited 2)"* ]]
+    [[ "$output" != *"-> /home/zzsynthuser"* ]]
+    [[ "$output" != *"BLOCKED"* ]]
+    run remote_holds_ref refs/heads/feature
+    [ "$status" -ne 0 ]
+}
+
+# The commit listing (rev-list over the range) answering NOTHING with a clean
+# status: read as "no commit to scan", the per-commit loop ran zero times and a
+# middle commit's banned line was published through a real push, on a new
+# branch and on a ref update alike (the round 5 refuters, 2026-09-22). The
+# empty listing is now judged against the type the pushed object peels to (a
+# blob or a tree names no commit), else against the remote-tracking refs
+# containing the pushed commit OR its ancestry over the remote's current
+# commit, and refused naming the read and the empty answer when neither holds.
+empty_rev_list() { git_refusing '[ "${1:-}" = rev-list ] && [ "${3:-}" = --not ]' 0 ""; }   # the range listing alone (<sha> --not --remotes ...): the parent count carries --parents, the credential probe is skipped
+
+@test "a commit listing that answers NOTHING (rev-list exiting 0 with no commit) on a NEW branch is refused as unscanned naming the read and the empty answer, through a real push: no remote-tracking ref contains the tip, so the listing answered short, and the remote holds nothing" {
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    commit_file leak.txt "home is /home/zzsynthuser/code" "leak"
+    remove_file leak.txt "remove it"                     # gone at the tip: only the per-commit half can name it
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    empty_rev_list
+    run _hook_in "$REPO" -c 'git rev-list "$1" --not --remotes' _ "$sha"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    run _hook_in "$REPO" -c 'git rev-list --parents -n 1 "$1"' _ "$sha"       # the parent count read is untouched
+    [[ "$output" == "$sha "* ]]
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the COMMITS of refs/heads/main (${sha:0:10}) were listed as none (git rev-list exited 0 and printed nothing) while no remote-tracking ref contains the pushed commit and the ref is new on the remote, so the listing answered short"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"ADDS a personal identifier"* ]]     # the loop ran over nothing: refused for the read, not as a finding
+    run remote_holds_main
+    [ "$status" -ne 0 ]
+}
+
+@test "the same empty listing on a REF UPDATE is refused the same way, the line naming the remote's commit the tip does not descend from, and the remote stays at the base" {
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    BASE="$(git -C "$REPO" rev-parse HEAD)"
+    commit_file leak.txt "home is /home/zzsynthuser/code" "leak"
+    remove_file leak.txt "remove it"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    empty_rev_list
+    run _hook_in "$REPO" -c 'git merge-base --is-ancestor "$1" "$2"; echo "status $?"' _ "$sha" "$BASE"   # the tip is no ancestor of the base
+    [[ "$output" == *"status 1"* ]]
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the COMMITS of refs/heads/main (${sha:0:10}) were listed as none (git rev-list exited 0 and printed nothing) while no remote-tracking ref contains the pushed commit and it is not an ancestor of the remote's ${BASE:0:10}, so the listing answered short"* ]]
+    [[ "$output" != *"ADDS a personal identifier"* ]]
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$BASE" ]
+}
+
+@test "a tag of a BLOB passes through a real push beside that shim: the empty listing is the object's own (the pushed object peels to a blob, which names no commit), and the remote gets the tag" {
+    add_remote
+    commit_file f.txt "plain" "base"
+    git -C "$REPO" tag -a blobtag "$(git -C "$REPO" rev-parse HEAD:f.txt)" -m "a tag of a blob"
+    sha="$(git -C "$REPO" rev-parse refs/tags/blobtag)"
+    empty_rev_list
+    run _hook_in "$REPO" -c 'git cat-file -t "$1^{}"' _ "$sha"
+    [ "$output" = blob ]
+    push_ref_through_hook_with_shim refs/tags/blobtag
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"romp pre-push"* ]]
+    remote_holds_ref refs/tags/blobtag
+}
+
+@test "a REWIND (the pushed commit an ancestor of the remote's current one) passes with nothing printed: the real listing is empty and the ancestry agrees, so the empty answer is right; a tip on a remote-tracking ref of another remote agrees the same way" {
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    base="$(git -C "$REPO" rev-parse HEAD)"
+    commit_file web.txt "the web session's work" "later"
+    git -C "$REPO" push -q origin main
+    later="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" reset -q --hard "$base"
+    git -C "$REPO" update-ref -d refs/remotes/origin/main                                                             # no remote-tracking ref contains the tip: the ancestry alone can agree
+    run _hook_in "$REPO" -c 'git rev-list "$1" --not --remotes "$2"' _ "$base" "$later"
+    [ -z "$output" ]
+    run _hook_in "$REPO" "$HOOK" origin git@example.invalid:x/y.git <<< "refs/heads/main $base refs/heads/main $later"   # the rewind, as a force-push would feed it
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    git -C "$REPO" update-ref refs/remotes/upstream/main "$base"                                                      # the same tip on ANOTHER remote's ref, pushed as a new ref here: the remote refs agree
+    run _hook_in "$REPO" "$HOOK" origin git@example.invalid:x/y.git <<< "refs/heads/sync $base refs/heads/sync $ZERO"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+# The parent count (rev-list --parents -n 1) answering NOTHING with a clean
+# status beside a combined listing answering nothing: the merge read as a
+# one-parent commit, the two empty answers agreed, and the merge's hidden link
+# was published through a real push (the round 5 refuters, 2026-09-22). The
+# count is now read in bash and judged against the commit named first once the
+# read exited 0; a short answer is refused naming it.
+empty_parents_and_listing() {   # <sha>: a git whose `rev-list --parents -n 1 <sha>` and `diff-tree ... --raw ... -c ... <sha>` exit 0 and print nothing, the real git for every other command and every other commit
+    git_refusing "[ \"\${!#}\" = $1 ] && { { [ \"\${1:-}\" = rev-list ] && [ \"\${2:-}\" = --parents ]; } || case \" \$* \" in *\" --raw \"*\" -c \"*) true ;; *) false ;; esac; }" 0 ""
+}
+
+@test "a parent count that answers NOTHING beside a combined listing that answers nothing is refused as unscanned naming the count's short answer, through a real push of a merge with a hidden link: two empty answers agreeing is not a one-parent commit, and the remote stays at the base" {
+    merge_with_hidden_link
+    empty_parents_and_listing "$sha"
+    run _hook_in "$REPO" -c 'git rev-list --parents -n 1 "$1"' _ "$sha"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    run _hook_in "$REPO" -c 'git diff-tree -r --raw --no-renames --root -c -z --no-commit-id "$1"' _ "$sha"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    push_main_through_hook_with_shim
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the ADDED LINES of commit ${sha:0:10} could not be read (git rev-list --parents exited 0 and answered \"\", not the commit and its parents)"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"exited 128"* ]]
+    [ "$(git -C "$TEST_DIR/remote.git" rev-parse refs/heads/main)" = "$BASE" ]
+}
+
+# The tip's symlink TARGET read (cat-file -p of the link blob) answering NOTHING
+# with a clean status: read as an empty target, a link the remote already held
+# whose target carried a banned string passed through a real push (the round 5
+# refuters, 2026-09-22). The empty answer is now judged against the blob's
+# size, emptiness against emptiness; the capture keeps a target of a newline
+# alone distinct from an empty one.
+silent_cat_file_p() {   # <blob>: a git whose `cat-file -p <blob>` exits 0 and prints nothing, the real git for every other command (cat-file -s included)
+    git_refusing "[ \"\${1:-}\" = cat-file ] && [ \"\${2:-}\" = -p ] && [ \"\${3:-}\" = $1 ]" 0 ""
+}
+
+@test "a symlink TARGET read that answers NOTHING (cat-file -p exiting 0 with no output, the size read untouched) over a link the remote already holds is refused as unscanned naming the link, the empty answer and the size, through a real push: an empty answer is an empty target only when the blob is, and the remote never gets the branch" {
+    branch_inheriting_mains_symlink_leak                 # main published the link: the tip's symlink pass alone reads it
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    blob="$(git -C "$REPO" rev-parse "$sha:node_modules")"
+    size="$(git -C "$REPO" cat-file -s "$blob")"
+    [ "$size" -gt 0 ]
+    silent_cat_file_p "$blob"
+    run _hook_in "$REPO" -c 'git cat-file -p "$1"' _ "$blob"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    push_ref_through_hook_with_shim feature
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the SYMLINK TARGET of node_modules at the tip of refs/heads/feature (${sha:0:10}) was read as empty while git cat-file -s gives its size as $size bytes, so the read answered short (git cat-file -p exited 0)"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"-> /home/zzsynthuser"* ]]          # judged by nothing: refused for the read, not as a finding
+    [[ "$output" != *"could not be read"* ]]
+    run remote_holds_ref refs/heads/feature
+    [ "$status" -ne 0 ]
+}
+
+@test "the controls: a link over the EMPTY blob passes (the size agrees with the empty answer), and a link whose target is a newline alone passes too (the capture keeps it distinct from empty, so the size is never asked)" {
+    commit_file f.txt "plain" "base"
+    empty="$(git -C "$REPO" hash-object -w --stdin < /dev/null)"
+    nl="$(printf '\n' | git -C "$REPO" hash-object -w --stdin)"
+    git -C "$REPO" update-index --add --cacheinfo "120000,$empty,emptylink"
+    git -C "$REPO" update-index --add --cacheinfo "120000,$nl,newlinelink"
+    git -C "$REPO" commit -qm "two odd links"
+    [ "$(git -C "$REPO" cat-file -s "$nl")" = 1 ]
+    run_hook
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+# The tip's content grep answering NOTHING with exit 0: git grep exits 0 for a
+# match, so a match that printed no hit line is a short answer, judged against
+# the grep's own status (the helper's road for a read whose sibling fact is its
+# status). Real git never does this; the shim shows the gate.
+silent_content_grep() { git_refusing '[ "${1:-}" = grep ] && [ "${3:-}" = -i ]' 0 ""; }   # the content grep alone (--no-color -i -I -l -F): the read list's grep carries -I -l -z and no -i
+
+@test "a tip content grep that exits 0 (a match) and prints NO hit line is refused as unscanned naming the read and the short answer, through a real push of a branch whose tip inherits main's leak: the status says a match, the answer says none, and the remote never gets the branch" {
+    branch_inheriting_mains_leak                         # main published leak.txt; the branch adds a clean file, so the tip grep alone can name the leak
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    silent_content_grep
+    run _hook_in "$REPO" -c 'git grep --no-color -i -I -l -F -e zzsynthuser "$1" --' _ "$sha"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    push_ref_through_hook_with_shim feature
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the CONTENT of the tip of refs/heads/feature (${sha:0:10}) was scanned with no hit listed (git grep exited 0, a match, and printed no hit line), so the answer is short"* ]]
+    [[ "$output" != *"would publish a personal identifier"* ]]
+    run remote_holds_ref refs/heads/feature
+    [ "$status" -ne 0 ]
+}
+
+# The credential half's own count (scannable_commits) answering NOTHING with a
+# clean status: an empty count skipped the comparison with the scanner's
+# reported count, so a scanner handed a shorter log passed. The count is now
+# judged as a run of digits before the comparison.
+awk_silent_on_count() {   # an awk that exits 0 printing nothing for the program that derives the count (the one naming a missing blob), the real awk for every other program
+    local real_awk
+    real_awk="$(command -v awk)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'case "$*" in *"is missing"*) cat > /dev/null; exit 0 ;; esac\n'
+        printf 'exec %q "$@"\n' "$real_awk"
+    } > "$TEST_DIR/shim/awk"
+    chmod 755 "$TEST_DIR/shim/awk"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+
+@test "the hook's own commit count answering NOTHING (the count's awk exiting 0 with no output) beside a scanner handed a shorter log is refused as unscanned naming the count read and the empty answer: an empty count is not a count that agrees" {
+    real_gitleaks
+    commit_file probe.py "token = \"$(probe_token)\"" "a credential in a middle commit"
+    commit_file clean.txt "nothing to see" "a clean tip"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    gitleaks_git_short                                   # the scanner's git handed --max-count=1: one commit scanned, the clean tip
+    awk_silent_on_count
+    run _hook_in "$REPO" -c 'printf "x\n" | awk "{ print \"is missing\" }"; echo "status $?"'
+    [ "$output" = "status 0" ]
+    run_hook
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"the COMMITS of refs/heads/main (${sha:0:10}) could not be counted for the credential scan (the count read exited 0 and answered \"\", not a count)"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" == *"gitleaks could not scan"* ]]
+    [[ "$output" != *"gitleaks found a credential"* ]]
+}

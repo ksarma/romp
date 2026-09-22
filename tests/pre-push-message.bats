@@ -363,3 +363,72 @@ fail_log_message() {   # [<sha whose message log fails; every commit's when omit
     [ "$status" -ne 0 ]
     [[ "$output" == *"the MESSAGE of commit ${sha:0:10} carries a personal identifier on line 5 (line 1 is the subject)"* ]]
 }
+
+# ── the message grep through one helper: its status read ─────────────────
+# The hook reads every grep over captured content through one helper
+# (judged_read) that refuses a status outside 0 and 1 naming the read
+# (pre-push-hook.bats pins the helper's derived lists). A grep exiting 2 over a
+# message read as no match and published the message through a real push (the
+# round 5 refuters, 2026-09-22); the two cases below are a commit's message and
+# a tag's, each through a real push with that shim.
+add_remote() {
+    git init -q --bare "$TEST_DIR/remote.git"
+    git -C "$REPO" remote add origin "$TEST_DIR/remote.git"
+}
+push_ref_through_hook_with_shim() {   # <refspec>: the hook installed for one real push behind a wrapper that puts the shim directory first on the hook's PATH
+    mkdir -p "$TEST_DIR/hooks"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'export PATH=%q:"$PATH"\n' "$TEST_DIR/shim"
+        printf 'exec %q "$@"\n' "$HOOK"
+    } > "$TEST_DIR/hooks/pre-push"
+    chmod 755 "$TEST_DIR/hooks/pre-push"
+    git -C "$REPO" config core.hooksPath "$TEST_DIR/hooks"
+    run git -C "$REPO" push origin "$1"
+    git -C "$REPO" config core.hooksPath "$TEST_DIR/no-hooks"
+}
+remote_holds_ref() { git -C "$TEST_DIR/remote.git" rev-parse -q --verify "$1" >/dev/null; }   # <ref>
+grep_refusing_message_shape() {   # a grep exiting 2 for the message grep's shape (-in -F), the real grep otherwise
+    local real_grep
+    real_grep="$(command -v grep)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if [ "${1:-}" = -in ]; then echo "shim: grep refused" >&2; exit 2; fi\n'
+        printf 'exec %q "$@"\n' "$real_grep"
+    } > "$TEST_DIR/shim/grep"
+    chmod 755 "$TEST_DIR/shim/grep"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+
+@test "the MESSAGE grep exiting 2 (an error, not a no-match) over a commit whose subject names a banned host is refused as unscanned naming the read, through a real push: an unread message is not a clean one, and the remote holds nothing" {
+    add_remote
+    commit_msg web.txt "fix the crash on TESTHOST"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    grep_refusing_message_shape
+    run _hook_in "$REPO" -c 'printf "x\n" | grep -in -F -e x; echo "status $?"'
+    [[ "$output" == *"status 2"* ]]
+    push_ref_through_hook_with_shim main
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the MESSAGE of commit ${sha:0:10} could not be grepped (grep exited 2)"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"carries a personal identifier"* ]]
+    [[ "$output" != *"BLOCKED"* ]]
+    run remote_holds_ref refs/heads/main
+    [ "$status" -ne 0 ]
+}
+
+@test "the same grep exiting 2 over an annotated TAG's message is refused naming the tag, through a real push of the tag over a commit the remote holds, and the remote never gets the tag" {
+    add_remote
+    commit_msg ok.txt "clean"
+    git -C "$REPO" push -q origin main                 # the commit on the remote: the tag's own reads are the only ones the push makes
+    git -C "$REPO" tag -a v1 -m "release one" -m "cut on TESTHOST"
+    sha="$(git -C "$REPO" rev-parse refs/tags/v1)"
+    grep_refusing_message_shape
+    push_ref_through_hook_with_shim refs/tags/v1
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the MESSAGE of tag refs/tags/v1 (${sha:0:10}) could not be grepped (grep exited 2)"* ]]
+    [[ "$output" != *"carries a personal identifier"* ]]
+    run remote_holds_ref refs/tags/v1
+    [ "$status" -ne 0 ]
+}

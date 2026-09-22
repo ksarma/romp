@@ -549,3 +549,178 @@ fail_log_addresses() {   # [<sha whose addresses log fails; every commit's when 
     [ "$status" -eq 0 ]
     [ -z "$output" ]
 }
+
+# ── every read through one helper: the exit-0 empty answer and the failed grep ─────
+# The hook reads each type, field and address through one helper (judged_read)
+# that refuses a status outside the read's expected set and judges an exit-0
+# empty answer against a sibling fact where one exists (pre-push-hook.bats pins
+# the helper's derived lists). The cases below are this file's reads, each
+# through a REAL push of a tag or a branch with the shim that published at the
+# earlier text: a type of nothing read as "not a tag" (the pushed object and the
+# one the peel reaches), an object field of nothing ending the peel, an
+# addresses log of nothing read as a commit stamped with none, and a grep over
+# an address exiting 2 read as no match (the round 5 refuters, 2026-09-22).
+
+# A bare remote named origin, and the hook installed for one real push of the
+# given ref behind a wrapper that puts the shim directory first on the hook's
+# PATH (the shim a git_refusing or grep_refusing call made before this).
+add_remote() {
+    git init -q --bare "$TEST_DIR/remote.git"
+    git -C "$REPO" remote add origin "$TEST_DIR/remote.git"
+}
+push_ref_through_hook_with_shim() {   # <refspec>
+    mkdir -p "$TEST_DIR/hooks"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'export PATH=%q:"$PATH"\n' "$TEST_DIR/shim"
+        printf 'exec %q "$@"\n' "$HOOK"
+    } > "$TEST_DIR/hooks/pre-push"
+    chmod 755 "$TEST_DIR/hooks/pre-push"
+    git -C "$REPO" config core.hooksPath "$TEST_DIR/hooks"
+    run git -C "$REPO" push origin "$1"
+    git -C "$REPO" config core.hooksPath "$TEST_DIR/no-hooks"
+}
+remote_holds_ref() { git -C "$TEST_DIR/remote.git" rev-parse -q --verify "$1" >/dev/null; }   # <ref>
+silent_cat_file_t() {   # <sha>: a git whose `cat-file -t <sha>` exits 0 and prints nothing, the real git for every other command (the peel's <sha>^{} included)
+    git_refusing "[ \"\${1:-}\" = cat-file ] && [ \"\${2:-}\" = -t ] && [ \"\${3:-}\" = $1 ]" 0 ""
+}
+silent_cat_file_p() {   # <sha>: a git whose `cat-file -p <sha>` exits 0 and prints nothing, the real git for every other command
+    git_refusing "[ \"\${1:-}\" = cat-file ] && [ \"\${2:-}\" = -p ] && [ \"\${3:-}\" = $1 ]" 0 ""
+}
+silent_log_addresses() {   # a git whose addresses log exits 0 and prints nothing, the real git for every other command (the message log is another format)
+    git_refusing '[ "${1:-}" = log ] && [[ "${4:-}" == --format=authored* ]]' 0 ""
+}
+grep_refusing() {   # <bash test over the shim's "$@">: a grep exiting 2 for that argument shape, the real grep otherwise
+    local real_grep
+    real_grep="$(command -v grep)"
+    mkdir -p "$TEST_DIR/shim"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'if %s; then echo "shim: grep refused" >&2; exit 2; fi\n' "$1"
+        printf 'exec %q "$@"\n' "$real_grep"
+    } > "$TEST_DIR/shim/grep"
+    chmod 755 "$TEST_DIR/shim/grep"
+    export PATH="$TEST_DIR/shim:$PATH"
+}
+# A clean commit under the hermetic identity, pushed to the remote, so a tag
+# pushed after it names a commit the remote holds and the tag's own reads are
+# the only ones the push makes.
+clean_commit_on_remote() {
+    add_remote
+    commit_clean ok.txt "clean"
+    git -C "$REPO" push -q origin main
+}
+
+@test "a TYPE read that answers NOTHING (cat-file -t exiting 0 with no output) over a tag with a banned tagger is refused as unscanned naming the read and the empty answer, through a real push: a type of nothing is not a non-tag, and the remote never gets the tag" {
+    clean_commit_on_remote
+    GIT_COMMITTER_EMAIL="$STAMPED" git -C "$REPO" tag -a v1 -m "release one"
+    sha="$(git -C "$REPO" rev-parse refs/tags/v1)"
+    silent_cat_file_t "$sha"
+    run _hook_in "$REPO" -c 'git cat-file -t "$1"' _ "$sha"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    run _hook_in "$REPO" -c 'git cat-file -t "$1^{}"' _ "$sha"      # the peel's type read is untouched
+    [ "$output" = commit ]
+    push_ref_through_hook_with_shim refs/tags/v1
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the TYPE of the object refs/tags/v1 pushes (${sha:0:10}) was read as \"\" (git cat-file -t exited 0), not an object type, so whether it is an annotated tag is unknown"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"could not be read"* ]]
+    [[ "$output" != *"is tagged as"* ]]                # nothing was peeled to name
+    run remote_holds_ref refs/tags/v1
+    [ "$status" -ne 0 ]
+}
+
+@test "the type is judged for every object the peel reaches: an INNER tag whose type reads as nothing under a clean outer one is refused naming it, through a real push, and the remote never gets the outer tag" {
+    clean_commit_on_remote
+    GIT_COMMITTER_EMAIL="$STAMPED" git -C "$REPO" tag -a v1 -m "release one"
+    git -C "$REPO" tag -a v1-outer refs/tags/v1 -m "the outer tag"     # the hermetic identity, a clean message
+    inner="$(git -C "$REPO" rev-parse refs/tags/v1)"
+    silent_cat_file_t "$inner"
+    push_ref_through_hook_with_shim refs/tags/v1-outer
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the TYPE of the object refs/tags/v1-outer pushes (${inner:0:10}) was read as \"\" (git cat-file -t exited 0), not an object type"* ]]
+    [[ "$output" != *"is tagged as"* ]]
+    run remote_holds_ref refs/tags/v1-outer
+    [ "$status" -ne 0 ]
+}
+
+@test "a tag whose fields all read as NOTHING (cat-file -p exiting 0 with no output) is refused on its OBJECT field, through a real push: a tag object always names what it points at, so an empty field under a type of tag is a short answer, and the remote never gets the tag" {
+    clean_commit_on_remote
+    GIT_COMMITTER_EMAIL="$STAMPED" git -C "$REPO" tag -a v1 -m "release one"
+    sha="$(git -C "$REPO" rev-parse refs/tags/v1)"
+    silent_cat_file_p "$sha"
+    run _hook_in "$REPO" -c 'git cat-file -p "$1"' _ "$sha"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    [ "$(git -C "$REPO" cat-file -t "$sha")" = tag ]            # the type read is untouched
+    push_ref_through_hook_with_shim refs/tags/v1
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the OBJECT of tag refs/tags/v1 (${sha:0:10}) was read as empty (git cat-file -p exited 0) while its type read as tag, which ends the peel here"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"could not be read"* ]]           # an absent tagger and an absent message are the tag's own: refused for the object field alone
+    [[ "$output" != *"is tagged as"* ]]
+    run remote_holds_ref refs/tags/v1
+    [ "$status" -ne 0 ]
+}
+
+@test "an ADDRESSES log that answers NOTHING (git log exiting 0 with no line) over a commit stamped under a banned domain is refused as unscanned naming the read and the empty answer, through a real push: the format asks for two role lines, so an answer of none is short, and the remote holds nothing" {
+    add_remote
+    commit_as "$STAMPED" "$STAMPED" web.txt "stamped by an unset user.email"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    silent_log_addresses
+    run _hook_in "$REPO" -c 'git log -1 --no-show-signature --format=authored%x09%ae%ncommitted%x09%ce "$1"' _ "$sha"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    push_ref_through_hook_with_shim main
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the ADDRESSES of commit ${sha:0:10} could not be read (git log exited 0 and answered \"\", not the two stamped roles)"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"is authored as"* ]]
+    run remote_holds_ref refs/heads/main
+    [ "$status" -ne 0 ]
+}
+
+@test "the ADDRESS DOMAIN grep exiting 2 (an error, not a no-match) over a commit stamped under a banned domain is refused as unscanned naming the address and the read, through a real push: an unread domain is not a clean one, and the remote holds nothing" {
+    add_remote
+    commit_as "$STAMPED" "$STAMPED" web.txt "stamped by an unset user.email"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    grep_refusing '[ "${1:-}" = -qi ]'                 # the domain grep's shape (-qi -F); the chosen-address match carries -qixF, the message grep -in
+    run _hook_in "$REPO" -c 'printf "x\n" | grep -qi -F -e x; echo "status $?"'
+    [[ "$output" == *"status 2"* ]]
+    push_ref_through_hook_with_shim main
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the ADDRESS <$STAMPED> of commit ${sha:0:10} could not be grepped (grep exited 2)"* ]]
+    [[ "$output" == *"the scan is incomplete, so the push is refused"* ]]
+    [[ "$output" != *"is authored as"* ]]
+    [[ "$output" != *"BLOCKED"* ]]
+    run remote_holds_ref refs/heads/main
+    [ "$status" -ne 0 ]
+}
+
+@test "the same grep exiting 2 over a tag's TAGGER is refused naming the tag and the address, through a real push of the tag, and the remote never gets it" {
+    clean_commit_on_remote
+    GIT_COMMITTER_EMAIL="$STAMPED" git -C "$REPO" tag -a v1 -m "release one"
+    sha="$(git -C "$REPO" rev-parse refs/tags/v1)"
+    grep_refusing '[ "${1:-}" = -qi ]'
+    push_ref_through_hook_with_shim refs/tags/v1
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the TAGGER ADDRESS <$STAMPED> of tag refs/tags/v1 (${sha:0:10}) could not be grepped (grep exited 2)"* ]]
+    [[ "$output" != *"is tagged as"* ]]
+    run remote_holds_ref refs/tags/v1
+    [ "$status" -ne 0 ]
+}
+
+@test "the CHOSEN ADDRESS match exiting 2 is refused as unscanned naming the comparison, and the address is then judged as one the clone did not choose (the strict side): a configured address with a banned domain is refused on both lines through a real push" {
+    add_remote
+    git -C "$REPO" config user.email dev@zzsynthuser.example
+    commit_as dev@zzsynthuser.example dev@zzsynthuser.example web.txt "the configured address"
+    sha="$(git -C "$REPO" rev-parse HEAD)"
+    grep_refusing '[ "${1:-}" = -qixF ]'               # the chosen-address match alone
+    push_ref_through_hook_with_shim main
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"the ADDRESS <dev@zzsynthuser.example> of commit ${sha:0:10} could not be compared with the addresses this clone is configured to use (grep exited 2)"* ]]
+    [[ "$output" == *"commit ${sha:0:10} is authored as <dev@zzsynthuser.example>, an address this clone is not configured to use"* ]]
+    run remote_holds_ref refs/heads/main
+    [ "$status" -ne 0 ]
+}
